@@ -13,11 +13,17 @@ import { CodesPanel } from "./CodesPanel";
 import { renderPrintSheetHtml } from "./renderPrintSheet";
 import { liveQrUrl } from "../live-qr-url";
 import {
+  printBatchOverBluetooth,
+  isWebBluetoothAvailable,
+  NO_WEB_BLUETOOTH,
+  type BluetoothPrinterSettings,
+} from "@cobblr/platform-web";
+import {
   PAPER_SIZES,
   findPaper,
   labelSizesForPaper,
   perSheet,
-} from "./sizes";
+} from "../label-sizes";
 import type { Printable } from "./api";
 
 const PAPER_LS = "cobblr:label-paper";
@@ -46,6 +52,7 @@ export function QueuePage() {
 
   // Paper + label-size selection, persisted so a workshop keeps its
   // printer setup between visits.
+  const [btProgress, setBtProgress] = useState<{ done: number; total: number } | null>(null);
   const [paperKey, setPaperKey] = useState(
     () => localStorage.getItem(PAPER_LS) ?? PAPER_SIZES[0]!.key,
   );
@@ -187,6 +194,44 @@ export function QueuePage() {
         throw new Error("No printer configured — add one at Configuration → Printers.");
       }
       const printer = printers.find((p) => p.is_default) ?? printers[0]!;
+
+      // A Bluetooth printer has no network address, so the SERVER cannot reach it
+      // (its driver throws by construction). This queue prints it from the
+      // browser instead: one connection for the whole batch, then every row's own
+      // payload and description. The device chooser needs a user gesture, which
+      // this click is — and the session is reused across rows so it prompts once,
+      // not once per label.
+      if (printer.driver === "browser-bluetooth") {
+        if (!isWebBluetoothAvailable()) throw new Error(NO_WEB_BLUETOOTH);
+        const settings = (printer.settings ?? {}) as unknown as BluetoothPrinterSettings;
+        if (!settings.widthDots) {
+          throw new Error(`${printer.name} has no width set — open Configuration → Printers and set the media width.`);
+        }
+        const batch = items.map((it) => ({
+          id: it.id,
+          qrPayload: liveUrl(it.qr_payload),   // the minted scan URL, never a guess
+          caption: it.description || undefined,
+          copies: it.qty,
+        }));
+        const res = await printBatchOverBluetooth(batch, settings, (done, total) => setBtProgress({ done, total }));
+        setBtProgress(null);
+        // The server never saw this job, so tell it what reached paper: history,
+        // frozen codes, and those rows out of the queue. Only the rows that
+        // actually printed — a jam at row 7 leaves 8 onward queued to retry.
+        // Recorded even if this call fails, because the labels physically exist;
+        // a failure here means a stale queue, not a lost print, so it is surfaced
+        // separately rather than turning a successful print into an error.
+        let recordError: string | null = null;
+        if (res.printed.length > 0) {
+          try {
+            await api.recordPrinted(res.printed.map((p) => p.id).filter((id): id is string => !!id));
+          } catch (e) {
+            recordError = e instanceof Error ? e.message : String(e);
+          }
+        }
+        return { printer, bluetooth: res, recordError, warnings: [] as { code: string }[] };
+      }
+
       const { pdf_base64, warnings } = await api.renderPdf(sizeKey);
       const job = await api.printToPrinter(printer.id, {
         document_base64: pdf_base64,
@@ -196,14 +241,32 @@ export function QueuePage() {
       });
       return { printer, job, warnings: warnings ?? [] };
     },
-    onSuccess: ({ printer, job, warnings }) => {
+    onSuccess: (r) => {
+      if ("bluetooth" in r && r.bluetooth) {
+        const { printed, failed, deviceName, reconnected } = r.bluetooth;
+        const n = printed.reduce((acc, i) => acc + Math.max(1, i.copies ?? 1), 0);
+        if (failed.length === 0) {
+          toast.success(`Printed ${n} label${n === 1 ? "" : "s"} to ${deviceName}${reconnected ? "" : " (device remembered for next time)"}`);
+        } else {
+          // Paper is already spent on the successes, so report exactly which rows
+          // failed rather than a blanket error.
+          toast.error(`Printed ${n}, failed ${failed.length}: ${failed.map((f) => f.item.caption ?? f.item.id ?? "?").slice(0, 3).join(", ")}`);
+        }
+        if ("recordError" in r && r.recordError) {
+          toast.error("Labels printed, but the queue could not be updated. Refresh before printing again so you don't print twice.");
+        }
+        // Printed rows are gone server-side; failed ones stay for a retry.
+        void qc.invalidateQueries({ queryKey: ["labels-queue"] });
+        return;
+      }
+      const { printer, job, warnings } = r as { printer: { name: string }; job: { jobId: string; state: string }; warnings: { code: string }[] };
       toast.success(`Sent to ${printer.name} — job ${job.jobId} (${job.state})`);
       if (warnings.length) {
         const codes = warnings.map((w) => w.code).join(", ");
         toast.error(`Heads up: code${warnings.length === 1 ? "" : "s"} ${codes} may be too long to scan reliably. Shorten the prefix or use a larger label.`);
       }
     },
-    onError: (e) => toast.error((e as Error).message),
+    onError: (e) => { setBtProgress(null); toast.error((e as Error).message); },
   });
 
   const sheets = size ? Math.ceil(Math.max(total, 0) / perSheet(size)) : 0;
@@ -248,7 +311,7 @@ export function QueuePage() {
           title="Render + send straight to a configured printer (CUPS) — no print dialog"
         >
           <Send size={14} />
-          {sendToPrinter.isPending ? "…" : "Send to printer"}
+          {btProgress ? `Printing ${btProgress.done}/${btProgress.total}…` : sendToPrinter.isPending ? "…" : "Send to printer"}
         </button>
         <button
           onClick={() => print.mutate()}

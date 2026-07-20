@@ -12,7 +12,7 @@ import {
   findPaper,
   perSheet,
   type LabelSize,
-} from "./sizes";
+} from "../label-sizes";
 
 interface RenderOpts {
   /** Render only the first sheet (used for the on-screen preview). */

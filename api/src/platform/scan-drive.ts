@@ -7,24 +7,15 @@
 //     tab to the Scan inbox so the new row's confirm/intake is on screen;
 //   • no designated tab → leave it in the triage inbox (driven:false).
 
+import { qrTokenFromScan } from "@cobblr/platform-contract/qr-token";
 import { driveHub } from "./drive-hub.js";
 import { resolveQrToken } from "../routes/qr-scan.js";
 
 const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
 
-/** Pull a QR token slug out of a scanned payload — a bare token, or the
- *  `…/qr/:token` URL a phone camera reads off a printed Cobblr label. */
-export function qrTokenFromScan(code: string): string | null {
-  const t = code.trim();
-  // Everything after /qr/ — a single opaque segment OR a descriptive
-  // "<kind>/<id>" with a slash; stop at any query/fragment, drop a trailing /.
-  const m = t.match(/\/qr\/([^?#\s]+)/);
-  if (m) return m[1]!.replace(/\/$/, "");
-  // A bare token is a url-safe slug with no scheme/space (descriptive bare
-  // tokens carry one slash). Numeric-only is a UPC/EAN — let it fall to barcode.
-  if (/^[A-Za-z0-9_-]+(\/[A-Za-z0-9_-]+)?$/.test(t) && t.length >= 6 && /[A-Za-z_-]/.test(t)) return t;
-  return null;
-}
+// Re-exported from the contract package, which is the ONE definition shared with
+// the browser. Three hand-rolled copies had drifted; two were wrong.
+export { qrTokenFromScan } from "@cobblr/platform-contract/qr-token";
 
 export interface ScanDriveResult {
   /** True when a designated tab existed and the action was pushed to it. */

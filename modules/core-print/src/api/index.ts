@@ -38,6 +38,7 @@ function serialize(row: PrinterRow) {
     is_default: row.is_default,
     notes: row.notes,
     has_credentials: !!row.credentials_enc,
+    settings: (row.settings ?? {}) as Record<string, unknown>,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -51,14 +52,32 @@ const Credentials = z
   })
   .strict();
 
+/** browser-bluetooth settings. Validated so a bad width/dialect fails at save
+ *  rather than at the printer, where the symptom is a silent no-print. */
+const BluetoothSettings = z
+  .object({
+    profileId: z.string().max(80).optional(),
+    protocol: z.enum(["tspl", "phomemo"]),
+    widthDots: z.number().int().min(8).max(4096),
+    writeCharUuid: z.string().max(80).optional(),
+    labelHeightMm: z.number().min(1).max(1000).optional(),
+    gapMm: z.number().min(0).max(100).optional(),
+    direction: z.union([z.literal(0), z.literal(1)]).optional(),
+    topMarginDots: z.number().int().min(0).max(4096).optional(),
+    density: z.number().int().min(0).max(15).optional(),
+    speed: z.number().int().min(1).max(10).optional(),
+  })
+  .strict();
+
 const CreateBody = z.object({
   name: z.string().min(1).max(200),
   driver: z.string().max(40).default("cups"),
-  base_url: z.string().min(1).max(500),
-  queue: z.string().min(1).max(200),
+  base_url: z.string().max(500).default(""),
+  queue: z.string().max(200).default(""),
   credentials: Credentials.optional(),
   is_default: z.boolean().optional(),
   notes: z.string().max(2000).optional(),
+  settings: z.record(z.unknown()).optional(),
 });
 
 const PatchBody = CreateBody.partial();
@@ -84,6 +103,7 @@ async function configuredDriver(orgId: string, row: PrinterRow) {
   const cfg: PrinterConfig = {
     baseUrl: row.base_url,
     queue: row.queue,
+    bluetooth: (row.settings ?? undefined) as never,
     username: typeof creds.username === "string" ? creds.username : undefined,
     password: typeof creds.password === "string" ? creds.password : undefined,
     apiKey: typeof creds.apiKey === "string" ? creds.apiKey : undefined,
@@ -149,6 +169,21 @@ router.post(
       res.status(400).json({ error: { code: "bad_driver", message: `unknown driver '${body.driver}'` } });
       return;
     }
+    // Per-driver requirements: network drivers need somewhere to send bytes; a
+    // browser-Bluetooth printer needs its dialect/geometry instead, since the
+    // browser — not the server — does the talking.
+    if (body.driver === "browser-bluetooth") {
+      const parsed = BluetoothSettings.safeParse(body.settings ?? {});
+      if (!parsed.success) {
+        res.status(400).json({
+          error: { code: "bad_settings", message: `Bluetooth settings invalid: ${parsed.error.issues[0]?.message ?? "unknown"}` },
+        });
+        return;
+      }
+    } else if (!body.base_url.trim() || !body.queue.trim()) {
+      res.status(400).json({ error: { code: "bad_request", message: "base_url and queue are required for this driver" } });
+      return;
+    }
     if (body.driver === "cups") {
       const bad = await checkManagerUrl(body.base_url);
       if (bad) {
@@ -173,6 +208,7 @@ router.post(
         driver: body.driver,
         base_url: body.base_url,
         queue: body.queue,
+        settings: (body.settings ?? {}) as never,
         credentials_enc,
         is_default: body.is_default ?? false,
         notes: body.notes ?? null,
@@ -212,6 +248,7 @@ router.patch(
       patch.base_url = body.base_url;
     }
     if (body.queue !== undefined) patch.queue = body.queue;
+    if (body.settings !== undefined) patch.settings = body.settings as never;
     if (body.notes !== undefined) patch.notes = body.notes;
     if (body.credentials !== undefined) {
       patch.credentials_enc = await platform().integrations.encryptCredentials(ctx.org.id, body.credentials);

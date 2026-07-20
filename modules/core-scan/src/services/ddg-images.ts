@@ -47,8 +47,37 @@ const CLUTTERED_DOMAINS = [
 ];
 const normalize = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
-/** Catalog-quality score for one image. Higher = cleaner product shot. */
-export function catalogScore(r: DdgImageResult, brand?: string | null): number {
+// Words that mean "several of the thing", in a RESULT's title. Penalised only
+// when the query didn't ask for one — see catalogScore. Deliberately about
+// plurality, not any product category: a lot of yarn, a set of chisels and a
+// boxed book series are the same mistake.
+const COLLECTION_WORDS = [
+  "box set",
+  "boxed set",
+  "book set",
+  "complete series",
+  "complete collection",
+  "full series",
+  "collection of",
+  "set of",
+  "lot of",
+  "pack of",
+  "bundle of",
+  "all books",
+  "series set",
+];
+
+/** Catalog-quality score for one image. Higher = cleaner product shot.
+ *
+ *  `query` is what we searched for. It's needed because the two strongest
+ *  wrong-answer signals are both RELATIVE to the request: an aspect ratio that
+ *  doesn't match the thing's real shape, and a result that shows a collection
+ *  when one item was asked for. */
+export function catalogScore(
+  r: DdgImageResult,
+  brand?: string | null,
+  query?: string | null,
+): number {
   let s = 0;
   const host = (r.source || "").toLowerCase();
   if (CLEAN_DOMAINS.some((d) => host.includes(d))) s += 10;
@@ -56,10 +85,45 @@ export function catalogScore(r: DdgImageResult, brand?: string | null): number {
   // The brand's own site (brand "Trader Joe's" → traderjoes.com) = clean shots.
   const b = brand ? normalize(brand) : "";
   if (b.length >= 4 && normalize(host).includes(b)) s += 8;
+
+  // A result that shows MANY when we asked for ONE. Only counts when the query
+  // itself didn't use the word: "Millennium Falcon set" legitimately wants the
+  // set, and a Lego set IS the item. Searching "Little House on the Prairie"
+  // and getting "…Complete Series Box Set" is the whole bug — the result
+  // introduced a plurality the record never asked for.
+  const ql = (query ?? "").toLowerCase();
+  const tl = (r.title || "").toLowerCase();
+  if (COLLECTION_WORDS.some((w) => tl.includes(w) && !ql.includes(w))) s -= 8;
+
+  // Does the RESULT actually name the thing we asked for? Nothing checked this
+  // before: brand scoring only looked at the HOST, so "Guliter 17 Inch Tool Bag"
+  // and "VANTOR 17 in. Tool Tote" scored identically for a Vantor tote, and an
+  // "X1 Extreme Gen 5" tied with the ThinkBook 4319-2NU someone actually owned.
+  // Both were the wrong product, and both said so in the title. (Measured from
+  // real human overrides, 2026-07-20.)
+  const qTokens = ql.split(/[^a-z0-9]+/).filter((t) => t.length >= 3);
+  if (qTokens.length) {
+    const hit = qTokens.filter((t) => tl.includes(t)).length;
+    s += Math.round((hit / qTokens.length) * 6); // 0..6 by how much of the ask it names
+
+    // A token carrying a digit is an IDENTIFIER — a model, a SKU, a size. If the
+    // query named one and the result names none of them, it is very likely a
+    // different variant of the right family, which is the failure that survives
+    // every other signal here.
+    const ident = qTokens.filter((t) => /\d/.test(t));
+    if (ident.length) s += ident.some((t) => tl.includes(t)) ? 4 : -6;
+  }
+
   if (r.width && r.height) {
     const ar = r.width / r.height;
-    if (ar >= 0.8 && ar <= 1.25) s += 4; // square-ish → product shot
-    else if (ar < 0.5 || ar > 2) s -= 4; // banner / tall lifestyle
+    // NOT a square bias. Square-ish used to earn +4 on the theory that a
+    // product shot is square — but that only holds for boxed retail goods. A
+    // book cover, a bottle, a poster and a phone are all PORTRAIT, so the old
+    // rule scored the correct answer 0 and handed +4 to the square group photo
+    // sitting next to it. Anything from a tall-ish portrait to a mild landscape
+    // is a plausible single object; only genuine banners and panoramas are not.
+    if (ar >= 0.5 && ar <= 1.6) s += 3;
+    else if (ar < 0.4 || ar > 2) s -= 4; // banner / sliver
     if (r.width < 200) s -= 3; // tiny
   }
   return s;
@@ -146,17 +210,25 @@ export function deriveImageQuery(opts: {
 }
 
 /** Reorder image options best-catalog-first (stable on ties). */
-export function rankImageOptions(results: DdgImageResult[], brand?: string | null): DdgImageResult[] {
+export function rankImageOptions(
+  results: DdgImageResult[],
+  brand?: string | null,
+  query?: string | null,
+): DdgImageResult[] {
   return results
-    .map((r, i) => ({ r, i, s: catalogScore(r, brand) }))
+    .map((r, i) => ({ r, i, s: catalogScore(r, brand, query) }))
     .sort((a, b) => b.s - a.s || a.i - b.i)
     .map((x) => x.r);
 }
 
 /** A CLEARLY clean catalog shot — safe to auto-set as the item's image without a
  *  human pick (retail/brand domain). Conservative on purpose. */
-export function isCleanCatalog(r: DdgImageResult, brand?: string | null): boolean {
-  return catalogScore(r, brand) >= 10;
+export function isCleanCatalog(
+  r: DdgImageResult,
+  brand?: string | null,
+  query?: string | null,
+): boolean {
+  return catalogScore(r, brand, query) >= 10;
 }
 
 async function fetchVqd(query: string): Promise<string> {

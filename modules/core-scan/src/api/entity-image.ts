@@ -94,7 +94,7 @@ entityImageRouter.get(
       return;
     }
     const pool = await searchImages(query, 24).catch(() => []);
-    const items = rankImageOptions(pool, rankBrand).slice(0, 12);
+    const items = rankImageOptions(pool, rankBrand, query).slice(0, 12);
     res.json({ items, query });
   }),
 );

@@ -7,6 +7,18 @@
 // later phases.
 
 import { z } from "zod";
+import type {
+  ResolvableProvider,
+  ResolveContext,
+  ResolveOutcome,
+} from "./resolvables.js";
+
+// Scanned-label parsing lives in its own file, reachable at
+// `@cobblr/platform-contract/qr-token`. It is deliberately NOT re-exported here:
+// this package is consumed source-first, and the api loads it under plain Node,
+// which resolves a relative specifier literally. `./qr-token.js` does not exist
+// (only the .ts does), so a re-export here fails at runtime while tsc and tsx
+// both resolve it happily. The subpath export sidesteps the question.
 
 // ───────────────────────── Module manifest ─────────────────────────
 
@@ -39,6 +51,14 @@ const EntityFieldRole = z.enum([
   "quantity",
   "unit",
 ]);
+
+/** The semantic RECORD roles a field can carry. ONE shared list so the three
+ *  places that validate it (this schema, and the two bundle routes) cannot drift
+ *  apart. `lint:field-role-enum` fails if a literal pair is hand-written instead
+ *  of imported from here. */
+export const FIELD_ROLE_VALUES = ["category", "pack", "identifier"] as const;
+export type FieldRole = (typeof FIELD_ROLE_VALUES)[number];
+export const FieldRoleSchema = z.enum(FIELD_ROLE_VALUES);
 
 const EntityField = z.object({
   name: z.string().min(1).max(80),
@@ -79,7 +99,15 @@ const EntityField = z.object({
   //     guess. Marking a field with this role is how a tracker opts into the pack
   //     dimension without every bundle re-inventing a `typical_pack` column.
   //     See FIELD_ROLE_PACK + docs/design-decisions/scan-pack-role.md.
-  fieldRole: z.enum(["category", "pack"]).optional(),
+  //
+  //   identifier — the field holds a value physically MARKED on the object (a
+  //     serial number, an asset tag) that a scan or a search can resolve straight
+  //     back to this record. Unlike category/pack there may be MORE THAN ONE per
+  //     kind, and it is the declaration the resolvable registry reads to build a
+  //     scan-and-search provider for the kind, so a workspace no longer has to
+  //     hand-write a QR rule for a field the module already knew was an
+  //     identifier. See docs/design-decisions/resolvable-registry.md D6.
+  fieldRole: FieldRoleSchema.optional(),
   required: z.boolean().optional(),
   description: z.string().optional(),
 });
@@ -93,6 +121,20 @@ export const FIELD_ROLE_CATEGORY = "category";
  *  dimension beside `quantity` (role) and `unit` (role); filled from the observed
  *  pack, never a "usual buy" guess. At most one per entity kind. */
 export const FIELD_ROLE_PACK = "pack";
+
+/** A field physically MARKED on the object that resolves back to its record: a
+ *  serial number, an asset tag. Unlike category/pack a kind may declare several.
+ *  The resolvable registry reads these to build a per-kind scan+search provider,
+ *  so a declared identifier resolves without a hand-written QR rule. See
+ *  docs/design-decisions/resolvable-registry.md. */
+export const FIELD_ROLE_IDENTIFIER = "identifier";
+
+/** The native field NAMES a kind marks as identifiers (fieldRole "identifier").
+ *  Reads the resolved registry record, so it sees module natives and any
+ *  workspace override. Empty when the kind declares none. */
+export function identifierFieldNames(kind: { fields?: { name: string; fieldRole?: string | null }[] }): string[] {
+  return (kind.fields ?? []).filter((f) => f.fieldRole === FIELD_ROLE_IDENTIFIER).map((f) => f.name);
+}
 
 /** The universal base: the native fields EVERY entity kind keeps, regardless of
  *  which domain module it borrows its shape from. Everything else a module
@@ -3398,10 +3440,23 @@ export interface PlatformScan {
   resolveUrl(value: string, opts?: { force?: boolean }): Promise<ScanUrlResolution | null>;
 }
 
+/** The resolvable registry seam. A module registers a provider for a value it
+ *  owns (core-scan's QR rules) or asks "what could this value mean" for a
+ *  surface. Types live in ./resolvables; the impl is api/src/platform. See
+ *  docs/design-decisions/resolvable-registry.md. */
+export interface PlatformResolvables {
+  /** Register a provider. Idempotent by id; throws if a scan-serving provider is
+   *  not an exact matcher (D3). Call at module load. */
+  register(provider: ResolvableProvider): boolean;
+  /** Run every provider serving `ctx.surface` and let the count decide. */
+  resolve(orgId: string, value: string, ctx: ResolveContext): Promise<ResolveOutcome>;
+}
+
 export interface Platform {
   activity: PlatformActivity;
   events: PlatformEvents;
   tenants: PlatformTenants;
+  resolvables: PlatformResolvables;
   db: PlatformDb;
   entities: PlatformEntities;
   actions: PlatformActions;

@@ -3,6 +3,7 @@
 // Everything goes through `request<T>` so error shape stays uniform.
 
 import { getImpersonationToken } from "./impersonation";
+import type { ResolveOutcome as RegistryResolveOutcome } from "@cobblr/platform-contract/resolvables";
 
 const TOKEN_KEY = "cobblr.token";
 
@@ -1854,6 +1855,15 @@ export const api = {
   // ── core-print (CUPS/IPP printers) ──────────────────────────────
   listPrinters: (slug: string) =>
     request<{ items: Printer[] }>("GET", `/orgs/${slug}/modules/core-print/printers`),
+  /** POST to a module path supplied by that module's own action result (the
+   *  `ui.print` directive's record callback). Constrained to /modules/ so a
+   *  malformed directive cannot be pointed at an arbitrary platform route. */
+  postToModulePath: (slug: string, path: string, body: unknown) => {
+    if (!path.startsWith("/modules/")) {
+      return Promise.reject(new Error(`refusing to POST outside /modules/: ${path}`));
+    }
+    return request<unknown>("POST", `/orgs/${slug}${path}`, body);
+  },
   createPrinter: (slug: string, body: PrinterInput) =>
     request<Printer>("POST", `/orgs/${slug}/modules/core-print/printers`, body),
   updatePrinter: (slug: string, id: string, body: Partial<PrinterInput>) =>
@@ -2532,6 +2542,11 @@ export const api = {
       .catch(() => null),
   scanResolveExternal: (slug: string, value: string) =>
     request<ScanResolveOutcome>("POST", `/orgs/${slug}/modules/core-scan/resolve-external`, { value }),
+  /** The resolvable registry (docs/design-decisions/resolvable-registry.md): what
+   *  a value could mean on a surface. The palette uses surface:"palette" to rank
+   *  an exact identifier hit above fuzzy text results. */
+  resolveOnSurface: (slug: string, value: string, surface: "scan" | "palette" | "search") =>
+    request<RegistryResolveOutcome>("POST", `/orgs/${slug}/resolve`, { value, surface }),
   listScanInbox: (
     slug: string,
     q: {
@@ -4238,6 +4253,15 @@ export interface ScanQrRule {
 }
 
 /** Outcome of resolving a foreign scan against the redirect table. */
+export interface ScanResolveCandidate {
+  entity_kind: string;
+  entity_id: string;
+  entity_label: string;
+  detail_path: string;
+  rule_id: string;
+  rule_name: string;
+}
+
 export type ScanResolveOutcome =
   | {
       outcome: "resolved";
@@ -4247,6 +4271,13 @@ export type ScanResolveOutcome =
       entity_id: string;
       entity_label: string;
       detail_path: string;
+    }
+  | {
+      /** The key names several entities; the resolver refuses to pick. */
+      outcome: "ambiguous";
+      key: string;
+      candidates: ScanResolveCandidate[];
+      truncated: boolean;
     }
   | {
       outcome: "recognized_no_match";
@@ -5110,12 +5141,15 @@ export interface DigifabFleet {
 export interface Printer {
   id: string;
   name: string;
+  /** "cups" | "edge" | "browser-bluetooth" | "mock" */
   driver: string;
   base_url: string;
   queue: string;
   is_default: boolean;
   notes: string | null;
   has_credentials: boolean;
+  /** Driver-specific settings. For browser-bluetooth: dialect, width, calibration. */
+  settings?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
@@ -5128,6 +5162,7 @@ export interface PrinterInput {
   credentials?: { username?: string; password?: string; apiKey?: string };
   is_default?: boolean;
   notes?: string;
+  settings?: Record<string, unknown>;
 }
 
 export interface DigifabDevice {

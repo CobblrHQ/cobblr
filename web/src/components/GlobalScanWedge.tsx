@@ -3,9 +3,12 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Modal, useToast } from "@cobblr/platform-web";
 import { MapPin, ScanLine } from "lucide-react";
+import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
 import { resolveSessionBatch } from "../lib/scanSession";
-import { api, ApiError } from "../lib/api";
+import { api, ApiError, type ScanResolveCandidate } from "../lib/api";
+import { ScanAmbiguityModal } from "./ScanAmbiguityModal";
+import { scanResolveActionFor } from "../lib/scanResolveAction";
 
 /**
  * App-wide hardware-scanner (keyboard-wedge) intake + Cobblr-QR navigation.
@@ -33,8 +36,10 @@ import { api, ApiError } from "../lib/api";
  * pass through untouched (that's `useBarcodeWedge`'s job).
  */
 
-// A scanned Cobblr QR is the full label URL a scanner/camera reads: `…/qr/<token>`.
-const QR_URL = /^https?:\/\/[^/]+\/qr\/([A-Za-z0-9_-]{16,})$/;
+// A scanned Cobblr QR is the full label URL a scanner reads: `…/qr/<token>`.
+// Parsed by the shared qrTokenFromUrl — a local `{16,}` copy here stopped
+// matching when tokens shortened to 12 chars, so this whole feature was dead for
+// every label printed after 2026-07-11.
 
 type QrNavPref = "always" | "off" | null;
 const prefKey = (slug: string) => `cobblr.qrNav.${slug}`;
@@ -69,6 +74,12 @@ export function GlobalScanWedge({ activeSlug }: { activeSlug: string }) {
   // Set when a QR resolved but we haven't been told whether to auto-jump — the
   // one-time consent prompt. Cleared by any of its three choices.
   const [ask, setAsk] = useState<ResolvedQr | null>(null);
+  // A scanned value that resolved to more than one entity — the person picks.
+  const [ambiguous, setAmbiguous] = useState<{
+    key: string;
+    candidates: ScanResolveCandidate[];
+    truncated: boolean;
+  } | null>(null);
 
   // ScanPage (and its camera) own the wedge while mounted. Paths are relative to
   // the /w/:slug router basename, so the scan routes are "/scan" and "/scan/*".
@@ -103,6 +114,32 @@ export function GlobalScanWedge({ activeSlug }: { activeSlug: string }) {
   function goTo(r: ResolvedQr) {
     navigate(r.path);
     toast.success(`Opened the scanned ${r.noun}`);
+  }
+
+  // A scanned value that is NOT a Cobblr QR token and NOT a plain product
+  // barcode: consult the resolvable registry (via the same resolve-external the
+  // camera uses, which now falls to declared identifier fields). So a part's own
+  // serial scanned from ANY page opens that part, with no rule configured, exactly
+  // as it does on the Scan page. Falls through to product-barcode intake when
+  // nothing resolves, so today's behaviour is unchanged for unrecognised codes.
+  async function handleNonToken(code: string): Promise<void> {
+    const out = await api.scanResolveExternal(activeSlug, code).catch(() => null);
+    const action = scanResolveActionFor(out);
+    switch (action.type) {
+      case "navigate":
+        navigate(action.path);
+        toast.success(`Opened ${action.label}`);
+        return;
+      case "pick":
+        setAmbiguous({ key: action.key, candidates: action.candidates, truncated: action.truncated });
+        return;
+      case "note":
+        toast.info(action.message);
+        return;
+      case "stage":
+        scan.mutate(code);
+        return;
+    }
   }
 
   // Resolve a scanned Cobblr QR and act on it. Returns true when handled (so the
@@ -142,16 +179,37 @@ export function GlobalScanWedge({ activeSlug }: { activeSlug: string }) {
   useBarcodeWedge({
     enabled: !!activeSlug && !onScanRoute,
     onScan: (code) => {
-      const m = QR_URL.exec(code.trim());
-      if (m) {
-        void handleQr(m[1] ?? "");
+      const token = qrTokenFromUrl(code);
+      if (token) {
+        void handleQr(token);
         return;
       }
-      scan.mutate(code);
+      // A pure product barcode (UPC/EAN) can't be a Cobblr label or a declared
+      // identifier, so skip the resolve round-trip and stage it directly — keeps
+      // the barcode hot path fast, matching ScanCameraPage's bareProductBarcode.
+      if (/^\d{8,14}$/.test(code.trim())) {
+        scan.mutate(code);
+        return;
+      }
+      void handleNonToken(code);
     },
   });
 
   return (
+    <>
+    {ambiguous && (
+      <ScanAmbiguityModal
+        scanKey={ambiguous.key}
+        candidates={ambiguous.candidates}
+        truncated={ambiguous.truncated}
+        onPick={(c) => {
+          setAmbiguous(null);
+          navigate(c.detail_path);
+          toast.success(`Opened ${c.entity_label}`);
+        }}
+        onClose={() => setAmbiguous(null)}
+      />
+    )}
     <Modal open={!!ask} onClose={() => setAsk(null)} title="Jump to scanned labels?" size="sm">
       {ask && (
         <div className="space-y-4">
@@ -198,5 +256,6 @@ export function GlobalScanWedge({ activeSlug }: { activeSlug: string }) {
         </div>
       )}
     </Modal>
+    </>
   );
 }

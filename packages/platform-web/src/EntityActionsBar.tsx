@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { usePlatformWeb, useFlowHost } from "./context";
+import { printDirectiveOf, runPrintDirective } from "./print-directive";
 import type { PlatformAction, PlatformActionBinding } from "./types";
 
 interface Props {
@@ -80,6 +81,9 @@ function ActionButton({
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [flash, setFlash] = useState<"ok" | "err" | null>(null);
+  // Walk-up print feedback. Its own line rather than the flash chip, because
+  // it lands a second or two later and says more than "done".
+  const [note, setNote] = useState<string | null>(null);
 
   const invoke = useMutation({
     mutationFn: () =>
@@ -95,6 +99,37 @@ function ActionButton({
       const ui = (data as { result?: { ui?: { flow?: string; args?: Record<string, unknown> } } })
         ?.result?.ui;
       if (ui && typeof ui.flow === "string") openFlow(ui.flow, ui.args ?? {});
+
+      // …or a `ui.print` directive: "here is something printable". Only a
+      // browser-driven printer needs the browser's help, since the server can
+      // reach every other kind itself, so this is a no-op unless one is the
+      // default. That is what lets a module return the directive every time
+      // without knowing what hardware the workspace has.
+      const directive = printDirectiveOf((data as { result?: unknown })?.result);
+      if (directive && api.listPrinters && api.postToModulePath) {
+        const listPrinters = api.listPrinters.bind(api);
+        const post = api.postToModulePath.bind(api);
+        void runPrintDirective(directive, {
+          listPrinters: () => listPrinters(orgSlug),
+          post: (path, body) => post(orgSlug, path, body),
+        })
+          .then((r) => {
+            if (!r.printed) return;          // no browser printer: the queue still has it
+            void qc.invalidateQueries({ queryKey: ["labels-queue"] });
+            setNote(
+              r.recordError
+                ? "Printed, but the queue could not be updated. Refresh before printing again."
+                : `Printed to ${r.deviceName}`,
+            );
+            setTimeout(() => setNote(null), 3000);
+          })
+          .catch((e: unknown) => {
+            // It did NOT print. The row is still queued, so the fallback is
+            // intact; say what went wrong rather than failing silently.
+            setNote(e instanceof Error ? e.message : String(e));
+            setTimeout(() => setNote(null), 5000);
+          });
+      }
     },
     onError: () => {
       setFlash("err");
@@ -114,32 +149,37 @@ function ActionButton({
   }
 
   return (
-    <button
-      type="button"
-      onClick={(e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        go();
-      }}
-      disabled={invoke.isPending}
-      title={action.description ?? action.label}
-      className={
-        "rounded-md border text-[10px] font-mono uppercase tracking-widest px-2 py-1 transition flex items-center gap-1 " +
-        (flash === "ok"
-          ? "border-moss-200 bg-moss-50 text-moss-600"
+    <>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          go();
+        }}
+        disabled={invoke.isPending}
+        title={action.description ?? action.label}
+        className={
+          "rounded-md border text-[10px] font-mono uppercase tracking-widest px-2 py-1 transition flex items-center gap-1 " +
+          (flash === "ok"
+            ? "border-moss-200 bg-moss-50 text-moss-600"
+            : flash === "err"
+            ? "border-ember-200 bg-ember-50 text-ember-600"
+            : "border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:bg-subtle dark:hover:bg-slate-800/70 hover:text-accent dark:hover:text-cobble-300")
+        }
+      >
+        {flash === "ok"
+          ? "done"
           : flash === "err"
-          ? "border-ember-200 bg-ember-50 text-ember-600"
-          : "border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:bg-subtle dark:hover:bg-slate-800/70 hover:text-accent dark:hover:text-cobble-300")
-      }
-    >
-      {flash === "ok"
-        ? "done"
-        : flash === "err"
-        ? "err"
-        : invoke.isPending
-        ? "…"
-        : action.label}
-    </button>
+          ? "err"
+          : invoke.isPending
+          ? "…"
+          : action.label}
+      </button>
+      {note && (
+        <span className="self-center text-[10px] text-muted dark:text-slate-400">{note}</span>
+      )}
+    </>
   );
 }
 

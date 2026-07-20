@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "inventory",
-  version: "0.15.0",
+  version: "0.16.0",
   displayName: "Inventory",
   description:
     "Parts, locations, categories, stock tracking, polymorphic allocations. The generalised toolkit you'd otherwise Frankenstein from a spreadsheet.",
@@ -63,6 +63,15 @@ export default defineModule({
           // Where it lives — the scan "already tracked" banner shows it and
           // move-mode uses it to skip entities already in the active bin.
           { name: "location_id", type: "text" },
+          // serial_number is a real column (HomeBox parity, migration 0004) but
+          // has lived outside this manifest list, which is a curated subset the
+          // platform reasons over (the UI renders from the row, not from here).
+          // Declared now with fieldRole "identifier" so the resolvable registry
+          // builds a scan+search provider for it: a lasered serial resolves to its
+          // part with no hand-written QR rule. The sibling parity fields
+          // (model_number, assigned_to, warranty_*) stay undeclared — they are not
+          // identifiers. See docs/design-decisions/resolvable-registry.md D6.
+          { name: "serial_number", type: "text", fieldRole: "identifier" },
         ],
         // Cross-module readable: name + description for labels & rendering,
         // qty/min_qty for low-stock / dep-satisfied checks, unit for quantity

@@ -105,6 +105,10 @@ export class LabelsApi {
     this.request<QueueItem>("PATCH", `/queue/${id}`, { qty });
   removeFromQueue = (id: string) => this.request<void>("DELETE", `/queue/${id}`);
   print = () => this.request<PrintResponse>("POST", "/print", {});
+  /** Bookkeeping for labels the BROWSER printed (Bluetooth): record them in
+   *  history, freeze their codes, and drop just those rows from the queue. */
+  recordPrinted = (item_ids: string[]) =>
+    this.request<{ batch_id: string | null; recorded: number }>("POST", "/print/record", { item_ids });
 
   /** Browse — the labelable instances the workspace has (tabs) + their rows. */
   listLabelableTabs = () =>
@@ -178,8 +182,19 @@ export class LabelsApi {
     if (!res.ok) throw new Error((parsed as { error?: { message?: string } } | null)?.error?.message ?? `HTTP ${res.status}`);
     return parsed as T;
   }
+  /** driver + settings matter here: a "browser-bluetooth" printer cannot be
+   *  reached by the server, so this queue prints it from the browser instead,
+   *  using the dialect + calibration stored on the connection. */
   listPrinters = () =>
-    this.requestAbs<{ items: Array<{ id: string; name: string; is_default: boolean }> }>(
+    this.requestAbs<{
+      items: Array<{
+        id: string;
+        name: string;
+        is_default: boolean;
+        driver: string;
+        settings?: Record<string, unknown>;
+      }>;
+    }>(
       "GET",
       `/api/v1/orgs/${this.slug}/modules/core-print/printers`,
     );

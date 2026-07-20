@@ -87,3 +87,23 @@ export type {
   PlatformUnitVocabulary,
   UnitDisplayMode,
 } from "./types";
+
+// Browser Bluetooth label printing. Shared because two surfaces print: the
+// Printers config page (test print) and the labels queue (your real labels).
+export {
+  isWebBluetoothAvailable, NO_WEB_BLUETOOTH,
+  connectPrinter, closePrinter, printToSession, printBatchOverBluetooth,
+  printLabelOverBluetooth, renderLabelBitmap, encodeForPrinter,
+  // Walk-up: a session held across prints, so one label at a time costs
+  // neither a chooser nor a reconnect.
+  heldPrinterSession, printOneOverBluetooth, heldPrinterName, releaseHeldPrinter,
+  type BluetoothPrinterSettings, type LabelContent, type PrinterSession,
+  type BatchItem, type BatchResult,
+} from "./bluetooth-label";
+
+// The generic print directive: how a module asks the platform to put something
+// on paper without either side learning the other's job.
+export {
+  runPrintDirective, printDirectiveOf,
+  type PrintDirective, type PrintDirectiveResult,
+} from "./print-directive";

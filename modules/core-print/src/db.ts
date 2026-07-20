@@ -12,6 +12,8 @@ export interface CorePrintPrintersTable {
   credentials_enc: string | null;
   is_default: Generated<boolean>;
   notes: string | null;
+  /** Driver-specific settings blob (browser-bluetooth: dialect, width, calibration). */
+  settings: Record<string, unknown> | null;
   created_by_user_id: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;

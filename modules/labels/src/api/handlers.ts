@@ -62,6 +62,25 @@ export function registerLabelsHandlers(): void {
       entityId: ent.id,
     });
 
-    return { ok: true, queueId: inserted.id, description: inserted.description };
+    // The row is queued, which is the durable outcome and the fallback if
+    // nothing below happens. The `ui.print` directive additionally offers it to
+    // a browser-driven printer, which is the only kind the SERVER cannot reach:
+    // that is walk-up printing (add a thing at the shelf, get the label in your
+    // hand). The platform ignores this unless such a printer is the default, so
+    // it is safe to return every time; labels does not know what hardware
+    // exists, and does not need to.
+    return {
+      ok: true,
+      queueId: inserted.id,
+      description: inserted.description,
+      ui: {
+        print: {
+          content: { qrPayload: qr_payload, caption: description },
+          // Our own bookkeeping endpoint: clears the row, records history,
+          // freezes the code. The platform just calls it back.
+          record: { path: "/modules/labels/print/record", ids: [inserted.id] },
+        },
+      },
+    };
   });
 }

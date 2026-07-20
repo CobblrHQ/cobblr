@@ -2162,11 +2162,11 @@ inboxRouter.get(
       res.json({ items: [] });
       return;
     }
-    // Rank a LARGER pool by catalog quality (retail/brand domain + square-ish),
+    // Rank a LARGER pool by catalog quality (retail/brand domain, plausible single-object shape),
     // then return the best — so the clean studio shot is at the front instead of
     // the recipe-blog / social photo DDG happened to put first.
     const pool = await searchImages(q, 24).catch(() => []);
-    const items = rankImageOptions(pool, row?.suggested_manufacturer).slice(0, 12);
+    const items = rankImageOptions(pool, row?.suggested_manufacturer, q).slice(0, 12);
     res.json({ items });
   }),
 );

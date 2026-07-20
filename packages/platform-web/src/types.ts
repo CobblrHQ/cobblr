@@ -124,6 +124,16 @@ export interface PlatformWebApi {
     },
   ): Promise<{ ok: boolean; result: unknown }>;
   lookupEntity(slug: string, kind: string, id: string): Promise<PlatformResolvedEntity>;
+  /** The workspace's printers. Needed only to honour a `ui.print` directive,
+   *  which is how walk-up printing reaches a browser-driven printer. Optional:
+   *  a host that doesn't wire it never walk-up prints, and the module's normal
+   *  path (the labels queue) still holds the work. */
+  listPrinters?(slug: string): Promise<{
+    items: { id: string; name: string; driver: string; is_default: boolean; settings?: unknown }[];
+  }>;
+  /** POST to a module-owned path, so a module can be told what reached paper.
+   *  The path comes from the module's own action result, never from user input. */
+  postToModulePath?(slug: string, path: string, body: unknown): Promise<unknown>;
   /** Generic entity list (`GET /orgs/:slug/entities/:kind`) — the data source
    *  for relation-field pickers. Optional: hosts that don't wire it render the
    *  relation value read-only instead of a picker. */

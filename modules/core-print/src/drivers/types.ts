@@ -17,8 +17,33 @@ export interface PrintJobResult {
   state: "pending" | "processing" | "completed" | "stopped" | "unknown";
 }
 
+/** Settings a Bluetooth thermal printer needs. Stored as DATA on the printer row
+ *  so the browser reads them at print time — nothing model-specific is compiled
+ *  into the front end, and supporting a new printer stays a profile entry. */
+export interface BluetoothPrinterSettings {
+  /** Profile id from @cobblr/thermal-print KNOWN_PROFILES, when recognised. */
+  profileId?: string;
+  /** Command family the printer speaks. LABEL printers are commonly TSPL and are
+   *  SILENT to ESC/POS, so this is not cosmetic. */
+  protocol: "tspl" | "phomemo";
+  /** Dots per line for the loaded media (320 = 40mm roll @203dpi). */
+  widthDots: number;
+  /** GATT write characteristic, when pinned. Otherwise discovered + ranked. */
+  writeCharUuid?: string;
+  /** TSPL geometry. Wrong values drift the image ~1mm/label off the edge. */
+  labelHeightMm?: number;
+  gapMm?: number;
+  /** 0 and 1 differ by 180°; which is upright is per-model. */
+  direction?: 0 | 1;
+  /** Calibrated dead zone at the top of the label, in dots. */
+  topMarginDots?: number;
+  density?: number;
+  speed?: number;
+}
+
 export interface PrinterConfig {
-  /** Print-manager base URL (CUPS IPP host, or an edge-bridge URL). */
+  /** Print-manager base URL (CUPS IPP host, or an edge-bridge URL). Empty for a
+   *  browser-Bluetooth printer, which has no network address. */
   baseUrl: string;
   /** Queue / printer name on the manager. */
   queue: string;
@@ -26,6 +51,8 @@ export interface PrinterConfig {
   username?: string;
   password?: string;
   apiKey?: string;
+  /** Only for driver kind "browser-bluetooth". */
+  bluetooth?: BluetoothPrinterSettings;
 }
 
 export interface PrintDriver {

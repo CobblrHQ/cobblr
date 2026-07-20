@@ -23,6 +23,7 @@ COPY web/package.json ./web/
 COPY api/package.json ./api/
 COPY packages/platform-contract/package.json ./packages/platform-contract/
 COPY packages/platform-web/package.json ./packages/platform-web/
+COPY packages/thermal-print/package.json ./packages/thermal-print/
 COPY modules/inventory/package.json ./modules/inventory/
 COPY modules/labels/package.json ./modules/labels/
 COPY modules/projects/package.json ./modules/projects/
@@ -43,6 +44,7 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 
 COPY packages/platform-contract ./packages/platform-contract
 COPY packages/platform-web ./packages/platform-web
+COPY packages/thermal-print ./packages/thermal-print
 # Module UI sources — Vite resolves @cobblr/<name>/ui to the TSX
 # source at build time. Each new module gets a line here.
 COPY modules/inventory ./modules/inventory

@@ -49,14 +49,14 @@ if (staleCopies.length > 0) {
 
 // Blanket copy of the whole dir → every module (present + future) is in the image.
 const blanketCopy = /^COPY\s+modules\s+\.\/modules\b/m;
-if (blanketCopy.test(df)) {
+const modulesCoveredByBlanket = blanketCopy.test(df);
+if (modulesCoveredByBlanket) {
   console.log(
     `dockerfile-modules lint: whole modules/ dir copied via blanket \`COPY modules ./modules\` — all modules covered ✓`,
   );
-  process.exit(0);
 }
 
-const modules = readdirSync(MODULES_DIR).filter((d) => {
+const modules = modulesCoveredByBlanket ? [] : readdirSync(MODULES_DIR).filter((d) => {
   if (d.startsWith(".")) return false;
   const p = join(MODULES_DIR, d);
   return statSync(p).isDirectory() && existsSync(join(p, "package.json"));
@@ -89,4 +89,95 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
-console.log(`dockerfile-modules lint: all ${modules.length} module(s) are copied into ${DOCKERFILE} ✓`);
+if (!modulesCoveredByBlanket) {
+  console.log(`dockerfile-modules lint: all ${modules.length} module(s) are copied into ${DOCKERFILE} ✓`);
+}
+
+// ── workspace PACKAGES (packages/*) ────────────────────────────────────────
+// The same trap, one directory over. Each image hand-enumerates the packages it
+// needs (twice: once for the package.json install layer, once for source), and
+// adding a package to the repo does not add it there. CI's typecheck job runs a
+// full pnpm install over the real tree, so it passes; only the IMAGE build uses
+// the curated list, and that only runs on push to main. Net effect: a new
+// package turns main red after merge, with an error that looks nothing like its
+// cause. (@cobblr/thermal-print hit exactly this.)
+interface ImageSpec {
+  dockerfile: string;
+  entry: string;   // the workspace dir whose deps the image must satisfy
+}
+const IMAGES: ImageSpec[] = [
+  { dockerfile: "docker/web.Dockerfile", entry: "web" },
+  { dockerfile: "docker/api.Dockerfile", entry: "api" },
+];
+
+/** name -> dir for every workspace package that lives under packages/. */
+function packageDirs(): Map<string, string> {
+  const out = new Map<string, string>();
+  if (!existsSync("packages")) return out;
+  for (const d of readdirSync("packages")) {
+    const pj = join("packages", d, "package.json");
+    if (!existsSync(pj)) continue;
+    const name = JSON.parse(readFileSync(pj, "utf8")).name;
+    if (typeof name === "string") out.set(name, d);
+  }
+  return out;
+}
+
+/** Transitive @cobblr/* deps of a workspace dir, restricted to packages/. */
+function neededPackages(entryDir: string, pkgDirs: Map<string, string>): Set<string> {
+  const seen = new Set<string>();
+  const need = new Set<string>();
+  const visit = (dir: string) => {
+    const pj = join(dir, "package.json");
+    if (!existsSync(pj) || seen.has(dir)) return;
+    seen.add(dir);
+    const json = JSON.parse(readFileSync(pj, "utf8"));
+    const deps = { ...(json.dependencies ?? {}), ...(json.devDependencies ?? {}) };
+    for (const dep of Object.keys(deps)) {
+      if (!dep.startsWith("@cobblr/")) continue;
+      const pdir = pkgDirs.get(dep);
+      if (pdir) {
+        need.add(pdir);
+        visit(join("packages", pdir));
+      } else {
+        // a module dependency — follow it so ITS package deps are counted too
+        const mdir = join("modules", dep.replace("@cobblr/", ""));
+        if (existsSync(mdir)) visit(mdir);
+      }
+    }
+  };
+  visit(entryDir);
+  return need;
+}
+
+const pkgDirs = packageDirs();
+let pkgFailures = 0;
+for (const img of IMAGES) {
+  if (!existsSync(img.dockerfile)) continue;
+  const text = readFileSync(img.dockerfile, "utf8");
+  // a blanket `COPY packages ./packages` covers everything, present + future
+  if (/^COPY\s+packages\s+\.\/packages\b/m.test(text)) {
+    console.log(`dockerfile-packages lint: ${img.dockerfile} blanket-copies packages/ ✓`);
+    continue;
+  }
+  const need = neededPackages(img.entry, pkgDirs);
+  const missing: string[] = [];
+  for (const p of need) {
+    const srcCopy = new RegExp(`^COPY\\s+packages/${escapeRegex(p)}\\s+\\./packages/${escapeRegex(p)}\\b`, "m");
+    if (!srcCopy.test(text)) missing.push(p);
+  }
+  if (missing.length > 0) {
+    pkgFailures += missing.length;
+    console.error(`\ndockerfile-packages lint: ${img.dockerfile} is missing ${missing.length} workspace package(s) that ${img.entry} needs:\n`);
+    for (const p of missing) console.error(`  ❌ packages/${p}`);
+    console.error(
+      `\nThe image build will fail to resolve them, but ONLY after merge (images\n` +
+        `build on push to main; PR CI installs the whole tree so it passes). Add BOTH:\n` +
+        `  COPY packages/<name>/package.json ./packages/<name>/   (package.json block)\n` +
+        `  COPY packages/<name> ./packages/<name>                 (source block)\n`,
+    );
+  } else {
+    console.log(`dockerfile-packages lint: ${img.dockerfile} copies all ${need.size} package(s) ${img.entry} needs ✓`);
+  }
+}
+if (pkgFailures > 0) process.exit(1);

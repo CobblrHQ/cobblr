@@ -416,11 +416,12 @@ export async function resolveBarcodeViaWebSearch(
   let imageUrl = corroborated ? (titled.length ? pickImage(titled, name) : null) : null;
   if (!imageUrl && corroborated) {
     try {
-      // Rank by catalog quality (retail/brand domain + square-ish) and take the
+      // Rank by catalog quality (retail/brand domain, plausible single-object shape) and take the
       // best — NOT the first DDG hit, which is often a recipe-blog / social /
       // styled photo. The clean studio shot is usually buried a few results down.
-      const byName = await searchImages(imageQuery(name, llm?.brand), 24);
-      imageUrl = rankImageOptions(byName, llm?.brand)[0]?.url ?? null;
+      const q = imageQuery(name, llm?.brand);
+      const byName = await searchImages(q, 24);
+      imageUrl = rankImageOptions(byName, llm?.brand, q)[0]?.url ?? null;
     } catch {
       imageUrl = null; // best-effort; the row is still useful without a photo
     }

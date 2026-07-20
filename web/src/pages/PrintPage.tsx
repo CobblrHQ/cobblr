@@ -8,7 +8,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Printer as PrinterIcon, Wifi, Send, Pencil, Star } from "lucide-react";
 import { ApiError, api, type Printer, type PrinterInput } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, usePageTitle, printLabelOverBluetooth, isWebBluetoothAvailable, NO_WEB_BLUETOOTH, type BluetoothPrinterSettings } from "@cobblr/platform-web";
+
 import { EdgeConnectField, type EdgeConnectValue } from "../components/EdgeConnectField";
 
 /** UTF-8-safe base64 — btoa() alone throws on non-Latin1 chars (em dash, etc.). */
@@ -26,6 +27,32 @@ export function PrintPage() {
   const toast = useToast();
   const confirm = useConfirm();
   const [editing, setEditing] = useState<Printer | "new" | null>(null);
+  const [btBusy, setBtBusy] = useState<string | null>(null);
+
+  /** Bluetooth printers are driven from THIS browser — the server has no route to
+   *  them — so the test print runs here rather than through the print API. */
+  const printBluetoothTest = async (p: Printer) => {
+    if (!isWebBluetoothAvailable()) {
+      toast.error(NO_WEB_BLUETOOTH);
+      return;
+    }
+    setBtBusy(p.id);
+    try {
+      const settings = (p.settings ?? {}) as unknown as BluetoothPrinterSettings;
+      // A deliberate self-test label, not a record's label: printing YOUR labels
+      // happens from the labels queue, which has the payloads. This proves the
+      // connection, dialect and calibration end to end.
+      const r = await printLabelOverBluetooth(
+        { qrPayload: `${window.location.origin}/`, caption: "COBBLR TEST" },
+        settings,
+      );
+      toast.success(`Test label printed to ${r.deviceName} (${r.bytes} bytes)`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBtBusy(null);
+    }
+  };
 
   const list = useQuery({
     queryKey: ["printers", activeSlug],
@@ -108,12 +135,25 @@ export function PrintPage() {
                 {p.driver}
               </span>
               <div className="flex-1" />
-              <button onClick={() => test.mutate(p.id)} disabled={test.isPending} className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 hover:border-accent px-2.5 py-1 text-xs transition" title="Reachability check">
-                <Wifi size={13} /> Test
-              </button>
-              <button onClick={() => printTest.mutate(p.id)} disabled={printTest.isPending} className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 hover:border-accent px-2.5 py-1 text-xs transition" title="Send a test page">
-                <Send size={13} /> Print test
-              </button>
+              {p.driver === "browser-bluetooth" ? (
+                <button
+                  onClick={() => printBluetoothTest(p)}
+                  disabled={!!btBusy}
+                  className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 hover:border-accent px-2.5 py-1 text-xs transition"
+                  title="Connect over Bluetooth and print a test QR label from this browser"
+                >
+                  <Send size={13} /> {btBusy?.startsWith(p.id) ? (btBusy.split(":")[1] ?? "working") + "…" : "Print test"}
+                </button>
+              ) : (
+                <>
+                  <button onClick={() => test.mutate(p.id)} disabled={test.isPending} className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 hover:border-accent px-2.5 py-1 text-xs transition" title="Reachability check">
+                    <Wifi size={13} /> Test
+                  </button>
+                  <button onClick={() => printTest.mutate(p.id)} disabled={printTest.isPending} className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 hover:border-accent px-2.5 py-1 text-xs transition" title="Send a test page">
+                    <Send size={13} /> Print test
+                  </button>
+                </>
+              )}
               <button onClick={() => setEditing(p)} className="p-1.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Edit">
                 <Pencil size={14} />
               </button>
@@ -186,10 +226,29 @@ function PrinterModal({
   const [isDefault, setIsDefault] = useState(printer?.is_default ?? false);
   const [notes, setNotes] = useState(printer?.notes ?? "");
   const [busy, setBusy] = useState(false);
+  const bt0 = (printer?.settings ?? {}) as Record<string, unknown>;
+  const [btProtocol, setBtProtocol] = useState(String(bt0.protocol ?? "tspl"));
+  const [btWidth, setBtWidth] = useState(String(bt0.widthDots ?? 320));
+  const [btHeightMm, setBtHeightMm] = useState(String(bt0.labelHeightMm ?? 30));
+  const [btGapMm, setBtGapMm] = useState(String(bt0.gapMm ?? 2));
+  const [btDirection, setBtDirection] = useState(String(bt0.direction ?? 0));
+  const [btTopMargin, setBtTopMargin] = useState(String(bt0.topMarginDots ?? 0));
+  const isBluetooth = driver === "browser-bluetooth";
 
   const save = async () => {
     const baseUrl = conn.base_url.trim();
-    if (!name.trim() || !baseUrl || !queue.trim()) {
+    if (!name.trim()) {
+      toast.error("Name is required");
+      return;
+    }
+    // A Bluetooth printer has no manager URL and no queue — the browser holds the
+    // radio — so its own settings are what must be valid.
+    if (isBluetooth) {
+      if (!Number(btWidth) || Number(btWidth) < 8) {
+        toast.error("Width (dots) is required: 320 for a 40mm roll");
+        return;
+      }
+    } else if (!baseUrl || !queue.trim()) {
       toast.error(conn.mode === "edge" ? "Name and queue are required (pick a bridge)" : "Name, manager URL, and queue are required");
       return;
     }
@@ -203,6 +262,18 @@ function PrinterModal({
       is_default: isDefault,
       notes: notes.trim() || undefined,
       ...(creds ? { credentials: creds } : {}),
+      ...(isBluetooth
+        ? {
+            settings: {
+              protocol: btProtocol,
+              widthDots: Number(btWidth),
+              labelHeightMm: Number(btHeightMm) || undefined,
+              gapMm: Number(btGapMm),
+              direction: Number(btDirection) === 1 ? 1 : 0,
+              topMarginDots: Number(btTopMargin) || 0,
+            },
+          }
+        : {}),
     };
     try {
       if (printer) await api.updatePrinter(slug, printer.id, body);
@@ -228,10 +299,62 @@ function PrinterModal({
         <label className="block">
           <div className="text-xs text-muted mb-1">Driver</div>
           <select className={field} value={driver} onChange={(e) => setDriver(e.target.value)}>
+            {/* Exactly DRIVER_KINDS (core-print/drivers/registry.ts), enforced by
+                lint:print-driver-options. Routing via a bridge is a TRANSPORT,
+                chosen by the cobblr-edge:// manager URL in EdgeConnectField below,
+                not a driver: an "edge" option here 400s on save. */}
             <option value="cups">CUPS (IPP)</option>
+            <option value="browser-bluetooth">Bluetooth label printer (prints from this browser)</option>
             <option value="mock">Mock (test)</option>
           </select>
         </label>
+        {isBluetooth ? (
+          <div className="space-y-3 rounded border border-line dark:border-slate-600 p-3">
+            <div className="text-[11px] text-faint">
+              This printer is driven from <b>this browser</b> over Bluetooth — the server cannot reach it.
+              Needs Chrome or Edge on desktop/Android; iOS has no Web Bluetooth. Values below come from the
+              printer&rsquo;s calibration; run the self-test if you don&rsquo;t know them.
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block">
+                <div className="text-xs text-muted mb-1">Command dialect</div>
+                <select className={field} value={btProtocol} onChange={(e) => setBtProtocol(e.target.value)}>
+                  <option value="tspl">TSPL (most label printers)</option>
+                  <option value="phomemo">ESC/POS raster (Phomemo M-series)</option>
+                </select>
+              </label>
+              <label className="block">
+                <div className="text-xs text-muted mb-1">Width (dots)</div>
+                <input className={field} type="number" value={btWidth} onChange={(e) => setBtWidth(e.target.value)} placeholder="320" />
+              </label>
+            </div>
+            {btProtocol === "tspl" && (
+              <div className="grid grid-cols-2 gap-2">
+                <label className="block">
+                  <div className="text-xs text-muted mb-1">Label height (mm)</div>
+                  <input className={field} type="number" value={btHeightMm} onChange={(e) => setBtHeightMm(e.target.value)} />
+                </label>
+                <label className="block">
+                  <div className="text-xs text-muted mb-1">Gap (mm)</div>
+                  <input className={field} type="number" step="0.01" value={btGapMm} onChange={(e) => setBtGapMm(e.target.value)} />
+                  <div className="text-[11px] text-faint mt-1">Wrong value drifts each label off the edge.</div>
+                </label>
+                <label className="block">
+                  <div className="text-xs text-muted mb-1">Orientation</div>
+                  <select className={field} value={btDirection} onChange={(e) => setBtDirection(e.target.value)}>
+                    <option value="0">Normal</option>
+                    <option value="1">Rotated 180°</option>
+                  </select>
+                </label>
+                <label className="block">
+                  <div className="text-xs text-muted mb-1">Top margin (dots)</div>
+                  <input className={field} type="number" value={btTopMargin} onChange={(e) => setBtTopMargin(e.target.value)} />
+                </label>
+              </div>
+            )}
+          </div>
+        ) : (
+        <>
         <div className="block">
           <EdgeConnectField slug={slug} hosted={hosted} value={conn} onChange={setConn} />
         </div>
@@ -249,6 +372,8 @@ function PrinterModal({
             <input className={field} type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" placeholder={printer?.has_credentials ? "•••• (unchanged)" : ""} />
           </label>
         </div>
+        </>
+        )}
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={isDefault} onChange={(e) => setIsDefault(e.target.checked)} /> Default printer
         </label>

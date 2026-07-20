@@ -57,6 +57,60 @@ export interface InventoryPartsTable {
   updated_at: Generated<Date>;
 }
 
+/** Columns the parts list resolver filters NATIVELY (`where col = value`).
+ *
+ *  Everything not listed here is treated as a metadata key and compiled to
+ *  `metadata ->> key = value` (the D8 dialect). That fallback is right for a
+ *  custom field and silently WRONG for a real column: `metadata ->> 'x'` is null
+ *  for every row when `x` lives in its own column, so the filter matches nothing
+ *  and reports it as "no such entity" rather than as an error.
+ *
+ *  That shipped: this set held only category_id/location_id/state, so a scan rule
+ *  resolving on `serial_number` (a real column since migration 0004) could never
+ *  match a part. Hence the rule: this set is EVERY column except `metadata`
+ *  itself, and `lint:part-filter-cols` fails the build if a column is added to
+ *  the table without landing here.
+ */
+export const PART_FILTER_COLS = new Set([
+  "id",
+  "name",
+  "description",
+  "category_id",
+  "location_id",
+  "qty",
+  "unit",
+  "cost",
+  "min_qty",
+  "manufacturer",
+  "supplier_url",
+  "image_path",
+  "notes",
+  "state",
+  "instance",
+  "asset_id",
+  "serial_number",
+  "model_number",
+  "assigned_to",
+  "warranty_expires",
+  "lifetime_warranty",
+  "warranty_details",
+  "insured",
+  "archived",
+  "created_at",
+  "updated_at",
+]);
+
+/** Native columns compared case-INSENSITIVELY (`lower(col) = lower(value)`).
+ *
+ *  These carry identifiers that get physically marked on an object and read back
+ *  by a machine: a scanner reports whatever the keyboard layout gives it, so the
+ *  same lasered mark can arrive as "wx-42" or "WX-42". Exact equality makes a
+ *  part resolvable or not depending on which scanner read it.
+ *
+ *  Migration 0004 already indexes `lower(serial_number)`, which an `=` comparison
+ *  cannot use anyway — so this also makes that index live. */
+export const PART_CI_FILTER_COLS = new Set(["serial_number", "model_number", "assigned_to"]);
+
 export type AllocationStatus = "reserved" | "consumed" | "released";
 
 export interface InventoryAllocationsTable {

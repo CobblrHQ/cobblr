@@ -28,6 +28,8 @@ import { loadAllModules } from "./modules/loader.js";
 import { loadAllSandboxedModules } from "./sandbox/loader.js";
 import { syncTenantMigrations, reconcileDefaultModules } from "./modules/enable.js";
 import { mountModules } from "./modules/mount.js";
+import { registerBuiltinResolvables } from "./platform/resolvable-providers.js";
+import { registerResolvable, resolveValue } from "./platform/resolvables.js";
 import * as activity from "./platform/activity.js";
 import * as actions from "./platform/actions.js";
 import * as devices from "./platform/devices.js";
@@ -131,6 +133,10 @@ async function boot() {
     tenants: {
       getDb: (orgId) => getTenantDb(orgId),
       releaseIdleDb: (orgId) => releaseIdleTenantPool(orgId),
+    },
+    resolvables: {
+      register: registerResolvable,
+      resolve: resolveValue,
     },
     db: { meta },
     entities: {
@@ -811,6 +817,9 @@ async function boot() {
   registerConfiguredAuthEmailSender();
 
   await T("loadAllModules", loadAllModules());
+  // Register the built-in resolvable providers (identifier-field, …). Synchronous
+  // and idempotent; after modules load so their kinds' identifier fields exist.
+  registerBuiltinResolvables();
   // Marketplace v0.3 PoC: register sandboxed wasm modules alongside
   // the in-process modules. They get the same Express mount + the
   // same workspace-enable toggle; the difference is invisible to

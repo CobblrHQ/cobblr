@@ -73,6 +73,7 @@ import {
   type ScanMenuEntry,
   type TrackedMatch,
 } from "../lib/api";
+import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
 import { matchParentType, readField } from "../lib/parent-type-match";
 import { isRerunInFlight } from "./scan-status";
 import { baseKind, confirmBodyFor, isReadyToFile } from "./scanFileAll";
@@ -1222,15 +1223,15 @@ export function ScanPage() {
         scanDrive.scan(code);
         return;
       }
-      const qr = /^https?:\/\/[^/]+\/qr\/([A-Za-z0-9_-]{16,})$/.exec(code);
-      if (!qr) {
+      const qrToken = qrTokenFromUrl(code);
+      if (!qrToken) {
         wedgeScan.mutate(code);
         return;
       }
       // A scanned LOCATION label sets the active filing bin (and nests a container
       // under the current bin) instead of staging an item — the scan-to-set
       // flow. Any other QR stages as a normal scan.
-      const token = qr[1] ?? "";
+      const token = qrToken;
       void (async () => {
         const resolved = await api.resolveQrToken(token);
         const locId = resolved?.entity_id;

@@ -5,7 +5,7 @@
 
 import { sql, type Kysely } from "kysely";
 import { platform, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
-import type { InventoryDB } from "../db.js";
+import { PART_CI_FILTER_COLS, PART_FILTER_COLS, type InventoryDB } from "../db.js";
 
 let registered = false;
 
@@ -41,7 +41,9 @@ export function registerInventoryResolvers(): void {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
     const limit = Math.min(query.limit ?? 50, 200);
     const offset = query.offset ?? 0;
-    const NATIVE_FILTER_COLS = new Set(["category_id", "location_id", "state"]);
+    // Every real column, so a filter on one never falls through to the metadata
+    // dialect below and silently matches nothing. See PART_FILTER_COLS.
+    const NATIVE_FILTER_COLS = PART_FILTER_COLS;
     let q = db.selectFrom("inventory_parts").selectAll();
     if (instance) q = q.where("instance", "=", instance as never);
     if (query.q && query.q.length > 0) {
@@ -75,7 +77,14 @@ export function registerInventoryResolvers(): void {
         }
         if (NATIVE_FILTER_COLS.has(key)) {
           if (typeof val === "string") {
-            q = q.where(key as never, "=", val as never);
+            // Scanned identifiers arrive in whatever case the scanner emitted, so
+            // those columns compare case-insensitively (and this form can finally
+            // use the lower(serial_number) index from migration 0004).
+            if (PART_CI_FILTER_COLS.has(key)) {
+              q = q.where(sql<boolean>`lower(${sql.ref(key)}) = lower(${val})`);
+            } else {
+              q = q.where(key as never, "=", val as never);
+            }
           }
           continue;
         }

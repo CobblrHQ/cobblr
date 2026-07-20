@@ -45,6 +45,7 @@ import { sandboxInstallRouter } from "./routes/sandbox-install.js";
 import { registryRouter, registryPublicRouter } from "./routes/registry.js";
 import { customRolesRouter } from "./routes/custom-roles.js";
 import { driveRouter } from "./routes/drive.js";
+import { resolveRouter } from "./routes/resolve.js";
 import { scanDriveRouter } from "./routes/scan-drive.js";
 import { instancesRouter, overridesRouter } from "./routes/instances.js";
 import { navHeadingsRouter } from "./routes/nav-headings.js";
@@ -215,6 +216,7 @@ export function createApp(): AppHandles {
   // Browser driving (Feature 3): SSE relay so Claude (via MCP) can drive the
   // user's open tab — gated by a per-workspace grant + a drive:control token.
   v1.use("/orgs", driveRouter);
+  v1.use("/orgs", resolveRouter);
   // A scan drives the user's designated tab (scan-drives-screen, Phase 1).
   v1.use("/orgs", scanDriveRouter);
   // Super-admin (platform operator) surface — cross-workspace

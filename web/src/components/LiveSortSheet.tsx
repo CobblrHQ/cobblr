@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { useToast } from "@cobblr/platform-web";
 import { api, ApiError, type LiveSortEntry } from "../lib/api";
+import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
 import { isLocationQrTarget } from "../lib/scanFiling";
 import { LocationTreePicker } from "./LocationTreePicker";
@@ -142,10 +143,10 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
       if (phaseRef.current === "routing" || phaseRef.current === "ended") return;
       // A directive is pending: a scanned LOCATION label means "this bin
       // instead" — confirm the current item into it (retarget, one gesture).
-      const qr = /^https?:\/\/[^/]+\/qr\/([A-Za-z0-9_-]{16,})$/.exec(code.trim());
-      if (qr) {
+      const qrToken = qrTokenFromUrl(code);
+      if (qrToken) {
         void (async () => {
-          const resolved = await api.resolveQrToken(qr[1] ?? "").catch(() => null);
+          const resolved = await api.resolveQrToken(qrToken).catch(() => null);
           if (isLocationQrTarget(resolved)) {
             if (phaseRef.current === "directive") confirmCurrent(resolved.entity_id);
             else toast.info("Scan an item first — a bin label confirms the current item into it.");

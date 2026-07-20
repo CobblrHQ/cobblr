@@ -45,8 +45,9 @@ export async function refreshCatalogImageByName(
   // photo-options strip uses) so a book finds its cover, not generic images.
   const { author, mediaWord } = mediaSearchExtras(cur?.suggested_candidates as Array<{ fields?: Record<string, unknown> }> | null);
   const extra = [author, mediaWord].filter(Boolean).join(" ") || null;
-  const pool = await searchImages(imageQuery(name, brand, extra), 24).catch(() => []);
-  const best = rankImageOptions(pool, brand)[0]?.url;
+  const q = imageQuery(name, brand, extra);
+  const pool = await searchImages(q, 24).catch(() => []);
+  const best = rankImageOptions(pool, brand, q)[0]?.url;
   if (!best) return;
   await db
     .updateTable("core_scan_inbox_items")

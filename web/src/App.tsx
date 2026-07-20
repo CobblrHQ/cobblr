@@ -429,6 +429,11 @@ function ActiveOrgScopedRoutes() {
         listActions: (slug, kind) => api.listActions(slug, kind),
         invokeAction: (slug, body) => api.invokeAction(slug, body),
         lookupEntity: (slug, kind, id) => api.lookupEntity(slug, kind, id),
+        // Walk-up printing: platform-web needs the printer list to spot a
+        // browser-driven default, and a way to call a module back once paper
+        // exists. Both optional in the contract; wiring them turns it on.
+        listPrinters: (slug) => api.listPrinters(slug),
+        postToModulePath: (slug, path, body) => api.postToModulePath(slug, path, body),
         listEntities: (slug, kind, q) => api.listEntities(slug, kind, q),
         listFieldDefs: (slug, kind) => api.listFieldDefs(slug, kind),
         appendFieldDefChoice: (slug, id, value) =>

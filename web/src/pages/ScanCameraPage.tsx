@@ -36,7 +36,8 @@ import { Link, useLocation, useNavigate, useSearchParams } from "react-router-do
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeftRight, ArrowRight, Camera, Check, Flashlight, Loader2, MapPin, Package, RefreshCw, ScanLine, SkipForward, Undo2, X, Zap } from "lucide-react";
 import { Modal, usePageTitle, useToast } from "@cobblr/platform-web";
-import { ApiError, api, type LiveSortEntry, type ScanInboxItem, type TrackedMatch } from "../lib/api";
+import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
+import { ApiError, api, type LiveSortEntry, type ScanInboxItem, type ScanResolveCandidate, type TrackedMatch } from "../lib/api";
 import { LOCATION_ENTITY_KIND, decideLocationScan, filingLabel } from "../lib/scanFiling";
 import { freshDedupState, shouldFireScan, pickDetection, makeDetectionCollector, type DedupState } from "../lib/scanDedup";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -52,6 +53,7 @@ import {
 import { armScanAudio, scanBeep } from "../lib/scanFeedback";
 import { ScanResultModal } from "./ScanResultModal";
 import { BinAdjustModal } from "../components/BinAdjustModal";
+import { ScanAmbiguityModal } from "../components/ScanAmbiguityModal";
 
 // BarcodeDetector type — not in lib.dom.d.ts as of TS 5.7. Local shim.
 interface BarcodeDetectorCtor {
@@ -202,6 +204,12 @@ export function ScanCameraPage() {
   // always-on "scanning" chip said "scanning" when the reticle already showed it
   // and went silent right here, so the freeze read as a hang.
   const [resolvingNote, setResolvingNote] = useState(false);
+  // A scanned key that named several entities — the person picks, we never do.
+  const [ambiguous, setAmbiguous] = useState<{
+    key: string;
+    candidates: ScanResolveCandidate[];
+    truncated: boolean;
+  } | null>(null);
   // Single-SKU bin (scanned its QR): direct qty-adjust modal for the one SKU
   // that lives there — the "bin of M3 screws" flow.
   const [binAdjust, setBinAdjust] = useState<{
@@ -762,7 +770,9 @@ export function ScanCameraPage() {
 
   // A decoded value → block into the result modal (dedup a stale repeat first).
   // EXCEPT Cobblr QR labels: a printed label encodes <host>/qr/<token>
-  // (24-char base64url — see labels' QR token mint), and that's a
+  // (parsed by the shared qrTokenFromUrl — do NOT hand-roll a length here,
+  // the token got shorter once already and the local copy went quietly dead),
+  // and that's a
   // navigation, not a product — route it to the /qr resolver, which lands
   // on the labeled entity. Without this, scanning your own label staged a
   // junk "no catalog match" inbox item.
@@ -816,9 +826,9 @@ export function ScanCameraPage() {
 
       // A native Cobblr label. What it points at decides what happens
       // (routeResolved); the token is only the fallback nav target.
-      const qrLabel = /^https?:\/\/[^/]+\/qr\/([A-Za-z0-9_-]{16,})$/.exec(raw);
-      if (qrLabel) {
-        const token = qrLabel[1] ?? "";
+      const qrToken = qrTokenFromUrl(raw);
+      if (qrToken) {
+        const token = qrToken;
         if (!sortRetarget) {
           setPhase("resolving"); // freeze decode + preview; the stream stays live
           setResolvingNote(true);
@@ -873,6 +883,17 @@ export function ScanCameraPage() {
                 { entity_kind: out.entity_kind, entity_id: out.entity_id },
                 out.detail_path,
               );
+              return;
+            }
+            if (out.outcome === "ambiguous") {
+              // Several entities carry this key. Hold the camera frozen and ask
+              // rather than opening one of them: picking here is exactly the bug
+              // this outcome exists to remove.
+              setAmbiguous({
+                key: out.key,
+                candidates: out.candidates,
+                truncated: out.truncated,
+              });
               return;
             }
             if (out.outcome === "recognized_no_match") {
@@ -1712,6 +1733,24 @@ export function ScanCameraPage() {
             toast.success(`Filing into ${binAdjust.locationName} — scan the new item`);
             setBinAdjust(null);
             setPhase("scanning");
+          }}
+        />
+      )}
+      {ambiguous && (
+        <ScanAmbiguityModal
+          scanKey={ambiguous.key}
+          candidates={ambiguous.candidates}
+          truncated={ambiguous.truncated}
+          onPick={(c) => {
+            setAmbiguous(null);
+            void routeResolvedRef.current(
+              { entity_kind: c.entity_kind, entity_id: c.entity_id },
+              c.detail_path,
+            );
+          }}
+          onClose={() => {
+            setAmbiguous(null);
+            setPhase("scanning");   // dismissing re-arms rather than stranding the camera
           }}
         />
       )}

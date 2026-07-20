@@ -1,4 +1,11 @@
-// Label size registry.
+// Label size registry — the ONE table, shared by both consumers:
+//   • ui/            the picker, the live preview, and the ⌘P sheet
+//   • print/layout   the PDF / direct-to-printer renderer, which DERIVES its
+//                    flattened LabelSheet rows from these
+// It sits at the module root, not under ui/, precisely so the server side can
+// import it without reaching into browser code. Pure data and pure functions:
+// keep it that way or the print path can no longer use it, and the two tables
+// this replaced start drifting again.
 //
 // Two concepts the user picks between:
 //   • PaperSize  — the physical media that goes through the printer
@@ -20,6 +27,11 @@ export interface PaperSize {
 export const PAPER_SIZES: PaperSize[] = [
   { key: "letter", label: 'US Letter — 8.5 × 11"', width_in: 8.5, height_in: 11 },
   { key: "roll-4x6", label: 'Label roll — 4 × 6"', width_in: 4, height_in: 6 },
+  // Die-cut square stock fed straight through a roll printer's adjustable
+  // guide. One label per feed, so no cutting: the alternative to tiling
+  // squares onto 4×6 and chopping them up.
+  { key: "roll-1.5", label: 'Label roll — 1½ × 1½"', width_in: 1.5, height_in: 1.5 },
+  { key: "roll-2", label: 'Label roll — 2 × 2"', width_in: 2, height_in: 2 },
 ];
 
 export interface LabelSize {
@@ -46,6 +58,14 @@ export const LABEL_SIZES: LabelSize[] = [
   { key: "roll-4x2", label: '4 × 2" banner — 3 up', paper: "roll-4x6", label_w: 4, label_h: 2, margin_t: 0, margin_l: 0, col_gap: 0, row_gap: 0, cols: 1, rows: 3 },
   { key: "roll-4x3", label: '4 × 3" — 2 up', paper: "roll-4x6", label_w: 4, label_h: 3, margin_t: 0, margin_l: 0, col_gap: 0, row_gap: 0, cols: 1, rows: 2 },
   { key: "roll-4x6", label: '4 × 6" — 1 up', paper: "roll-4x6", label_w: 4, label_h: 6, margin_t: 0, margin_l: 0, col_gap: 0, row_gap: 0, cols: 1, rows: 1 },
+  // 2 across leaves 1" over on a 4" web, so centre it (½" each side) rather
+  // than crowding one edge; the cut lines then sit where a guillotine can
+  // take the whole stack in two passes.
+  { key: "roll-1.5x1.5", label: '1½ × 1½" square — 8 up', paper: "roll-4x6", label_w: 1.5, label_h: 1.5, margin_t: 0, margin_l: 0.5, col_gap: 0, row_gap: 0, cols: 2, rows: 4 },
+
+  // ── Die-cut square rolls — one label per feed, nothing to cut ──
+  { key: "roll15-1up", label: '1½ × 1½" square — 1 up', paper: "roll-1.5", label_w: 1.5, label_h: 1.5, margin_t: 0, margin_l: 0, col_gap: 0, row_gap: 0, cols: 1, rows: 1 },
+  { key: "roll2-1up", label: '2 × 2" square — 1 up', paper: "roll-2", label_w: 2, label_h: 2, margin_t: 0, margin_l: 0, col_gap: 0, row_gap: 0, cols: 1, rows: 1 },
 
   // ── US Letter — laser/inkjet sheet ──
   { key: "letter-2x2", label: '2 × 2" square — 20 up', paper: "letter", label_w: 2, label_h: 2, margin_t: 0.5, margin_l: 0.25, col_gap: 0, row_gap: 0, cols: 4, rows: 5 },

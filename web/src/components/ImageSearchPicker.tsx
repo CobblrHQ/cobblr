@@ -20,7 +20,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
-import { Check } from "lucide-react";
+import { Maximize2 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type ImageOption } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -147,22 +147,23 @@ export function ImageSearchPicker({
           <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
             {label ?? "photo options"}{" "}
             <span className="text-faint normal-case">
-              · DuckDuckGo · tap to view full size, ✓ to use
+              · DuckDuckGo · tap to use, ⤢ to view full size
             </span>
           </div>
           <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
-            {/* Two gestures, because they're two different intentions: look at
-                it big, or take it. Making the tile do only one of them means the
-                other costs an extra round trip through a viewer you didn't want
-                to open (the author, 2026-07-18: "tapping an image result makes it full
-                screen not selected as the image to use"). */}
+            {/* Two gestures for two intentions. The BIG target does the common
+                thing — you are picking a photo, so tapping the photo picks it.
+                Zooming is the rarer "let me check this one first", so it gets
+                the small corner button (the author, 2026-07-20: "you should click image
+                to select, and press small button to zoom it"). */}
             {opts.map((o) => (
               <div key={o.url} className="relative w-20 h-20 shrink-0 group">
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() => tileClick(o)}
-                  title={`${o.title} — ${o.source}\n(tap to view full size)`}
+                  onClick={() => onPick(o.url)}
+                  title={`Use this image — ${o.title} (${o.source})`}
+                  aria-label={`Use this image: ${o.title}`}
                   className="w-full h-full rounded border border-line dark:border-slate-700 overflow-hidden bg-white hover:border-cobble-400 transition disabled:opacity-50"
                 >
                   <img
@@ -175,15 +176,15 @@ export function ImageSearchPicker({
                 </button>
                 <button
                   type="button"
-                  disabled={busy}
-                  onClick={() => onPick(o.url)}
-                  title="Use this image"
-                  aria-label={`Use this image: ${o.title}`}
+                  onClick={() => tileClick(o)}
+                  title="View full size"
+                  aria-label={`View full size: ${o.title}`}
                   // Always visible, not hover-only: on touch there is no hover,
                   // and a control you can't see is a control that doesn't exist.
-                  className="absolute bottom-1 right-1 rounded-full bg-cobble-600 hover:bg-cobble-700 text-white shadow-md w-6 h-6 flex items-center justify-center text-sm leading-none disabled:opacity-50"
+                  // Not disabled by `busy` — looking is safe while a pick saves.
+                  className="absolute bottom-1 right-1 rounded bg-black/60 hover:bg-black/80 text-white shadow-md w-6 h-6 flex items-center justify-center"
                 >
-                  <Check className="w-3.5 h-3.5" strokeWidth={3} />
+                  <Maximize2 className="w-3 h-3" strokeWidth={2.5} />
                 </button>
               </div>
             ))}

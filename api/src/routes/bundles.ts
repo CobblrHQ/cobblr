@@ -7,7 +7,7 @@ import { trackProductEvent } from "../platform/product-events.js";
 import { parseWireFilter } from "../platform/wire-filter.js";
 import { z } from "zod";
 import { sql, type Kysely } from "kysely";
-import { platform, CatalogSchemaConfig, packFieldIssues } from "@cobblr/platform-contract";
+import { platform, CatalogSchemaConfig, packFieldIssues, FieldRoleSchema } from "@cobblr/platform-contract";
 import { requireAuth } from "../auth/middleware.js";
 import { requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
@@ -146,7 +146,7 @@ const FieldDefEntry = z
      *  on, so a difference in kind is a category rather than a different table.
      *  `pack` marks the packaging-count field, filled from the scanned package.
      *  At most one of each per entity kind. */
-    field_role: z.enum(["category", "pack"]).optional(),
+    field_role: FieldRoleSchema.optional(),
   })
   .refine((f) => f.type !== "computed" || (f.template && f.template.trim().length > 0), {
     message: "computed field_defs need a template",
@@ -186,7 +186,7 @@ const FieldOverrideEntry = z.object({
    *  decode_role. Lets a bundle mark inventory's OWN `category` field as the
    *  table's grouping axis, or a native field as the `pack` count, with no
    *  schema change. */
-  field_role: z.enum(["category", "pack"]).optional(),
+  field_role: FieldRoleSchema.optional(),
 });
 
 const SavedViewEntry = z.object({

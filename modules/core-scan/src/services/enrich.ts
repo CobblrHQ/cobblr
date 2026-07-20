@@ -96,7 +96,7 @@ async function revalidateStaleHit(ctx: EnrichContext, staleTitle: string | null)
     .set({
       suggested_name: freshTitle,
       ...(fresh.brand ? { suggested_manufacturer: fresh.brand } : {}),
-      ...(fresh.image_url ? { catalog_image_url: fresh.image_url } : {}),
+      ...(catalogImageUrlOrNull(fresh.image_url) ? { catalog_image_url: fresh.image_url } : {}),
       ai_notes: `Identified via ${SOURCE_LABEL[fresh.source] ?? fresh.source} (refreshed — the shared entry was updated).`,
       updated_at: new Date(),
     })
@@ -331,7 +331,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
       .set({
         suggested_name: vendor.name,
         suggested_manufacturer: vendor.brand,
-        catalog_image_url: vendor.imageUrl ?? null,
+        catalog_image_url: catalogImageUrlOrNull(vendor.imageUrl),
         // `fields` ride in suggested_metadata so the commit can land them on
         // the created entity's metadata (size / batch_code for a spool, …).
         suggested_metadata: identityMeta({
@@ -580,7 +580,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
           suggested_name: withBrandPrefix(web.name, web.brand),
           suggested_manufacturer: web.brand,
           suggested_sku: web.sku,
-          catalog_image_url: web.imageUrl,
+          catalog_image_url: catalogImageUrlOrNull(web.imageUrl),
           suggested_metadata: identityMeta({
             source: "web-search",
             method: web.method,
@@ -721,7 +721,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
       suggested_name: withBrandPrefix(hit.title || null, hit.brand),
       suggested_manufacturer: hit.brand,
       suggested_sku: hit.model,
-      catalog_image_url: hit.image_url,
+      catalog_image_url: catalogImageUrlOrNull(hit.image_url),
       suggested_metadata: identityMeta({
         source: hit.source,
         category: hit.category,
@@ -744,12 +744,29 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
     .where("id", "=", ctx.itemId)
     .execute();
 
-  // 3. Download the catalog image into core-files (best-effort).
-  if (hit.image_url) await downloadCatalogImage(ctx, hit.image_url);
+  // 3. Download the catalog image into core-files (best-effort). The provider's
+  // image comes from the SAME catalog record as the title, so when it's real it
+  // is the most authoritative picture for this code — better than any search.
+  const providerImg = catalogImageUrlOrNull(hit.image_url);
+  if (providerImg) await downloadCatalogImage(ctx, providerImg);
   // A user-locked catalog image wins over the provider's — restore it (the hit
   // write above clobbered the url + dropped the lock; the download replaced the
   // file). The detached refresh/cross-check below re-read the lock and skip.
   await reassertLockedImage();
+
+  // No real provider image (absent, or a stock "no image" placeholder we just
+  // refused) → derive one from the TITLE we're showing. The card's title+image
+  // pair is the user's eyeball-verification UI, so the image must be the answer
+  // to the displayed name — and it must arrive in the same second (search+rank
+  // measures ~500ms, detached, while the title is already on screen). Every
+  // path that CORRECTS a title already routes through this same refresh; this
+  // closes the first-pass hole (the Buc-ee's mug: placeholder stored, user's
+  // own photo buried, correct images one search away).
+  if (!providerImg && hit.title) {
+    void refreshCatalogImageByName(ctx.orgId, ctx.itemId, hit.title, hit.brand ?? null).catch((e) =>
+      console.error("[core-scan] first-pass image-by-name failed:", (e as Error).message),
+    );
+  }
 
   // 3b. On an explicit RE-RUN, the resolver's image can be stale even when the
   // title is right — go-upc corrects titles but keeps the original (wrong)
@@ -1128,10 +1145,47 @@ async function writeTenantCache(ctx: EnrichContext, v: BarcodeCacheValue): Promi
  *  is later healed by the localize pass in /inbox/backfill-catalog-photos.
  *
  *  Returns true once a local file is stamped. */
+/** A catalog provider that has no photo for a code often answers with a stock
+ *  "no image" graphic instead of nothing at all. go-upc serves
+ *  `https://go-upc.com/img/no-image-placeholder.png`, and we stored it, uploaded
+ *  it and rendered it as the product's photo — over a real photo the user had
+ *  already taken (the author, 2026-07-20: a Buc-ee's mug showed a grey crossed-out
+ *  camera).
+ *
+ *  Nothing is lost by refusing these: no image at all is honest and leaves the
+ *  user's own photo standing, which is the whole "blank beats wrong" rule.
+ *  Matched on the URL because every provider names them plainly; it costs
+ *  nothing and happens before we spend a fetch. */
+export function isPlaceholderImageUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
+  // Path + filename only: a legitimate product could sit on a host or query
+  // string containing one of these words.
+  let path: string;
+  try {
+    const u = new URL(url);
+    path = `${u.pathname}`.toLowerCase();
+  } catch {
+    path = String(url).toLowerCase();
+  }
+  return /(^|[^a-z])(no[-_]?image|image[-_]?(un)?available|no[-_]?photo|placeholder|coming[-_]?soon|image[-_]?not[-_]?found|default[-_]?product)([^a-z]|$)/.test(
+    path,
+  );
+}
+
+/** The URL to STORE for a catalog image: the real one, or null for a stock
+ *  "no image" graphic. Applied wherever a provider result becomes
+ *  `catalog_image_url` so a placeholder never enters the row in the first
+ *  place. */
+export function catalogImageUrlOrNull(url: string | null | undefined): string | null {
+  return url && !isPlaceholderImageUrl(url) ? url : null;
+}
+
 export async function downloadCatalogImage(
   ctx: Pick<EnrichContext, "db" | "orgSlug" | "bearer" | "itemId">,
   imageUrl: string,
 ): Promise<boolean> {
+  // A stock "no image" graphic is not a photo. Refuse before spending a fetch.
+  if (isPlaceholderImageUrl(imageUrl)) return false;
   try {
     assertSafeOutboundUrl(imageUrl);
   } catch {

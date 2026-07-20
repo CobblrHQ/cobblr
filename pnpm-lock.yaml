@@ -1225,13 +1225,22 @@ importers:
 
   packages/platform-web:
     dependencies:
+      '@cobblr/thermal-print':
+        specifier: workspace:*
+        version: link:../thermal-print
       ajv:
         specifier: ^8.17.1
         version: 8.20.0
+      qrcode:
+        specifier: ^1.5.4
+        version: 1.5.4
     devDependencies:
       '@tanstack/react-query':
         specifier: ^5.62.7
         version: 5.100.10(react@19.2.6)
+      '@types/qrcode':
+        specifier: ^1.5.5
+        version: 1.5.6
       '@types/react':
         specifier: ^19.0.2
         version: 19.2.14
@@ -1255,6 +1264,15 @@ importers:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
+
+  packages/thermal-print:
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.19)
 
   packages/workspace-tools:
     dependencies:
@@ -1316,6 +1334,9 @@ importers:
       '@cobblr/lists':
         specifier: workspace:*
         version: link:../modules/lists
+      '@cobblr/platform-contract':
+        specifier: workspace:*
+        version: link:../packages/platform-contract
       '@cobblr/platform-web':
         specifier: workspace:*
         version: link:../packages/platform-web
@@ -1325,6 +1346,9 @@ importers:
       '@cobblr/sales':
         specifier: workspace:*
         version: link:../modules/sales
+      '@cobblr/thermal-print':
+        specifier: workspace:*
+        version: link:../packages/thermal-print
       '@cobblr/tracking':
         specifier: workspace:*
         version: link:../modules/tracking
