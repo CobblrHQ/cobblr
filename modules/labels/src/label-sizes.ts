@@ -92,6 +92,123 @@ export function perSheet(size: LabelSize): number {
   return size.cols * size.rows;
 }
 
+/** The most columns/rows of a label that fit on a paper, given margins + gaps.
+ *
+ *  This is the arithmetic that lets a size be defined by DIMENSIONS instead of a
+ *  hardcoded col×row grid: N labels need (N-1) gaps, so
+ *  `N ≤ (available + gap) / (label + gap)`. Proven against every preset in
+ *  label-sizes.test.ts — the hand-tuned registry values ARE the max-fit, so
+ *  deriveGrid reproduces them exactly. See
+ *  docs/design-decisions/label-media-and-accumulation.md D2.
+ *
+ *  The 1e-9 nudge matches the float-dust tolerance sizes.test.ts already uses: a
+ *  clean fit like 10.2/1.7 can land at 5.9999999 in binary and floor to the wrong
+ *  count without it. */
+export function deriveGrid(opts: {
+  paper_w: number;
+  paper_h: number;
+  label_w: number;
+  label_h: number;
+  margin_t: number;
+  margin_l: number;
+  col_gap: number;
+  row_gap: number;
+}): { cols: number; rows: number } {
+  const fit = (avail: number, label: number, gap: number): number =>
+    label <= 0 ? 0 : Math.max(0, Math.floor((avail + gap + 1e-9) / (label + gap)));
+  return {
+    cols: fit(opts.paper_w - 2 * opts.margin_l, opts.label_w, opts.col_gap),
+    rows: fit(opts.paper_h - 2 * opts.margin_t, opts.label_h, opts.row_gap),
+  };
+}
+
+/** Build a LabelSize from DIMENSIONS, deriving the col×row grid — the free-form
+ *  path a user-defined size takes (no hardcoded cols/rows). An explicit
+ *  `cols`/`rows` overrides the derived max ONLY downward (a deliberate under-fill,
+ *  e.g. 2-up on a sheet that fits 4); it is clamped so a size can never claim more
+ *  labels than physically fit. `paper` must resolve, else the derived grid is
+ *  0×0 and the caller shows the unknown-paper state. */
+export function makeLabelSize(input: {
+  key: string;
+  label: string;
+  paper: string;
+  label_w: number;
+  label_h: number;
+  margin_t?: number;
+  margin_l?: number;
+  col_gap?: number;
+  row_gap?: number;
+  cols?: number;
+  rows?: number;
+}): LabelSize {
+  const paper = findPaper(input.paper);
+  const margin_t = input.margin_t ?? 0;
+  const margin_l = input.margin_l ?? 0;
+  const col_gap = input.col_gap ?? 0;
+  const row_gap = input.row_gap ?? 0;
+  const max = paper
+    ? deriveGrid({ paper_w: paper.width_in, paper_h: paper.height_in, label_w: input.label_w, label_h: input.label_h, margin_t, margin_l, col_gap, row_gap })
+    : { cols: 0, rows: 0 };
+  return {
+    key: input.key,
+    label: input.label,
+    paper: input.paper,
+    label_w: input.label_w,
+    label_h: input.label_h,
+    margin_t,
+    margin_l,
+    col_gap,
+    row_gap,
+    cols: input.cols != null ? Math.min(input.cols, max.cols) : max.cols,
+    rows: input.rows != null ? Math.min(input.rows, max.rows) : max.rows,
+  };
+}
+
+/** A workspace-defined size (dimensions) as the (PaperSize, LabelSize) pair the
+ *  CLIENT renderer (renderPrintSheetHtml) wants, with the grid derived. The
+ *  media becomes a synthetic PaperSize; the `custom:<id>` key names both. Mirrors
+ *  the server's buildCustomLabelSheet so the ⌘P sheet and the CUPS PDF agree. */
+export function customSizeToLayout(row: {
+  id: string;
+  name: string;
+  media_w: number;
+  media_h: number;
+  label_w: number;
+  label_h: number;
+  margin_t: number;
+  margin_l: number;
+  col_gap: number;
+  row_gap: number;
+}): { size: LabelSize; paper: PaperSize } {
+  const key = `custom:${row.id}`;
+  const g = deriveGrid({
+    paper_w: row.media_w,
+    paper_h: row.media_h,
+    label_w: row.label_w,
+    label_h: row.label_h,
+    margin_t: row.margin_t,
+    margin_l: row.margin_l,
+    col_gap: row.col_gap,
+    row_gap: row.row_gap,
+  });
+  return {
+    paper: { key, label: row.name, width_in: row.media_w, height_in: row.media_h },
+    size: {
+      key,
+      label: row.name,
+      paper: key,
+      label_w: row.label_w,
+      label_h: row.label_h,
+      margin_t: row.margin_t,
+      margin_l: row.margin_l,
+      col_gap: row.col_gap,
+      row_gap: row.row_gap,
+      cols: g.cols,
+      rows: g.rows,
+    },
+  };
+}
+
 /** Which inner layout a label cell uses, from its aspect ratio.
  *  pickLayout():
  *   • portrait — tall cells: title on top, QR pinned below

@@ -188,8 +188,45 @@ function pickLayout(w: number, h: number): LabelLayout {
 /** Which sides of a label cell get a hairline cut guide. Empty / false
  *  sides are skipped so the outer paper edge (and any other edge we
  *  don't want a line at) renders cleanly. */
-interface CellBorders { top: boolean; right: boolean; bottom: boolean; left: boolean }
+export interface CellBorders { top: boolean; right: boolean; bottom: boolean; left: boolean }
 const ALL_CELL_BORDERS: CellBorders = { top: true, right: true, bottom: true, left: true };
+
+/** The cut-guide dedup: on a grid of ABUTTING cells (no gap), every internal
+ *  separator must be drawn EXACTLY ONCE, or it prints as a doubled/heavier
+ *  hairline. Each cell owns only the edges no neighbour already draws:
+ *    · top    — owned by the lower cell, so drawn unless this is the top row
+ *               (a margin still wants the outer line);
+ *    · left   — owned by the right cell, so drawn unless this is the left column;
+ *    · right  — only the outer paper edge (with a margin), or the seam next to an
+ *               EMPTY neighbour (a short last row leaves a gap that wants a line);
+ *    · bottom — only on the last rendered row.
+ *  With a gap between cells there is no shared edge, so every cell is fully
+ *  bordered (ALL_CELL_BORDERS). Pure + exported so this exact behaviour is locked
+ *  by test (modules/labels/tests/print-milestone.test.ts) and cannot silently
+ *  regress when the size model changes.
+ */
+export function computeCellBorders(opts: {
+  ci: number;
+  cols: number;
+  cellCount: number;
+  cellsAbut: boolean;
+  marginT: number;
+  marginL: number;
+}): CellBorders {
+  const { ci, cols, cellCount, cellsAbut, marginT, marginL } = opts;
+  if (!cellsAbut) return ALL_CELL_BORDERS;
+  const col = ci % cols;
+  const row = Math.floor(ci / cols);
+  const lastRenderedRow = cellCount > 0 ? Math.floor((cellCount - 1) / cols) : -1;
+  const rightCellFilled =
+    col < cols - 1 && ci + 1 < cellCount && Math.floor((ci + 1) / cols) === row;
+  return {
+    top: row > 0 || marginT > 0,
+    left: col > 0 || marginL > 0,
+    right: (col === cols - 1 && marginL > 0) || (col < cols - 1 && !rightCellFilled),
+    bottom: row === lastRenderedRow,
+  };
+}
 
 async function placeLabel(
   page: PDFPage, doc: PDFDocument, font: PDFFont, boldFont: PDFFont,
@@ -385,6 +422,11 @@ export interface RenderInput {
   /** Default size for items without their own `sizeKey`. */
   size_key: string;
   items: PrintItem[];
+  /** Workspace-defined sizes (built by buildCustomLabelSheet from the tenant's
+   *  labels_custom_sizes rows). Resolved BEFORE the built-in registry, so a
+   *  `custom:<id>` key finds its sheet. The route pre-fetches these because the
+   *  render loop resolves keys synchronously. */
+  extraSizes?: LabelSheet[];
 }
 
 export interface RenderResult {
@@ -398,13 +440,18 @@ export interface RenderResult {
 }
 
 export async function renderLabelsPdf(input: RenderInput): Promise<RenderResult> {
-  const defaultSize = findSize(input.size_key);
+  // A workspace-defined size (custom:<id>) resolves ahead of the built-in
+  // registry; everything downstream treats it as any other LabelSheet.
+  const resolveSize = (key: string): LabelSheet | undefined =>
+    input.extraSizes?.find((s) => s.key === key) ?? findSize(key);
+
+  const defaultSize = resolveSize(input.size_key);
   if (!defaultSize) throw new Error(`unknown size_key: ${input.size_key}`);
 
   // Resolve a per-item size_key: explicit override, else the default.
   const resolved = input.items.map((it) => {
     const key = it.sizeKey ?? input.size_key;
-    const size = findSize(key);
+    const size = resolveSize(key);
     if (!size) throw new Error(`unknown size_key on item ${it.kind}:${it.id}: ${key}`);
     return { item: it, size };
   });
@@ -463,29 +510,19 @@ async function renderUniformGrid(items: PrintItem[], size: LabelSheet): Promise<
   for (const pageItems of pages) {
     const page = doc.addPage([sheetWpt, sheetHpt]);
     const cells = chunk(pageItems, subdivisions);
-    const lastRenderedRow = cells.length > 0
-      ? Math.floor((cells.length - 1) / size.cols)
-      : -1;
     for (let ci = 0; ci < cells.length; ci++) {
       const col = ci % size.cols;
       const row = Math.floor(ci / size.cols);
       const cellX = marginLpt + col * (cellWpt + colGapPt);
       const cellY = sheetHpt - marginTpt - (row + 1) * cellHpt - row * rowGapPt;
-      // Is the grid cell immediately to the right filled?
-      const rightCellFilled =
-        col < size.cols - 1 &&
-        ci + 1 < cells.length &&
-        Math.floor((ci + 1) / size.cols) === row;
-      const cellBorders: CellBorders = cellsAbut
-        ? {
-            top: row > 0 || size.margin_t > 0,
-            left: col > 0 || size.margin_l > 0,
-            right:
-              (col === size.cols - 1 && size.margin_l > 0) ||
-              (col < size.cols - 1 && !rightCellFilled),
-            bottom: row === lastRenderedRow,
-          }
-        : ALL_CELL_BORDERS;
+      const cellBorders = computeCellBorders({
+        ci,
+        cols: size.cols,
+        cellCount: cells.length,
+        cellsAbut,
+        marginT: size.margin_t,
+        marginL: size.margin_l,
+      });
       const cellItems = cells[ci]!;
       if (subdivisions === 1) {
         if (cellItems[0]) await placeLabel(page, doc, font, boldFont, cellItems[0], cellX, cellY, cellWpt, cellHpt, cellBorders, warnings);

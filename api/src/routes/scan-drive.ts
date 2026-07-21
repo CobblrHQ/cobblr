@@ -15,6 +15,7 @@ export const scanDriveRouter = Router({ mergeParams: true });
 const Body = z.object({
   code: z.string().min(1).max(2000),
   scan_batch_id: z.string().min(1).max(120).optional(),
+  disposition: z.enum(["navigate", "print"]).optional(),
 });
 
 scanDriveRouter.post("/:slug/scan-drive", requireAuth, withTenant, async (req, res, next) => {
@@ -34,6 +35,7 @@ scanDriveRouter.post("/:slug/scan-drive", requireAuth, withTenant, async (req, r
       token,
       scanBatchId: b.data.scan_batch_id,
       baseUrl,
+      disposition: b.data.disposition,
     });
     res.json(result);
   } catch (err) {

@@ -12,6 +12,8 @@ import { browseRouter } from "./browse.js";
 import { codesRouter } from "./codes.js";
 import { qrTokensRouter } from "./qr-tokens.js";
 import { qrSettingsRouter } from "./qr-settings.js";
+import { sizesRouter } from "./sizes.js";
+import { autoflushRouter } from "./autoflush.js";
 import { registerLabelsHandlers } from "./handlers.js";
 
 registerLabelsHandlers();
@@ -24,6 +26,8 @@ router.use("/browse", browseRouter);
 router.use("/codes", codesRouter);
 router.use("/qr/tokens", qrTokensRouter);
 router.use("/qr/settings", qrSettingsRouter);
+router.use("/sizes", sizesRouter);
+router.use("/autoflush", autoflushRouter);
 
 // Old-shape alias for the former core-labels-qr module's paths
 // (/modules/core-labels-qr/{tokens,settings}). The platform mounts this at

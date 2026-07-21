@@ -5,6 +5,7 @@
 import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { LabelsDB } from "../db.js";
+import { evaluateAutoflush } from "./autoflush.js";
 
 let registered = false;
 
@@ -61,6 +62,19 @@ export function registerLabelsHandlers(): void {
       entityKind: ent.kind,
       entityId: ent.id,
     });
+
+    // Server-side auto-flush: if this workspace has an auto-print policy on a
+    // network printer, a label reaching the buffer may fire a print now — the same
+    // as the /queue route. Best-effort; never fail the queue. base=null: the row's
+    // stored qr_payload is used as-is (no request to resolve a custom QR base from).
+    // A userless invoke (a wire/system trigger) has no personal buffer to flush.
+    if (ctx.userId) {
+      try {
+        await evaluateAutoflush(db, ctx.orgId, ctx.userId, null);
+      } catch (e) {
+        console.error("[labels] auto-flush (from action) error:", (e as Error).message);
+      }
+    }
 
     // The row is queued, which is the durable outcome and the fallback if
     // nothing below happens. The `ui.print` directive additionally offers it to

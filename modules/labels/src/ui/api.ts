@@ -20,6 +20,47 @@ export interface Printable {
   center_code?: string;
 }
 
+/** A workspace-defined label size. Dimensions in inches; cols/rows/per_sheet are
+ *  derived server-side (deriveGrid) and returned for display. */
+export interface CustomLabelSize {
+  id: string;
+  name: string;
+  media_w: number;
+  media_h: number;
+  label_w: number;
+  label_h: number;
+  margin_t: number;
+  margin_l: number;
+  col_gap: number;
+  row_gap: number;
+  cols: number;
+  rows: number;
+  per_sheet: number;
+}
+
+export type FireMode = "manual" | "fill-media" | "count" | "immediate";
+
+/** Per-user accumulate-then-print policy (server-side, CUPS/edge). */
+export interface AutoflushConfig {
+  enabled: boolean;
+  printer_id: string | null;
+  size_key: string | null;
+  fire_mode: FireMode;
+  fire_count: number;
+}
+
+export interface CustomSizeInput {
+  name: string;
+  media_w: number;
+  media_h: number;
+  label_w: number;
+  label_h: number;
+  margin_t?: number;
+  margin_l?: number;
+  col_gap?: number;
+  row_gap?: number;
+}
+
 export interface PrintResponse {
   batch_id: string;
   count: number;
@@ -105,6 +146,15 @@ export class LabelsApi {
     this.request<QueueItem>("PATCH", `/queue/${id}`, { qty });
   removeFromQueue = (id: string) => this.request<void>("DELETE", `/queue/${id}`);
   print = () => this.request<PrintResponse>("POST", "/print", {});
+
+  /** Workspace-defined label sizes (dimensions in; grid + per_sheet derived). */
+  listCustomSizes = () => this.request<{ items: CustomLabelSize[] }>("GET", "/sizes");
+  createCustomSize = (b: CustomSizeInput) => this.request<CustomLabelSize>("POST", "/sizes", b);
+  deleteCustomSize = (id: string) => this.request<{ deleted: number }>("DELETE", `/sizes/${id}`);
+
+  /** Accumulate-then-print policy (server-side auto-flush, CUPS/edge). */
+  getAutoflush = () => this.request<AutoflushConfig>("GET", "/autoflush");
+  setAutoflush = (b: AutoflushConfig) => this.request<AutoflushConfig>("PUT", "/autoflush", b);
   /** Bookkeeping for labels the BROWSER printed (Bluetooth): record them in
    *  history, freeze their codes, and drop just those rows from the queue. */
   recordPrinted = (item_ids: string[]) =>

@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import QRCode from "qrcode";
-import { Hash, Minus, Plus, Printer, Send, Trash2 } from "lucide-react";
+import { Hash, Minus, Plus, Printer, Send, Trash2, Zap } from "lucide-react";
 import { usePageTitle, useToast, Modal } from "@cobblr/platform-web";
 import { useLabels } from "./context";
 import { BrowsePanel } from "./BrowsePanel";
@@ -22,9 +22,10 @@ import {
   PAPER_SIZES,
   findPaper,
   labelSizesForPaper,
-  perSheet,
 } from "../label-sizes";
-import type { Printable } from "./api";
+import type { CustomLabelSize, Printable } from "./api";
+import { NewSizeModal } from "./NewSizeModal";
+import { AutoPrintModal } from "./AutoPrintModal";
 
 const PAPER_LS = "cobblr:label-paper";
 const SIZE_LS = "cobblr:label-size";
@@ -49,6 +50,13 @@ export function QueuePage() {
     queryFn: () => api.listQueue(),
     enabled: !!orgSlug,
   });
+  // Current auto-print policy, to reflect on/off on the toolbar button.
+  const autoflush = useQuery({
+    queryKey: ["labels-autoflush", orgSlug],
+    queryFn: () => api.getAutoflush(),
+    enabled: !!orgSlug,
+  });
+  const [autoPrintOpen, setAutoPrintOpen] = useState(false);
 
   // Paper + label-size selection, persisted so a workshop keeps its
   // printer setup between visits.
@@ -60,14 +68,35 @@ export function QueuePage() {
     () => localStorage.getItem(SIZE_LS) ?? "",
   );
   const [codesOpen, setCodesOpen] = useState(false);
+  const [newSizeOpen, setNewSizeOpen] = useState(false);
+  // Workspace-defined sizes (dimensions in; grid derived server-side).
+  const customSizes = useQuery({
+    queryKey: ["labels-custom-sizes", orgSlug],
+    queryFn: () => api.listCustomSizes(),
+    enabled: !!orgSlug,
+  });
+  const customList = customSizes.data?.items ?? [];
   const sizesForPaper = labelSizesForPaper(paperKey);
-  // Effective label size: the user's pick if it's valid for the
-  // current paper, else that paper's first size. Derived during
-  // render — so paper, label <select>, and preview never disagree,
-  // not even for the one frame a useEffect-based correction leaves.
-  const size = sizesForPaper.find((s) => s.key === pickedSize) ?? sizesForPaper[0];
-  const sizeKey = size?.key ?? "";
-  const paper = size ? findPaper(size.paper) : undefined;
+
+  // Effective label size: a custom pick (custom:<id>), else the user's built-in
+  // pick if valid for the current paper, else that paper's first size. Derived
+  // during render, so paper, label <select>, and preview never disagree.
+  const pickedCustom = pickedSize.startsWith("custom:")
+    ? customList.find((c) => `custom:${c.id}` === pickedSize)
+    : undefined;
+  const builtin = pickedCustom
+    ? undefined
+    : (sizesForPaper.find((s) => s.key === pickedSize) ?? sizesForPaper[0]);
+  // The (LabelSize, PaperSize) the preview/render use, from either source.
+  const size = pickedCustom
+    ? { cols: pickedCustom.cols, rows: pickedCustom.rows, label: pickedCustom.name }
+    : builtin;
+  const sizeKey = pickedCustom ? pickedSize : (builtin?.key ?? "");
+  const paper = pickedCustom
+    ? { width_in: pickedCustom.media_w, height_in: pickedCustom.media_h }
+    : builtin
+      ? findPaper(builtin.paper)
+      : undefined;
   useEffect(() => localStorage.setItem(PAPER_LS, paperKey), [paperKey]);
   useEffect(() => {
     if (sizeKey) localStorage.setItem(SIZE_LS, sizeKey);
@@ -173,7 +202,7 @@ export function QueuePage() {
   const print = useMutation({
     mutationFn: () => api.print(),
     onSuccess: (r) => {
-      const html = renderPrintSheetHtml(r.printables, sizeKey);
+      const html = renderPrintSheetHtml(r.printables, sizeKey, { customSizes: customList });
       const w = window.open("", "_blank");
       if (w) {
         w.document.write(html);
@@ -269,7 +298,8 @@ export function QueuePage() {
     onError: (e) => { setBtProgress(null); toast.error((e as Error).message); },
   });
 
-  const sheets = size ? Math.ceil(Math.max(total, 0) / perSheet(size)) : 0;
+  const perSheetCount = size ? size.cols * size.rows : 0;
+  const sheets = perSheetCount > 0 ? Math.ceil(Math.max(total, 0) / perSheetCount) : 0;
 
   return (
     <div className="space-y-4">
@@ -296,12 +326,25 @@ export function QueuePage() {
           <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">label</span>
           <select
             value={sizeKey}
-            onChange={(e) => setPickedSize(e.target.value)}
+            onChange={(e) => {
+              if (e.target.value === "__new__") setNewSizeOpen(true);
+              else setPickedSize(e.target.value);
+            }}
             className="input !w-72 !py-1 text-xs"
           >
             {sizesForPaper.map((s) => (
               <option key={s.key} value={s.key}>{s.label}</option>
             ))}
+            {customList.length > 0 && (
+              <optgroup label="Your sizes">
+                {customList.map((c) => (
+                  <option key={c.id} value={`custom:${c.id}`}>
+                    {c.name} · {c.per_sheet} up
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            <option value="__new__">＋ New label size…</option>
           </select>
         </label>
         <button
@@ -329,6 +372,18 @@ export function QueuePage() {
         >
           <Hash size={14} />
           Codes
+        </button>
+        <button
+          onClick={() => setAutoPrintOpen(true)}
+          className={`rounded-md border text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 ${
+            autoflush.data?.enabled
+              ? "border-cobble-500 text-cobble-700 dark:text-cobble-300 bg-cobble-50 dark:bg-cobble-900/30"
+              : "border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200"
+          }`}
+          title="Print labels automatically as they are added, to a network printer"
+        >
+          <Zap size={14} />
+          {autoflush.data?.enabled ? "Auto-print: on" : "Auto-print"}
         </button>
       </div>
 
@@ -420,6 +475,7 @@ export function QueuePage() {
               printables={previewQr.data ?? []}
               paperW={paper?.width_in ?? 8.5}
               paperH={paper?.height_in ?? 11}
+              customSizes={customList}
             />
           </div>
         </div>
@@ -433,6 +489,14 @@ export function QueuePage() {
       >
         <CodesPanel />
       </Modal>
+
+      <NewSizeModal
+        open={newSizeOpen}
+        onClose={() => setNewSizeOpen(false)}
+        onCreated={(created) => setPickedSize(`custom:${created.id}`)}
+      />
+
+      <AutoPrintModal open={autoPrintOpen} onClose={() => setAutoPrintOpen(false)} />
     </div>
   );
 }
@@ -445,11 +509,13 @@ function SheetPreview({
   printables,
   paperW,
   paperH,
+  customSizes,
 }: {
   sizeKey: string;
   printables: Printable[];
   paperW: number;
   paperH: number;
+  customSizes: CustomLabelSize[];
 }) {
   // Fit the real-inch sheet to the ACTUAL column width, not a fixed 660px — in
   // the half-width side-by-side layout the column is narrower than that, so a
@@ -475,7 +541,7 @@ function SheetPreview({
   // Until the first measurement lands, fall back to natW so nothing over-scales.
   const availW = boxW > 0 ? boxW : natW;
   const scale = Math.min(availW / natW, MAX_H / natH);
-  const html = renderPrintSheetHtml(printables, sizeKey, { previewOnly: true });
+  const html = renderPrintSheetHtml(printables, sizeKey, { previewOnly: true, customSizes });
 
   return (
     <div>

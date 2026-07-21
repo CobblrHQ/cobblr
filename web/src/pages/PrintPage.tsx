@@ -9,6 +9,7 @@ import { Plus, Trash2, Printer as PrinterIcon, Wifi, Send, Pencil, Star } from "
 import { ApiError, api, type Printer, type PrinterInput } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { Modal, useToast, useConfirm, usePageTitle, printLabelOverBluetooth, isWebBluetoothAvailable, NO_WEB_BLUETOOTH, type BluetoothPrinterSettings } from "@cobblr/platform-web";
+import { mmToDots, dotsToMm, mmToInch, thermalFootprint, type FeedType } from "@cobblr/thermal-print";
 
 import { EdgeConnectField, type EdgeConnectValue } from "../components/EdgeConnectField";
 
@@ -227,13 +228,24 @@ function PrinterModal({
   const [notes, setNotes] = useState(printer?.notes ?? "");
   const [busy, setBusy] = useState(false);
   const bt0 = (printer?.settings ?? {}) as Record<string, unknown>;
+  // Media is the D3 source. An existing printer stored only widthDots, so
+  // reconstruct its width in mm (dotsToMm) to prefill — editing then migrates it
+  // to the media model on save. The 40mm/320-dot round-trip holds (see 1c-A).
+  const media0 = (bt0.media ?? null) as { widthMm?: number; heightMm?: number; feed?: FeedType; gapMm?: number } | null;
+  const initWmm = media0?.widthMm ?? Number(dotsToMm(Number(bt0.widthDots ?? 320)).toFixed(1));
   const [btProtocol, setBtProtocol] = useState(String(bt0.protocol ?? "tspl"));
-  const [btWidth, setBtWidth] = useState(String(bt0.widthDots ?? 320));
-  const [btHeightMm, setBtHeightMm] = useState(String(bt0.labelHeightMm ?? 30));
-  const [btGapMm, setBtGapMm] = useState(String(bt0.gapMm ?? 2));
+  const [btMediaWmm, setBtMediaWmm] = useState(String(initWmm));
+  const [btFeed, setBtFeed] = useState<FeedType>(media0?.feed ?? ((Number(bt0.gapMm) || 0) > 0 ? "die-cut" : "continuous"));
+  const [btHeightMm, setBtHeightMm] = useState(String(bt0.labelHeightMm ?? media0?.heightMm ?? 30));
+  const [btGapMm, setBtGapMm] = useState(String(bt0.gapMm ?? media0?.gapMm ?? 2));
   const [btDirection, setBtDirection] = useState(String(bt0.direction ?? 0));
   const [btTopMargin, setBtTopMargin] = useState(String(bt0.topMarginDots ?? 0));
   const isBluetooth = driver === "browser-bluetooth";
+  // Derived, shown live and stored on save — the raster path + any pre-D3 reader
+  // still get widthDots/labelHeightMm/gapMm; media/label are the source of truth.
+  const btMediaW = Number(btMediaWmm) || 0;
+  const btLabelH = Number(btHeightMm) || 0;
+  const btDerivedWidthDots = mmToDots(btMediaW);
 
   const save = async () => {
     const baseUrl = conn.base_url.trim();
@@ -244,8 +256,8 @@ function PrinterModal({
     // A Bluetooth printer has no manager URL and no queue — the browser holds the
     // radio — so its own settings are what must be valid.
     if (isBluetooth) {
-      if (!Number(btWidth) || Number(btWidth) < 8) {
-        toast.error("Width (dots) is required: 320 for a 40mm roll");
+      if (btMediaW < 1 || btDerivedWidthDots < 8) {
+        toast.error("Media width is required in mm (about 40 mm for a common roll)");
         return;
       }
     } else if (!baseUrl || !queue.trim()) {
@@ -264,14 +276,23 @@ function PrinterModal({
       ...(creds ? { credentials: creds } : {}),
       ...(isBluetooth
         ? {
-            settings: {
-              protocol: btProtocol,
-              widthDots: Number(btWidth),
-              labelHeightMm: Number(btHeightMm) || undefined,
-              gapMm: Number(btGapMm),
-              direction: Number(btDirection) === 1 ? 1 : 0,
-              topMarginDots: Number(btTopMargin) || 0,
-            },
+            settings: (() => {
+              // media+label are the source; the footprint is DERIVED so the raster
+              // path and any pre-D3 reader keep working (see spec D3).
+              const media = { widthMm: btMediaW, heightMm: btLabelH || btMediaW, feed: btFeed, gapMm: btFeed === "die-cut" ? Number(btGapMm) || 0 : 0 };
+              const label = { widthMm: media.widthMm, heightMm: media.heightMm };
+              const fp = thermalFootprint(media, label);
+              return {
+                protocol: btProtocol,
+                widthDots: fp.widthDots,
+                labelHeightMm: btLabelH || undefined,
+                gapMm: fp.gapMm,
+                direction: Number(btDirection) === 1 ? 1 : 0,
+                topMarginDots: Number(btTopMargin) || 0,
+                media,
+                label,
+              };
+            })(),
           }
         : {}),
     };
@@ -324,21 +345,33 @@ function PrinterModal({
                 </select>
               </label>
               <label className="block">
-                <div className="text-xs text-muted mb-1">Width (dots)</div>
-                <input className={field} type="number" value={btWidth} onChange={(e) => setBtWidth(e.target.value)} placeholder="320" />
+                <div className="text-xs text-muted mb-1">Media width (mm)</div>
+                <input className={field} type="number" step="0.1" value={btMediaWmm} onChange={(e) => setBtMediaWmm(e.target.value)} placeholder="40" />
+                <div className="text-[11px] text-faint mt-1">{btDerivedWidthDots} dots &middot; &asymp; {mmToInch(btMediaW).toFixed(2)} in</div>
               </label>
             </div>
             {btProtocol === "tspl" && (
               <div className="grid grid-cols-2 gap-2">
                 <label className="block">
-                  <div className="text-xs text-muted mb-1">Label height (mm)</div>
-                  <input className={field} type="number" value={btHeightMm} onChange={(e) => setBtHeightMm(e.target.value)} />
+                  <div className="text-xs text-muted mb-1">Feed</div>
+                  <select className={field} value={btFeed} onChange={(e) => setBtFeed(e.target.value as FeedType)}>
+                    <option value="continuous">Continuous roll</option>
+                    <option value="die-cut">Die-cut labels (gap)</option>
+                    <option value="sheet">Sheet</option>
+                  </select>
                 </label>
                 <label className="block">
-                  <div className="text-xs text-muted mb-1">Gap (mm)</div>
-                  <input className={field} type="number" step="0.01" value={btGapMm} onChange={(e) => setBtGapMm(e.target.value)} />
-                  <div className="text-[11px] text-faint mt-1">Wrong value drifts each label off the edge.</div>
+                  <div className="text-xs text-muted mb-1">Label height (mm)</div>
+                  <input className={field} type="number" value={btHeightMm} onChange={(e) => setBtHeightMm(e.target.value)} />
+                  <div className="text-[11px] text-faint mt-1">&asymp; {mmToInch(btLabelH).toFixed(2)} in</div>
                 </label>
+                {btFeed === "die-cut" && (
+                  <label className="block">
+                    <div className="text-xs text-muted mb-1">Gap (mm)</div>
+                    <input className={field} type="number" step="0.01" value={btGapMm} onChange={(e) => setBtGapMm(e.target.value)} />
+                    <div className="text-[11px] text-faint mt-1">Wrong value drifts each label off the edge.</div>
+                  </label>
+                )}
                 <label className="block">
                   <div className="text-xs text-muted mb-1">Orientation</div>
                   <select className={field} value={btDirection} onChange={(e) => setBtDirection(e.target.value)}>

@@ -18,9 +18,10 @@ import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { assertSafePrinterUrl } from "../drivers/ssrf.js";
-import { buildDriver, isDriverKind } from "../drivers/registry.js";
-import { isEdgeManagerUrl, buildEdgeRelay } from "../edge.js";
-import type { PrinterConfig, PrintDoc } from "../drivers/types.js";
+import { isDriverKind } from "../drivers/registry.js";
+import { isEdgeManagerUrl } from "../edge.js";
+import { configuredDriver, dispatchToPrinter } from "../dispatch.js";
+import type { PrintDoc } from "../drivers/types.js";
 import type { CorePrintPrintersTable } from "../db.js";
 import type { Selectable } from "kysely";
 
@@ -52,6 +53,21 @@ const Credentials = z
   })
   .strict();
 
+// The unified media+label model (D3). When present these are the SOURCE; the
+// client also sends the derived widthDots/labelHeightMm/gapMm so the raster path
+// and any pre-D3 reader keep working. See
+// docs/design-decisions/label-media-and-accumulation.md D3.
+const dimMm = z.number().positive().max(1000);
+const MediaObj = z
+  .object({
+    widthMm: dimMm,
+    heightMm: dimMm,
+    feed: z.enum(["continuous", "die-cut", "sheet"]),
+    gapMm: z.number().min(0).max(100),
+  })
+  .strict();
+const FaceObj = z.object({ widthMm: dimMm, heightMm: dimMm }).strict();
+
 /** browser-bluetooth settings. Validated so a bad width/dialect fails at save
  *  rather than at the printer, where the symptom is a silent no-print. */
 const BluetoothSettings = z
@@ -66,6 +82,8 @@ const BluetoothSettings = z
     topMarginDots: z.number().int().min(0).max(4096).optional(),
     density: z.number().int().min(0).max(15).optional(),
     speed: z.number().int().min(1).max(10).optional(),
+    media: MediaObj.optional(),
+    label: FaceObj.optional(),
   })
   .strict();
 
@@ -94,24 +112,6 @@ const PrintBody = z
   .refine((b) => !!b.file_id || !!b.document_base64, {
     message: "provide a file_id or document_base64",
   });
-
-async function configuredDriver(orgId: string, row: PrinterRow) {
-  let creds: Record<string, unknown> = {};
-  if (row.credentials_enc) {
-    creds = await platform().integrations.decryptCredentials(orgId, row.credentials_enc);
-  }
-  const cfg: PrinterConfig = {
-    baseUrl: row.base_url,
-    queue: row.queue,
-    bluetooth: (row.settings ?? undefined) as never,
-    username: typeof creds.username === "string" ? creds.username : undefined,
-    password: typeof creds.password === "string" ? creds.password : undefined,
-    apiKey: typeof creds.apiKey === "string" ? creds.apiKey : undefined,
-  };
-  // A cobblr-edge:// manager routes through the org's edge bridge; a direct
-  // http(s):// one dials CUPS itself (relay stays null).
-  return buildDriver(row.driver, cfg, buildEdgeRelay(orgId, row.base_url));
-}
 
 /** Validate a manager URL before persisting it. A `cobblr-edge://` manager is
  *  exempt from the SSRF guard — the BRIDGE reaches the LAN, Cobblr never does, so
@@ -343,22 +343,12 @@ router.post(
       };
     }
 
-    const driver = await configuredDriver(ctx.org.id, row);
+    // The one shared dispatch path (also used by the background auto-flush worker):
+    // it prints and emits job.submitted / job.failed. It throws on failure → 502.
     try {
-      const result = await driver.print(doc, { copies: body.copies, jobName: body.job_name });
-      void platform().events.emit("core-print.job.submitted", {
-        orgId: ctx.org.id,
-        printerId: row.id,
-        jobId: result.jobId,
-        state: result.state,
-      });
+      const result = await dispatchToPrinter(ctx.org.id, row, doc, { copies: body.copies, jobName: body.job_name });
       res.status(202).json({ printer_id: row.id, ...result });
     } catch (e) {
-      void platform().events.emit("core-print.job.failed", {
-        orgId: ctx.org.id,
-        printerId: row.id,
-        error: (e as Error).message,
-      });
       res.status(502).json({ error: { code: "print_failed", message: (e as Error).message } });
     }
   }),

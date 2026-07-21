@@ -9,7 +9,7 @@
 // drifted the moment a size was added on one side only, which is exactly how
 // a size you could pick failed to print.)
 
-import { LABEL_SIZES, findPaper } from "../label-sizes.js";
+import { LABEL_SIZES, findPaper, deriveGrid } from "../label-sizes.js";
 
 export type PrinterFamily = "rollo" | "laser";
 
@@ -57,4 +57,51 @@ export const SIZES: LabelSheet[] = LABEL_SIZES.map((s) => {
 
 export function findSize(key: string): LabelSheet | undefined {
   return SIZES.find((s) => s.key === key);
+}
+
+/** A workspace-defined size (labels_custom_sizes row, dims in inches) as the
+ *  LabelSheet the renderer wants. The grid is DERIVED here, never stored, so the
+ *  same 1.5x3-holds-two-1.5in arithmetic the presets validate against drives a
+ *  custom size too. Treated as the `rollo` (continuous/cut-guide) family: it gets
+ *  the abutting-grid cut guides (computeCellBorders), not the fixed-position
+ *  laser-sheet path. The synthetic `custom:<id>` key is how the route and the
+ *  renderer refer to it. */
+export function buildCustomLabelSheet(row: {
+  id: string;
+  name: string;
+  media_w: number;
+  media_h: number;
+  label_w: number;
+  label_h: number;
+  margin_t: number;
+  margin_l: number;
+  col_gap: number;
+  row_gap: number;
+}): LabelSheet {
+  const g = deriveGrid({
+    paper_w: row.media_w,
+    paper_h: row.media_h,
+    label_w: row.label_w,
+    label_h: row.label_h,
+    margin_t: row.margin_t,
+    margin_l: row.margin_l,
+    col_gap: row.col_gap,
+    row_gap: row.row_gap,
+  });
+  return {
+    key: `custom:${row.id}`,
+    label: row.name,
+    printer: "rollo",
+    sheet_w: row.media_w,
+    sheet_h: row.media_h,
+    margin_t: row.margin_t,
+    margin_l: row.margin_l,
+    col_gap: row.col_gap,
+    row_gap: row.row_gap,
+    cols: g.cols,
+    rows: g.rows,
+    label_w: row.label_w,
+    label_h: row.label_h,
+    is_sheet_label: false,
+  };
 }

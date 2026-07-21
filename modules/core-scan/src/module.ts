@@ -16,7 +16,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-scan",
-  version: "0.15.0",
+  version: "0.15.1",
   displayName: "Scan",
   description:
     "Scan a barcode or take a photo of a thing; end up with a draft inventory row, pre-filled with the resolved name + brand + catalog photo. One tap to commit.",
@@ -62,6 +62,27 @@ export default defineModule({
       "core-scan.putaway.session-ended",
     ],
     api: [],
+    // ──────────── Live box — scan-drive session mode ────────────
+    // Applicable only when a bridge scanner is connected (a scan from elsewhere
+    // can drive THIS screen). Tab-scoped (the follower is this browser tab); the
+    // Open/Print segment picks navigate vs print disposition (slice 4). See
+    // docs/design-decisions/live-controls.md + scan-drives-screen.md.
+    live: [
+      {
+        id: "core-scan.scan-drive",
+        label: "Scans drive this screen",
+        icon: "scan-line",
+        requires: "scanner.bridge",
+        scope: "tab",
+        control: "switch-segment",
+        segment: [
+          { value: "navigate", label: "Open" },
+          { value: "print", label: "Print" },
+        ],
+        detail: "/scan",
+        order: 10,
+      },
+    ],
     actions: [
       {
         id: "core-scan:identify-photo",

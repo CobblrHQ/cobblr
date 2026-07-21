@@ -860,6 +860,59 @@ const EntityAction = z.object({
   version: z.string().optional(),
 });
 
+// A LIVE CONTROL — the Live box (docs/design-decisions/live-controls.md). An
+// ongoing session mode a module exposes: scan-drive, auto-print, a drive
+// indicator. The platform aggregates these across enabled modules; the box
+// renders only the ones whose `requires` capability the workspace currently
+// satisfies (none apply → the box renders nothing, like DriveBanner when idle).
+// The declaration is metadata + gating + shape; reading/writing the toggle wires
+// per `scope` (see the doc §6).
+const LiveControlIdRegex = /^[a-z0-9][a-z0-9_-]*\.[a-z0-9][a-z0-9_-]*$/;
+const LiveControl = z
+  .object({
+    // Stable id, <module>.<name>, e.g. "labels.auto-print".
+    id: z.string().regex(LiveControlIdRegex, "live control id must be <module>.<name>"),
+    label: z.string().min(1),
+    // Kebab-case lucide icon name.
+    icon: z.string().min(1),
+    // The capability signal that must be present for this control to appear
+    // (e.g. "printer.connected", "scanner.bridge") — a capability a module
+    // provides. The box hides the control unless the workspace satisfies it;
+    // this is what keeps the box self-hiding without any module knowing it exists.
+    requires: z.string().min(1),
+    // Where the on/off lives, so a flip writes to the right place:
+    //   tab       — this browser tab only (localStorage; scan-drive follower)
+    //   user      — the signed-in user everywhere (server; auto-print policy)
+    //   workspace — the whole org (server)
+    scope: z.enum(["tab", "user", "workspace"]).default("user"),
+    // The shape the renderer draws:
+    //   switch         — a bare toggle
+    //   switch-segment — a toggle + an inline segmented choice (needs `segment`)
+    //   switch-detail  — a toggle + an expandable body + a "configure" deep-link
+    //   status         — a status row + stop/dismiss, no on-toggle (the drive
+    //                    indicator fold-in)
+    control: z.enum(["switch", "switch-segment", "switch-detail", "status"]).default("switch"),
+    // For control "switch-segment" — the inline choices (Open/Print for scan-drive).
+    segment: z.array(z.object({ value: z.string().min(1), label: z.string().min(1) })).optional(),
+    // For scope user/workspace — the org-scoped path the box GETs for current
+    // state and PUTs to flip. Omitted for scope tab (the renderer uses a
+    // client-side adapter keyed by `id`; doc §6).
+    endpoint: z.string().optional(),
+    // Deep-link the expanded "configure" opens (control "switch-detail").
+    detail: z.string().optional(),
+    // Sort order within the box (ascending); absent sorts after ordered ones.
+    order: z.number().optional(),
+    version: z.string().optional(),
+  })
+  .superRefine((c, ctx) => {
+    if (c.control === "switch-segment" && (!c.segment || c.segment.length < 2)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "control 'switch-segment' needs a `segment` of at least 2 choices" });
+    }
+    if ((c.scope === "user" || c.scope === "workspace") && c.control !== "status" && !c.endpoint) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `scope '${c.scope}' control needs an \`endpoint\` (server-side state)` });
+    }
+  });
+
 const ModuleManifest = z.object({
   // Stable identifier — must be unique across the platform, used as
   // the table prefix and the URL segment under /api/v1/modules/.
@@ -968,8 +1021,10 @@ const ModuleManifest = z.object({
       events: z.array(z.string()).default([]),
       api: z.array(z.string()).default([]),
       actions: z.array(EntityAction).default([]),
+      // Live controls — ongoing session modes surfaced in the Live box.
+      live: z.array(LiveControl).default([]),
     })
-    .default({ events: [], api: [], actions: [] }),
+    .default({ events: [], api: [], actions: [], live: [] }),
   // Pillar A — entity kinds the module provides for the rest of
   // the platform to introspect.
   provides: z
@@ -1113,6 +1168,7 @@ export type ModuleIntent = z.infer<typeof Intent>;
 export type EntityKindDecl = z.infer<typeof EntityKind>;
 export type EntityFieldDecl = z.infer<typeof EntityField>;
 export type EntityActionDecl = z.infer<typeof EntityAction>;
+export type LiveControlDecl = z.infer<typeof LiveControl>;
 export type ActionAppliesToDecl = z.infer<typeof ActionAppliesTo>;
 
 /**
@@ -3452,6 +3508,24 @@ export interface PlatformResolvables {
   resolve(orgId: string, value: string, ctx: ResolveContext): Promise<ResolveOutcome>;
 }
 
+/** A live control declaration plus the module that owns it (what the aggregation
+ *  hands the Live box). */
+export interface LiveControlPublic extends LiveControlDecl {
+  module: string;
+}
+
+/** The Live box seam (docs/design-decisions/live-controls.md §3). A module
+ *  registers the capability signals its live controls gate on; the aggregation
+ *  returns, per workspace, the enabled-module live controls whose `requires`
+ *  capability the workspace currently satisfies. */
+export interface PlatformLive {
+  /** Register a capability evaluator (`printer.connected`, `scanner.bridge`, …).
+   *  Called per workspace, cheap, cached per aggregation. Idempotent by name. */
+  registerCapability(name: string, evaluate: (orgId: string) => Promise<boolean>): void;
+  /** The applicable live controls for a workspace (self-hiding = empty array). */
+  applicable(orgId: string): Promise<LiveControlPublic[]>;
+}
+
 export interface Platform {
   activity: PlatformActivity;
   events: PlatformEvents;
@@ -3460,6 +3534,7 @@ export interface Platform {
   db: PlatformDb;
   entities: PlatformEntities;
   actions: PlatformActions;
+  live: PlatformLive;
   templates: PlatformTemplates;
   wires: PlatformWires;
   health: PlatformHealth;

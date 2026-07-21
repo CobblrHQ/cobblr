@@ -18,18 +18,27 @@
 import QRCode from "qrcode";
 import {
   CANDIDATE_SERVICES,
+  composeMediaNUp,
   connectAndDiscover,
+  dotsToMm,
   encodePhomemo,
   encodeTsplParts,
   knownPrinters,
   matchProfile,
+  mediaTiles,
+  mmToDots,
   packMonoBitmap,
   requestPrinter,
   streamToChar,
+  thermalFootprint,
   tsplBitmap,
+  tsplMediaFrom,
   type BleCharacteristic,
   type BleDevice,
+  type LabelFace,
+  type LabelMedia,
   type MonoBitmap,
+  type ThermalFootprint,
   type TsplMedia,
 } from "@cobblr/thermal-print";
 
@@ -45,6 +54,20 @@ export interface BluetoothPrinterSettings {
   topMarginDots?: number;
   density?: number;
   speed?: number;
+  /** The unified media+label model (D3). When both are present they are the SOURCE
+   *  and the footprint (widthDots/labelHeightMm/gapMm) is derived from them; when
+   *  absent a pre-D3 printer keeps using the raw footprint fields, byte-for-byte
+   *  unchanged. See docs/design-decisions/label-media-and-accumulation.md D3. */
+  media?: LabelMedia;
+  label?: LabelFace;
+}
+
+/** The single-label footprint this printer actually prints at: derived from
+ *  media+label when the D3 model is set, else the stored raw fields. Keeping this
+ *  in ONE place means every render/connect site agrees on the width. */
+export function effectiveFootprint(s: BluetoothPrinterSettings): ThermalFootprint {
+  if (s.media && s.label) return thermalFootprint(s.media, s.label);
+  return { widthDots: s.widthDots, labelHeightMm: s.labelHeightMm ?? 30, gapMm: s.gapMm ?? 2 };
 }
 
 /** One label's content. `qrPayload` must be the server-minted scan URL — never a
@@ -99,10 +122,11 @@ export function releaseHeldPrinter(): void {
  *  re-opens a dropped one (cheap thermal printers drop the link when idle), and
  *  only falls back to the chooser when there is nothing to reuse.
  *
- *  `settings.widthDots` is part of the key: change the media width and the held
+ *  The effective width is part of the key: change the media width and the held
  *  session is stale, because the encoder bakes width into the bytes. */
 export async function heldPrinterSession(settings: BluetoothPrinterSettings): Promise<PrinterSession> {
-  if (held && held.widthDots === settings.widthDots) {
+  const widthDots = effectiveFootprint(settings).widthDots;
+  if (held && held.widthDots === widthDots) {
     const s = held.session;
     if (s.device.gatt?.connected) return s;
     // Same device, dropped link: reconnect without a chooser. If the device is
@@ -116,7 +140,7 @@ export async function heldPrinterSession(settings: BluetoothPrinterSettings): Pr
   }
   if (held) closePrinter(held.session);
   const session = await connectPrinter(settings);
-  held = { session, widthDots: settings.widthDots };
+  held = { session, widthDots };
   return session;
 }
 
@@ -254,17 +278,41 @@ export function encodeForPrinter(bmp: MonoBitmap, s: BluetoothPrinterSettings): 
   if (s.protocol === "phomemo") {
     return encodePhomemo(bmp, { density: s.density ?? 8, speed: s.speed ?? 3, media: "gaps", init: true });
   }
+  // media set (D3) → the mm-native projection carries the real media width; else a
+  // pre-D3 printer keeps the historical widthDots/8 approximation, byte-for-byte.
+  const media: TsplMedia =
+    s.media && s.label
+      ? tsplMediaFrom(s.media, s.label, { direction: s.direction ?? 0, density: s.density, speed: s.speed })
+      : {
+          widthMm: Number((s.widthDots / 8).toFixed(2)), // 203 dpi = 8 dots/mm
+          heightMm: s.labelHeightMm ?? 30,
+          gapMm: s.gapMm ?? 2,
+          direction: s.direction ?? 0,
+          density: s.density,
+          speed: s.speed,
+        };
+  // BITMAP rather than TSPL's QRCODE: some firmware omits QRCODE entirely and
+  // silently drops the object. Rasterising always works. Polarity inverts inside.
+  return encodeTsplParts(media, [tsplBitmap(0, s.topMarginDots ?? 0, bmp)]);
+}
+
+/** Encode a COMPOSED media sheet (several labels tiled onto the loaded media, D8).
+ *  Same dialects as encodeForPrinter, but the TSPL SIZE is the whole tiled panel
+ *  (media width × the composed sheet height), not one label, so one feed advances
+ *  the full sheet. */
+function encodeTiledSheet(sheet: MonoBitmap, s: BluetoothPrinterSettings): Uint8Array {
+  if (s.protocol === "phomemo") {
+    return encodePhomemo(sheet, { density: s.density ?? 8, speed: s.speed ?? 3, media: "gaps", init: true });
+  }
   const media: TsplMedia = {
-    widthMm: Number((s.widthDots / 8).toFixed(2)),   // 203 dpi = 8 dots/mm
-    heightMm: s.labelHeightMm ?? 30,
-    gapMm: s.gapMm ?? 2,
+    widthMm: s.media?.widthMm ?? Number((s.widthDots / 8).toFixed(2)),
+    heightMm: Number(dotsToMm(sheet.height).toFixed(2)),
+    gapMm: s.media?.feed === "die-cut" ? (s.media.gapMm ?? 0) : 0,
     direction: s.direction ?? 0,
     density: s.density,
     speed: s.speed,
   };
-  // BITMAP rather than TSPL's QRCODE: some firmware omits QRCODE entirely and
-  // silently drops the object. Rasterising always works. Polarity inverts inside.
-  return encodeTsplParts(media, [tsplBitmap(0, s.topMarginDots ?? 0, bmp)]);
+  return encodeTsplParts(media, [tsplBitmap(0, s.topMarginDots ?? 0, sheet)]);
 }
 
 // ── printing ────────────────────────────────────────────────────────────────
@@ -274,7 +322,7 @@ export async function printToSession(
   content: LabelContent,
   settings: BluetoothPrinterSettings,
 ): Promise<{ bytes: number }> {
-  const bmp = await renderLabelBitmap(content, settings.widthDots);
+  const bmp = await renderLabelBitmap(content, effectiveFootprint(settings).widthDots);
   const bytes = encodeForPrinter(bmp, settings);
   // A single GATT write caps at 512 bytes and label jobs exceed it.
   await streamToChar(session.writeChar, bytes, { chunkSize: 180 });
@@ -294,20 +342,78 @@ export interface BatchResult {
   reconnected: boolean;
 }
 
+/** Labels per feed for this printer's loaded media: cols×rows when the media holds
+ *  more than one label face (n-up), else 1 (the historical one-per-feed). */
+function tileCount(s: BluetoothPrinterSettings): number {
+  if (!s.media || !s.label) return 1;
+  const { cols, rows } = mediaTiles(s.media, s.label);
+  return Math.max(1, Math.max(1, cols) * Math.max(1, rows));
+}
+
+/** n-up sender (D8): render each label at its FACE width, tile `perSheet` onto one
+ *  media bitmap (copies fill tiles first, D4), and feed one composed sheet per pass.
+ *  A partial last sheet leaves its remaining tiles blank. */
+async function runTiled(
+  session: PrinterSession,
+  items: BatchItem[],
+  settings: BluetoothPrinterSettings,
+  perSheet: number,
+  onProgress?: (done: number, total: number, current?: BatchItem) => void,
+): Promise<{ printed: BatchItem[]; failed: { item: BatchItem; error: string }[] }> {
+  const media = settings.media!;
+  const label = settings.label!;
+  const labelWDots = mmToDots(label.widthMm);
+  // Expand copies into a flat run, remembering each label's source item.
+  const flat: { item: BatchItem; content: LabelContent }[] = [];
+  for (const item of items) {
+    for (let c = 0; c < Math.max(1, item.copies ?? 1); c++) flat.push({ item, content: item });
+  }
+  const total = flat.length;
+  const okItems = new Set<BatchItem>();
+  const badItems = new Map<BatchItem, string>();
+  let done = 0;
+  for (let i = 0; i < flat.length; i += perSheet) {
+    const chunk = flat.slice(i, i + perSheet);
+    onProgress?.(done, total, chunk[0]?.item);
+    try {
+      const bitmaps = await Promise.all(chunk.map((c) => renderLabelBitmap(c.content, labelWDots)));
+      const sheet = composeMediaNUp(bitmaps, media, label);
+      await streamToChar(session.writeChar, encodeTiledSheet(sheet, settings), { chunkSize: 180 });
+      done += chunk.length;
+      chunk.forEach((c) => okItems.add(c.item));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      chunk.forEach((c) => badItems.set(c.item, msg)); // whole sheet failed
+    }
+  }
+  onProgress?.(done, total);
+  return {
+    printed: [...okItems].filter((it) => !badItems.has(it)),
+    failed: [...badItems].map(([item, error]) => ({ item, error })),
+  };
+}
+
 /** Print many labels over ONE session (one gesture). Continues past a failed
  *  label rather than aborting the batch: with paper already spent, stopping
- *  silently mid-run is worse than finishing and reporting exactly what failed. */
+ *  silently mid-run is worse than finishing and reporting exactly what failed.
+ *  When the loaded media is multi-up (D8), labels tile onto one sheet per feed. */
 export async function printBatchOverBluetooth(
   items: BatchItem[],
   settings: BluetoothPrinterSettings,
   onProgress?: (done: number, total: number, current?: BatchItem) => void,
 ): Promise<BatchResult> {
-  const total = items.reduce((n, i) => n + Math.max(1, i.copies ?? 1), 0);
   const session = await connectPrinter(settings);
-  const printed: BatchItem[] = [];
-  const failed: { item: BatchItem; error: string }[] = [];
-  let done = 0;
   try {
+    const perSheet = tileCount(settings);
+    if (perSheet > 1) {
+      const { printed, failed } = await runTiled(session, items, settings, perSheet, onProgress);
+      return { printed, failed, deviceName: session.deviceName, reconnected: session.reconnected };
+    }
+    // One-up: a feed per label (per copy), reporting exactly what failed.
+    const total = items.reduce((n, i) => n + Math.max(1, i.copies ?? 1), 0);
+    const printed: BatchItem[] = [];
+    const failed: { item: BatchItem; error: string }[] = [];
+    let done = 0;
     for (const item of items) {
       const copies = Math.max(1, item.copies ?? 1);
       for (let c = 0; c < copies; c++) {
@@ -322,11 +428,11 @@ export async function printBatchOverBluetooth(
       }
       if (!failed.some((f) => f.item === item)) printed.push(item);
     }
+    onProgress?.(done, total);
+    return { printed, failed, deviceName: session.deviceName, reconnected: session.reconnected };
   } finally {
     closePrinter(session);
   }
-  onProgress?.(done, total);
-  return { printed, failed, deviceName: session.deviceName, reconnected: session.reconnected };
 }
 
 /** One-shot convenience: connect, print a single label, disconnect. */

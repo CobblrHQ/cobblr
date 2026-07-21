@@ -15,7 +15,8 @@ import { Search } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { NotificationsBell } from "./NotificationsBell";
-import { DriveBanner } from "./DriveBanner";
+import { DriveProvider } from "./DriveContext";
+import { LiveBox } from "./LiveBox";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import { ModuleNav } from "./ModuleNav";
 import { SidebarNav } from "./SidebarNav";
@@ -289,6 +290,9 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           queue is empty. The floating pill is suppressed in full-sidebar
           (App.tsx). */}
       {labelsEnabled && <LabelsBasket asRow orgSlug={activeSlug} getToken={getToken} />}
+      {/* Live box — ongoing session modes (auto-print, …), tucked at the foot.
+          Self-hides when the workspace has no applicable live capability. */}
+      <LiveBox mode="sidebar" slug={activeSlug} />
       <ChatWidget open={chatOpen} setOpen={setChatOpen} asRow />
       {/* Configuration lives HERE, not behind the account flyout — the flyout
           detour (open menu → Configuration → back into the sidebar) was the
@@ -336,6 +340,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
     // shrink-0 on flex children. If something does push wider than
     // viewport, that's a layout bug to fix locally rather than mask
     // here.
+    <DriveProvider>
     <div className="min-h-screen grid grid-rows-[auto_1fr] grid-cols-1">
       {fontFace && <style dangerouslySetInnerHTML={{ __html: fontFace }} />}
       {/* Header + the email-verify nudge share the grid's auto row, so the
@@ -544,10 +549,13 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
       <CommandPalette />
       {/* Stale-tab nudge: deploys are frequent; open tabs must find out. */}
       <NewVersionNudge />
-      {/* Feature 3: the drive prompt + green/red indicator (renders only when a
-          drive grant is set and a session is live). */}
-      <DriveBanner />
+      {/* Feature 3 folds into the Live box now: the drive prompt + indicator are
+          rendered by LiveBox; DriveProvider (wrapping the shell) is the headless
+          SSE transport + presence overlay. Floating mount for non-full-sidebar
+          layouts (mobile / top-bar); full-sidebar uses the sidebar-foot mount. */}
+      {!fullSide && activeSlug && <LiveBox mode="floating" slug={activeSlug} />}
     </div>
+    </DriveProvider>
   );
 }
 

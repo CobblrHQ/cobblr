@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "labels",
-  version: "0.6.0",
+  version: "0.8.2",
   displayName: "Labels",
   description:
     "QR codes, label templates, per-user print queue, scan-to-navigate/scan-to-action tokens. Polymorphic — any module's entity can have a label.",
@@ -48,6 +48,23 @@ export default defineModule({
       "labels.qr.scan.action_invoked",
     ],
     api: ["queue", "listQueue", "clearQueue", "printBatch"],
+    // ──────────── Live box — the accumulate-then-print policy ─────────────
+    // Applicable only when the workspace has a printer connected; a per-user
+    // switch (the auto-flush policy) with a "configure" deep-link. See
+    // docs/design-decisions/live-controls.md.
+    live: [
+      {
+        id: "labels.auto-print",
+        label: "Labels print automatically",
+        icon: "printer",
+        requires: "printer.connected",
+        scope: "user",
+        control: "switch-detail",
+        endpoint: "/modules/labels/autoflush",
+        detail: "/labels",
+        order: 20,
+      },
+    ],
     // ──────────────── Pillar B — labels' actions ──────────────────
     actions: [
       {

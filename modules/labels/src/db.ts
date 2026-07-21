@@ -74,6 +74,38 @@ export interface LabelsCodesTable {
   created_at: Generated<Date>;
 }
 
+/** A workspace-defined label size (migration 0005). Stores DIMENSIONS only, in
+ *  inches; the col x row grid is derived (deriveGrid), never stored. */
+export interface LabelsCustomSizesTable {
+  id: Generated<string>;
+  name: string;
+  media_w: string; // numeric comes back from pg as a string
+  media_h: string;
+  label_w: string;
+  label_h: string;
+  margin_t: Generated<string>;
+  margin_l: Generated<string>;
+  col_gap: Generated<string>;
+  row_gap: Generated<string>;
+  created_by_user_id: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+/** Per-user accumulate-then-print policy (migration 0006). One row per user; the
+ *  queue-insert handler evaluates flush-policy.ts against it. */
+export interface LabelsAutoflushTable {
+  user_id: string;
+  enabled: Generated<boolean>;
+  printer_id: string | null;
+  size_key: string | null;
+  fire_mode: Generated<string>;
+  fire_count: Generated<number>;
+  last_fired_at: Date | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
 export interface LabelsDB {
   labels_templates: LabelsTemplatesTable;
   labels_queue: LabelsQueueTable;
@@ -82,6 +114,8 @@ export interface LabelsDB {
   labels_code_config: LabelsCodeConfigTable;
   labels_code_prefixes: LabelsCodePrefixesTable;
   labels_codes: LabelsCodesTable;
+  labels_custom_sizes: LabelsCustomSizesTable;
+  labels_autoflush: LabelsAutoflushTable;
 }
 
 export type OrgRole = "owner" | "admin" | "member" | "guest";

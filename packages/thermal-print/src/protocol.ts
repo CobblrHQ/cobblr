@@ -40,6 +40,25 @@ export function mmToDots(mm: number, dpi: number = PHOMEMO_DPI): number {
   return Math.round((mm / 25.4) * dpi);
 }
 
+/** Inverse of mmToDots: raster dots back to millimetres. Used to reconstruct a
+ *  media width from a pre-D3 printer that stored only `widthDots`. dots→mm→dots is
+ *  an exact identity for integer dots (the 25.4 and dpi cancel), so a synthesized
+ *  media reprojects to the same widthDots — keep the result UNrounded to preserve
+ *  that (round only for display). */
+export function dotsToMm(dots: number, dpi: number = PHOMEMO_DPI): number {
+  return (dots / dpi) * 25.4;
+}
+
+/** Millimetres to inches, for the DISPLAY affordance on the mm-native settings UI
+ *  (label media is often spec'd in inches: 1.5", 2", 4x6"). Geometry stays mm
+ *  internally (spec section 7); this is presentation only. */
+export function mmToInch(mm: number): number {
+  return mm / 25.4;
+}
+export function inchToMm(inch: number): number {
+  return inch * 25.4;
+}
+
 export interface PhomemoOptions {
   /** Print speed 1..5. */
   speed?: number;

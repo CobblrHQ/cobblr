@@ -5,18 +5,38 @@
 // aspect ratio. `@page size` is set to the paper so the browser
 // prints 1:1 with no scaling.
 
-import type { Printable } from "./api";
+import type { CustomLabelSize, Printable } from "./api";
 import {
   cellLayout,
+  customSizeToLayout,
   findLabelSize,
   findPaper,
   perSheet,
   type LabelSize,
+  type PaperSize,
 } from "../label-sizes";
 
 interface RenderOpts {
   /** Render only the first sheet (used for the on-screen preview). */
   previewOnly?: boolean;
+  /** Workspace-defined sizes, so a `custom:<id>` key resolves to its dimensions.
+   *  Omitted for the built-in presets (and for the milestone golden). */
+  customSizes?: CustomLabelSize[];
+}
+
+/** A size key to its (LabelSize, PaperSize), built-in or `custom:<id>`. */
+function resolveSize(
+  sizeKey: string,
+  customSizes: CustomLabelSize[] | undefined,
+): { size: LabelSize; paper: PaperSize } | undefined {
+  if (sizeKey.startsWith("custom:")) {
+    const id = sizeKey.slice("custom:".length);
+    const row = customSizes?.find((c) => c.id === id);
+    return row ? customSizeToLayout(row) : undefined;
+  }
+  const size = findLabelSize(sizeKey);
+  const paper = size ? findPaper(size.paper) : undefined;
+  return size && paper ? { size, paper } : undefined;
 }
 
 /** Center-code badge shape, by code length. A 1-2 char code (`c1`) reads as a
@@ -32,12 +52,12 @@ export function renderPrintSheetHtml(
   sizeKey: string,
   opts: RenderOpts = {},
 ): string {
-  const size = findLabelSize(sizeKey);
-  const paper = size ? findPaper(size.paper) : undefined;
-  if (!size || !paper) {
+  const resolved = resolveSize(sizeKey, opts.customSizes);
+  if (!resolved) {
     return `<!doctype html><meta charset="utf-8"><body style="font:14px sans-serif;padding:2rem">
       Unknown label size "<b>${escapeHtml(sizeKey)}</b>".</body>`;
   }
+  const { size, paper } = resolved;
 
   const cap = perSheet(size);
   const pageItems = opts.previewOnly ? items.slice(0, cap) : items;

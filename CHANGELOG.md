@@ -2,6 +2,22 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-07-21
+
+### Features
+- Auto-print now works with a Bluetooth label printer: pick it under Auto-print and each scan (or every N labels) prints itself from your open Labels tab.
+- Auto-print labels as they are added: turn on Auto-print on the Labels page, pick a network printer and a size, and choose to print when a sheet fills up, every N labels, or each one immediately. Cobblr renders and sends the job in the background, records a re-printable batch, and a short cooldown stops a burst of scans from firing a print per scan. Off by default.
+- The workspace sidebar now has a Live box: a small, self-hiding home for ongoing session modes. When you have a printer connected, it shows an auto-print toggle right in the sidebar foot, so you can flip label auto-printing on or off at a glance instead of digging through settings.
+- The "Claude is driving this screen" indicator and the "use this window?" prompt now live inside the Live box instead of a separate floating banner, so there is one thing in the corner instead of two. The Live box also shows up on mobile and in top-bar layouts now, not just the full sidebar.
+- When a bridge scanner is connected, the Live box now carries a "Scans drive this screen" toggle with an Open/Print choice, so you can make any window follow scans from another device without going to the Scan page first.
+- The Scan page has a new Print mode: scan an item's QR label and its label goes straight to the print buffer instead of opening the item, so you can reprint a run of labels as you walk the shelves.
+
+### Improvements
+- Set up a Bluetooth label printer by the media you loaded: enter the roll width in millimetres and choose the feed type, and Cobblr derives the print width and shows it in inches too. Printers you configured earlier keep working and show their width converted to millimetres when you edit them.
+- The label size picker now lets you create your own size. Pick "New label size", type the media sheet and the label measurements, and a live preview shows how many fit before you save. Your sizes appear in the picker next to the built-in ones, and printing uses them like any other. So a 1.5 by 3 inch sheet holding two 1.5 inch squares is a few numbers, not something we have to add in advance.
+- You can now define your own label sizes instead of picking only from the built-in list. Give a workspace a media sheet and a label measurement and Cobblr works out how many fit, so a 1.5 by 3 inch sheet holding two 1.5 inch squares just works. This ships the data and the print path; the setup screen for creating one lands next.
+- Groundwork for defining a label size by its dimensions instead of picking from a fixed list. Cobblr can now work out how many labels fit on a sheet from the media and label measurements, which is the first step toward setting up your own sizes (for example two 1.5 inch squares on a 1.5 by 3 inch sheet). No visible change yet; the built-in sizes are unchanged.
+
 ## 2026-07-20
 
 ### Features

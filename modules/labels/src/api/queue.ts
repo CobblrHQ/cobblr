@@ -7,6 +7,8 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { evaluateAutoflush } from "./autoflush.js";
+import { qrBaseFor } from "./print.js";
 
 export const queueRouter = Router({ mergeParams: true });
 
@@ -74,7 +76,17 @@ queueRouter.post(
       entity_id: parsed.data.entity_id,
     });
 
-    res.status(201).json(inserted);
+    // Auto-flush: a non-manual policy may render the due labels and dispatch them
+    // now. Best-effort — a failure here must never fail the add (the row IS
+    // inserted); the fire result rides along so the client can say "printed".
+    let autoflush = null;
+    try {
+      autoflush = await evaluateAutoflush(db, ctx.org.id, session.id, await qrBaseFor(req));
+    } catch (e) {
+      console.error("[labels] auto-flush error:", (e as Error).message);
+    }
+
+    res.status(201).json(autoflush ? { ...inserted, autoflush } : inserted);
   }),
 );
 

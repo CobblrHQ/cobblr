@@ -4,6 +4,7 @@
 
 import { getImpersonationToken } from "./impersonation";
 import type { ResolveOutcome as RegistryResolveOutcome } from "@cobblr/platform-contract/resolvables";
+import type { LiveControlPublic } from "@cobblr/platform-contract";
 
 const TOKEN_KEY = "cobblr.token";
 
@@ -1414,19 +1415,42 @@ export const api = {
       `/orgs/${slug}/drive/status`,
     ),
 
+  // ─── Live box (docs/design-decisions/live-controls.md) ────────────
+  // The applicable live controls for this workspace: every enabled module's
+  // exposes.live whose required capability is satisfied. Empty → the box hides.
+  getLive: (slug: string) =>
+    request<{ controls: LiveControlPublic[] }>("GET", `/orgs/${slug}/live`),
+  // Read / write a server-scoped live control's state through its declared
+  // org-relative endpoint (e.g. "/modules/labels/autoflush").
+  liveState: (slug: string, endpoint: string) =>
+    request<Record<string, unknown>>("GET", `/orgs/${slug}${endpoint}`),
+  liveSet: (slug: string, endpoint: string, body: Record<string, unknown>) =>
+    request<Record<string, unknown>>("PUT", `/orgs/${slug}${endpoint}`, body),
+
   // ─── scan-drives-screen (Phase 1) ─────────────────────────────────
   // A scan is a driver: a Cobblr QR navigates the designated tab to that
   // entity; a product barcode intakes it + surfaces the Scan inbox; nothing
   // designated → it lands in triage (driven:false). See
   // docs/design-decisions/scan-drives-screen.md.
-  scanDrive: (slug: string, code: string, scan_batch_id?: string) =>
+  scanDrive: (
+    slug: string,
+    code: string,
+    scan_batch_id?: string,
+    disposition?: "navigate" | "print",
+  ) =>
     request<{
       driven: boolean;
       kind: "qr" | "barcode";
-      action?: "navigate";
+      action?: "navigate" | "print";
       path?: string;
       item_id?: string;
-    }>("POST", `/orgs/${slug}/scan-drive`, { code, ...(scan_batch_id ? { scan_batch_id } : {}) }),
+      /** For action:"print" — the label was queued (auto-flush policy, if any, ran). */
+      queued?: boolean;
+    }>("POST", `/orgs/${slug}/scan-drive`, {
+      code,
+      ...(scan_batch_id ? { scan_batch_id } : {}),
+      ...(disposition ? { disposition } : {}),
+    }),
 
   // ─── core-files ───────────────────────────────────────────────────
   listFiles: (slug: string, kind?: string) =>

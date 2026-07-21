@@ -47,6 +47,7 @@ import { customRolesRouter } from "./routes/custom-roles.js";
 import { driveRouter } from "./routes/drive.js";
 import { resolveRouter } from "./routes/resolve.js";
 import { scanDriveRouter } from "./routes/scan-drive.js";
+import { liveRouter } from "./routes/live.js";
 import { instancesRouter, overridesRouter } from "./routes/instances.js";
 import { navHeadingsRouter } from "./routes/nav-headings.js";
 import { requireAuth } from "./auth/middleware.js";
@@ -219,6 +220,8 @@ export function createApp(): AppHandles {
   v1.use("/orgs", resolveRouter);
   // A scan drives the user's designated tab (scan-drives-screen, Phase 1).
   v1.use("/orgs", scanDriveRouter);
+  // The Live box's applicable session controls for this workspace.
+  v1.use("/orgs", liveRouter);
   // Super-admin (platform operator) surface — cross-workspace
   // dashboards. Gated by SUPERADMIN_EMAILS env var.
   v1.use("/super-admin", superAdminRouter);

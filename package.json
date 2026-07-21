@@ -24,6 +24,7 @@
     "lint:field-role-enum": "tsx scripts/lint-field-role-enum.ts",
     "lint:node-resolves": "tsx scripts/lint-node-resolves.ts",
     "lint:ci-paths-mirror": "tsx scripts/lint-ci-paths-mirror.ts",
+    "lint:deploy-poke-nonfatal": "tsx scripts/lint-deploy-poke-nonfatal.ts",
     "lint:part-filter-cols": "tsx scripts/lint-part-filter-cols.ts",
     "lint:print-driver-options": "tsx scripts/lint-print-driver-options.ts",
     "lint:selfhost-mounts": "tsx scripts/lint-selfhost-mounts.ts",

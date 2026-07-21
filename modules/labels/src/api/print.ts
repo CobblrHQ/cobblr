@@ -9,8 +9,8 @@ import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { qrSvg } from "./qr.js";
 import { liveQrUrl } from "../live-qr-url.js";
-import { renderLabelsPdf, type PrintItem } from "../print/pdf.js";
 import { SIZES } from "../print/layout.js";
+import { renderRowsToPdf } from "../print/render-queue.js";
 import { assignCodes, freezePrintedGroups, getOverlayCenter } from "../services/codes.js";
 
 export const printRouter = Router({ mergeParams: true });
@@ -30,7 +30,7 @@ printRouter.use((req, res, next) => {
 // scan-drive uses). Lets us rebuild each queued label's URL against the CURRENT
 // base at print time, so what prints matches the live preview. Null on any
 // failure → labels keep their stored URL.
-async function qrBaseFor(req: Request): Promise<string | null> {
+export async function qrBaseFor(req: Request): Promise<string | null> {
   try {
     const slug = req.params.slug;
     if (!slug) return null;
@@ -61,7 +61,8 @@ printRouter.get(
 );
 
 const RenderBody = z.object({
-  size_key: z.string().min(1).max(40).default("roll-2x2"),
+  // 80 chars: a workspace size is `custom:<uuid>` (43), longer than any preset key.
+  size_key: z.string().min(1).max(80).default("roll-2x2"),
   item_ids: z.array(z.string().uuid()).optional(),
 });
 
@@ -74,7 +75,11 @@ printRouter.post(
 
     const db = tenantDb(req);
     const session = sessionUser(req);
-    let q = db.selectFrom("labels_queue").selectAll().where("user_id", "=", session.id);
+    const { org } = tenantContext(req);
+    let q = db
+      .selectFrom("labels_queue")
+      .select(["id", "module_name", "entity_type", "entity_id", "qr_payload", "description", "qty"])
+      .where("user_id", "=", session.id);
     if (item_ids && item_ids.length) q = q.where("id", "in", item_ids);
     const rows = await q.orderBy("created_at").execute();
     if (rows.length === 0) {
@@ -82,31 +87,10 @@ printRouter.post(
       return;
     }
 
-    // Queue row → renderer item, expanded by qty. description is the label
-    // text; qr_payload is the URL the QR encodes.
-    const base = await qrBaseFor(req);
-    // Get-or-assign a human-readable code (m1, p42, b7) per entity — the same
-    // code is reused across a queue row's qty copies and across reprints.
-    const ctx = tenantContext(req);
-    const printRefs = rows.map((r) => ({ kind: `${r.module_name}:${r.entity_type}`, id: r.entity_id }));
-    const codes = await assignCodes(ctx.org.id, db, printRefs);
-    // This renders a printable PDF the user is about to put on paper, so it
-    // counts as printing: lock these prefixes.
-    await freezePrintedGroups(db, printRefs);
-    // Per-kind: some kinds opt out of the QR-center code (default on).
-    const overlay = await getOverlayCenter(db, rows.map((r) => `${r.module_name}:${r.entity_type}`));
-    const items: PrintItem[] = [];
-    rows.forEach((r, i) => {
-      const overlayOn = overlay.get(`${r.module_name}:${r.entity_type}`) ?? true;
-      const centerCode = overlayOn ? codes.get(r.entity_id) : undefined;
-      for (let n = 0; n < (r.qty ?? 1); n++) {
-        items.push({ kind: r.entity_type, id: i + 1, title: r.description, url: liveQrUrl(r.qr_payload, base), centerCode });
-      }
-    });
-
     try {
-      const { pdf, sheets, warnings } = await renderLabelsPdf({ size_key, items });
-      res.json({ pdf_base64: pdf.toString("base64"), sheets, labels: items.length, warnings });
+      const base = await qrBaseFor(req);
+      const { pdf, sheets, warnings, labels } = await renderRowsToPdf(db, org.id, base, rows as never, size_key);
+      res.json({ pdf_base64: pdf.toString("base64"), sheets, labels, warnings });
     } catch (e) {
       res.status(400).json({ error: { code: "render_failed", message: (e as Error).message } });
     }

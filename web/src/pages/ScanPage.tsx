@@ -38,6 +38,7 @@ import {
   ScanLine,
   Search,
   Sparkles,
+  Tag,
   Trash2,
   Upload,
   Wand2,
@@ -102,6 +103,10 @@ interface ScanDrive {
   active: boolean;
   /** Toggle this tab as the driven screen (non-destructive to a Claude grant). */
   toggle: () => void;
+  /** What a scan does this session: `navigate` drives the screen; `print` drops a
+   *  label for the scanned entity into the print buffer (D7). */
+  mode: "navigate" | "print";
+  setMode: (m: "navigate" | "print") => void;
   /** Route a scanned code through /scan-drive (navigate the driven tab / intake). */
   scan: (code: string) => void;
 }
@@ -273,14 +278,26 @@ function useScanDrive(slug: string | undefined, batchId: string | undefined): Sc
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [on, setOn] = useState(false);
+  const [mode, setModeState] = useState<"navigate" | "print">("navigate");
   const weRaisedGrant = useRef(false);
   const bid = useRef(tabBrowserId());
 
-  // Remember the opt-in per workspace so a refresh keeps this as the scan screen.
+  // Remember the opt-in + session mode per workspace so a refresh keeps this as
+  // the scan screen in the mode you left it.
   useEffect(() => {
     if (!slug) return;
     setOn(localStorage.getItem(`cobblr.scanDrive.${slug}`) === "1");
+    setModeState(localStorage.getItem(`cobblr.scanDriveMode.${slug}`) === "print" ? "print" : "navigate");
   }, [slug]);
+
+  const setMode = useCallback(
+    (m: "navigate" | "print") => {
+      if (!slug) return;
+      setModeState(m);
+      localStorage.setItem(`cobblr.scanDriveMode.${slug}`, m);
+    },
+    [slug],
+  );
 
   // Is the hub pointing at THIS tab? Poll status while opted in.
   const statusQ = useQuery({
@@ -348,10 +365,16 @@ function useScanDrive(slug: string | undefined, batchId: string | undefined): Sc
           api.createScanBatch(slug!).then((b) => b.id).catch(() => null),
         )) ??
         undefined;
-      return api.scanDrive(slug!, code, sessionBatch);
+      return api.scanDrive(slug!, code, sessionBatch, mode);
     },
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
+      // Print mode: the scanned entity's label went to the buffer (+ any
+      // auto-flush policy). No navigation.
+      if (r.action === "print") {
+        toast.success(r.queued ? "Label queued to print" : "Scanned");
+        return;
+      }
       // The driven tab is navigated server-push via the DriveBanner stream. If
       // nothing is driven (single-device, no opt-in), do the friendly thing
       // locally so a QR scan on this very tab still opens the entity.
@@ -362,7 +385,7 @@ function useScanDrive(slug: string | undefined, batchId: string | undefined): Sc
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
-  return { on, active, toggle, scan: (code) => scanMut.mutate(code) };
+  return { on, active, toggle, mode, setMode, scan: (code) => scanMut.mutate(code) };
 }
 
 /** Second-screen opt-in: make THIS tab follow scans from another device (scan a
@@ -386,21 +409,53 @@ function ScanDrivePanel({ drive }: { drive: ScanDrive }) {
       </button>
     );
   }
+  const printing = drive.mode === "print";
   return (
     <div className="inline-flex items-center gap-2 rounded-md border border-cobble-400 dark:border-cobble-600 bg-cobble-50 dark:bg-cobble-900/30 px-2.5 py-1 text-xs">
-      <MonitorSmartphone size={14} className="text-accent shrink-0" />
+      {printing ? (
+        <Tag size={14} className="text-accent shrink-0" />
+      ) : (
+        <MonitorSmartphone size={14} className="text-accent shrink-0" />
+      )}
       <span className="text-content dark:text-mortar-100">
-        {active ? "This screen follows your scans" : "Connecting this screen…"}
+        {printing
+          ? "Scans print a label"
+          : active
+            ? "This screen follows your scans"
+            : "Connecting this screen…"}
       </span>
-      <span
-        className={
-          "shrink-0 rounded-full px-1.5 py-0.5 " +
-          (active
-            ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300"
-            : "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300")
-        }
-      >
-        {active ? "live" : "…"}
+      {/* Only navigate mode claims/connects a driven tab, so the live pill is
+          navigate-only; print just queues server-side. */}
+      {!printing && (
+        <span
+          className={
+            "shrink-0 rounded-full px-1.5 py-0.5 " +
+            (active
+              ? "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300"
+              : "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300")
+          }
+        >
+          {active ? "live" : "…"}
+        </span>
+      )}
+      {/* Session mode: what a scan does (D7). */}
+      <span className="inline-flex shrink-0 overflow-hidden rounded border border-cobble-300 dark:border-cobble-700">
+        {(["navigate", "print"] as const).map((m) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => drive.setMode(m)}
+            aria-pressed={drive.mode === m}
+            className={
+              "px-1.5 py-0.5 transition " +
+              (drive.mode === m
+                ? "bg-accent text-white"
+                : "text-muted hover:text-content dark:text-slate-400 dark:hover:text-mortar-100")
+            }
+          >
+            {m === "navigate" ? "Open" : "Print"}
+          </button>
+        ))}
       </span>
       <button
         type="button"

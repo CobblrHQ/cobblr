@@ -32,6 +32,7 @@ import { registerBuiltinResolvables } from "./platform/resolvable-providers.js";
 import { registerResolvable, resolveValue } from "./platform/resolvables.js";
 import * as activity from "./platform/activity.js";
 import * as actions from "./platform/actions.js";
+import * as live from "./platform/live.js";
 import * as devices from "./platform/devices.js";
 import * as entities from "./platform/entities.js";
 import * as files from "./platform/files.js";
@@ -171,6 +172,10 @@ async function boot() {
       registerHandler: actions.registerHandler,
       listApplicable: actions.listApplicable,
       invoke: actions.invoke,
+    },
+    live: {
+      registerCapability: live.registerCapability,
+      applicable: live.applicable,
     },
     devices: {
       registerDriverProvider: devices.registerDriverProvider,

@@ -18,7 +18,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-print",
-  version: "0.1.0",
+  version: "0.1.1",
   displayName: "Printing",
   description:
     "Send documents to a print manager (CUPS/IPP). Configure a printer once, then any module or user can print to it. Direct on your LAN, or, on a hosted Cobblr, through an on-site edge bridge.",
@@ -32,6 +32,18 @@ export default defineModule({
   },
 
   api: () => import("./api/index.js"),
+
+  // Register the background dispatch worker once at boot: a core-queue worker that
+  // prints an enqueued document to a printer with retry/backoff — the server-side
+  // firing path for label auto-flush (D8). Same dynamic-import shape as `api`.
+  lifecycle: {
+    onBoot: async () => {
+      const { registerDispatchWorker } = await import("./dispatch-worker.js");
+      registerDispatchWorker();
+      const { registerLiveCapabilities } = await import("./live.js");
+      registerLiveCapabilities();
+    },
+  },
 
   intents: [],
   dependencies: [],

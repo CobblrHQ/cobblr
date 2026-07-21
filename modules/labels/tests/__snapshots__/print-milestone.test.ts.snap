@@ -1,0 +1,601 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`renderPrintSheetHtml (golden — current output is the floor) > renders avery-5160 identically to the locked golden 1`] = `
+"<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Cobblr labels — Avery 5160 — 1 × 2⅝&quot; address · 30 up</title>
+<style>
+  @page { size: 8.5in 11in; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: Inter, system-ui, -apple-system, sans-serif;
+    color: #1f2530;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .sheet {
+    position: relative;
+    width: 8.5in;
+    height: 11in;
+    page-break-after: always;
+    overflow: hidden;
+  }
+  .sheet:last-child { page-break-after: auto; }
+  .label {
+    position: absolute;
+    border: 1px dashed #c8ccd2;
+    padding: 0.07in;
+    overflow: hidden;
+  }
+  .label .qr { flex-shrink: 0; position: relative; }
+  .label .qr svg { display: block; width: 100%; height: 100%; }
+  /* Human-readable code overlaid in the QR center; the QR is EC=H so the
+     covered center still decodes. Short codes (1-2 chars) get a solid circle,
+     longer ones a stadium pill — matching the PDF path (print/qr-overlay.ts).
+     A single squished oval for a 2-char code was the bug this replaces. */
+  .label .code {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    background: #fff; color: #111; font-weight: 800; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    font-family: Inter, system-ui, -apple-system, sans-serif;
+  }
+  /* Circle for 1-2 chars: an equal-sided box, sized in em so it tracks codePt. */
+  .label .code.code-circle {
+    width: 1.7em; height: 1.7em; border-radius: 50%;
+  }
+  /* Pill for 3+ chars: fixed height, min-width so 3 chars already read as a
+     stadium, horizontal padding, fully-rounded ends. */
+  .label .code.code-pill {
+    height: 1.5em; min-width: 2.6em; padding: 0 0.35em;
+    border-radius: 999px; white-space: nowrap;
+  }
+  .label .desc {
+    font-size: 8pt;
+    font-weight: 600;
+    line-height: 1.15;
+    word-break: break-word;
+    overflow: hidden;
+  }
+  /* row — QR left, text right */
+  .label.row { display: flex; align-items: center; gap: 0.08in; }
+  .label.row .qr { height: 100%; aspect-ratio: 1; order: -1; }
+  .label.row .desc { flex: 1; }
+  /* portrait — text on top, QR pinned below, centered */
+  .label.portrait { display: flex; flex-direction: column; gap: 0.05in; }
+  .label.portrait .desc { text-align: center; }
+  .label.portrait .qr { margin: auto auto 0; width: 86%; aspect-ratio: 1; }
+  /* square — short title on top, QR fills the rest */
+  .label.square { display: flex; flex-direction: column; gap: 0.04in; }
+  .label.square .desc { text-align: center; flex-shrink: 0; }
+  .label.square .qr { flex: 1; min-height: 0; aspect-ratio: 1; margin: 0 auto; }
+  @media print {
+    .label { border: 1px solid #d4d8de; }
+  }
+</style>
+</head>
+<body>
+  <div class="sheet">
+    <div class="label row" style="left:0.1875in;top:0.5in;width:2.625in;height:1in">
+      <div class="desc">Widget A</div>
+      <div class="qr"><svg data-qr="1"></svg><span class="code code-circle" style="font-size:9.3pt">m1</span></div>
+    </div>
+    <div class="label row" style="left:2.9375in;top:0.5in;width:2.625in;height:1in">
+      <div class="desc">Gadget with a longer name</div>
+      <div class="qr"><svg data-qr="1"></svg><span class="code code-pill" style="font-size:9.3pt">p42</span></div>
+    </div>
+    <div class="label row" style="left:5.6875in;top:0.5in;width:2.625in;height:1in">
+      <div class="desc">No code</div>
+      <div class="qr"><svg data-qr="1"></svg></div>
+    </div>
+    <div class="label row" style="left:0.1875in;top:1.5in;width:2.625in;height:1in">
+      <div class="desc">Short</div>
+      <div class="qr"><svg data-qr="1"></svg><span class="code code-circle" style="font-size:9.3pt">z</span></div>
+    </div>
+  </div>
+</body>
+</html>"
+`;
+
+exports[`renderPrintSheetHtml (golden — current output is the floor) > renders avery-22805 identically to the locked golden 1`] = `
+"<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Cobblr labels — Avery 22805 — 1½ × 1½&quot; square · 24 up</title>
+<style>
+  @page { size: 8.5in 11in; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: Inter, system-ui, -apple-system, sans-serif;
+    color: #1f2530;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .sheet {
+    position: relative;
+    width: 8.5in;
+    height: 11in;
+    page-break-after: always;
+    overflow: hidden;
+  }
+  .sheet:last-child { page-break-after: auto; }
+  .label {
+    position: absolute;
+    border: 1px dashed #c8ccd2;
+    padding: 0.07in;
+    overflow: hidden;
+  }
+  .label .qr { flex-shrink: 0; position: relative; }
+  .label .qr svg { display: block; width: 100%; height: 100%; }
+  /* Human-readable code overlaid in the QR center; the QR is EC=H so the
+     covered center still decodes. Short codes (1-2 chars) get a solid circle,
+     longer ones a stadium pill — matching the PDF path (print/qr-overlay.ts).
+     A single squished oval for a 2-char code was the bug this replaces. */
+  .label .code {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    background: #fff; color: #111; font-weight: 800; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    font-family: Inter, system-ui, -apple-system, sans-serif;
+  }
+  /* Circle for 1-2 chars: an equal-sided box, sized in em so it tracks codePt. */
+  .label .code.code-circle {
+    width: 1.7em; height: 1.7em; border-radius: 50%;
+  }
+  /* Pill for 3+ chars: fixed height, min-width so 3 chars already read as a
+     stadium, horizontal padding, fully-rounded ends. */
+  .label .code.code-pill {
+    height: 1.5em; min-width: 2.6em; padding: 0 0.35em;
+    border-radius: 999px; white-space: nowrap;
+  }
+  .label .desc {
+    font-size: 9pt;
+    font-weight: 600;
+    line-height: 1.15;
+    word-break: break-word;
+    overflow: hidden;
+  }
+  /* row — QR left, text right */
+  .label.row { display: flex; align-items: center; gap: 0.08in; }
+  .label.row .qr { height: 100%; aspect-ratio: 1; order: -1; }
+  .label.row .desc { flex: 1; }
+  /* portrait — text on top, QR pinned below, centered */
+  .label.portrait { display: flex; flex-direction: column; gap: 0.05in; }
+  .label.portrait .desc { text-align: center; }
+  .label.portrait .qr { margin: auto auto 0; width: 86%; aspect-ratio: 1; }
+  /* square — short title on top, QR fills the rest */
+  .label.square { display: flex; flex-direction: column; gap: 0.04in; }
+  .label.square .desc { text-align: center; flex-shrink: 0; }
+  .label.square .qr { flex: 1; min-height: 0; aspect-ratio: 1; margin: 0 auto; }
+  @media print {
+    .label { border: 1px solid #d4d8de; }
+  }
+</style>
+</head>
+<body>
+  <div class="sheet">
+    <div class="label square" style="left:0.7799in;top:0.5in;width:1.5in;height:1.5in">
+      <div class="desc">Widget A</div>
+      <div class="qr"><svg data-qr="1"></svg><span class="code code-circle" style="font-size:11.3pt">m1</span></div>
+    </div>
+    <div class="label square" style="left:2.5930999999999997in;top:0.5in;width:1.5in;height:1.5in">
+      <div class="desc">Gadget with a longer name</div>
+      <div class="qr"><svg data-qr="1"></svg><span class="code code-pill" style="font-size:11.3pt">p42</span></div>
+    </div>
+    <div class="label square" style="left:4.4063in;top:0.5in;width:1.5in;height:1.5in">
+      <div class="desc">No code</div>
+      <div class="qr"><svg data-qr="1"></svg></div>
+    </div>
+    <div class="label square" style="left:6.2195in;top:0.5in;width:1.5in;height:1.5in">
+      <div class="desc">Short</div>
+      <div class="qr"><svg data-qr="1"></svg><span class="code code-circle" style="font-size:11.3pt">z</span></div>
+    </div>
+  </div>
+</body>
+</html>"
+`;
+
+exports[`renderPrintSheetHtml (golden — current output is the floor) > renders letter-2x2 identically to the locked golden 1`] = `
+"<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Cobblr labels — 2 × 2&quot; square — 20 up</title>
+<style>
+  @page { size: 8.5in 11in; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: Inter, system-ui, -apple-system, sans-serif;
+    color: #1f2530;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .sheet {
+    position: relative;
+    width: 8.5in;
+    height: 11in;
+    page-break-after: always;
+    overflow: hidden;
+  }
+  .sheet:last-child { page-break-after: auto; }
+  .label {
+    position: absolute;
+    border: 1px dashed #c8ccd2;
+    padding: 0.07in;
+    overflow: hidden;
+  }
+  .label .qr { flex-shrink: 0; position: relative; }
+  .label .qr svg { display: block; width: 100%; height: 100%; }
+  /* Human-readable code overlaid in the QR center; the QR is EC=H so the
+     covered center still decodes. Short codes (1-2 chars) get a solid circle,
+     longer ones a stadium pill — matching the PDF path (print/qr-overlay.ts).
+     A single squished oval for a 2-char code was the bug this replaces. */
+  .label .code {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    background: #fff; color: #111; font-weight: 800; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    font-family: Inter, system-ui, -apple-system, sans-serif;
+  }
+  /* Circle for 1-2 chars: an equal-sided box, sized in em so it tracks codePt. */
+  .label .code.code-circle {
+    width: 1.7em; height: 1.7em; border-radius: 50%;
+  }
+  /* Pill for 3+ chars: fixed height, min-width so 3 chars already read as a
+     stadium, horizontal padding, fully-rounded ends. */
+  .label .code.code-pill {
+    height: 1.5em; min-width: 2.6em; padding: 0 0.35em;
+    border-radius: 999px; white-space: nowrap;
+  }
+  .label .desc {
+    font-size: 12pt;
+    font-weight: 600;
+    line-height: 1.15;
+    word-break: break-word;
+    overflow: hidden;
+  }
+  /* row — QR left, text right */
+  .label.row { display: flex; align-items: center; gap: 0.08in; }
+  .label.row .qr { height: 100%; aspect-ratio: 1; order: -1; }
+  .label.row .desc { flex: 1; }
+  /* portrait — text on top, QR pinned below, centered */
+  .label.portrait { display: flex; flex-direction: column; gap: 0.05in; }
+  .label.portrait .desc { text-align: center; }
+  .label.portrait .qr { margin: auto auto 0; width: 86%; aspect-ratio: 1; }
+  /* square — short title on top, QR fills the rest */
+  .label.square { display: flex; flex-direction: column; gap: 0.04in; }
+  .label.square .desc { text-align: center; flex-shrink: 0; }
+  .label.square .qr { flex: 1; min-height: 0; aspect-ratio: 1; margin: 0 auto; }
+  @media print {
+    .label { border: 1px solid #d4d8de; }
+  }
+</style>
+</head>
+<body>
+  <div class="sheet">
+    <div class="label square" style="left:0.25in;top:0.5in;width:2in;height:2in">
+      <div class="desc">Widget A</div>
+      <div class="qr"><svg data-qr="1"></svg><span class="code code-circle" style="font-size:15.1pt">m1</span></div>
+    </div>
+    <div class="label square" style="left:2.25in;top:0.5in;width:2in;height:2in">
+      <div class="desc">Gadget with a longer name</div>
+      <div class="qr"><svg data-qr="1"></svg><span class="code code-pill" style="font-size:15.1pt">p42</span></div>
+    </div>
+    <div class="label square" style="left:4.25in;top:0.5in;width:2in;height:2in">
+      <div class="desc">No code</div>
+      <div class="qr"><svg data-qr="1"></svg></div>
+    </div>
+    <div class="label square" style="left:6.25in;top:0.5in;width:2in;height:2in">
+      <div class="desc">Short</div>
+      <div class="qr"><svg data-qr="1"></svg><span class="code code-circle" style="font-size:15.1pt">z</span></div>
+    </div>
+  </div>
+</body>
+</html>"
+`;
+
+exports[`renderPrintSheetHtml (golden — current output is the floor) > renders roll-1.5x1.5 identically to the locked golden 1`] = `
+"<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Cobblr labels — 1½ × 1½&quot; square — 8 up</title>
+<style>
+  @page { size: 4in 6in; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: Inter, system-ui, -apple-system, sans-serif;
+    color: #1f2530;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .sheet {
+    position: relative;
+    width: 4in;
+    height: 6in;
+    page-break-after: always;
+    overflow: hidden;
+  }
+  .sheet:last-child { page-break-after: auto; }
+  .label {
+    position: absolute;
+    border: 1px dashed #c8ccd2;
+    padding: 0.07in;
+    overflow: hidden;
+  }
+  .label .qr { flex-shrink: 0; position: relative; }
+  .label .qr svg { display: block; width: 100%; height: 100%; }
+  /* Human-readable code overlaid in the QR center; the QR is EC=H so the
+     covered center still decodes. Short codes (1-2 chars) get a solid circle,
+     longer ones a stadium pill — matching the PDF path (print/qr-overlay.ts).
+     A single squished oval for a 2-char code was the bug this replaces. */
+  .label .code {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    background: #fff; color: #111; font-weight: 800; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    font-family: Inter, system-ui, -apple-system, sans-serif;
+  }
+  /* Circle for 1-2 chars: an equal-sided box, sized in em so it tracks codePt. */
+  .label .code.code-circle {
+    width: 1.7em; height: 1.7em; border-radius: 50%;
+  }
+  /* Pill for 3+ chars: fixed height, min-width so 3 chars already read as a
+     stadium, horizontal padding, fully-rounded ends. */
+  .label .code.code-pill {
+    height: 1.5em; min-width: 2.6em; padding: 0 0.35em;
+    border-radius: 999px; white-space: nowrap;
+  }
+  .label .desc {
+    font-size: 9pt;
+    font-weight: 600;
+    line-height: 1.15;
+    word-break: break-word;
+    overflow: hidden;
+  }
+  /* row — QR left, text right */
+  .label.row { display: flex; align-items: center; gap: 0.08in; }
+  .label.row .qr { height: 100%; aspect-ratio: 1; order: -1; }
+  .label.row .desc { flex: 1; }
+  /* portrait — text on top, QR pinned below, centered */
+  .label.portrait { display: flex; flex-direction: column; gap: 0.05in; }
+  .label.portrait .desc { text-align: center; }
+  .label.portrait .qr { margin: auto auto 0; width: 86%; aspect-ratio: 1; }
+  /* square — short title on top, QR fills the rest */
+  .label.square { display: flex; flex-direction: column; gap: 0.04in; }
+  .label.square .desc { text-align: center; flex-shrink: 0; }
+  .label.square .qr { flex: 1; min-height: 0; aspect-ratio: 1; margin: 0 auto; }
+  @media print {
+    .label { border: 1px solid #d4d8de; }
+  }
+</style>
+</head>
+<body>
+  <div class="sheet">
+    <div class="label square" style="left:0.5in;top:0in;width:1.5in;height:1.5in">
+      <div class="desc">Widget A</div>
+      <div class="qr"><svg data-qr="1"></svg><span class="code code-circle" style="font-size:11.3pt">m1</span></div>
+    </div>
+    <div class="label square" style="left:2in;top:0in;width:1.5in;height:1.5in">
+      <div class="desc">Gadget with a longer name</div>
+      <div class="qr"><svg data-qr="1"></svg><span class="code code-pill" style="font-size:11.3pt">p42</span></div>
+    </div>
+    <div class="label square" style="left:0.5in;top:1.5in;width:1.5in;height:1.5in">
+      <div class="desc">No code</div>
+      <div class="qr"><svg data-qr="1"></svg></div>
+    </div>
+    <div class="label square" style="left:2in;top:1.5in;width:1.5in;height:1.5in">
+      <div class="desc">Short</div>
+      <div class="qr"><svg data-qr="1"></svg><span class="code code-circle" style="font-size:11.3pt">z</span></div>
+    </div>
+  </div>
+</body>
+</html>"
+`;
+
+exports[`renderPrintSheetHtml (golden — current output is the floor) > renders roll-2x2 identically to the locked golden 1`] = `
+"<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Cobblr labels — 2 × 2&quot; square — 6 up</title>
+<style>
+  @page { size: 4in 6in; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: Inter, system-ui, -apple-system, sans-serif;
+    color: #1f2530;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .sheet {
+    position: relative;
+    width: 4in;
+    height: 6in;
+    page-break-after: always;
+    overflow: hidden;
+  }
+  .sheet:last-child { page-break-after: auto; }
+  .label {
+    position: absolute;
+    border: 1px dashed #c8ccd2;
+    padding: 0.07in;
+    overflow: hidden;
+  }
+  .label .qr { flex-shrink: 0; position: relative; }
+  .label .qr svg { display: block; width: 100%; height: 100%; }
+  /* Human-readable code overlaid in the QR center; the QR is EC=H so the
+     covered center still decodes. Short codes (1-2 chars) get a solid circle,
+     longer ones a stadium pill — matching the PDF path (print/qr-overlay.ts).
+     A single squished oval for a 2-char code was the bug this replaces. */
+  .label .code {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    background: #fff; color: #111; font-weight: 800; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    font-family: Inter, system-ui, -apple-system, sans-serif;
+  }
+  /* Circle for 1-2 chars: an equal-sided box, sized in em so it tracks codePt. */
+  .label .code.code-circle {
+    width: 1.7em; height: 1.7em; border-radius: 50%;
+  }
+  /* Pill for 3+ chars: fixed height, min-width so 3 chars already read as a
+     stadium, horizontal padding, fully-rounded ends. */
+  .label .code.code-pill {
+    height: 1.5em; min-width: 2.6em; padding: 0 0.35em;
+    border-radius: 999px; white-space: nowrap;
+  }
+  .label .desc {
+    font-size: 12pt;
+    font-weight: 600;
+    line-height: 1.15;
+    word-break: break-word;
+    overflow: hidden;
+  }
+  /* row — QR left, text right */
+  .label.row { display: flex; align-items: center; gap: 0.08in; }
+  .label.row .qr { height: 100%; aspect-ratio: 1; order: -1; }
+  .label.row .desc { flex: 1; }
+  /* portrait — text on top, QR pinned below, centered */
+  .label.portrait { display: flex; flex-direction: column; gap: 0.05in; }
+  .label.portrait .desc { text-align: center; }
+  .label.portrait .qr { margin: auto auto 0; width: 86%; aspect-ratio: 1; }
+  /* square — short title on top, QR fills the rest */
+  .label.square { display: flex; flex-direction: column; gap: 0.04in; }
+  .label.square .desc { text-align: center; flex-shrink: 0; }
+  .label.square .qr { flex: 1; min-height: 0; aspect-ratio: 1; margin: 0 auto; }
+  @media print {
+    .label { border: 1px solid #d4d8de; }
+  }
+</style>
+</head>
+<body>
+  <div class="sheet">
+    <div class="label square" style="left:0in;top:0in;width:2in;height:2in">
+      <div class="desc">Widget A</div>
+      <div class="qr"><svg data-qr="1"></svg><span class="code code-circle" style="font-size:15.1pt">m1</span></div>
+    </div>
+    <div class="label square" style="left:2in;top:0in;width:2in;height:2in">
+      <div class="desc">Gadget with a longer name</div>
+      <div class="qr"><svg data-qr="1"></svg><span class="code code-pill" style="font-size:15.1pt">p42</span></div>
+    </div>
+    <div class="label square" style="left:0in;top:2in;width:2in;height:2in">
+      <div class="desc">No code</div>
+      <div class="qr"><svg data-qr="1"></svg></div>
+    </div>
+    <div class="label square" style="left:2in;top:2in;width:2in;height:2in">
+      <div class="desc">Short</div>
+      <div class="qr"><svg data-qr="1"></svg><span class="code code-circle" style="font-size:15.1pt">z</span></div>
+    </div>
+  </div>
+</body>
+</html>"
+`;
+
+exports[`renderPrintSheetHtml (golden — current output is the floor) > renders roll-4x6 identically to the locked golden 1`] = `
+"<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Cobblr labels — 4 × 6&quot; — 1 up</title>
+<style>
+  @page { size: 4in 6in; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: Inter, system-ui, -apple-system, sans-serif;
+    color: #1f2530;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .sheet {
+    position: relative;
+    width: 4in;
+    height: 6in;
+    page-break-after: always;
+    overflow: hidden;
+  }
+  .sheet:last-child { page-break-after: auto; }
+  .label {
+    position: absolute;
+    border: 1px dashed #c8ccd2;
+    padding: 0.07in;
+    overflow: hidden;
+  }
+  .label .qr { flex-shrink: 0; position: relative; }
+  .label .qr svg { display: block; width: 100%; height: 100%; }
+  /* Human-readable code overlaid in the QR center; the QR is EC=H so the
+     covered center still decodes. Short codes (1-2 chars) get a solid circle,
+     longer ones a stadium pill — matching the PDF path (print/qr-overlay.ts).
+     A single squished oval for a 2-char code was the bug this replaces. */
+  .label .code {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    background: #fff; color: #111; font-weight: 800; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    font-family: Inter, system-ui, -apple-system, sans-serif;
+  }
+  /* Circle for 1-2 chars: an equal-sided box, sized in em so it tracks codePt. */
+  .label .code.code-circle {
+    width: 1.7em; height: 1.7em; border-radius: 50%;
+  }
+  /* Pill for 3+ chars: fixed height, min-width so 3 chars already read as a
+     stadium, horizontal padding, fully-rounded ends. */
+  .label .code.code-pill {
+    height: 1.5em; min-width: 2.6em; padding: 0 0.35em;
+    border-radius: 999px; white-space: nowrap;
+  }
+  .label .desc {
+    font-size: 15pt;
+    font-weight: 600;
+    line-height: 1.15;
+    word-break: break-word;
+    overflow: hidden;
+  }
+  /* row — QR left, text right */
+  .label.row { display: flex; align-items: center; gap: 0.08in; }
+  .label.row .qr { height: 100%; aspect-ratio: 1; order: -1; }
+  .label.row .desc { flex: 1; }
+  /* portrait — text on top, QR pinned below, centered */
+  .label.portrait { display: flex; flex-direction: column; gap: 0.05in; }
+  .label.portrait .desc { text-align: center; }
+  .label.portrait .qr { margin: auto auto 0; width: 86%; aspect-ratio: 1; }
+  /* square — short title on top, QR fills the rest */
+  .label.square { display: flex; flex-direction: column; gap: 0.04in; }
+  .label.square .desc { text-align: center; flex-shrink: 0; }
+  .label.square .qr { flex: 1; min-height: 0; aspect-ratio: 1; margin: 0 auto; }
+  @media print {
+    .label { border: 1px solid #d4d8de; }
+  }
+</style>
+</head>
+<body>
+  <div class="sheet">
+    <div class="label portrait" style="left:0in;top:0in;width:4in;height:6in">
+      <div class="desc">Widget A</div>
+      <div class="qr"><svg data-qr="1"></svg><span class="code code-circle" style="font-size:30.0pt">m1</span></div>
+    </div>
+  </div>
+  <div class="sheet">
+    <div class="label portrait" style="left:0in;top:0in;width:4in;height:6in">
+      <div class="desc">Gadget with a longer name</div>
+      <div class="qr"><svg data-qr="1"></svg><span class="code code-pill" style="font-size:30.0pt">p42</span></div>
+    </div>
+  </div>
+  <div class="sheet">
+    <div class="label portrait" style="left:0in;top:0in;width:4in;height:6in">
+      <div class="desc">No code</div>
+      <div class="qr"><svg data-qr="1"></svg></div>
+    </div>
+  </div>
+  <div class="sheet">
+    <div class="label portrait" style="left:0in;top:0in;width:4in;height:6in">
+      <div class="desc">Short</div>
+      <div class="qr"><svg data-qr="1"></svg><span class="code code-circle" style="font-size:30.0pt">z</span></div>
+    </div>
+  </div>
+</body>
+</html>"
+`;
