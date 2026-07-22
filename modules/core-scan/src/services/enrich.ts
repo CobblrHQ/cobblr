@@ -200,11 +200,6 @@ async function nameFromPhoto(ctx: EnrichContext): Promise<boolean> {
   return true;
 }
 
-// The catalog-image upload re-uses the caller's bearer token, so it MUST
-// target our own API — never a caller-influenced base URL, or the token
-// leaks. enrich runs in the api process, so localhost is correct.
-const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
-
 // SSRF guard for the externally-sourced catalog image_url: block
 // non-http(s) + internal targets (loopback/private/link-local incl.
 // cloud metadata). Hostname-based; not DNS-rebind-proof (follow-up).
@@ -1181,7 +1176,7 @@ export function catalogImageUrlOrNull(url: string | null | undefined): string | 
 }
 
 export async function downloadCatalogImage(
-  ctx: Pick<EnrichContext, "db" | "orgSlug" | "bearer" | "itemId">,
+  ctx: Pick<EnrichContext, "db" | "orgId" | "itemId">,
   imageUrl: string,
 ): Promise<boolean> {
   // A stock "no image" graphic is not a photo. Refuse before spending a fetch.
@@ -1203,19 +1198,20 @@ export async function downloadCatalogImage(
       if (Number(dlRes.headers.get("content-length") ?? 0) > MAX) return false; // too big — don't retry
       const blob = await dlRes.blob();
       if (blob.size === 0 || blob.size > MAX) return false;
-      const fd = new FormData();
-      fd.append("file", blob, imageUrl.split("/").pop()?.split("?")[0] || "catalog.jpg");
-      // INTERNAL_API, not ctx.baseUrl: this call carries the bearer
-      // token, so it must never target a caller-influenced URL.
-      const upRes = await fetch(
-        `${INTERNAL_API}/api/v1/orgs/${ctx.orgSlug}/modules/core-files/files`,
-        { method: "POST", headers: { Authorization: `Bearer ${ctx.bearer}` }, body: fd },
+      const filename = imageUrl.split("/").pop()?.split("?")[0] || "catalog.jpg";
+      // Store server-side via the platform files seam (in-process; generates
+      // variants + the DB row), NOT the HTTP upload route — that route is the
+      // USER upload surface and may be entitlement-gated (e.g. the trial tier
+      // withholds user uploads). A fetched catalog image is not a user upload.
+      const written = await platform().files.write(
+        ctx.orgId,
+        new Uint8Array(await blob.arrayBuffer()),
+        { filename, mimeType: blob.type || "image/jpeg" },
       );
-      if (!upRes.ok) continue;
-      const f = (await upRes.json()) as { id: string };
+      if (!written) continue;
       await ctx.db
         .updateTable("core_scan_inbox_items")
-        .set({ catalog_image_file_id: f.id, updated_at: new Date() })
+        .set({ catalog_image_file_id: written.fileId, updated_at: new Date() })
         .where("id", "=", ctx.itemId)
         .execute();
       return true;

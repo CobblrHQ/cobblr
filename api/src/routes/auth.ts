@@ -17,6 +17,7 @@ import { meta, metaPool } from "../db/meta.js";
 import { applyBlueprint, BlueprintManifest } from "./blueprint.js";
 import { provisionTenantDb } from "../db/provision.js";
 import { hashPassword, verifyPassword } from "../auth/password.js";
+import { TRIAL_MODE, TRIAL_TTL_DAYS } from "../platform/trial.js";
 
 // A throwaway hash, computed once, so the "no such user / inactive" login
 // path spends the same ~bcrypt time as a real password check — otherwise the
@@ -176,11 +177,18 @@ export async function provisionOrgForUser(
       slug = candidates.next().value as string;
       try {
         await client.query("begin");
+        // On the trial tier, stamp a 30-day (TRY_TTL_DAYS) expiry so
+        // `trial_expires_at IS NOT NULL` marks a trial workspace. Reaping is
+        // deferred — this is just the stamp; nothing sweeps yet. NULL everywhere
+        // else (prod/staging/self-host).
+        const trialExpiresAt = TRIAL_MODE
+          ? new Date(Date.now() + TRIAL_TTL_DAYS * 86_400_000)
+          : null;
         const orgRow = await client.query<{ id: string }>(
-          `insert into orgs (name, slug, db_name)
-           values ($1, $2, $3)
+          `insert into orgs (name, slug, db_name, trial_expires_at)
+           values ($1, $2, $3, $4)
            returning id`,
-          [orgName.trim(), slug, dbName],
+          [orgName.trim(), slug, dbName, trialExpiresAt],
         );
         orgId = orgRow.rows[0]!.id;
         // Append the new workspace at the BOTTOM of the user's switcher

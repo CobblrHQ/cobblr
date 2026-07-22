@@ -16,6 +16,7 @@
 import { Router, text as expressText } from "express";
 import { z } from "zod";
 import multer from "multer";
+import { platform } from "@cobblr/platform-contract";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, requireRole } from "./util.js";
 import { assertSafeOutboundUrl } from "../services/enrich.js";
@@ -29,7 +30,6 @@ import {
 
 export const importRouter = Router({ mergeParams: true });
 
-const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
 const PHOTO_TIMEOUT_MS = 10_000;
 const PHOTO_MAX_BYTES = 5 * 1024 * 1024;
 const PHOTO_CONCURRENCY = 4;
@@ -105,8 +105,10 @@ const provKey = (i: NormalizedImportItem): string | null =>
   i.provenance ? `${String(i.provenance.source_instance ?? "")}::${i.provenance.source_id}` : null;
 
 /** Fetch a photo URL (10s / 5MB / SSRF-guarded) and store it via core-files.
- *  Returns the file id, or throws with a user-facing message. */
-async function fetchPhotoToFile(orgSlug: string, token: string, url: string): Promise<string> {
+ *  Returns the file id, or throws with a user-facing message. Stores through the
+ *  platform files seam (in-process), NOT the HTTP upload route — a fetched photo
+ *  is not a user upload, so it must bypass any gate on that route. */
+async function fetchPhotoToFile(orgId: string, url: string): Promise<string> {
   // CI/test escape, same convention as the webhook + machine guards: the test
   // suite spins a loopback photo server and CI sets COBBLR_TEST_CALLBACK_HOST.
   const testHost = process.env.COBBLR_TEST_CALLBACK_HOST;
@@ -124,36 +126,29 @@ async function fetchPhotoToFile(orgSlug: string, token: string, url: string): Pr
   if (len > PHOTO_MAX_BYTES) throw new Error(`photo larger than ${PHOTO_MAX_BYTES / 1024 / 1024}MB cap`);
   const blob = await res.blob();
   if (blob.size > PHOTO_MAX_BYTES) throw new Error(`photo larger than ${PHOTO_MAX_BYTES / 1024 / 1024}MB cap`);
-  const fd = new FormData();
-  const ext = (res.headers.get("content-type") ?? "").includes("png") ? "png" : "jpg";
-  fd.append("file", blob, `import-${Date.now()}.${ext}`);
-  // INTERNAL_API on purpose: this call carries the caller's bearer, so it must
-  // never target a caller-influenced URL.
-  const up = await fetch(`${INTERNAL_API}/api/v1/orgs/${orgSlug}/modules/core-files/files`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-    body: fd,
+  const contentType = res.headers.get("content-type") ?? "";
+  const ext = contentType.includes("png") ? "png" : "jpg";
+  const written = await platform().files.write(orgId, new Uint8Array(await blob.arrayBuffer()), {
+    filename: `import-${Date.now()}.${ext}`,
+    mimeType: blob.type || contentType || "image/jpeg",
   });
-  if (!up.ok) throw new Error(`file store failed: HTTP ${up.status}`);
-  return ((await up.json()) as { id: string }).id;
+  if (!written) throw new Error("file store failed");
+  return written.fileId;
 }
 
 /** Store a baked-in (embed-mode) photo: decode its base64 and hand the bytes to
  *  core-files. NO network — this is the offline / LAN-only import path. */
-async function storeEmbeddedToFile(orgSlug: string, token: string, embed: { mime: string; data: string }): Promise<string> {
+async function storeEmbeddedToFile(orgId: string, embed: { mime: string; data: string }): Promise<string> {
   const bytes = Buffer.from(embed.data, "base64");
   if (bytes.byteLength === 0) throw new Error("embedded photo is empty / not valid base64");
   if (bytes.byteLength > PHOTO_MAX_BYTES) throw new Error(`embedded photo larger than ${PHOTO_MAX_BYTES / 1024 / 1024}MB cap`);
-  const fd = new FormData();
   const ext = embed.mime.includes("png") ? "png" : embed.mime.includes("webp") ? "webp" : "jpg";
-  fd.append("file", new Blob([bytes], { type: embed.mime }), `import-${Date.now()}.${ext}`);
-  const up = await fetch(`${INTERNAL_API}/api/v1/orgs/${orgSlug}/modules/core-files/files`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-    body: fd,
+  const written = await platform().files.write(orgId, new Uint8Array(bytes), {
+    filename: `import-${Date.now()}.${ext}`,
+    mimeType: embed.mime,
   });
-  if (!up.ok) throw new Error(`file store failed: HTTP ${up.status}`);
-  return ((await up.json()) as { id: string }).id;
+  if (!written) throw new Error("file store failed");
+  return written.fileId;
 }
 
 async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R>): Promise<R[]> {
@@ -329,8 +324,8 @@ importRouter.post(
         if (!embed && !url) continue;
         try {
           const fileId = embed
-            ? await storeEmbeddedToFile(ctx.org.slug, token, embed)
-            : await fetchPhotoToFile(ctx.org.slug, token, url!);
+            ? await storeEmbeddedToFile(ctx.org.id, embed)
+            : await fetchPhotoToFile(ctx.org.id, url!);
           await db
             .updateTable("core_scan_inbox_items")
             .set(role === "identify" ? { image_file_id: fileId, updated_at: new Date() } : { catalog_image_file_id: fileId, updated_at: new Date() })

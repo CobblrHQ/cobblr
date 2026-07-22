@@ -5,27 +5,40 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import QRCode from "qrcode";
-import { Hash, Minus, Plus, Printer, Send, Trash2, Zap } from "lucide-react";
+import { Bluetooth, Hash, Minus, Plus, Printer, Send, Settings2, Trash2, Wifi, Zap } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { usePageTitle, useToast, Modal } from "@cobblr/platform-web";
 import { useLabels } from "./context";
 import { BrowsePanel } from "./BrowsePanel";
 import { CodesPanel } from "./CodesPanel";
 import { renderPrintSheetHtml } from "./renderPrintSheet";
+import { useScreenCalibration } from "./useScreenCalibration";
+import { ActualSizeControl } from "./ActualSizeControl";
 import { liveQrUrl } from "../live-qr-url";
 import {
   printBatchOverBluetooth,
   isWebBluetoothAvailable,
+  heldPrinterName,
+  pairBluetoothPrinter,
+  setPrintProgress,
   NO_WEB_BLUETOOTH,
   type BluetoothPrinterSettings,
 } from "@cobblr/platform-web";
 import {
   PAPER_SIZES,
   findPaper,
+  findLabelSize,
+  customSizeToLayout,
   labelSizesForPaper,
+  printerCapability,
+  papersForPrinter,
+  qrSideForLabel,
 } from "../label-sizes";
+import { assessScannability } from "../print/qr-overlay";
 import type { CustomLabelSize, Printable } from "./api";
 import { NewSizeModal } from "./NewSizeModal";
 import { AutoPrintModal } from "./AutoPrintModal";
+import { PrinterConfigModal } from "./PrinterConfigModal";
 
 const PAPER_LS = "cobblr:label-paper";
 const SIZE_LS = "cobblr:label-size";
@@ -36,6 +49,12 @@ function qrSvg(payload: string, ecLevel: "M" | "H" = "M"): Promise<string> {
     margin: 1,
     errorCorrectionLevel: ecLevel,
   });
+}
+
+/** Data modules per side for a payload at a given EC level — the same encode the
+ *  SVG uses, so the scannability read reflects the real symbol drawn. */
+function qrModuleCount(payload: string, ecLevel: "M" | "H"): number {
+  return QRCode.create(payload, { errorCorrectionLevel: ecLevel }).modules.size;
 }
 
 export function QueuePage() {
@@ -57,6 +76,68 @@ export function QueuePage() {
     enabled: !!orgSlug,
   });
   const [autoPrintOpen, setAutoPrintOpen] = useState(false);
+  const [printerConfigOpen, setPrinterConfigOpen] = useState(false);
+  const navigate = useNavigate();
+
+  // The printer this page prints to — the workspace default (or the only one).
+  // It decides the whole toolbar: a Bluetooth roll hides the sheet paper/size
+  // pickers (they mean nothing to it), and having no printer at all turns the
+  // toolbar into a "connect a printer" call to action instead of dead buttons.
+  const printersQ = useQuery({
+    queryKey: ["labels-printers", orgSlug],
+    queryFn: () => api.listPrinters(),
+    enabled: !!orgSlug,
+  });
+  const printers = printersQ.data?.items ?? [];
+  const defaultPrinter = printers.find((p) => p.is_default) ?? printers[0];
+  const isBleDefault = defaultPrinter?.driver === "browser-bluetooth";
+  const hasPrinter = printers.length > 0;
+  // Funnel the paper options to what the default printer can feed (its kind + max
+  // width) — the same rule as the auto-print modal, so the platform is consistent.
+  const cap = defaultPrinter ? printerCapability(defaultPrinter.driver, defaultPrinter.settings) : null;
+  const funnelPapers = cap ? papersForPrinter(cap) : PAPER_SIZES;
+
+  // Live "is the Bluetooth printer connected in this tab" flag — a held BLE
+  // session is per-tab and drops when idle, so poll the in-memory handle rather
+  // than trust a stale render.
+  const [btConnected, setBtConnected] = useState<string | null>(() => heldPrinterName());
+  useEffect(() => {
+    const t = setInterval(() => setBtConnected(heldPrinterName()), 1500);
+    return () => clearInterval(t);
+  }, []);
+  const bleLive = isBleDefault && btConnected === defaultPrinter?.name;
+
+  // Connect a Bluetooth printer WITHOUT leaving this page: pair, auto-detect from
+  // its known profile, and save it as the default — then you're printing. An
+  // unrecognised model falls back to the full manual setup on the printers page.
+  const [connecting, setConnecting] = useState(false);
+  const connectBluetooth = async () => {
+    if (!isWebBluetoothAvailable()) {
+      toast.error(NO_WEB_BLUETOOTH);
+      return;
+    }
+    setConnecting(true);
+    try {
+      const { deviceName, profile, settings } = await pairBluetoothPrinter();
+      if (!profile || !settings) {
+        toast.error(`Paired "${deviceName}", but it isn't a model I know yet. Add it under Configuration → Printers.`);
+        navigate("/configuration/print");
+        return;
+      }
+      await api.createPrinter({
+        name: profile.label,
+        driver: "browser-bluetooth",
+        settings: settings as unknown as Record<string, unknown>,
+        is_default: true,
+      });
+      await qc.invalidateQueries({ queryKey: ["labels-printers", orgSlug] });
+      toast.success(`${profile.label} connected — you're ready to print.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setConnecting(false);
+    }
+  };
 
   // Paper + label-size selection, persisted so a workshop keeps its
   // printer setup between visits.
@@ -98,6 +179,13 @@ export function QueuePage() {
       ? findPaper(builtin.paper)
       : undefined;
   useEffect(() => localStorage.setItem(PAPER_LS, paperKey), [paperKey]);
+  // Snap the paper to one the default printer can feed (a persisted 4×6 must not
+  // stick on a 2" printer).
+  useEffect(() => {
+    if (funnelPapers.length && !funnelPapers.some((p) => p.key === paperKey)) {
+      setPaperKey(funnelPapers[0]!.key);
+    }
+  }, [funnelPapers, paperKey]);
   useEffect(() => {
     if (sizeKey) localStorage.setItem(SIZE_LS, sizeKey);
   }, [sizeKey]);
@@ -178,10 +266,12 @@ export function QueuePage() {
         expanded.map(async (it) => {
           const overlayOn = overlayMap[`${it.module_name}:${it.entity_type}`] ?? true;
           const code = overlayOn ? codeMap[it.entity_id] : undefined;
+          const payload = liveUrl(it.qr_payload);
           return {
             description: it.description,
-            qr_svg: await svgFor(liveUrl(it.qr_payload), !!code),
+            qr_svg: await svgFor(payload, !!code),
             center_code: code,
+            qr_modules: qrModuleCount(payload, code ? "H" : "M"),
           };
         }),
       );
@@ -261,6 +351,11 @@ export function QueuePage() {
         return { printer, bluetooth: res, recordError, warnings: [] as { code: string }[] };
       }
 
+      // A network send is one job, not a per-label stream, so there's nothing to
+      // count down — but publish a transient count so the Live-box printer icon
+      // shows the job the same way a taskbar does. Cleared in onSettled.
+      const netTotal = items.reduce((n, it) => n + it.qty, 0);
+      setPrintProgress({ done: 0, total: netTotal, deviceName: printer.name });
       const { pdf_base64, warnings } = await api.renderPdf(sizeKey);
       const job = await api.printToPrinter(printer.id, {
         document_base64: pdf_base64,
@@ -268,7 +363,8 @@ export function QueuePage() {
         filename: "labels.pdf",
         job_name: "labels",
       });
-      return { printer, job, warnings: warnings ?? [] };
+      // Hold the queue — the async confirm records + clears once it looks right.
+      return { printer, job, itemIds: items.map((it) => it.id), warnings: warnings ?? [] };
     },
     onSuccess: (r) => {
       if ("bluetooth" in r && r.bluetooth) {
@@ -288,14 +384,35 @@ export function QueuePage() {
         void qc.invalidateQueries({ queryKey: ["labels-queue"] });
         return;
       }
-      const { printer, job, warnings } = r as { printer: { name: string }; job: { jobId: string; state: string }; warnings: { code: string }[] };
-      toast.success(`Sent to ${printer.name} — job ${job.jobId} (${job.state})`);
-      if (warnings.length) {
-        const codes = warnings.map((w) => w.code).join(", ");
-        toast.error(`Heads up: code${warnings.length === 1 ? "" : "s"} ${codes} may be too long to scan reliably. Shorten the prefix or use a larger label.`);
+      const nr = r as { printer: { name: string }; job: { jobId: string; state: string }; itemIds: string[]; warnings: { code: string }[] };
+      if (nr.warnings.length) {
+        const codes = nr.warnings.map((w) => w.code).join(", ");
+        toast.error(`Heads up: code${nr.warnings.length === 1 ? "" : "s"} ${codes} may be too long to scan reliably. Shorten the prefix or use a larger label.`);
       }
+      // Async print: dispatched, not yet confirmed on paper. Hold the queue and
+      // raise a non-blocking action-toast; "Mark batch printed" records + clears
+      // those items once the physical output looks right.
+      const count = nr.itemIds.length;
+      toast.action(`Sent ${count} to ${nr.printer.name}. Mark printed once it looks right?`, {
+        actionLabel: "Mark batch printed",
+        onAction: async () => {
+          try {
+            await api.recordPrinted(nr.itemIds);
+            void qc.invalidateQueries({ queryKey: ["labels-queue"] });
+            toast.success("Batch recorded");
+          } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Couldn't record the batch");
+          }
+        },
+      });
     },
-    onError: (e) => { setBtProgress(null); toast.error((e as Error).message); },
+    onError: (e) => {
+      setBtProgress(null);
+      // The queue is held (nothing recorded), so a failed dispatch is one tap to retry.
+      toast.action((e as Error).message, { actionLabel: "Reprint", onAction: () => sendToPrinter.mutate() });
+    },
+    // Clear the Live-box count pip (the network path sets it; BLE self-clears).
+    onSettled: () => setPrintProgress(null),
   });
 
   const perSheetCount = size ? size.cols * size.rows : 0;
@@ -303,68 +420,131 @@ export function QueuePage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3 flex-wrap">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">labels</h1>
-        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
-          {items.length} item{items.length === 1 ? "" : "s"} · {total} label{total === 1 ? "" : "s"}
-          {size ? ` · ${sheets} sheet${sheets === 1 ? "" : "s"}` : ""}
-        </span>
+      <div className="flex items-center gap-x-3 gap-y-2 border-b border-line dark:border-slate-700 pb-3 flex-wrap">
+        <div className="flex items-baseline gap-3">
+          <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">labels</h1>
+          <span className="text-[10px] font-mono text-faint dark:text-slate-500">
+            {items.length} item{items.length === 1 ? "" : "s"} · {total} label{total === 1 ? "" : "s"}
+            {!isBleDefault && size ? ` · ${sheets} sheet${sheets === 1 ? "" : "s"}` : ""}
+          </span>
+        </div>
         <div className="flex-1" />
-        <label className="flex items-center gap-1.5">
-          <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">paper</span>
-          <select
-            value={paperKey}
-            onChange={(e) => setPaperKey(e.target.value)}
-            className="input !w-auto !py-1 text-xs"
+
+        {/* Printer-first: the toolbar leads with WHICH printer this prints to.
+            No printer → a call to action, not dead buttons. A Bluetooth roll
+            hides the sheet paper/size pickers (it prints one label at a time,
+            with no paper or N-up to choose); a sheet/network printer keeps them. */}
+        {!hasPrinter ? (
+          <>
+            <button
+              onClick={connectBluetooth}
+              disabled={connecting}
+              className="rounded-md border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
+              title="Pair a Bluetooth label printer and set it up automatically — no forms, no leaving this page"
+            >
+              <Bluetooth size={14} /> {connecting ? "Pairing…" : "Pair a Bluetooth printer"}
+            </button>
+            <button
+              onClick={() => navigate("/configuration/print")}
+              className="rounded-md border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
+              title="Set up a network (CUPS) printer or an on-site edge bridge"
+            >
+              <Wifi size={14} /> Network printer
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={() => (isBleDefault ? setPrinterConfigOpen(true) : navigate("/configuration/print"))}
+            className="rounded-md border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 text-sm px-2.5 py-2 transition flex items-center gap-1.5"
+            title={isBleDefault ? "Printer settings — label size, labels across, name" : "Manage printers"}
           >
-            {PAPER_SIZES.map((p) => (
-              <option key={p.key} value={p.key}>{p.label}</option>
-            ))}
-          </select>
-        </label>
-        <label className="flex items-center gap-1.5">
-          <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">label</span>
-          <select
-            value={sizeKey}
-            onChange={(e) => {
-              if (e.target.value === "__new__") setNewSizeOpen(true);
-              else setPickedSize(e.target.value);
-            }}
-            className="input !w-72 !py-1 text-xs"
-          >
-            {sizesForPaper.map((s) => (
-              <option key={s.key} value={s.key}>{s.label}</option>
-            ))}
-            {customList.length > 0 && (
-              <optgroup label="Your sizes">
-                {customList.map((c) => (
-                  <option key={c.id} value={`custom:${c.id}`}>
-                    {c.name} · {c.per_sheet} up
-                  </option>
-                ))}
-              </optgroup>
+            {isBleDefault ? (
+              <Bluetooth size={14} className={bleLive ? "text-emerald-500" : "text-faint"} />
+            ) : (
+              <Wifi size={14} className="text-faint" />
             )}
-            <option value="__new__">＋ New label size…</option>
-          </select>
-        </label>
-        <button
-          onClick={() => sendToPrinter.mutate()}
-          disabled={sendToPrinter.isPending || items.length === 0 || !size}
-          className="rounded-md border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
-          title="Render + send straight to a configured printer (CUPS) — no print dialog"
-        >
-          <Send size={14} />
-          {btProgress ? `Printing ${btProgress.done}/${btProgress.total}…` : sendToPrinter.isPending ? "…" : "Send to printer"}
-        </button>
-        <button
-          onClick={() => print.mutate()}
-          disabled={print.isPending || items.length === 0 || !size}
-          className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
-          title="Open a browser print sheet (⌘P)"
-        >
-          <Printer size={14} />
-          {print.isPending ? "…" : `Print ${total}`}
-        </button>
+            <span className="font-medium max-w-[10rem] truncate">{defaultPrinter!.name}</span>
+            {isBleDefault && (
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${bleLive ? "bg-emerald-500" : "bg-slate-400 dark:bg-slate-600"}`}
+                title={bleLive ? "Connected in this tab" : "Not connected — printing will pair it"}
+              />
+            )}
+            <Settings2 size={13} className="text-faint" />
+          </button>
+        )}
+
+        {hasPrinter && !isBleDefault && (
+          <>
+            <label className="flex items-center gap-1.5">
+              <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">paper</span>
+              <select
+                value={paperKey}
+                onChange={(e) => setPaperKey(e.target.value)}
+                className="input !w-auto !py-1 text-xs"
+              >
+                {funnelPapers.map((p) => (
+                  <option key={p.key} value={p.key}>{p.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="flex items-center gap-1.5">
+              <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">label</span>
+              <select
+                value={sizeKey}
+                onChange={(e) => {
+                  if (e.target.value === "__new__") setNewSizeOpen(true);
+                  else setPickedSize(e.target.value);
+                }}
+                className="input !w-72 !py-1 text-xs"
+              >
+                {sizesForPaper.map((s) => (
+                  <option key={s.key} value={s.key}>{s.label}</option>
+                ))}
+                {customList.length > 0 && (
+                  <optgroup label="Your sizes">
+                    {customList.map((c) => (
+                      <option key={c.id} value={`custom:${c.id}`}>
+                        {c.name} · {c.per_sheet} up
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                <option value="__new__">＋ New label size…</option>
+              </select>
+            </label>
+          </>
+        )}
+
+        {hasPrinter && (
+          <button
+            onClick={() => sendToPrinter.mutate()}
+            disabled={sendToPrinter.isPending || items.length === 0 || (!isBleDefault && !size)}
+            className="rounded-md border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
+            title={isBleDefault ? `Print the queue to ${defaultPrinter!.name} over Bluetooth` : "Render + send straight to the printer (CUPS) — no print dialog"}
+          >
+            {isBleDefault ? <Bluetooth size={14} /> : <Send size={14} />}
+            {btProgress
+              ? `Printing ${btProgress.done}/${btProgress.total}…`
+              : sendToPrinter.isPending
+                ? "…"
+                : isBleDefault
+                  ? `Print to ${defaultPrinter!.name}`
+                  : "Send to printer"}
+          </button>
+        )}
+
+        {!isBleDefault && (
+          <button
+            onClick={() => print.mutate()}
+            disabled={print.isPending || items.length === 0 || !size}
+            className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
+            title="Open a browser print sheet (⌘P)"
+          >
+            <Printer size={14} />
+            {print.isPending ? "…" : `Print ${total}`}
+          </button>
+        )}
         <button
           onClick={() => setCodesOpen(true)}
           className="rounded-md border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
@@ -380,7 +560,7 @@ export function QueuePage() {
               ? "border-cobble-500 text-cobble-700 dark:text-cobble-300 bg-cobble-50 dark:bg-cobble-900/30"
               : "border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200"
           }`}
-          title="Print labels automatically as they are added, to a network printer"
+          title="Print labels automatically as they are added, to your default printer"
         >
           <Zap size={14} />
           {autoflush.data?.enabled ? "Auto-print: on" : "Auto-print"}
@@ -485,7 +665,8 @@ export function QueuePage() {
         open={codesOpen}
         onClose={() => setCodesOpen(false)}
         title="Label codes"
-        subtitle="Find an item by code · rename a prefix · change grouping"
+        subtitle="Find by code · optionally show it in the QR"
+        cobb={{ opener: "You're looking at your label codes. I can rename a list's prefix, remove a list's code entirely to free that letter, or toggle whether a list's code shows inside its QR (per list, so your 3D printers can differ from your CNC). Which list, and what would you like?" }}
       >
         <CodesPanel />
       </Modal>
@@ -497,6 +678,15 @@ export function QueuePage() {
       />
 
       <AutoPrintModal open={autoPrintOpen} onClose={() => setAutoPrintOpen(false)} />
+      {defaultPrinter && isBleDefault && (
+        <PrinterConfigModal
+          printer={defaultPrinter}
+          otherPrinters={printers.filter((p) => p.id !== defaultPrinter.id)}
+          customSizes={customList}
+          open={printerConfigOpen}
+          onClose={() => setPrinterConfigOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -536,24 +726,73 @@ function SheetPreview({
     return () => ro.disconnect();
   }, []);
 
+  const cal = useScreenCalibration();
+  const [actual, setActual] = useState(false);
+
   const natW = paperW * 96;
   const natH = paperH * 96;
   // Until the first measurement lands, fall back to natW so nothing over-scales.
   const availW = boxW > 0 ? boxW : natW;
-  const scale = Math.min(availW / natW, MAX_H / natH);
+  const fitScale = Math.min(availW / natW, MAX_H / natH);
+  // "Actual size": render at the display's TRUE px/inch instead of fitting. The
+  // sheet HTML is authored at 96px/inch, so scaling it by (calibrated px/inch ÷
+  // 96) makes one on-screen inch equal one real inch. Screen-only — print honours
+  // real millimetres directly and never sees this.
+  const actualScale = (cal.pxPerMm * 25.4) / 96;
+  const scale = actual ? actualScale : fitScale;
   const html = renderPrintSheetHtml(printables, sizeKey, { previewOnly: true, customSizes });
+
+  // Physical scannability of the printed QR at THIS size — the "is it too small
+  // to read?" sanity check. mm-per-module is a property of the printed inches, so
+  // it is honest whether or not "actual size" is on. Worst case across the sheet
+  // (most modules ⇒ smallest module ⇒ hardest to scan) so the read is not
+  // optimistic. Hidden until the module counts are known / the size resolves.
+  const resolvedSize = useMemo(() => {
+    if (sizeKey.startsWith("custom:")) {
+      const row = customSizes.find((c) => c.id === sizeKey.slice("custom:".length));
+      return row ? customSizeToLayout(row).size : null;
+    }
+    return findLabelSize(sizeKey) ?? null;
+  }, [sizeKey, customSizes]);
+  const maxModules = printables.reduce((m, p) => Math.max(m, p.qr_modules ?? 0), 0);
+  const scan = resolvedSize && maxModules > 0 ? assessScannability(qrSideForLabel(resolvedSize), maxModules) : null;
 
   return (
     <div>
       <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
         // sheet preview <span className="text-faint dark:text-slate-500">— {paperW}″ × {paperH}″, first sheet</span>
+        {scan && (
+          <span
+            className="normal-case tracking-normal text-faint dark:text-slate-500"
+            title={`QR prints about ${scan.moduleMm.toFixed(2)} mm per module — ${scan.label}. Under ~0.2 mm a phone can't read it; 0.3 mm and up is comfortable. This is the physical printed size, independent of screen zoom.`}
+          >
+            {" · "}
+            <span
+              className={`inline-block h-1.5 w-1.5 rounded-full align-middle ${
+                scan.rating === "good" ? "bg-emerald-500" : scan.rating === "tight" ? "bg-amber-500" : "bg-red-500"
+              }`}
+            />{" "}
+            <span
+              className={
+                scan.rating === "good"
+                  ? ""
+                  : scan.rating === "tight"
+                    ? "text-amber-600 dark:text-amber-500"
+                    : "text-red-600 dark:text-red-400"
+              }
+            >
+              QR {scan.moduleMm.toFixed(2)} mm/module{scan.rating !== "good" ? ` · ${scan.label}` : ""}
+            </span>
+          </span>
+        )}
       </div>
       <div
         ref={boxRef}
-        className="rounded-xl border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/40 p-5 flex justify-center"
+        className={`rounded-xl border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/40 p-5 flex ${actual ? "justify-start overflow-auto" : "justify-center"}`}
+        style={actual ? { maxHeight: MAX_H } : undefined}
       >
         <div
-          className="rounded-lg border border-line dark:border-slate-700 bg-surface overflow-hidden shadow-md"
+          className="rounded-lg border border-line dark:border-slate-700 bg-surface overflow-hidden shadow-md shrink-0"
           style={{ width: natW * scale, height: natH * scale }}
         >
           <iframe
@@ -570,6 +809,7 @@ function SheetPreview({
           />
         </div>
       </div>
+      <ActualSizeControl actual={actual} onToggle={() => setActual((v) => !v)} cal={cal} />
     </div>
   );
 }

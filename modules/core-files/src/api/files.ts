@@ -63,6 +63,25 @@ filesRouter.post(
       return;
     }
 
+    // Entitlement gate for a USER upload. A hosted tier may withhold user file
+    // uploads — the trial tier does (its anti-hosting rule: never store bytes the
+    // user chose; scan images arrive only via the server-side fetch, which stores
+    // with platform().files.write and never hits this route). No-op in open core /
+    // self-host (no guard registered) and on paid plans (the overlay allows it —
+    // files.upload has no configured limit, so it returns allow).
+    const ent = await platform().entitlements.check({
+      orgId: ctx.org.id,
+      feature: "files.upload",
+      userId: session?.id,
+      quantity: file.buffer.length,
+    });
+    if (!ent.allow) {
+      res.status(402).json({
+        error: { code: "plan_limit", message: ent.reason ?? "File uploads aren't available on your plan." },
+      });
+      return;
+    }
+
     // Read attach-shortcut fields from body (multer-hoisted) OR
     // query string. Both supported; body wins on collision.
     const readField = (k: string): string | null => {

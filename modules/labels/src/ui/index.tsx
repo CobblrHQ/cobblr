@@ -14,6 +14,7 @@ import "./DashboardWidget";
 import { LabelsProvider, useLabels } from "./context";
 import { QueuePage } from "./QueuePage";
 import { BasketWidget } from "./BasketWidget";
+import { ClientAutoflushMount } from "./client-autoflush";
 
 export const navItems = [
   { label: "Labels", path: "/labels", icon: Tag },
@@ -48,6 +49,9 @@ export function LabelsBasket({
 }: LabelsUIProps & { asRow?: boolean; rowClassName?: string; onNavigate?: () => void }) {
   return (
     <LabelsProvider orgSlug={orgSlug} getToken={getToken}>
+      {/* The client-fired (Bluetooth) auto-print loop. Headless + a module-scope
+          singleton, so mounting it in every LabelsBasket is safe. */}
+      <ClientAutoflushMount />
       <BasketWidget asRow={asRow} rowClassName={rowClassName} onNavigate={onNavigate} />
     </LabelsProvider>
   );

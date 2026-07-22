@@ -37,6 +37,7 @@ interface AutoflushRow {
   size_key: string | null;
   fire_mode: string;
   fire_count: number;
+  client_fired: boolean;
   last_fired_at: Date | null;
 }
 
@@ -47,6 +48,8 @@ function present(row: AutoflushRow | undefined) {
     size_key: row?.size_key ?? null,
     fire_mode: (row?.fire_mode ?? "manual") as FireMode,
     fire_count: row?.fire_count ?? 2,
+    // A Bluetooth printer's policy fires in the browser (slice 3c), not the server.
+    client_fired: row?.client_fired ?? false,
   };
 }
 
@@ -68,6 +71,8 @@ const PutBody = z.object({
   size_key: z.string().max(80).nullable().optional(),
   fire_mode: z.enum(FIRE_MODES),
   fire_count: z.number().int().min(1).max(MAX_PER_FIRE).default(2),
+  // Bluetooth printers are fired from the browser (slice 3c); the server skips them.
+  client_fired: z.boolean().default(false),
 });
 
 autoflushRouter.put(
@@ -77,10 +82,15 @@ autoflushRouter.put(
     const parsed = PutBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const d = parsed.data;
-    // An enabled, non-manual policy must name a printer + size, else it can never fire.
-    if (d.enabled && d.fire_mode !== "manual" && (!d.printer_id || !d.size_key)) {
-      res.status(400).json({ error: { code: "incomplete", message: "Auto-print needs a printer and a label size." } });
-      return;
+    // An enabled, non-manual policy must name a printer, else it can never fire. A
+    // server-fired policy also needs a size (to render the sheet); a client-fired
+    // (Bluetooth) policy doesn't — the browser owns its media + n-up tiling.
+    if (d.enabled && d.fire_mode !== "manual") {
+      const missing = !d.printer_id ? "a printer" : !d.client_fired && !d.size_key ? "a label size" : null;
+      if (missing) {
+        res.status(400).json({ error: { code: "incomplete", message: `Auto-print needs ${missing}.` } });
+        return;
+      }
     }
     const userId = sessionUser(req).id;
     const values = {
@@ -90,6 +100,7 @@ autoflushRouter.put(
       size_key: d.size_key ?? null,
       fire_mode: d.fire_mode,
       fire_count: d.fire_count,
+      client_fired: d.client_fired,
       updated_at: new Date(),
     };
     await tenantDb(req)
@@ -128,6 +139,11 @@ export async function evaluateAutoflush(
     .executeTakeFirst()) as AutoflushRow | undefined;
 
   if (!cfg || !cfg.enabled || cfg.fire_mode === "manual") return null;
+  // A client-fired (Bluetooth) policy accumulates + fires in the browser — the
+  // server can't reach a BLE printer. Skip it here; the client loop owns the whole
+  // accumulate → n-up compose → BLE fire → clear (slice 3c). The queue keeps
+  // buffering until the client fires it.
+  if (cfg.client_fired) return null;
   if (!cfg.printer_id || !cfg.size_key) return null;
   // Cooldown: a burst of scans must not fire a print per scan.
   if (cfg.last_fired_at && Date.now() - new Date(cfg.last_fired_at).getTime() < COOLDOWN_MS) return null;
@@ -158,8 +174,10 @@ export async function evaluateAutoflush(
     .execute();
   if (rows.length === 0) return null;
 
-  // Render FIRST — if it throws, nothing is deleted or dispatched.
-  const rendered = await renderRowsToPdf(db, orgId, base, rows as never, cfg.size_key);
+  // Render FIRST — if it throws, nothing is deleted or dispatched. markPrinted:
+  // these labels ARE auto-printed (a batch is recorded below), so freeze the
+  // prefixes — unlike a bare preview render, which must not.
+  const rendered = await renderRowsToPdf(db, orgId, base, rows as never, cfg.size_key, { markPrinted: true });
 
   // Snapshot a re-printable batch, clear the flushed rows, stamp the cooldown — one
   // tenant transaction so a crash can't half-clear the queue.

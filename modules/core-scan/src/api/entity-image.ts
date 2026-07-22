@@ -131,6 +131,7 @@ entityImageRouter.post(
     // image_path and can show it live. Bounded (~8s fetch + the search), and
     // best-effort: enrichEntityImage never throws (null on any failure).
     const image_path = await enrichEntityImage({
+      orgId: tenantContext(req).org.id,
       orgSlug: slug,
       bearer: token,
       entityKind: parsed.data.entity_kind,
@@ -199,6 +200,7 @@ entityImageRouter.post(
       }
       started++;
       void enrichEntityImage({
+        orgId,
         orgSlug: slug,
         bearer: token,
         entityKind: entity_kind,

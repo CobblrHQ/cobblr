@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/workspace-tools",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "description": "The ONE registry of workspace read/write tools an AI can call — consumed by the in-app Ask Cobb chat AND the MCP server, so both surfaces stay capability-identical by construction.",

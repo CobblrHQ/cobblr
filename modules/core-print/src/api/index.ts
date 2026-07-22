@@ -75,6 +75,7 @@ const BluetoothSettings = z
     profileId: z.string().max(80).optional(),
     protocol: z.enum(["tspl", "phomemo"]),
     widthDots: z.number().int().min(8).max(4096),
+    maxWidthMm: z.number().min(1).max(1000).optional(),
     writeCharUuid: z.string().max(80).optional(),
     labelHeightMm: z.number().min(1).max(1000).optional(),
     gapMm: z.number().min(0).max(100).optional(),

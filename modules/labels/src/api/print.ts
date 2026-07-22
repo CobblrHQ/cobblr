@@ -11,7 +11,7 @@ import { qrSvg } from "./qr.js";
 import { liveQrUrl } from "../live-qr-url.js";
 import { SIZES } from "../print/layout.js";
 import { renderRowsToPdf } from "../print/render-queue.js";
-import { assignCodes, freezePrintedGroups, getOverlayCenter } from "../services/codes.js";
+import { assignCodes, freezePrintedGroups, getOverlayForRefs } from "../services/codes.js";
 
 export const printRouter = Router({ mergeParams: true });
 
@@ -156,11 +156,12 @@ printRouter.post(
     const codes = await assignCodes(ctx.org.id, db, printRefs);
     // A batch is recorded — these labels exist. Lock their prefixes.
     await freezePrintedGroups(db, printRefs);
-    // Per-kind: some kinds opt out of the QR-center code (default on).
-    const overlay = await getOverlayCenter(db, items.map((it) => `${it.module_name}:${it.entity_type}`));
+    // Per-group: an instance can opt its code out of the QR center (default on),
+    // resolved per entity via its code group with the kind default as fallback.
+    const overlay = await getOverlayForRefs(db, printRefs);
     const printables: { description: string; qr_svg: string; center_code?: string }[] = [];
     for (const it of items) {
-      const overlayOn = overlay.get(`${it.module_name}:${it.entity_type}`) ?? true;
+      const overlayOn = overlay.get(it.entity_id) ?? true;
       const center_code = overlayOn ? codes.get(it.entity_id) : undefined;
       const svg = await qrSvg(liveQrUrl(it.qr_payload, base), { margin: 1, ecLevel: center_code ? "H" : "M" });
       for (let i = 0; i < it.qty; i++) {

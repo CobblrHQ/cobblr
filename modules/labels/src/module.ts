@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "labels",
-  version: "0.8.2",
+  version: "0.19.0",
   displayName: "Labels",
   description:
     "QR codes, label templates, per-user print queue, scan-to-navigate/scan-to-action tokens. Polymorphic — any module's entity can have a label.",
@@ -79,6 +79,27 @@ export default defineModule({
         // (see docs/architecture/traits.md §Example).
         appliesTo: { traits: ["physical"] },
         invokeHandler: "labels.queue-from-entity",
+      },
+      {
+        // A WORKSPACE-scoped action: it configures the workspace's label codes,
+        // it doesn't run on a record. This is what makes "give my 3D printers a
+        // 'p' prefix" reachable by Cobb / the MCP through the generic
+        // invoke_action rail — no bespoke per-op AI tool. A rename on a printed
+        // (frozen) group keeps the printed stickers valid and only changes new
+        // labels (keep_existing), so it's always safe to run.
+        id: "labels:set-code",
+        label: "Change label codes",
+        description:
+          "Rename a code group's prefix (e.g. p1, p2 for 3D printers), remove a list's code entirely to free that letter, or toggle whether THAT group's code prints inside the QR (per instance, so 3d printers can show it and cnc can hide it). Runs on the workspace, not a record.",
+        icon: "hash",
+        scope: "workspace",
+        invokeHandler: "labels.set-code",
+        argsSchema: {
+          group_key: { label: "Code group key", type: "text" },
+          prefix: { label: "New prefix (letters only)", type: "text" },
+          remove_code: { label: "Remove this list's code entirely (frees the letter)", type: "boolean" },
+          code_in_qr: { label: "Draw the code inside the QR for this group", type: "boolean" },
+        },
       },
     ],
   },

@@ -19,7 +19,7 @@ import * as activity from "../platform/activity.js";
 import { checkAvailability as checkAiAvailability } from "../platform/ai.js";
 import { AiCapabilities, type AiCapability } from "@cobblr/platform-contract";
 import { clearComputedDefsCache } from "../platform/computed-fields.js";
-import { effectiveAppliesTo, matchAction } from "../platform/actions.js";
+import { effectiveAppliesTo, matchAction, getActionScope } from "../platform/actions.js";
 import type { ActionAppliesToDecl } from "@cobblr/platform-contract";
 import {
   FIELD_SCOPE_PRESETS,
@@ -320,8 +320,10 @@ platformOrgRouter.get(
 
 const InvokeBody = z.object({
   actionId: z.string(),
-  entityKind: z.string(),
-  entityId: z.string(),
+  // Optional: a workspace-scoped action has no record. For an entity-scoped
+  // action they're required — enforced after we read the action's scope.
+  entityKind: z.string().optional(),
+  entityId: z.string().optional(),
   bindingId: z.string().uuid().optional(),
   args: z.record(z.unknown()).optional(),
 });
@@ -344,14 +346,39 @@ platformOrgRouter.post(
       // authenticated member (incl. a read-only guest) could invoke any
       // action — e.g. hand-firing inventory:adjust-stock to move stock.
       if (!(await requireCapability(req, res, parsed.data.actionId))) return;
-      // Look up the entity once — we need its fields for the
-      // namespaced ctx.entity block (Q2 resolution) and also for
-      // template rendering if a binding template applies.
-      const ent = await platform().entities.lookup(
-        req.tenant!.org.id,
-        parsed.data.entityKind,
-        parsed.data.entityId,
-      );
+
+      // A workspace-scoped action runs on the workspace, not a record — it
+      // takes no entityKind/entityId and skips entity resolution. Read the
+      // action's scope up front so we know which path to take. (null = the
+      // action doesn't exist; treat as entity so invoke() throws its clear
+      // "Unknown action" below.)
+      const isWorkspaceAction =
+        (await getActionScope(parsed.data.actionId)) === "workspace";
+      if (
+        !isWorkspaceAction &&
+        (!parsed.data.entityKind || !parsed.data.entityId)
+      ) {
+        res.status(400).json({
+          error: {
+            code: "entity_required",
+            message:
+              "entityKind and entityId are required for this action (it runs on a record)",
+          },
+        });
+        return;
+      }
+
+      // Look up the entity once (entity-scoped only) — we need its fields for
+      // the namespaced ctx.entity block (Q2 resolution) and also for template
+      // rendering if a binding template applies.
+      const ent =
+        !isWorkspaceAction && parsed.data.entityKind && parsed.data.entityId
+          ? await platform().entities.lookup(
+              req.tenant!.org.id,
+              parsed.data.entityKind,
+              parsed.data.entityId,
+            )
+          : null;
       const entityFields = ent?.fields ?? {};
 
       // Resolve actor metadata for the namespaced event.actor block.
@@ -408,11 +435,14 @@ platformOrgRouter.post(
       const result = await platform().actions.invoke(parsed.data.actionId, {
         orgId: req.tenant!.org.id,
         userId: req.session!.id,
-        entity: {
-          kind: parsed.data.entityKind,
-          id: parsed.data.entityId,
-          fields: entityFields,
-        },
+        scope: isWorkspaceAction ? "workspace" : "entity",
+        entity: isWorkspaceAction
+          ? undefined
+          : {
+              kind: parsed.data.entityKind!,
+              id: parsed.data.entityId!,
+              fields: entityFields,
+            },
         event: {
           name: null, // user-invoked has no event name
           payload: parsed.data.args ?? {},
@@ -422,9 +452,9 @@ platformOrgRouter.post(
         },
         rendered,
         args: parsed.data.args,
-        // Deprecated compat aliases.
-        entityKind: parsed.data.entityKind,
-        entityId: parsed.data.entityId,
+        // Deprecated compat aliases (absent for workspace-scoped actions).
+        entityKind: isWorkspaceAction ? undefined : parsed.data.entityKind,
+        entityId: isWorkspaceAction ? undefined : parsed.data.entityId,
       });
       res.json({ ok: true, result });
     } catch (err) {
@@ -1485,23 +1515,31 @@ platformOrgRouter.get(
           const ovr = overrides.get(a.id);
           const effective = (ovr?.applies_to_override ??
             a.applies_to) as ActionAppliesToDecl;
-          const matchedKinds = kinds
-            .filter(
-              (k) =>
-                matchAction(
-                  effective,
-                  (k.fields as { role?: string }[]) ?? [],
-                  k.id,
-                  (k.traits as Record<string, unknown> | null) ?? null,
-                ).via !== null,
-            )
-            .map((k) => k.id);
+          const scope = a.scope === "workspace" ? "workspace" : "entity";
+          // Workspace-scoped actions run on the workspace, not a record, so
+          // they match no kind (their appliesTo is ignored). Force an empty
+          // set rather than letting a default { any: true } match everything.
+          const matchedKinds =
+            scope === "workspace"
+              ? []
+              : kinds
+                  .filter(
+                    (k) =>
+                      matchAction(
+                        effective,
+                        (k.fields as { role?: string }[]) ?? [],
+                        k.id,
+                        (k.traits as Record<string, unknown> | null) ?? null,
+                      ).via !== null,
+                  )
+                  .map((k) => k.id);
           return {
             id: a.id,
             module_name: a.module_name,
             label: a.label,
             description: a.description,
             icon: a.icon,
+            scope,
             default_applies_to: a.applies_to,
             effective_applies_to: effective,
             overridden: !!ovr,
@@ -1567,15 +1605,22 @@ platformOrgRouter.get(
         actions: actions.map((a) => {
           const effective = (overrides.get(a.id) ??
             a.applies_to) as ActionAppliesToDecl;
-          const reason = matchAction(
-            effective,
-            (kind.fields as { role?: string }[]) ?? [],
-            kind.id,
-            (kind.traits as Record<string, unknown> | null) ?? null,
-          );
+          const scope = a.scope === "workspace" ? "workspace" : "entity";
+          // Workspace-scoped actions never match a kind (they run on the
+          // workspace, not a record).
+          const reason: ReturnType<typeof matchAction> =
+            scope === "workspace"
+              ? { via: null }
+              : matchAction(
+                  effective,
+                  (kind.fields as { role?: string }[]) ?? [],
+                  kind.id,
+                  (kind.traits as Record<string, unknown> | null) ?? null,
+                );
           return {
             id: a.id,
             label: a.label,
+            scope,
             effective_applies_to: effective,
             overridden: overrides.has(a.id),
             matched: reason.via !== null,
@@ -1616,6 +1661,7 @@ platformOrgRouter.get(
         label: action.label,
         description: action.description,
         icon: action.icon,
+        scope: action.scope === "workspace" ? "workspace" : "entity",
         default_applies_to: result.default,
         effective_applies_to: result.effective,
         overridden: result.overridden,

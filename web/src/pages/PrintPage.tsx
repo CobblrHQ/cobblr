@@ -5,11 +5,11 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Printer as PrinterIcon, Wifi, Send, Pencil, Star } from "lucide-react";
+import { Plus, Trash2, Printer as PrinterIcon, Wifi, Send, Pencil, Star, Bluetooth } from "lucide-react";
 import { ApiError, api, type Printer, type PrinterInput } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useToast, useConfirm, usePageTitle, printLabelOverBluetooth, isWebBluetoothAvailable, NO_WEB_BLUETOOTH, type BluetoothPrinterSettings } from "@cobblr/platform-web";
-import { mmToDots, dotsToMm, mmToInch, thermalFootprint, type FeedType } from "@cobblr/thermal-print";
+import { Modal, useToast, useConfirm, usePageTitle, printLabelOverBluetooth, connectPrinter, closePrinter, pairBluetoothPrinter, isWebBluetoothAvailable, NO_WEB_BLUETOOTH, type BluetoothPrinterSettings } from "@cobblr/platform-web";
+import { mmToDots, dotsToMm, mmToInch, thermalFootprint, matchProfile, type FeedType } from "@cobblr/thermal-print";
 
 import { EdgeConnectField, type EdgeConnectValue } from "../components/EdgeConnectField";
 
@@ -28,7 +28,9 @@ export function PrintPage() {
   const toast = useToast();
   const confirm = useConfirm();
   const [editing, setEditing] = useState<Printer | "new" | null>(null);
+  const [newDriver, setNewDriver] = useState<string | null>(null);
   const [btBusy, setBtBusy] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState(false);
 
   /** Bluetooth printers are driven from THIS browser — the server has no route to
    *  them — so the test print runs here rather than through the print API. */
@@ -92,6 +94,40 @@ export function PrintPage() {
 
   const items = list.data?.items ?? [];
 
+  // Connect a Bluetooth printer right here: pair, auto-detect from its known
+  // profile, and save it — no form. An unrecognised model drops into the manual
+  // add form (pre-set to Bluetooth) instead.
+  const connectBluetooth = async () => {
+    if (!isWebBluetoothAvailable()) {
+      toast.error(NO_WEB_BLUETOOTH);
+      return;
+    }
+    setConnecting(true);
+    try {
+      const { deviceName, profile, settings } = await pairBluetoothPrinter();
+      if (!profile || !settings) {
+        toast.error(`Paired "${deviceName}", but it isn't a model we know yet. Fill in the fields to finish.`);
+        setNewDriver("browser-bluetooth");
+        setEditing("new");
+        return;
+      }
+      await api.createPrinter(activeSlug, {
+        name: profile.label,
+        driver: "browser-bluetooth",
+        base_url: "",
+        queue: "",
+        settings: settings as unknown as Record<string, unknown>,
+        is_default: items.length === 0,
+      });
+      toast.success(`${profile.label} connected.`);
+      void invalidate();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : String(e));
+    } finally {
+      setConnecting(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
@@ -101,7 +137,7 @@ export function PrintPage() {
         </span>
         <div className="flex-1" />
         <button
-          onClick={() => setEditing("new")}
+          onClick={() => { setNewDriver(null); setEditing("new"); }}
           className="inline-flex items-center gap-2 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition"
         >
           <Plus size={14} /> Add printer
@@ -109,15 +145,40 @@ export function PrintPage() {
       </div>
 
       <p className="text-sm text-muted dark:text-slate-400 max-w-2xl">
-        A printer is a queue on a print manager (CUPS). Cobblr sends documents to
-        the manager over IPP: direct on your LAN, or, on a hosted Cobblr, through
-        an on-site edge bridge. It hands the manager a job; it never drives the device.
+        Connect a printer to print labels and documents. Cobblr works with{" "}
+        <b>Bluetooth label printers</b> (printed straight from this browser, no server or app),{" "}
+        <b>network printers</b> on a CUPS/IPP manager, and printers reached through an{" "}
+        <b>on-site edge bridge</b>. It hands the manager a job and tracks it; it never drives the device.
       </p>
 
       {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {!list.isLoading && items.length === 0 && (
-        <div className="rounded-xl border border-dashed border-line dark:border-slate-700 p-6 text-center text-sm text-muted dark:text-slate-400">
-          No printers yet. <button onClick={() => setEditing("new")} className="text-accent hover:underline">Add one</button> — e.g. a Rollo label printer on your CUPS server.
+        <div className="grid sm:grid-cols-2 gap-3 max-w-2xl">
+          <button
+            onClick={connectBluetooth}
+            disabled={connecting}
+            className="text-left rounded-xl border border-line dark:border-slate-700 hover:border-accent bg-surface dark:bg-slate-900 p-4 transition disabled:opacity-60"
+          >
+            <div className="flex items-center gap-2 mb-1">
+              <Bluetooth size={16} className="text-accent" />
+              <span className="font-medium text-content dark:text-mortar-100">{connecting ? "Pairing…" : "Bluetooth label printer"}</span>
+            </div>
+            <p className="text-xs text-muted dark:text-slate-400">
+              A thermal label printer over Bluetooth (Phomemo, POLONO, and similar). Click to pair and auto-detect its settings. Prints from this browser (Chrome or Edge, desktop or Android).
+            </p>
+          </button>
+          <button
+            onClick={() => { setNewDriver("cups"); setEditing("new"); }}
+            className="text-left rounded-xl border border-line dark:border-slate-700 hover:border-accent bg-surface dark:bg-slate-900 p-4 transition"
+          >
+            <div className="flex items-center gap-2 mb-1">
+              <Wifi size={16} className="text-accent" />
+              <span className="font-medium text-content dark:text-mortar-100">Network printer</span>
+            </div>
+            <p className="text-xs text-muted dark:text-slate-400">
+              A printer on a CUPS/IPP manager on your network, or through an on-site edge bridge on a hosted Cobblr. Cobblr sends it whole print jobs.
+            </p>
+          </button>
         </div>
       )}
 
@@ -135,6 +196,19 @@ export function PrintPage() {
               <span className="px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider bg-subtle dark:bg-slate-800 text-muted dark:text-slate-400">
                 {p.driver}
               </span>
+              {/* A network printer with no declared type/width is assumed an 8.5" sheet
+                  printer by the size funnel — fine for an inkjet, wrong for a thermal
+                  roll. Nudge the user to set it (one click into edit) rather than
+                  silently mis-funnel an existing printer. */}
+              {p.driver !== "browser-bluetooth" && !(p.settings as Record<string, unknown> | undefined)?.printerKind && (
+                <button
+                  onClick={() => setEditing(p)}
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 hover:brightness-105 transition"
+                  title="Set this printer's type and max width so label sizes funnel correctly"
+                >
+                  Set type
+                </button>
+              )}
               <div className="flex-1" />
               {p.driver === "browser-bluetooth" ? (
                 <button
@@ -171,8 +245,18 @@ export function PrintPage() {
               </button>
             </div>
             <div className="mt-2 text-xs text-muted dark:text-slate-400 font-mono">
-              {p.base_url} · queue <span className="text-content dark:text-mortar-200">{p.queue}</span>
-              {p.has_credentials && " · 🔒 auth set"}
+              {p.driver === "browser-bluetooth" ? (
+                (() => {
+                  const s = (p.settings ?? {}) as Record<string, unknown>;
+                  const w = Number(s.widthDots) || 0;
+                  return `${String(s.protocol ?? "tspl").toUpperCase()}${w ? ` · ${w} dots · ≈${dotsToMm(w).toFixed(0)}mm wide` : ""}`;
+                })()
+              ) : (
+                <>
+                  {p.base_url} · queue <span className="text-content dark:text-mortar-200">{p.queue}</span>
+                  {p.has_credentials && " · 🔒 auth set"}
+                </>
+              )}
             </div>
             {p.notes && <div className="mt-1 text-xs text-muted dark:text-slate-400">{p.notes}</div>}
           </div>
@@ -183,9 +267,12 @@ export function PrintPage() {
         <PrinterModal
           slug={activeSlug}
           printer={editing === "new" ? null : editing}
-          onClose={() => setEditing(null)}
+          initialDriver={newDriver ?? undefined}
+          existingPrinters={items.filter((p) => p.driver === "browser-bluetooth" && (editing === "new" || p.id !== editing.id))}
+          onClose={() => { setNewDriver(null); setEditing(null); }}
           onSaved={() => {
             void invalidate();
+            setNewDriver(null);
             setEditing(null);
           }}
         />
@@ -197,11 +284,15 @@ export function PrintPage() {
 function PrinterModal({
   slug,
   printer,
+  initialDriver,
+  existingPrinters,
   onClose,
   onSaved,
 }: {
   slug: string;
   printer: Printer | null;
+  initialDriver?: string;
+  existingPrinters?: Printer[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -211,7 +302,7 @@ function PrinterModal({
   const authCfg = useQuery({ queryKey: ["auth-config"], queryFn: () => api.authConfig(), staleTime: 5 * 60_000 });
   const hosted = !!authCfg.data?.hosted;
   const [name, setName] = useState(printer?.name ?? "");
-  const [driver, setDriver] = useState(printer?.driver ?? "cups");
+  const [driver, setDriver] = useState(printer?.driver ?? initialDriver ?? "cups");
   // How Cobblr reaches the manager: a direct URL, or a cobblr-edge:// bridge route.
   const [conn, setConn] = useState<EdgeConnectValue>(() => {
     const url = printer?.base_url ?? "";
@@ -224,6 +315,16 @@ function PrinterModal({
   const [queue, setQueue] = useState(printer?.queue ?? "");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  // A network manager (CUPS/edge) can't report the printer's kind or media width,
+  // so the user declares it. This is exactly what the label-size funnel reads to
+  // offer only the sizes this printer can feed (a sheet printer never lists a
+  // thermal roll; nothing wider than the max is shown). Bluetooth gets it free from
+  // the matched profile; a network printer declares it here.
+  const net0 = (printer?.settings ?? {}) as Record<string, unknown>;
+  const [netKind, setNetKind] = useState<"inkjet-laser" | "thermal">(net0.printerKind === "thermal" ? "thermal" : "inkjet-laser");
+  const [netMaxIn, setNetMaxIn] = useState(
+    String(net0.maxWidthMm ? Number((Number(net0.maxWidthMm) / 25.4).toFixed(2)) : net0.printerKind === "thermal" ? 4 : 8.5),
+  );
   const [isDefault, setIsDefault] = useState(printer?.is_default ?? false);
   const [notes, setNotes] = useState(printer?.notes ?? "");
   const [busy, setBusy] = useState(false);
@@ -240,12 +341,89 @@ function PrinterModal({
   const [btGapMm, setBtGapMm] = useState(String(bt0.gapMm ?? media0?.gapMm ?? 2));
   const [btDirection, setBtDirection] = useState(String(bt0.direction ?? 0));
   const [btTopMargin, setBtTopMargin] = useState(String(bt0.topMarginDots ?? 0));
+  // "Labels across": how many faces fit ACROSS the loaded media (n-up). Reconstruct
+  // it from a stored media/label pair on edit; default 1 (one label per feed).
+  const label0 = (bt0.label ?? null) as { widthMm?: number } | null;
+  const initAcross = media0?.widthMm && label0?.widthMm ? Math.max(1, Math.round(media0.widthMm / label0.widthMm)) : 1;
+  const [btAcross, setBtAcross] = useState(String(initAcross));
   const isBluetooth = driver === "browser-bluetooth";
   // Derived, shown live and stored on save — the raster path + any pre-D3 reader
   // still get widthDots/labelHeightMm/gapMm; media/label are the source of truth.
   const btMediaW = Number(btMediaWmm) || 0;
   const btLabelH = Number(btHeightMm) || 0;
   const btDerivedWidthDots = mmToDots(btMediaW);
+  // mediaTiles reserves the inter-face gap, so a face is (mediaW - (n-1)*gap)/n.
+  const btAcrossN = Math.max(1, Math.min(8, Math.round(Number(btAcross) || 1)));
+  // Faces pack across the media, so each is a clean 1/N of the width with its own
+  // margins built in (the die-cut gap is the feed space, not between faces).
+  const btFaceW = btMediaW / btAcrossN;
+
+  // Reuse a media layout from a printer the workspace already set up — "you did
+  // this before". describeLayout labels the option; reuseLayout reads it back in.
+  const describeLayout = (p: Printer): string => {
+    const s = (p.settings ?? {}) as Record<string, unknown>;
+    const m = (s.media ?? null) as { widthMm?: number; heightMm?: number } | null;
+    const l = (s.label ?? null) as { widthMm?: number } | null;
+    const w = m?.widthMm ?? (s.widthDots ? Math.round(dotsToMm(Number(s.widthDots))) : 0);
+    const h = Math.round(Number(m?.heightMm ?? s.labelHeightMm ?? 0));
+    const across = m?.widthMm && l?.widthMm ? Math.max(1, Math.round(m.widthMm / l.widthMm)) : 1;
+    return `${p.name}: ${w}×${h}${across > 1 ? `, ${across}-up` : ""}`;
+  };
+  const reuseLayout = (p: Printer) => {
+    const s = (p.settings ?? {}) as Record<string, unknown>;
+    const m = (s.media ?? null) as { widthMm?: number; heightMm?: number; feed?: FeedType; gapMm?: number } | null;
+    const l = (s.label ?? null) as { widthMm?: number } | null;
+    const w = m?.widthMm ?? (s.widthDots ? Number(dotsToMm(Number(s.widthDots)).toFixed(1)) : 0);
+    if (w) setBtMediaWmm(String(w));
+    const h = m?.heightMm ?? s.labelHeightMm;
+    if (h != null) setBtHeightMm(String(h));
+    if (m?.feed) setBtFeed(m.feed);
+    if (m?.gapMm != null) setBtGapMm(String(m.gapMm));
+    if (s.protocol) setBtProtocol(String(s.protocol));
+    setBtAcross(String(m?.widthMm && l?.widthMm ? Math.max(1, Math.round(m.widthMm / l.widthMm)) : 1));
+  };
+  const [detecting, setDetecting] = useState(false);
+
+  // Pair a Bluetooth printer and fill the fields from its known profile, so a user
+  // never has to know its dialect, width, or orientation. We pair only to read the
+  // advertised name (width here is a throwaway — pairing ignores it), match a
+  // bundled profile, then close the session; the real print re-opens the
+  // now-granted device with no chooser. Values stay editable and the save path
+  // derives the footprint exactly as a hand-entered printer does.
+  const autoDetect = async () => {
+    if (!isWebBluetoothAvailable()) {
+      toast.error(NO_WEB_BLUETOOTH);
+      return;
+    }
+    setDetecting(true);
+    try {
+      const session = await connectPrinter({ protocol: "tspl", widthDots: 320 });
+      const detected = matchProfile(session.deviceName);
+      closePrinter(session);
+      setDriver("browser-bluetooth");
+      if (!detected) {
+        toast.error(`Paired "${session.deviceName}", but it is not a model we know yet. Set the fields below by hand, or run the self-test.`);
+        return;
+      }
+      if (!name.trim()) setName(detected.label);
+      setBtProtocol(detected.protocol);
+      setBtMediaWmm(String(Number(dotsToMm(detected.defaultWidthDots).toFixed(1))));
+      setBtDirection(String(detected.direction ?? 0));
+      setBtTopMargin(String(detected.topMarginDots ?? 0));
+      const feed: FeedType = detected.defaults.media === "continuous" ? "continuous" : "die-cut";
+      setBtFeed(feed);
+      if (detected.pitchMm) {
+        const gap = feed === "die-cut" ? 2 : 0;
+        setBtHeightMm(String(Number((detected.pitchMm - gap).toFixed(1))));
+        setBtGapMm(String(gap));
+      }
+      toast.success(`Detected ${detected.label} — review and save.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDetecting(false);
+    }
+  };
 
   const save = async () => {
     const baseUrl = conn.base_url.trim();
@@ -280,7 +458,8 @@ function PrinterModal({
               // media+label are the source; the footprint is DERIVED so the raster
               // path and any pre-D3 reader keep working (see spec D3).
               const media = { widthMm: btMediaW, heightMm: btLabelH || btMediaW, feed: btFeed, gapMm: btFeed === "die-cut" ? Number(btGapMm) || 0 : 0 };
-              const label = { widthMm: media.widthMm, heightMm: media.heightMm };
+              // "Labels across" narrows the face so N fit per media; mediaTiles tiles it.
+              const label = { widthMm: btAcrossN > 1 ? Number(btFaceW.toFixed(2)) : media.widthMm, heightMm: media.heightMm };
               const fp = thermalFootprint(media, label);
               return {
                 protocol: btProtocol,
@@ -294,7 +473,14 @@ function PrinterModal({
               };
             })(),
           }
-        : {}),
+        : {
+            // Network printer capability the size funnel reads (kind + max width).
+            settings: {
+              ...(printer?.settings ?? {}),
+              printerKind: netKind,
+              maxWidthMm: Math.round((Number(netMaxIn) || (netKind === "thermal" ? 4 : 8.5)) * 25.4),
+            },
+          }),
     };
     try {
       if (printer) await api.updatePrinter(slug, printer.id, body);
@@ -336,6 +522,35 @@ function PrinterModal({
               Needs Chrome or Edge on desktop/Android; iOS has no Web Bluetooth. Values below come from the
               printer&rsquo;s calibration; run the self-test if you don&rsquo;t know them.
             </div>
+            <button
+              type="button"
+              onClick={autoDetect}
+              disabled={detecting}
+              className="w-full rounded border border-accent/60 bg-accent/5 hover:bg-accent/10 text-accent text-sm font-medium px-3 py-2 transition flex items-center justify-center gap-1.5 disabled:opacity-50"
+            >
+              <Bluetooth size={14} /> {detecting ? "Pairing…" : "Pair & auto-detect"}
+            </button>
+            <div className="text-[11px] text-faint text-center">
+              Pairs your printer and fills these in from its known profile. Or set them by hand below.
+            </div>
+            {existingPrinters && existingPrinters.length > 0 && (
+              <label className="block">
+                <div className="text-xs text-muted mb-1">Reuse a layout you set up before</div>
+                <select
+                  className={field}
+                  value=""
+                  onChange={(e) => {
+                    const p = existingPrinters.find((x) => x.id === e.target.value);
+                    if (p) reuseLayout(p);
+                  }}
+                >
+                  <option value="">Choose a saved layout…</option>
+                  {existingPrinters.map((p) => (
+                    <option key={p.id} value={p.id}>{describeLayout(p)}</option>
+                  ))}
+                </select>
+              </label>
+            )}
             <div className="grid grid-cols-2 gap-2">
               <label className="block">
                 <div className="text-xs text-muted mb-1">Command dialect</div>
@@ -383,6 +598,13 @@ function PrinterModal({
                   <div className="text-xs text-muted mb-1">Top margin (dots)</div>
                   <input className={field} type="number" value={btTopMargin} onChange={(e) => setBtTopMargin(e.target.value)} />
                 </label>
+                <label className="block">
+                  <div className="text-xs text-muted mb-1">Labels across</div>
+                  <input className={field} type="number" min={1} max={8} value={btAcross} onChange={(e) => setBtAcross(e.target.value)} />
+                  <div className="text-[11px] text-faint mt-1">
+                    {btAcrossN > 1 ? `${btAcrossN} labels of ${Number(btFaceW.toFixed(1))}mm across the ${btMediaW || "?"}mm media` : "one label per feed"}
+                  </div>
+                </label>
               </div>
             )}
           </div>
@@ -403,6 +625,30 @@ function PrinterModal({
           <label className="block">
             <div className="text-xs text-muted mb-1">Password (optional)</div>
             <input className={field} type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" placeholder={printer?.has_credentials ? "•••• (unchanged)" : ""} />
+          </label>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block">
+            <div className="text-xs text-muted mb-1">Printer type</div>
+            <select
+              className={field}
+              value={netKind}
+              onChange={(e) => {
+                const k = e.target.value as "inkjet-laser" | "thermal";
+                setNetKind(k);
+                // Snap the width to the kind's usual max if it's still the other default.
+                if (k === "thermal" && (netMaxIn === "8.5" || netMaxIn === "")) setNetMaxIn("4");
+                if (k === "inkjet-laser" && (netMaxIn === "4" || netMaxIn === "")) setNetMaxIn("8.5");
+              }}
+            >
+              <option value="inkjet-laser">Inkjet / laser (sheets)</option>
+              <option value="thermal">Thermal label / roll</option>
+            </select>
+          </label>
+          <label className="block">
+            <div className="text-xs text-muted mb-1">Max width (in)</div>
+            <input className={field} type="number" step="0.1" min={1} value={netMaxIn} onChange={(e) => setNetMaxIn(e.target.value)} placeholder={netKind === "thermal" ? "4" : "8.5"} />
+            <div className="text-[11px] text-faint mt-1">Widest media it feeds. Sizes wider than this aren&rsquo;t offered.</div>
           </label>
         </div>
         </>

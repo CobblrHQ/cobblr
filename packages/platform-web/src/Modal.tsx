@@ -20,7 +20,7 @@
 
 import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { X } from "lucide-react";
+import { Sparkles, X } from "lucide-react";
 
 interface Props {
   open: boolean;
@@ -50,6 +50,17 @@ interface Props {
    *  "no use wasting screen space" (the author). Off by default so a small confirm
    *  dialog still sizes to its content. */
   fillHeight?: boolean;
+  /** A contextual **Ask Cobb** button in the header. `prompt` is a ready-to-go
+   *  starter typed into the chat for the user (editable, one tap to send) — a
+   *  modal's "help me understand / act on what's in front of me" front door. The
+   *  chat docks alongside (it sits z-above modals and the shell reserves its
+   *  edge), so no screen needs its own chat coupling. Works in any nav mode: the
+   *  button lives IN the modal, so it dodges the launcher-under-backdrop problem. */
+  /** `opener` is what Cobb SAYS when the button opens the chat — a greeting that
+   *  frames this modal ("You're on your label codes. I can rename a prefix or…"),
+   *  rendered as an assistant turn, not words typed into the user's box. Write it
+   *  in Cobb's voice, using the screen's real vocabulary. */
+  cobb?: { opener: string; label?: string };
 }
 
 const SIZE: Record<NonNullable<Props["size"]>, string> = {
@@ -62,7 +73,7 @@ const SIZE: Record<NonNullable<Props["size"]>, string> = {
   content: "max-w-4xl",
 };
 
-export function Modal({ open, onClose, title, subtitle, children, size = "md", destructive, dismissOnBackdrop = true, inline = false, fillHeight = false }: Props) {
+export function Modal({ open, onClose, title, subtitle, children, size = "md", destructive, dismissOnBackdrop = true, inline = false, fillHeight = false, cobb }: Props) {
   // "Dirty" = the user has entered/changed something inside this modal. Tracked
   // by listening (capture) for input/change events bubbling from any descendant
   // field — so we never have to know in advance whether a modal is a form. Only
@@ -131,7 +142,7 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
         onInput={markDirty}
         onChange={markDirty}
       >
-        {(title || subtitle) && (
+        {(title || subtitle || cobb) && (
           <div
             className={
               "flex items-start gap-3 px-5 py-3 border-b shrink-0 " +
@@ -159,6 +170,19 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
                 </div>
               )}
             </div>
+            {cobb && (
+              <button
+                type="button"
+                onClick={() =>
+                  window.dispatchEvent(new CustomEvent("cobblr:open-chat", { detail: { opener: cobb.opener } }))
+                }
+                className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-accent hover:bg-subtle dark:hover:bg-slate-800 transition shrink-0"
+                title="Ask Cobb about this — opens chat with Cobb ready to help"
+              >
+                <Sparkles size={15} className="shrink-0" />
+                <span className="hidden sm:inline">{cobb.label ?? "Ask Cobb"}</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={onClose}

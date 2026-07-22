@@ -17,7 +17,7 @@ import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { ChevronDown, Maximize2, Bot } from "lucide-react";
 import { api } from "../lib/api";
-import { useToast } from "@cobblr/platform-web";
+import { useToast, usePrintProgress } from "@cobblr/platform-web";
 import { iconForName } from "../lib/panel-icons";
 import { useDrive } from "./DriveContext";
 import { tabBrowserId, type DriveState } from "../hooks/useBrowserDrive";
@@ -238,22 +238,25 @@ function Ring({
   on,
   size = 34,
   onClick,
+  badge = 0,
 }: {
   control: LiveControlPublic;
   on: boolean;
   size?: number;
   onClick?: (e: React.MouseEvent) => void;
+  /** A taskbar-style count over the icon (labels still to print); 0 hides it. */
+  badge?: number;
 }) {
   const Icon = iconForName(control.icon);
   return (
     <button
       type="button"
-      title={control.label}
+      title={badge > 0 ? `${badge} to print` : control.label}
       aria-pressed={on}
       onClick={onClick}
       style={{ width: size, height: size }}
       className={
-        "shrink-0 grid place-items-center rounded-full border-2 transition " +
+        "relative shrink-0 grid place-items-center rounded-full border-2 transition " +
         (onClick ? "cursor-pointer hover:brightness-110 " : "cursor-default ") +
         (on
           ? "border-[#6B8E4E] bg-[#6B8E4E]/15 text-[#4f6c39] dark:text-[#a9c48c]"
@@ -261,7 +264,18 @@ function Ring({
       }
     >
       <Icon size={Math.round(size * 0.48)} />
+      {badge > 0 && <CountBadge n={badge} />}
     </button>
+  );
+}
+
+/** The little job-count bubble on the printer icon while a batch streams out —
+ *  the print-manager-in-the-taskbar cue. */
+function CountBadge({ n }: { n: number }) {
+  return (
+    <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-[3px] grid place-items-center rounded-full bg-cobble-600 text-white text-[9px] font-semibold leading-none tabular-nums shadow ring-1 ring-surface dark:ring-slate-900">
+      {n > 99 ? "99+" : n}
+    </span>
   );
 }
 
@@ -271,18 +285,20 @@ function Row({
   on,
   onToggle,
   segment,
+  badge = 0,
 }: {
   control: LiveControlPublic;
   on: boolean;
   onToggle: () => void;
   segment?: { value: string; onChange: (v: string) => void };
+  badge?: number;
 }) {
   const navigate = useNavigate();
   const opts = control.segment ?? [];
   return (
     <div className="rounded-lg border border-line dark:border-slate-700 p-2">
       <div className="flex items-center gap-2.5">
-        <Ring control={control} on={on} size={32} onClick={() => onToggle()} />
+        <Ring control={control} on={on} size={32} onClick={() => onToggle()} badge={badge} />
         <span className="font-semibold text-[12.5px] leading-tight text-content dark:text-mortar-100">
           {control.label}
         </span>
@@ -326,6 +342,7 @@ function Panel({
   footerAtBottom,
   onClose,
   segmentState,
+  badgeFor,
 }: {
   controls: LiveControlPublic[];
   states: Record<string, ControlState>;
@@ -333,6 +350,7 @@ function Panel({
   footerAtBottom?: boolean;
   onClose: () => void;
   segmentState?: (c: LiveControlPublic) => { value: string; onChange: (v: string) => void } | undefined;
+  badgeFor?: (c: LiveControlPublic) => number;
 }) {
   const onIcons = controls.filter((c) => isOn(states[c.id] ?? null));
   const header = (
@@ -363,6 +381,7 @@ function Panel({
           on={isOn(states[c.id] ?? null)}
           onToggle={() => onToggle(c)}
           segment={segmentState ? segmentState(c) : undefined}
+          badge={badgeFor ? badgeFor(c) : 0}
         />
       ))}
     </div>
@@ -390,6 +409,12 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
   const toggle = useToggle(slug ?? "");
   const drive = useDrive();
   const scanDrive = useScanDriveControl(slug ?? "");
+  // Labels still to print in the batch in flight (BLE), for the taskbar-style count
+  // on the printer icon. The print path publishes this; it's live only while a
+  // browser-driven batch runs. Anchored to the "printer"-icon control (auto-print).
+  const printProgress = usePrintProgress();
+  const printing = printProgress ? Math.max(0, printProgress.total - printProgress.done) : 0;
+  const badgeFor = (c: LiveControlPublic) => (c.icon === "printer" ? printing : 0);
 
   // Fold the drive indicator in as a DATA control (green ring while this tab is
   // driven, grey while another window is); an offer is a prompt, handled below.
@@ -428,6 +453,12 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
   if (controls.length === 0) return null; // self-hiding
 
   const onIcons = controls.filter((c) => isOn(states[c.id] ?? null));
+  // The collapsed pill normally shows the ON controls. While a batch prints, add
+  // the printer icon even if auto-print is off (a manual queue print) — a taskbar
+  // surfaces an active job whether or not you armed anything.
+  const printerControl = printing > 0 ? controls.find((c) => c.icon === "printer") : undefined;
+  const pillIcons =
+    printerControl && !onIcons.some((c) => c.id === printerControl.id) ? [printerControl, ...onIcons] : onIcons;
 
   if (mode === "sidebar") {
     // Bare ring row in the sidebar foot; expands into a right-flyout panel.
@@ -435,7 +466,7 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
       <div className="relative">
         <div className="flex items-center gap-2.5 overflow-hidden px-0.5 py-1">
           {controls.map((c) => (
-            <Ring key={c.id} control={c} on={isOn(states[c.id] ?? null)} size={28} onClick={() => fire(c)} />
+            <Ring key={c.id} control={c} on={isOn(states[c.id] ?? null)} size={28} onClick={() => fire(c)} badge={badgeFor(c)} />
           ))}
           <button
             type="button"
@@ -448,7 +479,7 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
         </div>
         {open && (
           <div className="absolute left-full bottom-1 ml-1.5 z-[60]">
-            <Panel controls={controls} states={states} onToggle={fire} segmentState={segmentState} onClose={() => setOpen(false)} />
+            <Panel controls={controls} states={states} onToggle={fire} segmentState={segmentState} badgeFor={badgeFor} onClose={() => setOpen(false)} />
           </div>
         )}
       </div>
@@ -460,18 +491,24 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
   return (
     <div className="fixed bottom-4 right-4 z-[900] flex flex-col items-end">
       {open ? (
-        <Panel controls={controls} states={states} onToggle={fire} segmentState={segmentState} footerAtBottom onClose={() => setOpen(false)} />
+        <Panel controls={controls} states={states} onToggle={fire} segmentState={segmentState} badgeFor={badgeFor} footerAtBottom onClose={() => setOpen(false)} />
       ) : (
         <button
           type="button"
           onClick={() => setOpen(true)}
-          title="Live controls"
+          title={printing > 0 ? `${printing} to print` : "Live controls"}
           className="inline-flex items-center gap-2.5 rounded-full border-[1.5px] border-cobble-300 dark:border-cobble-600 bg-surface dark:bg-slate-900 px-4 py-2 shadow-lg hover:brightness-105"
         >
-          {onIcons.length > 0 ? (
-            onIcons.map((c) => {
+          {pillIcons.length > 0 ? (
+            pillIcons.map((c) => {
               const Icon = iconForName(c.icon);
-              return <Icon key={c.id} size={17} className="text-content dark:text-mortar-100" />;
+              const n = badgeFor(c);
+              return (
+                <span key={c.id} className="relative inline-flex">
+                  <Icon size={17} className="text-content dark:text-mortar-100" />
+                  {n > 0 && <CountBadge n={n} />}
+                </span>
+              );
             })
           ) : (
             <span className="text-[12px] font-semibold text-muted dark:text-slate-400">Live</span>

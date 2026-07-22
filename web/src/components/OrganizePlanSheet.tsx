@@ -894,9 +894,12 @@ export function SortingPlanView({
               onClick={() =>
                 window.dispatchEvent(
                   new CustomEvent("cobblr:open-chat", {
+                    // Shared opener seam (same one the Modal `cobb` prop uses): open
+                    // chat with a Cobb greeting that frames this plan, not a starter
+                    // typed into the user's box.
                     detail: {
-                      seed:
-                        "Describe the places in your home — Cobb sees this plan, creates the locations with your confirmation, then re-plans for you.",
+                      opener:
+                        "I can see your put-away plan. Describe the places in your home and I'll create them, then re-plan so your scanned items route to real spots. Where do things go?",
                     },
                   }),
                 )

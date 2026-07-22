@@ -97,9 +97,23 @@ export {
   // Walk-up: a session held across prints, so one label at a time costs
   // neither a chooser nor a reconnect.
   heldPrinterSession, printOneOverBluetooth, heldPrinterName, releaseHeldPrinter,
+  // Inline connect: pair + auto-detect a known model, then persist it with no hand-entry.
+  pairBluetoothPrinter, settingsFromProfile,
+  // Labels per feed for a printer's loaded media (n-up), so an accumulate loop
+  // knows how many labels fill one sheet.
+  tileCount,
   type BluetoothPrinterSettings, type LabelContent, type PrinterSession,
   type BatchItem, type BatchResult,
 } from "./bluetooth-label";
+
+// Live progress of the print batch in flight — a taskbar-style count for the
+// Live-box printer icon. Bluetooth publishes it per label from
+// printBatchOverBluetooth; a network send publishes a transient count around the
+// job submit via setPrintProgress. Read by the Live box.
+export {
+  getPrintProgress, setPrintProgress, subscribePrintProgress, usePrintProgress,
+  type PrintProgress,
+} from "./print-progress";
 
 // The generic print directive: how a module asks the platform to put something
 // on paper without either side learning the other's job.

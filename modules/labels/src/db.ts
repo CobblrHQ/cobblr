@@ -56,10 +56,17 @@ export interface LabelsCodeConfigTable {
 export interface LabelsCodePrefixesTable {
   group_key: string;
   entity_kind: string;
-  prefix: string;
+  /** NULL = the list is opted out of a code (letter freed); no code is minted for
+   *  its items. A real string is the group's globally-unique prefix. */
+  prefix: string | null;
   label: string | null;
   next_seq: Generated<number>;
   frozen: Generated<boolean>;
+  /** Per-group override for drawing the code in the QR center. NULL inherits
+   *  the kind default (labels_code_config, then the module-declared default),
+   *  so two instances of one kind can differ (3d-printers on, cnc off).
+   *  Insert-optional: a freshly minted group is NULL (inherits) until toggled. */
+  overlay_center: Generated<boolean | null>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
@@ -101,6 +108,7 @@ export interface LabelsAutoflushTable {
   size_key: string | null;
   fire_mode: Generated<string>;
   fire_count: Generated<number>;
+  client_fired: Generated<boolean>;
   last_fired_at: Date | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;

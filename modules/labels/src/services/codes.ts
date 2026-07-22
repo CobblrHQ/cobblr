@@ -134,6 +134,34 @@ export async function getOverlayCenter(
   return out;
 }
 
+/** Resolve "draw the code in the QR center" PER ENTITY, honouring a per-GROUP
+ *  override before the kind default. An entity's group is its labels_codes row;
+ *  that group may carry an explicit `overlay_center` (a per-instance toggle set
+ *  in the Codes panel), otherwise it inherits the kind's default (per-kind
+ *  config, then the module-declared default). This is what lets two instances of
+ *  one kind differ — 3d-printers on, cnc off. Keyed by entity id. */
+export async function getOverlayForRefs(
+  db: Kysely<LabelsDB>,
+  refs: ReadonlyArray<{ kind: string; id: string }>,
+): Promise<Map<string, boolean>> {
+  const out = new Map<string, boolean>();
+  if (refs.length === 0) return out;
+  const ids = [...new Set(refs.map((r) => r.id))];
+  const rows = await db
+    .selectFrom("labels_codes")
+    .innerJoin("labels_code_prefixes", "labels_code_prefixes.group_key", "labels_codes.group_key")
+    .select(["labels_codes.entity_id as entity_id", "labels_code_prefixes.overlay_center as override"])
+    .where("labels_codes.entity_id", "in", ids)
+    .execute();
+  const override = new Map(rows.map((r) => [r.entity_id, r.override]));
+  const kindOverlay = await getOverlayCenter(db, refs.map((r) => r.kind));
+  for (const ref of refs) {
+    const o = override.get(ref.id);
+    out.set(ref.id, o == null ? kindOverlay.get(ref.kind) ?? true : o);
+  }
+  return out;
+}
+
 /** Read already-assigned codes for a set of entity ids (no minting). */
 export async function getCodes(
   db: Kysely<LabelsDB>,
@@ -193,7 +221,8 @@ export async function assignCodes(
       if (!ent) continue; // deleted / not readable — no code, skip
       const gf = groupFieldFor.get(ref.kind) ?? "instance";
       const { key, label } = groupValueOf(ref.kind, gf, ent.fields);
-      out.set(ref.id, await mintOne(trx, ref.kind, ref.id, key, label));
+      const minted = await mintOne(trx, ref.kind, ref.id, key, label);
+      if (minted !== null) out.set(ref.id, minted); // null = list opted out of a code
     }
   });
 
@@ -225,14 +254,41 @@ export async function freezePrintedGroups(
     .execute();
 }
 
-/** Mint one code inside an already-locked transaction. */
+/** Is `prefix` claimed by any group OTHER than `exceptKey`? Checks the active
+ *  prefixes AND retired ones that still carry live codes — a going-forward rename
+ *  (keep_existing) moves a group's active prefix but leaves its old codes in
+ *  labels_codes, and `code` is UNIQUE, so a retired prefix can't be handed out
+ *  again or its next mint would collide. */
+export async function prefixTakenByOther(
+  db: Kysely<LabelsDB>,
+  prefix: string,
+  exceptKey: string,
+): Promise<boolean> {
+  const active = await db
+    .selectFrom("labels_code_prefixes")
+    .select("group_key")
+    .where("prefix", "=", prefix)
+    .where("group_key", "!=", exceptKey)
+    .executeTakeFirst();
+  if (active) return true;
+  const retired = await db
+    .selectFrom("labels_codes")
+    .select("group_key")
+    .where("prefix", "=", prefix)
+    .where("group_key", "!=", exceptKey)
+    .executeTakeFirst();
+  return Boolean(retired);
+}
+
+/** Mint one code inside an already-locked transaction. Returns null when the
+ *  group is opted out of a code (prefix NULL) — its items carry no code. */
 async function mintOne(
   trx: Transaction<LabelsDB>,
   kind: string,
   entityId: string,
   groupKey: string,
   label: string,
-): Promise<string> {
+): Promise<string | null> {
   const already = await trx
     .selectFrom("labels_codes")
     .select(["code"])
@@ -247,14 +303,29 @@ async function mintOne(
     .where("group_key", "=", groupKey)
     .executeTakeFirst();
   if (!group) {
-    const taken = await trx.selectFrom("labels_code_prefixes").select(["prefix"]).execute();
-    const prefix = derivePrefix(label, new Set(taken.map((t) => t.prefix)));
+    // Reserve retired prefixes too: a going-forward rename (keep_existing) moves a
+    // group's active prefix but leaves its old codes in labels_codes, and `code`
+    // is UNIQUE — so an auto-derived prefix must dodge every prefix that still
+    // carries live codes, not just the currently-active ones.
+    const [active, retired] = await Promise.all([
+      trx.selectFrom("labels_code_prefixes").select(["prefix"]).execute(),
+      trx.selectFrom("labels_codes").select("prefix").distinct().execute(),
+    ]);
+    // Opted-out groups have a NULL prefix; drop those so they don't poison the set.
+    const taken = new Set([...active, ...retired].map((t) => t.prefix).filter((p): p is string => p !== null));
+    const prefix = derivePrefix(label, taken);
     group = await trx
       .insertInto("labels_code_prefixes")
       .values({ group_key: groupKey, entity_kind: kind, prefix, label })
       .returningAll()
       .executeTakeFirstOrThrow();
   }
+
+  // A pre-existing group with a NULL prefix is opted out of a code: mint nothing.
+  // (A group we just auto-created above always has a real prefix, so this only
+  // catches groups a user deliberately cleared.)
+  const groupPrefix = group.prefix;
+  if (groupPrefix === null) return null;
 
   // NOT frozen here. Minting only RESERVES a code — the row exists, nothing
   // exists in the world. A prefix becomes unchangeable when a label is
@@ -269,13 +340,198 @@ async function mintOne(
     .returning("next_seq")
     .executeTakeFirstOrThrow();
   const seq = Number(claimed.next_seq) - 1;
-  const code = `${group.prefix}${seq}`;
+  const code = `${groupPrefix}${seq}`;
 
   await trx
     .insertInto("labels_codes")
-    .values({ entity_kind: kind, entity_id: entityId, group_key: groupKey, prefix: group.prefix, seq, code })
+    .values({ entity_kind: kind, entity_id: entityId, group_key: groupKey, prefix: groupPrefix, seq, code })
     .execute();
   return code;
+}
+
+/** Result of {@link renameCodeGroup}: a discriminated union so the HTTP route
+ *  and the labels:set-code action branch the same way (no thrown control flow). */
+export type RenameCodeGroupResult =
+  | {
+      ok: true;
+      group_key: string;
+      prefix: string;
+      codes_rewritten: number;
+      kept_existing: boolean;
+    }
+  | {
+      ok: false;
+      code: "bad_prefix" | "not_found" | "frozen" | "prefix_taken";
+      message: string;
+    };
+
+/** Rename a code group's prefix. Shared by PATCH /codes/groups/:key and the
+ *  labels:set-code workspace action, so the HTTP surface and the AI surface can
+ *  never drift on the freeze / keep-existing / reservation semantics.
+ *
+ *  Default (keepExisting=false): rejected once the group is frozen (printed);
+ *  otherwise REWRITES the group's already-minted codes to the new prefix
+ *  (c1 -> loc1), which is safe before anything is printed.
+ *
+ *  keepExisting=true: the override for a printed group — moves the active prefix
+ *  for FUTURE mints only and leaves every minted code untouched, so a sticker
+ *  already in the world still scans to its item. The retired prefix stays
+ *  reserved (its codes remain in labels_codes; prefixTakenByOther sees them), so
+ *  nothing else can reuse it and collide on the UNIQUE code. */
+export async function renameCodeGroup(
+  db: Kysely<LabelsDB>,
+  groupKey: string,
+  rawPrefix: string,
+  keepExisting: boolean,
+): Promise<RenameCodeGroupResult> {
+  // A blank prefix means "opt this list out of a code": free the letter (prefix
+  // -> NULL), unbind its items (delete their unprinted codes), and reset the
+  // counter so re-enabling starts clean. Rejected once frozen — a printed sticker
+  // still carries the code, so the group can't quietly lose it. Shared here so the
+  // HTTP route and the labels:set-code action clear a code the same way.
+  if (rawPrefix.trim() === "") {
+    const g = await db
+      .selectFrom("labels_code_prefixes")
+      .select(["frozen"])
+      .where("group_key", "=", groupKey)
+      .executeTakeFirst();
+    if (!g) return { ok: false, code: "not_found", message: "code group not found" };
+    if (g.frozen) {
+      return {
+        ok: false,
+        code: "frozen",
+        message:
+          "labels have already been printed under this prefix, so this list's code can't be removed — a sticker out in the world still reads it.",
+      };
+    }
+    const removed = await db.transaction().execute(async (trx) => {
+      await trx
+        .updateTable("labels_code_prefixes")
+        .set({ prefix: null, next_seq: 1, updated_at: sql`now()` })
+        .where("group_key", "=", groupKey)
+        .execute();
+      const rows = await trx
+        .deleteFrom("labels_codes")
+        .where("group_key", "=", groupKey)
+        .returning("code")
+        .execute();
+      return rows.length;
+    });
+    return { ok: true, group_key: groupKey, prefix: "", codes_rewritten: removed, kept_existing: false };
+  }
+  let prefix: string;
+  try {
+    prefix = normalizePrefix(rawPrefix);
+  } catch (e) {
+    return { ok: false, code: "bad_prefix", message: (e as Error).message };
+  }
+  const grp = await db
+    .selectFrom("labels_code_prefixes")
+    .selectAll()
+    .where("group_key", "=", groupKey)
+    .executeTakeFirst();
+  if (!grp) return { ok: false, code: "not_found", message: "code group not found" };
+  if (grp.frozen && !keepExisting) {
+    return {
+      ok: false,
+      code: "frozen",
+      message:
+        "labels have already been printed under this prefix. Rename with keep_existing to keep the printed codes valid and use the new prefix from now on.",
+    };
+  }
+  if (await prefixTakenByOther(db, prefix, groupKey)) {
+    return { ok: false, code: "prefix_taken", message: `prefix '${prefix}' is already used` };
+  }
+  if (keepExisting) {
+    // Going-forward rename: only the active prefix moves. Existing codes stay in
+    // labels_codes exactly as printed; the next mint uses the new prefix.
+    await db
+      .updateTable("labels_code_prefixes")
+      .set({ prefix, updated_at: sql`now()` })
+      .where("group_key", "=", groupKey)
+      .execute();
+    return { ok: true, group_key: groupKey, prefix, codes_rewritten: 0, kept_existing: true };
+  }
+  // Default (only reachable when NOT frozen): rewrite the group's already-minted
+  // codes too. labels_codes.code stores the whole <prefix><seq> string (what a
+  // scan/typed lookup matches), so renaming only the group would strand every
+  // existing code under the old prefix. One transaction: prefix + codes move together.
+  const renamed = await db.transaction().execute(async (trx) => {
+    await trx
+      .updateTable("labels_code_prefixes")
+      .set({ prefix, updated_at: sql`now()` })
+      .where("group_key", "=", groupKey)
+      .execute();
+    const rows = await trx
+      .updateTable("labels_codes")
+      .set({ prefix, code: sql`${prefix} || seq::text` })
+      .where("group_key", "=", groupKey)
+      .returning("code")
+      .execute();
+    return rows.length;
+  });
+  return { ok: true, group_key: groupKey, prefix, codes_rewritten: renamed, kept_existing: false };
+}
+
+/** Set the per-kind code config (grain + QR-center toggle). The caller supplies
+ *  at least one of the two. Shared by PATCH /codes/config and the labels:set-code
+ *  workspace action. Returns the fully-resolved config after the write. */
+export async function setCodeConfig(
+  db: Kysely<LabelsDB>,
+  kind: string,
+  opts: { group_field?: string; overlay_center?: boolean },
+): Promise<{ entity_kind: string; group_field: string; overlay_center: boolean }> {
+  // Insert only the provided columns; on conflict update just what was sent so
+  // the two settings stay independent. When only the grain is set and the row is
+  // CREATED, seed overlay_center with the kind's module-declared default (not the
+  // column default of true) so a grain edit can't silently flip a default-OFF
+  // kind (e.g. a location) back ON. Put on the insert `values` only, never the
+  // conflict `set`, so an existing row's saved toggle is preserved.
+  const values: Record<string, unknown> = { entity_kind: kind, updated_at: sql`now()` };
+  const set: Record<string, unknown> = { updated_at: sql`now()` };
+  if (opts.group_field !== undefined) {
+    values.group_field = opts.group_field;
+    set.group_field = opts.group_field;
+  }
+  if (opts.overlay_center !== undefined) {
+    values.overlay_center = opts.overlay_center;
+    set.overlay_center = opts.overlay_center;
+  } else {
+    values.overlay_center = await declaredOverlayDefault(kind);
+  }
+  await db
+    .insertInto("labels_code_config")
+    .values(values as never)
+    .onConflict((oc) => oc.column("entity_kind").doUpdateSet(set as never))
+    .execute();
+  const row = await db
+    .selectFrom("labels_code_config")
+    .select(["group_field", "overlay_center"])
+    .where("entity_kind", "=", kind)
+    .executeTakeFirst();
+  return {
+    entity_kind: kind,
+    group_field: row?.group_field ?? "instance",
+    overlay_center: row?.overlay_center ?? (await declaredOverlayDefault(kind)),
+  };
+}
+
+/** Set a single code GROUP's per-group QR-center override (the per-instance
+ *  toggle). `null` clears it back to inheriting the kind default. Returns false
+ *  if the group doesn't exist. Shared by PATCH /codes/groups/:key/overlay and
+ *  the labels:set-code action, so the HTTP and AI surfaces stay in step. */
+export async function setGroupOverlay(
+  db: Kysely<LabelsDB>,
+  groupKey: string,
+  overlayCenter: boolean | null,
+): Promise<boolean> {
+  const updated = await db
+    .updateTable("labels_code_prefixes")
+    .set({ overlay_center: overlayCenter })
+    .where("group_key", "=", groupKey)
+    .returning("group_key")
+    .executeTakeFirst();
+  return Boolean(updated);
 }
 
 /** Resolve a typed/scanned code to its entity, tolerant of look-alike typos. */

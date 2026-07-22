@@ -7,7 +7,7 @@ import type { Kysely } from "kysely";
 import type { DigifabDB } from "./db.js";
 import { resolveDriver } from "./drivers/registry.js";
 import { EdgeAdapterDriver, type EdgeRelay } from "./drivers/edge-adapter.js";
-import type { MachineDriver, RemoteDevice, SubmitResult } from "./drivers/types.js";
+import type { CommandResult, MachineDriver, RemoteDevice, SubmitResult } from "./drivers/types.js";
 import { isAssignable } from "./state.js";
 import { notifyPrint, progressBucket } from "./notify.js";
 // Call-time only (reprint-on-fail re-queue) — lazy/circular by design; ESM
@@ -138,6 +138,36 @@ export async function bambuLanDriverFor(orgId: string, connectionRef: string, de
   // "All cloud" mode ignores LAN even if the host/code are stored.
   if (!lan?.host || !lan?.access_code || bambuLanMode(lan) === "cloud") return null;
   return buildBambuLanDriver(orgId, deviceId, lan);
+}
+
+/** Run a control, falling back to the cloud driver when the LAN/edge-bridge path
+ *  failed. A flaky bridge (or a printer that's off the LAN) shouldn't block a
+ *  command the cloud broker can ALSO send — the chamber light, pause/resume/stop,
+ *  temps. It only falls back when LAN was the primary (`lanPrimary`); the cloud
+ *  driver rejects an id it doesn't know, so a LAN-only control still surfaces its
+ *  failure honestly, and the original LAN detail is preserved when cloud can't
+ *  help either. `buildCloud` is lazy so the cloud driver is only built on failure.
+ *
+ *  Why this exists: a prefer_lan printer routed a chamber-light command through a
+ *  failing edge bridge and 502'd, even though the live cloud pump could publish it
+ *  (2026-07-22). "Prefer LAN" must not mean "never try the working cloud path." */
+export async function runControlWithCloudFallback(opts: {
+  primary: MachineDriver;
+  lanPrimary: boolean;
+  buildCloud: () => Promise<MachineDriver | null>;
+  deviceId: string;
+  id: string;
+  params: Record<string, unknown>;
+  onFallback?: (lanDetail: string | undefined) => void;
+}): Promise<CommandResult> {
+  const r = await opts.primary.runControl!(opts.deviceId, opts.id, opts.params);
+  if (r.ok || !opts.lanPrimary) return r;
+  const cloud = await opts.buildCloud();
+  if (!cloud?.runControl || cloud === opts.primary) return r;
+  const cr = await cloud.runControl(opts.deviceId, opts.id, opts.params);
+  if (!cr.ok) return r; // cloud can't help either — keep the LAN driver's detail
+  opts.onFallback?.(r.detail);
+  return cr;
 }
 
 /** The cloud→edge tunnel relay closure for a `cobblr-edge://` connection: routes

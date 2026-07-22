@@ -8,6 +8,7 @@
 // OWN file store (not bundled in the app), which also keeps us clear of shipping
 // manufacturer photos.
 
+import { platform } from "@cobblr/platform-contract";
 import { searchImages } from "./ddg-images.js";
 import { pickImage } from "./barcode-websearch.js";
 import { assertSafeOutboundUrl } from "./enrich.js";
@@ -17,8 +18,11 @@ const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 /** Fetch an external image (SSRF-guarded, size/timeout-bounded) and store it in
- *  the workspace file store; returns the new file id, or null on any failure. */
-async function fetchAndStoreImage(orgSlug: string, bearer: string, imageUrl: string): Promise<string | null> {
+ *  the workspace file store; returns the new file id, or null on any failure.
+ *  Stores via the platform files seam (in-process), NOT the HTTP upload route —
+ *  a system-fetched image is not a user upload, so it must bypass any gate on
+ *  that route (e.g. the trial tier withholds user uploads). */
+async function fetchAndStoreImage(orgId: string, imageUrl: string): Promise<string | null> {
   try {
     assertSafeOutboundUrl(imageUrl);
     const dl = await fetch(imageUrl, { headers: { "user-agent": "cobblr-core-scan/0.1" }, signal: AbortSignal.timeout(8_000) });
@@ -28,15 +32,11 @@ async function fetchAndStoreImage(orgSlug: string, bearer: string, imageUrl: str
     const blob = await dl.blob();
     if (blob.size > MAX_IMAGE_BYTES || blob.size === 0) return null;
     const name = (imageUrl.split("/").pop() ?? "image").split("?")[0] || "image.jpg";
-    const fd = new FormData();
-    fd.append("file", blob, name);
-    const up = await fetch(`${INTERNAL_API}/api/v1/orgs/${orgSlug}/modules/core-files/files`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${bearer}` },
-      body: fd,
+    const written = await platform().files.write(orgId, new Uint8Array(await blob.arrayBuffer()), {
+      filename: name,
+      mimeType: blob.type || "image/jpeg",
     });
-    if (!up.ok) return null;
-    return ((await up.json()) as { id: string }).id;
+    return written?.fileId ?? null;
   } catch {
     return null;
   }
@@ -46,6 +46,7 @@ async function fetchAndStoreImage(orgSlug: string, bearer: string, imageUrl: str
  *  the file store, and set it as `entityKind:entityId`'s image_path. Returns the
  *  new image_path, or null. Best-effort: never throws. */
 export async function enrichEntityImage(opts: {
+  orgId: string;
   orgSlug: string;
   bearer: string;
   entityKind: string;
@@ -73,7 +74,7 @@ export async function enrichEntityImage(opts: {
       }
     }
     if (!imageUrl) return null;
-    const fileId = await fetchAndStoreImage(opts.orgSlug, opts.bearer, imageUrl);
+    const fileId = await fetchAndStoreImage(opts.orgId, imageUrl);
     if (!fileId) return null;
     const imagePath = `/api/v1/orgs/${opts.orgSlug}/modules/core-files/files/${fileId}/raw?variant=medium`;
     // Set image_path via the entity's CRUD route (loopback only, carries the

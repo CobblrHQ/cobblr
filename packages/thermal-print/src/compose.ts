@@ -99,7 +99,9 @@ export function composeMediaNUp(
     rows: Math.max(1, rows),
     labelWDots: mmToDots(label.widthMm, dpi),
     labelHDots: mmToDots(label.heightMm, dpi),
-    colGapDots: gapDots,
+    // Faces pack across the width (their margins are inside each face); only the
+    // feed direction carries the die-cut gap, between stacked physical labels.
+    colGapDots: 0,
     rowGapDots: gapDots,
   });
 }

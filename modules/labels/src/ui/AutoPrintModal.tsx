@@ -1,13 +1,14 @@
-// Configure accumulate-then-print (slice 2, D5/D6). A per-user policy: which
-// printer + label size the queue auto-fires to, and when (a full sheet / every N /
-// each label). Server-side, so CUPS or edge printers only — a browser-Bluetooth
-// printer can't be reached by the server (that path stays the manual Print button).
-// See docs/design-decisions/label-media-and-accumulation.md.
+// Configure accumulate-then-print (slice 2 D5/D6, slice 3c). A per-user policy:
+// which printer + label size the queue auto-fires to, and when (a full sheet /
+// every N / each label). A network printer (CUPS/edge) fires server-side; a
+// browser-Bluetooth printer the server can't reach fires from the browser instead
+// (client_fired) — the ClientAutoflushMount loop owns it while its tab holds the
+// BLE session. See docs/design-decisions/label-media-and-accumulation.md.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Modal, useToast } from "@cobblr/platform-web";
-import { LABEL_SIZES } from "../label-sizes";
+import { printerCapability, labelSizesForPrinter, customWidthFits } from "../label-sizes";
 import type { FireMode } from "./api";
 import { useLabels } from "./context";
 
@@ -43,18 +44,36 @@ export function AutoPrintModal({ open, onClose }: { open: boolean; onClose: () =
     setSeeded(true);
   }
 
-  // Server-side dispatch can't reach a browser-held Bluetooth printer.
-  const printers = (printersQ.data?.items ?? []).filter((p) => p.driver !== "browser-bluetooth");
+  // Both printer kinds are offered; the chosen one's driver decides the path. A
+  // Bluetooth printer can't be reached server-side, so its policy is client_fired
+  // and fires from the browser (the ClientAutoflushMount loop).
+  const printers = printersQ.data?.items ?? [];
+  const selectedPrinter = printers.find((p) => p.id === printerId);
+  const isBle = selectedPrinter?.driver === "browser-bluetooth";
   const customSizes = customQ.data?.items ?? [];
+  // Funnel the size options to what THIS printer can run (its kind + max width),
+  // so a 2" printer never lists a 4×6 and an inkjet never lists a thermal roll.
+  // Empty until a printer is chosen — you pick the printer first, sizes follow.
+  const cap = selectedPrinter ? printerCapability(selectedPrinter.driver, selectedPrinter.settings) : null;
+  const sizeOptions = cap ? labelSizesForPrinter(cap) : [];
+  const customOptions = cap ? customSizes.filter((c) => customWidthFits(c.media_w, cap)) : [];
+
+  // A Bluetooth printer prints a continuous roll — "when a sheet fills up" has no
+  // meaning there, so fall back to a count.
+  useEffect(() => {
+    if (isBle && mode === "fill-media") setMode("count");
+  }, [isBle, mode]);
 
   const save = useMutation({
     mutationFn: () =>
       api.setAutoflush({
         enabled,
         printer_id: enabled ? printerId || null : null,
-        size_key: enabled ? sizeKey || null : null,
+        // A Bluetooth policy owns its media in the browser; no server size needed.
+        size_key: enabled && !isBle ? sizeKey || null : null,
         fire_mode: enabled ? mode : "manual",
         fire_count: Number(count) || 2,
+        client_fired: enabled && isBle,
       }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["labels-autoflush", orgSlug] });
@@ -64,7 +83,7 @@ export function AutoPrintModal({ open, onClose }: { open: boolean; onClose: () =
     onError: (e) => toast.error(e instanceof Error ? e.message : "Could not save"),
   });
 
-  const canSave = !enabled || (!!printerId && !!sizeKey);
+  const canSave = !enabled || (!!printerId && (isBle || !!sizeKey));
   const sel = "input !py-1.5 text-sm";
 
   return (
@@ -78,8 +97,9 @@ export function AutoPrintModal({ open, onClose }: { open: boolean; onClose: () =
           </span>
         </label>
 
-        {enabled && (
-          <div className="space-y-3 pl-6">
+          {/* Always visible so you can see what auto-print needs; greyed + inert
+              until you turn it on, rather than appearing out of nowhere. */}
+          <div className={`space-y-3 pl-6 transition-opacity ${enabled ? "" : "opacity-50 pointer-events-none select-none"}`} aria-disabled={!enabled}>
             <label className="flex flex-col gap-1">
               <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">printer</span>
               <select className={sel} value={printerId} onChange={(e) => setPrinterId(e.target.value)}>
@@ -89,35 +109,42 @@ export function AutoPrintModal({ open, onClose }: { open: boolean; onClose: () =
                 ))}
               </select>
               {printers.length === 0 && (
-                <span className="text-xs text-amber-700 dark:text-amber-400">No network printer yet. Add a CUPS or edge printer under Configuration → Printers. (A Bluetooth printer prints from the browser, not automatically.)</span>
+                <span className="text-xs text-amber-700 dark:text-amber-400">No printer yet. Add one under Configuration → Printers.</span>
+              )}
+              {isBle && (
+                <span className="text-xs text-faint dark:text-slate-400">This printer prints from this browser tab. Auto-print fires while the tab is open and the printer is connected on the Labels page.</span>
               )}
             </label>
 
-            <label className="flex flex-col gap-1">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">label size</span>
-              <select className={sel} value={sizeKey} onChange={(e) => setSizeKey(e.target.value)}>
-                <option value="">Choose a size…</option>
-                <optgroup label="Built-in">
-                  {LABEL_SIZES.map((s) => (
-                    <option key={s.key} value={s.key}>{s.label}</option>
-                  ))}
-                </optgroup>
-                {customSizes.length > 0 && (
-                  <optgroup label="Your sizes">
-                    {customSizes.map((c) => (
-                      <option key={c.id} value={`custom:${c.id}`}>{c.name} ({c.per_sheet} up)</option>
+            {!isBle && (
+              <label className="flex flex-col gap-1">
+                <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">label size</span>
+                <select className={sel} value={sizeKey} onChange={(e) => setSizeKey(e.target.value)}>
+                  <option value="">Choose a size…</option>
+                  <optgroup label="Built-in">
+                    {sizeOptions.map((s) => (
+                      <option key={s.key} value={s.key}>{s.label}</option>
                     ))}
                   </optgroup>
-                )}
-              </select>
-            </label>
+                  {customOptions.length > 0 && (
+                    <optgroup label="Your sizes">
+                      {customOptions.map((c) => (
+                        <option key={c.id} value={`custom:${c.id}`}>{c.name} ({c.per_sheet} up)</option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+              </label>
+            )}
 
             <label className="flex flex-col gap-1">
               <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">print when</span>
               <select className={sel} value={mode} onChange={(e) => setMode(e.target.value as Exclude<FireMode, "manual">)}>
-                {(Object.keys(MODE_LABEL) as Array<keyof typeof MODE_LABEL>).map((m) => (
-                  <option key={m} value={m}>{MODE_LABEL[m]}</option>
-                ))}
+                {(Object.keys(MODE_LABEL) as Array<keyof typeof MODE_LABEL>)
+                  .filter((m) => !(isBle && m === "fill-media"))
+                  .map((m) => (
+                    <option key={m} value={m}>{MODE_LABEL[m]}</option>
+                  ))}
               </select>
             </label>
 
@@ -131,7 +158,6 @@ export function AutoPrintModal({ open, onClose }: { open: boolean; onClose: () =
               </label>
             )}
           </div>
-        )}
 
         <div className="flex justify-end gap-2 pt-1">
           <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-md text-sm border border-line dark:border-slate-700 hover:bg-subtle dark:hover:bg-slate-800">Cancel</button>

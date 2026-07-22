@@ -16,6 +16,7 @@
 // than appear broken. Use isWebBluetoothAvailable().
 
 import QRCode from "qrcode";
+import { setPrintProgress } from "./print-progress.js";
 import {
   CANDIDATE_SERVICES,
   composeMediaNUp,
@@ -24,6 +25,7 @@ import {
   encodePhomemo,
   encodeTsplParts,
   knownPrinters,
+  KNOWN_PROFILES,
   matchProfile,
   mediaTiles,
   mmToDots,
@@ -35,9 +37,11 @@ import {
   tsplMediaFrom,
   type BleCharacteristic,
   type BleDevice,
+  type FeedType,
   type LabelFace,
   type LabelMedia,
   type MonoBitmap,
+  type PrinterProfile,
   type ThermalFootprint,
   type TsplMedia,
 } from "@cobblr/thermal-print";
@@ -47,6 +51,9 @@ export interface BluetoothPrinterSettings {
   profileId?: string;
   protocol: "tspl" | "phomemo";
   widthDots: number;
+  /** Widest media (mm) the printer can feed — its capability, funnels the offered
+   *  sizes. From the matched profile; independent of what's currently loaded. */
+  maxWidthMm?: number;
   writeCharUuid?: string;
   labelHeightMm?: number;
   gapMm?: number;
@@ -217,6 +224,58 @@ export async function connectPrinter(settings: BluetoothPrinterSettings): Promis
   };
 }
 
+/** Build the settings for a printer row from a matched profile, so a connect flow
+ *  can save a working Bluetooth printer with ZERO hand-entry. Everything comes
+ *  from the (hardware-confirmed) profile: width, dialect, orientation, top margin,
+ *  and — for die-cut stock — the label height + gap split from pitchMm.
+ *  Unit-tested against the bundled profiles. */
+export function settingsFromProfile(p: PrinterProfile): BluetoothPrinterSettings {
+  const labelHeightMm = p.labelHeightMm ?? (p.pitchMm != null ? Math.round((p.pitchMm - 2) * 10) / 10 : undefined);
+  const gapMm =
+    p.pitchMm != null && labelHeightMm != null ? Math.max(0, Math.round((p.pitchMm - labelHeightMm) * 100) / 100) : undefined;
+  const widthMm = Number(dotsToMm(p.defaultWidthDots).toFixed(1));
+  const heightMm = labelHeightMm ?? 30;
+  const feed: FeedType = p.defaults.media === "continuous" ? "continuous" : "die-cut";
+  // The loaded stock, and one label face per media by default. The setup's "labels
+  // across" narrows the face to fit N per media (n-up); mediaTiles then tiles it.
+  const media: LabelMedia = { widthMm, heightMm, feed, gapMm: gapMm ?? 0 };
+  const label: LabelFace = { widthMm, heightMm };
+  return {
+    profileId: p.id,
+    protocol: p.protocol,
+    widthDots: p.defaultWidthDots,
+    maxWidthMm: p.maxWidthMm,
+    writeCharUuid: p.writeCharUuid,
+    labelHeightMm,
+    gapMm,
+    direction: p.direction ?? 0,
+    topMarginDots: p.topMarginDots ?? 0,
+    density: p.defaults.density,
+    speed: p.defaults.speed,
+    media,
+    label,
+  };
+}
+
+/** Pair a Bluetooth printer via the chooser (needs a user gesture in the call
+ *  stack) and describe it from its bundled profile, so a caller can persist a
+ *  working printer with no hand-entry. `settings` is null for a model we do not
+ *  recognise — the caller then sends the user to the manual fields. The detection
+ *  session is closed right after; the real print re-opens the now-granted device
+ *  with no chooser. */
+export async function pairBluetoothPrinter(): Promise<{
+  deviceName: string;
+  profile: PrinterProfile | null;
+  settings: BluetoothPrinterSettings | null;
+}> {
+  // Width here is a throwaway — pairing ignores it; the profile carries the real one.
+  const session = await connectPrinter({ protocol: "tspl", widthDots: 320 });
+  const profile =
+    (session.profileId ? KNOWN_PROFILES.find((p) => p.id === session.profileId) : null) ?? matchProfile(session.deviceName) ?? null;
+  closePrinter(session);
+  return { deviceName: session.deviceName, profile, settings: profile ? settingsFromProfile(profile) : null };
+}
+
 async function findChar(device: BleDevice, charUuid: string): Promise<BleCharacteristic | null> {
   try {
     const server = await device.gatt!.connect();
@@ -344,7 +403,7 @@ export interface BatchResult {
 
 /** Labels per feed for this printer's loaded media: cols×rows when the media holds
  *  more than one label face (n-up), else 1 (the historical one-per-feed). */
-function tileCount(s: BluetoothPrinterSettings): number {
+export function tileCount(s: BluetoothPrinterSettings): number {
   if (!s.media || !s.label) return 1;
   const { cols, rows } = mediaTiles(s.media, s.label);
   return Math.max(1, Math.max(1, cols) * Math.max(1, rows));
@@ -403,21 +462,28 @@ export async function printBatchOverBluetooth(
   onProgress?: (done: number, total: number, current?: BatchItem) => void,
 ): Promise<BatchResult> {
   const session = await connectPrinter(settings);
+  const total = items.reduce((n, i) => n + Math.max(1, i.copies ?? 1), 0);
+  // Mirror every progress tick into the process-wide store so the Live box can show
+  // a taskbar-style count of labels still to print; done===total clears it.
+  const report = (d: number, t: number, current?: BatchItem) => {
+    setPrintProgress(d >= t ? null : { done: d, total: t, deviceName: session.deviceName });
+    onProgress?.(d, t, current);
+  };
   try {
+    setPrintProgress({ done: 0, total, deviceName: session.deviceName });
     const perSheet = tileCount(settings);
     if (perSheet > 1) {
-      const { printed, failed } = await runTiled(session, items, settings, perSheet, onProgress);
+      const { printed, failed } = await runTiled(session, items, settings, perSheet, report);
       return { printed, failed, deviceName: session.deviceName, reconnected: session.reconnected };
     }
     // One-up: a feed per label (per copy), reporting exactly what failed.
-    const total = items.reduce((n, i) => n + Math.max(1, i.copies ?? 1), 0);
     const printed: BatchItem[] = [];
     const failed: { item: BatchItem; error: string }[] = [];
     let done = 0;
     for (const item of items) {
       const copies = Math.max(1, item.copies ?? 1);
       for (let c = 0; c < copies; c++) {
-        onProgress?.(done, total, item);
+        report(done, total, item);
         try {
           await printToSession(session, item, settings);
           done++;
@@ -428,9 +494,10 @@ export async function printBatchOverBluetooth(
       }
       if (!failed.some((f) => f.item === item)) printed.push(item);
     }
-    onProgress?.(done, total);
+    report(done, total);
     return { printed, failed, deviceName: session.deviceName, reconnected: session.reconnected };
   } finally {
+    setPrintProgress(null);
     closePrinter(session);
   }
 }

@@ -2,6 +2,32 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-07-22
+
+### Features
+- Ask Cobb about any modal, and let it manage your label codes. Modals now carry an "Ask Cobb" button that opens the assistant docked alongside, pre-filled with a ready-to-send starter about what you are looking at, so it is a helper for the screen in front of you instead of a separate trip (and it works in sidebar mode too, since the button lives in the modal, not the nav). And Cobb can now see and change label codes: tell it "give my 3d printers a p prefix" or "group these by category" and it does it, keeping already-printed codes valid.
+- Rename a code prefix even after you have printed labels. A code like `c1` used to lock the moment its label printed, so you were stuck with whatever prefix was auto-picked. Now a printed prefix shows a Rename anyway button: the codes already on your shelves keep working and still scan, and only new labels use the new prefix. The old prefix stays reserved so nothing else can reuse it.
+- The Live box now shows a count on the printer icon while your labels are printing, like a print manager in the taskbar, so you can see how many are still to come off the printer.
+- Network printers now declare their type (inkjet/laser or thermal) and widest media, so the label size pickers only offer sizes that printer can actually run.
+
+### Improvements
+- Ask Cobb can now change workspace-level settings, starting with your label-code prefixes. Ask it to give your 3D printers a "p" so their codes read p1, p2, and it happens through the same confirm-first flow as any other change Cobb makes.
+- When you open Ask Cobb for something specific (from a screen's Ask Cobb button), your earlier conversation now scrolls up behind a quiet "Earlier" divider instead of piling under the new question. Nothing is lost, scroll up to read it again.
+- When you tap Ask Cobb from a screen (like the Label codes panel), Cobb now opens with a short greeting about what it can do right there, instead of dropping a canned sentence into your input box. Your earlier chat parks behind the "Earlier" divider, and you just reply.
+- The printer popover on the Labels page now offers the common thermal label sizes as one-tap presets, so you can set your loaded media without typing the dimensions.
+- You can now connect a Bluetooth label printer without leaving the labels page. When you have none, the labels page shows a "Pair a Bluetooth printer" button right there: it pairs, auto-detects the model from its profile, and sets it up as your default in one step. The Printers page opens the same way now, with the printer types shown up front instead of hidden behind a form.
+- The label preview has a new Actual size toggle: flip it to see a label at its true physical size on screen, so you can tell at a glance whether the text is too small to read or the QR too tight before you print. Calibrate once by dragging the little ruler to match a real one, and it is saved for that device.
+- You can now give a list no code at all. In the Label codes panel, clear a list's prefix box and hit Save (or ask Cobb to remove it), and that list stops getting a human code, which frees its letter for another list so you are never forced to code something you do not want to. A list whose labels are already printed keeps its code and refuses to lose it. Type a prefix back in any time to turn it on again, numbering fresh.
+- The Label codes panel is simpler and more capable. It groups your code lists under their kind (Machines, Locations) with friendly names instead of raw ids, drops the confusing "count by" control, and makes "show the code inside the QR" a per-list toggle. So your 3D Printers can print the code while your CNC hides it, even though both are machines.
+- The label preview now tells you how big each QR actually prints and flags when it is too small to scan, so you can catch an unreadable code before you commit a whole sheet. It reads out the QR module size in millimetres and turns amber, then red, as the code gets too tight for a phone to read. The printed layout and the on-screen preview also now agree for every label shape, so what you see is what prints.
+- A Bluetooth label printer can now fit more than one label on each physical label. Set "Labels across" when you add or edit the printer (2 across a 50mm roll splits each label into two faces), and both Print and Auto-print tile them onto one feed. You can also reuse a layout you already set up on another printer, so a configuration you got right once shows as a "you did this before" option instead of being re-entered by hand.
+- Sending labels to a network printer no longer just fires and forgets. It keeps them in the queue and drops a to-the-side prompt, "Mark printed once it looks right?", so a jam or a wrong size doesn't burn the batch. Click Mark batch printed once the output is good and those labels clear; if the send fails, the prompt offers Reprint. Bluetooth printing is unchanged (it already knows the result the moment the labels are out).
+- Sending labels to a network printer now shows a count on the Live box printer icon, the same as Bluetooth printing does.
+- A network printer with no type set now shows a "Set type" prompt on the printers page, so its label sizes funnel correctly instead of defaulting to a full-size sheet.
+- Label size options now match the printer instead of listing every roll and Avery sheet at once. Each printer has a capability, its kind and the widest media it feeds, and you only see the sizes that fit: a 2-inch Bluetooth printer never offers a 4x6, and an inkjet never offers a thermal roll. Pick the printer first and the sizes follow.
+- The Labels page now leads with your printer. It shows which printer will print, hides the paper and sheet-layout pickers when your default is a Bluetooth roll (they do not apply to it), and prompts you to connect one when you have none. Adding a Bluetooth printer can now pair and auto-detect its settings from a known profile instead of you typing in the dialect, width, and orientation by hand.
+- The label size presets in the printer popover now come from sizes you have already set up, on other printers or as custom sizes, so a layout you use elsewhere is one tap to match here.
+
 ## 2026-07-21
 
 ### Features

@@ -81,6 +81,11 @@ export interface OrgsTable {
    *  than app_mode (workspace stays navigable; owner can flip it back, which is
    *  the upsell). false = full platform (the default). */
   focused: Generated<boolean>;
+  /** try/trial tier: when set, this workspace is a trial that expires at this
+   *  time. Reaping is deferred — the stamp is set at signup but nothing sweeps
+   *  yet. NULL = a normal workspace (every non-`try` instance). See
+   *  docs/design-decisions/try-instance.md. */
+  trial_expires_at: Generated<Date | null>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
@@ -566,6 +571,9 @@ export interface EntityActionsTable {
   description: string | null;
   icon: string | null;
   applies_to: unknown;
+  /** "entity" (default) → runs on a record; "workspace" → a config/admin
+   *  operation with no record. Re-synced from the manifest on every boot. */
+  scope: Generated<"entity" | "workspace">;
   invoke_route: string | null;
   invoke_handler: string | null;
   version: Generated<string>;

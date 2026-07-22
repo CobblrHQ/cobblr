@@ -8,7 +8,7 @@
 // way the UI's EntityAttachments does.
 
 import { sql, type Kysely } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, requireActionEntity } from "@cobblr/platform-contract";
 import type { CoreTagsDB } from "../db.js";
 
 let registered = false;
@@ -23,10 +23,11 @@ export function registerTagActionHandlers(): void {
   registered = true;
 
   platform().actions.registerHandler("core-tags.tag-record", async (ctx) => {
+    const entity = requireActionEntity(ctx);
     const tagName = String((ctx.args as { tag_name?: unknown } | null)?.tag_name ?? "").trim();
     if (!tagName) return { ok: false, error: "tag_name required" };
-    const src = splitKind(ctx.entity.kind);
-    if (!src) return { ok: false, error: `bad entity kind "${ctx.entity.kind}"` };
+    const src = splitKind(entity.kind);
+    if (!src) return { ok: false, error: `bad entity kind "${entity.kind}"` };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreTagsDB>;
 
     // Resolve to a tag id — create on the fly if no such tag yet (the same
@@ -53,7 +54,7 @@ export function registerTagActionHandlers(): void {
       .where("tag_id", "=", tagId)
       .where("source_module", "=", src.source_module)
       .where("source_type", "=", src.source_type)
-      .where("source_id", "=", ctx.entity.id)
+      .where("source_id", "=", entity.id)
       .executeTakeFirst();
     if (already) return { ok: true, tag_id: tagId, attachment_id: already.id, already_tagged: true };
 
@@ -63,7 +64,7 @@ export function registerTagActionHandlers(): void {
         tag_id: tagId,
         source_module: src.source_module,
         source_type: src.source_type,
-        source_id: ctx.entity.id,
+        source_id: entity.id,
       })
       .returning("id")
       .executeTakeFirstOrThrow();
@@ -72,16 +73,17 @@ export function registerTagActionHandlers(): void {
       tagId,
       source_module: src.source_module,
       source_type: src.source_type,
-      source_id: ctx.entity.id,
+      source_id: entity.id,
     });
     return { ok: true, tag_id: tagId, attachment_id: row.id };
   });
 
   platform().actions.registerHandler("core-tags.untag-record", async (ctx) => {
+    const entity = requireActionEntity(ctx);
     const tagName = String((ctx.args as { tag_name?: unknown } | null)?.tag_name ?? "").trim();
     if (!tagName) return { ok: false, error: "tag_name required" };
-    const src = splitKind(ctx.entity.kind);
-    if (!src) return { ok: false, error: `bad entity kind "${ctx.entity.kind}"` };
+    const src = splitKind(entity.kind);
+    if (!src) return { ok: false, error: `bad entity kind "${entity.kind}"` };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreTagsDB>;
 
     const tag = await db
@@ -96,7 +98,7 @@ export function registerTagActionHandlers(): void {
       .where("tag_id", "=", tag.id)
       .where("source_module", "=", src.source_module)
       .where("source_type", "=", src.source_type)
-      .where("source_id", "=", ctx.entity.id)
+      .where("source_id", "=", entity.id)
       .returning("id")
       .executeTakeFirst();
     if (!row) return { ok: true, removed: false, reason: "not tagged with that" };
@@ -105,7 +107,7 @@ export function registerTagActionHandlers(): void {
       tagId: tag.id,
       source_module: src.source_module,
       source_type: src.source_type,
-      source_id: ctx.entity.id,
+      source_id: entity.id,
     });
     return { ok: true, removed: true };
   });

@@ -13,8 +13,13 @@ import {
   getCodes,
   resolveCode,
   normalizePrefix,
+  prefixTakenByOther,
   groupValueOf,
   declaredOverlayDefault,
+  getOverlayCenter,
+  renameCodeGroup,
+  setCodeConfig,
+  setGroupOverlay,
 } from "../services/codes.js";
 
 export const codesRouter = Router({ mergeParams: true });
@@ -68,6 +73,8 @@ const AssignBody = z.object({
     .min(1)
     .max(500),
 });
+// AI-REACH: exempt — internal code minting (get-or-assign). Runs inside the
+// label/print flow to reserve a code; not a user-facing operation.
 codesRouter.post(
   "/assign",
   asyncHandler(async (req, res) => {
@@ -117,44 +124,18 @@ const ConfigBody = z
   .refine((b) => b.group_field !== undefined || b.overlay_center !== undefined, {
     message: "group_field or overlay_center required",
   });
+// AI-REACH: action labels:set-code — grain + QR-center toggle (shared service
+// setCodeConfig in services/codes.ts).
 codesRouter.patch(
   "/config",
   asyncHandler(async (req, res) => {
     const parsed = ConfigBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const { kind, group_field, overlay_center } = parsed.data;
-    // Insert only the provided columns; on conflict, update just what was sent
-    // so the two settings stay independent. When this PATCH only sets the grain
-    // and CREATES the row, seed overlay_center with the kind's module-declared
-    // default (not the DB column default of true) so a group_field edit can't
-    // silently flip a default-OFF kind (e.g. a location) back ON. It's put on
-    // the insert `values` only, never the conflict `set`, so an existing row's
-    // saved toggle is preserved.
-    const values: Record<string, unknown> = { entity_kind: kind, updated_at: sql`now()` };
-    const set: Record<string, unknown> = { updated_at: sql`now()` };
-    if (group_field !== undefined) { values.group_field = group_field; set.group_field = group_field; }
-    if (overlay_center !== undefined) {
-      values.overlay_center = overlay_center;
-      set.overlay_center = overlay_center;
-    } else {
-      values.overlay_center = await declaredOverlayDefault(kind);
-    }
-    const db = tenantDb(req);
-    await db
-      .insertInto("labels_code_config")
-      .values(values as never)
-      .onConflict((oc) => oc.column("entity_kind").doUpdateSet(set as never))
-      .execute();
-    const row = await db
-      .selectFrom("labels_code_config")
-      .select(["group_field", "overlay_center"])
-      .where("entity_kind", "=", kind)
-      .executeTakeFirst();
-    res.json({
-      entity_kind: kind,
-      group_field: row?.group_field ?? "instance",
-      overlay_center: row?.overlay_center ?? (await declaredOverlayDefault(kind)),
-    });
+    // Shared with the labels:set-code workspace action (services/codes.ts) so
+    // the HTTP surface and the AI surface can't drift on the seed-default rule.
+    const result = await setCodeConfig(tenantDb(req), kind, { group_field, overlay_center });
+    res.json(result);
   }),
 );
 
@@ -162,13 +143,50 @@ codesRouter.patch(
 codesRouter.get(
   "/groups",
   asyncHandler(async (req, res) => {
-    const rows = await tenantDb(req)
+    const ctx = tenantContext(req);
+    const db = tenantDb(req);
+    const rows = await db
       .selectFrom("labels_code_prefixes")
-      .select(["group_key", "entity_kind", "prefix", "label", "next_seq", "frozen"])
+      .select(["group_key", "entity_kind", "prefix", "label", "next_seq", "frozen", "overlay_center"])
       .orderBy("entity_kind")
       .orderBy("prefix")
       .execute();
-    res.json({ groups: rows.map((r) => ({ ...r, count: Number(r.next_seq) - 1 })) });
+    // Resolve friendly display names so the panel shows "Machines" / "3D Printers"
+    // rather than the raw kind id (machines:machine) or an instance slug. The
+    // registry carries a display_name per kind AND per named instance
+    // (<instance_name>:item records), so one listing covers both.
+    const kinds = await platform().entities.listKindsForOrg(ctx.org.id).catch(() => []);
+    const kindLabel = new Map(kinds.map((k) => [k.id, k.display_name]));
+    const instanceLabel = new Map(
+      kinds.filter((k) => k.instance_name).map((k) => [k.instance_name!, k.display_name]),
+    );
+    // Effective QR-center per group: the group's own override, else the kind default.
+    const kindOverlay = await getOverlayCenter(db, [...new Set(rows.map((r) => r.entity_kind))]);
+    res.json({
+      groups: rows.map((r) => {
+        const parts = r.group_key.split("|");
+        const groupField = parts[1] ?? "";
+        const groupValue = parts[2] ?? "";
+        const kind_label = kindLabel.get(r.entity_kind) ?? r.entity_kind;
+        // The group's own display name: a value that fell back to the kind (no
+        // instance / field value) uses the kind's name; an instance value
+        // resolves to that instance's name; any other field value (e.g. a
+        // category) shows as the user stored it.
+        const group_label =
+          !groupValue || groupValue === r.entity_kind
+            ? kind_label
+            : groupField === "instance"
+              ? instanceLabel.get(groupValue) ?? groupValue
+              : groupValue;
+        return {
+          ...r,
+          count: Number(r.next_seq) - 1,
+          kind_label,
+          group_label,
+          overlay_center: r.overlay_center ?? kindOverlay.get(r.entity_kind) ?? true,
+        };
+      }),
+    });
   }),
 );
 
@@ -181,6 +199,9 @@ const SeedBody = z.object({
   group_value: z.string().min(1).max(200),
   prefix: z.string().min(1).max(8),
 });
+// AI-REACH: exempt — pre-seed a memorable prefix BEFORE a group's first print.
+// Once codes exist the AI renames via the labels:set-code action; seeding a
+// brand-new group by voice is a BACKLOG follow-up.
 codesRouter.post(
   "/groups",
   asyncHandler(async (req, res) => {
@@ -207,13 +228,7 @@ codesRouter.post(
       res.status(409).json({ error: { code: "frozen", message: "this group already has printed codes" } });
       return;
     }
-    const clash = await db
-      .selectFrom("labels_code_prefixes")
-      .select(["group_key"])
-      .where("prefix", "=", prefix)
-      .where("group_key", "!=", key)
-      .executeTakeFirst();
-    if (clash) {
+    if (await prefixTakenByOther(db, prefix, key)) {
       res.status(409).json({ error: { code: "prefix_taken", message: `prefix '${prefix}' is already used` } });
       return;
     }
@@ -226,9 +241,21 @@ codesRouter.post(
   }),
 );
 
-// PATCH /groups/:group_key { prefix } — rename a prefix. Rejected once frozen
-// (printed), because reusing/churning a prefix that has codes would collide.
-const PrefixBody = z.object({ prefix: z.string().min(1).max(8) });
+// PATCH /groups/:group_key { prefix, keep_existing? } — rename a prefix.
+//
+// Default: rejected once frozen (printed); it REWRITES the group's existing codes
+// to the new prefix (c1 → loc1), which is fine before anything is printed.
+//
+// keep_existing:true is the OVERRIDE for a printed group — it moves the prefix for
+// FUTURE mints only and leaves every already-minted code alone, so a sticker out in
+// the world still scans to its item. The old prefix stays reserved (its codes remain
+// in labels_codes; prefixTakenByOther sees them), so nothing else can reuse it and
+// collide on the UNIQUE code.
+// A blank prefix is allowed: it opts the list out of a code (renameCodeGroup
+// clears it). Non-blank values are validated for shape inside normalizePrefix.
+const PrefixBody = z.object({ prefix: z.string().max(8), keep_existing: z.boolean().optional() });
+// AI-REACH: action labels:set-code — rename a prefix (shared service
+// renameCodeGroup in services/codes.ts).
 codesRouter.patch(
   "/groups/:group_key",
   asyncHandler(async (req, res) => {
@@ -239,58 +266,49 @@ codesRouter.patch(
       res.status(400).json({ error: { code: "missing_key", message: "group_key required" } });
       return;
     }
-    const db = tenantDb(req);
-    let prefix: string;
-    try {
-      prefix = normalizePrefix(parsed.data.prefix);
-    } catch (e) {
-      res.status(400).json({ error: { code: "bad_prefix", message: (e as Error).message } });
+    // Shared with the labels:set-code workspace action (services/codes.ts): the
+    // freeze / keep-existing / prefix-reservation rules live in one place so the
+    // HTTP surface and the AI surface can never disagree about them.
+    const result = await renameCodeGroup(
+      tenantDb(req),
+      key,
+      parsed.data.prefix,
+      parsed.data.keep_existing === true,
+    );
+    if (!result.ok) {
+      const status = result.code === "bad_prefix" ? 400 : result.code === "not_found" ? 404 : 409;
+      res.status(status).json({ error: { code: result.code, message: result.message } });
       return;
     }
-    const grp = await db
-      .selectFrom("labels_code_prefixes")
-      .selectAll()
-      .where("group_key", "=", key)
-      .executeTakeFirst();
-    if (!grp) {
+    res.json({
+      group_key: result.group_key,
+      prefix: result.prefix,
+      codes_rewritten: result.codes_rewritten,
+      ...(result.kept_existing ? { kept_existing: true } : {}),
+    });
+  }),
+);
+
+// PATCH /groups/:group_key/overlay { overlay_center } — the per-GROUP QR-center
+// toggle, so two instances of one kind can differ (3d-printers on, cnc off). Sets
+// the group's own override; the print path reads it before the kind default.
+// AI-REACH: action labels:set-code — its code_in_qr arg routes here per group.
+const OverlayBody = z.object({ overlay_center: z.boolean() });
+codesRouter.patch(
+  "/groups/:group_key/overlay",
+  asyncHandler(async (req, res) => {
+    const parsed = OverlayBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const key = req.params.group_key;
+    if (!key) {
+      res.status(400).json({ error: { code: "missing_key", message: "group_key required" } });
+      return;
+    }
+    const ok = await setGroupOverlay(tenantDb(req), key, parsed.data.overlay_center);
+    if (!ok) {
       res.status(404).json({ error: { code: "not_found", message: "code group not found" } });
       return;
     }
-    if (grp.frozen) {
-      res.status(409).json({ error: { code: "frozen", message: "labels have already been printed under this prefix, so it can't change" } });
-      return;
-    }
-    const clash = await db
-      .selectFrom("labels_code_prefixes")
-      .select(["group_key"])
-      .where("prefix", "=", prefix)
-      .where("group_key", "!=", key)
-      .executeTakeFirst();
-    if (clash) {
-      res.status(409).json({ error: { code: "prefix_taken", message: `prefix '${prefix}' is already used` } });
-      return;
-    }
-    // Rewrite the group's ALREADY-MINTED codes too. `labels_codes.code` stores
-    // the whole `<prefix><seq>` string (it's what a scan/typed lookup matches),
-    // so renaming only the group would strand every existing code under the old
-    // prefix — c1 would still resolve while the group claims to be `loc`. This
-    // never bit before because a group froze on its first mint and so could
-    // never be both renameable and non-empty; now that freezing waits for a
-    // print, it can be. One transaction: prefix + codes move together.
-    const renamed = await db.transaction().execute(async (trx) => {
-      await trx
-        .updateTable("labels_code_prefixes")
-        .set({ prefix, updated_at: sql`now()` })
-        .where("group_key", "=", key)
-        .execute();
-      const rows = await trx
-        .updateTable("labels_codes")
-        .set({ prefix, code: sql`${prefix} || seq::text` })
-        .where("group_key", "=", key)
-        .returning("code")
-        .execute();
-      return rows.length;
-    });
-    res.json({ group_key: key, prefix, codes_rewritten: renamed });
+    res.json({ group_key: key, overlay_center: parsed.data.overlay_center });
   }),
 );

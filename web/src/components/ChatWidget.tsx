@@ -163,15 +163,35 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   // Deep-link seam: any surface can open the chat with GUIDANCE
-  // (window.dispatchEvent(new CustomEvent("cobblr:open-chat", {detail:{seed}}))).
-  // The seed is a PLACEHOLDER (ghost text telling you what this conversation
-  // is for), never typed content — the user's first words are their own.
+  // (window.dispatchEvent(new CustomEvent("cobblr:open-chat", {detail:{seed|prefill|opener}}))).
+  //   seed    — a PLACEHOLDER (ghost text saying what this conversation is for).
+  //   prefill — a ready-to-go STARTER typed into the box for you, editable (legacy).
+  //   opener  — a Cobb GREETING (an assistant turn) framing the screen you came
+  //             from, what a modal's "Ask Cobb" button sends now. Preferred over
+  //             prefill: it puts the words in Cobb's mouth, not the user's.
+  // seed only shows while empty; prefill never clobbers text you've already typed.
   const [seedPlaceholder, setSeedPlaceholder] = useState<string | null>(null);
+  // When the chat is opened programmatically for a NEW task (a modal's "Ask
+  // Cobb", a deep-link) on top of an existing conversation, park the prior turns
+  // behind a divider and scroll to it — the old chat isn't deleted, just scrolled
+  // up out of the way (scroll back up to read it). `sessionStart` is the message
+  // index where the current session begins; null = no divider.
+  const [sessionStart, setSessionStart] = useState<number | null>(null);
+  // Live message count so the open-event listener (stable, empty-deps) reads the
+  // length at fire time without going stale.
+  const msgCountRef = useRef(0);
   useEffect(() => {
     const onOpen = (e: Event) => {
-      const seed = (e as CustomEvent<{ seed?: string }>).detail?.seed;
+      const d = (e as CustomEvent<{ seed?: string; prefill?: string; opener?: string }>).detail ?? {};
       setOpen(true);
-      if (seed) setSeedPlaceholder(seed);
+      if (d.seed) setSeedPlaceholder(d.seed);
+      if (d.prefill) setInput((cur) => (cur.trim() ? cur : d.prefill!));
+      // Park whatever's already there behind a divider for this fresh task.
+      setSessionStart(msgCountRef.current > 0 ? msgCountRef.current : null);
+      // A Cobb OPENER: a canned greeting that frames the screen you came from,
+      // added as an assistant turn below the divider. It tells you what Cobb can
+      // do here AND grounds the model for your reply (it's part of the chat context).
+      if (d.opener) setMessages((cur) => [...cur, { role: "assistant", content: d.opener! }]);
     };
     window.addEventListener("cobblr:open-chat", onOpen);
     return () => window.removeEventListener("cobblr:open-chat", onOpen);
@@ -181,10 +201,21 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const dividerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages, busy]);
+  // Keep the count the open-listener reads in sync with what's rendered.
+  useEffect(() => {
+    msgCountRef.current = messages.length;
+  }, [messages]);
+  // On a fresh-task open, bring the session divider to the top so the prior
+  // history scrolls up out of the way (still there — scroll back up). Before
+  // paint, so there's no flash of the old scroll position.
+  useLayoutEffect(() => {
+    if (sessionStart != null && open) dividerRef.current?.scrollIntoView({ block: "start" });
+  }, [sessionStart, open]);
 
   // Auto-grow the input with its content (up to a cap), then shrink back.
   useLayoutEffect(() => {
@@ -230,11 +261,13 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
     }
     msgsSlugRef.current = activeSlug ?? null;
     setMessages(loaded);
+    setSessionStart(null); // a different workspace's history — the old index is meaningless
   }, [activeSlug]);
 
   function clearChat() {
     setMessages([]);
     setError(null);
+    setSessionStart(null);
     const key = chatStoreKey(activeSlug);
     if (key) {
       try {
@@ -431,6 +464,18 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
     }
   }
 
+  // The line that separates a parked earlier conversation (above it, scrolled
+  // out of view on open) from the current session (below). Rendered exactly once
+  // — at the session boundary — so its ref is unambiguous for the open-scroll.
+  const sessionDivider = (
+    <div ref={dividerRef} className="relative py-2 select-none" aria-hidden="true">
+      <div className="border-t border-line dark:border-slate-700" />
+      <span className="absolute left-1/2 -translate-x-1/2 -top-2 bg-surface dark:bg-slate-900 px-2 text-[10px] font-medium uppercase tracking-wider text-faint dark:text-slate-500">
+        ↑ Earlier
+      </span>
+    </div>
+  );
+
   if (!activeSlug) return null;
 
   return (
@@ -540,7 +585,8 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
                 </p>
               </div>
             )}
-            {messages.map((m, i) =>
+            {messages.map((m, i) => {
+              const el =
               m.role === "user" ? (
                 <div key={i} className="text-right">
                   <div className="inline-block max-w-[88%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words bg-cobble-600 text-white text-left">
@@ -644,7 +690,27 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
                   )}
                   {m.undone && <div className="mt-1 text-[11px] text-faint">↩ undone</div>}
                 </div>
-              ),
+              );
+              // Drop the session divider in front of the first message of the
+              // current session; the parked earlier turns render above it.
+              return sessionStart != null && i === sessionStart ? (
+                <div key={i}>
+                  {sessionDivider}
+                  {el}
+                </div>
+              ) : (
+                el
+              );
+            })}
+            {/* Fresh session opened with nothing new typed yet — the divider
+                trails the parked history, and a spacer below gives it room to pin
+                to the top so the old conversation fully scrolls out of view (the
+                first reply fills the space). */}
+            {sessionStart != null && sessionStart === messages.length && messages.length > 0 && (
+              <>
+                {sessionDivider}
+                <div className="min-h-[70vh] shrink-0" aria-hidden="true" />
+              </>
             )}
             {busy && (
               <div className="text-left">

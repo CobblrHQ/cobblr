@@ -32,6 +32,11 @@ export interface PrinterProfile {
   /** Default dots-per-line for this model's COMMON media (media-dependent; the
    *  self-test / user can override for a specific roll). */
   defaultWidthDots: number;
+  /** The widest media (mm) this model can physically feed — its CAPABILITY, not
+   *  what's loaded. Funnels which label sizes are offered (only ones that fit).
+   *  PM220S = 54mm (~2"), M220 = 80mm (~3"). Bench/spec-verified. Optional: an
+   *  auto-harvested profile may not know it yet (the funnel falls back to width). */
+  maxWidthMm?: number;
   /** Default encode options (speed / density / media / init). */
   defaults: Required<PhomemoOptions>;
   /** true once confirmed against real hardware; false when auto-harvested. */
@@ -41,6 +46,10 @@ export interface PrinterProfile {
   /** Calibrated media pitch (label height + gap) in mm — the number that stops the
    *  image walking off the label. Derived by the printed-ruler routine. */
   pitchMm?: number;
+  /** The printable label height in mm (die-cut stock). With pitchMm this splits the
+   *  pitch into label + gap, so a connect flow persists exact geometry instead of
+   *  guessing the split. Absent for continuous media. */
+  labelHeightMm?: number;
   /** Calibrated dead zone at the top of every label, in dots. */
   topMarginDots?: number;
   /** Things a support agent needs that aren't expressible as fields. */
@@ -130,16 +139,18 @@ const PHOMEMO_DEFAULTS: Required<PhomemoOptions> = {
 export const KNOWN_PROFILES: readonly PrinterProfile[] = [
   {
     id: "polono-pm220s",
-    label: "POLONO PM220S",
+    label: "PM220S", // model only; the id keeps the vendor for uniqueness
     namePrefixes: ["PM220S", "POLONO"],
     serviceUuid: "0000ff00-0000-1000-8000-00805f9b34fb",
     writeCharUuid: "0000ff02-0000-1000-8000-00805f9b34fb",
     protocol: "tspl",
     defaultWidthDots: 320,                    // 40 mm roll @ 203 dpi
+    maxWidthMm: 54,                           // 0.91–2.12" media range; a 2"-class printer
     defaults: { speed: 3, density: 8, media: "gaps", init: true },
     verified: true,                           // bench-confirmed 2026-07-20
     direction: 0,
     pitchMm: 32.67,                           // 30 mm label + 2.67 mm gap (refinePitch)
+    labelHeightMm: 30,                        // the label itself; gap = pitch - label
     topMarginDots: 24,                        // 3 mm dead zone
     quirks: [
       "Silent to ESC/POS on every characteristic — TSPL only.",
@@ -155,13 +166,14 @@ export const KNOWN_PROFILES: readonly PrinterProfile[] = [
 
   {
     id: "phomemo-m220",
-    label: "Phomemo M220",
+    label: "M220", // model only (the id keeps the vendor for uniqueness)
     // Advertises as its serial (observed "Q155E…") and, on some firmware, "M220".
     namePrefixes: ["M220", "Q155"],
     serviceUuid: "0000ff00-0000-1000-8000-00805f9b34fb",
     writeCharUuid: "0000ff02-0000-1000-8000-00805f9b34fb",
     protocol: "phomemo",
     defaultWidthDots: 320, // 40 mm at 203 dpi; M220 does 20–80 mm
+    maxWidthMm: 80, // 20–80 mm media range; a 3"-class printer
     defaults: PHOMEMO_DEFAULTS,
     verified: true,
     notes: "GATT service 0xff00 / write char 0xff02 confirmed on real hardware 2026-07.",

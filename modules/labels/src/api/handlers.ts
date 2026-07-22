@@ -3,9 +3,10 @@
 // / a wire triggers a labels action.
 
 import type { Kysely } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, requireActionEntity } from "@cobblr/platform-contract";
 import type { LabelsDB } from "../db.js";
 import { evaluateAutoflush } from "./autoflush.js";
+import { renameCodeGroup, setGroupOverlay } from "../services/codes.js";
 
 let registered = false;
 
@@ -19,15 +20,16 @@ export function registerLabelsHandlers(): void {
   // template) + the entity ref; we encode a canonical URL for the
   // QR and stash everything in the labels_queue.
   platform().actions.registerHandler("labels.queue-from-entity", async (ctx) => {
+    const entity = requireActionEntity(ctx);
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<LabelsDB>;
     const ent = await platform().entities.lookup(
       ctx.orgId,
-      ctx.entityKind,
-      ctx.entityId,
+      entity.kind,
+      entity.id,
     );
     if (!ent) {
       throw new Error(
-        `labels:print: could not resolve ${ctx.entityKind}:${ctx.entityId}`,
+        `labels:print: could not resolve ${entity.kind}:${entity.id}`,
       );
     }
     // Description: prefer the rendered template if the binding had
@@ -96,5 +98,61 @@ export function registerLabelsHandlers(): void {
         },
       },
     };
+  });
+
+  // labels:set-code — a WORKSPACE-scoped action (no entity): configure the
+  // workspace's label codes. This is the AI-reachable form of the /codes
+  // routes, so Cobb / the MCP can "give the 3D printers a 'p' prefix" through
+  // the generic invoke_action rail rather than a bespoke per-op tool. Shares
+  // the exact rename/config services the HTTP routes use, so the freeze /
+  // keep-existing / seed-default rules can't drift between the two surfaces.
+  platform().actions.registerHandler("labels.set-code", async (ctx) => {
+    const args = (ctx.args ?? {}) as {
+      group_key?: unknown;
+      prefix?: unknown;
+      code_in_qr?: unknown;
+      remove_code?: unknown;
+    };
+    const groupKey = typeof args.group_key === "string" ? args.group_key.trim() : "";
+    if (!groupKey) {
+      return { ok: false, error: "group_key is required (see the label-codes list)" };
+    }
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<LabelsDB>;
+    const changed: string[] = [];
+
+    // 1. Change the prefix. remove_code opts the list OUT of a code (frees the
+    // letter, unbinds its items); otherwise a non-blank prefix renames. On a
+    // printed (frozen) group a rename retries as going-forward (keeps the printed
+    // codes valid); a removal is refused (the sticker still carries the code).
+    // remove_code and prefix are mutually exclusive — remove_code wins.
+    if (args.remove_code === true) {
+      const r = await renameCodeGroup(db, groupKey, "", false);
+      if (!r.ok) return { ok: false, error: r.message };
+      changed.push(
+        `code removed — list opted out${r.codes_rewritten ? ` (${r.codes_rewritten} cleared)` : ""}`,
+      );
+    } else if (typeof args.prefix === "string" && args.prefix.trim()) {
+      const wanted = args.prefix.trim();
+      let r = await renameCodeGroup(db, groupKey, wanted, false);
+      if (!r.ok && r.code === "frozen") r = await renameCodeGroup(db, groupKey, wanted, true);
+      if (!r.ok) return { ok: false, error: r.message };
+      changed.push(
+        r.kept_existing ? `prefix → ${r.prefix} (already-printed codes kept)` : `prefix → ${r.prefix}`,
+      );
+    }
+
+    // 2. QR-center is PER GROUP (per instance): one instance can drop its code
+    // from the QR while another keeps it. Sets the group's own override.
+    const wantCodeInQr = typeof args.code_in_qr === "boolean" ? args.code_in_qr : undefined;
+    if (wantCodeInQr !== undefined) {
+      const ok = await setGroupOverlay(db, groupKey, wantCodeInQr);
+      if (!ok) return { ok: false, error: "couldn't find that code group" };
+      changed.push(`code in QR → ${wantCodeInQr ? "on" : "off"}`);
+    }
+
+    if (changed.length === 0) {
+      return { ok: false, error: "nothing to change — pass prefix or code_in_qr" };
+    }
+    return { ok: true, group_key: groupKey, changed };
   });
 }

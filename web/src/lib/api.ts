@@ -1888,8 +1888,13 @@ export const api = {
     }
     return request<unknown>("POST", `/orgs/${slug}${path}`, body);
   },
-  createPrinter: (slug: string, body: PrinterInput) =>
-    request<Printer>("POST", `/orgs/${slug}/modules/core-print/printers`, body),
+  createPrinter: async (slug: string, body: PrinterInput) => {
+    // core-print owns the printer registry and is opt-in. Enable it on demand the
+    // first time a workspace adds a printer (idempotent), so printing infra appears
+    // exactly when it is needed instead of bloating every workspace.
+    await request("POST", `/orgs/${slug}/modules/core-print/enable`, {});
+    return request<Printer>("POST", `/orgs/${slug}/modules/core-print/printers`, body);
+  },
   updatePrinter: (slug: string, id: string, body: Partial<PrinterInput>) =>
     request<Printer>("PATCH", `/orgs/${slug}/modules/core-print/printers/${id}`, body),
   deletePrinter: (slug: string, id: string) =>

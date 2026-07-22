@@ -172,3 +172,50 @@ export function validateOverlay(payload: string, capsule: Capsule): OverlayValid
     reason,
   };
 }
+
+// ── Physical scannability: is the QR printed big enough to read? ──────────────
+//
+// The overlay check above asks "does the center code cover too much?"; this asks
+// the orthogonal question "is each module physically large enough for a camera?"
+// A QR's "X dimension" is one module's printed edge. Below a floor a printed QR
+// stops decoding no matter the error correction: the camera has to resolve each
+// module across several sensor pixels, and past a point adjacent modules blur
+// together. These are practical MOBILE-scan floors at close range (a phone), not
+// the looser limits a dedicated handheld scanner allows.
+
+/** At/above this module edge (mm) a QR scans reliably on modern phones. */
+export const MODULE_MM_GOOD = 0.3;
+/** Below this it usually will not read even up close. */
+export const MODULE_MM_MIN = 0.2;
+
+export type ScannabilityRating = "good" | "tight" | "poor";
+
+export interface Scannability {
+  /** Printed module edge length, in millimetres (the QR X dimension). */
+  moduleMm: number;
+  /** Data modules per side of the symbol. */
+  moduleCount: number;
+  rating: ScannabilityRating;
+  /** A short human phrase for the rating. */
+  label: string;
+}
+
+/**
+ * Judge whether a QR printed `qrSideIn` inches wide, with `moduleCount` modules
+ * per side, is physically large enough to scan. Pure + unit-testable; the module
+ * count comes from the REAL symbol (QRCode.create(payload).modules.size or the
+ * rendered SVG), so this is payload-aware — a longer URL packs more modules into
+ * the same square and shrinks each one — not a fixed size cutoff.
+ */
+export function assessScannability(qrSideIn: number, moduleCount: number): Scannability {
+  const moduleMm = (qrSideIn * 25.4) / Math.max(1, moduleCount);
+  const rating: ScannabilityRating =
+    moduleMm >= MODULE_MM_GOOD ? "good" : moduleMm >= MODULE_MM_MIN ? "tight" : "poor";
+  const label =
+    rating === "good"
+      ? "scans on most phones"
+      : rating === "tight"
+        ? "scannable up close"
+        : "likely too small to scan";
+  return { moduleMm, moduleCount, rating, label };
+}

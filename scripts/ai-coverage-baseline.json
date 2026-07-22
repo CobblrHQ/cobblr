@@ -1,0 +1,1587 @@
+[
+  {
+    "file": "modules/assets/src/api/assets.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/assets/src/api/assets.ts",
+    "method": "patch",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/assets/src/api/assets.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/bricklink-connector/src/api/index.ts",
+    "method": "post",
+    "path": "/parse-wanted-list"
+  },
+  {
+    "file": "modules/bricklink-connector/src/api/index.ts",
+    "method": "post",
+    "path": "/parse-order"
+  },
+  {
+    "file": "modules/bricklink-connector/src/api/index.ts",
+    "method": "post",
+    "path": "/diff-wanted-list"
+  },
+  {
+    "file": "modules/builds/src/api/builds.ts",
+    "method": "post",
+    "path": "/builds"
+  },
+  {
+    "file": "modules/builds/src/api/builds.ts",
+    "method": "patch",
+    "path": "/builds/:id"
+  },
+  {
+    "file": "modules/builds/src/api/builds.ts",
+    "method": "delete",
+    "path": "/builds/:id"
+  },
+  {
+    "file": "modules/builds/src/api/builds.ts",
+    "method": "post",
+    "path": "/builds/:id/components"
+  },
+  {
+    "file": "modules/builds/src/api/builds.ts",
+    "method": "delete",
+    "path": "/builds/:id/components/:cid"
+  },
+  {
+    "file": "modules/builds/src/api/builds.ts",
+    "method": "post",
+    "path": "/builds/:id/operations"
+  },
+  {
+    "file": "modules/builds/src/api/builds.ts",
+    "method": "patch",
+    "path": "/builds/:id/operations/:opId"
+  },
+  {
+    "file": "modules/builds/src/api/builds.ts",
+    "method": "delete",
+    "path": "/builds/:id/operations/:opId"
+  },
+  {
+    "file": "modules/builds/src/api/builds.ts",
+    "method": "post",
+    "path": "/builds/:id/operations/:opId/time"
+  },
+  {
+    "file": "modules/builds/src/api/builds.ts",
+    "method": "post",
+    "path": "/builds/:id/operations/:opId/quantities"
+  },
+  {
+    "file": "modules/builds/src/api/builds.ts",
+    "method": "post",
+    "path": "/builds/:id/build"
+  },
+  {
+    "file": "modules/builds/src/api/builds.ts",
+    "method": "post",
+    "path": "/planned"
+  },
+  {
+    "file": "modules/builds/src/api/builds.ts",
+    "method": "patch",
+    "path": "/planned/:pid"
+  },
+  {
+    "file": "modules/builds/src/api/builds.ts",
+    "method": "delete",
+    "path": "/planned/:pid"
+  },
+  {
+    "file": "modules/core-ai/src/api/basics.ts",
+    "method": "post",
+    "path": "/answer"
+  },
+  {
+    "file": "modules/core-ai/src/api/basics.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/core-ai/src/api/basics.ts",
+    "method": "patch",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/core-ai/src/api/basics.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/core-ai/src/api/capabilities.ts",
+    "method": "put",
+    "path": "/"
+  },
+  {
+    "file": "modules/core-ai/src/api/capabilities.ts",
+    "method": "delete",
+    "path": "/:capability"
+  },
+  {
+    "file": "modules/core-ai/src/api/chat.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/core-ai/src/api/chat.ts",
+    "method": "put",
+    "path": "/prefs"
+  },
+  {
+    "file": "modules/core-ai/src/api/chat.ts",
+    "method": "post",
+    "path": "/writes/:id/undo"
+  },
+  {
+    "file": "modules/core-ai/src/api/chat.ts",
+    "method": "post",
+    "path": "/execute"
+  },
+  {
+    "file": "modules/core-ai/src/api/invoke.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/core-ai/src/api/match-to-catalog.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/core-ai/src/api/providers.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/core-ai/src/api/providers.ts",
+    "method": "patch",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/core-ai/src/api/providers.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/core-ai/src/api/providers.ts",
+    "method": "post",
+    "path": "/:id/test"
+  },
+  {
+    "file": "modules/core-apps/src/api/apps.ts",
+    "method": "post",
+    "path": "/:slug/token"
+  },
+  {
+    "file": "modules/core-apps/src/api/apps.ts",
+    "method": "put",
+    "path": "/:slug/data/:key"
+  },
+  {
+    "file": "modules/core-apps/src/api/apps.ts",
+    "method": "post",
+    "path": "/validate"
+  },
+  {
+    "file": "modules/core-apps/src/api/apps.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/core-apps/src/api/apps.ts",
+    "method": "patch",
+    "path": "/:slug"
+  },
+  {
+    "file": "modules/core-apps/src/api/apps.ts",
+    "method": "delete",
+    "path": "/:slug"
+  },
+  {
+    "file": "modules/core-authoring/src/api/drafts.ts",
+    "method": "post",
+    "path": "/match-template"
+  },
+  {
+    "file": "modules/core-authoring/src/api/drafts.ts",
+    "method": "post",
+    "path": "/context"
+  },
+  {
+    "file": "modules/core-authoring/src/api/drafts.ts",
+    "method": "post",
+    "path": "/compile"
+  },
+  {
+    "file": "modules/core-authoring/src/api/drafts.ts",
+    "method": "post",
+    "path": "/build"
+  },
+  {
+    "file": "modules/core-authoring/src/api/drafts.ts",
+    "method": "post",
+    "path": "/drafts/:id/refine"
+  },
+  {
+    "file": "modules/core-authoring/src/api/drafts.ts",
+    "method": "post",
+    "path": "/drafts/:id/candidate"
+  },
+  {
+    "file": "modules/core-authoring/src/api/drafts.ts",
+    "method": "post",
+    "path": "/drafts/:id/repair-prompt"
+  },
+  {
+    "file": "modules/core-authoring/src/api/drafts.ts",
+    "method": "post",
+    "path": "/drafts/:id/apply"
+  },
+  {
+    "file": "modules/core-catalogs/src/api/catalogs.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/core-catalogs/src/api/catalogs.ts",
+    "method": "patch",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/core-catalogs/src/api/catalogs.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/core-catalogs/src/api/catalogs.ts",
+    "method": "post",
+    "path": "/:id/import-csv"
+  },
+  {
+    "file": "modules/core-catalogs/src/api/catalogs.ts",
+    "method": "post",
+    "path": "/:id/pull"
+  },
+  {
+    "file": "modules/core-catalogs/src/api/catalogs.ts",
+    "method": "post",
+    "path": "/:id/sync"
+  },
+  {
+    "file": "modules/core-devices/src/api/ingest.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/core-devices/src/api/links.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/core-devices/src/api/links.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/core-file-preview/src/api/renderers.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/core-file-preview/src/api/renderers.ts",
+    "method": "delete",
+    "path": "/:name"
+  },
+  {
+    "file": "modules/core-files/src/api/attachments.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/core-files/src/api/attachments.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/core-files/src/api/files.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/core-files/src/api/files.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/core-import/src/api/homebox-import.ts",
+    "method": "post",
+    "path": "/homebox/preview"
+  },
+  {
+    "file": "modules/core-import/src/api/homebox-import.ts",
+    "method": "post",
+    "path": "/homebox"
+  },
+  {
+    "file": "modules/core-integrations/src/api/connectors.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/core-integrations/src/api/connectors.ts",
+    "method": "patch",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/core-integrations/src/api/connectors.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/core-integrations/src/api/connectors.ts",
+    "method": "post",
+    "path": "/:id/test"
+  },
+  {
+    "file": "modules/core-integrations/src/api/connectors.ts",
+    "method": "post",
+    "path": "/:id/invoke"
+  },
+  {
+    "file": "modules/core-integrations/src/api/inbound-tokens.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/core-integrations/src/api/inbound-tokens.ts",
+    "method": "post",
+    "path": "/:id/revoke"
+  },
+  {
+    "file": "modules/core-integrations/src/api/inbound-tokens.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/core-integrations/src/api/source-defs.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/core-integrations/src/api/source-defs.ts",
+    "method": "delete",
+    "path": "/:sourceId"
+  },
+  {
+    "file": "modules/core-integrations/src/api/sync.ts",
+    "method": "post",
+    "path": "/connections"
+  },
+  {
+    "file": "modules/core-integrations/src/api/sync.ts",
+    "method": "patch",
+    "path": "/connections/:id"
+  },
+  {
+    "file": "modules/core-integrations/src/api/sync.ts",
+    "method": "delete",
+    "path": "/connections/:id"
+  },
+  {
+    "file": "modules/core-integrations/src/api/sync.ts",
+    "method": "post",
+    "path": "/connections/:id/archive"
+  },
+  {
+    "file": "modules/core-integrations/src/api/sync.ts",
+    "method": "post",
+    "path": "/connections/:id/unarchive"
+  },
+  {
+    "file": "modules/core-integrations/src/api/sync.ts",
+    "method": "post",
+    "path": "/connections/:id/test"
+  },
+  {
+    "file": "modules/core-integrations/src/api/sync.ts",
+    "method": "put",
+    "path": "/connections/:id/syncs/:entityType"
+  },
+  {
+    "file": "modules/core-integrations/src/api/sync.ts",
+    "method": "post",
+    "path": "/connections/:id/syncs/:entityType/preview"
+  },
+  {
+    "file": "modules/core-integrations/src/api/sync.ts",
+    "method": "post",
+    "path": "/connections/:id/syncs/:entityType/import"
+  },
+  {
+    "file": "modules/core-integrations/src/api/sync.ts",
+    "method": "post",
+    "path": "/connections/:id/syncs/:entityType/run"
+  },
+  {
+    "file": "modules/core-locations/src/api/floorplan.ts",
+    "method": "post",
+    "path": "/:id/floorplan/seed"
+  },
+  {
+    "file": "modules/core-locations/src/api/import.ts",
+    "method": "post",
+    "path": "/import"
+  },
+  {
+    "file": "modules/core-locations/src/api/locations.ts",
+    "method": "post",
+    "path": "/reorder"
+  },
+  {
+    "file": "modules/core-locations/src/api/locations.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/core-locations/src/api/locations.ts",
+    "method": "patch",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/core-locations/src/api/locations.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/core-maintenance/src/api/entries.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/core-maintenance/src/api/entries.ts",
+    "method": "patch",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/core-maintenance/src/api/entries.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/core-maintenance/src/api/entries.ts",
+    "method": "post",
+    "path": "/:id/complete"
+  },
+  {
+    "file": "modules/core-maintenance/src/api/index.ts",
+    "method": "post",
+    "path": "/sweep"
+  },
+  {
+    "file": "modules/core-placement/src/api/index.ts",
+    "method": "post",
+    "path": "/place"
+  },
+  {
+    "file": "modules/core-placement/src/api/index.ts",
+    "method": "post",
+    "path": "/remove"
+  },
+  {
+    "file": "modules/core-print/src/api/index.ts",
+    "method": "post",
+    "path": "/printers"
+  },
+  {
+    "file": "modules/core-print/src/api/index.ts",
+    "method": "patch",
+    "path": "/printers/:id"
+  },
+  {
+    "file": "modules/core-print/src/api/index.ts",
+    "method": "delete",
+    "path": "/printers/:id"
+  },
+  {
+    "file": "modules/core-print/src/api/index.ts",
+    "method": "post",
+    "path": "/printers/:id/test"
+  },
+  {
+    "file": "modules/core-print/src/api/index.ts",
+    "method": "post",
+    "path": "/printers/:id/print"
+  },
+  {
+    "file": "modules/core-public-surfaces/src/api/surfaces.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/core-public-surfaces/src/api/surfaces.ts",
+    "method": "patch",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/core-public-surfaces/src/api/surfaces.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/core-recurrence/src/api/index.ts",
+    "method": "post",
+    "path": "/tick"
+  },
+  {
+    "file": "modules/core-scan/src/api/decode.ts",
+    "method": "post",
+    "path": "/decode"
+  },
+  {
+    "file": "modules/core-scan/src/api/entity-image.ts",
+    "method": "post",
+    "path": "/entity-image"
+  },
+  {
+    "file": "modules/core-scan/src/api/entity-image.ts",
+    "method": "post",
+    "path": "/entity-image/backfill"
+  },
+  {
+    "file": "modules/core-scan/src/api/export.ts",
+    "method": "post",
+    "path": "/export"
+  },
+  {
+    "file": "modules/core-scan/src/api/import.ts",
+    "method": "post",
+    "path": "/import/preview"
+  },
+  {
+    "file": "modules/core-scan/src/api/import.ts",
+    "method": "post",
+    "path": "/import"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "post",
+    "path": "/scan"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "post",
+    "path": "/scan/note"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "post",
+    "path": "/scan/receipt"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "post",
+    "path": "/receipt-group/:groupId/confirm"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "patch",
+    "path": "/inbox/:id"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "post",
+    "path": "/inbox/:id/confirm"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "post",
+    "path": "/inbox/:id/confirm-into-location"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "post",
+    "path": "/inbox/:id/discard"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "post",
+    "path": "/inbox/:id/restore"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "post",
+    "path": "/inbox/:id/rerun-ai"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "post",
+    "path": "/inbox/:id/catalog-image"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "post",
+    "path": "/inbox/:id/undo-rerun"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "post",
+    "path": "/inbox/:id/unconfirm"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "post",
+    "path": "/inbox/:id/attach"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "post",
+    "path": "/bin/:locationId/adjust"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "post",
+    "path": "/inbox/:id/rotate"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "post",
+    "path": "/inbox/:id/photos"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "post",
+    "path": "/inbox/:id/photos/primary"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "delete",
+    "path": "/inbox/:id/photos/:fileId"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "post",
+    "path": "/inbox/:id/split"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "post",
+    "path": "/inbox/:id/confirm-barcode"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "post",
+    "path": "/inbox/merge-batches"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "post",
+    "path": "/inbox/reassign-batch"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "post",
+    "path": "/inbox/backfill-catalog-photos"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "post",
+    "path": "/inbox/apply-theme"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "post",
+    "path": "/inbox/combine"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "post",
+    "path": "/inbox/:id/match"
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "method": "post",
+    "path": "/batches"
+  },
+  {
+    "file": "modules/core-scan/src/api/organize.ts",
+    "method": "post",
+    "path": "/organize/plan"
+  },
+  {
+    "file": "modules/core-scan/src/api/organize.ts",
+    "method": "post",
+    "path": "/organize/apply"
+  },
+  {
+    "file": "modules/core-scan/src/api/organize.ts",
+    "method": "post",
+    "path": "/organize/walk-state"
+  },
+  {
+    "file": "modules/core-scan/src/api/putaway.ts",
+    "method": "post",
+    "path": "/putaway/start"
+  },
+  {
+    "file": "modules/core-scan/src/api/putaway.ts",
+    "method": "post",
+    "path": "/putaway/:id/setup-bins"
+  },
+  {
+    "file": "modules/core-scan/src/api/putaway.ts",
+    "method": "post",
+    "path": "/putaway/:id/scan"
+  },
+  {
+    "file": "modules/core-scan/src/api/putaway.ts",
+    "method": "post",
+    "path": "/putaway/:id/confirm"
+  },
+  {
+    "file": "modules/core-scan/src/api/putaway.ts",
+    "method": "post",
+    "path": "/putaway/:id/undo"
+  },
+  {
+    "file": "modules/core-scan/src/api/putaway.ts",
+    "method": "post",
+    "path": "/putaway/:id/state"
+  },
+  {
+    "file": "modules/core-scan/src/api/putaway.ts",
+    "method": "post",
+    "path": "/putaway/:id/end"
+  },
+  {
+    "file": "modules/core-scan/src/api/qr-rules.ts",
+    "method": "post",
+    "path": "/qr-rules"
+  },
+  {
+    "file": "modules/core-scan/src/api/qr-rules.ts",
+    "method": "patch",
+    "path": "/qr-rules/:id"
+  },
+  {
+    "file": "modules/core-scan/src/api/qr-rules.ts",
+    "method": "delete",
+    "path": "/qr-rules/:id"
+  },
+  {
+    "file": "modules/core-scan/src/api/qr-rules.ts",
+    "method": "post",
+    "path": "/qr-rules/reorder"
+  },
+  {
+    "file": "modules/core-scan/src/api/qr-rules.ts",
+    "method": "post",
+    "path": "/resolve-external"
+  },
+  {
+    "file": "modules/core-tags/src/api/tags.ts",
+    "method": "post",
+    "path": "/tags"
+  },
+  {
+    "file": "modules/core-tags/src/api/tags.ts",
+    "method": "patch",
+    "path": "/tags/:id"
+  },
+  {
+    "file": "modules/core-tags/src/api/tags.ts",
+    "method": "delete",
+    "path": "/tags/:id"
+  },
+  {
+    "file": "modules/core-tags/src/api/tags.ts",
+    "method": "post",
+    "path": "/tags/:id/merge"
+  },
+  {
+    "file": "modules/core-tags/src/api/tags.ts",
+    "method": "post",
+    "path": "/attachments"
+  },
+  {
+    "file": "modules/core-tags/src/api/tags.ts",
+    "method": "delete",
+    "path": "/attachments/:id"
+  },
+  {
+    "file": "modules/core-templates/src/api/templates.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/core-templates/src/api/templates.ts",
+    "method": "patch",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/core-templates/src/api/templates.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/core-templates/src/api/templates.ts",
+    "method": "post",
+    "path": "/:id/instantiate"
+  },
+  {
+    "file": "modules/core-units/src/api/units.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/core-units/src/api/units.ts",
+    "method": "delete",
+    "path": "/:code"
+  },
+  {
+    "file": "modules/core-units/src/api/units.ts",
+    "method": "put",
+    "path": "/settings"
+  },
+  {
+    "file": "modules/core-views/src/api/views.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/core-views/src/api/views.ts",
+    "method": "patch",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/core-views/src/api/views.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/digifab/src/api/bambu.ts",
+    "method": "post",
+    "path": "/login"
+  },
+  {
+    "file": "modules/digifab/src/api/bambu.ts",
+    "method": "post",
+    "path": "/code"
+  },
+  {
+    "file": "modules/digifab/src/api/bambu.ts",
+    "method": "post",
+    "path": "/create"
+  },
+  {
+    "file": "modules/digifab/src/api/bambu.ts",
+    "method": "post",
+    "path": "/command"
+  },
+  {
+    "file": "modules/digifab/src/api/bulk.ts",
+    "method": "post",
+    "path": "/connections"
+  },
+  {
+    "file": "modules/digifab/src/api/bulk.ts",
+    "method": "post",
+    "path": "/detect"
+  },
+  {
+    "file": "modules/digifab/src/api/connections.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/digifab/src/api/connections.ts",
+    "method": "patch",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/digifab/src/api/connections.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/digifab/src/api/connections.ts",
+    "method": "post",
+    "path": "/:id/test"
+  },
+  {
+    "file": "modules/digifab/src/api/drivers.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/digifab/src/api/drivers.ts",
+    "method": "delete",
+    "path": "/:key"
+  },
+  {
+    "file": "modules/digifab/src/api/edge-relay.ts",
+    "method": "post",
+    "path": "/register"
+  },
+  {
+    "file": "modules/digifab/src/api/edge-relay.ts",
+    "method": "post",
+    "path": "/respond"
+  },
+  {
+    "file": "modules/digifab/src/api/edge-shares.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/digifab/src/api/edge-shares.ts",
+    "method": "post",
+    "path": "/redeem"
+  },
+  {
+    "file": "modules/digifab/src/api/edge-shares.ts",
+    "method": "post",
+    "path": "/:id/revoke"
+  },
+  {
+    "file": "modules/digifab/src/api/failure.ts",
+    "method": "put",
+    "path": "/config"
+  },
+  {
+    "file": "modules/digifab/src/api/failure.ts",
+    "method": "post",
+    "path": "/:connectionId/:deviceId/check"
+  },
+  {
+    "file": "modules/digifab/src/api/failure.ts",
+    "method": "post",
+    "path": "/detectors"
+  },
+  {
+    "file": "modules/digifab/src/api/failure.ts",
+    "method": "patch",
+    "path": "/detectors/:id"
+  },
+  {
+    "file": "modules/digifab/src/api/failure.ts",
+    "method": "delete",
+    "path": "/detectors/:id"
+  },
+  {
+    "file": "modules/digifab/src/api/failure.ts",
+    "method": "post",
+    "path": "/detectors/:id/printers"
+  },
+  {
+    "file": "modules/digifab/src/api/failure.ts",
+    "method": "post",
+    "path": "/detectors/:id/printers/from-connection"
+  },
+  {
+    "file": "modules/digifab/src/api/failure.ts",
+    "method": "post",
+    "path": "/detectors/:id/test"
+  },
+  {
+    "file": "modules/digifab/src/api/fleet.ts",
+    "method": "post",
+    "path": "/:connectionId/:deviceId/ready"
+  },
+  {
+    "file": "modules/digifab/src/api/fleet.ts",
+    "method": "put",
+    "path": "/:connectionId/:deviceId/position"
+  },
+  {
+    "file": "modules/digifab/src/api/fleet.ts",
+    "method": "put",
+    "path": "/layout"
+  },
+  {
+    "file": "modules/digifab/src/api/fleet.ts",
+    "method": "post",
+    "path": "/:connectionId/:deviceId/camera"
+  },
+  {
+    "file": "modules/digifab/src/api/fleet.ts",
+    "method": "post",
+    "path": "/:connectionId/:deviceId/snapshot-relay"
+  },
+  {
+    "file": "modules/digifab/src/api/fleet.ts",
+    "method": "post",
+    "path": "/:connectionId/:deviceId/snapshot"
+  },
+  {
+    "file": "modules/digifab/src/api/fleet.ts",
+    "method": "post",
+    "path": "/:connectionId/:deviceId/control"
+  },
+  {
+    "file": "modules/digifab/src/api/fleet.ts",
+    "method": "post",
+    "path": "/:connectionId/:deviceId/print"
+  },
+  {
+    "file": "modules/digifab/src/api/fleet.ts",
+    "method": "put",
+    "path": "/:connectionId/:deviceId/lan"
+  },
+  {
+    "file": "modules/digifab/src/api/fleet.ts",
+    "method": "delete",
+    "path": "/:connectionId/:deviceId/lan"
+  },
+  {
+    "file": "modules/digifab/src/api/import.ts",
+    "method": "post",
+    "path": "/fdm-monster"
+  },
+  {
+    "file": "modules/digifab/src/api/jobs.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/digifab/src/api/jobs.ts",
+    "method": "patch",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/digifab/src/api/jobs.ts",
+    "method": "post",
+    "path": "/:id/send"
+  },
+  {
+    "file": "modules/digifab/src/api/jobs.ts",
+    "method": "post",
+    "path": "/:id/assign"
+  },
+  {
+    "file": "modules/digifab/src/api/jobs.ts",
+    "method": "post",
+    "path": "/:id/retry"
+  },
+  {
+    "file": "modules/digifab/src/api/jobs.ts",
+    "method": "post",
+    "path": "/:id/reprint"
+  },
+  {
+    "file": "modules/digifab/src/api/jobs.ts",
+    "method": "post",
+    "path": "/:id/poll"
+  },
+  {
+    "file": "modules/digifab/src/api/jobs.ts",
+    "method": "post",
+    "path": "/:id/cancel"
+  },
+  {
+    "file": "modules/digifab/src/api/jobs.ts",
+    "method": "post",
+    "path": "/:id/pause"
+  },
+  {
+    "file": "modules/digifab/src/api/jobs.ts",
+    "method": "post",
+    "path": "/:id/resume"
+  },
+  {
+    "file": "modules/digifab/src/api/jobs.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/digifab/src/api/library.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/digifab/src/api/library.ts",
+    "method": "patch",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/digifab/src/api/library.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/digifab/src/api/library.ts",
+    "method": "post",
+    "path": "/:id/send"
+  },
+  {
+    "file": "modules/digifab/src/api/links.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/digifab/src/api/links.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/digifab/src/api/pools.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/digifab/src/api/pools.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/digifab/src/api/pools.ts",
+    "method": "post",
+    "path": "/:id/members"
+  },
+  {
+    "file": "modules/digifab/src/api/pools.ts",
+    "method": "delete",
+    "path": "/:id/members/:connectionId/:deviceId"
+  },
+  {
+    "file": "modules/digifab/src/api/print-rules.ts",
+    "method": "post",
+    "path": "/channels"
+  },
+  {
+    "file": "modules/digifab/src/api/print-rules.ts",
+    "method": "patch",
+    "path": "/channels/:id"
+  },
+  {
+    "file": "modules/digifab/src/api/print-rules.ts",
+    "method": "delete",
+    "path": "/channels/:id"
+  },
+  {
+    "file": "modules/digifab/src/api/print-rules.ts",
+    "method": "post",
+    "path": "/channels/:id/test"
+  },
+  {
+    "file": "modules/digifab/src/api/print-rules.ts",
+    "method": "post",
+    "path": "/rules"
+  },
+  {
+    "file": "modules/digifab/src/api/print-rules.ts",
+    "method": "patch",
+    "path": "/rules/:id"
+  },
+  {
+    "file": "modules/digifab/src/api/print-rules.ts",
+    "method": "delete",
+    "path": "/rules/:id"
+  },
+  {
+    "file": "modules/digifab/src/api/print-rules.ts",
+    "method": "post",
+    "path": "/preview"
+  },
+  {
+    "file": "modules/digifab/src/api/print-rules.ts",
+    "method": "post",
+    "path": "/test-fire"
+  },
+  {
+    "file": "modules/digifab/src/api/runs.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/digifab/src/api/runs.ts",
+    "method": "patch",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/inventory/src/api/allocations.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/inventory/src/api/allocations.ts",
+    "method": "patch",
+    "path": "/:id/status"
+  },
+  {
+    "file": "modules/inventory/src/api/categories.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/inventory/src/api/import.ts",
+    "method": "post",
+    "path": "/parts/import"
+  },
+  {
+    "file": "modules/inventory/src/api/parts.ts",
+    "method": "post",
+    "path": "/:id/units"
+  },
+  {
+    "file": "modules/inventory/src/api/parts.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/inventory/src/api/parts.ts",
+    "method": "patch",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/inventory/src/api/parts.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/inventory/src/api/parts.ts",
+    "method": "post",
+    "path": "/:id/stock-adjust"
+  },
+  {
+    "file": "modules/inventory/src/api/spoolman.ts",
+    "method": "post",
+    "path": "/connections"
+  },
+  {
+    "file": "modules/inventory/src/api/spoolman.ts",
+    "method": "delete",
+    "path": "/connections/:id"
+  },
+  {
+    "file": "modules/inventory/src/api/spoolman.ts",
+    "method": "post",
+    "path": "/sync"
+  },
+  {
+    "file": "modules/knowledge/src/api/entries.ts",
+    "method": "post",
+    "path": "/entries"
+  },
+  {
+    "file": "modules/knowledge/src/api/entries.ts",
+    "method": "patch",
+    "path": "/entries/:id"
+  },
+  {
+    "file": "modules/knowledge/src/api/entries.ts",
+    "method": "delete",
+    "path": "/entries/:id"
+  },
+  {
+    "file": "modules/knowledge/src/api/entries.ts",
+    "method": "post",
+    "path": "/entries/:id/image"
+  },
+  {
+    "file": "modules/labels/src/api/autoflush.ts",
+    "method": "put",
+    "path": "/"
+  },
+  {
+    "file": "modules/labels/src/api/print.ts",
+    "method": "post",
+    "path": "/render"
+  },
+  {
+    "file": "modules/labels/src/api/print.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/labels/src/api/print.ts",
+    "method": "post",
+    "path": "/record"
+  },
+  {
+    "file": "modules/labels/src/api/qr-settings.ts",
+    "method": "put",
+    "path": "/"
+  },
+  {
+    "file": "modules/labels/src/api/qr-tokens.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/labels/src/api/qr-tokens.ts",
+    "method": "post",
+    "path": "/:id/revoke"
+  },
+  {
+    "file": "modules/labels/src/api/queue.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/labels/src/api/queue.ts",
+    "method": "patch",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/labels/src/api/queue.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/labels/src/api/sizes.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/labels/src/api/sizes.ts",
+    "method": "put",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/labels/src/api/sizes.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/lists/src/api/lists.ts",
+    "method": "post",
+    "path": "/lists"
+  },
+  {
+    "file": "modules/lists/src/api/lists.ts",
+    "method": "patch",
+    "path": "/lists/:id"
+  },
+  {
+    "file": "modules/lists/src/api/lists.ts",
+    "method": "delete",
+    "path": "/lists/:id"
+  },
+  {
+    "file": "modules/lists/src/api/lists.ts",
+    "method": "post",
+    "path": "/lists/:id/clear-done"
+  },
+  {
+    "file": "modules/lists/src/api/lists.ts",
+    "method": "post",
+    "path": "/items"
+  },
+  {
+    "file": "modules/lists/src/api/lists.ts",
+    "method": "patch",
+    "path": "/items/:id"
+  },
+  {
+    "file": "modules/lists/src/api/lists.ts",
+    "method": "delete",
+    "path": "/items/:id"
+  },
+  {
+    "file": "modules/machines/src/api/machines.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/machines/src/api/machines.ts",
+    "method": "patch",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/machines/src/api/machines.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/projects/src/api/projects.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/projects/src/api/projects.ts",
+    "method": "patch",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/projects/src/api/projects.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/projects/src/api/projects.ts",
+    "method": "post",
+    "path": "/:id/extract-pattern-file"
+  },
+  {
+    "file": "modules/projects/src/api/projects.ts",
+    "method": "post",
+    "path": "/:id/extract-pattern-images"
+  },
+  {
+    "file": "modules/projects/src/api/projects.ts",
+    "method": "post",
+    "path": "/:id/extract-pattern"
+  },
+  {
+    "file": "modules/projects/src/api/tasks.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/projects/src/api/tasks.ts",
+    "method": "patch",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/projects/src/api/tasks.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/projects/src/api/tasks.ts",
+    "method": "post",
+    "path": "/:id/dependencies"
+  },
+  {
+    "file": "modules/projects/src/api/tasks.ts",
+    "method": "delete",
+    "path": "/:id/dependencies/:depId"
+  },
+  {
+    "file": "modules/purchases/src/api/orders.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/purchases/src/api/orders.ts",
+    "method": "patch",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/purchases/src/api/orders.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/purchases/src/api/orders.ts",
+    "method": "post",
+    "path": "/:id/items"
+  },
+  {
+    "file": "modules/purchases/src/api/vendors.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/purchases/src/api/vendors.ts",
+    "method": "patch",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/purchases/src/api/vendors.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/records/src/api/records.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/records/src/api/records.ts",
+    "method": "patch",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/records/src/api/records.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/sales/src/api/customers.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/sales/src/api/customers.ts",
+    "method": "patch",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/sales/src/api/customers.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/sales/src/api/orders.ts",
+    "method": "post",
+    "path": "/"
+  },
+  {
+    "file": "modules/sales/src/api/orders.ts",
+    "method": "patch",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/sales/src/api/orders.ts",
+    "method": "delete",
+    "path": "/:id"
+  },
+  {
+    "file": "modules/sales/src/api/orders.ts",
+    "method": "post",
+    "path": "/:id/items"
+  },
+  {
+    "file": "modules/sales/src/api/orders.ts",
+    "method": "patch",
+    "path": "/:id/items/:itemId"
+  },
+  {
+    "file": "modules/sales/src/api/orders.ts",
+    "method": "delete",
+    "path": "/:id/items/:itemId"
+  },
+  {
+    "file": "modules/sales/src/api/orders.ts",
+    "method": "post",
+    "path": "/:id/fulfill"
+  },
+  {
+    "file": "modules/tracking/src/api/metrics.ts",
+    "method": "post",
+    "path": "/metrics"
+  },
+  {
+    "file": "modules/tracking/src/api/metrics.ts",
+    "method": "patch",
+    "path": "/metrics/:id"
+  },
+  {
+    "file": "modules/tracking/src/api/metrics.ts",
+    "method": "delete",
+    "path": "/metrics/:id"
+  },
+  {
+    "file": "modules/tracking/src/api/metrics.ts",
+    "method": "post",
+    "path": "/metrics/:id/measurements"
+  },
+  {
+    "file": "modules/tracking/src/api/metrics.ts",
+    "method": "delete",
+    "path": "/measurements/:id"
+  }
+]

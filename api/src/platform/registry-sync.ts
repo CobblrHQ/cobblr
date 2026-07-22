@@ -38,6 +38,7 @@ export async function syncManifestRegistries(): Promise<{
     description: string | null;
     icon: string | null;
     applies_to: unknown;
+    scope: "entity" | "workspace";
     invoke_route: string | null;
     invoke_handler: string | null;
     user_invokable: boolean;
@@ -83,12 +84,15 @@ export async function syncManifestRegistries(): Promise<{
       // bundles, users, every entity kind in the system. Wire-driven
       // (userInvokable: false) actions can legitimately apply to any.
       const userInvokable = a.userInvokable ?? true;
+      const scope = a.scope ?? "entity";
       const appliesAny =
         typeof a.appliesTo === "object" &&
         a.appliesTo !== null &&
         "any" in a.appliesTo &&
         a.appliesTo.any === true;
-      if (userInvokable && appliesAny) {
+      // Workspace-scoped actions legitimately match no kind (appliesTo is
+      // ignored for them), so the "shows on every kind" warning doesn't apply.
+      if (userInvokable && appliesAny && scope !== "workspace") {
         console.warn(
           `[registry-sync] action ${a.id} declares appliesTo: { any: true } AND userInvokable: true. ` +
             `It will show as a button on every entity kind (locations, bundles, users, …). ` +
@@ -102,6 +106,7 @@ export async function syncManifestRegistries(): Promise<{
         description: a.description ?? null,
         icon: a.icon ?? null,
         applies_to: a.appliesTo,
+        scope,
         invoke_route: a.invokeRoute ?? null,
         invoke_handler: a.invokeHandler ?? null,
         user_invokable: userInvokable,
@@ -178,6 +183,7 @@ export async function syncManifestRegistries(): Promise<{
           description: a.description,
           icon: a.icon,
           applies_to: sql`${JSON.stringify(a.applies_to)}::jsonb`,
+          scope: a.scope,
           invoke_route: a.invoke_route,
           invoke_handler: a.invoke_handler,
           user_invokable: a.user_invokable,
@@ -191,6 +197,7 @@ export async function syncManifestRegistries(): Promise<{
             description: a.description,
             icon: a.icon,
             applies_to: sql`${JSON.stringify(a.applies_to)}::jsonb`,
+            scope: a.scope,
             invoke_route: a.invoke_route,
             invoke_handler: a.invoke_handler,
             user_invokable: a.user_invokable,

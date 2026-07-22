@@ -18,6 +18,11 @@ export interface Printable {
   qr_svg: string;
   /** Human-readable code drawn in the QR center (m1, p42, …), when assigned. */
   center_code?: string;
+  /** Data modules per side of this item's QR symbol (QRCode.create().modules.size).
+   *  Set by the preview builder so the physical-scannability read (module size at
+   *  the printed dimensions) needs no re-encoding. Optional: producers that don't
+   *  compute it leave the verdict hidden. */
+  qr_modules?: number;
 }
 
 /** A workspace-defined label size. Dimensions in inches; cols/rows/per_sheet are
@@ -47,6 +52,8 @@ export interface AutoflushConfig {
   size_key: string | null;
   fire_mode: FireMode;
   fire_count: number;
+  /** Bluetooth printers fire from the browser (slice 3c); the server skips them. */
+  client_fired?: boolean;
 }
 
 export interface CustomSizeInput {
@@ -71,10 +78,20 @@ export interface PrintResponse {
 export interface CodeGroup {
   group_key: string;
   entity_kind: string;
-  prefix: string;
+  /** null = the list is opted out of a code (no prefix, letter freed). Blank the
+   *  prefix + Save to clear it; type one + Save to re-enable. */
+  prefix: string | null;
   label: string | null;
   count: number;
   frozen: boolean;
+  /** The owning kind's display name ("Machines"), resolved from the registry. */
+  kind_label: string;
+  /** This group's own display name: the named instance ("3D Printers"), the
+   *  grouping field value, or the kind name when the group is the whole kind. */
+  group_label: string;
+  /** Effective "draw the code in the QR center" for THIS group (its own override,
+   *  else the kind default). Per-group, so 3d printers can differ from cnc. */
+  overlay_center: boolean;
 }
 
 /** One tab in the browser — a labelable, non-empty INSTANCE the workspace
@@ -211,12 +228,22 @@ export class LabelsApi {
     );
   /** Every code group with its prefix + count, for the management panel. */
   listCodeGroups = () => this.request<{ groups: CodeGroup[] }>("GET", "/codes/groups");
-  /** Rename a group's prefix (rejected once the group has printed codes). */
-  renameCodePrefix = (groupKey: string, prefix: string) =>
-    this.request<{ group_key: string; prefix: string }>(
+  /** Rename a group's prefix. Before anything is printed this rewrites existing
+   *  codes; `keepExisting` is the override for a PRINTED group — existing codes
+   *  (and their stickers) keep their old code, only new labels use the new prefix. */
+  renameCodePrefix = (groupKey: string, prefix: string, keepExisting = false) =>
+    this.request<{ group_key: string; prefix: string; kept_existing?: boolean }>(
       "PATCH",
       `/codes/groups/${encodeURIComponent(groupKey)}`,
-      { prefix },
+      keepExisting ? { prefix, keep_existing: true } : { prefix },
+    );
+  /** Toggle whether THIS group's code prints inside the QR (per group, so two
+   *  instances of one kind can differ). */
+  setGroupOverlay = (groupKey: string, overlayCenter: boolean) =>
+    this.request<{ group_key: string; overlay_center: boolean }>(
+      "PATCH",
+      `/codes/groups/${encodeURIComponent(groupKey)}/overlay`,
+      { overlay_center: overlayCenter },
     );
 
   // core-print is a sibling module reached over HTTP (no import). Labels
@@ -247,6 +274,26 @@ export class LabelsApi {
     }>(
       "GET",
       `/api/v1/orgs/${this.slug}/modules/core-print/printers`,
+    );
+  /** Create a printer from the labels page, so a user connects one without leaving
+   *  to Configuration. Used by the inline "Pair a Bluetooth printer" flow with
+   *  profile-derived settings; the server validates them. core-print owns the
+   *  printer registry and is opt-in, so enable it on demand the first time a
+   *  workspace connects a printer (idempotent) — printing infra appears exactly
+   *  when it is needed, not preemptively on every workspace. */
+  createPrinter = async (b: { name: string; driver: string; settings?: Record<string, unknown>; is_default?: boolean }) => {
+    await this.requestAbs("POST", `/api/v1/orgs/${this.slug}/modules/core-print/enable`, {});
+    return this.requestAbs<{ id: string }>("POST", `/api/v1/orgs/${this.slug}/modules/core-print/printers`, b);
+  };
+  /** Edit a printer's name / media / layout from the labels page, so a user tunes
+   *  the loaded media + "labels across" without a trip to Configuration. */
+  updatePrinter = (id: string, b: { name?: string; settings?: Record<string, unknown> }) =>
+    this.requestAbs<{ id: string }>("PATCH", `/api/v1/orgs/${this.slug}/modules/core-print/printers/${id}`, b);
+  /** The full printer record (settings included) for the inline config panel. */
+  getPrinter = (id: string) =>
+    this.requestAbs<{ id: string; name: string; driver: string; is_default: boolean; settings?: Record<string, unknown> }>(
+      "GET",
+      `/api/v1/orgs/${this.slug}/modules/core-print/printers/${id}`,
     );
   printToPrinter = (printerId: string, body: { document_base64: string; content_type?: string; filename?: string; job_name?: string }) =>
     this.requestAbs<{ jobId: string; state: string }>(

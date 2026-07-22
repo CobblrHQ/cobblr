@@ -10,7 +10,7 @@
 // Lego-specific expansion and drives those + the platform pairings seam. No
 // direct access to inventory's tables.
 
-import { platform } from "@cobblr/platform-contract";
+import { platform, requireActionEntity } from "@cobblr/platform-contract";
 
 let registered = false;
 
@@ -19,7 +19,7 @@ export function registerBricklinkHandlers(): void {
   registered = true;
 
   platform().actions.registerHandler("bricklink.disassemble-kit", async (ctx) => {
-    const kitId = ctx.entity.id;
+    const kitId = requireActionEntity(ctx).id;
 
     // 1. Find the matched catalog entry (a Rebrickable set).
     const matched = await platform().entities.walkPairings(

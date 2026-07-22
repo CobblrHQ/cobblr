@@ -46,6 +46,7 @@ import * as recurrenceRegistry from "./platform/recurrence-registry.js";
 import * as calendarRegistry from "./platform/calendar-registry.js";
 import { registerDateFieldSource, queryDateField } from "./platform/date-field-calendar.js";
 import { registerDefaultRequestGuard } from "./platform/default-request-guard.js";
+import { registerTrialMode } from "./platform/trial.js";
 import * as computedFields from "./platform/computed-fields.js";
 import * as createDefaults from "./platform/create-defaults.js";
 import * as deviceApply from "./platform/device-apply.js";
@@ -952,6 +953,10 @@ async function boot() {
   if (registerDefaultRequestGuard()) {
     console.log("[cobblr-api] in-core rate-limit guard active (auth/anon/feedback)");
   }
+
+  // try/trial tier: register the single-workspace entitlement cap + log the
+  // withheld modules. No-op unless COBBLR_TIER=trial.
+  registerTrialMode();
 
   // (The date-custom-field calendar source is now registered per-owning-module
   // via platform().calendar.registerDateFieldSource — inventory/assets/projects

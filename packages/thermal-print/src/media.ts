@@ -56,14 +56,17 @@ export function thermalFootprint(
 }
 
 /** How many label faces fit on the media: cols across × rows down, the max-fit
- *  grid. The same arithmetic the PDF path's deriveGrid uses, in mm: N faces need
- *  (N-1) gaps, so N <= (available + gap) / (face + gap). Only die-cut has a gap.
+ *  grid. ACROSS the printable width faces pack edge to edge — the die-cut gap is a
+ *  FEED-direction space between physical labels, not between faces printed on one,
+ *  so two faces on a 50mm label are a clean 25mm each with their own margins built
+ *  in (the sheet path's behaviour). DOWN the feed, stacked physical labels DO carry
+ *  the die-cut gap toward the pitch: N faces need (N-1) gaps, N <= (avail+gap)/(face+gap).
  *  The 1e-9 nudge absorbs binary float dust (a clean 3/1.5 landing at 1.9999). */
 export function mediaTiles(media: LabelMedia, label: LabelFace): { cols: number; rows: number } {
   const gap = media.feed === "die-cut" ? media.gapMm : 0;
-  const fit = (avail: number, face: number): number =>
-    face <= 0 ? 0 : Math.max(0, Math.floor((avail + gap + 1e-9) / (face + gap)));
-  return { cols: fit(media.widthMm, label.widthMm), rows: fit(media.heightMm, label.heightMm) };
+  const cols = label.widthMm <= 0 ? 0 : Math.max(0, Math.floor((media.widthMm + 1e-9) / label.widthMm));
+  const rows = label.heightMm <= 0 ? 0 : Math.max(0, Math.floor((media.heightMm + gap + 1e-9) / (label.heightMm + gap)));
+  return { cols, rows };
 }
 
 /** media + label → TsplMedia (mm-native, no dots). The TSPL SIZE is the LABEL, not

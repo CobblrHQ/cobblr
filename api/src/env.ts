@@ -91,6 +91,26 @@ const Schema = z.object({
     .enum(["true", "false"])
     .default("true")
     .transform((v) => v === "true"),
+
+  // ── try / trial tier ─────────────────────────────────────────────────────
+  // COBBLR_TIER=trial turns this instance into the locked-down "try" tier
+  // (try.cobblr.xyz): a restricted default-module set (no AI/authoring/devices/
+  // integrations/public-surfaces), a single-workspace entitlement cap, and a
+  // trial_expires_at stamp on every new workspace. Unset = a normal instance
+  // (prod, staging, self-host) — none of the trial behaviour runs. Pair with
+  // COBBLR_HOSTED=true (strict egress) and COBBLR_AI_ENABLED=false.
+  // See docs/design-decisions/try-instance.md.
+  COBBLR_TIER: z.enum(["trial"]).optional(),
+  // Days until a trial workspace's expiry stamp. Reaping itself is DEFERRED —
+  // the stamp is set at signup, but nothing sweeps until the reaper is added.
+  TRY_TTL_DAYS: z.coerce.number().int().positive().default(30),
+  // Comma-separated module names withheld on the trial tier (only read when
+  // COBBLR_TIER=trial). This is INSTANCE POLICY, not kernel code — the kernel
+  // never hardcodes a module name (module-isolation lint). The `try` box sets:
+  //   COBBLR_TRIAL_DENY_MODULES=core-ai,core-authoring,core-devices,core-integrations,core-public-surfaces
+  // Belt-and-suspenders: COBBLR_AI_ENABLED=false + COBBLR_HOSTED=true mean a
+  // missing entry still can't turn AI or SSRF on. See platform/trial.ts.
+  COBBLR_TRIAL_DENY_MODULES: z.string().optional(),
 });
 
 export type Env = z.infer<typeof Schema>;

@@ -10,7 +10,7 @@ import type { LabelsDB } from "../db.js";
 import { liveQrUrl } from "../live-qr-url.js";
 import { renderLabelsPdf, type PrintItem } from "./pdf.js";
 import { buildCustomLabelSheet, type LabelSheet } from "./layout.js";
-import { assignCodes, freezePrintedGroups, getOverlayCenter } from "../services/codes.js";
+import { assignCodes, freezePrintedGroups, getOverlayForRefs } from "../services/codes.js";
 
 /** A queue row, or a snapshot of one, that the renderer needs. */
 export interface RenderableRow {
@@ -56,24 +56,30 @@ export interface RenderedRows {
   labels: number;
 }
 
-/** Rows → a PDF for `sizeKey`. Expands each row by qty; the code/overlay/freeze
- *  side-effects match the manual print path exactly (these labels ARE being
- *  printed). `base` is the resolved QR base URL. */
+/** Rows → a PDF for `sizeKey`. Expands each row by qty; assigns a code per entity
+ *  and draws the QR-centre overlay. `base` is the resolved QR base URL.
+ *
+ *  `markPrinted` FREEZES the code prefixes (a printed sticker's code can't change),
+ *  and defaults to FALSE because this same render powers the PREVIEW — a preview is
+ *  NOT a print. Only a caller that actually puts the PDF on paper (auto-flush, which
+ *  records a labels_batches row) passes true. Real bug this fixes: `/render`
+ *  (preview) used to freeze on the first preview, locking a prefix the user never
+ *  printed (2026-07-22). The manual /print and /record routes freeze themselves. */
 export async function renderRowsToPdf(
   db: Kysely<LabelsDB>,
   orgId: string,
   base: string | null,
   rows: RenderableRow[],
   sizeKey: string,
+  opts: { markPrinted?: boolean } = {},
 ): Promise<RenderedRows> {
   const printRefs = rows.map((r) => ({ kind: `${r.module_name}:${r.entity_type}`, id: r.entity_id }));
   const codes = await assignCodes(orgId, db, printRefs);
-  // A PDF the user is about to put on paper counts as printing: lock these prefixes.
-  await freezePrintedGroups(db, printRefs);
-  const overlay = await getOverlayCenter(db, rows.map((r) => `${r.module_name}:${r.entity_type}`));
+  if (opts.markPrinted) await freezePrintedGroups(db, printRefs);
+  const overlay = await getOverlayForRefs(db, printRefs);
   const items: PrintItem[] = [];
   rows.forEach((r, i) => {
-    const overlayOn = overlay.get(`${r.module_name}:${r.entity_type}`) ?? true;
+    const overlayOn = overlay.get(r.entity_id) ?? true;
     const centerCode = overlayOn ? codes.get(r.entity_id) : undefined;
     for (let n = 0; n < (r.qty ?? 1); n++) {
       items.push({ kind: r.entity_type, id: i + 1, title: r.description, url: liveQrUrl(r.qr_payload, base), centerCode });

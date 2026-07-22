@@ -6,7 +6,7 @@
 //   - core-placement.place  — put the targeted record inside a container.
 //   - core-placement.remove — take the targeted record out of its container.
 
-import { platform } from "@cobblr/platform-contract";
+import { platform, requireActionEntity } from "@cobblr/platform-contract";
 
 let registered = false;
 
@@ -21,10 +21,11 @@ export function registerPlacementActionHandlers(): void {
     if (!containerKind || !containerId) {
       return { ok: false, error: "container_kind and container_id are required" };
     }
+    const entity = requireActionEntity(ctx);
     try {
       await platform().placement.place({
         orgId: ctx.orgId,
-        containee: { kind: ctx.entity.kind, id: ctx.entity.id },
+        containee: { kind: entity.kind, id: entity.id },
         container: { kind: containerKind, id: containerId },
         slot: typeof args.slot === "string" && args.slot.trim() ? args.slot.trim() : null,
         placedBy: ctx.userId ?? null,
@@ -38,9 +39,10 @@ export function registerPlacementActionHandlers(): void {
   });
 
   platform().actions.registerHandler("core-placement.remove", async (ctx) => {
+    const entity = requireActionEntity(ctx);
     await platform().placement.remove({
       orgId: ctx.orgId,
-      containee: { kind: ctx.entity.kind, id: ctx.entity.id },
+      containee: { kind: entity.kind, id: entity.id },
     });
     return { ok: true, removed: true };
   });

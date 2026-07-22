@@ -14,6 +14,7 @@ import QRCode from "qrcode";
 import { findSize, type LabelSheet } from "./layout.js";
 import { packShelvesBigFirst } from "./pack.js";
 import { computeCapsule, validateOverlay } from "./qr-overlay.js";
+import { pickCellLayout, type CellLayout } from "../label-sizes.js";
 
 /** A label whose center code would make its QR hard/impossible to scan. The
  *  render still emits the label; the caller surfaces these so the user can
@@ -173,17 +174,17 @@ function wrapToLines(font: PDFFont, text: string, size: number, maxWidth: number
   return lines;
 }
 
-// Three layouts, picked from cell aspect ratio (mirrors the web's
-// pickLabelLayout in LabelPrintPage.tsx):
-//   row      — w > h:           QR left, [title + description] right.
-//   portrait — h >= w * 1.3:    [title + description] top half, QR bottom half.
-//   square   — otherwise:       title centred on top, QR fills rest.
-type LabelLayout = "row" | "portrait" | "square";
-function pickLayout(w: number, h: number): LabelLayout {
-  if (w > h) return "row";
-  if (h >= w * 1.3) return "portrait";
-  return "square";
-}
+// Three layouts, picked from the cell's aspect ratio by the SHARED rule
+// (pickCellLayout in ../label-sizes) so the PDF draws the exact layout the
+// preview + ⌘P sheet showed. These used to be the PDF's own w>h / h>=1.3w
+// thresholds, which disagreed with the preview for custom sizes in aspect
+// 0.77–0.85 and 1.0–1.2 — the preview then lied about the print. Aspect is
+// unit-independent, so passing points here matches the preview's inches.
+//   row      — wide:  QR left, [title + description] right.
+//   portrait — tall:  [title + description] top half, QR bottom half.
+//   square   — ~1:1:  title centred on top, QR fills rest.
+type LabelLayout = CellLayout;
+const pickLayout = (w: number, h: number): LabelLayout => pickCellLayout(w, h);
 
 /** Which sides of a label cell get a hairline cut guide. Empty / false
  *  sides are skipped so the outer paper edge (and any other edge we

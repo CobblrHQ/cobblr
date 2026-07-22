@@ -12,6 +12,7 @@ import {
   findLabelSize,
   findPaper,
   perSheet,
+  qrSideForLabel,
   type LabelSize,
   type PaperSize,
 } from "../label-sizes";
@@ -155,12 +156,7 @@ function renderSheet(items: Printable[], size: LabelSize): string {
   const layout = cellLayout(size);
   // Center-code font, sized to the QR's on-paper side (~15% of it), so the pill
   // reads from a distance but stays inside the QR for short codes.
-  const qrSideIn =
-    layout === "row"
-      ? Math.max(0.1, size.label_h - 0.14)
-      : layout === "portrait"
-        ? 0.86 * size.label_w
-        : Math.min(size.label_w, size.label_h) * 0.7;
+  const qrSideIn = qrSideForLabel(size);
   const codePt = Math.max(6, Math.min(30, qrSideIn * 72 * 0.15));
   const cells = items
     .map((it, k) => {

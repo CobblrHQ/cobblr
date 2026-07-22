@@ -1,16 +1,16 @@
-// Codes management — find an item by its code, rename a list's prefix, and pick
-// what a kind's codes group by. Opened from the Labels page. See
-// docs/design-decisions/label-codes.md.
+// Codes management — find an item by its code; per KIND, its instances nested
+// inside, each with its own prefix and its own "show the code in the QR" toggle.
+// Opened from the Labels page. See docs/design-decisions/label-codes.md.
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@cobblr/platform-web";
 import { useLabels } from "./context";
 import type { CodeGroup } from "./api";
 
-const CARD = "flex items-center gap-2 rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-2";
 const BTN = "rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-xs font-medium px-2.5 py-1 transition disabled:opacity-40";
+const NESTED = "flex items-center gap-2 rounded-md border border-line/60 dark:border-slate-700/60 bg-subtle/40 dark:bg-slate-800/40 px-2.5 py-1.5";
 
 export function CodesPanel() {
   const { api, orgSlug } = useLabels();
@@ -42,7 +42,27 @@ export function CodesPanel() {
     onError: (e) => toast.error((e as Error).message),
   });
 
-  const kinds = [...new Set((groups.data ?? []).map((g) => g.entity_kind))];
+  const overlay = useMutation({
+    mutationFn: ({ groupKey, on }: { groupKey: string; on: boolean }) => api.setGroupOverlay(groupKey, on),
+    onSuccess: (_r, { on }) => {
+      toast.success(on ? "Code will show in the QR — applies on the next print." : "Code hidden from the QR — applies on the next print.");
+      void qc.invalidateQueries({ queryKey: ["labels-code-groups"] });
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+
+  // One card per KIND (Machines, Locations, …), each with its instances nested.
+  const byKind = useMemo(() => {
+    const m = new Map<string, { kindLabel: string; groups: CodeGroup[] }>();
+    for (const g of groups.data ?? []) {
+      const e = m.get(g.entity_kind) ?? { kindLabel: g.kind_label, groups: [] };
+      e.groups.push(g);
+      m.set(g.entity_kind, e);
+    }
+    return [...m.entries()];
+  }, [groups.data]);
+
+  const pending = rename.isPending || overlay.isPending;
 
   return (
     <div className="space-y-5">
@@ -56,7 +76,8 @@ export function CodesPanel() {
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Find an item by its code — e.g. m1"
+          // vocab-lint-ok: codes span every kind (parts, machines, locations), so a neutral generic noun is correct here
+          placeholder="Find an item by its short code (e.g. m1)"
           className="input flex-1 !py-1.5 text-sm"
           autoFocus
         />
@@ -70,54 +91,144 @@ export function CodesPanel() {
       </form>
 
       <div>
-        <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-2">code prefixes</div>
+        <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">codes by kind</div>
+        <p className="text-[11px] text-muted dark:text-slate-400 mb-2.5">
+          <span className="font-medium text-content dark:text-mortar-100">Find an item by its short human-readable code</span> (like{" "}
+          <span className="font-mono">p1</span>): type it in the box above, no scanning needed. Each list's code starts with a{" "}
+          <span className="font-medium">prefix</span> (the <span className="font-mono">p</span> in <span className="font-mono">p1</span>); set it in the small text box on the list's row, or clear that box to give the list no code.{" "}
+          <span className="font-medium text-content dark:text-mortar-100">Optionally show that code in the middle of the QR label</span>, per list, with the toggles below.
+        </p>
         {groups.isLoading ? (
           <p className="text-sm text-muted dark:text-slate-400">Loading…</p>
-        ) : (groups.data ?? []).length === 0 ? (
+        ) : byKind.length === 0 ? (
           <p className="text-sm text-muted dark:text-slate-400">
             No codes yet — print a label and its list gets a prefix automatically.
           </p>
         ) : (
-          <div className="space-y-2">
-            {(groups.data ?? []).map((g) => (
-              <PrefixRow key={g.group_key} group={g} onRename={(prefix) => rename.mutate({ groupKey: g.group_key, prefix })} pending={rename.isPending} />
+          <div className="space-y-3">
+            {byKind.map(([kind, { kindLabel, groups: kindGroups }]) => (
+              <KindCard
+                key={kind}
+                kindLabel={kindLabel}
+                groups={kindGroups}
+                onRename={(groupKey, prefix) => rename.mutate({ groupKey, prefix })}
+                onToggleOverlay={(groupKey, on) => overlay.mutate({ groupKey, on })}
+                pending={pending}
+              />
             ))}
           </div>
         )}
       </div>
-
-      {kinds.length > 0 && (
-        <div>
-          <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-2">grouping &amp; QR center</div>
-          <p className="text-[11px] text-muted dark:text-slate-400 mb-2">
-            Which field a kind's codes count by. <span className="font-mono">instance</span> gives each list its own line; try{" "}
-            <span className="font-mono">category</span> to split one list by category. Only affects new codes. The{" "}
-            <span className="font-medium">Code in QR center</span> switch decides whether the code is drawn inside the QR for
-            that kind — turn it off for singular kinds (e.g. one Office) where the code adds nothing.
-          </p>
-          <div className="space-y-2">
-            {kinds.map((k) => (
-              <GroupByRow key={k} kind={k} />
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
 
-function PrefixRow({ group, onRename, pending }: { group: CodeGroup; onRename: (prefix: string) => void; pending: boolean }) {
-  const [val, setVal] = useState(group.prefix);
-  const norm = val.trim().toLowerCase();
-  const dirty = norm !== group.prefix && norm.length > 0;
-  return (
-    <div className={CARD}>
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium text-content dark:text-mortar-100 truncate">{group.label ?? group.entity_kind}</div>
-        <div className="text-[11px] font-mono text-faint dark:text-slate-500 truncate">
-          {group.entity_kind} · {group.count} code{group.count === 1 ? "" : "s"}
+/** A kind (the OUTER level). If it's just itself (no named sub-lists), its
+ *  controls sit inline on its own row (so "Location · Code in QR · c"). If it has
+ *  named lists (Machine → 3D Printers), it's a header with those lists nested. */
+function KindCard({
+  kindLabel,
+  groups,
+  onRename,
+  onToggleOverlay,
+  pending,
+}: {
+  kindLabel: string;
+  groups: CodeGroup[];
+  onRename: (groupKey: string, prefix: string) => void;
+  onToggleOverlay: (groupKey: string, on: boolean) => void;
+  pending: boolean;
+}) {
+  // How many items are coded, kept as a hover on the name rather than a label —
+  // it's metadata, not what the row IS (the author, 2026-07-22: "what does '1 code' mean").
+  const coded = (g: CodeGroup) =>
+    g.prefix == null
+      ? "No code — this list is opted out, so its letter is free for another list."
+      : `${g.count} item${g.count === 1 ? "" : "s"} coded so far`;
+  // A lone whole-kind group (no named instance) is the kind itself: show its
+  // controls inline on the card row rather than a nameless "N codes" child.
+  const solo = groups.length === 1 && (!groups[0]!.group_label || groups[0]!.group_label === kindLabel);
+
+  if (solo) {
+    const g = groups[0]!;
+    return (
+      <div className="rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 flex items-center gap-2 px-3 py-2.5">
+        <div className="flex-1 min-w-0 text-sm font-semibold text-content dark:text-mortar-100 truncate" title={coded(g)}>
+          {kindLabel}
         </div>
+        <GroupControls group={g} name={kindLabel} onRename={(p) => onRename(g.group_key, p)} onToggleOverlay={(on) => onToggleOverlay(g.group_key, on)} pending={pending} />
       </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900">
+      <div className="px-3 py-2 border-b border-line dark:border-slate-700">
+        <div className="text-sm font-semibold text-content dark:text-mortar-100 truncate">{kindLabel}</div>
+      </div>
+      <div className="p-2 space-y-1.5">
+        {groups.map((g) => {
+          const name = g.group_label && g.group_label !== kindLabel ? g.group_label : "Other";
+          return (
+            <div key={g.group_key} className={NESTED}>
+              <div className="flex-1 min-w-0 text-sm text-content dark:text-mortar-100 truncate" title={coded(g)}>
+                {name}
+              </div>
+              <GroupControls group={g} name={name} onRename={(p) => onRename(g.group_key, p)} onToggleOverlay={(on) => onToggleOverlay(g.group_key, on)} pending={pending} />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** The right-hand controls for one code group: the per-group QR-center toggle, and
+ *  the prefix (a lock once printed, otherwise an editable rename). Shared by the
+ *  inline (solo-kind) row and the nested (per-list) rows. */
+function GroupControls({
+  group,
+  name,
+  onRename,
+  onToggleOverlay,
+  pending,
+}: {
+  group: CodeGroup;
+  name: string;
+  onRename: (prefix: string) => void;
+  onToggleOverlay: (on: boolean) => void;
+  pending: boolean;
+}) {
+  const [val, setVal] = useState(group.prefix ?? "");
+  const norm = val.trim().toLowerCase();
+  const hasCode = group.prefix != null;
+  // Save is live when there's a real new prefix (rename, or re-enable a cleared
+  // list), OR the field is blank on a list that currently HAS a code — blanking it
+  // opts the list out of a code, freeing the letter for another list.
+  const willClear = norm.length === 0 && hasCode;
+  const dirty = (norm.length > 0 && norm !== group.prefix) || willClear;
+  return (
+    <div className="flex items-center gap-2 shrink-0">
+      <button
+        type="button"
+        role="switch"
+        aria-checked={hasCode && group.overlay_center}
+        aria-label={`Show the code in the QR for ${name}`}
+        disabled={pending || !hasCode}
+        onClick={() => onToggleOverlay(!group.overlay_center)}
+        title={
+          hasCode
+            ? "Draw this list's human-readable code inside its QR. Turn off where the code adds nothing (a clean QR)."
+            : "This list has no code to draw. Give it a prefix first."
+        }
+        className="inline-flex items-center gap-1.5 rounded-md border border-line dark:border-slate-600 px-2 py-1 text-[11px] text-muted dark:text-slate-400 hover:border-accent transition disabled:opacity-40"
+      >
+        <span className="whitespace-nowrap hidden sm:inline">Code in QR</span>
+        <span className={"inline-block h-3 w-6 rounded-full relative transition-colors " + (hasCode && group.overlay_center ? "bg-cobble-600" : "bg-slate-300 dark:bg-slate-600")}>
+          <span className={"absolute top-[1px] h-2.5 w-2.5 rounded-full bg-white transition-all " + (hasCode && group.overlay_center ? "left-[13px]" : "left-[1px]")} />
+        </span>
+      </button>
+
       {group.frozen ? (
         <span
           className="text-xs font-mono px-2 py-1 rounded bg-subtle dark:bg-slate-800 text-muted dark:text-slate-400"
@@ -127,88 +238,30 @@ function PrefixRow({ group, onRename, pending }: { group: CodeGroup; onRename: (
         </span>
       ) : (
         <>
-          {/* Say that it's yours to change. The prefix is auto-derived from the
-              group's name, so without this it reads as a fixed system id and
-              nobody discovers it was theirs to name until it's printed and
-              genuinely fixed (the author, 2026-07-18). */}
-          <span className="text-[10px] text-faint dark:text-slate-500 hidden sm:inline whitespace-nowrap">
-            not printed yet — rename freely
-          </span>
           <input
             value={val}
             onChange={(e) => setVal(e.target.value)}
-            title={`Codes here read ${norm || group.prefix}1, ${norm || group.prefix}2, … Change it any time before the first print.`}
-            className="input !w-20 !py-1 text-sm font-mono text-center"
+            placeholder={hasCode ? undefined : "none"}
+            title={
+              norm
+                ? `Codes here read ${norm}1, ${norm}2, … Change it any time before the first print.`
+                : hasCode
+                  ? "Clear this and Save to remove the code for this list (frees the letter for another list)."
+                  : "This list has no code. Type a prefix to give it one."
+            }
+            className="input !w-16 !py-1 text-sm font-mono text-center"
             maxLength={4}
           />
-          <button className={BTN} disabled={!dirty || pending} onClick={() => onRename(norm)}>
-            Save
+          <button
+            className={BTN}
+            disabled={!dirty || pending}
+            onClick={() => onRename(norm)}
+            title={willClear ? "Remove this list's code and free the letter" : undefined}
+          >
+            {willClear ? "Remove" : "Save"}
           </button>
         </>
       )}
-    </div>
-  );
-}
-
-function GroupByRow({ kind }: { kind: string }) {
-  const { api } = useLabels();
-  const toast = useToast();
-  const qc = useQueryClient();
-  const cfg = useQuery({ queryKey: ["labels-code-config", kind], queryFn: () => api.getCodeConfig(kind) });
-  const [field, setField] = useState("");
-  const current = field || cfg.data?.group_field || "instance";
-  const overlayCenter = cfg.data?.overlay_center ?? true;
-  const save = useMutation({
-    mutationFn: (patch: { group_field?: string; overlay_center?: boolean }) => api.setCodeConfig(kind, patch),
-    onSuccess: (_r, patch) => {
-      toast.success(
-        patch.overlay_center !== undefined
-          ? patch.overlay_center
-            ? "Code will show in the QR center — applies on the next print."
-            : "Code hidden from the QR center — applies on the next print."
-          : "Grouping updated — applies to new codes.",
-      );
-      void qc.invalidateQueries({ queryKey: ["labels-code-config", kind] });
-    },
-    onError: (e) => toast.error((e as Error).message),
-  });
-  return (
-    <div className={`${CARD} flex-wrap`}>
-      <div className="flex-1 min-w-0 text-sm text-content dark:text-mortar-100 truncate">{kind}</div>
-      <input
-        value={current}
-        onChange={(e) => setField(e.target.value)}
-        className="input !w-40 !py-1 text-sm font-mono"
-        placeholder="instance"
-      />
-      <button className={BTN} disabled={save.isPending || !current.trim()} onClick={() => save.mutate({ group_field: current.trim() || "instance" })}>
-        Set
-      </button>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={overlayCenter}
-        aria-label={`Show code in QR center for ${kind}`}
-        disabled={save.isPending || cfg.isLoading}
-        onClick={() => save.mutate({ overlay_center: !overlayCenter })}
-        title="Draw the human-readable code inside the QR. Turn off for singular kinds (e.g. one Office) where the code adds nothing."
-        className="inline-flex items-center gap-1.5 rounded-md border border-line dark:border-slate-600 px-2 py-1 text-[11px] text-muted dark:text-slate-400 hover:border-accent transition disabled:opacity-40"
-      >
-        <span className="whitespace-nowrap">Code in QR center</span>
-        <span
-          className={
-            "inline-block h-3 w-6 rounded-full relative transition-colors " +
-            (overlayCenter ? "bg-cobble-600" : "bg-slate-300 dark:bg-slate-600")
-          }
-        >
-          <span
-            className={
-              "absolute top-[1px] h-2.5 w-2.5 rounded-full bg-white transition-all " +
-              (overlayCenter ? "left-[13px]" : "left-[1px]")
-            }
-          />
-        </span>
-      </button>
     </div>
   );
 }

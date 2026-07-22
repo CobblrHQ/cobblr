@@ -183,17 +183,23 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_actions",
     description:
-      "Discover the operations (actions) this workspace can run on existing records — adjust stock, mark a task done, build one of something. Optionally filter to one kind. Use invoke_action to run one.",
+      "Discover the operations (actions) this workspace can run. Each item has a `scope`: an 'entity' action runs on a record (adjust stock, mark a task done, build one) — its matched_kinds lists which record kinds it applies to; a 'workspace' action is a config/admin operation that runs on the whole workspace (rename a label-code prefix, change a default) and is invoked WITHOUT a record. Optionally filter to one entity kind — workspace actions are always included. Use invoke_action to run one.",
     mode: "read",
     params: {
-      kind: z.string().optional().describe("Only actions applicable to this entity kind id"),
+      kind: z.string().optional().describe("Only entity actions applicable to this kind id (workspace actions still included)"),
     },
     execute: async (api, args) => {
       const res = await api.request("GET", "/registered-actions");
       if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't list actions"));
-      const items = (res.body.items as Array<{ matched_kinds?: string[] }> | undefined) ?? [];
+      const items = (res.body.items as Array<{ matched_kinds?: string[]; scope?: string }> | undefined) ?? [];
       const kind = typeof args.kind === "string" && args.kind.trim() ? args.kind.trim() : null;
-      return toolOk(kind ? items.filter((a) => (a.matched_kinds ?? []).includes(kind)) : items);
+      // When filtering by a record's kind, still surface workspace-level config
+      // actions — they're not record-scoped but the user may want one from here.
+      return toolOk(
+        kind
+          ? items.filter((a) => a.scope === "workspace" || (a.matched_kinds ?? []).includes(kind))
+          : items,
+      );
     },
   },
   {
@@ -337,23 +343,45 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "invoke_action",
     description:
-      "Run a registered action on one existing record (see list_actions for what's available and which kinds each applies to). This is how module operations happen: adjust stock, mark done, build one, print a label…",
+      "Run a registered action (see list_actions). Two shapes: an ENTITY action runs on one record — pass entity_kind + entity_id (adjust stock, mark done, build one, print a label). A WORKSPACE action (scope 'workspace' in list_actions) is a config/admin operation that runs on the whole workspace — OMIT entity_kind/entity_id and pass its args (e.g. rename a label-code prefix). This is how config changes happen without a record.",
     mode: "write",
     params: {
-      action_id: z.string().describe("Action id, e.g. inventory:adjust-stock"),
-      entity_kind: z.string().describe("The record's kind id"),
-      entity_id: z.string().describe("The record's id"),
+      action_id: z.string().describe("Action id, e.g. inventory:adjust-stock or labels:set-code"),
+      entity_kind: z
+        .string()
+        .optional()
+        .describe("The record's kind id — required for an entity action, omit for a workspace action"),
+      entity_id: z
+        .string()
+        .optional()
+        .describe("The record's id — required for an entity action, omit for a workspace action"),
       args: z.record(z.unknown()).optional().describe("Action arguments (see the action's args schema from list_actions)"),
     },
     execute: async (api, args) => {
+      const entityKind = typeof args.entity_kind === "string" && args.entity_kind.trim() ? args.entity_kind.trim() : undefined;
+      const entityId = typeof args.entity_id === "string" && args.entity_id.trim() ? args.entity_id.trim() : undefined;
       const res = await api.request("POST", "/actions/invoke", {
         actionId: String(args.action_id ?? ""),
-        entityKind: String(args.entity_kind ?? ""),
-        entityId: String(args.entity_id ?? ""),
+        // Omitted entirely for a workspace action — the server skips entity
+        // resolution when the action's scope is 'workspace'.
+        ...(entityKind ? { entityKind } : {}),
+        ...(entityId ? { entityId } : {}),
         args: (args.args as Record<string, unknown> | undefined) ?? undefined,
       });
       if (res.status >= 400) return toolFail(apiErrorMessage(res, "action failed"));
       return toolOk(res.body);
+    },
+  },
+  {
+    name: "list_label_codes",
+    description:
+      "List the workspace's label-code groups (one per kind + instance, e.g. 3D Printers under Machines). Each entry has its code prefix (the letters before the number, e.g. 'p' in p42), how many codes exist, whether it is frozen (a label was printed, so existing codes are fixed), whether its code shows inside the QR, and its group_key. Call this to find the group_key, then change it by invoking the labels:set-code action (invoke_action with no entity) — pass group_key plus prefix and/or code_in_qr (the QR toggle is per group, so 3d printers can differ from cnc).",
+    mode: "read",
+    params: {},
+    execute: async (api) => {
+      const res = await api.request("GET", "/modules/labels/codes/groups");
+      if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't list label codes"));
+      return toolOk((res.body as { groups?: unknown[] }).groups ?? []);
     },
   },
 ];

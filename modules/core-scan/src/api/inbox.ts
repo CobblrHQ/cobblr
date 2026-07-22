@@ -2306,7 +2306,7 @@ inboxRouter.post(
       })
       .where("id", "=", row.id)
       .execute();
-    await downloadCatalogImage({ db, orgSlug: ctx.org.slug, bearer: token, itemId: row.id }, url);
+    await downloadCatalogImage({ db, orgId: ctx.org.id, itemId: row.id }, url);
     // Picking a better catalog photo for a BARCODE item is the truth — feed it
     // back to the shared Barcode Intelligence DB as an image_url correction, so
     // the next scan of this UPC (any workspace) gets YOUR clean image, beating
@@ -3442,7 +3442,7 @@ inboxRouter.post(
         .execute();
       for (const r of urlOnly) {
         void downloadCatalogImage(
-          { db, orgSlug: ctx.org.slug, bearer: token, itemId: r.id },
+          { db, orgId: ctx.org.id, itemId: r.id },
           r.catalog_image_url!,
         ).catch((err) => console.error("[core-scan] backfill localize url failed:", (err as Error).message));
       }

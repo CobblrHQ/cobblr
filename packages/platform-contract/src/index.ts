@@ -832,6 +832,17 @@ const EntityAction = z.object({
   description: z.string().optional(),
   icon: z.string().optional(),
   appliesTo: ActionAppliesTo.default({ any: true }),
+  // Entity vs workspace scope. Default "entity": the action runs ON a record
+  // — the entity-detail button, a wire target, invoke_action with an entity.
+  // "workspace": a config/admin operation that runs on the WORKSPACE itself,
+  // not any one record (rename a label-code prefix, flip a default, seed a
+  // group). A workspace action skips entity resolution (its handler's ctx has
+  // no `entity`), never renders as an entity-detail button, and `appliesTo` is
+  // ignored (it matches no kind). Crucially it is reached through the SAME
+  // invoke_action rail with no entity_kind/entity_id — which is how a config
+  // operation becomes AI-reachable (Cobb / MCP) WITHOUT a bespoke per-op tool.
+  // See docs/architecture/wires-and-bundles.md and the AI-reachability lint.
+  scope: z.enum(["entity", "workspace"]).default("entity"),
   // Whether this action renders as a clickable button on entity-
   // detail pages. Default true. Set false for wire-only actions
   // (event reactions) — they're still targetable by wires, just
@@ -2054,11 +2065,19 @@ export interface ActionInvokeActor {
 export interface ActionInvokeContext {
   orgId: string;
   userId: string | null;
-  /** The entity the action runs on. For a wire with target='self',
-   *  this is the source entity; for target:{rel,...} it's one of the
-   *  entities discovered by walking pairings. The wire engine
-   *  resolves it and projects through the kind's exposableFields. */
-  entity: {
+  /** Which pole this invocation runs on. "entity" (default) → `entity` is
+   *  populated. "workspace" → a config/admin action with NO record, so
+   *  `entity`/`entityKind`/`entityId` are all absent. A handler that reads
+   *  `entity` must guard it: an entity-scoped handler can assert presence
+   *  (the invoke route always populates it), a workspace handler never
+   *  touches it. */
+  scope?: "entity" | "workspace";
+  /** The entity the action runs on. Present iff scope === "entity". For a
+   *  wire with target='self', this is the source entity; for target:{rel,...}
+   *  it's one of the entities discovered by walking pairings. The wire engine
+   *  resolves it and projects through the kind's exposableFields. Absent for
+   *  workspace-scoped actions. */
+  entity?: {
     kind: string;
     id: string;
     fields?: Record<string, unknown>;
@@ -2079,10 +2098,32 @@ export interface ActionInvokeContext {
   args?: Record<string, unknown>;
 
   // ─── Deprecated compatibility aliases (remove in v0.3) ──────────
-  /** @deprecated Use `ctx.entity.kind`. */
-  entityKind: string;
-  /** @deprecated Use `ctx.entity.id`. */
-  entityId: string;
+  /** @deprecated Use `ctx.entity.kind`. Absent for workspace-scoped actions. */
+  entityKind?: string;
+  /** @deprecated Use `ctx.entity.id`. Absent for workspace-scoped actions. */
+  entityId?: string;
+}
+
+/** Assert that an action ran on a record (scope 'entity') and return that
+ *  entity, narrowed to non-null. Entity-scoped handlers call this at the top
+ *  instead of reaching into `ctx.entity` / the deprecated `ctx.entityKind`
+ *  aliases directly: the invoke route always populates `entity` for an
+ *  entity-scoped action, so this only throws if a workspace-scoped invocation
+ *  somehow reached an entity handler (a wiring mistake) — a clear error beats
+ *  a downstream `undefined.id`. Workspace handlers never call it; they read
+ *  `ctx.args`. */
+export function requireActionEntity(ctx: ActionInvokeContext): {
+  kind: string;
+  id: string;
+  fields?: Record<string, unknown>;
+} {
+  if (!ctx.entity) {
+    throw new Error(
+      "This action runs on a record, but was invoked without one (workspace scope). " +
+        "Check the action's `scope` and how it was triggered.",
+    );
+  }
+  return ctx.entity;
 }
 
 export interface PlatformActions {
@@ -2104,6 +2145,10 @@ export interface EntityActionRecord {
   description: string | null;
   icon: string | null;
   applies_to: ActionAppliesToDecl;
+  /** "entity" (default) → runs on a record; "workspace" → a config/admin
+   *  operation with no record (skips entity resolution, never an entity
+   *  button, matches no kind). */
+  scope: "entity" | "workspace";
   invoke_route: string | null;
   invoke_handler: string | null;
   /** False = wire-only; don't render as a user button. */

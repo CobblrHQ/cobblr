@@ -54,6 +54,7 @@
     "lint:authed-media": "tsx scripts/lint-authed-media.ts",
     "lint:action-predicates": "tsx scripts/lint-action-predicates.ts",
     "lint:ai-reach": "tsx scripts/lint-ai-reach.ts",
+    "lint:ai-coverage": "tsx scripts/lint-ai-coverage.ts",
     "lint:provider-labels": "tsx scripts/lint-provider-field-labels.ts",
     "lint:page-imports": "tsx scripts/lint-page-imports.ts",
     "lint:client-fetch-mounts": "tsx scripts/lint-client-fetch-mounts.ts",

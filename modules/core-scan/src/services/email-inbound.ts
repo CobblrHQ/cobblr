@@ -125,23 +125,18 @@ const KIND_MIME: Record<AttachmentKind, string> = {
 // ── internal-API helpers (all as the minted owner session) ──────────────────
 
 async function uploadFile(
-  slug: string,
-  token: string,
+  orgId: string,
   bytes: Buffer,
   filename: string,
   contentType: string,
 ): Promise<string | null> {
-  const form = new FormData();
-  form.append("file", new Blob([new Uint8Array(bytes)], { type: contentType }), filename);
+  // Store server-side via the platform files seam, NOT the HTTP upload route:
+  // this is a system-captured attachment, not a user upload, so it must bypass
+  // any gate on that route. The sibling scan/receipt/note captures below stay on
+  // the internal API — they trigger scan PIPELINES, not a file store.
   try {
-    const r = await fetch(`${INTERNAL_API}/api/v1/orgs/${slug}/modules/core-files/files`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-      body: form,
-    });
-    if (!r.ok) return null;
-    const b = (await r.json()) as { id?: string };
-    return b.id ?? null;
+    const written = await platform().files.write(orgId, new Uint8Array(bytes), { filename, mimeType: contentType });
+    return written?.fileId ?? null;
   } catch {
     return null;
   }
@@ -258,8 +253,7 @@ export function registerEmailInbound(): void {
           continue;
         }
         const fileId = await uploadFile(
-          who.slug,
-          token,
+          ctx.orgId,
           bytes,
           a.filename ?? `email-attachment.${kind === "image" ? "jpg" : kind}`,
           a.content_type ?? KIND_MIME[kind],
@@ -285,7 +279,7 @@ export function registerEmailInbound(): void {
       // ── 2. Multi-item body → same receipt parser, body as a text file ──────
       let bodySplit = false;
       if (note && looksMultiItem(note)) {
-        const fileId = await uploadFile(who.slug, token, Buffer.from(note, "utf8"), "email-body.txt", "text/plain");
+        const fileId = await uploadFile(ctx.orgId, Buffer.from(note, "utf8"), "email-body.txt", "text/plain");
         if (fileId) {
           const n = await receiptCapture(who.slug, token, fileId);
           if (n != null && n > 0) {

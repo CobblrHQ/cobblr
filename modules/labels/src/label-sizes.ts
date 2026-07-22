@@ -87,6 +87,116 @@ export function labelSizesForPaper(paperKey: string): LabelSize[] {
   return LABEL_SIZES.filter((s) => s.paper === paperKey);
 }
 
+// ── the printer-capability funnel ────────────────────────────────────
+// One rule, used on every size surface (auto-print, queue, inline config): a
+// printer has a KIND (inkjet/laser sheet vs thermal roll) and a MAX WIDTH it can
+// feed, and it is only ever offered the sizes that fit. Derived from the printer,
+// never from the loaded label (a thermal printer can't report what's loaded).
+export type PrinterKind = "inkjet-laser" | "thermal";
+export interface PrinterCapability {
+  kind: PrinterKind;
+  maxWidthMm: number;
+}
+
+const MM_PER_IN = 25.4;
+
+/** A printer's media capability, from its driver + saved settings. Bluetooth =
+ *  thermal, max from the matched profile; network (CUPS/edge) = whatever the user
+ *  set on the printers page (a manager can't report it), defaulting to a desktop
+ *  sheet printer. */
+export function printerCapability(driver: string, settings?: Record<string, unknown> | null): PrinterCapability {
+  const s = settings ?? {};
+  if (driver === "browser-bluetooth") {
+    const max = Number(s.maxWidthMm) || (Number(s.widthDots) ? Number(s.widthDots) / 8 : 0) || 54;
+    return { kind: "thermal", maxWidthMm: max };
+  }
+  const kind: PrinterKind = s.printerKind === "thermal" ? "thermal" : "inkjet-laser";
+  const max = Number(s.maxWidthMm) || (kind === "thermal" ? 104 : 216); // 4" roll or 8.5" sheet
+  return { kind, maxWidthMm: max };
+}
+
+/** The max width is the real constraint — nothing wider than the printer can feed.
+ *  Beyond that, an inkjet/laser feeds SHEETS only (it can't take a thermal roll),
+ *  while a thermal printer runs either a roll or a die-cut sheet, so it is bounded
+ *  only by width. The tolerance absorbs mm↔in rounding. */
+export function paperForCapability(paper: PaperSize, cap: PrinterCapability): boolean {
+  if (paper.width_in > cap.maxWidthMm / MM_PER_IN + 0.05) return false;
+  return cap.kind === "thermal" || !paper.key.startsWith("roll-");
+}
+export function papersForPrinter(cap: PrinterCapability): PaperSize[] {
+  return PAPER_SIZES.filter((p) => paperForCapability(p, cap));
+}
+/** Built-in label sizes a printer can actually run. */
+export function labelSizesForPrinter(cap: PrinterCapability): LabelSize[] {
+  const keys = new Set(papersForPrinter(cap).map((p) => p.key));
+  return LABEL_SIZES.filter((s) => keys.has(s.paper));
+}
+/** Whether a custom size (media width, inches) fits the printer. */
+export function customWidthFits(mediaWIn: number, cap: PrinterCapability): boolean {
+  if (cap.kind === "inkjet-laser") return true;
+  return mediaWIn <= cap.maxWidthMm / MM_PER_IN + 0.05;
+}
+
+/** A loaded-media preset for the inline printer config: a width×height (mm) and
+ *  "labels across", tappable to set the printer's media in one go. */
+export interface SizePreset {
+  key: string;
+  /** Media width, mm. */
+  w: number;
+  /** Media height, mm. */
+  h: number;
+  /** Faces across the media (n-up); 1 for a plain roll. */
+  across: number;
+  /** Where it came from, for a tooltip ("from Shop Rollo"); absent for the
+   *  platform library. */
+  from?: string;
+}
+
+/** One-tap loaded-media presets for a printer, DERIVED from what the workspace
+ *  actually uses rather than a hardcoded catalog — the "you've done this before"
+ *  presets the author asked for. In priority order, deduped, and filtered to what the
+ *  printer can feed:
+ *   1. layouts already set up on OTHER printers (their media + labels-across),
+ *   2. the workspace's own custom label sizes,
+ *   3. the platform's funnel-filtered label library (`labelSizesForPrinter`) as a
+ *      baseline, so a fresh workspace with one printer still gets useful taps.
+ *  There is no parallel hardcoded size list: (3) is the same canonical library
+ *  every other size surface funnels, so the platform stays consistent. */
+export function presetsForPrinter(
+  cap: PrinterCapability,
+  opts: {
+    otherPrinters?: { name: string; settings?: Record<string, unknown> | null }[];
+    customSizes?: { name: string; media_w: number; media_h: number; label_w: number }[];
+  } = {},
+): SizePreset[] {
+  const out: SizePreset[] = [];
+  const seen = new Set<string>();
+  const round1 = (n: number) => Math.round(n * 10) / 10;
+  const push = (w: number, h: number, across: number, from?: string) => {
+    if (!(w >= 1) || !(h >= 1)) return;
+    if (!customWidthFits(w / MM_PER_IN, cap)) return;
+    const a = Math.max(1, Math.round(across || 1));
+    const key = `${round1(w)}x${round1(h)}x${a}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ key, w: round1(w), h: round1(h), across: a, from });
+  };
+  // 1. Sizes already configured on OTHER printers — "you've done this before".
+  for (const p of opts.otherPrinters ?? []) {
+    const s = (p.settings ?? {}) as Record<string, unknown>;
+    const m = (s.media ?? null) as { widthMm?: number; heightMm?: number } | null;
+    const l = (s.label ?? null) as { widthMm?: number } | null;
+    if (m?.widthMm && m?.heightMm) push(m.widthMm, m.heightMm, l?.widthMm ? m.widthMm / l.widthMm : 1, p.name);
+  }
+  // 2. The workspace's own custom label sizes (inches → mm).
+  for (const c of opts.customSizes ?? []) {
+    push(c.media_w * MM_PER_IN, c.media_h * MM_PER_IN, c.label_w ? c.media_w / c.label_w : 1, c.name);
+  }
+  // 3. The platform library, funnel-filtered — the same list every surface uses.
+  for (const s of labelSizesForPrinter(cap)) push(s.label_w * MM_PER_IN, s.label_h * MM_PER_IN, 1);
+  return out.slice(0, 8);
+}
+
 /** Items per physical sheet for a label size. */
 export function perSheet(size: LabelSize): number {
   return size.cols * size.rows;
@@ -216,9 +326,32 @@ export function customSizeToLayout(row: {
  *   • row      — wide cells: QR on the left, text on the right       */
 export type CellLayout = "row" | "portrait" | "square";
 
-export function cellLayout(size: LabelSize): CellLayout {
-  const aspect = size.label_w / size.label_h;
+/** Pick a cell layout from raw width/height in ANY consistent unit (inches on
+ *  the web side, points in the PDF renderer). The ONE aspect-threshold rule, so
+ *  the preview and every renderer agree on a label's layout. A renderer that
+ *  applied its own thresholds made the preview lie about the print: a ~2.2×2.0
+ *  custom label (aspect 1.1) previewed `square` but the PDF drew it `row`, with a
+ *  very different QR size. Share this and they can't diverge. */
+export function pickCellLayout(w: number, h: number): CellLayout {
+  const aspect = w / h;
   if (aspect <= 0.85) return "portrait";
   if (aspect < 1.2) return "square";
   return "row";
+}
+
+export function cellLayout(size: LabelSize): CellLayout {
+  return pickCellLayout(size.label_w, size.label_h);
+}
+
+/** The QR's printed side, in INCHES, for a label — the single source of truth
+ *  shared by the ⌘P/preview renderer (renderPrintSheet) and the preview's
+ *  scannability read (print/qr-overlay assessScannability), so "how big the QR
+ *  prints" and "will it scan" can never drift apart. Mirrors the per-layout
+ *  geometry the sheet HTML draws: a row label gives the QR the cell height less
+ *  padding; portrait ~86% of the width; square 70% of the shorter side. */
+export function qrSideForLabel(size: LabelSize): number {
+  const layout = cellLayout(size);
+  if (layout === "row") return Math.max(0.1, size.label_h - 0.14);
+  if (layout === "portrait") return 0.86 * size.label_w;
+  return Math.min(size.label_w, size.label_h) * 0.7;
 }

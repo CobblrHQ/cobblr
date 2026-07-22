@@ -17,7 +17,7 @@ import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, requireRole } from "./util.js";
 import { putSnapshot, getSnapshot, freshSnapshotKeys } from "../snapshot-store.js";
 import { getBambuStatusMap } from "../bambu-status-store.js";
-import { buildDriverById, bambuLanDriverFor, parseBambuLan, bambuLanMode, reverseBuildIfCommitted, sendJob, type BambuLan } from "../jobs-core.js";
+import { buildDriverById, bambuLanDriverFor, runControlWithCloudFallback, parseBambuLan, bambuLanMode, reverseBuildIfCommitted, sendJob, type BambuLan } from "../jobs-core.js";
 import { enqueuePoll } from "../poll-worker.js";
 import { recordRunVerdict } from "../runs-core.js";
 import { availableDriverKeys } from "../drivers/registry.js";
@@ -731,11 +731,22 @@ fleetRouter.post(
     if (!parsed.success) return void res.status(400).json({ error: { code: "bad_body", message: "control id required" } });
     const orgId = tenantContext(req).org.id;
     // Prefer the LAN driver when this printer has LAN configured (more reliable
-    // than cloud, and the only path that works if cloud rejects the command).
+    // than cloud, and the only path that works if cloud rejects the command) — but
+    // fall back to cloud if the LAN/edge-bridge path fails, so a flaky bridge can't
+    // block a command the cloud broker can also send (light / pause / temps).
     const lan = await bambuLanDriverFor(orgId, req.params.connectionId!, req.params.deviceId!);
     const driver = lan ?? (await buildDriverById(tenantDb(req), orgId, req.params.connectionId!));
     if (!driver?.runControl) return void res.status(501).json({ error: { code: "unsupported", message: "this printer can't be controlled here" } });
-    const r = await driver.runControl(req.params.deviceId!, parsed.data.id, parsed.data.params ?? {});
+    const r = await runControlWithCloudFallback({
+      primary: driver,
+      lanPrimary: !!lan,
+      buildCloud: () => buildDriverById(tenantDb(req), orgId, req.params.connectionId!),
+      deviceId: req.params.deviceId!,
+      id: parsed.data.id,
+      params: parsed.data.params ?? {},
+      onFallback: (detail) =>
+        console.warn(`[digifab] control "${parsed.data.id}" — LAN/bridge failed (${detail ?? "?"}); sent via cloud instead`),
+    });
     if (!r.ok) return void res.status(502).json({ error: { code: "control_failed", message: r.detail ?? "command not accepted by the printer" } });
     res.json({ ok: true, ref: r.ref });
   }),

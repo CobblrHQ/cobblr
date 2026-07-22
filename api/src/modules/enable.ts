@@ -16,6 +16,7 @@ import { runMigrations } from "../db/migrate.js";
 import { getTenantPool, evictTenantPool } from "../db/tenant.js";
 import { getEntry, listEntries } from "./registry.js";
 import * as activity from "../platform/activity.js";
+import { isTrialDenied } from "../platform/trial.js";
 import { clearServerManagedCache } from "../platform/entities.js";
 import { clearRelationDefsCache } from "../platform/relation-fields.js";
 
@@ -123,6 +124,13 @@ export async function enableModuleForOrg(
   const entry = getEntry(moduleName);
   if (!entry) {
     throw new Error(`Module not registered: ${moduleName}`);
+  }
+
+  // On the trial tier, withheld modules can't be enabled at all — this guards
+  // the manual enable route (the default-enable path filters them out earlier,
+  // so it never reaches here for a denied module). No-op off-trial.
+  if (isTrialDenied(moduleName)) {
+    throw new Error(`Module ${moduleName} is not available on the trial tier.`);
   }
 
   // Pillar E — every declared dep must be enabled for this org
@@ -512,7 +520,9 @@ export async function enableDefaultModulesForOrg(
 ): Promise<string[]> {
   const enabled: string[] = [];
   const foundationals = listEntries().filter(
-    (e) => isFoundational(e) || e.manifest.autoEnable === true,
+    (e) =>
+      (isFoundational(e) || e.manifest.autoEnable === true) &&
+      !isTrialDenied(e.manifest.name),
   );
 
   // Sort foundationals so any with deps run AFTER their deps. (Today

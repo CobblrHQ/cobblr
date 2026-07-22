@@ -65,6 +65,10 @@ export async function listApplicable(
   return allActions
     .map(rowToActionRecord)
     .filter((a) => {
+      // Workspace-scoped actions run on the workspace, not a record — they
+      // never belong in an entity's action list (and their appliesTo defaults
+      // to { any: true }, which would otherwise match every kind here).
+      if (a.scope === "workspace") return false;
       const predicate = overrides.get(a.id) ?? a.applies_to;
       return actionApplies(predicate, kindRecord.fields, matchKind, kindRecord.traits);
     });
@@ -238,6 +242,7 @@ function rowToActionRecord(row: {
   description: string | null;
   icon: string | null;
   applies_to: unknown;
+  scope?: string | null;
   invoke_route: string | null;
   invoke_handler: string | null;
   user_invokable?: boolean;
@@ -251,6 +256,7 @@ function rowToActionRecord(row: {
     description: row.description,
     icon: row.icon,
     applies_to: (row.applies_to as ActionAppliesToDecl) ?? { any: true },
+    scope: row.scope === "workspace" ? "workspace" : "entity",
     invoke_route: row.invoke_route,
     invoke_handler: row.invoke_handler,
     user_invokable: row.user_invokable ?? true,
@@ -258,6 +264,21 @@ function rowToActionRecord(row: {
       (row.args_schema as EntityActionRecord["args_schema"]) ?? null,
     version: row.version,
   };
+}
+
+/** The scope of a single action, or null if the action is unknown. The invoke
+ *  route reads this BEFORE resolving an entity: a workspace-scoped action has
+ *  no record, so it skips the lookup and requires no entityKind/entityId. */
+export async function getActionScope(
+  actionId: string,
+): Promise<"entity" | "workspace" | null> {
+  const row = await meta
+    .selectFrom("entity_actions")
+    .select("scope")
+    .where("id", "=", actionId)
+    .executeTakeFirst();
+  if (!row) return null;
+  return row.scope === "workspace" ? "workspace" : "entity";
 }
 
 // Suppress unused warning — re-exported for tests
