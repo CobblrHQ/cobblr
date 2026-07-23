@@ -17,22 +17,21 @@
 // All measurements are inches — the print renderer sets `@page` and
 // every box in real inches so the browser's print output is 1:1.
 
+const MM_PER_IN = 25.4;
+
+/** The physical class of a print medium: cut SHEETS (Letter, Avery) vs a label
+ *  ROLL (continuous or die-cut). This is the ONE thing that decides which printer
+ *  can run it — an inkjet feeds sheets only, a thermal printer feeds either — so it
+ *  is an explicit field, never sniffed from the key. */
+export type MediaClass = "sheet" | "roll";
+
 export interface PaperSize {
   key: string;
   label: string;
   width_in: number;
   height_in: number;
+  class: MediaClass;
 }
-
-export const PAPER_SIZES: PaperSize[] = [
-  { key: "letter", label: 'US Letter — 8.5 × 11"', width_in: 8.5, height_in: 11 },
-  { key: "roll-4x6", label: 'Label roll — 4 × 6"', width_in: 4, height_in: 6 },
-  // Die-cut square stock fed straight through a roll printer's adjustable
-  // guide. One label per feed, so no cutting: the alternative to tiling
-  // squares onto 4×6 and chopping them up.
-  { key: "roll-1.5", label: 'Label roll — 1½ × 1½"', width_in: 1.5, height_in: 1.5 },
-  { key: "roll-2", label: 'Label roll — 2 × 2"', width_in: 2, height_in: 2 },
-];
 
 export interface LabelSize {
   key: string;
@@ -48,6 +47,52 @@ export interface LabelSize {
   cols: number;
   rows: number;
 }
+
+const mm = (n: number): number => n / MM_PER_IN;
+
+/** A metric thermal label roll as a PaperSize — so common sizes like 50×30 are
+ *  selectable everywhere, including system-printing to a "dumb" thermal printer
+ *  that Cobblr isn't connected to. */
+function rollMedia(wMm: number, hMm: number): PaperSize {
+  return { key: `roll-${wMm}x${hMm}mm`, label: `Label roll — ${wMm} × ${hMm} mm`, width_in: mm(wMm), height_in: mm(hMm), class: "roll" };
+}
+/** A 1-up (or n-across) layout on a metric roll. faceW divides the media exactly,
+ *  so n faces tile the width with no float drift. */
+function rollLabel(wMm: number, hMm: number, across: number): LabelSize {
+  return {
+    key: `roll-${wMm}x${hMm}-${across}up`,
+    label: across > 1 ? `${wMm} × ${hMm} mm — ${across} up (${Math.round(wMm / across)} × ${hMm} mm each)` : `${wMm} × ${hMm} mm — 1 up`,
+    paper: `roll-${wMm}x${hMm}mm`,
+    label_w: mm(wMm) / across,
+    label_h: mm(hMm),
+    margin_t: 0,
+    margin_l: 0,
+    col_gap: 0,
+    row_gap: 0,
+    cols: across,
+    rows: 1,
+  };
+}
+// The ubiquitous cheap thermal roll sizes; `across` lists the offered n-up layouts
+// (2-up only where each face stays a usable width).
+const METRIC_ROLLS: { w: number; h: number; across: number[] }[] = [
+  { w: 50, h: 30, across: [1, 2] },
+  { w: 40, h: 30, across: [1, 2] },
+  { w: 40, h: 20, across: [1] },
+  { w: 30, h: 20, across: [1] },
+  { w: 25, h: 25, across: [1] },
+];
+
+export const PAPER_SIZES: PaperSize[] = [
+  { key: "letter", label: 'US Letter — 8.5 × 11"', width_in: 8.5, height_in: 11, class: "sheet" },
+  { key: "roll-4x6", label: 'Label roll — 4 × 6"', width_in: 4, height_in: 6, class: "roll" },
+  // Die-cut square stock fed straight through a roll printer's adjustable
+  // guide. One label per feed, so no cutting: the alternative to tiling
+  // squares onto 4×6 and chopping them up.
+  { key: "roll-1.5", label: 'Label roll — 1½ × 1½"', width_in: 1.5, height_in: 1.5, class: "roll" },
+  { key: "roll-2", label: 'Label roll — 2 × 2"', width_in: 2, height_in: 2, class: "roll" },
+  ...METRIC_ROLLS.map((r) => rollMedia(r.w, r.h)),
+];
 
 // Layouts are validated against their paper: margin_l*2 + cols*label_w
 // + (cols-1)*col_gap must fit width_in, likewise for height.
@@ -67,6 +112,9 @@ export const LABEL_SIZES: LabelSize[] = [
   { key: "roll15-1up", label: '1½ × 1½" square — 1 up', paper: "roll-1.5", label_w: 1.5, label_h: 1.5, margin_t: 0, margin_l: 0, col_gap: 0, row_gap: 0, cols: 1, rows: 1 },
   { key: "roll2-1up", label: '2 × 2" square — 1 up', paper: "roll-2", label_w: 2, label_h: 2, margin_t: 0, margin_l: 0, col_gap: 0, row_gap: 0, cols: 1, rows: 1 },
 
+  // ── Metric thermal rolls (50×30, 40×30, …) — 1-up, plus 2-up where it fits ──
+  ...METRIC_ROLLS.flatMap((r) => r.across.map((a) => rollLabel(r.w, r.h, a))),
+
   // ── US Letter — laser/inkjet sheet ──
   { key: "letter-2x2", label: '2 × 2" square — 20 up', paper: "letter", label_w: 2, label_h: 2, margin_t: 0.5, margin_l: 0.25, col_gap: 0, row_gap: 0, cols: 4, rows: 5 },
   { key: "letter-3x3", label: '3 × 3" square — 6 up', paper: "letter", label_w: 3, label_h: 3, margin_t: 0.5, margin_l: 0.5, col_gap: 0.5, row_gap: 0.25, cols: 2, rows: 3 },
@@ -74,6 +122,25 @@ export const LABEL_SIZES: LabelSize[] = [
   { key: "avery-5160", label: 'Avery 5160 — 1 × 2⅝" address · 30 up', paper: "letter", label_w: 2.625, label_h: 1, margin_t: 0.5, margin_l: 0.1875, col_gap: 0.125, row_gap: 0, cols: 3, rows: 10 },
   { key: "avery-22805", label: 'Avery 22805 — 1½ × 1½" square · 24 up', paper: "letter", label_w: 1.5, label_h: 1.5, margin_t: 0.5, margin_l: 0.7799, col_gap: 0.3132, row_gap: 0.2, cols: 4, rows: 6 },
 ];
+
+/** Media classes in picker order, with their section label. */
+export const MEDIA_CLASSES: { class: MediaClass; label: string }[] = [
+  { class: "roll", label: "Label rolls" },
+  { class: "sheet", label: "Sheets" },
+];
+
+/** Group papers into the picker's sections (Label rolls / Sheets), dropping empty
+ *  sections. The ONE grouping every size picker uses, so they read the same. */
+export function groupPapersByClass(papers: PaperSize[]): { class: MediaClass; label: string; papers: PaperSize[] }[] {
+  return MEDIA_CLASSES.map((c) => ({ ...c, papers: papers.filter((p) => p.class === c.class) })).filter((g) => g.papers.length > 0);
+}
+
+/** The "what are you printing on?" filter, used when no printer's capability is
+ *  narrowing the list (system print). "all" passes everything through. */
+export type MediaTypeFilter = "all" | MediaClass;
+export function papersOfType(papers: PaperSize[], filter: MediaTypeFilter): PaperSize[] {
+  return filter === "all" ? papers : papers.filter((p) => p.class === filter);
+}
 
 export function findPaper(key: string): PaperSize | undefined {
   return PAPER_SIZES.find((p) => p.key === key);
@@ -98,8 +165,6 @@ export interface PrinterCapability {
   maxWidthMm: number;
 }
 
-const MM_PER_IN = 25.4;
-
 /** A printer's media capability, from its driver + saved settings. Bluetooth =
  *  thermal, max from the matched profile; network (CUPS/edge) = whatever the user
  *  set on the printers page (a manager can't report it), defaulting to a desktop
@@ -121,7 +186,9 @@ export function printerCapability(driver: string, settings?: Record<string, unkn
  *  only by width. The tolerance absorbs mm↔in rounding. */
 export function paperForCapability(paper: PaperSize, cap: PrinterCapability): boolean {
   if (paper.width_in > cap.maxWidthMm / MM_PER_IN + 0.05) return false;
-  return cap.kind === "thermal" || !paper.key.startsWith("roll-");
+  // Inkjet/laser feeds sheets only; thermal feeds either. Keyed on the explicit
+  // media class, never the key string.
+  return cap.kind === "thermal" || paper.class === "sheet";
 }
 export function papersForPrinter(cap: PrinterCapability): PaperSize[] {
   return PAPER_SIZES.filter((p) => paperForCapability(p, cap));
@@ -302,7 +369,9 @@ export function customSizeToLayout(row: {
     row_gap: row.row_gap,
   });
   return {
-    paper: { key, label: row.name, width_in: row.media_w, height_in: row.media_h },
+    // A user-defined size is treated as a roll (its own media, tiled as chosen);
+    // class is unused by the renderer but keeps it a valid PaperSize.
+    paper: { key, label: row.name, width_in: row.media_w, height_in: row.media_h, class: "roll" as const },
     size: {
       key,
       label: row.name,

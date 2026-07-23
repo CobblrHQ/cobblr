@@ -476,6 +476,10 @@ export interface OrgModuleListItem {
    *  Optional: real modules from the API always carry it, but synthetic nav
    *  entries (instances, lens bundles) have no module band. */
   band?: "foundational" | "stock" | "marketplace" | "user";
+  /** Release maturity — the UI shows an Experimental/Beta badge for non-stable
+   *  modules. Absent → treat as stable. ("hidden" modules never load, so they
+   *  never reach this list — listed for type-completeness with the manifest.) */
+  maturity?: "hidden" | "experimental" | "beta" | "stable";
   /** "multi" → the module can host several named instances (the "+ New thing"
    *  funnel offers it). "single" / absent → one instance only. */
   instanceability?: "single" | "multi";

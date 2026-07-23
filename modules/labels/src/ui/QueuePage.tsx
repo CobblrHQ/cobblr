@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import QRCode from "qrcode";
-import { Bluetooth, Hash, Minus, Plus, Printer, Send, Settings2, Trash2, Wifi, Zap } from "lucide-react";
+import { Bluetooth, Hash, Minus, Pencil, Plus, Printer, Send, Settings2, Trash2, Wifi, Zap } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { usePageTitle, useToast, Modal } from "@cobblr/platform-web";
 import { useLabels } from "./context";
@@ -32,13 +32,17 @@ import {
   labelSizesForPaper,
   printerCapability,
   papersForPrinter,
+  groupPapersByClass,
+  papersOfType,
   qrSideForLabel,
+  type MediaTypeFilter,
 } from "../label-sizes";
 import { assessScannability } from "../print/qr-overlay";
 import type { CustomLabelSize, Printable } from "./api";
 import { NewSizeModal } from "./NewSizeModal";
 import { AutoPrintModal } from "./AutoPrintModal";
 import { PrinterConfigModal } from "./PrinterConfigModal";
+import { queueToolbarMode } from "./queue-toolbar";
 
 const PAPER_LS = "cobblr:label-paper";
 const SIZE_LS = "cobblr:label-size";
@@ -55,6 +59,32 @@ function qrSvg(payload: string, ecLevel: "M" | "H" = "M"): Promise<string> {
  *  SVG uses, so the scannability read reflects the real symbol drawn. */
 function qrModuleCount(payload: string, ecLevel: "M" | "H"): number {
   return QRCode.create(payload, { errorCorrectionLevel: ecLevel }).modules.size;
+}
+
+/** Print a self-contained HTML sheet from the CURRENT page — no new tab or window.
+ *  Mount it in a hidden iframe, print THAT iframe (it carries its own @page size,
+ *  so it prints 1:1), and clean up once the dialog resolves. srcdoc's onload fires
+ *  after the inline QR SVGs have parsed, so there's no render-race timeout. */
+function printHtmlViaIframe(html: string): void {
+  const iframe = document.createElement("iframe");
+  iframe.setAttribute("aria-hidden", "true");
+  iframe.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;";
+  iframe.srcdoc = html;
+  iframe.onload = () => {
+    const win = iframe.contentWindow;
+    if (!win) {
+      iframe.remove();
+      return;
+    }
+    // Chrome fires onafterprint on both accept AND cancel; a long fallback covers
+    // browsers that don't, so a cancelled dialog never leaks the iframe.
+    const cleanup = () => iframe.remove();
+    win.onafterprint = cleanup;
+    setTimeout(cleanup, 120_000);
+    win.focus();
+    win.print();
+  };
+  document.body.appendChild(iframe);
 }
 
 export function QueuePage() {
@@ -91,11 +121,22 @@ export function QueuePage() {
   const printers = printersQ.data?.items ?? [];
   const defaultPrinter = printers.find((p) => p.is_default) ?? printers[0];
   const isBleDefault = defaultPrinter?.driver === "browser-bluetooth";
-  const hasPrinter = printers.length > 0;
+  // One source of truth for which toolbar parts show. The sheet/label pickers and
+  // the browser Print button share `sheetControls`/`browserPrint` so they can never
+  // be gated apart again (the regression: no printer hid the pickers but kept Print,
+  // so system-printing to a normal printer had no way to pick sheet + label size).
+  const toolbar = queueToolbarMode(defaultPrinter);
   // Funnel the paper options to what the default printer can feed (its kind + max
   // width) — the same rule as the auto-print modal, so the platform is consistent.
   const cap = defaultPrinter ? printerCapability(defaultPrinter.driver, defaultPrinter.settings) : null;
   const funnelPapers = cap ? papersForPrinter(cap) : PAPER_SIZES;
+  // When a printer's capability isn't narrowing the list (system print, no printer),
+  // let the user say what they're printing on — roll vs sheet — to filter down to,
+  // say, a 50×30 roll. With a printer connected, its capability already filtered, so
+  // this passes everything through. The picker then groups into the same sections.
+  const [mediaType, setMediaType] = useState<MediaTypeFilter>("all");
+  const visiblePapers = papersOfType(funnelPapers, toolbar.connectCtas ? mediaType : "all");
+  const paperGroups = groupPapersByClass(visiblePapers);
 
   // Live "is the Bluetooth printer connected in this tab" flag — a held BLE
   // session is per-tab and drops when idle, so poll the in-memory handle rather
@@ -182,10 +223,10 @@ export function QueuePage() {
   // Snap the paper to one the default printer can feed (a persisted 4×6 must not
   // stick on a 2" printer).
   useEffect(() => {
-    if (funnelPapers.length && !funnelPapers.some((p) => p.key === paperKey)) {
-      setPaperKey(funnelPapers[0]!.key);
+    if (visiblePapers.length && !visiblePapers.some((p) => p.key === paperKey)) {
+      setPaperKey(visiblePapers[0]!.key);
     }
-  }, [funnelPapers, paperKey]);
+  }, [visiblePapers, paperKey]);
   useEffect(() => {
     if (sizeKey) localStorage.setItem(SIZE_LS, sizeKey);
   }, [sizeKey]);
@@ -289,19 +330,38 @@ export function QueuePage() {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["labels-queue"] }),
   });
 
-  const print = useMutation({
-    mutationFn: () => api.print(),
-    onSuccess: (r) => {
-      const html = renderPrintSheetHtml(r.printables, sizeKey, { customSizes: customList });
-      const w = window.open("", "_blank");
-      if (w) {
-        w.document.write(html);
-        w.document.close();
-        setTimeout(() => w.print(), 350);
-      }
-      void qc.invalidateQueries({ queryKey: ["labels-queue"] });
-    },
+  const rename = useMutation({
+    mutationFn: ({ id, description }: { id: string; description: string }) => api.renameQueueItem(id, description),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["labels-queue"] }),
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't rename"),
   });
+
+  // Browser (⌘P) print. Prints from THIS page via a hidden iframe (no separate
+  // tab), using the SAME client-built printables the preview shows, and does NOT
+  // touch the queue yet. Like the Rollo path, raise a "mark printed" toast and
+  // only record + clear the batch once the user confirms the paper looks right;
+  // until then the queue and preview stay exactly as they were. (Was: api.print()
+  // snapshotted + cleared the queue before the dialog even opened, so cancelling
+  // still lost the labels — the author, 2026-07-23.)
+  const doBrowserPrint = () => {
+    const printables = previewQr.data ?? [];
+    if (!printables.length) return;
+    printHtmlViaIframe(renderPrintSheetHtml(printables, sizeKey, { customSizes: customList }));
+    const itemIds = items.map((it) => it.id);
+    const count = itemIds.length;
+    toast.action(`Printing ${count} label${count === 1 ? "" : "s"}. Mark printed once the paper looks right?`, {
+      actionLabel: "Mark printed",
+      onAction: async () => {
+        try {
+          await api.recordPrinted(itemIds);
+          void qc.invalidateQueries({ queryKey: ["labels-queue"] });
+          toast.success("Batch recorded");
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : "Couldn't record the batch");
+        }
+      },
+    });
+  };
 
   // Direct-to-printer: render the queue to a PDF (labels) → dispatch via the
   // configured printer (core-print). No browser print dialog. core-print uses
@@ -420,7 +480,10 @@ export function QueuePage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-x-3 gap-y-2 border-b border-line dark:border-slate-700 pb-3 flex-wrap">
+      <div className="space-y-2 border-b border-line dark:border-slate-700 pb-3">
+        {/* Main row: identity + the action buttons. The sheet/label size pickers
+            live on their own thin row below (they wrapped ugly inline). */}
+        <div className="flex items-center gap-x-3 gap-y-2 flex-wrap">
         <div className="flex items-baseline gap-3">
           <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">labels</h1>
           <span className="text-[10px] font-mono text-faint dark:text-slate-500">
@@ -431,10 +494,11 @@ export function QueuePage() {
         <div className="flex-1" />
 
         {/* Printer-first: the toolbar leads with WHICH printer this prints to.
-            No printer → a call to action, not dead buttons. A Bluetooth roll
-            hides the sheet paper/size pickers (it prints one label at a time,
-            with no paper or N-up to choose); a sheet/network printer keeps them. */}
-        {!hasPrinter ? (
+            No printer → connect CTAs, but the sheet pickers + system Print stay
+            (you can print to your OS printer without configuring one here). A
+            Bluetooth roll hides the sheet paper/size pickers (it prints one label
+            at a time from its own media); network + no-printer keep them. */}
+        {toolbar.connectCtas ? (
           <>
             <button
               onClick={connectBluetooth}
@@ -474,18 +538,94 @@ export function QueuePage() {
           </button>
         )}
 
-        {hasPrinter && !isBleDefault && (
-          <>
+        {toolbar.configuredPrint && (
+          <button
+            onClick={() => sendToPrinter.mutate()}
+            disabled={sendToPrinter.isPending || items.length === 0 || (!isBleDefault && !size)}
+            className="rounded-md border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
+            title={isBleDefault ? `Print the queue to ${defaultPrinter!.name} over Bluetooth` : "Render + send straight to the printer (CUPS) — no print dialog"}
+          >
+            {isBleDefault ? <Bluetooth size={14} /> : <Send size={14} />}
+            {btProgress
+              ? `Printing ${btProgress.done}/${btProgress.total}…`
+              : sendToPrinter.isPending
+                ? "…"
+                : isBleDefault
+                  ? `Print to ${defaultPrinter!.name}`
+                  : "Send to printer"}
+          </button>
+        )}
+
+        {toolbar.browserPrint && (
+          <button
+            onClick={doBrowserPrint}
+            disabled={items.length === 0 || !size}
+            className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
+            title="Print here with the browser dialog (⌘P) — no new tab"
+          >
+            <Printer size={14} />
+            {`Print ${total}`}
+          </button>
+        )}
+        <button
+          onClick={() => setCodesOpen(true)}
+          className="rounded-md border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
+          title="Find an item by code, rename a prefix, or change what codes group by"
+        >
+          <Hash size={14} />
+          Codes
+        </button>
+        <button
+          onClick={() => setAutoPrintOpen(true)}
+          className={`rounded-md border text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 ${
+            autoflush.data?.enabled
+              ? "border-cobble-500 text-cobble-700 dark:text-cobble-300 bg-cobble-50 dark:bg-cobble-900/30"
+              : "border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200"
+          }`}
+          title="Print labels automatically as they are added, to your default printer"
+        >
+          <Zap size={14} />
+          {autoflush.data?.enabled ? "Auto-print: on" : "Auto-print"}
+        </button>
+        </div>
+
+        {/* Thin second row: the sheet + label size pickers (sheet-output only). */}
+        {toolbar.sheetControls && (
+          <div className="flex items-center gap-3 flex-wrap">
+            {/* "What are you printing on?" — only when no printer's capability is
+                filtering (system print). Lets you narrow to a roll and reach 50×30. */}
+            {toolbar.connectCtas && (
+              <label className="flex items-center gap-1.5">
+                <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">printing on</span>
+                <select
+                  value={mediaType}
+                  onChange={(e) => setMediaType(e.target.value as MediaTypeFilter)}
+                  className="input !w-auto !py-1 text-xs"
+                >
+                  <option value="all">Anything</option>
+                  <option value="roll">Label roll</option>
+                  <option value="sheet">Sheet</option>
+                </select>
+              </label>
+            )}
             <label className="flex items-center gap-1.5">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">paper</span>
+              <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">media</span>
               <select
                 value={paperKey}
-                onChange={(e) => setPaperKey(e.target.value)}
+                onChange={(e) => {
+                  if (e.target.value === "__newsize__") setNewSizeOpen(true);
+                  else setPaperKey(e.target.value);
+                }}
                 className="input !w-auto !py-1 text-xs"
               >
-                {funnelPapers.map((p) => (
-                  <option key={p.key} value={p.key}>{p.label}</option>
+                {paperGroups.map((g) => (
+                  <optgroup key={g.class} label={g.label}>
+                    {g.papers.map((p) => (
+                      <option key={p.key} value={p.key}>{p.label}</option>
+                    ))}
+                  </optgroup>
                 ))}
+                <option value="__newsize__">＋ Custom size…</option>
               </select>
             </label>
             <label className="flex items-center gap-1.5">
@@ -513,58 +653,8 @@ export function QueuePage() {
                 <option value="__new__">＋ New label size…</option>
               </select>
             </label>
-          </>
+          </div>
         )}
-
-        {hasPrinter && (
-          <button
-            onClick={() => sendToPrinter.mutate()}
-            disabled={sendToPrinter.isPending || items.length === 0 || (!isBleDefault && !size)}
-            className="rounded-md border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
-            title={isBleDefault ? `Print the queue to ${defaultPrinter!.name} over Bluetooth` : "Render + send straight to the printer (CUPS) — no print dialog"}
-          >
-            {isBleDefault ? <Bluetooth size={14} /> : <Send size={14} />}
-            {btProgress
-              ? `Printing ${btProgress.done}/${btProgress.total}…`
-              : sendToPrinter.isPending
-                ? "…"
-                : isBleDefault
-                  ? `Print to ${defaultPrinter!.name}`
-                  : "Send to printer"}
-          </button>
-        )}
-
-        {!isBleDefault && (
-          <button
-            onClick={() => print.mutate()}
-            disabled={print.isPending || items.length === 0 || !size}
-            className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
-            title="Open a browser print sheet (⌘P)"
-          >
-            <Printer size={14} />
-            {print.isPending ? "…" : `Print ${total}`}
-          </button>
-        )}
-        <button
-          onClick={() => setCodesOpen(true)}
-          className="rounded-md border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
-          title="Find an item by code, rename a prefix, or change what codes group by"
-        >
-          <Hash size={14} />
-          Codes
-        </button>
-        <button
-          onClick={() => setAutoPrintOpen(true)}
-          className={`rounded-md border text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 ${
-            autoflush.data?.enabled
-              ? "border-cobble-500 text-cobble-700 dark:text-cobble-300 bg-cobble-50 dark:bg-cobble-900/30"
-              : "border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200"
-          }`}
-          title="Print labels automatically as they are added, to your default printer"
-        >
-          <Zap size={14} />
-          {autoflush.data?.enabled ? "Auto-print: on" : "Auto-print"}
-        </button>
       </div>
 
       {list.isLoading && <div className="text-sm text-faint dark:text-slate-500">loading…</div>}
@@ -591,7 +681,10 @@ export function QueuePage() {
                     <span className="font-mono text-[10px] text-faint dark:text-slate-500 shrink-0">
                       {it.module_name}/{it.entity_type}
                     </span>
-                    <span className="text-content dark:text-mortar-100 flex-1 min-w-0 truncate">{it.description}</span>
+                    <EditableLabel
+                      value={it.description}
+                      onSave={(v) => rename.mutate({ id: it.id, description: v })}
+                    />
                     {codes.data?.[it.entity_id] && (
                       <span
                         className="font-mono text-[11px] font-bold shrink-0 px-1.5 py-0.5 rounded bg-subtle dark:bg-slate-800 text-content dark:text-mortar-100"
@@ -691,6 +784,49 @@ export function QueuePage() {
   );
 }
 
+/** The queued item's printed caption, click-to-edit. A long entity title
+ *  (e.g. "2002 Honda Odyssey Minivan EX") can be trimmed to a short name that
+ *  fits the label without wrapping — the abbreviation IS the fit, no ellipsis.
+ *  Enter or blur saves; Escape cancels. */
+function EditableLabel({ value, onSave }: { value: string; onSave: (v: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={() => { setDraft(value); setEditing(true); }}
+        className="group/name flex items-center gap-1.5 flex-1 min-w-0 text-left text-content dark:text-mortar-100"
+        title="Click to rename this label"
+      >
+        <span className="truncate group-hover/name:underline decoration-dotted underline-offset-2">
+          {value || <span className="text-faint italic">no name</span>}
+        </span>
+        <Pencil size={12} className="shrink-0 text-faint opacity-60 group-hover/name:opacity-100 group-hover/name:text-accent transition" />
+      </button>
+    );
+  }
+  const commit = () => {
+    setEditing(false);
+    const v = draft.trim();
+    if (v !== value) onSave(v);
+  };
+  return (
+    <input
+      autoFocus
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") { e.preventDefault(); commit(); }
+        if (e.key === "Escape") { setDraft(value); setEditing(false); }
+      }}
+      maxLength={200}
+      className="input !py-0.5 !px-1.5 text-sm flex-1 min-w-0"
+    />
+  );
+}
+
 /** Scaled WYSIWYG preview of the first sheet — renders the exact
  *  print HTML inside an iframe sized in real inches, then CSS-scales
  *  it to fit a large preview box below the queue. */
@@ -707,12 +843,15 @@ function SheetPreview({
   paperH: number;
   customSizes: CustomLabelSize[];
 }) {
-  // Fit the real-inch sheet to the ACTUAL column width, not a fixed 660px — in
-  // the half-width side-by-side layout the column is narrower than that, so a
-  // fixed width overflowed and clipped the 2nd label tile. Measure the padded
-  // box with a ResizeObserver and scale the whole first sheet to fit it (still
-  // capped in height so a tall Letter sheet doesn't run off the page).
+  // ONE scale for the whole preview, so sizes stay comparable: a 2" label is bigger
+  // than a 1.5", and a 2" single equals a 2" cell of a 4×6. But it must also be
+  // READABLE — a fixed 60px/in left a 50×30 label unreadably tiny. So the scale is
+  // anchored to the box: a REFERENCE_IN-wide medium fills the preview width, and
+  // everything scales from there (same factor for every size, big enough to read;
+  // a full sheet like Letter is wider than that and simply scrolls). "Actual size"
+  // swaps in the display's calibrated px/inch for a true-to-life ruler check.
   const MAX_H = 820;
+  const REFERENCE_IN = 4; // a 4" roll fills the preview width; smaller media scale down proportionally
   const boxRef = useRef<HTMLDivElement>(null);
   const [boxW, setBoxW] = useState(0);
   useEffect(() => {
@@ -725,21 +864,16 @@ function SheetPreview({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-
   const cal = useScreenCalibration();
   const [actual, setActual] = useState(false);
 
-  const natW = paperW * 96;
+  const natW = paperW * 96; // the sheet HTML is authored at 96px/inch
   const natH = paperH * 96;
-  // Until the first measurement lands, fall back to natW so nothing over-scales.
-  const availW = boxW > 0 ? boxW : natW;
-  const fitScale = Math.min(availW / natW, MAX_H / natH);
-  // "Actual size": render at the display's TRUE px/inch instead of fitting. The
-  // sheet HTML is authored at 96px/inch, so scaling it by (calibrated px/inch ÷
-  // 96) makes one on-screen inch equal one real inch. Screen-only — print honours
-  // real millimetres directly and never sees this.
   const actualScale = (cal.pxPerMm * 25.4) / 96;
-  const scale = actual ? actualScale : fitScale;
+  // px-per-inch = boxW / REFERENCE_IN, ÷96 to scale the 96dpi HTML. Falls back to a
+  // sane width until the box is measured.
+  const previewScale = (boxW > 0 ? boxW : 640) / (REFERENCE_IN * 96);
+  const scale = actual ? actualScale : previewScale;
   const html = renderPrintSheetHtml(printables, sizeKey, { previewOnly: true, customSizes });
 
   // Physical scannability of the printed QR at THIS size — the "is it too small
@@ -757,10 +891,30 @@ function SheetPreview({
   const maxModules = printables.reduce((m, p) => Math.max(m, p.qr_modules ?? 0), 0);
   const scan = resolvedSize && maxModules > 0 ? assessScannability(qrSideForLabel(resolvedSize), maxModules) : null;
 
+  // Multi-sheet: a queue often needs more than one sheet (2 labels of a 1-up
+  // die-cut roll = 2 sheets). The default view is a wrapping STRIP of small
+  // per-sheet thumbnails so it matches what actually comes out; "actual size"
+  // drops back to the first sheet at true physical size for the ruler check.
+  // Bounded (CAP) so a huge queue can't spawn hundreds of iframes.
+  const per = resolvedSize ? resolvedSize.cols * resolvedSize.rows : 0;
+  const sheetCount = per > 0 ? Math.max(1, Math.ceil(printables.length / per)) : 1;
+  const CAP = 12;
+  const shownSheets = Math.min(sheetCount, CAP);
+  const sheetHtml = useMemo(
+    () =>
+      Array.from({ length: per > 0 ? shownSheets : 1 }, (_, i) =>
+        renderPrintSheetHtml(per > 0 ? printables.slice(i * per, (i + 1) * per) : printables, sizeKey, {
+          previewOnly: true,
+          customSizes,
+        }),
+      ),
+    [printables, per, shownSheets, sizeKey, customSizes],
+  );
+
   return (
     <div>
       <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
-        // sheet preview <span className="text-faint dark:text-slate-500">— {paperW}″ × {paperH}″, first sheet</span>
+        // sheet preview <span className="text-faint dark:text-slate-500">— {paperW}″ × {paperH}″, {actual ? "first sheet, actual size" : sheetCount > 1 ? `${sheetCount} sheets` : "1 sheet"}</span>
         {scan && (
           <span
             className="normal-case tracking-normal text-faint dark:text-slate-500"
@@ -788,26 +942,55 @@ function SheetPreview({
       </div>
       <div
         ref={boxRef}
-        className={`rounded-xl border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/40 p-5 flex ${actual ? "justify-start overflow-auto" : "justify-center"}`}
-        style={actual ? { maxHeight: MAX_H } : undefined}
+        className={`rounded-xl border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/40 p-5 flex overflow-auto ${
+          actual ? "justify-start" : "flex-wrap gap-3 content-start justify-start"
+        }`}
+        style={{ maxHeight: MAX_H }}
       >
-        <div
-          className="rounded-lg border border-line dark:border-slate-700 bg-surface overflow-hidden shadow-md shrink-0"
-          style={{ width: natW * scale, height: natH * scale }}
-        >
-          <iframe
-            title="label sheet preview"
-            srcDoc={html}
-            scrolling="no"
-            style={{
-              width: natW,
-              height: natH,
-              border: 0,
-              transform: `scale(${scale})`,
-              transformOrigin: "top left",
-            }}
-          />
-        </div>
+        {actual ? (
+          <div
+            className="rounded-lg border border-line dark:border-slate-700 bg-surface overflow-hidden shadow-md shrink-0"
+            style={{ width: natW * scale, height: natH * scale }}
+          >
+            <iframe
+              title="label sheet preview"
+              srcDoc={html}
+              scrolling="no"
+              style={{ width: natW, height: natH, border: 0, transform: `scale(${scale})`, transformOrigin: "top left" }}
+            />
+          </div>
+        ) : (
+          <>
+            {/* Every thumbnail at the SAME scale, so a 2" sheet is visibly bigger
+                than a 1.5" one and a 2" cell of a 4×6 matches a 2" single. */}
+            {sheetHtml.map((h, i) => (
+              // Sheet number goes BELOW the thumbnail, not over it — an absolute
+              // badge sat on the label's title and hid it.
+              <div key={i} className="shrink-0 flex flex-col items-center gap-1">
+                <div
+                  className="rounded-md border border-line dark:border-slate-700 bg-surface overflow-hidden shadow-sm"
+                  style={{ width: natW * scale, height: natH * scale }}
+                >
+                  <iframe
+                    title={`sheet ${i + 1}`}
+                    srcDoc={h}
+                    scrolling="no"
+                    style={{ width: natW, height: natH, border: 0, transform: `scale(${scale})`, transformOrigin: "top left" }}
+                  />
+                </div>
+                {sheetCount > 1 && <span className="text-[9px] font-mono text-faint dark:text-slate-500 leading-none">{i + 1}</span>}
+              </div>
+            ))}
+            {sheetCount > CAP && (
+              <div
+                className="grid place-items-center rounded-md border border-dashed border-line dark:border-slate-700 text-[11px] text-faint dark:text-slate-500 shrink-0"
+                style={{ width: natW * scale, height: natH * scale }}
+              >
+                +{sheetCount - CAP} more
+              </div>
+            )}
+          </>
+        )}
       </div>
       <ActualSizeControl actual={actual} onToggle={() => setActual((v) => !v)} cal={cal} />
     </div>

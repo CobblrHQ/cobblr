@@ -6,12 +6,17 @@
 #
 # Requires in .env:
 #   COBBLR_SITE_ADDRESS = cobblr.tail1234.ts.net   (your tailnet's name)
-#   TS_AUTHKEY          = tskey-auth-...           (reusable key, admin console)
+#   TS_AUTHKEY          = tskey-auth-...           (OPTIONAL, see below)
+#
+# Joining the tailnet, two ways:
+#   * No TS_AUTHKEY: the entrypoint runs the node interactively and the caddy
+#     logs print a one-time approval link. Open it, sign in, approve. Easiest.
+#   * TS_AUTHKEY set: a headless join with a reusable key from the admin console.
 #
 # Tailnet prerequisites: MagicDNS + HTTPS certificates enabled (admin console,
 # DNS page). After the node first appears, disable its key expiry in the admin
-# console or it deauthenticates in ~6 months. Node identity persists under
-# /data (bind-mounted), so restarts keep the same node.
+# console or it deauthenticates in ~6 months (this applies to both paths). Node
+# identity persists under /data (bind-mounted), so restarts keep the same node.
 #
 # COBBLR_TSNET_NAME is derived by the entrypoint from the address's first
 # label (cobblr.tail1234.ts.net -> "cobblr"); set it only to override.

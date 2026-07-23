@@ -24,6 +24,19 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  *  Both resolve to the repo's modules/ dir. */
 const MODULES_DIR = resolve(__dirname, "..", "..", "..", "modules");
 
+/** A module is dropped at load when it's `maturity: "hidden"` (never loads
+ *  anywhere — the dark-ship state, to keep main releasable) OR
+ *  `maturity: "experimental"` AND the deploy sets
+ *  COBBLR_DISABLE_EXPERIMENTAL_MODULES (public / trial). beta + stable always
+ *  load; an absent maturity is stable. Pure so it's unit-testable. */
+export function shouldSkipAtLoad(
+  maturity: ModuleManifest["maturity"] | undefined,
+  disableExperimental: boolean,
+): boolean {
+  if (maturity === "hidden") return true;
+  return disableExperimental && maturity === "experimental";
+}
+
 export async function loadAllModules(): Promise<{ count: number; names: string[] }> {
   let entries: string[];
   try {
@@ -37,6 +50,12 @@ export async function loadAllModules(): Promise<{ count: number; names: string[]
     throw err;
   }
 
+  // Public / trial deploys set this to keep half-baked (maturity:
+  // "experimental") modules out entirely — not loaded, not mounted, no
+  // boot-time workers (e.g. digifab's Bambu cloud pump). Self-host default is
+  // off, so an existing install is never surprised by a module vanishing.
+  const disableExperimental = process.env.COBBLR_DISABLE_EXPERIMENTAL_MODULES === "true";
+
   // Pass 1: read all manifests without registering. Lets us
   // dependency-order them before they take effect.
   const pending: Array<{ manifest: ModuleManifest; rootPath: string }> = [];
@@ -48,6 +67,11 @@ export async function loadAllModules(): Promise<{ count: number; names: string[]
 
     const manifest = await tryLoadModule(moduleRoot, entry);
     if (manifest) {
+      if (shouldSkipAtLoad(manifest.maturity, disableExperimental)) {
+        const why = manifest.maturity === "hidden" ? "hidden" : "experimental (COBBLR_DISABLE_EXPERIMENTAL_MODULES)";
+        console.log(`[modules] skipping ${why} module '${manifest.name}'`);
+        continue;
+      }
       pending.push({ manifest, rootPath: moduleRoot });
     }
   }

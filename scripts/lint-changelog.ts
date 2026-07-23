@@ -144,6 +144,15 @@ for (const f of touchedEntries) {
   if (!/^type:\s*feature\s*$/m.test(fm)) continue;
   const scope = fm.match(/^scope:\s*(.+)$/m)?.[1]?.trim();
   if (scope) touchedScopes.add(scope);
+  else
+    // A feature with no scope can't be routed to the public-docs page it should
+    // update: the docs-debt report (docs repo, scripts/sync-docs-debt.mjs) keys
+    // off `scope:`, so a scopeless feature lands in an unroutable bucket and its
+    // public docs go stale silently. 152 historical entries already did. Checked
+    // only on features this PR touches (diff-scoped), so no retroactive breakage.
+    docsProblems.push(
+      `${f}: type: feature needs a "scope:" (the area, e.g. labels / scan / inventory) — the public docs-debt report routes by it`,
+    );
   const target = fm.match(/^docs_target:\s*(.+)$/m)?.[1]?.trim();
   if (!target) {
     docsProblems.push(

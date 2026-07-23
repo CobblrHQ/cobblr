@@ -6,12 +6,16 @@
 // workshop can come HERE and build a label run, not only push into the
 // queue from other modules.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Plus, Search, X } from "lucide-react";
 import { EntityThumb, buildLocationForest, flattenLocationForest } from "@cobblr/platform-web";
 import { useLabels } from "./context";
 import type { LabelableItem } from "./api";
+
+// The browse tab the user last looked at, remembered across refresh — same idea
+// as the paper/size pickers on the queue side.
+const TAB_LS = "cobblr:labels-browse-tab";
 
 export function BrowsePanel() {
   const { api, orgSlug } = useLabels();
@@ -24,9 +28,13 @@ export function BrowsePanel() {
   });
   const tabs = tabsQ.data?.tabs ?? [];
 
-  const [active, setActive] = useState<string | null>(null);
-  // Default to the first tab once they load (no useEffect — derive it).
-  const activeTab = active ?? tabs[0]?.id ?? null;
+  // The chosen tab persists across refresh (init from localStorage). Ignore a
+  // stale value whose instance no longer exists, and remember every change.
+  const [active, setActive] = useState<string | null>(() => localStorage.getItem(TAB_LS));
+  useEffect(() => {
+    if (active) localStorage.setItem(TAB_LS, active);
+  }, [active]);
+  const activeTab = (active && tabs.some((t) => t.id === active) ? active : tabs[0]?.id) ?? null;
 
   const [q, setQ] = useState("");
 

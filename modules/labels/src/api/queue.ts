@@ -90,9 +90,14 @@ queueRouter.post(
   }),
 );
 
-const QueuePatch = z.object({
-  qty: z.number().int().min(1).max(99),
-});
+const QueuePatch = z
+  .object({
+    qty: z.number().int().min(1).max(99).optional(),
+    // The printed caption — editable so a long title can be trimmed to a short name
+    // that fits the label. Empty is allowed (a QR-only label).
+    description: z.string().max(200).optional(),
+  })
+  .refine((b) => b.qty !== undefined || b.description !== undefined, { message: "qty or description required" });
 
 queueRouter.patch(
   "/:id",
@@ -106,9 +111,12 @@ queueRouter.patch(
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
       return;
     }
+    const patch: Record<string, unknown> = {};
+    if (parsed.data.qty !== undefined) patch.qty = parsed.data.qty;
+    if (parsed.data.description !== undefined) patch.description = parsed.data.description.trim();
     const updated = await db
       .updateTable("labels_queue")
-      .set({ qty: parsed.data.qty })
+      .set(patch)
       .where("id", "=", id)
       .where("user_id", "=", session.id)
       .returningAll()

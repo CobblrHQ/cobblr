@@ -42,6 +42,18 @@ export function CodesPanel() {
     onError: (e) => toast.error((e as Error).message),
   });
 
+  // Commit a SUGGESTED list's prefix (create its row) before any print, or opt it
+  // out with a blank prefix. Separate from rename because a suggestion has no row
+  // to rename yet.
+  const seed = useMutation({
+    mutationFn: ({ groupKey, prefix }: { groupKey: string; prefix: string }) => api.seedGroup(groupKey, prefix),
+    onSuccess: (_r, { prefix }) => {
+      toast.success(prefix.trim() ? "Code saved." : "List opted out of a code.");
+      void qc.invalidateQueries({ queryKey: ["labels-code-groups"] });
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+
   const overlay = useMutation({
     mutationFn: ({ groupKey, on }: { groupKey: string; on: boolean }) => api.setGroupOverlay(groupKey, on),
     onSuccess: (_r, { on }) => {
@@ -102,7 +114,7 @@ export function CodesPanel() {
           <p className="text-sm text-muted dark:text-slate-400">Loading…</p>
         ) : byKind.length === 0 ? (
           <p className="text-sm text-muted dark:text-slate-400">
-            No codes yet — print a label and its list gets a prefix automatically.
+            No labelable lists yet. Add a machine, part, or location and it shows up here with a suggested code.
           </p>
         ) : (
           <div className="space-y-3">
@@ -111,7 +123,12 @@ export function CodesPanel() {
                 key={kind}
                 kindLabel={kindLabel}
                 groups={kindGroups}
-                onRename={(groupKey, prefix) => rename.mutate({ groupKey, prefix })}
+                onRename={(groupKey, prefix) => {
+                  // A suggested list has no row yet: Save COMMITS it (seed). A
+                  // committed one renames. Same button, routed by suggested.
+                  const g = (groups.data ?? []).find((x) => x.group_key === groupKey);
+                  (g?.suggested ? seed : rename).mutate({ groupKey, prefix });
+                }}
                 onToggleOverlay={(groupKey, on) => overlay.mutate({ groupKey, on })}
                 pending={pending}
               />
@@ -142,9 +159,11 @@ function KindCard({
   // How many items are coded, kept as a hover on the name rather than a label —
   // it's metadata, not what the row IS (the author, 2026-07-22: "what does '1 code' mean").
   const coded = (g: CodeGroup) =>
-    g.prefix == null
-      ? "No code — this list is opted out, so its letter is free for another list."
-      : `${g.count} item${g.count === 1 ? "" : "s"} coded so far`;
+    g.suggested
+      ? "Suggested code, not saved yet. Save to lock it in, change it, or clear the box to skip a code for this list."
+      : g.prefix == null
+        ? "No code — this list is opted out, so its letter is free for another list."
+        : `${g.count} item${g.count === 1 ? "" : "s"} coded so far`;
   // A lone whole-kind group (no named instance) is the kind itself: show its
   // controls inline on the card row rather than a nameless "N codes" child.
   const solo = groups.length === 1 && (!groups[0]!.group_label || groups[0]!.group_label === kindLabel);
@@ -201,31 +220,35 @@ function GroupControls({
 }) {
   const [val, setVal] = useState(group.prefix ?? "");
   const norm = val.trim().toLowerCase();
-  const hasCode = group.prefix != null;
-  // Save is live when there's a real new prefix (rename, or re-enable a cleared
-  // list), OR the field is blank on a list that currently HAS a code — blanking it
-  // opts the list out of a code, freeing the letter for another list.
-  const willClear = norm.length === 0 && hasCode;
-  const dirty = (norm.length > 0 && norm !== group.prefix) || willClear;
+  const isSuggested = !!group.suggested;
+  const committed = !isSuggested && group.prefix != null; // a saved, real code
+  // Save/commit rules: a SUGGESTED list Saves to COMMIT its prefix (or blank to
+  // skip a code); a COMMITTED list renames (or blank to remove + free the letter);
+  // an opted-out list re-enables when you type one. The QR toggle only means
+  // anything once a code is actually committed (there's a row to set it on).
+  const willOptOut = norm.length === 0 && (committed || isSuggested);
+  const dirty = isSuggested ? norm.length > 0 || willOptOut : (norm.length > 0 && norm !== group.prefix) || willOptOut;
   return (
     <div className="flex items-center gap-2 shrink-0">
       <button
         type="button"
         role="switch"
-        aria-checked={hasCode && group.overlay_center}
+        aria-checked={committed && group.overlay_center}
         aria-label={`Show the code in the QR for ${name}`}
-        disabled={pending || !hasCode}
+        disabled={pending || !committed}
         onClick={() => onToggleOverlay(!group.overlay_center)}
         title={
-          hasCode
+          committed
             ? "Draw this list's human-readable code inside its QR. Turn off where the code adds nothing (a clean QR)."
-            : "This list has no code to draw. Give it a prefix first."
+            : isSuggested
+              ? "Save this list's code first, then you can show it in the QR."
+              : "This list has no code to draw. Give it a prefix first."
         }
         className="inline-flex items-center gap-1.5 rounded-md border border-line dark:border-slate-600 px-2 py-1 text-[11px] text-muted dark:text-slate-400 hover:border-accent transition disabled:opacity-40"
       >
         <span className="whitespace-nowrap hidden sm:inline">Code in QR</span>
-        <span className={"inline-block h-3 w-6 rounded-full relative transition-colors " + (hasCode && group.overlay_center ? "bg-cobble-600" : "bg-slate-300 dark:bg-slate-600")}>
-          <span className={"absolute top-[1px] h-2.5 w-2.5 rounded-full bg-white transition-all " + (hasCode && group.overlay_center ? "left-[13px]" : "left-[1px]")} />
+        <span className={"inline-block h-3 w-6 rounded-full relative transition-colors " + (committed && group.overlay_center ? "bg-cobble-600" : "bg-slate-300 dark:bg-slate-600")}>
+          <span className={"absolute top-[1px] h-2.5 w-2.5 rounded-full bg-white transition-all " + (committed && group.overlay_center ? "left-[13px]" : "left-[1px]")} />
         </span>
       </button>
 
@@ -241,24 +264,32 @@ function GroupControls({
           <input
             value={val}
             onChange={(e) => setVal(e.target.value)}
-            placeholder={hasCode ? undefined : "none"}
+            placeholder={committed || isSuggested ? undefined : "none"}
             title={
-              norm
-                ? `Codes here read ${norm}1, ${norm}2, … Change it any time before the first print.`
-                : hasCode
-                  ? "Clear this and Save to remove the code for this list (frees the letter for another list)."
-                  : "This list has no code. Type a prefix to give it one."
+              isSuggested
+                ? `Suggested code (not saved). Save to lock in ${norm || group.prefix}1, ${norm || group.prefix}2, …, change it, or clear to skip a code here.`
+                : norm
+                  ? `Codes here read ${norm}1, ${norm}2, … Change it any time before the first print.`
+                  : committed
+                    ? "Clear this and Save to remove the code for this list (frees the letter for another list)."
+                    : "This list has no code. Type a prefix to give it one."
             }
-            className="input !w-16 !py-1 text-sm font-mono text-center"
+            className={"input !w-16 !py-1 text-sm font-mono text-center " + (isSuggested ? "border-dashed text-muted dark:text-slate-400" : "")}
             maxLength={4}
           />
           <button
             className={BTN}
             disabled={!dirty || pending}
             onClick={() => onRename(norm)}
-            title={willClear ? "Remove this list's code and free the letter" : undefined}
+            title={
+              willOptOut
+                ? "Skip a code for this list (frees the letter for another list)"
+                : isSuggested
+                  ? "Save this suggested code so it's locked in"
+                  : undefined
+            }
           >
-            {willClear ? "Remove" : "Save"}
+            {willOptOut ? (isSuggested ? "Skip" : "Remove") : "Save"}
           </button>
         </>
       )}

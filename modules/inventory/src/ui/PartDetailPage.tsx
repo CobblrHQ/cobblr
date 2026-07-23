@@ -5,7 +5,7 @@
 import { useState, type FocusEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, Copy, Library, Minus, Plus, Printer, ShieldCheck, Trash2 } from "lucide-react";
-import { CustomFieldsPanel, EntityActionsBar, EntityThumb, Modal, UnitInput, useConfirm, usePageTitle, useToast, useUnits } from "@cobblr/platform-web";
+import { ContentsPanel, CustomFieldsPanel, EntityActionsBar, EntityThumb, Modal, UnitInput, useConfirm, usePageTitle, useToast, useUnits } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { NewPartDialog } from "./NewPartDialog";
 import { ParentPicker } from "./ParentPicker";
@@ -642,6 +642,19 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
       <div id="units">
         <UnitsPanel partId={p.id} />
       </div>
+
+      {/* Contents — anything physically placed INSIDE this item. Any physical
+          record can be a container (a box, a bag, a kit, a case), so an opaque
+          "box of mugs" tracked as one item can be itemized later: open it and add
+          the individual mugs inside. Same generic panel the machines/assets pages
+          use; the placement primitive gates what can actually go in. */}
+      <ContentsPanel
+        slug={orgSlug}
+        getToken={getToken}
+        container={{ kind: "inventory:part", id: p.id }}
+        title="Contents"
+        scanIntoHref={`/scan/camera?container_kind=${encodeURIComponent("inventory:part")}&container_id=${encodeURIComponent(p.id)}`}
+      />
 
       <div className="flex items-center justify-center gap-4 pt-4">
         <button

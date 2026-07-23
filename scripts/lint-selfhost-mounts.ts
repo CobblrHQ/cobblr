@@ -66,9 +66,18 @@ function readApiService(path: string): ApiService {
     if (section === "volumes") {
       const entry = line.match(/^ {6}-\s*(\S+)\s*$/);
       if (!entry) continue;
-      const parts = entry[1]!.split(":");
-      if (parts.length >= 2) {
-        out.mounts.push({ line: i + 1, target: parts[1]!, raw: entry[1]! });
+      const raw = entry[1]!;
+      // A bind mount is SOURCE:TARGET[:MODE]. SOURCE may hold a compose
+      // interpolation like ${COBBLR_DATA_ROOT:-./data} whose `:-` default
+      // carries a colon — a naive split(":") would tear the path apart. Mask
+      // ${...} to equal-length filler so the split lands on the real
+      // separators, then slice the ORIGINAL for the true target substring.
+      const masked = raw.replace(/\$\{[^}]*\}/g, (m) => "#".repeat(m.length));
+      const segs = masked.split(":");
+      if (segs.length >= 2) {
+        const start = segs[0]!.length + 1;
+        const target = raw.slice(start, start + segs[1]!.length);
+        out.mounts.push({ line: i + 1, target, raw });
       }
     }
   }

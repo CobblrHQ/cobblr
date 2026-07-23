@@ -7,8 +7,10 @@
 #
 # HTTPS is a compose PROFILE: COMPOSE_PROFILES=caddy (default, set in .env)
 # runs the bundled TLS proxy; empty runs bare, for `tailscale serve/funnel`
-# on the host. All data lives in bind mounts under ./data/ — copying that
-# tree is a complete backup; there are deliberately NO named volumes.
+# on the host. All data lives in bind mounts under ${COBBLR_DATA_ROOT:-./data}/ —
+# set COBBLR_DATA_ROOT in .env to relocate every mount at once (e.g. onto a NAS
+# or a data disk); copying that tree is a complete backup. Deliberately NO named
+# volumes.
 
 services:
   db:
@@ -18,7 +20,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-cobblr_meta}
     volumes:
-      - ./data/db:/var/lib/postgresql/data
+      - ${COBBLR_DATA_ROOT:-./data}/db:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cobblr} -d ${POSTGRES_DB:-cobblr_meta}"]
       interval: 5s
@@ -48,8 +50,8 @@ services:
       db:
         condition: service_healthy
     volumes:
-      - ./data/files:/var/cobblr/files
-      - ./data/modules:/var/cobblr/sandboxed-modules
+      - ${COBBLR_DATA_ROOT:-./data}/files:/var/cobblr/files
+      - ${COBBLR_DATA_ROOT:-./data}/modules:/var/cobblr/sandboxed-modules
     restart: unless-stopped
 
   web:
@@ -82,8 +84,8 @@ services:
       CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
     volumes:
       # certs + CA state survive restarts (never re-request on boot)
-      - ./data/caddy:/data
-      - ./data/caddy-config:/config
+      - ${COBBLR_DATA_ROOT:-./data}/caddy:/data
+      - ${COBBLR_DATA_ROOT:-./data}/caddy-config:/config
     depends_on:
       - web
     restart: unless-stopped

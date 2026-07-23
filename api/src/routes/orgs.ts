@@ -93,6 +93,8 @@ orgsRouter.get("/:slug/modules", requireAuth, withTenant, async (req, res, next)
         // Module layer (foundational/stock/marketplace/user) — the empty
         // dashboard suggests only `stock` first-party domains.
         band: m.band,
+        // Release maturity — the UI shows an Experimental/Beta badge.
+        maturity: m.maturity,
         // "multi" → the module can host several named instances (the "+ New
         // thing" funnel offers it). Surfaced from the manifest so the funnel
         // stops hardcoding the set. (Audit 2026-06-26 follow-up.)

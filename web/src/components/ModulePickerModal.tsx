@@ -28,6 +28,31 @@ import { applyNavOrder, readNavOrder, writeNavOrder } from "../lib/nav-order";
 const LAUNCH_FEATURED = new Set(["inventory", "assets", "lists", "purchases", "labels"]);
 const WORKSHOP_PACK = new Set(["digifab", "machines"]);
 
+/** Small badge for a module's release maturity. Renders nothing for stable /
+ *  hidden / absent, an amber "Experimental" or a sky "Beta" chip otherwise.
+ *  (hidden modules never load, so they never reach here — guarded for safety.) */
+function MaturityBadge({ maturity }: { maturity?: OrgModuleListItem["maturity"] }) {
+  if (!maturity || maturity === "stable" || maturity === "hidden") return null;
+  const beta = maturity === "beta";
+  return (
+    <span
+      className={
+        "text-[9px] font-semibold uppercase tracking-wide px-1.5 py-px rounded-full border " +
+        (beta
+          ? "border-sky-300 text-sky-700 dark:border-sky-500/40 dark:text-sky-300"
+          : "border-amber-300 text-amber-700 dark:border-amber-500/40 dark:text-amber-300")
+      }
+      title={
+        beta
+          ? "Beta — usable, but still changing"
+          : "Experimental — rough, narrow, and may change or be removed"
+      }
+    >
+      {beta ? "Beta" : "Experimental"}
+    </span>
+  );
+}
+
 interface Props {
   /** Render in-flow (settings page mode) instead of as an overlay. */
   inline?: boolean;
@@ -510,6 +535,7 @@ function Row({
             {m.displayName}
           </span>
           <span className="text-[10px] font-mono text-faint">v{m.version}</span>
+          <MaturityBadge maturity={m.maturity} />
           {m.dependencies.length > 0 && (
             <span className="text-[10px] font-mono text-faint dark:text-slate-500">
               · needs {m.dependencies.join(", ")}
@@ -589,6 +615,7 @@ function CoreRow({
         {m.displayName}
       </span>
       <span className="text-[10px] font-mono text-faint shrink-0">v{m.version}</span>
+      <MaturityBadge maturity={m.maturity} />
       <span
         className="text-[11px] text-faint dark:text-slate-500 truncate flex-1"
         title={m.description}

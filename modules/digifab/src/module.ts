@@ -9,12 +9,16 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "digifab",
-  version: "0.34.0",
+  version: "0.35.0",
   displayName: "Digital Fabrication",
   description:
     "Send a design file to the software that runs your machine — FDM Monster, OctoPrint, and friends — and track the job to completion. Map a manager's printers to your machines and route files to them. Talks to each manager's REST API; it sends files, it never drives the hardware.",
   icon: "printer",
   band: "stock",
+  // Experimental: the machine-manager drivers are still narrow + moving, so it
+  // carries an Experimental badge and is skipped on public / trial deploys that
+  // set COBBLR_DISABLE_EXPERIMENTAL_MODULES (see the module loader).
+  maturity: "experimental",
   // An operator, not a trackable kind: digifab acts ON machines (sends
   // files to their managers). Keeps it out of the funnel's "track a
   // kind of thing" column — what-to-do-funnel.md option (c).

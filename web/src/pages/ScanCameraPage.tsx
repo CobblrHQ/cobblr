@@ -408,6 +408,25 @@ export function ScanCameraPage() {
     setParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // ?container_kind=&container_id= arms a SPECIFIC container as the active bin —
+  // the "Scan items into this" deep-link from a container's Contents panel. Unlike
+  // scanning a container's QR (gated to physical+unique kinds), an explicit link
+  // arms any container the user chose, including a fungible-kind part used as a
+  // one-off box (a "box of mugs"). Consume-once, like ?sort=1.
+  useEffect(() => {
+    const ck = params.get("container_kind");
+    const ci = params.get("container_id");
+    if (!ck || !ci) return;
+    const cb = { kind: ck, id: ci };
+    setContainerBin(cb);
+    containerBinRef.current = cb;
+    setAreaId(null);
+    const next = new URLSearchParams(params);
+    next.delete("container_kind");
+    next.delete("container_id");
+    setParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const sortModeRef = useRef(sortMode);
   sortModeRef.current = sortMode;
   // Phase 3 experiment: scanning the NEXT item commits the previous directive

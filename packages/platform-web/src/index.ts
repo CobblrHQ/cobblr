@@ -69,6 +69,7 @@ export { CatalogTypeahead, type CatalogTypeaheadHit } from "./CatalogTypeahead";
 export { usePageTitle } from "./usePageTitle";
 export { usePublishChatContext, getChatPageContext, type ChatPageContext } from "./chat-context";
 export { Modal } from "./Modal";
+export { ContentsPanel } from "./ContentsPanel";
 export { ToastProvider, useToast } from "./ToastContext";
 export { ConfirmProvider, useConfirm } from "./ConfirmContext";
 export { UnitInput } from "./UnitInput";

@@ -60,6 +60,17 @@ surface, then stamps `docs_published:`.
 - `docs_published:` is stamped by the flush — never write it by hand. After
   publish, doc corrections go straight to the target file.
 
+## The PUBLIC docs site is tracked separately
+
+`docs_target` and the flush only touch **this repo's** `USER_GUIDE.md`. The public
+Docusaurus site (`CobblrHQ/docs`) has **no automatic wire to the changelog** — a
+feature here does not update a public page on its own. That site reconciles
+against the changelog with its own report (`npm run docs:debt` there, which reads
+`changelog.d/` and routes each user-facing entry to the pages it should update,
+**keyed by `scope:`** — which is why `lint:changelog` now requires a scope on
+every feature). So a good `scope:` on your entry is what keeps the public docs
+from going stale, not just this repo's manual.
+
 ## Voice (enforced by `lint:changelog`)
 
 Entries and their `## docs` bodies are user-facing writing: the one-liner feeds

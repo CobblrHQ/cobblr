@@ -15,12 +15,14 @@ import {
   normalizePrefix,
   prefixTakenByOther,
   groupValueOf,
+  derivePrefix,
   declaredOverlayDefault,
   getOverlayCenter,
   renameCodeGroup,
   setCodeConfig,
   setGroupOverlay,
 } from "../services/codes.js";
+import { labelableKindForModule, type LabelableKind } from "./browse.js";
 
 export const codesRouter = Router({ mergeParams: true });
 
@@ -160,33 +162,83 @@ codesRouter.get(
     const instanceLabel = new Map(
       kinds.filter((k) => k.instance_name).map((k) => [k.instance_name!, k.display_name]),
     );
-    // Effective QR-center per group: the group's own override, else the kind default.
-    const kindOverlay = await getOverlayCenter(db, [...new Set(rows.map((r) => r.entity_kind))]);
-    res.json({
-      groups: rows.map((r) => {
-        const parts = r.group_key.split("|");
-        const groupField = parts[1] ?? "";
-        const groupValue = parts[2] ?? "";
-        const kind_label = kindLabel.get(r.entity_kind) ?? r.entity_kind;
-        // The group's own display name: a value that fell back to the kind (no
-        // instance / field value) uses the kind's name; an instance value
-        // resolves to that instance's name; any other field value (e.g. a
-        // category) shows as the user stored it.
-        const group_label =
-          !groupValue || groupValue === r.entity_kind
-            ? kind_label
-            : groupField === "instance"
-              ? instanceLabel.get(groupValue) ?? groupValue
-              : groupValue;
-        return {
-          ...r,
-          count: Number(r.next_seq) - 1,
-          kind_label,
-          group_label,
-          overlay_center: r.overlay_center ?? kindOverlay.get(r.entity_kind) ?? true,
-        };
-      }),
+    const labelFor = (entity_kind: string, groupField: string, groupValue: string, kind_label: string) =>
+      // The group's own display name: a value that fell back to the kind (no
+      // instance / field value) uses the kind's name; an instance value resolves
+      // to that instance's name; any other field value (e.g. a category) shows as
+      // the user stored it.
+      !groupValue || groupValue === entity_kind
+        ? kind_label
+        : groupField === "instance"
+          ? instanceLabel.get(groupValue) ?? groupValue
+          : groupValue;
+
+    // ── SUGGESTED groups ─────────────────────────────────────────────────────
+    // Every labelable list the workspace has that hasn't minted a code YET, shown
+    // up front with a derived prefix the user can keep, change, or clear before
+    // anything prints — instead of a list only appearing after its first label.
+    // The group_key is built with groupValueOf's exact scheme, so committing a
+    // suggestion (or the first mint) lands on the same row. Only instance-grouped
+    // kinds can be enumerated ahead of data; a kind grouped by a custom field has
+    // emergent groups and keeps the lazy behaviour.
+    const committedKeys = new Set(rows.map((r) => r.group_key));
+    const taken = new Set(rows.map((r) => r.prefix).filter((p): p is string => !!p));
+    const cfg = await db.selectFrom("labels_code_config").select(["entity_kind", "group_field"]).execute();
+    const groupFieldFor = new Map(cfg.map((c) => [c.entity_kind, c.group_field]));
+    const instances = await platform().instances.list(ctx.org.id).catch(() => []);
+    const modulesWithNamed = new Set(instances.filter((i) => !i.is_default).map((i) => i.module_name));
+    const lkCache = new Map<string, LabelableKind | null>();
+    const lkFor = async (m: string) => {
+      if (!lkCache.has(m)) lkCache.set(m, await labelableKindForModule(m, ctx.org.id).catch(() => null));
+      return lkCache.get(m) ?? null;
+    };
+    const suggestions: Array<{ group_key: string; entity_kind: string; prefix: string; group_label: string }> = [];
+    for (const inst of instances) {
+      if (inst.is_default && modulesWithNamed.has(inst.module_name)) continue; // superseded default
+      const lk = await lkFor(inst.module_name);
+      if (!lk) continue; // module owns nothing labelable
+      if ((groupFieldFor.get(lk.kind) ?? "instance") !== "instance") continue; // emergent groups
+      // Build the key exactly as a real mint would (groupValueOf): a default
+      // instance keys on the kind, a named one on its instance_name.
+      const { key } = groupValueOf(lk.kind, "instance", { instance: inst.is_default ? "" : inst.instance_name });
+      if (committedKeys.has(key)) continue;
+      const group_label = inst.is_default ? kindLabel.get(lk.kind) ?? lk.label : instanceLabel.get(inst.instance_name) ?? inst.display_name;
+      const prefix = derivePrefix(group_label, taken);
+      taken.add(prefix);
+      suggestions.push({ group_key: key, entity_kind: lk.kind, prefix, group_label });
+    }
+
+    // Effective QR-center default resolved for committed AND suggested kinds.
+    const allKinds = [...new Set([...rows.map((r) => r.entity_kind), ...suggestions.map((s) => s.entity_kind)])];
+    const kindOverlay = await getOverlayCenter(db, allKinds);
+
+    const committed = rows.map((r) => {
+      const parts = r.group_key.split("|");
+      const kind_label = kindLabel.get(r.entity_kind) ?? r.entity_kind;
+      return {
+        ...r,
+        count: Number(r.next_seq) - 1,
+        kind_label,
+        group_label: labelFor(r.entity_kind, parts[1] ?? "", parts[2] ?? "", kind_label),
+        overlay_center: r.overlay_center ?? kindOverlay.get(r.entity_kind) ?? true,
+        suggested: false,
+      };
     });
+    const suggested = suggestions.map((s) => ({
+      group_key: s.group_key,
+      entity_kind: s.entity_kind,
+      prefix: s.prefix,
+      label: s.group_label,
+      next_seq: 1,
+      frozen: false,
+      overlay_center: kindOverlay.get(s.entity_kind) ?? true,
+      count: 0,
+      kind_label: kindLabel.get(s.entity_kind) ?? s.entity_kind,
+      group_label: s.group_label,
+      suggested: true,
+    }));
+
+    res.json({ groups: [...committed, ...suggested] });
   }),
 );
 
@@ -197,7 +249,9 @@ const SeedBody = z.object({
   entity_kind: z.string().min(1).max(120),
   group_field: z.string().min(1).max(80).default("instance"),
   group_value: z.string().min(1).max(200),
-  prefix: z.string().min(1).max(8),
+  // Empty = opt this list out of a code entirely (a null-prefix row), so a
+  // suggested code can be disabled before it ever prints.
+  prefix: z.string().max(8),
 });
 // AI-REACH: exempt — pre-seed a memorable prefix BEFORE a group's first print.
 // Once codes exist the AI renames via the labels:set-code action; seeding a
@@ -207,12 +261,17 @@ codesRouter.post(
   asyncHandler(async (req, res) => {
     const parsed = SeedBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    let prefix: string;
-    try {
-      prefix = normalizePrefix(parsed.data.prefix);
-    } catch (e) {
-      res.status(400).json({ error: { code: "bad_prefix", message: (e as Error).message } });
-      return;
+    // A blank prefix opts the list out of a code (null-prefix row); otherwise
+    // normalize + collision-check the chosen one.
+    const rawPrefix = parsed.data.prefix.trim();
+    let prefix: string | null = null;
+    if (rawPrefix !== "") {
+      try {
+        prefix = normalizePrefix(rawPrefix);
+      } catch (e) {
+        res.status(400).json({ error: { code: "bad_prefix", message: (e as Error).message } });
+        return;
+      }
     }
     const db = tenantDb(req);
     // Match groupValueOf's key exactly so a later mint lands on this row.
@@ -228,7 +287,7 @@ codesRouter.post(
       res.status(409).json({ error: { code: "frozen", message: "this group already has printed codes" } });
       return;
     }
-    if (await prefixTakenByOther(db, prefix, key)) {
+    if (prefix && (await prefixTakenByOther(db, prefix, key))) {
       res.status(409).json({ error: { code: "prefix_taken", message: `prefix '${prefix}' is already used` } });
       return;
     }

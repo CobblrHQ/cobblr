@@ -955,6 +955,24 @@ const ModuleManifest = z.object({
   // §"Foundational modules — the strict-test band").
   band: z.enum(["foundational", "stock", "marketplace", "user"]).default("user"),
 
+  // Release maturity — distinct from `band` (band = where in the layer model;
+  // maturity = how finished). The UI surfaces it as a badge. The ladder:
+  //   hidden:       merged but off everywhere — never loads. The dark-ship
+  //                 state: land a module's code + migrations on main to keep
+  //                 main releasable, invisible until you promote it up.
+  //   experimental: rough / narrow / may change or vanish; an "Experimental"
+  //                 badge, AND skipped at load when
+  //                 COBBLR_DISABLE_EXPERIMENTAL_MODULES=true (the public /
+  //                 trial default) so a half-baked connector never fronts a
+  //                 public deploy.
+  //   beta:         usable but still moving; a "Beta" badge. Reserved — the
+  //                 ladder in practice is hidden → experimental → stable.
+  //   stable:       ready for general use; no badge.
+  // The same ladder + badge applies to a FEATURE (a LiveControl) via the
+  // capability gate — one vocabulary, two zooms. See
+  // docs/design-decisions/release-channels.md + architecture/module-layers.md.
+  maturity: z.enum(["hidden", "experimental", "beta", "stable"]).default("stable"),
+
   // Capability vs. domain. A *capability* module is ambient plumbing that
   // makes other things work (views, search, scan, ai, recurrence, …) — it
   // has no decision content ("do you want search?") and no behavioural

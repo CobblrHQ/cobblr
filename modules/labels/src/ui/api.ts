@@ -92,6 +92,10 @@ export interface CodeGroup {
   /** Effective "draw the code in the QR center" for THIS group (its own override,
    *  else the kind default). Per-group, so 3d printers can differ from cnc. */
   overlay_center: boolean;
+  /** True for a list that has no committed row yet: the prefix shown is a
+   *  SUGGESTION (derived, not saved). Keep it (it commits on first print), Save it
+   *  to lock it in, change it, or clear it to opt the list out before printing. */
+  suggested?: boolean;
 }
 
 /** One tab in the browser — a labelable, non-empty INSTANCE the workspace
@@ -161,6 +165,10 @@ export class LabelsApi {
   }) => this.request<QueueItem>("POST", "/queue", b);
   updateQueueQty = (id: string, qty: number) =>
     this.request<QueueItem>("PATCH", `/queue/${id}`, { qty });
+  /** Rename a queued label's printed caption — trim a long title to a short name
+   *  that fits the label. */
+  renameQueueItem = (id: string, description: string) =>
+    this.request<QueueItem>("PATCH", `/queue/${id}`, { description });
   removeFromQueue = (id: string) => this.request<void>("DELETE", `/queue/${id}`);
   print = () => this.request<PrintResponse>("POST", "/print", {});
 
@@ -226,8 +234,22 @@ export class LabelsApi {
       "/codes/config",
       { kind, ...patch },
     );
-  /** Every code group with its prefix + count, for the management panel. */
+  /** Every code group with its prefix + count, for the management panel. Includes
+   *  SUGGESTED groups (suggested:true) for labelable lists that have no code yet. */
   listCodeGroups = () => this.request<{ groups: CodeGroup[] }>("GET", "/codes/groups");
+  /** Commit a SUGGESTED group's prefix — create its row before any print, so the
+   *  suggestion is locked in. A blank prefix opts the list out of a code. The
+   *  group_key encodes entity_kind|group_field|group_value, so we split it back
+   *  into the pre-seed body. */
+  seedGroup = (groupKey: string, prefix: string) => {
+    const [entity_kind, group_field = "instance", group_value = ""] = groupKey.split("|");
+    return this.request<{ group_key: string; prefix: string | null }>("POST", "/codes/groups", {
+      entity_kind,
+      group_field,
+      group_value,
+      prefix,
+    });
+  };
   /** Rename a group's prefix. Before anything is printed this rewrites existing
    *  codes; `keepExisting` is the override for a PRINTED group — existing codes
    *  (and their stickers) keep their old code, only new labels use the new prefix. */

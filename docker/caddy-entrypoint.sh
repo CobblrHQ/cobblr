@@ -13,15 +13,44 @@ if [ ! -f "$CONFIG" ]; then
   echo "caddy-entrypoint: using baked variant '$MODE'"
 
   # tsnet: the virtual node's name defaults to the address's first label
-  # (cobblr.tail1234.ts.net -> "cobblr"). TS_AUTHKEY must be set or the node
-  # can't join the tailnet — fail loud here, not as a cryptic tsnet error.
+  # (cobblr.tail1234.ts.net -> "cobblr"). Two ways to join the tailnet:
+  #   * TS_AUTHKEY set   -> headless, non-interactive (mint a reusable key first).
+  #   * TS_AUTHKEY empty  -> INTERACTIVE: tsnet asks Tailscale to authorize this
+  #     node and logs a one-time approval link. No key to mint; click, sign in,
+  #     approve. This is the easier path and now the default when no key is given
+  #     (it used to `exit 1` here). Empty-key never worked before, so this only
+  #     adds a path -- an existing key-based install is unchanged.
   if [ "$MODE" = "tsnet" ]; then
     export COBBLR_TSNET_NAME="${COBBLR_TSNET_NAME:-${COBBLR_SITE_ADDRESS%%.*}}"
     if [ -z "${TS_AUTHKEY:-}" ]; then
-      echo "caddy-entrypoint: COBBLR_TLS_MODE=tsnet needs TS_AUTHKEY (a reusable auth key from the Tailscale admin console)" >&2
-      exit 1
+      # tsnet emits the approval link to THESE logs a moment after Caddy starts
+      # below (a line like "To authenticate, visit: https://..."). Capturing it
+      # to a file would mean wrapping Caddy in a pipe, which breaks its clean
+      # shutdown -- that friendlier surfacing is a separate, backlogged change.
+      # For now, point the user at the exact one command.
+      cat >&2 <<BANNER
+
+============================================================================
+  CONNECT THIS BOX TO YOUR TAILSCALE ACCOUNT
+----------------------------------------------------------------------------
+  No TS_AUTHKEY was set, so Cobblr is asking Tailscale to authorize this box
+  interactively. A one-time approval link appears in the log lines just below
+  (look for "To authenticate, visit"). Open it, sign in, and approve the node
+  named '${COBBLR_TSNET_NAME}'.
+
+  Running detached (docker compose up -d)? Fetch the link any time with:
+      docker compose logs caddy | grep -iE 'to authenticate|login.tailscale'
+
+  Once approved, open:  https://${COBBLR_SITE_ADDRESS}
+
+  Prefer not to wait on a link? Set TS_AUTHKEY in .env instead (a reusable key
+  from the Tailscale admin console) and restart; that path is fully headless.
+============================================================================
+
+BANNER
+    else
+      echo "caddy-entrypoint: tsnet node '$COBBLR_TSNET_NAME' for $COBBLR_SITE_ADDRESS (auth key)"
     fi
-    echo "caddy-entrypoint: tsnet node '$COBBLR_TSNET_NAME' for $COBBLR_SITE_ADDRESS"
   fi
 
   # The ACME variants carry `email {$COBBLR_ACME_EMAIL}` as an OPTIONAL contact

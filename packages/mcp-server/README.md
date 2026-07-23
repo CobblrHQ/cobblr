@@ -60,9 +60,22 @@ Claude Desktop `claude_desktop_config.json` (or Claude Code `.mcp.json`):
 
 ## Tools
 
+Two tool families. The **build** tools (authoring + bundles) are registered
+directly in `src/tools.ts`. The **operate** tools are generated from the shared
+`@cobblr/workspace-tools` registry — one `cobblr_<name>` per entry — so this
+server and the in-app Ask Cobb chat expose the same capabilities by
+construction. That registry (`packages/workspace-tools/src/tools.ts`) is the
+source of truth for the operate list below; add a tool there and both surfaces
+get it.
+
+### Build an app (authoring + bundles)
+
 | Tool | Maps to | Mutates? |
 |---|---|---|
 | `cobblr_list_workspaces` | `GET /orgs` | no |
+| `cobblr_list_templates` | `GET …/core-authoring/templates` | no |
+| `cobblr_match_template` | `POST …/core-authoring/match-template` | no |
+| `cobblr_get_template` | `GET …/core-authoring/templates/:id` | no |
 | `cobblr_authoring_context` | `POST …/core-authoring/context` | no |
 | `cobblr_authoring_compile` | `POST …/core-authoring/compile` | no (creates a draft) |
 | `cobblr_authoring_candidate` | `POST …/core-authoring/drafts/:id/candidate` | no (validates) |
@@ -72,11 +85,13 @@ Claude Desktop `claude_desktop_config.json` (or Claude Code `.mcp.json`):
 | `cobblr_authoring_get_draft` | `GET …/core-authoring/drafts/:id` | no |
 | `cobblr_validate_bundle` | `POST …/bundles/validate` | no |
 | `cobblr_install_bundle` | `POST …/bundles/install` | **yes** |
-| `cobblr_list_record_kinds` | `GET …/entity-kinds` | no |
-| `cobblr_list_records` | `GET …/entities/:kind` | no |
-| `cobblr_get_record` | `GET …/entities/:kind/:id` | no |
-| `cobblr_list_actions` | `GET …/registered-actions` | no |
-| `cobblr_invoke_action` | `POST …/actions/invoke` | **yes** |
+
+### Read and act on any app's data (operate)
+
+Generated from `@cobblr/workspace-tools`, so the set matches the in-app chat:
+
+- **Read** (no mutation): `cobblr_list_record_kinds`, `cobblr_list_records`, `cobblr_get_record`, `cobblr_search_records`, `cobblr_list_related`, `cobblr_list_actions`, `cobblr_get_putaway_plan`, `cobblr_replan_putaway`, `cobblr_list_label_codes`
+- **Write** (permission-checked server-side; the in-app chat routes these same writes through its Confirm gate): `cobblr_create_record`, `cobblr_update_record`, `cobblr_delete_record`, `cobblr_invoke_action`
 
 (Plus the `cobblr_drive_*` browser-driving tools — see `docs/modules/mcp-server.md`.)
 
@@ -85,10 +100,11 @@ Claude Desktop `claude_desktop_config.json` (or Claude Code `.mcp.json`):
 A second loop, alongside authoring — generic over every module + every app the user built:
 
 1. `cobblr_list_record_kinds` → what kinds the workspace holds (`inventory:part`, …)
-2. `cobblr_list_records` / `cobblr_get_record` → read the data
+2. `cobblr_list_records` / `cobblr_search_records` / `cobblr_get_record` → read the data
 3. `cobblr_list_actions kind=<k>` → the verbs that apply + their args
-4. `cobblr_invoke_action` → do it (adjust stock, mark a task done, build one, …);
-   permission-checked server-side.
+4. `cobblr_invoke_action`, or `cobblr_create_record` / `cobblr_update_record` /
+   `cobblr_delete_record` → do it (adjust stock, mark a task done, add or edit a
+   record, …); permission-checked server-side.
 
 ### The build loop the model follows
 

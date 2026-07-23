@@ -26,7 +26,7 @@ export const browseRouter = Router({ mergeParams: true });
 
 const LABELS_ACTION = "labels:print";
 
-interface LabelableKind {
+export interface LabelableKind {
   kind: string;
   label: string;
   icon: string | null;
@@ -34,8 +34,9 @@ interface LabelableKind {
 
 /** The first entity kind of `moduleName` that `labels:print` applies to in this
  *  org (per-org appliesTo overrides included), or null if the module owns no
- *  labelable kind. Cached per request by the caller. */
-async function labelableKindForModule(
+ *  labelable kind. Cached per request by the caller. Shared with the codes route,
+ *  which lists a suggested code for every labelable list up front. */
+export async function labelableKindForModule(
   moduleName: string,
   orgId: string,
 ): Promise<LabelableKind | null> {

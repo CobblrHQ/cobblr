@@ -2,6 +2,26 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-07-23
+
+### Features
+- Common thermal label sizes like 50x30 mm are now built in, and you can pick them (and print two-up) even when no printer is connected to Cobblr, by choosing what you are printing on. Every size picker now groups into Label rolls and Sheets and shows only what fits your printer.
+- Modules now show an Experimental or Beta badge in the module picker while they are still maturing, and public or trial deploys can hide experimental modules entirely so a half-finished connector never fronts a public instance.
+
+### Improvements
+- You can now put things inside an inventory item. Every part's detail has a Contents panel, the same one machines and assets already have, so a container you track as a single part can be itemized in place. Track "box of mugs" as one item today, then open it and add the individual mugs inside when the details start to matter. Nothing converts, and the box keeps its own record and history. It closes the gap where an opaque item could not hold its own contents.
+- Filling a container is now a complete flow. From any item's Contents panel you can add something you already track, type a name to Create and add a brand-new one in a single step, or hit Scan in to open the camera already filing everything you scan straight inside. That last one is how you itemize a bag of parts from an invoice: open the bag, Scan in, scan each one, and they land inside with no separate step to move them.
+- The Label codes panel now shows every list you could label from the start, each with a suggested prefix, instead of a list only appearing after you print its first label. Keep the suggestion, change it, or clear it to skip a code for that list, all before anything prints. Save locks a suggestion in; if you leave it, your first label just adopts it.
+- The Labels preview now shows every sheet your queue will print as a strip of thumbnails, not just the first, so a multi-sheet run looks like what comes out. The sheet and label size pickers also moved to their own row so the toolbar stops wrapping.
+- The browser Print on the labels page is friendlier now. It opens the print dialog right on the page instead of a separate tab, and it no longer clears your queue the moment you hit Print. Like a direct printer, it asks you to confirm the paper looks right first, so cancelling the print dialog keeps every label in the queue. The Browse tab you were on is also remembered across a refresh.
+- You can now click a label's name in the print queue to rename it, so a long title like "2002 Honda Odyssey Minivan EX" can be trimmed to a short name that fits the label and keeps the QR big. The sheet numbers in the multi-sheet preview also moved below each thumbnail so they stop covering the label text.
+- Join a Tailscale hostname by clicking a link, no auth key to mint. Self-hosting Cobblr behind its own tailnet name (`COBBLR_TLS_MODE=tsnet`) used to require pasting a reusable auth key from the Tailscale admin console. Now you can leave `TS_AUTHKEY` empty: on first start the box asks Tailscale to authorize itself, prints a one-time approval link, and you click it and sign in, the same flow you get authorizing any device. Setting a key still works for a fully headless join. Empty-key previously refused to start, so nothing that worked before changes.
+
+### Fixes
+- The Labels preview now draws every sheet at the same real-world scale, so a 2 inch label looks bigger than a 1.5 inch one and a 2 inch label matches a 2 inch cell inside a 4x6 sheet, instead of every sheet being squeezed to the same width.
+- The label preview is readable again: it now scales so a 4 inch wide medium fills the preview, so small labels like 50x30 mm are big enough to read while a 2 inch label still shows bigger than a 1.5 inch one. Renaming a label is also clearer now, with a pencil on the name in the queue.
+- Fixed the Labels page hiding the sheet and label size pickers when no printer was set up, so printing to your normal printer through the browser dialog now lets you choose the sheet and label size again.
+
 ## 2026-07-22
 
 ### Features
