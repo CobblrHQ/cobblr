@@ -2595,13 +2595,32 @@ export const api = {
     if (q.limit) params.set("limit", String(q.limit));
     if (q.cursor) params.set("cursor", q.cursor);
     const qs = params.toString();
-    return request<{ items: ScanInboxItem[]; next_cursor?: string | null; total?: number }>(
-      "GET",
-      `/orgs/${slug}/modules/core-scan/inbox${qs ? "?" + qs : ""}`,
-    );
+    return request<{
+      items: ScanInboxItem[];
+      /** Session labels keyed by scan_batch_id — the inbox group header + the
+       *  receipt's stored original (for View original / Re-parse). */
+      batches?: Record<string, { label: string | null; origin: string | null; source_file_id: string | null; order_ref: string | null }>;
+      next_cursor?: string | null;
+      total?: number;
+    }>("GET", `/orgs/${slug}/modules/core-scan/inbox${qs ? "?" + qs : ""}`);
   },
   getScanItem: (slug: string, id: string) =>
     request<ScanInboxItem>("GET", `/orgs/${slug}/modules/core-scan/inbox/${id}`),
+  /** Re-run the receipt parser on a session's stored original, replacing its
+   *  still-pending lines with a fresh parse. */
+  reparseReceipt: (slug: string, batchId: string) =>
+    request<{ receipt: { item_count: number; vendor: string | null }; items: Array<{ id: string }> }>(
+      "POST",
+      `/orgs/${slug}/modules/core-scan/scan/receipt/reparse`,
+      { batch_id: batchId },
+    ),
+  /** Set/clear a receipt session's order (invoice) number — recomputes its label. */
+  setReceiptOrderRef: (slug: string, batchId: string, orderRef: string | null) =>
+    request<{ id: string; label: string | null; order_ref: string | null }>(
+      "PATCH",
+      `/orgs/${slug}/modules/core-scan/scan/receipt/${batchId}/order-ref`,
+      { order_ref: orderRef },
+    ),
   /** Light in-the-moment edits the camera modal makes — quantity, name. */
   updateScanItem: (
     slug: string,

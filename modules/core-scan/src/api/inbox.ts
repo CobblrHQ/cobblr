@@ -24,8 +24,10 @@ import { sql } from "kysely";
 import { z } from "zod";
 import { platform, planDecodeFill, traitAxisValue, type DecodeFillTarget } from "@cobblr/platform-contract";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
+import { resolveNativeIdentity } from "../native-identity.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { downloadCatalogImage, enrichBarcodeItem, isJunkName } from "../services/enrich.js";
+import { committedImagePath } from "../services/committed-image.js";
 import {
   crossCheckScanPhoto,
   enrichPhotoItem,
@@ -48,6 +50,7 @@ import { lookupBookIsbn } from "../services/book-lookup.js";
 import { resolvePaintColorFromText } from "../services/paint-code.js";
 import { resolvePaintCodeViaWeb } from "../services/paint-code-websearch.js";
 import { parseReceipt } from "../services/receipt.js";
+import { cleanOrderRef, receiptSessionLabel, vendorFromLabel, type ParsedReceipt, type ParseMethod } from "../services/receipt-shared.js";
 import { reportBarcodeCorrection, meaningfullyChanged } from "../services/barcode-corrections.js";
 import { findBinContents, findTracked } from "../services/entity-match.js";
 import { cropRegion, detectSplitItems, rotateImage } from "../services/image-ops.js";
@@ -491,7 +494,79 @@ inboxRouter.post(
 // does — a receipt becomes N parts without retyping. The file is uploaded
 // separately via core-files (like image_file_id), keeping this body small.
 
-const ReceiptBody = z.object({ file_id: z.string().uuid() });
+/** Insert one inbox row per receipt line (source_kind "receipt", shared
+ *  receipt_group_id, attached to the receipt's own batch) and kick off matching —
+ *  the shared body of /scan/receipt and its /reparse. Returns the created rows. */
+async function materializeReceiptLines(opts: {
+  db: ReturnType<typeof tenantDb>;
+  orgId: string;
+  orgSlug: string;
+  userId: string;
+  batchId: string | null;
+  receipt: ParsedReceipt;
+  method: ParseMethod;
+  token: string | null;
+  baseUrl: string;
+}): Promise<Array<{ id: string }>> {
+  const groupId = randomUUID();
+  const baseMeta = {
+    source: "receipt",
+    receipt_group_id: groupId,
+    receipt_vendor: opts.receipt.vendor,
+    receipt_date: opts.receipt.date,
+    receipt_currency: opts.receipt.currency,
+    parse_method: opts.method,
+  };
+  const rows: Array<{ id: string }> = [];
+  for (const line of opts.receipt.items) {
+    const inserted = await opts.db
+      .insertInto("core_scan_inbox_items")
+      .values({
+        source_kind: "receipt",
+        scan_batch_id: opts.batchId,
+        suggested_name: line.description.slice(0, 300),
+        quantity: Math.max(1, Math.round(line.qty || 1)),
+        suggested_metadata: JSON.stringify({
+          ...baseMeta,
+          description: line.description,
+          unit_price: line.unit_price,
+          line_total: line.line_total,
+        }) as never,
+        created_by_user_id: opts.userId,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    rows.push(inserted);
+    void platform().events.emit("core-scan.scan.received", {
+      orgId: opts.orgId,
+      itemId: inserted.id,
+      barcode: null,
+      sourceKind: "receipt",
+    });
+  }
+  // Route each line against the menu, detached — no enrichment to wait for.
+  if (opts.token) {
+    for (const row of rows) {
+      void matchItem({
+        orgId: opts.orgId,
+        userId: opts.userId,
+        orgSlug: opts.orgSlug,
+        token: opts.token,
+        baseUrl: opts.baseUrl,
+        itemId: row.id,
+        force: false,
+      }).catch((err) => console.error("[core-scan] receipt match threw:", (err as Error).message));
+    }
+  }
+  return rows;
+}
+
+const ReceiptBody = z.object({
+  file_id: z.string().uuid(),
+  /** Where the receipt came from — "email" makes the inbox session read
+   *  "Receipt · emailed <when>". Absent → an ordinary in-app upload. */
+  origin: z.enum(["email", "upload"]).optional(),
+});
 
 inboxRouter.post(
   "/scan/receipt",
@@ -513,64 +588,41 @@ inboxRouter.post(
     }
     const { receipt, method } = result;
 
-    // One inbox row per line item, grouped by a shared receipt id so the UI can
-    // show "<vendor> — N items" and triage them together. Vendor/date/currency
-    // ride in metadata; the line price stays on the row for a later order rollup.
-    // parse_method records whether the line came from a deterministic parse
-    // (csv / pdf-table) or the AI fallback (ai-chat / ai-vision).
-    const groupId = randomUUID();
-    const baseMeta = {
-      source: "receipt",
-      receipt_group_id: groupId,
-      receipt_vendor: receipt.vendor,
-      receipt_date: receipt.date,
-      receipt_currency: receipt.currency,
-      parse_method: method,
-    };
+    // A receipt is its OWN inbox session: one batch holds all its lines, so the
+    // header reads "Receipt · <vendor>" (or "Receipt" when the vendor is unknown)
+    // instead of a bare timestamp, and the lines can't time-cluster with unrelated
+    // items. origin="email" makes the inbox add "emailed <when>". (Falls back to a
+    // batch-less group only if the batch insert somehow fails.)
+    const batchLabel = receiptSessionLabel(receipt.vendor, receipt.order_ref);
+    const batch = await db
+      .insertInto("core_scan_batches")
+      .values({
+        created_by_user_id: session.id,
+        label: batchLabel,
+        origin: parsed.data.origin ?? null,
+        // Remember the original so the session can offer "View original" + "Re-parse".
+        source_file_id: parsed.data.file_id,
+        // Vendor + order # as their own fields so the order # is editable later.
+        vendor: receipt.vendor,
+        order_ref: receipt.order_ref,
+      })
+      .returning("id")
+      .executeTakeFirst();
+    const batchId = batch?.id ?? null;
 
-    const rows: Array<{ id: string }> = [];
-    for (const line of receipt.items) {
-      const inserted = await db
-        .insertInto("core_scan_inbox_items")
-        .values({
-          source_kind: "receipt",
-          suggested_name: line.description.slice(0, 300),
-          quantity: Math.max(1, Math.round(line.qty || 1)),
-          suggested_metadata: JSON.stringify({
-            ...baseMeta,
-            description: line.description,
-            unit_price: line.unit_price,
-            line_total: line.line_total,
-          }) as never,
-          created_by_user_id: session.id,
-        })
-        .returningAll()
-        .executeTakeFirstOrThrow();
-      rows.push(inserted);
-      void platform().events.emit("core-scan.scan.received", {
-        orgId: ctx.org.id,
-        itemId: inserted.id,
-        barcode: null,
-        sourceKind: "receipt",
-      });
-    }
-
-    // Route each line against the menu, detached — same as /scan/note. No
-    // enrichment to wait for (we already have name + qty + price).
-    const token = bearer(req);
-    if (token) {
-      const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
-      for (const row of rows) {
-        void matchItem({
-          orgId: ctx.org.id, userId: sessionUser(req)?.id ?? null,
-          orgSlug: ctx.org.slug,
-          token,
-          baseUrl,
-          itemId: row.id,
-          force: false,
-        }).catch((err) => console.error("[core-scan] receipt match threw:", (err as Error).message));
-      }
-    }
+    // One inbox row per line item (shared receipt_group_id, attached to the
+    // batch), then matched against the menu — a receipt becomes N parts.
+    const rows = await materializeReceiptLines({
+      db,
+      orgId: ctx.org.id,
+      orgSlug: ctx.org.slug,
+      userId: session.id,
+      batchId,
+      receipt,
+      method,
+      token: bearer(req),
+      baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
+    });
 
     res.status(201).json({
       receipt: {
@@ -583,6 +635,113 @@ inboxRouter.post(
       },
       items: rows,
     });
+  }),
+);
+
+// ─────────────── POST /scan/receipt/reparse ───────────────
+// Re-run the parser on a receipt session's STORED original and replace its still-
+// PENDING lines with a fresh parse. Confirmed/discarded lines are left alone. For
+// when the first parse read the receipt poorly (or AI was off then) — no re-upload
+// needed, since the source is kept on the batch.
+// AI-REACH: exempt (scan-inbox maintenance — a user re-runs the parser on a scan
+//   session's stored source from the inbox UI; it mutates transient pending
+//   scan-inbox rows, not a domain entity Cobb orchestrates)
+const ReparseBody = z.object({ batch_id: z.string().uuid() });
+
+inboxRouter.post(
+  "/scan/receipt/reparse",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = ReparseBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const session = sessionUser(req);
+
+    const batch = await db
+      .selectFrom("core_scan_batches")
+      .select(["id", "source_file_id"])
+      .where("id", "=", parsed.data.batch_id)
+      .executeTakeFirst();
+    if (!batch?.source_file_id) {
+      res.status(400).json({ error: { code: "no_source", message: "This receipt has no stored original to re-parse." } });
+      return;
+    }
+
+    const result = await parseReceipt(ctx.org.id, batch.source_file_id, session?.id ?? null);
+    if (!result.ok) {
+      res.status(422).json({ error: { code: "receipt_unparsed", message: result.reason } });
+      return;
+    }
+    const { receipt, method } = result;
+
+    // Drop only the still-pending lines of this batch (keep confirmed/discarded
+    // history), refresh the session label from the new vendor, then re-insert.
+    await db
+      .deleteFrom("core_scan_inbox_items")
+      .where("scan_batch_id", "=", batch.id)
+      .where("source_kind", "=", "receipt")
+      .where("status", "in", ["pending", "enriching"])
+      .execute();
+    await db
+      .updateTable("core_scan_batches")
+      .set({ label: receiptSessionLabel(receipt.vendor, receipt.order_ref), vendor: receipt.vendor, order_ref: receipt.order_ref })
+      .where("id", "=", batch.id)
+      .execute();
+
+    const rows = await materializeReceiptLines({
+      db,
+      orgId: ctx.org.id,
+      orgSlug: ctx.org.slug,
+      userId: session.id,
+      batchId: batch.id,
+      receipt,
+      method,
+      token: bearer(req),
+      baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
+    });
+
+    res.json({
+      receipt: { vendor: receipt.vendor, date: receipt.date, currency: receipt.currency, total: receipt.total, item_count: rows.length, method },
+      items: rows,
+    });
+  }),
+);
+
+// ─────────────── PATCH /scan/receipt/:batchId/order-ref ───────────────
+// Set/clear the order (invoice) number on a receipt session, recomputing the
+// header label ("Receipt · <vendor> #<ref>"). Lets the user add one the parser
+// missed, or fix a wrong one. Vendor comes from the batch column (recovered from
+// the label for pre-0015 sessions, then persisted).
+// AI-REACH: exempt (scan-inbox metadata edit from the UI; renames a transient scan
+//   session, not a domain entity Cobb orchestrates)
+const OrderRefBody = z.object({ order_ref: z.string().max(60).nullable() });
+
+inboxRouter.patch(
+  "/scan/receipt/:batchId/order-ref",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = OrderRefBody.safeParse(req.body ?? {});
+    if (!parsed.success) return badBody(res, parsed.error);
+    const db = tenantDb(req);
+    const batch = await db
+      .selectFrom("core_scan_batches")
+      .select(["id", "vendor", "label"])
+      .where("id", "=", req.params.batchId ?? "")
+      .executeTakeFirst();
+    if (!batch) {
+      res.status(404).json({ error: { code: "not_found", message: "receipt session not found" } });
+      return;
+    }
+    const ref = cleanOrderRef(parsed.data.order_ref);
+    const vendor = batch.vendor ?? vendorFromLabel(batch.label);
+    const label = receiptSessionLabel(vendor, ref);
+    await db
+      .updateTable("core_scan_batches")
+      .set({ order_ref: ref, vendor, label })
+      .where("id", "=", batch.id)
+      .execute();
+    res.json({ id: batch.id, label, order_ref: ref });
   }),
 );
 
@@ -783,6 +942,22 @@ inboxRouter.get(
     const items = await query.execute();
     const last = items[items.length - 1];
     const next_cursor = items.length === limit && last ? encodeCursor(last.created_at, last.id) : null;
+
+    // Session labels for the batches on this page — the inbox groups items by
+    // scan_batch_id and shows this as the group header ("Receipt · <vendor>",
+    // "emailed <when>"). Kept as a side map so the item query/pagination is
+    // untouched.
+    const batchIds = [...new Set(items.map((i) => i.scan_batch_id).filter((x): x is string => !!x))];
+    const batches: Record<string, { label: string | null; origin: string | null; source_file_id: string | null; order_ref: string | null }> = {};
+    if (batchIds.length) {
+      for (const b of await db
+        .selectFrom("core_scan_batches")
+        .select(["id", "label", "origin", "source_file_id", "order_ref"])
+        .where("id", "in", batchIds)
+        .execute()) {
+        batches[b.id] = { label: b.label, origin: b.origin, source_file_id: b.source_file_id, order_ref: b.order_ref };
+      }
+    }
     // Total (for the header) only on the first page — it doesn't change per page.
     let total: number | undefined;
     if (!cursor) {
@@ -794,7 +969,7 @@ inboxRouter.get(
       const row = await cq.executeTakeFirst();
       total = Number(row?.n ?? 0);
     }
-    res.json({ items, next_cursor, ...(total !== undefined ? { total } : {}) });
+    res.json({ items, batches, next_cursor, ...(total !== undefined ? { total } : {}) });
   }),
 );
 
@@ -1197,23 +1372,29 @@ inboxRouter.post(
         ([, v]) => v !== "" && v !== null && v !== undefined,
       ),
     );
+    // A decoder-mapped value (a VIN, decoded to candidateFields.serial_number by
+    // applyDecoderFill) must reach the NATIVE serial_number/model column the field
+    // actually reads — not only the metadata blob candidateFields spreads into
+    // below. resolveNativeIdentity falls the native keys back from meta.* to the
+    // candidate value. Without it a decoded VIN landed in metadata.serial_number (a
+    // key the VIN box never reads) and the native column stayed blank (the author,
+    // 2026-07-24). Pure + unit-tested (native-identity.test.ts).
+    const { serial_number: nativeSerial, model: nativeModel } = resolveNativeIdentity(
+      meta as { serial_number?: unknown; model?: unknown },
+      candidateFields,
+    );
     const body: Record<string, unknown> = {
       name: parsed.data.name ?? row.suggested_name ?? "Untitled",
       manufacturer: row.suggested_manufacturer ?? undefined,
-      // A serial/service tag the vision read off the label → the destination
-      // table's NATIVE serial_number field (inventory/assets/machines all
-      // declare it; an unknown target routes it to metadata harmlessly). Native
-      // key like manufacturer; a user-typed value in restExtras still wins below.
-      ...((meta as { serial_number?: string }).serial_number
-        ? { serial_number: (meta as { serial_number?: string }).serial_number }
-        : {}),
-      // A decoded/observed model (an identifier decoder stamps meta.model — a
-      // VIN's model) → the destination's NATIVE model field. Same discipline as
-      // serial_number: assets/machines declare it; a target without it drops the
-      // key harmlessly (a user-typed value in restExtras still wins below).
-      ...((meta as { model?: string }).model
-        ? { model: (meta as { model?: string }).model }
-        : {}),
+      // A serial/service tag (vision-read) OR a decoder-mapped value (a VIN) →
+      // the destination table's NATIVE serial_number field (inventory/assets/
+      // machines all declare it; an unknown target routes it to metadata
+      // harmlessly). Native key like manufacturer; a user-typed value in
+      // restExtras still wins below.
+      ...(nativeSerial ? { serial_number: nativeSerial } : {}),
+      // A decoded model (a VIN's model, from meta.model or the candidate) → the
+      // destination's NATIVE model field. Same discipline as serial_number.
+      ...(nativeModel ? { model: nativeModel } : {}),
       // Carry the SKU + barcode + source into metadata so a future
       // catalog-match step can find this entity.
       metadata: {
@@ -1357,55 +1538,66 @@ inboxRouter.post(
       }
     }
 
-    // Attach the catalog image (if any) as the new entity's
-    // gallery photo via core-files.
-    if (row.catalog_image_file_id) {
+    // Attach photos to the new entity as gallery images (core-files), then pick
+    // the thumbnail. The user's OWN captured shots come first — this row's
+    // image_file_id AND every combined-sibling's (a barcode pic + a plate pic
+    // scanned as SEPARATE rows then combined; the plate lives on the absorbed
+    // sibling, suggested_metadata.combined_into === this row) — then the catalog/
+    // internet image. Confirm used to attach ONLY the catalog image, so a user's
+    // captured photos silently vanished at commit (the author, 2026-07-24).
+    const siblingPhotos = await db
+      .selectFrom("core_scan_inbox_items")
+      .select("image_file_id")
+      .where(sql<string>`suggested_metadata ->> 'combined_into'`, "=", row.id)
+      .where("image_file_id", "is not", null)
+      .execute()
+      .catch(() => [] as { image_file_id: string | null }[]);
+    const userPhotos = [row.image_file_id, ...siblingPhotos.map((s) => s.image_file_id)].filter(
+      (fid): fid is string => !!fid,
+    );
+    const galleryFiles = [...userPhotos, ...(row.catalog_image_file_id ? [row.catalog_image_file_id] : [])];
+    if (galleryFiles.length) {
       try {
-        await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-files/attachments`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            file_id: row.catalog_image_file_id,
-            source_module: target.module,
-            source_type: target.kind,
-            source_id: created.id,
-            role: "gallery",
-          }),
-        });
-        // Optionally also point image_path at the catalog photo — UNLESS the
-        // item's identity is a colour swatch (a valid colour hex on the item,
-        // e.g. a yarn's colourway). A generic internet photo of "a skein" then
-        // suppresses the swatch the user actually wants (the thumbnail prefers a
-        // photo over a colour). Keep the catalog photo in the gallery (attached
-        // above), just don't make it the primary thumbnail. The user's own
-        // uploaded photo still wins — this only skips the auto-catalog stamp.
+        for (const fileId of galleryFiles) {
+          await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-files/attachments`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              file_id: fileId,
+              source_module: target.module,
+              source_type: target.kind,
+              source_id: created.id,
+              role: "gallery",
+            }),
+          });
+        }
+        // Thumbnail: a user's own captured photo wins over the catalog image. With
+        // no user photo, the catalog image is the thumbnail UNLESS the item's
+        // identity is a colour swatch (a valid hex, e.g. a yarn's colourway) — a
+        // generic internet photo would then suppress the swatch the user actually
+        // wants, so keep the catalog photo in the gallery only.
         const committedColor = String(
           ((body.metadata as Record<string, unknown> | undefined)?.color ?? "") as string,
         ).trim();
         const hasColorSwatch = /^#[0-9a-fA-F]{3,8}$/.test(committedColor);
-        // An instance-scoped entity is invisible to the bare module route (its
-        // CRUD filters to the default instance), so the patch must ride the same
-        // instance path the create used.
-        const patchUrl = parsed.data.instance
-          ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/instances/${parsed.data.instance}/items/${created.id}`
-          : `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${createPath}/${created.id}`;
-        if (!hasColorSwatch) {
+        const thumb = userPhotos[0] ?? (hasColorSwatch ? null : (row.catalog_image_file_id ?? null));
+        if (thumb) {
+          // An instance-scoped entity is invisible to the bare module route (its
+          // CRUD filters to the default instance), so the patch rides the same
+          // instance path the create used.
+          const patchUrl = parsed.data.instance
+            ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/instances/${parsed.data.instance}/items/${created.id}`
+            : `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${createPath}/${created.id}`;
           await fetch(patchUrl, {
             method: "PATCH",
-            headers: {
-              Authorization: `Bearer ${token}`,
-              "Content-Type": "application/json",
-            },
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
             body: JSON.stringify({
-              image_path: `/api/v1/orgs/${ctx.org.slug}/modules/core-files/files/${row.catalog_image_file_id}/raw`,
+              image_path: `/api/v1/orgs/${ctx.org.slug}/modules/core-files/files/${thumb}/raw`,
             }),
           });
         }
       } catch (err) {
-        console.error("[core-scan] attach catalog image failed:", (err as Error).message);
+        console.error("[core-scan] attach scan photos failed:", (err as Error).message);
       }
     }
 
@@ -1635,8 +1827,27 @@ inboxRouter.post(
     const currentMeta = (loc.metadata as Record<string, unknown> | null) ?? {};
     const fields: Record<string, unknown> = { metadata: { ...currentMeta, ...identity } };
     if (!loc.description && row.suggested_name) fields.description = row.suggested_name;
-    if (!loc.image_path && row.catalog_image_file_id) {
-      fields.image_path = `/api/v1/orgs/${ctx.org.slug}/modules/core-files/files/${row.catalog_image_file_id}/raw`;
+    if (!loc.image_path) {
+      // Carry the scan's image onto the part. It USED to transfer ONLY a stored
+      // file (catalog_image_file_id) — so an item whose image was still a raw
+      // web URL (not downloaded yet, or committed mid-enrich) lost its image on
+      // commit (the author, 2026-07-24). Now: prefer the stored file; else download the
+      // URL right here (browser headers → beats hotlinking) for a STABLE image;
+      // else fall back to the raw URL so the image is NEVER just dropped.
+      let imgFileId = row.catalog_image_file_id;
+      if (!imgFileId && row.catalog_image_url) {
+        const ok = await downloadCatalogImage({ db, orgId: ctx.org.id, itemId: id }, row.catalog_image_url).catch(() => false);
+        if (ok) {
+          const fresh = await db
+            .selectFrom("core_scan_inbox_items")
+            .select(["catalog_image_file_id"])
+            .where("id", "=", id)
+            .executeTakeFirst();
+          imgFileId = fresh?.catalog_image_file_id ?? null;
+        }
+      }
+      const imagePath = committedImagePath(ctx.org.slug, imgFileId, row.catalog_image_url);
+      if (imagePath) fields.image_path = imagePath;
     }
     await writer.update(ctx.org.id, locId, fields);
 
@@ -1900,7 +2111,61 @@ inboxRouter.post(
       // vision call and matchItem re-acquires its own, so neither touches a reaped
       // pool.
       if (!row.image_file_id) {
-        res.status(400).json({ error: { code: "no_input", message: "item has neither a barcode nor a photo" } });
+        // No barcode, no photo — but maybe a NAME (a receipt/note line). Re-run the
+        // NAME-based lookup (web image search + re-match) instead of refusing, so a
+        // receipt line isn't stuck imageless AND un-rerunnable (the author, 2026-07-24: the
+        // ↺ button is enabled for name-only items, but the server still rejected).
+        // Detached like the photo path; the run ends by stamping finalized_at.
+        if (!row.suggested_name) {
+          res.status(400).json({ error: { code: "no_input", message: "item has no barcode, photo, or name to look up" } });
+          return;
+        }
+        const nameQuery = [row.suggested_name, rerun?.hint].filter(Boolean).join(" ").trim();
+        const nameBrand = row.suggested_manufacturer;
+        await db
+          .updateTable("core_scan_inbox_items")
+          .set({
+            suggested_metadata: sql`(coalesce(suggested_metadata, '{}'::jsonb) - 'matched_at' - 'finalized_at' - 'match_failed')
+              || ${JSON.stringify({
+                pipeline_started_at: new Date().toISOString(),
+                pipeline_kind: "rerun",
+                ...(rerun?.hint ? { user_hint: rerun.hint } : {}),
+              })}::jsonb` as never,
+            updated_at: new Date(),
+          })
+          .where("id", "=", id)
+          .execute();
+        const uidName = sessionUser(req).id;
+        const baseUrlName = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+        void (async () => {
+          try {
+            await refreshCatalogImageByName(ctx.org.id, id, nameQuery, nameBrand);
+          } catch (e) {
+            console.error("[core-scan] name re-run image threw:", (e as Error).message);
+          }
+          try {
+            await matchItem({ orgId: ctx.org.id, userId: uidName, orgSlug: ctx.org.slug, token, baseUrl: baseUrlName, itemId: id, force: true });
+          } catch (e) {
+            console.error("[core-scan] name re-run match threw:", (e as Error).message);
+          }
+          // End the run so the card's spinner stops (stamp the completion signal +
+          // finalized_at, which isRerunInFlight checks) on a freshly-acquired pool.
+          try {
+            const wdb = (await platform().tenants.getDb(ctx.org.id)) as unknown as typeof db;
+            await wdb
+              .updateTable("core_scan_inbox_items")
+              .set({
+                ai_suggested_at: new Date(),
+                suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({ finalized_at: new Date().toISOString() })}::jsonb` as never,
+                updated_at: new Date(),
+              })
+              .where("id", "=", id)
+              .execute();
+          } catch {
+            /* non-fatal bookkeeping */
+          }
+        })().catch((err) => console.error("[core-scan] name rerun work failed:", (err as Error)?.message ?? err));
+        res.json(row);
         return;
       }
       const imageFileId = row.image_file_id;
@@ -2294,19 +2559,35 @@ inboxRouter.post(
       return;
     }
 
-    // A picked/pasted URL: stash the original, set + download it.
+    // A picked/pasted URL: DOWNLOAD FIRST, then commit. Lots of web-search image
+    // URLs can't actually be used (hotlink-block/403, 404, a non-image, too big),
+    // and downloadCatalogImage returns false for those. If we committed the url +
+    // lock first (as this used to) and ignored that false, the item kept a broken
+    // catalog_image_url and the client still got a 200 → a "Catalog photo updated"
+    // toast that was a lie (the author, 2026-07-24). So only mutate the row on a real
+    // download; otherwise leave the previous image and 422 so the UI says so.
     const url = (parsed.data as { url: string }).url;
+    const stored = await downloadCatalogImage({ db, orgId: ctx.org.id, itemId: row.id }, url);
+    if (!stored) {
+      res.status(422).json({
+        error: {
+          code: "image_unusable",
+          message: "That image couldn't be used (the site may block hotlinking, or it isn't a usable image). Try another.",
+        },
+      });
+      return;
+    }
+    // Download stored catalog_image_file_id already. Record the source url + lock
+    // the pick + stash the original (for Revert).
     await db
       .updateTable("core_scan_inbox_items")
       .set({
         catalog_image_url: url,
-        // The user chose this image → lock it so a later re-identify won't clobber it.
         suggested_metadata: mergeMeta(catalogLockSet) as never,
         updated_at: new Date(),
       })
       .where("id", "=", row.id)
       .execute();
-    await downloadCatalogImage({ db, orgId: ctx.org.id, itemId: row.id }, url);
     // Picking a better catalog photo for a BARCODE item is the truth — feed it
     // back to the shared Barcode Intelligence DB as an image_url correction, so
     // the next scan of this UPC (any workspace) gets YOUR clean image, beating

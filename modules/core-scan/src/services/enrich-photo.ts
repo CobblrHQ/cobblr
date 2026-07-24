@@ -47,11 +47,26 @@ export async function refreshCatalogImageByName(
   const extra = [author, mediaWord].filter(Boolean).join(" ") || null;
   const q = imageQuery(name, brand, extra);
   const pool = await searchImages(q, 24).catch(() => []);
-  const best = rankImageOptions(pool, brand, q)[0]?.url;
-  if (!best) return;
+  // Try to DOWNLOAD the top candidates into core-files, falling through until one
+  // stores. Storing just the top RAW url (as this did) left many tiles empty: a
+  // product-page image often hotlink-blocks or 404s in the browser, and there was
+  // no fallback to the next result (the author, 2026-07-24). downloadCatalogImage handles
+  // SSRF-guard + retries + size limits and stamps catalog_image_file_id. Dynamic
+  // import because enrich.ts imports THIS module — a static import would cycle.
+  const candidates = rankImageOptions(pool, brand, q)
+    .map((r) => r.url)
+    .filter((u): u is string => !!u)
+    .slice(0, 4);
+  if (!candidates.length) return;
+  const { downloadCatalogImage } = await import("./enrich.js");
+  for (const url of candidates) {
+    if (await downloadCatalogImage({ db, orgId, itemId }, url)) return; // stored → done
+  }
+  // None downloaded — keep the best raw url as a last resort (renders if it isn't
+  // hotlink-blocked), never regressing to no image at all.
   await db
     .updateTable("core_scan_inbox_items")
-    .set({ catalog_image_url: best, catalog_image_file_id: null, updated_at: new Date() })
+    .set({ catalog_image_url: candidates[0], catalog_image_file_id: null, updated_at: new Date() })
     .where("id", "=", itemId)
     .execute();
 }

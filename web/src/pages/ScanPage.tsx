@@ -16,7 +16,6 @@
 // nothing enriches it yet — a dead control is worse than none.
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -34,6 +33,7 @@ import {
   MapPin,
   MonitorSmartphone,
   RefreshCw,
+  Pencil,
   RotateCcw,
   ScanLine,
   Search,
@@ -56,6 +56,9 @@ import { OrganizePlanSheet, SortingPlanView } from "../components/OrganizePlanSh
 import { OrganizeWalkSheet } from "../components/OrganizeWalkSheet";
 import { LiveSortSheet } from "../components/LiveSortSheet";
 import { ImageSearchPicker } from "../components/ImageSearchPicker";
+import { ImageLightbox, type LightboxItem } from "../components/ImageLightbox";
+import { ReceiptSourceViewer } from "../components/ReceiptSourceViewer";
+import { canRerunLookup } from "../lib/scanRerun";
 import { TrackedMatchBanner } from "../components/TrackedMatchBanner";
 import { BinAdjustModal } from "../components/BinAdjustModal";
 import { PairPhoneButton } from "../components/PairPhoneButton";
@@ -68,6 +71,7 @@ import {
   type AiStatus,
   ApiError,
   api,
+  type ImageOption,
   type OrganizeStoredPlan,
   type ScanInboxItem,
   type ScanCandidate,
@@ -76,7 +80,7 @@ import {
 } from "../lib/api";
 import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
 import { matchParentType, readField } from "../lib/parent-type-match";
-import { isRerunInFlight } from "./scan-status";
+import { isRerunInFlight, itemEnriching } from "./scan-status";
 import { baseKind, confirmBodyFor, isReadyToFile } from "./scanFileAll";
 import { usePublishChatContext } from "../lib/chat-context";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
@@ -168,54 +172,6 @@ function isUnidentified(name: string | null | undefined): boolean {
   return alnum.length < 3 || /(.)\1{3,}/i.test(alnum);
 }
 
-// Is this row still being worked by the AI pipeline — i.e. NOT yet settled?
-// This is the single source of truth behind both the per-card "finishing…" chip
-// and the session-header "N finishing / all set" signal, so they never diverge.
-// Three not-done phases (see InboxCard for the display split):
-//   • serverMatching — identified but the matchmaker hasn't produced routing yet
-//   • rerunning      — a re-run / replay in flight (real work: tens of seconds)
-//   • awaitingFresh  — brand-new, nothing has come back at all
-// Terminal states (couldn't-identify, rate-limit-gave-up) count as DONE here —
-// they need the user, not more AI. Barcode/photo alike route through matchItem,
-// which stamps matched_at/finalized_at, so this predicate covers every source.
-//
-// The post-match TAIL (matched_at set, finalized_at not — location + cover art
-// landing) is deliberately NOT a phase here. Measured over every stamped item in
-// prod: mean 0.19s, p95 0.72s, max 0.88s, none over 2s. A phase that lasts a
-// fifth of a second cannot honestly be on screen "for a while" — the only way to
-// SEE it is a poll landing inside that sub-second window, which then pins the
-// stale snapshot for a whole interval and reads as "still thinking" long after
-// the work finished (the author, 2026-07-16). It was never a state worth showing. Busy
-// now ends when the AI ends, which is what the spinner already said — so the
-// header and the spinner can no longer tell two different stories.
-function itemEnriching(it: ScanInboxItem, now = Date.now()): boolean {
-  if (it.status !== "pending") return false;
-  const meta = (it.suggested_metadata ?? {}) as {
-    pipeline_started_at?: string;
-    matched_at?: string;
-    finalized_at?: string;
-    rate_limited?: boolean;
-  };
-  const cands = (it.suggested_candidates ?? []).length;
-  const aiAgeMs = it.ai_suggested_at ? now - new Date(it.ai_suggested_at).getTime() : Infinity;
-  // Enrichment finished but produced no name/candidates → it needs the USER
-  // (manual naming), not more AI; that's DONE-for-the-pipeline, not "finishing".
-  const needsName = !it.suggested_name && !!it.ai_suggested_at && cands === 0;
-  // A RE-RUN in flight. The server stamps pipeline_started_at, clears the terminal
-  // markers, and stamps finalized_at only when the whole chain is done. Nothing
-  // else here catches it: every other branch demands `cands === 0`, and a re-run
-  // still holds the PREVIOUS run's candidates. So the spinner stopped the instant
-  // the new name landed while the matchmaker was still running — the card looked
-  // finished and then mutated, which reads as a bug rather than as progress.
-  const serverMatching =
-    !!(it.suggested_name || it.ai_suggested_at) &&
-    cands === 0 &&
-    !meta.matched_at &&
-    !needsName &&
-    aiAgeMs < 180_000;
-  const awaitingFresh = !it.suggested_name && !it.ai_suggested_at && cands === 0 && !meta.rate_limited;
-  return isRerunInFlight(it, now) || serverMatching || awaitingFresh;
-}
 /** How a combine offer was found — drives the banner's wording + which item it
  *  keeps. "name" = same brand + product words; "barcode" = an OCR-read barcode
  *  that's a near-match to one you scanned earlier. */
@@ -781,6 +737,13 @@ export function ScanPage() {
     }
     return out;
   }, [list.data]);
+  // Session labels by batch id, merged across pages — drives the group header
+  // ("Receipt · <vendor>", "emailed <when>") instead of a bare timestamp.
+  const batchMeta = useMemo(() => {
+    const m: Record<string, { label: string | null; origin: string | null; source_file_id: string | null; order_ref: string | null }> = {};
+    for (const p of list.data?.pages ?? []) Object.assign(m, p.batches ?? {});
+    return m;
+  }, [list.data]);
   const totalPending = list.data?.pages[0]?.total ?? items.length;
   // Pull the next page when the bottom sentinel scrolls into view.
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
@@ -1026,6 +989,10 @@ export function ScanPage() {
       latest: number; // max(created_at) — the session's real scan time
       lastTouched: number; // max(updated_at) — later edits (un-confirm, fixes)
       area: string | null;
+      label: string | null; // session title (e.g. "Receipt · Home Depot")
+      origin: string | null; // "email" → the header says "emailed <when>"
+      sourceFileId: string | null; // the receipt's stored original (View / Re-parse)
+      orderRef: string | null; // editable order/invoice number
     };
     const groups: Group[] = [];
     const byBatch = new Map<string, Group>();
@@ -1042,13 +1009,14 @@ export function ScanPage() {
         const existing = byBatch.get(it.scan_batch_id);
         if (existing) g = existing;
         else {
-          g = { key: it.scan_batch_id, isBatch: true, batchId: it.scan_batch_id, items: [], latest: 0, lastTouched: 0, area: null };
+          const meta = batchMeta[it.scan_batch_id];
+          g = { key: it.scan_batch_id, isBatch: true, batchId: it.scan_batch_id, items: [], latest: 0, lastTouched: 0, area: null, label: meta?.label ?? null, origin: meta?.origin ?? null, sourceFileId: meta?.source_file_id ?? null, orderRef: meta?.order_ref ?? null };
           byBatch.set(it.scan_batch_id, g);
           groups.push(g);
         }
       } else {
         if (!pseudo || !Number.isFinite(t) || pseudoLastT - t > SESSION_GAP_MS) {
-          pseudo = { key: `gap:${it.id}`, isBatch: false, batchId: null, items: [], latest: 0, lastTouched: 0, area: null };
+          pseudo = { key: `gap:${it.id}`, isBatch: false, batchId: null, items: [], latest: 0, lastTouched: 0, area: null, label: null, origin: null, sourceFileId: null, orderRef: null };
           groups.push(pseudo);
         }
         if (Number.isFinite(t)) pseudoLastT = t;
@@ -1061,7 +1029,7 @@ export function ScanPage() {
       if (!g.area && it.scan_area) g.area = it.scan_area;
     }
     return groups.sort((a, b) => b.latest - a.latest);
-  }, [batchId, visibleItems]);
+  }, [batchId, visibleItems, batchMeta]);
   // Every group (session or day) carries a meaningful time header now, so show
   // them whenever we're grouping at all.
   const showSessionHeaders = !!sessionGroups && sessionGroups.length > 0;
@@ -1207,6 +1175,27 @@ export function ScanPage() {
     .sort((a, b) => String(b.resolved_at ?? "").localeCompare(String(a.resolved_at ?? "")))
     .slice(0, 20);
   const [showCommitted, setShowCommitted] = useState(false);
+  // Recently-committed grouped by the SESSION they were committed from, so a whole
+  // receipt/scan session committed at once (e.g. "Confirm all") can be sent back in
+  // ONE click — not 20 (the author, 2026-07-24). Loose items (no batch) stay as singletons.
+  const committedGroups = useMemo(() => {
+    const byBatch = new Map<string, ScanInboxItem[]>();
+    const groups: Array<{ key: string; batchId: string | null; items: ScanInboxItem[] }> = [];
+    for (const it of recentlyCommitted) {
+      if (it.scan_batch_id) {
+        const arr = byBatch.get(it.scan_batch_id);
+        if (arr) arr.push(it);
+        else {
+          const g = { key: it.scan_batch_id, batchId: it.scan_batch_id, items: [it] };
+          byBatch.set(it.scan_batch_id, g.items);
+          groups.push(g);
+        }
+      } else {
+        groups.push({ key: it.id, batchId: null, items: [it] });
+      }
+    }
+    return groups;
+  }, [recentlyCommitted]);
   const unconfirm = useMutation({
     mutationFn: (id: string) => api.unconfirmScanItem(activeSlug, id),
     onSuccess: (r) => {
@@ -1222,6 +1211,34 @@ export function ScanPage() {
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
+  // Send a whole session's committed items back to the inbox at once.
+  const [sendingBackAll, setSendingBackAll] = useState<string | null>(null);
+  const sendBackSession = async (key: string, ids: string[]) => {
+    setSendingBackAll(key);
+    try {
+      await Promise.allSettled(ids.map((id) => api.unconfirmScanItem(activeSlug, id)));
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] }),
+        qc.invalidateQueries({ queryKey: ["scan-inbox-resolved", activeSlug] }),
+        qc.invalidateQueries({ queryKey: ["scan-stats", activeSlug] }),
+      ]);
+      toast.success(`Sent ${ids.length} item${ids.length === 1 ? "" : "s"} back to the inbox.`);
+    } finally {
+      setSendingBackAll(null);
+    }
+  };
+  // Revert a set of just-committed items (used by the "Undo" on a receipt/PO
+  // commit): send each back to the inbox and drop the created part.
+  const undoCommittedIds = async (ids: string[]) => {
+    if (ids.length === 0) return;
+    await Promise.allSettled(ids.map((id) => api.unconfirmScanItem(activeSlug, id)));
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] }),
+      qc.invalidateQueries({ queryKey: ["scan-inbox-resolved", activeSlug] }),
+      qc.invalidateQueries({ queryKey: ["scan-stats", activeSlug] }),
+    ]);
+    toast.success(`Sent ${ids.length} item${ids.length === 1 ? "" : "s"} back to the inbox.`);
+  };
 
   // Hardware barcode scanners (USB/Bluetooth HID, 1D or 2D) "type" the code +
   // Enter. Capture that burst page-wide so a physical scan intakes a barcode
@@ -1407,16 +1424,64 @@ export function ScanPage() {
   const confirmGroup = useMutation({
     mutationFn: (groupId: string) => api.confirmReceiptGroup(activeSlug, groupId),
     onSuccess: (r) => {
-      const n = r.confirmed.filter((c) => !c.error).length;
-      toast.success(
+      const ids = r.confirmed.filter((c) => !c.error && c.itemId).map((c) => c.itemId);
+      const n = ids.length;
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      void qc.invalidateQueries({ queryKey: ["scan-inbox-resolved", activeSlug] });
+      // Undo inline — a mis-tapped "Confirm as purchase order" sends every line
+      // back to the inbox (and removes the created part), unsorted, in one tap.
+      toast.action(
         r.order_id
           ? `Purchase order created — ${n} item${n === 1 ? "" : "s"}${r.vendor ? ` from ${r.vendor}` : ""}`
           : `Confirmed ${n} item${n === 1 ? "" : "s"} (enable Purchases to group them into an order)`,
+        {
+          actionLabel: "Undo",
+          duration: 8000,
+          onAction: () => void undoCommittedIds(ids),
+        },
       );
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
+  // Multiple pending receipts → one collapsible banner instead of a stack of
+  // "Confirm as purchase order" rows (the author, 2026-07-24). "Confirm all" turns each
+  // receipt into its OWN purchase order (they're separate orders), with one
+  // summary toast instead of N.
+  const [poExpanded, setPoExpanded] = useState(false);
+  const [confirmingAll, setConfirmingAll] = useState(false);
+  const confirmAllReceipts = async () => {
+    setConfirmingAll(true);
+    let orders = 0;
+    const committedIds: string[] = [];
+    try {
+      for (const g of receiptGroups) {
+        try {
+          const r = await api.confirmReceiptGroup(activeSlug, g.groupId);
+          if (r.order_id) orders += 1;
+          for (const c of r.confirmed) if (!c.error && c.itemId) committedIds.push(c.itemId);
+        } catch {
+          /* skip a failed group; the others still go */
+        }
+      }
+      await qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      await qc.invalidateQueries({ queryKey: ["scan-inbox-resolved", activeSlug] });
+      const itemsN = committedIds.length;
+      // Undo the WHOLE bulk commit — one tap sends every line from every receipt
+      // back to the inbox, unsorted, if "Confirm all" was premature (the author, 2026-07-24).
+      toast.action(
+        orders
+          ? `Created ${orders} purchase order${orders === 1 ? "" : "s"} (${itemsN} item${itemsN === 1 ? "" : "s"})`
+          : `Confirmed ${itemsN} item${itemsN === 1 ? "" : "s"} (enable Purchases to group them into orders)`,
+        {
+          actionLabel: "Undo all",
+          duration: 10000,
+          onAction: () => void undoCommittedIds(committedIds),
+        },
+      );
+    } finally {
+      setConfirmingAll(false);
+    }
+  };
 
   const headerBtn =
     "inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-700 text-sm text-content hover:bg-subtle dark:hover:bg-slate-800/70 px-2.5 py-1.5 transition shrink-0";
@@ -1607,6 +1672,36 @@ export function ScanPage() {
           }
         },
       });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+
+  // Receipt session: view the original + re-parse it (re-run the parser on the
+  // stored source, replacing the still-pending lines).
+  const [viewSource, setViewSource] = useState<string | null>(null);
+  const [reparseBatch, setReparseBatch] = useState<string | null>(null);
+  const reparse = useMutation({
+    mutationFn: (batchId: string) => {
+      setReparseBatch(batchId);
+      return api.reparseReceipt(activeSlug, batchId);
+    },
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      toast.success(`Re-parsed: ${r.receipt.item_count} item${r.receipt.item_count === 1 ? "" : "s"}`);
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+    onSettled: () => setReparseBatch(null),
+  });
+  // Edit the order/invoice # on a receipt session (add one the parser missed, or
+  // fix a wrong one). The label recomputes server-side.
+  const [editingPo, setEditingPo] = useState<string | null>(null);
+  const [poInput, setPoInput] = useState("");
+  const setOrderRef = useMutation({
+    mutationFn: (v: { batchId: string; orderRef: string | null }) =>
+      api.setReceiptOrderRef(activeSlug, v.batchId, v.orderRef),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      setEditingPo(null);
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -2040,27 +2135,74 @@ export function ScanPage() {
         </div>
       )}
 
-      {purchasesEnabled &&
-        receiptGroups.map((g) => (
-          <div
-            key={g.groupId}
-            className="flex items-center gap-2 rounded-md border border-cobble-400 dark:border-cobble-600 bg-cobble-50 dark:bg-cobble-900/30 px-3 py-2 text-sm"
+      {purchasesEnabled && receiptGroups.length === 1 && receiptGroups[0] && (
+        <div className="flex items-center gap-2 rounded-md border border-cobble-400 dark:border-cobble-600 bg-cobble-50 dark:bg-cobble-900/30 px-3 py-2 text-sm">
+          <FileText size={15} className="text-accent shrink-0" />
+          <span className="text-content dark:text-mortar-100">
+            Receipt{receiptGroups[0].vendor ? ` from ${receiptGroups[0].vendor}` : ""} — {receiptGroups[0].count} item
+            {receiptGroups[0].count === 1 ? "" : "s"} pending
+          </span>
+          <div className="flex-1" />
+          <button
+            type="button"
+            disabled={confirmGroup.isPending}
+            onClick={() => confirmGroup.mutate(receiptGroups[0]!.groupId)}
+            className="inline-flex items-center rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2.5 py-1 text-sm transition disabled:opacity-50 shrink-0"
           >
+            {confirmGroup.isPending ? "Creating…" : "Confirm as purchase order"}
+          </button>
+        </div>
+      )}
+
+      {/* 2+ pending receipts → ONE collapsible banner, not a stack. "Confirm all"
+          makes each its own purchase order; expand to confirm one at a time. */}
+      {purchasesEnabled && receiptGroups.length > 1 && (
+        <div className="rounded-md border border-cobble-400 dark:border-cobble-600 bg-cobble-50 dark:bg-cobble-900/30 text-sm">
+          <div className="flex items-center gap-2 px-3 py-2">
             <FileText size={15} className="text-accent shrink-0" />
-            <span className="text-content dark:text-mortar-100">
-              Receipt{g.vendor ? ` from ${g.vendor}` : ""} — {g.count} item{g.count === 1 ? "" : "s"} pending
-            </span>
+            <button
+              type="button"
+              onClick={() => setPoExpanded((v) => !v)}
+              className="flex items-center gap-1.5 min-w-0 text-left text-content dark:text-mortar-100"
+            >
+              <ChevronDown size={13} className={`shrink-0 transition ${poExpanded ? "" : "-rotate-90"}`} />
+              <span>
+                {receiptGroups.length} receipts to confirm as purchase orders
+                <span className="text-faint"> · {receiptGroups.reduce((n, g) => n + g.count, 0)} items</span>
+              </span>
+            </button>
             <div className="flex-1" />
             <button
               type="button"
-              disabled={confirmGroup.isPending}
-              onClick={() => confirmGroup.mutate(g.groupId)}
+              disabled={confirmingAll || confirmGroup.isPending}
+              onClick={() => void confirmAllReceipts()}
               className="inline-flex items-center rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2.5 py-1 text-sm transition disabled:opacity-50 shrink-0"
             >
-              {confirmGroup.isPending ? "Creating…" : "Confirm as purchase order"}
+              {confirmingAll ? "Creating…" : "Confirm all"}
             </button>
           </div>
-        ))}
+          {poExpanded && (
+            <div className="border-t border-cobble-300/70 dark:border-cobble-700/70 divide-y divide-cobble-300/50 dark:divide-cobble-700/50">
+              {receiptGroups.map((g) => (
+                <div key={g.groupId} className="flex items-center gap-2 px-3 py-1.5 pl-8">
+                  <span className="text-content dark:text-mortar-100 truncate">
+                    Receipt{g.vendor ? ` from ${g.vendor}` : ""} — {g.count} item{g.count === 1 ? "" : "s"}
+                  </span>
+                  <div className="flex-1" />
+                  <button
+                    type="button"
+                    disabled={confirmGroup.isPending || confirmingAll}
+                    onClick={() => confirmGroup.mutate(g.groupId)}
+                    className="text-accent hover:underline text-xs disabled:opacity-50 shrink-0"
+                  >
+                    Confirm
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* The put-away front door on the page itself: a captured backlog is
           Guided Organize's native situation — ONE verb, preview-first
@@ -2459,9 +2601,15 @@ export function ScanPage() {
                     className="flex flex-1 min-w-0 items-center gap-2 text-left"
                   >
                     <ChevronDown size={13} className={`shrink-0 transition ${collapsed ? "-rotate-90" : ""}`} />
-                    <span className="font-medium text-content dark:text-mortar-100">
-                      Session · {formatSessionTime(g.latest)}
+                    <span className="font-medium text-content dark:text-mortar-100 truncate">
+                      {g.label ?? `Session · ${formatSessionTime(g.latest)}`}
                     </span>
+                    {g.label && (
+                      <span className="shrink-0 text-faint">
+                        {g.origin === "email" ? "emailed " : ""}
+                        {formatSessionTime(g.latest)}
+                      </span>
+                    )}
                     {isActiveSession && (
                       <span
                         className="inline-flex items-center gap-1 shrink-0 text-emerald-600/80 dark:text-emerald-400/80"
@@ -2523,6 +2671,76 @@ export function ScanPage() {
                     >
                       <CheckCircle size={11} /> filed
                     </span>
+                  )}
+                  {g.sourceFileId && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setViewSource(g.sourceFileId);
+                      }}
+                      title="View the original receipt this was parsed from"
+                      className="shrink-0 inline-flex items-center gap-1 text-faint hover:text-accent"
+                    >
+                      <FileText size={11} /> Original
+                    </button>
+                  )}
+                  {/* Edit the order/invoice #. Gated on a RECEIPT session (by label,
+                      so pre-source-storage sessions get it too), not sourceFileId. */}
+                  {g.isBatch && g.batchId && g.label?.startsWith("Receipt") &&
+                    (editingPo === g.batchId ? (
+                      <span onClick={(e) => e.stopPropagation()} className="shrink-0 inline-flex items-center gap-1">
+                        <span className="text-faint">#</span>
+                        <input
+                          autoFocus
+                          value={poInput}
+                          onChange={(e) => setPoInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") setOrderRef.mutate({ batchId: g.batchId!, orderRef: poInput.trim() || null });
+                            else if (e.key === "Escape") setEditingPo(null);
+                          }}
+                          placeholder="order #"
+                          className="w-24 bg-transparent border-b border-cobble-400 dark:border-cobble-600 text-content dark:text-mortar-100 text-sm px-0.5 focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          disabled={setOrderRef.isPending}
+                          onClick={() => setOrderRef.mutate({ batchId: g.batchId!, orderRef: poInput.trim() || null })}
+                          className="text-accent hover:underline text-xs disabled:opacity-50"
+                        >
+                          save
+                        </button>
+                        <button type="button" onClick={() => setEditingPo(null)} className="text-faint hover:text-content text-xs">
+                          ✕
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPoInput(g.orderRef ?? "");
+                          setEditingPo(g.batchId!);
+                        }}
+                        title={g.orderRef ? "Edit the order / invoice number" : "Add an order / invoice number"}
+                        className="shrink-0 inline-flex items-center gap-1 text-faint hover:text-accent"
+                      >
+                        <Pencil size={11} /> {g.orderRef ? "PO#" : "+ PO#"}
+                      </button>
+                    ))}
+                  {g.sourceFileId && g.batchId && (
+                    <button
+                      type="button"
+                      disabled={reparse.isPending && reparseBatch === g.batchId}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        reparse.mutate(g.batchId!);
+                      }}
+                      title="Re-run the parser on the original receipt (replaces the pending lines)"
+                      className="shrink-0 inline-flex items-center gap-1 text-faint hover:text-accent disabled:opacity-50"
+                    >
+                      <RotateCcw size={11} className={reparse.isPending && reparseBatch === g.batchId ? "animate-spin" : ""} /> Re-parse
+                    </button>
                   )}
                   {g.isBatch && g.batchId && (
                     <Link
@@ -2682,30 +2900,68 @@ export function ScanPage() {
                 Committed the wrong thing? Send it back: the scan returns to the inbox to redo, and
                 the entry it created is removed (an entry it merely updated is left alone).
               </p>
-              {recentlyCommitted.map((d) => (
-                <div
-                  key={d.id}
-                  className="flex items-center gap-2 rounded-md border border-line dark:border-slate-700 bg-surface/50 dark:bg-slate-800/30 px-3 py-2"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm text-muted truncate">
-                      {d.suggested_name ?? d.barcode_text ?? "Unknown scan"}
+              {committedGroups.map((grp) =>
+                grp.batchId && grp.items.length > 1 ? (
+                  <div key={grp.key} className="rounded-md border border-line dark:border-slate-700 bg-surface/50 dark:bg-slate-800/30">
+                    <div className="flex items-center gap-2 px-3 py-1.5 border-b border-line/70 dark:border-slate-700/70">
+                      <span className="text-xs text-muted">Session — {grp.items.length} items committed together</span>
+                      <div className="flex-1" />
+                      <button
+                        type="button"
+                        onClick={() => void sendBackSession(grp.key, grp.items.map((i) => i.id))}
+                        disabled={sendingBackAll === grp.key}
+                        className="shrink-0 inline-flex items-center gap-1 text-xs rounded border border-line px-2 py-1 text-muted hover:text-content disabled:opacity-50"
+                      >
+                        <RotateCcw size={12} className={sendingBackAll === grp.key ? "animate-spin" : ""} /> Send all {grp.items.length} back
+                      </button>
                     </div>
-                    <div className="text-[10px] font-mono text-faint truncate">
-                      {d.target_kind ? `→ ${d.target_kind}` : ""}
-                      {d.barcode_text ? ` · ${d.barcode_text}` : ""}
-                    </div>
+                    {grp.items.map((d) => (
+                      <div key={d.id} className="flex items-center gap-2 px-3 py-1.5 pl-6">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm text-muted truncate">{d.suggested_name ?? d.barcode_text ?? "Unknown scan"}</div>
+                          <div className="text-[10px] font-mono text-faint truncate">
+                            {d.target_kind ? `→ ${d.target_kind}` : ""}
+                            {d.barcode_text ? ` · ${d.barcode_text}` : ""}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => unconfirm.mutate(d.id)}
+                          disabled={unconfirm.isPending || sendingBackAll === grp.key}
+                          className="shrink-0 text-xs text-faint hover:text-content disabled:opacity-50"
+                        >
+                          Send back
+                        </button>
+                      </div>
+                    ))}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => unconfirm.mutate(d.id)}
-                    disabled={unconfirm.isPending}
-                    className="shrink-0 inline-flex items-center gap-1 text-xs rounded border border-line px-2 py-1 text-muted hover:text-content disabled:opacity-50"
-                  >
-                    <RotateCcw size={12} /> Send back
-                  </button>
-                </div>
-              ))}
+                ) : (
+                  grp.items[0] && (
+                    <div
+                      key={grp.key}
+                      className="flex items-center gap-2 rounded-md border border-line dark:border-slate-700 bg-surface/50 dark:bg-slate-800/30 px-3 py-2"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm text-muted truncate">
+                          {grp.items[0].suggested_name ?? grp.items[0].barcode_text ?? "Unknown scan"}
+                        </div>
+                        <div className="text-[10px] font-mono text-faint truncate">
+                          {grp.items[0].target_kind ? `→ ${grp.items[0].target_kind}` : ""}
+                          {grp.items[0].barcode_text ? ` · ${grp.items[0].barcode_text}` : ""}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => unconfirm.mutate(grp.items[0]!.id)}
+                        disabled={unconfirm.isPending}
+                        className="shrink-0 inline-flex items-center gap-1 text-xs rounded border border-line px-2 py-1 text-muted hover:text-content disabled:opacity-50"
+                      >
+                        <RotateCcw size={12} /> Send back
+                      </button>
+                    </div>
+                  )
+                ),
+              )}
             </div>
           )}
         </div>
@@ -2727,6 +2983,9 @@ export function ScanPage() {
       )}
       {upcOpen && <UpcModal onClose={() => setUpcOpen(false)} />}
       {urlsOpen && <UrlsModal onClose={() => setUrlsOpen(false)} />}
+      {viewSource && (
+        <ReceiptSourceViewer slug={activeSlug} fileId={viewSource} onClose={() => setViewSource(null)} />
+      )}
     </div>
   );
 }
@@ -3299,10 +3558,44 @@ function InboxCard({
   )?.photo_check_pending || !!(item.suggested_metadata as { photo_mismatch?: unknown } | null)?.photo_mismatch;
   const thumb = photoUnverified ? (yoursImg ?? catalogImg) : (catalogImg ?? yoursImg);
 
-  // Image viewer: click to zoom (lightbox), revert the catalog image to the
-  // original (preserved server-side on the first override), or use your own scan
-  // photo as the catalog image.
-  const [zoom, setZoom] = useState<string | null>(null);
+  // Image viewer: click to zoom (the shared ImageLightbox — same viewer as the
+  // web-photo "view full size"), revert the catalog image to the original
+  // (preserved server-side on the first override), or use your own scan photo as
+  // the catalog image. ONE filmstrip regardless of which image you click: the
+  // item's own shots (catalog + yours, already-resolved blob urls above) followed
+  // by the web photo candidates — so opening from the catalog shows the same
+  // options as opening from a web tile (the author, 2026-07-24). The candidates are
+  // fetched by the PhotoOptions strip below and reported up via onItems.
+  const [zoomIdx, setZoomIdx] = useState<number | null>(null);
+  const [photoCandidates, setPhotoCandidates] = useState<ImageOption[]>([]);
+  const zoomItems: LightboxItem[] = [
+    ...(catalogImg ? [{ key: "catalog", caption: "Catalog image", url: catalogImg }] : []),
+    ...(yoursImg && yoursImg !== catalogImg ? [{ key: "yours", caption: "Your photo", url: yoursImg }] : []),
+    ...photoCandidates.map((o) => ({
+      key: o.url,
+      caption: `${o.title} · ${o.source}`,
+      href: o.source,
+      url: o.url,
+      thumbUrl: o.thumb,
+    })),
+  ];
+  const openZoom = (key: "catalog" | "yours") => {
+    const i = zoomItems.findIndex((z) => z.key === key);
+    if (i >= 0) setZoomIdx(i);
+  };
+  const openZoomUrl = (url: string) => {
+    const i = zoomItems.findIndex((z) => z.url === url);
+    if (i >= 0) setZoomIdx(i);
+  };
+  // "Use this image" on a web candidate in the viewer → set it as the catalog.
+  const pickCatalogImage = useMutation({
+    mutationFn: (url: string) => api.setScanCatalogImage(activeSlug, item.id, url),
+    onSuccess: () => {
+      toast.success("Catalog photo updated");
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
   const hasOrigCatalog = !!(item.suggested_metadata as { orig_catalog?: unknown } | null)?.orig_catalog;
   const catalogAction = useMutation({
     mutationFn: (action: "revert" | "use_own_photo") => api.scanCatalogAction(activeSlug, item.id, action),
@@ -3953,7 +4246,11 @@ function InboxCard({
           <button
             type="button"
             onClick={() => rerun.mutate(undefined)}
-            disabled={aiWorking || (!item.barcode_text && !item.image_file_id)}
+            // Re-run needs SOMETHING to look up again — a barcode, a photo, OR a
+            // name (a receipt/note line has only a name; re-running re-does the
+            // web/text lookup and can finally fetch a product image). See
+            // canRerunLookup — gating on barcode||image alone greyed out receipts.
+            disabled={aiWorking || !canRerunLookup(item)}
             className="text-faint hover:text-accent p-1.5 disabled:opacity-30"
             title={replayNoAi ? "Replaying (no AI)…" : aiWorking ? "AI is working…" : "Rerun lookup"}
           >
@@ -4002,7 +4299,7 @@ function InboxCard({
                 <figure className="flex-1 min-w-0">
                   <button
                     type="button"
-                    onClick={() => setZoom(catalogImg)}
+                    onClick={() => openZoom("catalog")}
                     title="View full size"
                     className="block w-full rounded-md overflow-hidden border border-line dark:border-slate-700 bg-white dark:bg-slate-800 aspect-square flex items-center justify-center cursor-zoom-in"
                   >
@@ -4017,7 +4314,7 @@ function InboxCard({
                 <figure className="flex-1 min-w-0">
                   <button
                     type="button"
-                    onClick={() => setZoom(yoursImg)}
+                    onClick={() => openZoom("yours")}
                     title="View full size"
                     className="block w-full rounded-md overflow-hidden border border-line dark:border-slate-700 bg-black aspect-square flex items-center justify-center cursor-zoom-in"
                   >
@@ -4141,24 +4438,26 @@ function InboxCard({
               onClose={() => setCaptureSheet(null)}
             />
           </div>
-          {zoom &&
-            createPortal(
-              <div
-                className="fixed inset-0 z-[100] bg-black/85 flex flex-col items-center justify-center gap-3 p-4 cursor-zoom-out"
-                onClick={() => setZoom(null)}
-                role="dialog"
-                aria-label="Image viewer"
-              >
-                <img src={zoom} alt="" className="max-w-full min-h-0 flex-1 object-contain rounded shadow-2xl" />
-                {/* Swap the photo without leaving the viewer. stopPropagation
-                    so a thumbnail click doesn't also dismiss the lightbox. */}
-                <div className="w-full max-w-2xl shrink-0" onClick={(e) => e.stopPropagation()}>
-                  <PhotoOptions item={item} onPick={(u) => setZoom(u)} inViewer />
-                </div>
-              </div>,
-              document.body,
-            )}
-          <PhotoOptions item={item} />
+          {zoomIdx !== null && zoomItems[zoomIdx] && (
+            <ImageLightbox
+              items={zoomItems}
+              index={zoomIdx}
+              onIndex={setZoomIdx}
+              onClose={() => setZoomIdx(null)}
+              action={{
+                // Only a web candidate can be adopted as the catalog image; the
+                // item's own catalog/your-photo are view-only here (the card's
+                // own buttons handle those).
+                label: (it) => (it.key === "catalog" || it.key === "yours" ? null : "Use this image"),
+                busy: pickCatalogImage.isPending,
+                onAction: (it) => {
+                  if (it.url) pickCatalogImage.mutate(it.url);
+                  setZoomIdx(null);
+                },
+              }}
+            />
+          )}
+          <PhotoOptions item={item} onView={openZoomUrl} onItems={setPhotoCandidates} />
           </div>
           <div className="space-y-3 min-w-0">
 
@@ -4495,15 +4794,17 @@ function ExtraPhotoThumb({
 // image (SSRF-guarded server-side).
 function PhotoOptions({
   item,
-  onPick,
-  inViewer = false,
+  onView,
+  onItems,
 }: {
   item: ScanInboxItem;
-  onPick?: (url: string) => void;
-  /** Rendered INSIDE the item lightbox: a tile click swaps the enlarged image
-   *  (via onPreview) instead of opening the picker's own full-screen viewer,
-   *  which would stack two viewers on top of each other. */
-  inViewer?: boolean;
+  /** A tile's ⤢ opens the CALLER's full-screen viewer at this candidate (the
+   *  scan card's ONE lightbox: catalog + yours + these candidates), instead of
+   *  the picker's own viewer. */
+  onView?: (url: string) => void;
+  /** Report the fetched candidates up so the caller can fold them into its own
+   *  filmstrip. */
+  onItems?: (items: ImageOption[]) => void;
 }) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
@@ -4522,13 +4823,17 @@ function PhotoOptions({
   });
   const pick = useMutation({
     mutationFn: (url: string) => api.setScanCatalogImage(activeSlug, item.id, url),
-    onSuccess: (_data, url) => {
+    onSuccess: () => {
       toast.success("Catalog photo updated");
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-      onPick?.(url); // swap the enlarged image in the lightbox to the picked one
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
+  // Report the fetched candidates up so the card's ONE lightbox can fold them
+  // into its filmstrip (open from the catalog image → see the web options too).
+  useEffect(() => {
+    onItems?.(options.data?.items ?? []);
+  }, [options.data, onItems]);
   // The search box, the grid, broken-thumb handling and the full-size preview
   // all live in the shared ImageSearchPicker now — this used to carry its own
   // copy of the box, which is exactly how the surfaces drifted apart. What
@@ -4541,7 +4846,7 @@ function PhotoOptions({
       busy={pick.isPending}
       onSearch={(t) => setApplied(t)}
       onPick={(url) => pick.mutate(url)}
-      onPreview={inViewer ? onPick : undefined}
+      onPreview={onView}
       label={applied ? `results for "${applied}"` : "other photo options"}
     />
   );

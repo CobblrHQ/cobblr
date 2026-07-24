@@ -28,7 +28,12 @@ import type {
 } from "@cobblr/platform-contract";
 import { TRAIT_PRESETS, traitAxisValue } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
+import { INSTANCE_ITEM_DETAIL, resolveDetailPath } from "./instance-detail.js";
 import { getEntry } from "../modules/registry.js";
+
+// Re-export so callers reaching detail-path logic through `entities` keep working
+// while the ONE decision lives in the DB-free instance-detail module.
+export { resolveDetailPath } from "./instance-detail.js";
 import { applyComputedFields } from "./computed-fields.js";
 import { applyRelationFields } from "./relation-fields.js";
 import { normalizeEntitySort } from "./sort.js";
@@ -809,22 +814,66 @@ export async function listKinds(): Promise<EntityKindRecord[]> {
   return rows.map(rowToKindRecord);
 }
 
-/** Per-item detail path under `/instances/<name>/…` for the modules whose
- *  instance UI actually mounts a per-item detail route (verified against each
- *  module's <Routes> + web/src/App.tsx `/instances/:name/*` → InstancePage):
- *    - projects  → `/instances/<name>/<id>`        (ProjectsUI `<Route path=":id">`)
- *    - inventory → `/instances/<name>/items/<id>`  (InventoryUI `<Route path="items/:id">`,
- *                  the same target inventory's resolver already sets as detailUrl)
- *  Each template still carries `{id}` for the caller (useDetailRoute / SearchBar)
- *  to substitute. Modules NOT listed here (machines, assets, purchases) have NO
- *  per-item instance detail route today — their instance UI opens items in a
- *  modal or a name-only list — so their synthesized kind keeps pointing at the
- *  instance LIST page (no `{id}`), unchanged. Add a module here only once its
- *  instance UI mounts a real per-item route. */
-const INSTANCE_ITEM_DETAIL: Record<string, (instanceName: string) => string> = {
-  projects: (n) => `/instances/${n}/{id}`,
-  inventory: (n) => `/instances/${n}/items/{id}`,
-};
+/** Find the NAMED (non-default) instance an id lives in, resolving the entity
+ *  there. A BASE-kind lookup can't see an item in a named instance — the base
+ *  resolver is scoped to the default instance (SELECT ... WHERE instance =
+ *  '<module>') — so a Vehicle (assets instance) or a 3D Printer (machines
+ *  instance) comes back null from it. This probes the module's named instances
+ *  (`lookup("<instance>:item", id)`) until one resolves. The instance resolvers
+ *  key on (id, instance) with NO user filter, so it works unauthenticated.
+ *  Bounded, usually 1-3 named instances. The ONE place the probe lives, shared by
+ *  detailPathForEntity + titleForEntity so they can't drift. */
+async function probeNamedInstance(
+  orgId: string,
+  module: string,
+  id: string,
+): Promise<{ instance: string; entity: ResolvedEntity } | null> {
+  const insts = await meta
+    .selectFrom("workspace_module_instances")
+    .select(["instance_name"])
+    .where("org_id", "=", orgId)
+    .where("module_name", "=", module)
+    .where("is_default", "=", false)
+    .execute();
+  for (const inst of insts) {
+    const hit = await lookup(orgId, `${inst.instance_name}:item`, id).catch(() => null);
+    if (hit) return { instance: inst.instance_name, entity: hit };
+  }
+  return null;
+}
+
+/** The detail path a QR/scan/search hit for an entity should land on, INSTANCE
+ *  AWARE. Resolves the entity (for its detailUrl + named-collection `instance`),
+ *  confirms the instance is a named (non-default) one, then applies
+ *  resolveDetailPath. A printed label for a Vehicle (an assets instance) lands on
+ *  the Vehicle, not the base Assets page that can't load it. */
+export async function detailPathForEntity(orgId: string, kind: string, id: string): Promise<string | undefined> {
+  const entity = (await lookup(orgId, kind, id).catch(() => null)) as
+    | { detailUrl?: unknown; instance?: unknown }
+    | null;
+  const detailUrl = entity && typeof entity.detailUrl === "string" && entity.detailUrl ? entity.detailUrl : null;
+  const module = kind.split(":")[0] ?? "";
+  let namedInstance = entity && typeof entity.instance === "string" && entity.instance ? entity.instance : null;
+  if (!namedInstance && INSTANCE_ITEM_DETAIL[module]) {
+    const probed = await probeNamedInstance(orgId, module, id);
+    if (probed) namedInstance = probed.instance;
+  }
+  const rec = await getKind(kind);
+  return resolveDetailPath({ kind, id, instance: namedInstance, detailUrl, baseDetailRoute: rec?.detail_route ?? null });
+}
+
+/** The entity's current system TITLE, INSTANCE AWARE — the stock name a label
+ *  caption defaulted to at enqueue, re-resolved live so a trimmed caption can be
+ *  reverted to it. Same probe as detailPathForEntity: try the given kind, and if
+ *  that base lookup can't see the item (it lives in a named instance) probe the
+ *  module's named instances. null when the entity no longer resolves. */
+export async function titleForEntity(orgId: string, kind: string, id: string): Promise<string | null> {
+  const direct = await lookup(orgId, kind, id).catch(() => null);
+  if (direct && direct.title) return direct.title;
+  const module = kind.split(":")[0] ?? "";
+  const probed = await probeNamedInstance(orgId, module, id);
+  return probed && probed.entity.title ? probed.entity.title : null;
+}
 
 /** The kinds a WORKSPACE sees: every manifest kind, plus one synthesized
  *  `<instance_name>:item` kind per named (non-default) instance in this org.

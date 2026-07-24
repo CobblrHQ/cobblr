@@ -108,7 +108,12 @@ export function buildAuthEmailSender(): AuthEmailSender | null {
   return async (msg: AuthEmailMessage) => {
     const perSend = checkEmailConfig({ ...valid, to: msg.to }, true);
     if (!perSend.ok) throw new Error(perSend.reason);
-    await sendEmailVia(perSend.config, msg.subject, msg.text, msg.html);
+    await sendEmailVia(perSend.config, msg.subject, msg.text, msg.html, {
+      from: msg.from,
+      replyTo: msg.replyTo,
+      inReplyTo: msg.inReplyTo,
+      references: msg.references,
+    });
   };
 }
 

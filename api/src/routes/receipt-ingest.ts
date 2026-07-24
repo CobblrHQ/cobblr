@@ -21,6 +21,10 @@ import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { signSession } from "../auth/jwt.js";
 import { inboundSecretOk } from "../platform/inbound-secret.js";
+import { notifyAccount } from "../platform/notifications.js";
+import { absoluteAppUrl } from "../platform/public-url.js";
+import { planBodyCapture } from "../platform/receipt-body.js";
+import { bestReceiptBody, receiptReplyHeaders } from "../platform/inbound-email-body.js";
 import {
   extractReceiptToken,
   mintReceiptAddress,
@@ -51,6 +55,9 @@ const IngestEmail = z.object({
   to: z.union([z.string().max(400), z.array(z.string().max(400)).max(20)]).optional(),
   /** Sender — used only for the single-workspace bare-address fallback. */
   from_email: z.string().email().max(255).optional(),
+  /** Plain-text body — a forwarded receipt EMAIL (no file attached) is captured
+   *  from this so it never silently vanishes. */
+  text: z.string().max(20_000).optional(),
   attachments: z.array(Attachment).max(20).default([]),
 });
 
@@ -62,6 +69,14 @@ export interface ReceiptEmailInput {
   to?: string | string[];
   /** Sender — used only for the single-workspace bare-address fallback. */
   from_email?: string;
+  /** Plain-text body — captured as a receipt/note when no file is attached. */
+  text?: string;
+  /** Html body — read when the plain part is thin (store receipts are often html). */
+  html?: string;
+  /** Original Subject — quoted back in the reply + used for "Re: …". */
+  subject?: string;
+  /** Original Message-ID — reserved for threading the reply (Phase 2). */
+  message_id?: string;
   attachments: Array<{ filename?: string; content_type?: string; content_base64: string }>;
 }
 
@@ -73,8 +88,11 @@ export interface ReceiptEmailInput {
  *  stray email doesn't bounce. */
 export async function ingestReceiptEmail(
   input: ReceiptEmailInput,
-): Promise<{ status: number; body: Record<string, unknown> }> {
-  const { token, to, from_email, attachments } = input;
+): Promise<{ status: number; body: Record<string, unknown>; orgId?: string; userId?: string }> {
+  const { token, to, from_email, text, html, subject, message_id, attachments } = input;
+  // A forwarded store receipt often has its content in html (or a full,
+  // unstripped plain body). Pick whichever carries more text for body capture.
+  const bodyText = bestReceiptBody(text, html);
 
   // Resolve the target (user, workspace).
   let userId: string | null = null;
@@ -119,14 +137,28 @@ export async function ingestReceiptEmail(
     .executeTakeFirst();
   if (!membership) return { status: 200, body: { ignored: true, reason: "not_a_member" } };
 
-  const ingestable = attachments.filter(isIngestable);
-  if (ingestable.length === 0) return { status: 200, body: { ignored: true, reason: "no_receipt_attachment" } };
-
-  // Write each attachment to core-files (server-side seam) + reuse core-scan's
-  // receipt route via an internal call under a freshly minted session token.
+  const slug = membership.slug;
+  const scanUrl = absoluteAppUrl(`/w/${slug}/scan`);
   const sessionToken = await signSession(userId);
+  const post = (path: string, payload: Record<string, unknown>) =>
+    fetch(`${INTERNAL_API}/api/v1/orgs/${slug}${path}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${sessionToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
   const results: Array<Record<string, unknown>> = [];
-  for (const a of ingestable) {
+  // parsedCount = real receipt LINE ITEMS (attachments + body parse). noteCreated
+  // = the never-vanish single-note fallback fired (the receipt couldn't be parsed
+  // into lines — e.g. no AI). Kept apart so the reply doesn't call a whole receipt
+  // saved as one note "1 item".
+  let parsedCount = 0;
+  let noteCreated = false;
+
+  // 1. File attachments → core-files → core-scan's receipt parser (one row per
+  //    line item). Written via the server-side seam (system capture, not a user
+  //    upload).
+  for (const a of attachments.filter(isIngestable)) {
     try {
       const bytes = Buffer.from(a.content_base64, "base64");
       const written = await platform().files.write(orgId, new Uint8Array(bytes), {
@@ -137,31 +169,120 @@ export async function ingestReceiptEmail(
         results.push({ filename: a.filename ?? null, error: "store_failed" });
         continue;
       }
-      const r = await fetch(`${INTERNAL_API}/api/v1/orgs/${membership.slug}/modules/core-scan/scan/receipt`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${sessionToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ file_id: written.fileId }),
-      });
+      const r = await post(`/modules/core-scan/scan/receipt`, { file_id: written.fileId, origin: "email" });
       const body = (await r.json().catch(() => ({}))) as {
         receipt?: { item_count?: number; method?: string; vendor?: string | null };
         error?: { code?: string; message?: string };
       };
+      if (r.ok) parsedCount += body.receipt?.item_count ?? 0;
       results.push(
         r.ok
-          ? {
-              filename: a.filename ?? null,
-              ok: true,
-              item_count: body.receipt?.item_count ?? 0,
-              method: body.receipt?.method ?? null,
-              vendor: body.receipt?.vendor ?? null,
-            }
+          ? { filename: a.filename ?? null, ok: true, item_count: body.receipt?.item_count ?? 0, method: body.receipt?.method ?? null, vendor: body.receipt?.vendor ?? null }
           : { filename: a.filename ?? null, error: body.error?.code ?? `http_${r.status}`, message: body.error?.message },
       );
     } catch (err) {
       results.push({ filename: a.filename ?? null, error: "exception", message: (err as Error).message });
     }
   }
-  return { status: 200, body: { workspace: membership.slug, results } };
+
+  // 2. NEVER-VANISH body fallback: a forwarded receipt EMAIL (no file attached)
+  //    carries its line items in the body. When the attachments produced nothing,
+  //    run the body through the RECEIPT PARSER (its AI tier extracts one row per
+  //    line item from any receipt-shaped text — a forwarded order confirmation
+  //    included). Only if the parser finds nothing do we capture a single NOTE, so
+  //    the email always lands SOMETHING and a real multi-line receipt is never
+  //    flattened into one useless item.
+  const body = bodyText.trim();
+  if (parsedCount === 0 && planBodyCapture(body) === "receipt") {
+    try {
+      const written = await platform().files.write(orgId, new TextEncoder().encode(body), {
+        filename: "emailed-receipt.txt",
+        mimeType: "text/plain",
+      });
+      if (written) {
+        const r = await post(`/modules/core-scan/scan/receipt`, { file_id: written.fileId, origin: "email" });
+        const rb = (await r.json().catch(() => ({}))) as { receipt?: { item_count?: number } };
+        if (r.ok) {
+          parsedCount += rb.receipt?.item_count ?? 0;
+          results.push({ source: "body", ok: true, item_count: rb.receipt?.item_count ?? 0 });
+        }
+      }
+    } catch (err) {
+      results.push({ source: "body", error: "exception", message: (err as Error).message });
+    }
+    if (parsedCount === 0) {
+      // The parser found nothing usable (e.g. a real receipt but no AI to split it)
+      // — capture the whole body as one note item so it never silently disappears.
+      const r = await post(`/modules/core-scan/scan/note`, { text: body.slice(0, 2000) });
+      if (r.ok) {
+        noteCreated = true;
+        results.push({ source: "body-note", ok: true });
+      }
+    }
+  }
+
+  // 3. Reply to the sender about THEIR email — BRIEF, and honest about what
+  //    actually happened. It comes FROM the `receipts+<token>@` address they
+  //    emailed and threads under their original (Reply-To = that address, so a
+  //    reply-with-attachment loops back in). Three cases, so a whole receipt saved
+  //    as ONE note is never miscounted as "1 item":
+  //      parsedCount > 0 → the accurate line-item count
+  //      noteCreated     → "we've got your receipt" (no count; the UI flags that
+  //                        it wasn't split — the email stays short)
+  //      neither         → "couldn't find a receipt"
+  //    Goes to the resolved account (in-app + their registered email), never the
+  //    raw sender, so no backscatter.
+  const subj = (subject ?? "").trim();
+  const reSubject = (base: string) => (subj ? `Re: ${subj}` : base);
+  const replyHeaders = receiptReplyHeaders(mintReceiptAddress(userId, orgId), message_id);
+
+  if (parsedCount > 0) {
+    await notifyAccount({
+      userId,
+      representativeOrgId: orgId,
+      notificationType: "core-scan.email.imported",
+      message: `Imported ${parsedCount} item${parsedCount === 1 ? "" : "s"} from your emailed receipt${subj ? ` "${subj}"` : ""} into your scan inbox.`,
+      link_url: scanUrl,
+      email: {
+        subject: reSubject("Your emailed receipt is in your scan inbox"),
+        text: `We captured ${parsedCount} item${parsedCount === 1 ? "" : "s"} from your receipt. Review them in your scan inbox:\n${scanUrl}`,
+        ...replyHeaders,
+      },
+    }).catch(() => {});
+  } else if (noteCreated) {
+    await notifyAccount({
+      userId,
+      representativeOrgId: orgId,
+      notificationType: "core-scan.email.received",
+      message: "We've got your emailed receipt — see it in your scan inbox.",
+      link_url: scanUrl,
+      email: {
+        subject: reSubject("We've got your receipt"),
+        text: `We've got your receipt — see it in your scan inbox:\n${scanUrl}`,
+        ...replyHeaders,
+      },
+    }).catch(() => {});
+  } else {
+    await notifyAccount({
+      userId,
+      representativeOrgId: orgId,
+      notificationType: "core-scan.email.no_receipt",
+      message: "We got your email but couldn't find a receipt to import. Reply with the receipt as a PDF or photo, or forward the store's receipt email.",
+      link_url: scanUrl,
+      email: {
+        subject: reSubject("We couldn't find a receipt in your email"),
+        text: `We got your email but couldn't find a receipt to import. Reply with the receipt as a PDF or photo, or forward the store's receipt email:\n${scanUrl}`,
+        ...replyHeaders,
+      },
+    }).catch(() => {});
+  }
+
+  return {
+    status: 200,
+    body: { workspace: slug, item_count: parsedCount, note: noteCreated, results },
+    orgId,
+    userId,
+  };
 }
 
 export const receiptInboundRouter = Router();

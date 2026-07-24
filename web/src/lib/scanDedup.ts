@@ -20,26 +20,48 @@
 // "still held" and suppress forever, so a code that left and came back never
 // re-fired. That's exactly the kind of off-by-one a test pins down.
 
+import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
+
+/** A generic web link (a product's marketing QR) that is NOT one of Cobblr's own
+ *  `<host>/qr/<token>` labels. Lowest-priority sighting: a Nike box's
+ *  `qr.nike.com/…` code must never beat the product barcode beside it (the author,
+ *  2026-07-24). A Cobblr QR is a URL too, but `qrTokenFromUrl` parses it, so it is
+ *  NOT generic and keeps its priority. */
+export function isGenericLink(v: string): boolean {
+  return /^https?:\/\//i.test(v.trim()) && !qrTokenFromUrl(v.trim());
+}
+
+/** Priority TIER of one sighting (higher wins). Cobblr QR labels are ours and
+ *  route to a bin/entity, so they lead; a retail digit-code next; then any other
+ *  symbol (an alphanumeric SKU, a Code-128 label); a generic web link last, so it
+ *  only wins when it is the ONLY thing in view. */
+export function detectionTier(v: string): number {
+  const t = v.trim();
+  if (qrTokenFromUrl(t)) return 3; // Cobblr QR label
+  if (/^\d{8,14}$/.test(t)) return 2; // retail UPC / EAN
+  if (isGenericLink(t)) return 0; // marketing / redirect link — lowest
+  return 1; // any other code (SKU, fragment)
+}
+
 /**
  * One frame can hold SEVERAL symbols — a book cover carries its main retail code
- * plus a small price-supplement barcode beside it. Feeding whichever comes first
- * into the agreement gate made detection ORDER decide the candidate, and when the
- * order flips frame-to-frame the two-in-a-row gate resets forever: "the scanner
- * struggles with books". Pick ONE deterministically instead:
- *   1. prefer real retail product codes (8–14 all digits), the longest first —
- *      an EAN-13/UPC-A main code always beats a short supplement misread;
- *   2. else the longest value (a QR label URL beats fragments);
- *   3. tie-break lexicographically, so the same frame always picks the same code.
+ * plus a small price-supplement barcode; a shoebox carries a UPC AND a marketing
+ * QR. Feeding whichever comes first into the agreement gate made detection ORDER
+ * decide the candidate, and when the order flips frame-to-frame the two-in-a-row
+ * gate resets forever: "the scanner struggles with books". Pick ONE
+ * deterministically by TIER (see detectionTier): a Cobblr QR beats a retail code
+ * beats any other symbol beats a generic link. Within a tier the longest wins (an
+ * EAN-13 main code beats a short supplement misread; a full QR URL beats a
+ * fragment), then lexicographic so the same frame always picks the same code.
  */
 export function pickDetection(values: string[]): string | null {
   const clean = values.map((v) => v.trim()).filter(Boolean);
   if (clean.length === 0) return null;
   if (clean.length === 1) return clean[0]!;
-  const retail = (v: string) => /^\d{8,14}$/.test(v);
   return [...clean].sort((a, b) => {
-    const ra = retail(a) ? 1 : 0;
-    const rb = retail(b) ? 1 : 0;
-    if (ra !== rb) return rb - ra;
+    const ta = detectionTier(a);
+    const tb = detectionTier(b);
+    if (ta !== tb) return tb - ta;
     if (a.length !== b.length) return b.length - a.length;
     return a.localeCompare(b);
   })[0]!;

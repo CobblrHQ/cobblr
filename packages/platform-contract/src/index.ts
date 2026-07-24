@@ -1972,6 +1972,20 @@ export interface PlatformEntities {
   listKindsForOrg(orgId: string): Promise<EntityKindRecord[]>;
   /** Get a single kind's full declaration. */
   getKind(kind: string): Promise<EntityKindRecord | null>;
+  /** The ONE resolver for where a QR/scan/search hit for an entity should land,
+   *  INSTANCE AWARE — shared by the QR-token resolver, the scan registry, and
+   *  search so they can't drift (they were three hand-kept copies that each
+   *  hand-substituted `{id}` into a base detail_route and so mis-routed an item in
+   *  a NAMED instance to the empty base page). It resolves the entity, probes the
+   *  module's named instances when the base kind can't see it, and picks the
+   *  per-instance route. Returns undefined when the entity has no reachable page. */
+  detailPathForEntity(orgId: string, kind: string, id: string): Promise<string | undefined>;
+  /** The entity's current system TITLE, INSTANCE AWARE — the stock name, re-resolved
+   *  live. Same instance probe as detailPathForEntity: tries the given kind, and if
+   *  that base lookup can't see an item in a NAMED instance, probes the module's
+   *  named instances. Lets a caller (the label queue) offer "revert this trimmed
+   *  caption to the system name". null when the entity no longer resolves. */
+  titleForEntity(orgId: string, kind: string, id: string): Promise<string | null>;
   /** The MODULE kind behind a kind string: identity for a registered kind,
    *  `<instance>:item` → its owning module's primary kind.
    *
@@ -3505,6 +3519,16 @@ export interface AuthEmailMessage {
   /** Optional Reply-To. Used for reply-by-email (a tokenized feedback address)
    *  so a recipient's reply can be routed back inbound instead of lost. */
   replyTo?: string;
+  /** Optional From override — e.g. a per-workspace `receipts+<token>@` address so
+   *  a receipt reply comes FROM the very address the user emailed (DKIM-aligned to
+   *  the verified sending domain). A sender that can't set From for its domain
+   *  falls back to its configured From. */
+  from?: string;
+  /** Threading: the Message-ID of the message this replies to. Senders set
+   *  In-Reply-To + References so the recipient's client threads the reply under
+   *  their original. */
+  inReplyTo?: string;
+  references?: string;
 }
 export type AuthEmailSender = (msg: AuthEmailMessage) => Promise<void>;
 

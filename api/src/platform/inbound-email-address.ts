@@ -13,3 +13,12 @@ export function replyTokenFrom(to: string | string[] | undefined): string | null
   }
   return null;
 }
+
+/** True when the mail was sent TO one of OUR no-reply addresses — i.e. it's a
+ *  reply to a one-way notification we sent (receipt-noreply@ / noreply@ /
+ *  no-reply@). Such mail must be DROPPED, never ingested: a user replying to a
+ *  receipt confirmation ("what is this?") used to land as a junk inbox item. */
+export function isNoReplyAddress(to: string | string[] | undefined): boolean {
+  const arr = Array.isArray(to) ? to : to ? [to] : [];
+  return arr.some((a) => /(^|[<\s,])(receipt-noreply|no-?reply)@/i.test(a));
+}

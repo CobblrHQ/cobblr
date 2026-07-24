@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "labels",
-  version: "0.22.2",
+  version: "0.25.0",
   displayName: "Labels",
   description:
     "QR codes, label templates, per-user print queue, scan-to-navigate/scan-to-action tokens. Polymorphic — any module's entity can have a label.",

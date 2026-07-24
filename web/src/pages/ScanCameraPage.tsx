@@ -39,7 +39,7 @@ import { Modal, usePageTitle, useToast } from "@cobblr/platform-web";
 import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
 import { ApiError, api, type LiveSortEntry, type ScanInboxItem, type ScanResolveCandidate, type TrackedMatch } from "../lib/api";
 import { LOCATION_ENTITY_KIND, decideLocationScan, filingLabel } from "../lib/scanFiling";
-import { freshDedupState, shouldFireScan, pickDetection, makeDetectionCollector, type DedupState } from "../lib/scanDedup";
+import { freshDedupState, shouldFireScan, pickDetection, makeDetectionCollector, isGenericLink, type DedupState } from "../lib/scanDedup";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { LocationChipPicker } from "../components/LocationChipPicker";
 import {
@@ -83,6 +83,11 @@ const UNDER_TOP_CHROME = "max(4.5rem, calc(env(safe-area-inset-top) + 3.5rem))";
 // sightings tens of ms apart — far below this — and reads as one continuous scan.
 // A deliberate re-scan means moving the code out of frame for about this long.
 const REPEAT_GAP_MS = 1300;
+// A GENERIC web link (a product's marketing QR, not a Cobblr label) is held this
+// long before it fires, so a real product barcode beside it — a shoebox's UPC
+// next to its qr.nike.com code — gets a chance to be read and win. A non-link
+// code seen during the hold fires immediately and cancels it (the author, 2026-07-24).
+const LINK_HOLD_MS = 700;
 
 // Scan-session persistence — localStorage (NOT sessionStorage: phones kill
 // background tabs, and resuming the same shelf-walk is the whole point).
@@ -125,6 +130,9 @@ export function ScanCameraPage() {
   // is a pure, tested reducer (lib/scanDedup); this ref is just where its mutable
   // state lives across frames.
   const dedupRef = useRef<DedupState>(freshDedupState());
+  // Deferral state for a generic web link (see LINK_HOLD_MS): the link value +
+  // when its hold started. Cleared the moment a non-link code is seen.
+  const linkHoldRef = useRef<{ value: string; heldAt: number } | null>(null);
   // phaseRef mirrors `phase` so the decode callbacks (set up once) read the
   // live value — once we're in the result modal, decodes are ignored. That
   // guard IS the "stop scanning the same thing over and over" fix.
@@ -807,6 +815,27 @@ export function ScanCameraPage() {
       if (phaseRef.current !== "scanning") return;
       const raw = rawIn.trim();
       if (!raw) return;
+      // HOLD a generic web link (a product's marketing QR — NOT a Cobblr label,
+      // those parse via qrTokenFromUrl and route to a bin/entity). pickDetection
+      // already ranks a link below every barcode WITHIN a frame, but the native
+      // iOS detector reads a 2D QR every frame while the 1D UPC lands only
+      // intermittently, so the link cleared the 2-sighting gate before the barcode
+      // was ever co-seen — it "grabbed the QR every time, ignoring the UPC" (the author,
+      // 2026-07-24). Give the barcode a window: hold the link, and a non-link code
+      // seen meanwhile fires and cancels the hold; only a link still alone after
+      // LINK_HOLD_MS falls through to fire.
+      if (isGenericLink(raw)) {
+        const now = Date.now();
+        const h = linkHoldRef.current;
+        if (!h || h.value !== raw || now - h.heldAt > REPEAT_GAP_MS + LINK_HOLD_MS) {
+          linkHoldRef.current = { value: raw, heldAt: now };
+          return; // start of a fresh hold — wait for a barcode
+        }
+        if (now - h.heldAt < LINK_HOLD_MS) return; // still holding
+        // grace elapsed and no barcode won → let the link through the gate below.
+      } else {
+        linkHoldRef.current = null; // a real code showed up: it wins, drop the hold
+      }
       // Agreement gate + continuous-presence dedup, in one tested reducer. A code
       // held steady in the frame is ONE scan; it only re-fires after leaving the
       // frame and coming back. This is the fix for a location QR spamming a new

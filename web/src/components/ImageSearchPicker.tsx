@@ -19,12 +19,12 @@
 // inbox's own pipeline) → `entity` (server-derived) → `query` (literal).
 
 import { useEffect, useState, type FormEvent } from "react";
-import { createPortal } from "react-dom";
 import { Maximize2 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type ImageOption } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { nextTerm } from "./imageSearchTerm";
+import { ImageLightbox } from "./ImageLightbox";
 
 export function ImageSearchPicker({
   entity,
@@ -69,7 +69,7 @@ export function ImageSearchPicker({
   const [term, setTerm] = useState("");
   const [touched, setTouched] = useState(false);
   const [applied, setApplied] = useState("");
-  const [viewing, setViewing] = useState<ImageOption | null>(null);
+  const [viewIdx, setViewIdx] = useState<number | null>(null);
 
   const fetched = useQuery({
     queryKey: ["image-options", activeSlug, entity?.kind, entity?.id, query, brand, applied],
@@ -98,7 +98,7 @@ export function ImageSearchPicker({
 
   function tileClick(o: ImageOption) {
     if (onPreview) onPreview(o.url);
-    else setViewing(o);
+    else setViewIdx(opts.indexOf(o));
   }
 
   return (
@@ -192,91 +192,37 @@ export function ImageSearchPicker({
         </div>
       )}
 
-      {/* Full-screen viewer — the same shape the scan inbox uses: the image big
-          on a dark backdrop with the options strip still under it, so you flip
-          between candidates at full size and pick without leaving. Portaled to
-          body so no ancestor's transform/overflow can trap it. */}
-      {viewing &&
-        createPortal(
-          <div
-            className="fixed inset-0 z-[100] bg-black/85 flex flex-col items-center justify-center gap-3 p-4"
-            onClick={() => setViewing(null)}
-            role="dialog"
-            aria-label="Image viewer"
-          >
-            <img
-              src={viewing.url}
-              alt={viewing.title}
-              className="max-w-full min-h-0 flex-1 object-contain rounded shadow-2xl"
-              onError={() => {
-                // Full-size dead but the thumb loaded — drop it and close
-                // rather than leaving a broken image filling the screen.
-                setBroken((s) => new Set(s).add(viewing.url));
-                setViewing(null);
-              }}
-            />
-            {/* stopPropagation so using the controls doesn't dismiss the viewer */}
-            <div className="w-full max-w-2xl shrink-0 space-y-2" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-center justify-between gap-3">
-                <a
-                  href={viewing.source}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-[11px] text-white/60 hover:text-white truncate"
-                >
-                  {viewing.title} · {viewing.source}
-                </a>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setViewing(null)}
-                    className="px-3 py-1.5 rounded-md text-sm text-white/80 hover:bg-white/10"
-                  >
-                    Close
-                  </button>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => {
-                      onPick(viewing.url);
-                      setViewing(null);
-                    }}
-                    className="rounded-md bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 px-3 py-1.5 text-sm font-medium text-white"
-                  >
-                    {busy ? "Saving…" : "Use this image"}
-                  </button>
-                </div>
-              </div>
-              {/* Flip through the other candidates without closing. */}
-              {opts.length > 1 && (
-                <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
-                  {opts.map((o) => (
-                    <button
-                      key={o.url}
-                      type="button"
-                      onClick={() => setViewing(o)}
-                      title={o.title}
-                      className={
-                        "w-16 h-16 shrink-0 rounded overflow-hidden bg-white transition border-2 " +
-                        (o.url === viewing.url
-                          ? "border-cobble-400"
-                          : "border-transparent hover:border-white/40")
-                      }
-                    >
-                      <img
-                        src={o.thumb}
-                        alt={o.title}
-                        className="w-full h-full object-cover"
-                        loading="lazy"
-                      />
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>,
-          document.body,
-        )}
+      {/* Full-screen viewer — the shared app-wide ImageLightbox. Candidates are
+          the filmstrip; "Use this image" is the primary action. */}
+      {viewIdx !== null && opts[viewIdx] && (
+        <ImageLightbox
+          items={opts.map((o) => ({
+            key: o.url,
+            url: o.url,
+            thumbUrl: o.thumb,
+            caption: `${o.title} · ${o.source}`,
+            href: o.source,
+          }))}
+          index={viewIdx}
+          onIndex={setViewIdx}
+          onClose={() => setViewIdx(null)}
+          action={{
+            label: "Use this image",
+            busy,
+            onAction: (it) => {
+              if (it.url) onPick(it.url);
+              setViewIdx(null);
+            },
+          }}
+          onItemError={(it) => {
+            // Full-size dead but the thumb loaded — drop it and close rather than
+            // leaving a broken image filling the screen.
+            const u = it.url;
+            if (u) setBroken((s) => new Set(s).add(u));
+            setViewIdx(null);
+          }}
+        />
+      )}
     </div>
   );
 }

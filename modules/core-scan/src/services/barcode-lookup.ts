@@ -396,6 +396,70 @@ async function tryResolver(upc: string): Promise<ProviderResult> {
   }
 }
 
+// ── BIdb: the hosted, cross-install intelligence tier ─────────────────
+// The public sibling of the box resolver above. Where COBBLR_BARCODE_RESOLVER_URL
+// is ONE deployment's private shared cache (tailnet-only), BIdb (bidb.cobblr.xyz)
+// is the hosted, cross-install brain: it serves known results fast and, for our
+// own first-party tiers, resolves live behind one shared quota. A per-install key
+// selects the tier server-side — first-party (live-lookup, full data) vs external
+// read-only cache — and the server strips commercial-sourced fields for external
+// keys, so this client renders whatever it is handed with no redistribution
+// concern of its own. See docs/design-decisions/barcode-intelligence-db.md.
+//
+//   COBBLR_BIDB_URL   set ⇒ query BIdb (default on for the trial tier; opt-in for
+//                     self-host). Unset ⇒ this tier is inert (ships dark).
+//   COBBLR_BIDB_KEY   per-install key, issued from a Cobblr account; sent as a
+//                     bearer token; determines the tier + the data class returned.
+//
+// Unlike the box resolver, a BIdb MISS is NOT definitive: it falls through to the
+// rest of the chain so a self-host still reaches its own providers. A throttle is
+// surfaced upward, never cached as a miss (the no-poison rule). Operator-configured
+// infra ⇒ plain fetch, strict-egress-safe (the env-set-URL convention, CLAUDE.md
+// §14.1).
+const BIDB_TIMEOUT_MS = 12_000;
+
+export const bidbEnabled = (): boolean => Boolean(process.env.COBBLR_BIDB_URL?.trim());
+
+export async function tryBidb(upc: string): Promise<ProviderResult> {
+  const base = (process.env.COBBLR_BIDB_URL ?? "").replace(/\/+$/, "");
+  const key = process.env.COBBLR_BIDB_KEY?.trim();
+  const { status, body } = await fetchJson(
+    `${base}/v1/barcode/${encodeURIComponent(upc)}`,
+    BIDB_TIMEOUT_MS,
+    key ? { authorization: `Bearer ${key}` } : {},
+  );
+  if (status === 404) return { kind: "miss" }; // known-absent — safe to cache
+  if (status === 429) return { kind: "rate_limited", scope: "daily" }; // over fair-use
+  if (status !== 200) throw new Error(`bidb HTTP ${status}`); // transport-ish → fall through
+  // A hit is a flat product record (barcode-intelligence-db.md §3.5).
+  const p = body as {
+    name?: unknown;
+    brand?: unknown;
+    model?: unknown;
+    description?: unknown;
+    category?: unknown;
+    image_url?: unknown;
+    source?: unknown;
+    confidence?: unknown;
+  } | null;
+  const title = typeof p?.name === "string" ? p.name.trim() : "";
+  if (!p || !title) return { kind: "miss" };
+  return {
+    kind: "hit",
+    hit: {
+      source: typeof p.source === "string" && p.source ? p.source : "bidb",
+      title,
+      brand: typeof p.brand === "string" ? p.brand : null,
+      model: typeof p.model === "string" ? p.model : null,
+      description: typeof p.description === "string" ? p.description : null,
+      category: typeof p.category === "string" ? p.category : null,
+      image_url: typeof p.image_url === "string" ? p.image_url : null,
+      // Preserve confidence + any extra server fields for the cache row.
+      raw: { bidb: p },
+    },
+  };
+}
+
 /**
  * Resolve a UPC: go-upc first (authoritative), then the API providers
  * concurrently as the fallback.
@@ -496,9 +560,26 @@ async function doLookupBarcode(norm: string): Promise<BarcodeOutcome> {
     }
   }
 
+  // BIdb tier (hosted, cross-install). Hit wins; a miss falls through so a
+  // self-host still reaches its own providers; a throttle is remembered so a
+  // BIdb-only tier (the trial: external lookups off) never caches a rate-limit
+  // as a permanent miss (the no-poison rule).
+  let bidbThrottled = false;
+  if (bidbEnabled()) {
+    try {
+      const r = await tryBidb(norm);
+      if (r.kind === "hit") return { outcome: "hit", hit: r.hit };
+      if (r.kind === "rate_limited") bidbThrottled = true;
+    } catch (e) {
+      console.error(`[core-scan] bidb unreachable (${(e as Error).message}) — falling back to local chain`);
+    }
+  }
+  const throttledMiss = (): BarcodeOutcome =>
+    bidbThrottled ? { outcome: "rate_limited", scope: "daily" } : { outcome: "miss" };
+
   // Third-party direct lookups — master switch (self-host privacy). Off ⇒ no
   // external barcode calls at all; only the cache + box resolver (above) answer.
-  if (!externalLookupsEnabled()) return { outcome: "miss" };
+  if (!externalLookupsEnabled()) return throttledMiss();
 
   // go-upc tier. A supplied API key uses the OFFICIAL API (clean transport);
   // otherwise the HTML scraper runs ONLY when explicitly opted in
@@ -534,5 +615,5 @@ async function doLookupBarcode(norm: string): Promise<BarcodeOutcome> {
   // No catalog hit. If upcitemdb was throttled, the answer is
   // "unknown, retry" — not "doesn't exist".
   if (upcRes.kind === "rate_limited") return { outcome: "rate_limited", scope: upcRes.scope };
-  return { outcome: "miss" };
+  return throttledMiss();
 }

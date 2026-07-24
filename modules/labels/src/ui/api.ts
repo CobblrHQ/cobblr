@@ -11,6 +11,9 @@ export interface QueueItem {
   description: string;
   qty: number;
   created_at: string;
+  /** The source entity's current system title, resolved live (instance-aware).
+   *  The caption's "revert to system name" target; null when the entity is gone. */
+  stock_title?: string | null;
 }
 
 export interface Printable {
@@ -323,6 +326,10 @@ export class LabelsApi {
       `/api/v1/orgs/${this.slug}/modules/core-print/printers/${printerId}/print`,
       body,
     );
+  /** Forget a saved printer. Behind a confirm in the UI — the deliberate, destructive
+   *  action, distinct from switching the session target to System print. */
+  deletePrinter = (id: string) =>
+    this.requestAbs<void>("DELETE", `/api/v1/orgs/${this.slug}/modules/core-print/printers/${id}`);
 
   // Queue a label the RIGHT way: mint (or reuse) a QR scan token via
   // the QR token endpoint and queue the full scan_url it hands back, so the label

@@ -280,21 +280,14 @@ async function resolveEntity(
   const items = truncated ? res.items.slice(0, MAX_CANDIDATES) : res.items;
   if (items.length === 0) return { kind, candidates: [], truncated: false };
 
-  // Prefer each entity's own detailUrl; fall back to the kind's detail_route
-  // template (same computation as api/src/routes/qr-scan.ts). The kind lookup is
-  // per-kind, not per-item, so it costs one call however many candidates there are.
-  let template: string | undefined;
-  let templateLoaded = false;
+  // Detail path via the ONE instance-aware resolver (entities.detailPathForEntity),
+  // the SAME function the QR-token resolver and search use — so this can't drift
+  // and a scan that lands on an item in a NAMED instance (a Vehicle, a 3D Printer)
+  // routes to that instance's page instead of the empty base page. Bounded by
+  // MAX_CANDIDATES (8), and this is a cold, user-triggered resolve.
   const candidates: ResolveCandidate[] = [];
   for (const item of items) {
-    let detailPath = item.detailUrl;
-    if (!detailPath) {
-      if (!templateLoaded) {
-        template = (await platform().entities.getKind(kind))?.detail_route ?? undefined;
-        templateLoaded = true;
-      }
-      detailPath = template ? template.replace("{id}", item.id) : undefined;
-    }
+    const detailPath = await platform().entities.detailPathForEntity(orgId, kind, item.id);
     // An entity with no reachable detail page cannot be offered as a
     // destination; skip it rather than hand back a dead candidate.
     if (!detailPath) continue;

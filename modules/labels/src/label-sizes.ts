@@ -412,6 +412,18 @@ export function cellLayout(size: LabelSize): CellLayout {
   return pickCellLayout(size.label_w, size.label_h);
 }
 
+/** Whether the "Rotate 90°" (print portrait) toggle applies to a label of these
+ *  cell dimensions. ONLY a LANDSCAPE face (wider than tall — a `row` cell)
+ *  benefits: a quarter turn makes it read portrait. A portrait cell is already
+ *  portrait and a square is unchanged, so rotating them is pointless — and for a
+ *  portrait cell actively BROKEN: the 2-up 50×30 has 25×30 portrait cells, and
+ *  turning one landscape (30×25, nearly square) left the QR filling it with the
+ *  caption overflowing off the label (the author, 2026-07). Gate the toggle on this so it
+ *  only appears where it helps. */
+export function labelRotatable(labelW: number, labelH: number): boolean {
+  return pickCellLayout(labelW, labelH) === "row";
+}
+
 /** The QR's printed side, in INCHES, for a label — the single source of truth
  *  shared by the ⌘P/preview renderer (renderPrintSheet) and the preview's
  *  scannability read (print/qr-overlay assessScannability), so "how big the QR

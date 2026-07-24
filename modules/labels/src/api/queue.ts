@@ -35,13 +35,36 @@ queueRouter.get(
   asyncHandler(async (req, res) => {
     const db = tenantDb(req);
     const session = sessionUser(req);
+    const ctx = tenantContext(req);
     const rows = await db
       .selectFrom("labels_queue")
       .selectAll()
       .where("user_id", "=", session.id)
       .orderBy("created_at")
       .execute();
-    res.json({ items: rows });
+    // Each item's STOCK system name — the source entity's live title, re-resolved
+    // so a trimmed caption can be reverted to it. Instance-aware: the stored kind
+    // is `${module_name}:${entity_type}` (how enqueue split ent.kind), and a Vehicle
+    // lives in a named instance the base kind can't see, so titleForEntity probes.
+    // Best-effort per row — a deleted entity or a resolve error just yields null
+    // (the client then hides revert), never a 500 on the whole queue. In-process
+    // lookups over a small per-user set.
+    const items = await Promise.all(
+      rows.map(async (r) => {
+        let stock_title: string | null = null;
+        try {
+          stock_title = await platform().entities.titleForEntity(
+            ctx.org.id,
+            `${r.module_name}:${r.entity_type}`,
+            r.entity_id,
+          );
+        } catch {
+          stock_title = null;
+        }
+        return { ...r, stock_title };
+      }),
+    );
+    res.json({ items });
   }),
 );
 

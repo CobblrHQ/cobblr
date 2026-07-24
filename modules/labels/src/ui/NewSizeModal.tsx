@@ -10,6 +10,12 @@ import { deriveGrid } from "../label-sizes";
 import type { CustomLabelSize } from "./api";
 import { useLabels } from "./context";
 
+/** Cap a dimension at 2 decimals for display (1.96, not 1.9685039370078740). */
+const round2 = (n: number) => Number(n.toFixed(2));
+const MM_PER_IN = 25.4;
+const UNIT_LS = "cobblr:label-size-unit";
+type Unit = "in" | "mm";
+
 function NumField({ label, value, onChange, step = 0.25 }: { label: string; value: string; onChange: (v: string) => void; step?: number }) {
   return (
     <label className="flex flex-col gap-1">
@@ -38,6 +44,10 @@ export function NewSizeModal({
   const toast = useToast();
 
   const [name, setName] = useState("");
+  // The fields hold whatever UNIT the user is working in; the stored size is always
+  // inches (deriveGrid + createCustomSize speak inches). Metric label stock (50×30
+  // mm) is the common case, so mm is a first-class choice, remembered per browser.
+  const [unit, setUnitState] = useState<Unit>(() => (localStorage.getItem(UNIT_LS) === "mm" ? "mm" : "in"));
   const [mediaW, setMediaW] = useState("1.5");
   const [mediaH, setMediaH] = useState("3");
   const [labelW, setLabelW] = useState("1.5");
@@ -48,12 +58,30 @@ export function NewSizeModal({
   const [rowGap, setRowGap] = useState("0");
 
   const num = (v: string) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  const toIn = (v: string) => (unit === "mm" ? num(v) / MM_PER_IN : num(v));
   const dims = {
-    media_w: num(mediaW), media_h: num(mediaH),
-    label_w: num(labelW), label_h: num(labelH),
-    margin_t: num(marginT), margin_l: num(marginL),
-    col_gap: num(colGap), row_gap: num(rowGap),
+    media_w: toIn(mediaW), media_h: toIn(mediaH),
+    label_w: toIn(labelW), label_h: toIn(labelH),
+    margin_t: toIn(marginT), margin_l: toIn(marginL),
+    col_gap: toIn(colGap), row_gap: toIn(rowGap),
   };
+
+  // Switch units in place: convert every field so the PHYSICAL size is unchanged
+  // (1.5 in ⇄ 38.1 mm), rather than reinterpreting the numbers. Remembered.
+  const setUnit = (u: Unit) => {
+    if (u === unit) return;
+    const f = u === "mm" ? MM_PER_IN : 1 / MM_PER_IN;
+    const conv = (s: string) => (num(s) ? String(round2(num(s) * f)) : s);
+    setMediaW(conv(mediaW)); setMediaH(conv(mediaH));
+    setLabelW(conv(labelW)); setLabelH(conv(labelH));
+    setMarginL(conv(marginL)); setMarginT(conv(marginT));
+    setColGap(conv(colGap)); setRowGap(conv(rowGap));
+    localStorage.setItem(UNIT_LS, u);
+    setUnitState(u);
+  };
+  const u = unit === "mm" ? "mm" : "inches";
+  const mainStep = unit === "mm" ? 1 : 0.25;
+  const fineStep = unit === "mm" ? 0.5 : 0.125;
 
   // Live: how many fit, straight from the numbers.
   const grid = useMemo(
@@ -82,29 +110,41 @@ export function NewSizeModal({
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="1.5 × 3 sheet, two-up" className="input !py-1.5 text-sm" />
         </label>
 
-        <div>
-          <div className="text-[11px] font-semibold text-content dark:text-mortar-200 mb-1.5">Media loaded (inches)</div>
-          <div className="grid grid-cols-2 gap-2">
-            <NumField label="width" value={mediaW} onChange={setMediaW} />
-            <NumField label="height" value={mediaH} onChange={setMediaH} />
+        <div className="flex items-center justify-between">
+          <div className="text-[11px] font-semibold text-content dark:text-mortar-200">Media loaded ({u})</div>
+          <div className="inline-flex rounded-md border border-line dark:border-slate-700 p-0.5 text-xs">
+            {(["in", "mm"] as Unit[]).map((opt) => (
+              <button
+                key={opt}
+                type="button"
+                onClick={() => setUnit(opt)}
+                className={`px-2.5 py-0.5 rounded transition ${unit === opt ? "bg-cobble-600 text-white" : "text-faint dark:text-slate-400 hover:text-accent"}`}
+              >
+                {opt}
+              </button>
+            ))}
           </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2 -mt-2">
+          <NumField label="width" value={mediaW} onChange={setMediaW} step={mainStep} />
+          <NumField label="height" value={mediaH} onChange={setMediaH} step={mainStep} />
         </div>
 
         <div>
-          <div className="text-[11px] font-semibold text-content dark:text-mortar-200 mb-1.5">Each label (inches)</div>
+          <div className="text-[11px] font-semibold text-content dark:text-mortar-200 mb-1.5">Each label ({u})</div>
           <div className="grid grid-cols-2 gap-2">
-            <NumField label="width" value={labelW} onChange={setLabelW} />
-            <NumField label="height" value={labelH} onChange={setLabelH} />
+            <NumField label="width" value={labelW} onChange={setLabelW} step={mainStep} />
+            <NumField label="height" value={labelH} onChange={setLabelH} step={mainStep} />
           </div>
         </div>
 
         <details className="text-sm">
           <summary className="cursor-pointer text-faint dark:text-slate-400 text-xs">Margins &amp; gaps (optional)</summary>
           <div className="grid grid-cols-2 gap-2 mt-2">
-            <NumField label="margin left" value={marginL} onChange={setMarginL} step={0.125} />
-            <NumField label="margin top" value={marginT} onChange={setMarginT} step={0.125} />
-            <NumField label="gap across" value={colGap} onChange={setColGap} step={0.0625} />
-            <NumField label="gap down" value={rowGap} onChange={setRowGap} step={0.0625} />
+            <NumField label="margin left" value={marginL} onChange={setMarginL} step={fineStep} />
+            <NumField label="margin top" value={marginT} onChange={setMarginT} step={fineStep} />
+            <NumField label="gap across" value={colGap} onChange={setColGap} step={fineStep} />
+            <NumField label="gap down" value={rowGap} onChange={setRowGap} step={fineStep} />
           </div>
         </details>
 
@@ -120,7 +160,7 @@ export function NewSizeModal({
             </>
           ) : (
             <div className="text-sm text-amber-700 dark:text-amber-400">
-              A {dims.label_w}×{dims.label_h}″ label does not fit a {dims.media_w}×{dims.media_h}″ media with those margins.
+              A {num(labelW)}×{num(labelH)} {u === "mm" ? "mm" : "in"} label does not fit a {num(mediaW)}×{num(mediaH)} {u === "mm" ? "mm" : "in"} media with those margins.
             </div>
           )}
         </div>

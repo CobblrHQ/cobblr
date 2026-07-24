@@ -13,6 +13,7 @@ import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { getTenantDb } from "../db/tenant.js";
 import * as events from "../platform/events.js";
+import { detailPathForEntity } from "../platform/entities.js";
 
 export const qrScanRouter = Router({ mergeParams: true });
 
@@ -53,12 +54,10 @@ export async function resolveQrToken(token: string): Promise<ResolveResult> {
     .executeTakeFirst();
   if (!orgRow) return { ok: false, status: "not_found" };
 
-  const ekRow = await meta
-    .selectFrom("entity_kinds")
-    .select(["detail_route"])
-    .where("id", "=", row.entity_kind)
-    .executeTakeFirst();
-  const detailPath = ekRow?.detail_route ? ekRow.detail_route.replace("{id}", row.entity_id) : undefined;
+  // Instance-aware detail path: a label for a Vehicle (assets instance) or a 3D
+  // Printer (machines instance) lands on THAT item's instance page, not the empty
+  // base page. Shared with the scan registry + search via detailPathForEntity.
+  const detailPath = await detailPathForEntity(row.org_id, row.entity_kind, row.entity_id);
 
   return {
     ok: true,

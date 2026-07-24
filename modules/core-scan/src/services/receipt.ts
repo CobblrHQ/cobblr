@@ -31,13 +31,15 @@ export type { ReceiptLine, ParsedReceipt, ReceiptResult, ParseMethod } from "./r
 
 const SCHEMA_INSTRUCTION =
   "Reply with ONLY a JSON object, no prose:\n" +
-  '{"vendor":<string|null>,"date":<"YYYY-MM-DD"|null>,"currency":<ISO-4217 code|null>,' +
+  '{"vendor":<string|null>,"order_ref":<string|null>,"date":<"YYYY-MM-DD"|null>,"currency":<ISO-4217 code|null>,' +
   '"total":<number|null grand total>,"items":[{"description":<string>,"qty":<number>,' +
   '"unit_price":<number|null>,"line_total":<number|null>}]}\n' +
   "One entry per PURCHASED line item. Skip subtotal / tax / shipping / discount / " +
   "total rows — capture the grand total in \"total\" instead. qty defaults to 1 when " +
   "no count is shown. Prices are numbers only (strip currency symbols and thousands " +
-  "separators). Use null for anything not printed on the receipt.";
+  'separators). "order_ref" is the order/invoice/confirmation number if the receipt ' +
+  "states one (the bare identifier only, e.g. \"384602\" not \"Order #384602\"). " +
+  "Use null for anything not printed on the receipt.";
 
 /** Shape a model's (possibly messy) JSON reply into a ParsedReceipt. Pure +
  *  tolerant (first JSON object, price coercion, blank-line drop) so it's
@@ -53,6 +55,7 @@ export function shapeReceipt(raw: string): ParsedReceipt | null {
   const itemsRaw = Array.isArray(parsed.items) ? parsed.items : [];
   return buildReceipt({
     vendor: parsed.vendor,
+    order_ref: parsed.order_ref,
     date: parsed.date,
     currency: parsed.currency,
     total: parsed.total,

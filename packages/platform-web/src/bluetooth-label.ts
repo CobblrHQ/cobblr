@@ -82,6 +82,9 @@ export function effectiveFootprint(s: BluetoothPrinterSettings): ThermalFootprin
 export interface LabelContent {
   qrPayload: string;
   caption?: string;
+  /** The short human-readable code (`m1`, `p42`) drawn in the QR centre, matching
+   *  the on-screen preview. EC=H keeps the covered modules decodable. */
+  centerCode?: string;
 }
 
 export function isWebBluetoothAvailable(): boolean {
@@ -299,37 +302,217 @@ export function closePrinter(session: PrinterSession): void {
 }
 
 // ── render + encode ─────────────────────────────────────────────────────────
-/** Render one label (QR, plus an optional caption) to a 1-bpp bitmap at the
- *  printer's width. Exported so a preview can show exactly what will be sent. */
-export async function renderLabelBitmap(content: LabelContent, widthDots: number): Promise<MonoBitmap> {
-  const captionH = content.caption ? 28 : 0;
-  const qrSize = widthDots - 16;             // small inset: thermal edges are soft
+
+/** The inner layout of one label cell, by aspect. MIRRORS pickCellLayout in
+ *  modules/labels/src/label-sizes.ts so the thermal print matches the on-screen
+ *  preview + the ⌘P/PDF renderers. (A module can't be imported here, so the two
+ *  thresholds are kept identical by test — see bluetooth-label.test.ts.) */
+export type LabelLayout = "row" | "portrait" | "square";
+export function labelLayoutFor(widthDots: number, heightDots: number): LabelLayout {
+  // Aspect is unit-independent, so this matches pickCellLayout for dots OR inches;
+  // guard only a non-positive height (degenerate → treat as wide).
+  const aspect = heightDots > 0 ? widthDots / heightDots : 999;
+  if (aspect <= 0.85) return "portrait";
+  if (aspect < 1.2) return "square";
+  return "row";
+}
+
+/** The caption font size that best FILLS a text box: a short name ("Office") prints
+ *  large, a long one ("2019 Honda Civic") shrinks and wraps to fit (up to maxLines).
+ *  The QR is already at its max, so the NAME is what adapts. Pure + shared by the
+ *  BLE renderer AND the preview/⌘P HTML (both import this), so the printed and
+ *  on-screen text size identically. A glyph-advance ESTIMATE (not a canvas measure)
+ *  keeps both sides computing the same number. Units are the caller's (px, or in ×
+ *  96); the return is in those same units. */
+export function fitCaptionPx(
+  text: string,
+  boxW: number,
+  boxH: number,
+  opts: { maxLines?: number; min?: number; max?: number } = {},
+): number {
+  const t = (text ?? "").trim();
+  // Units are the caller's (px or inches), so min/max default to no clamp — the
+  // caller supplies bounds in its own unit. min defaulting to a px value would clamp
+  // an inch-caller's whole range to that number.
+  const min = opts.min ?? 0;
+  const max = opts.max ?? Infinity;
+  if (!t || boxW <= 0 || boxH <= 0) return min;
+  const words = t.split(/\s+/).filter(Boolean);
+  const n = t.length;
+  // Avg glyph advance / font-size for bold system sans. Measured across real label
+  // names (bold system-ui) it is ~0.45-0.51; 0.55 keeps a small margin so the
+  // longest wrapped line still fits without the HTML re-wrapping. 0.72 was WAY too
+  // conservative — it undersized every caption by ~30% and left the text short of
+  // the label's left/right extents (the author, 2026-07: "2019 Honda Civic is way too
+  // small ... scale to the extents").
+  const CHAR = 0.55;
+  const LINE = 1.12;
+  const maxLines = Math.max(1, Math.min(opts.maxLines ?? 2, words.length));
+  let best = 0;
+  for (let lc = 1; lc <= maxLines; lc++) {
+    const perLine = Math.ceil(n / lc);
+    best = Math.max(best, Math.min(boxW / (perLine * CHAR), boxH / (lc * LINE)));
+  }
+  return Math.max(min, Math.min(max, best));
+}
+
+/** Greedily wrap `text` to at most `maxLines` lines fitting `maxW` px at the set
+ *  font. The last line is ellipsised if the whole caption doesn't fit. `ctx.font`
+ *  must already be set. */
+function wrapLines(ctx: CanvasRenderingContext2D, text: string, maxW: number, maxLines: number): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let cur = "";
+  for (const w of words) {
+    const next = cur ? `${cur} ${w}` : w;
+    if (ctx.measureText(next).width <= maxW || !cur) {
+      cur = next;
+    } else {
+      lines.push(cur);
+      cur = w;
+      if (lines.length === maxLines - 1) break;
+    }
+  }
+  if (cur && lines.length < maxLines) lines.push(cur);
+  // Any remaining words overflowed the line budget — ellipsise the last line.
+  const usedWords = lines.join(" ").split(/\s+/).filter(Boolean).length;
+  if (usedWords < words.length && lines.length) {
+    let last = lines[lines.length - 1]!;
+    while (last && ctx.measureText(`${last}…`).width > maxW) last = last.slice(0, -1).trimEnd();
+    lines[lines.length - 1] = `${last}…`;
+  }
+  return lines;
+}
+
+/** Draw a block of caption lines centred in the box (x, y, w, h). `align` positions
+ *  each line; the block is vertically centred. */
+function drawCaption(
+  ctx: CanvasRenderingContext2D,
+  lines: string[],
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  fontPx: number,
+  align: "center" | "left",
+  valign: "top" | "middle" = "middle",
+): void {
+  if (!lines.length) return;
+  ctx.fillStyle = "#000";
+  ctx.font = `bold ${fontPx}px system-ui, -apple-system, sans-serif`;
+  ctx.textAlign = align;
+  ctx.textBaseline = "middle";
+  const lineH = Math.round(fontPx * 1.15);
+  const blockH = lines.length * lineH;
+  // TOP hugs the top of the box (a caption strip); MIDDLE centres (text beside a QR).
+  const startY = y + (valign === "top" ? 0 : Math.max(0, (h - blockH) / 2)) + lineH / 2;
+  const tx = align === "center" ? x + w / 2 : x;
+  lines.forEach((ln, i) => ctx.fillText(ln, tx, startY + i * lineH, w));
+}
+
+/** The human-readable code badge in the QR centre (circle ≤2 chars, pill for 3+),
+ *  matching the preview + PDF. White fill so it stays legible over the modules;
+ *  EC=H keeps the QR decodable under it. */
+function drawCenterCode(ctx: CanvasRenderingContext2D, code: string, cx: number, cy: number, qrSize: number): void {
+  const fontPx = Math.max(9, Math.round(qrSize * 0.16));
+  ctx.font = `bold ${fontPx}px system-ui, -apple-system, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const textW = ctx.measureText(code).width;
+  const padX = Math.round(fontPx * 0.5);
+  const h = Math.round(fontPx * 1.5);
+  const w = code.length <= 2 ? h : Math.max(h, Math.round(textW + padX * 2));
+  const r = h / 2;
+  const x = cx - w / 2, y = cy - h / 2;
+  // rounded-rect (a circle when w === h)
+  ctx.fillStyle = "#fff";
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "#000";
+  ctx.fillText(code, cx, cy + 1);
+}
+
+/** Render one label to a 1-bpp bitmap at the face's dot size, laid out to MATCH THE
+ *  ON-SCREEN PREVIEW (renderPrintSheetHtml): a whitespace margin (never edge-to-edge
+ *  — misalignment tolerance + the printer's soft/unreachable edges), a wrapped
+ *  caption and QR placed by the cell layout (portrait/square = caption on top, QR
+ *  below; row = QR left, caption right), and the centre-code badge. Exported so a
+ *  preview can show exactly what will be sent. `heightDots` defaults to a portrait
+ *  QR-plus-caption box for callers that haven't passed a face height yet. */
+export async function renderLabelBitmap(
+  content: LabelContent,
+  widthDots: number,
+  heightDots?: number,
+): Promise<MonoBitmap> {
+  const W = Math.max(1, Math.round(widthDots));
+  const H = Math.max(1, Math.round(heightDots ?? widthDots * 1.25));
   const canvas = document.createElement("canvas");
-  canvas.width = widthDots;
-  canvas.height = qrSize + captionH;
+  canvas.width = W;
+  canvas.height = H;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("no 2d canvas context");
   ctx.fillStyle = "#fff";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillRect(0, 0, W, H);
+  ctx.imageSmoothingEnabled = false;
 
-  const qr = document.createElement("canvas");
-  await QRCode.toCanvas(qr, content.qrPayload, {
-    width: qrSize,
-    margin: 1,
-    errorCorrectionLevel: "H",               // survives thermal wear + handling
-    color: { dark: "#000000ff", light: "#ffffffff" },
-  });
-  ctx.drawImage(qr, Math.round((widthDots - qrSize) / 2), 0);
+  // Whitespace margin: ~6% of the shorter side, so a 50 mm label prints ~46 mm
+  // centred rather than filling the head to a clipped edge.
+  const m = Math.max(6, Math.round(Math.min(W, H) * 0.06));
+  const cx = m, cy = m, cw = Math.max(1, W - 2 * m), chAll = Math.max(1, H - 2 * m);
+  const caption = content.caption?.trim() ?? "";
+  const layout = labelLayoutFor(W, H);
 
-  if (content.caption) {
-    ctx.fillStyle = "#000";
-    ctx.font = "bold 22px system-ui, sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText(content.caption, widthDots / 2, qrSize + 21, widthDots - 8);
+  const drawQr = async (qx: number, qy: number, size: number): Promise<void> => {
+    const s = Math.max(1, Math.round(size));
+    const qr = document.createElement("canvas");
+    await QRCode.toCanvas(qr, content.qrPayload, {
+      width: s,
+      margin: 0,
+      errorCorrectionLevel: "H", // survives thermal wear + the centre badge
+      color: { dark: "#000000ff", light: "#ffffffff" },
+    });
+    ctx.drawImage(qr, Math.round(qx), Math.round(qy));
+    if (content.centerCode) drawCenterCode(ctx, content.centerCode, qx + s / 2, qy + s / 2, s);
+  };
+
+  if (layout === "row") {
+    // QR left (square, full content height); caption right, auto-fit to its box.
+    const qrSize = Math.min(chAll, cw * 0.5);
+    await drawQr(cx, cy + (chAll - qrSize) / 2, qrSize);
+    if (caption) {
+      const tx = cx + qrSize + Math.round(m * 0.8);
+      const tw = Math.max(1, cx + cw - tx);
+      const fontPx = fitCaptionPx(caption, tw, chAll, { maxLines: 3, min: 10 });
+      ctx.font = `bold ${fontPx}px system-ui, sans-serif`;
+      drawCaption(ctx, wrapLines(ctx, caption, tw, 3), tx, cy, tw, chAll, fontPx, "left");
+    }
+  } else {
+    // Caption TOP, QR anchored to a FLOOR at the bottom (the author, 2026-07: "the QRs
+    // should have a floor they anchor to" — so every label's QR bottom lines up). The
+    // QR is the fixed max square (full content width for a portrait face, 82% for a
+    // square) sitting just above the bottom with a small floor margin; the caption
+    // fills the space above it, top-aligned. Mirrors the HTML sheet's space-between.
+    const qrSize = layout === "square" ? Math.round(cw * 0.82) : Math.min(cw, chAll);
+    const floor = Math.max(2, Math.round(m * 0.5)); // margin below the QR so it isn't at the edge
+    const strip = Math.max(0, chAll - qrSize - floor); // caption space above the QR
+    if (caption && strip > 4) {
+      const fitH = strip * 0.9;
+      const fMin = Math.min(9, (strip * 0.85) / (2 * 1.15));
+      const fontPx = fitCaptionPx(caption, cw, fitH, { maxLines: 2, min: fMin, max: fitH });
+      ctx.font = `bold ${fontPx}px system-ui, sans-serif`;
+      drawCaption(ctx, wrapLines(ctx, caption, cw, 2), cx, cy, cw, strip, fontPx, "center", "top");
+    }
+    await drawQr(cx + (cw - qrSize) / 2, cy + chAll - qrSize - floor, qrSize);
   }
 
-  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  return packMonoBitmap(new Uint8Array(img.data), canvas.width, canvas.height, 128);
+  const img = ctx.getImageData(0, 0, W, H);
+  return packMonoBitmap(new Uint8Array(img.data), W, H, 128);
 }
 
 /** Encode a bitmap in whichever dialect this printer speaks. */
@@ -381,7 +564,9 @@ export async function printToSession(
   content: LabelContent,
   settings: BluetoothPrinterSettings,
 ): Promise<{ bytes: number }> {
-  const bmp = await renderLabelBitmap(content, effectiveFootprint(settings).widthDots);
+  const fp = effectiveFootprint(settings);
+  const labelHDots = mmToDots(settings.label?.heightMm ?? settings.labelHeightMm ?? 30);
+  const bmp = await renderLabelBitmap(content, fp.widthDots, labelHDots);
   const bytes = encodeForPrinter(bmp, settings);
   // A single GATT write caps at 512 bytes and label jobs exceed it.
   await streamToChar(session.writeChar, bytes, { chunkSize: 180 });
@@ -422,6 +607,7 @@ async function runTiled(
   const media = settings.media!;
   const label = settings.label!;
   const labelWDots = mmToDots(label.widthMm);
+  const labelHDots = mmToDots(label.heightMm);
   // Expand copies into a flat run, remembering each label's source item.
   const flat: { item: BatchItem; content: LabelContent }[] = [];
   for (const item of items) {
@@ -435,7 +621,7 @@ async function runTiled(
     const chunk = flat.slice(i, i + perSheet);
     onProgress?.(done, total, chunk[0]?.item);
     try {
-      const bitmaps = await Promise.all(chunk.map((c) => renderLabelBitmap(c.content, labelWDots)));
+      const bitmaps = await Promise.all(chunk.map((c) => renderLabelBitmap(c.content, labelWDots, labelHDots)));
       const sheet = composeMediaNUp(bitmaps, media, label);
       await streamToChar(session.writeChar, encodeTiledSheet(sheet, settings), { chunkSize: 180 });
       done += chunk.length;
@@ -461,7 +647,11 @@ export async function printBatchOverBluetooth(
   settings: BluetoothPrinterSettings,
   onProgress?: (done: number, total: number, current?: BatchItem) => void,
 ): Promise<BatchResult> {
-  const session = await connectPrinter(settings);
+  // Reuse the HELD session (open one if none), and keep it open after — so a second
+  // batch, or a batch after connecting, does not re-show Chrome's device chooser.
+  // The session self-heals (heldPrinterSession reconnects a dropped link) and is
+  // dropped on sign-out / printer change via releaseHeldPrinter.
+  const session = await heldPrinterSession(settings);
   const total = items.reduce((n, i) => n + Math.max(1, i.copies ?? 1), 0);
   // Mirror every progress tick into the process-wide store so the Live box can show
   // a taskbar-style count of labels still to print; done===total clears it.
@@ -498,7 +688,8 @@ export async function printBatchOverBluetooth(
     return { printed, failed, deviceName: session.deviceName, reconnected: session.reconnected };
   } finally {
     setPrintProgress(null);
-    closePrinter(session);
+    // Session stays HELD for the next print (no closePrinter) — releaseHeldPrinter
+    // drops it on sign-out / printer change.
   }
 }
 

@@ -30,22 +30,26 @@ import { resolveQrToken } from "../routes/qr-scan.js";
  *  dropped; a scoped resolve (ctx.scope) probes exactly one and never hits it. */
 const MAX_KINDS_PROBED = 24;
 
-/** Build the detail path for a resolved entity: its own detailUrl, else the
- *  kind's detail_route template. Mirrors resolveEntity in core-scan's qr-resolver
- *  and qr-scan.ts, kept identical so a registry hit lands exactly where a native
- *  scan would. */
+/** Build the detail path for a resolved entity, through the ONE shared decision
+ *  (entities.resolveDetailPath) so this, qr-scan.ts, and core-scan's resolver can't
+ *  drift — a registry hit lands exactly where a native scan would, instance items
+ *  included. */
 async function detailPathFor(
   kind: string,
-  item: { id: string; detailUrl?: string },
+  item: { id: string; detailUrl?: string; instance?: string },
   routeCache: Map<string, string | null>,
 ): Promise<string | undefined> {
-  if (item.detailUrl) return item.detailUrl;
   if (!routeCache.has(kind)) {
     const rec = await entities.getKind(kind);
     routeCache.set(kind, rec?.detail_route ?? null);
   }
-  const route = routeCache.get(kind);
-  return route ? route.replace("{id}", item.id) : undefined;
+  return entities.resolveDetailPath({
+    kind,
+    id: item.id,
+    instance: typeof item.instance === "string" ? item.instance : null,
+    detailUrl: item.detailUrl ?? null,
+    baseDetailRoute: routeCache.get(kind) ?? null,
+  });
 }
 
 /** Register the built-in providers. Idempotent (registerResolvable dedupes by

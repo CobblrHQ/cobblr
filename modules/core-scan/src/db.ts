@@ -1,6 +1,6 @@
 // Tenant-side DB types for core-scan.
 
-import type { Generated, Kysely } from "kysely";
+import type { ColumnType, Generated, Kysely } from "kysely";
 import type { Request } from "express";
 
 export type ScanStatus = "pending" | "enriching" | "resolved" | "discarded";
@@ -50,6 +50,22 @@ export interface CoreScanBatchesTable {
   id: Generated<string>;
   created_by_user_id: string | null;
   created_at: Generated<Date>;
+  /** Human title for the session header. A receipt session sets e.g.
+   *  "Receipt · Home Depot" (or "Receipt" when the vendor is unknown); a plain
+   *  scan session leaves it null (the inbox shows the timestamp). */
+  label: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  /** Where the session came from — "email" makes the inbox say "emailed <when>".
+   *  Null for an ordinary in-app scan session. */
+  origin: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  /** The ORIGINAL source a receipt session was parsed from — the core-files id of
+   *  the uploaded PDF/photo, or the emailed body captured as a file. Powers "View
+   *  original" (rendered in an iframe, any type) + "Re-parse". Null for a plain
+   *  scan session. */
+  source_file_id: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  /** Receipt vendor + order/invoice number as their own fields, so the user can
+   *  EDIT the order # and we recompute `label` = "Receipt · <vendor> #<ref>". */
+  vendor: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  order_ref: ColumnType<string | null, string | null | undefined, string | null | undefined>;
 }
 
 /** A stored Guided Organize plan (services/organize-plan.ts). Apply validates

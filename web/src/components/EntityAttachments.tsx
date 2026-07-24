@@ -14,6 +14,7 @@ import { ApiError, api, type PairingItem, type TagRecord } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
 import { useImageSrc, FilePreview, canPreviewFile, useFilePreviewRegistry } from "@cobblr/platform-web";
+import { ImageLightbox } from "./ImageLightbox";
 
 interface Props {
   /** Entity kind id, e.g. "inventory:part". */
@@ -434,6 +435,11 @@ function FilesSection({
   useFilePreviewRegistry();
   // A non-image file open in the preview modal (STL / G-code / SVG / …).
   const [preview, setPreview] = useState<{ file_id: string; filename: string } | null>(null);
+  // Which image is open in the full-screen lightbox (index into the image
+  // attachments), or null when closed. The lightbox pages across ALL images on
+  // the entity, so it navigates this filtered list, not the mixed grid.
+  const imageAtts = items.filter((a) => a.kind === "image");
+  const [lightbox, setLightbox] = useState<number | null>(null);
 
   // Drag-and-drop: drop anywhere on the section to upload. We track
   // `dragOver` so the grid can highlight as a drop target instead of
@@ -516,6 +522,7 @@ function FilesSection({
               fileId={att.file_id}
               filename={att.filename}
               slug={activeSlug}
+              onOpen={() => setLightbox(imageAtts.findIndex((i) => i.id === att.id))}
               onSetAsCover={async () => {
                 try {
                   await setEntityImagePath(
@@ -603,6 +610,19 @@ function FilesSection({
             filename={preview.filename}
           />
         </Modal>
+      )}
+
+      {lightbox !== null && imageAtts[lightbox] && (
+        <ImageLightbox
+          items={imageAtts.map((a) => ({
+            key: a.id,
+            caption: a.filename,
+            file: { slug: activeSlug, fileId: a.file_id },
+          }))}
+          index={lightbox}
+          onIndex={setLightbox}
+          onClose={() => setLightbox(null)}
+        />
       )}
     </section>
   );
@@ -941,6 +961,7 @@ function AttachmentThumb({
   fileId,
   filename,
   slug,
+  onOpen,
   onSetAsCover,
   onDetach,
 }: {
@@ -948,6 +969,7 @@ function AttachmentThumb({
   fileId: string;
   filename: string;
   slug: string;
+  onOpen: () => void;
   onSetAsCover: () => void;
   onDetach: () => void;
 }) {
@@ -957,9 +979,22 @@ function AttachmentThumb({
   return (
     <div className="group relative aspect-square rounded overflow-hidden border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800">
       {resolved ? (
-        <img src={resolved} alt={filename} className="w-full h-full object-cover" />
+        <img
+          src={resolved}
+          alt={filename}
+          onClick={onOpen}
+          className="w-full h-full object-cover cursor-zoom-in"
+          title="Click to enlarge"
+        />
       ) : (
-        <div className="w-full h-full flex items-center justify-center text-[10px] text-faint">…</div>
+        <button
+          type="button"
+          onClick={onOpen}
+          className="w-full h-full flex items-center justify-center text-[10px] text-faint cursor-zoom-in"
+          title="Click to enlarge"
+        >
+          …
+        </button>
       )}
       <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition">
         <button

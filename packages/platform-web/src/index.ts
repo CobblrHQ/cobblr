@@ -94,7 +94,7 @@ export type {
 export {
   isWebBluetoothAvailable, NO_WEB_BLUETOOTH,
   connectPrinter, closePrinter, printToSession, printBatchOverBluetooth,
-  printLabelOverBluetooth, renderLabelBitmap, encodeForPrinter,
+  printLabelOverBluetooth, renderLabelBitmap, labelLayoutFor, fitCaptionPx, encodeForPrinter,
   // Walk-up: a session held across prints, so one label at a time costs
   // neither a chooser nor a reconnect.
   heldPrinterSession, printOneOverBluetooth, heldPrinterName, releaseHeldPrinter,

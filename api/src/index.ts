@@ -67,6 +67,7 @@ import { migrateBookshelfToInstance } from "./platform/migrate-bookshelf-to-inst
 import { mergeLabelsQr } from "./platform/merge-labels-qr.js";
 import { backfillPlacements } from "./platform/migrate-location-to-placement.js";
 import { backfillDefaultBindings } from "./platform/seed-bindings.js";
+import { startTrialReaper } from "./platform/reap-trials.js";
 import { reconcileScanCategoryFields } from "./platform/reconcile-scan-category.js";
 import { backfillBundleClaims } from "./platform/backfill-bundle-claims.js";
 import {
@@ -166,6 +167,8 @@ async function boot() {
       listKinds: entities.listKinds,
       listKindsForOrg: entities.listKindsForOrg,
       getKind: entities.getKind,
+      detailPathForEntity: entities.detailPathForEntity,
+      titleForEntity: entities.titleForEntity,
       baseKindOf: entities.baseKindOf,
       serverManagedFields: entities.serverManagedFields,
     },
@@ -957,6 +960,11 @@ async function boot() {
   // try/trial tier: register the single-workspace entitlement cap + log the
   // withheld modules. No-op unless COBBLR_TIER=trial.
   registerTrialMode();
+
+  // Reap expired trial/demo workspaces (drops the tenant DB past a grace window).
+  // No-op unless COBBLR_TRIAL_REAP=dry|live; only ever touches trial_expires_at-stamped
+  // orgs, so prod/staging/self-host are untouchable. See platform/reap-trials.ts.
+  startTrialReaper();
 
   // (The date-custom-field calendar source is now registered per-owning-module
   // via platform().calendar.registerDateFieldSource — inventory/assets/projects

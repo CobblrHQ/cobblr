@@ -1002,6 +1002,28 @@ export interface MetaDB {
   workspace_role_capabilities: WorkspaceRoleCapabilitiesTable;
   workspace_role_assignments: WorkspaceRoleAssignmentsTable;
   installed_modules: InstalledModulesTable;
+  inbound_emails: InboundEmailsTable;
+}
+
+/** Durable archive of every inbound email, written BEFORE processing so a
+ *  message we couldn't handle is replayable from the backend rather than lost.
+ *  See migrations/platform/20260724-091-inbound-emails.sql. */
+export interface InboundEmailsTable {
+  id: Generated<string>;
+  received_at: Generated<Date>;
+  to_addr: string | null;
+  from_email: string | null;
+  text_body: string | null;
+  html_body: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  subject: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  message_id: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  attachments: Generated<Array<{ filename?: string; content_type?: string; content_base64: string }>>;
+  handler: string | null;
+  org_id: string | null;
+  user_id: string | null;
+  outcome: ColumnType<Record<string, unknown> | null, Record<string, unknown> | null | undefined, Record<string, unknown> | null | undefined>;
+  processed_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;
+  attempts: Generated<number>;
 }
 
 /** Marketplace v2 — registry of code that can run on this host.

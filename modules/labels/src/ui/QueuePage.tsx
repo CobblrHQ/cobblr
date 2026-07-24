@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import QRCode from "qrcode";
-import { Bluetooth, Hash, Minus, Pencil, Plus, Printer, Send, Settings2, Trash2, Wifi, Zap } from "lucide-react";
+import { Bluetooth, Check, ChevronDown, Hash, Minus, Monitor, Pencil, Plus, Printer, RotateCcw, RotateCw, Send, Settings2, Trash2, Wifi, Zap } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { usePageTitle, useToast, Modal } from "@cobblr/platform-web";
 import { useLabels } from "./context";
@@ -35,17 +35,23 @@ import {
   groupPapersByClass,
   papersOfType,
   qrSideForLabel,
+  labelRotatable,
   type MediaTypeFilter,
 } from "../label-sizes";
+import { bleSettingsForSize } from "../ble-media";
 import { assessScannability } from "../print/qr-overlay";
 import type { CustomLabelSize, Printable } from "./api";
 import { NewSizeModal } from "./NewSizeModal";
 import { AutoPrintModal } from "./AutoPrintModal";
 import { PrinterConfigModal } from "./PrinterConfigModal";
-import { queueToolbarMode } from "./queue-toolbar";
+import { queueToolbarMode, canRevertToStock, resolvePrintTarget } from "./queue-toolbar";
 
 const PAPER_LS = "cobblr:label-paper";
 const SIZE_LS = "cobblr:label-size";
+const ROTATE_LS = "cobblr:label-rotate";
+// Sentinel print target: the browser/system print dialog (⌘P), always available.
+// Distinct from a printer id so a saved printer is never confused with it.
+const SYSTEM_TARGET = "__system__";
 
 function qrSvg(payload: string, ecLevel: "M" | "H" = "M"): Promise<string> {
   return QRCode.toString(payload, {
@@ -107,6 +113,7 @@ export function QueuePage() {
   });
   const [autoPrintOpen, setAutoPrintOpen] = useState(false);
   const [printerConfigOpen, setPrinterConfigOpen] = useState(false);
+  const [confirmForget, setConfirmForget] = useState<{ id: string; name: string } | null>(null);
   const navigate = useNavigate();
 
   // The printer this page prints to — the workspace default (or the only one).
@@ -119,8 +126,16 @@ export function QueuePage() {
     enabled: !!orgSlug,
   });
   const printers = printersQ.data?.items ?? [];
-  const defaultPrinter = printers.find((p) => p.is_default) ?? printers[0];
+  const hasPrinter = printers.length > 0;
+  // The print target for THIS session: the saved default, but switchable to System
+  // print (⌘P) or any OTHER saved printer without changing the default or forgetting
+  // anything. null = follow the saved default; SYSTEM_TARGET = system print.
+  // EVERYTHING below (funnel, buttons, bleLive, the print routing) follows
+  // `defaultPrinter`, so switching targets needs no change anywhere but here.
+  const [pickedTarget, setPickedTarget] = useState<string | null>(null);
+  const defaultPrinter = resolvePrintTarget(pickedTarget, printers, SYSTEM_TARGET);
   const isBleDefault = defaultPrinter?.driver === "browser-bluetooth";
+  const [targetMenuOpen, setTargetMenuOpen] = useState(false);
   // One source of truth for which toolbar parts show. The sheet/label pickers and
   // the browser Print button share `sheetControls`/`browserPrint` so they can never
   // be gated apart again (the regression: no printer hid the pickers but kept Print,
@@ -189,6 +204,10 @@ export function QueuePage() {
   const [pickedSize, setPickedSize] = useState(
     () => localStorage.getItem(SIZE_LS) ?? "",
   );
+  // Turn the label content 90° (portrait from a landscape face). Remembered, but
+  // only ever APPLIED to a non-square size (see effectiveRotate) so it can't
+  // silently rotate a square where the toggle is hidden.
+  const [rotate, setRotate] = useState(() => localStorage.getItem(ROTATE_LS) === "1");
   const [codesOpen, setCodesOpen] = useState(false);
   const [newSizeOpen, setNewSizeOpen] = useState(false);
   // Workspace-defined sizes (dimensions in; grid derived server-side).
@@ -219,6 +238,22 @@ export function QueuePage() {
     : builtin
       ? findPaper(builtin.paper)
       : undefined;
+  // A clean media name for the preview header ("Label roll — 50 × 30 mm"), never
+  // raw float inches like 1.9685039370078740″.
+  const mediaLabel = pickedCustom ? pickedCustom.name : builtin ? (findPaper(builtin.paper)?.label ?? "") : "";
+  // Rotate is only OFFERED for a LANDSCAPE face (turning it portrait is the whole
+  // point) and only APPLIED when offered — so a remembered "on" never silently
+  // rotates a size where it doesn't belong (a 2-up 50×30 has portrait 25×30 cells;
+  // rotating those overflowed the label). Both the preview and ⌘P read
+  // effectiveRotate.
+  const faceWH = pickedCustom
+    ? { w: pickedCustom.label_w, h: pickedCustom.label_h }
+    : builtin
+      ? { w: builtin.label_w, h: builtin.label_h }
+      : null;
+  const canRotate = !!faceWH && labelRotatable(faceWH.w, faceWH.h);
+  const effectiveRotate = rotate && canRotate;
+  useEffect(() => localStorage.setItem(ROTATE_LS, rotate ? "1" : "0"), [rotate]);
   useEffect(() => localStorage.setItem(PAPER_LS, paperKey), [paperKey]);
   // Snap the paper to one the default printer can feed (a persisted 4×6 must not
   // stick on a 2" printer).
@@ -289,7 +324,10 @@ export function QueuePage() {
     queryKey: [
       "labels-preview-qr",
       qrBase.data ?? "",
-      expanded.map((e) => e.id).join(","),
+      // Include the description, not just the id — the printed caption IS the
+      // description, so a rename must bust this cache or the preview goes stale
+      // (it did: the rename showed only after a manual refresh).
+      expanded.map((e) => `${e.id}:${e.description}`).join(","),
       codes.data ? "c" : "0",
       overlayCfg.data ? Object.entries(overlayCfg.data).map(([k, v]) => `${k}:${v ? 1 : 0}`).join(",") : "o",
     ],
@@ -336,6 +374,20 @@ export function QueuePage() {
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't rename"),
   });
 
+  // Forget a saved printer (the deliberate, destructive one — behind a confirm, not
+  // the same as switching to System print). Drops the session target back to the
+  // default so the toolbar never points at a printer that no longer exists.
+  const forget = useMutation({
+    mutationFn: (id: string) => api.deletePrinter(id),
+    onSuccess: () => {
+      setPickedTarget(null);
+      setConfirmForget(null);
+      void qc.invalidateQueries({ queryKey: ["labels-printers", orgSlug] });
+      toast.success("Printer forgotten");
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't forget the printer"),
+  });
+
   // Browser (⌘P) print. Prints from THIS page via a hidden iframe (no separate
   // tab), using the SAME client-built printables the preview shows, and does NOT
   // touch the queue yet. Like the Rollo path, raise a "mark printed" toast and
@@ -346,7 +398,7 @@ export function QueuePage() {
   const doBrowserPrint = () => {
     const printables = previewQr.data ?? [];
     if (!printables.length) return;
-    printHtmlViaIframe(renderPrintSheetHtml(printables, sizeKey, { customSizes: customList }));
+    printHtmlViaIframe(renderPrintSheetHtml(printables, sizeKey, { customSizes: customList, rotate: effectiveRotate }));
     const itemIds = items.map((it) => it.id);
     const count = itemIds.length;
     toast.action(`Printing ${count} label${count === 1 ? "" : "s"}. Mark printed once the paper looks right?`, {
@@ -372,7 +424,12 @@ export function QueuePage() {
       if (!printers.length) {
         throw new Error("No printer configured — add one at Configuration → Printers.");
       }
-      const printer = printers.find((p) => p.is_default) ?? printers[0]!;
+      // The ACTIVE target (the toolbar selector), not blindly the saved default —
+      // so "Print to X" prints to whichever printer the selector shows.
+      const printer =
+        printers.find((p) => p.id === defaultPrinter?.id) ??
+        printers.find((p) => p.is_default) ??
+        printers[0]!;
 
       // A Bluetooth printer has no network address, so the SERVER cannot reach it
       // (its driver throws by construction). This queue prints it from the
@@ -382,14 +439,24 @@ export function QueuePage() {
       // not once per label.
       if (printer.driver === "browser-bluetooth") {
         if (!isWebBluetoothAvailable()) throw new Error(NO_WEB_BLUETOOTH);
-        const settings = (printer.settings ?? {}) as unknown as BluetoothPrinterSettings;
+        const stored = (printer.settings ?? {}) as unknown as BluetoothPrinterSettings;
+        // The media/label you pick in the toolbar drives the print (the author's fix),
+        // keeping the printer's protocol + calibration; fall back to the stored
+        // media if no size resolves.
+        const labelDims = pickedCustom
+          ? { label_w: pickedCustom.label_w, label_h: pickedCustom.label_h }
+          : builtin
+            ? { label_w: builtin.label_w, label_h: builtin.label_h }
+            : null;
+        const settings = paper && labelDims ? bleSettingsForSize(stored, paper, labelDims) : stored;
         if (!settings.widthDots) {
-          throw new Error(`${printer.name} has no width set — open Configuration → Printers and set the media width.`);
+          throw new Error(`${printer.name} has no media set — pick a label size, or set one in Configuration → Printers.`);
         }
         const batch = items.map((it) => ({
           id: it.id,
           qrPayload: liveUrl(it.qr_payload),   // the minted scan URL, never a guess
           caption: it.description || undefined,
+          centerCode: codes.data?.[it.entity_id] || undefined,  // the QR-centre badge, as on screen
           copies: it.qty,
         }));
         const res = await printBatchOverBluetooth(batch, settings, (done, total) => setBtProgress({ done, total }));
@@ -408,7 +475,22 @@ export function QueuePage() {
             recordError = e instanceof Error ? e.message : String(e);
           }
         }
-        return { printer, bluetooth: res, recordError, warnings: [] as { code: string }[] };
+        // Snapshots of the rows that PRINTED (and were therefore cleared from the
+        // queue), so "Didn't come out right?" can put them BACK rather than only
+        // reprint the same thing. Same fields addToQueue needs; the qr_payload is
+        // the already-minted token, so returning reuses it (no re-mint).
+        const printedIds = new Set(res.printed.map((p) => p.id).filter(Boolean));
+        const printedItems = items
+          .filter((it) => printedIds.has(it.id))
+          .map((it) => ({
+            module_name: it.module_name,
+            entity_type: it.entity_type,
+            entity_id: it.entity_id,
+            qr_payload: it.qr_payload,
+            description: it.description,
+            qty: it.qty,
+          }));
+        return { printer, bluetooth: res, batch, settings, printedItems, recordError, warnings: [] as { code: string }[] };
       }
 
       // A network send is one job, not a per-label stream, so there's nothing to
@@ -428,14 +510,26 @@ export function QueuePage() {
     },
     onSuccess: (r) => {
       if ("bluetooth" in r && r.bluetooth) {
-        const { printed, failed, deviceName, reconnected } = r.bluetooth;
+        const { printed, failed, deviceName } = r.bluetooth;
         const n = printed.reduce((acc, i) => acc + Math.max(1, i.copies ?? 1), 0);
+        // Live BLE printing must NOT block for a "did it look good?" confirm (the author).
+        // The labels are already recorded + cleared; this is a non-blocking UNDO to
+        // the side. When it came out wrong you don't want to reprint the SAME thing —
+        // you want the rows BACK so you can fix the size and try again. So the action
+        // returns them to the queue (reusing their tokens), not a blind reprint.
+        const returnToQueue = async () => {
+          try {
+            await Promise.all((r.printedItems ?? []).map((it) => api.addToQueue(it)));
+            void qc.invalidateQueries({ queryKey: ["labels-queue"] });
+            toast.success(`${r.printedItems?.length ?? 0} back in the queue`);
+          } catch (e) {
+            toast.error(e instanceof Error ? e.message : "Couldn't return them to the queue");
+          }
+        };
         if (failed.length === 0) {
-          toast.success(`Printed ${n} label${n === 1 ? "" : "s"} to ${deviceName}${reconnected ? "" : " (device remembered for next time)"}`);
+          toast.action(`Printed ${n} to ${deviceName}. Didn't come out right?`, { actionLabel: "Return to queue", onAction: returnToQueue });
         } else {
-          // Paper is already spent on the successes, so report exactly which rows
-          // failed rather than a blanket error.
-          toast.error(`Printed ${n}, failed ${failed.length}: ${failed.map((f) => f.item.caption ?? f.item.id ?? "?").slice(0, 3).join(", ")}`);
+          toast.action(`Printed ${n}, ${failed.length} failed.`, { actionLabel: "Return to queue", onAction: returnToQueue });
         }
         if ("recordError" in r && r.recordError) {
           toast.error("Labels printed, but the queue could not be updated. Refresh before printing again so you don't print twice.");
@@ -498,7 +592,7 @@ export function QueuePage() {
             (you can print to your OS printer without configuring one here). A
             Bluetooth roll hides the sheet paper/size pickers (it prints one label
             at a time from its own media); network + no-printer keep them. */}
-        {toolbar.connectCtas ? (
+        {!hasPrinter ? (
           <>
             <button
               onClick={connectBluetooth}
@@ -517,25 +611,84 @@ export function QueuePage() {
             </button>
           </>
         ) : (
-          <button
-            onClick={() => (isBleDefault ? setPrinterConfigOpen(true) : navigate("/configuration/print"))}
-            className="rounded-md border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 text-sm px-2.5 py-2 transition flex items-center gap-1.5"
-            title={isBleDefault ? "Printer settings — label size, labels across, name" : "Manage printers"}
-          >
-            {isBleDefault ? (
-              <Bluetooth size={14} className={bleLive ? "text-emerald-500" : "text-faint"} />
-            ) : (
-              <Wifi size={14} className="text-faint" />
+          // Print-target selector: which printer this prints to, OR System print
+          // (⌘P). The active target drives the whole toolbar — media funnel, print
+          // button, preview — so switching to System print unlocks all media and
+          // needs no "forget" (PM220S stays saved). See §defaultPrinter above.
+          <div className="relative">
+            {targetMenuOpen && (
+              <button aria-hidden tabIndex={-1} className="fixed inset-0 z-10 cursor-default" onClick={() => setTargetMenuOpen(false)} />
             )}
-            <span className="font-medium max-w-[10rem] truncate">{defaultPrinter!.name}</span>
-            {isBleDefault && (
-              <span
-                className={`w-1.5 h-1.5 rounded-full ${bleLive ? "bg-emerald-500" : "bg-slate-400 dark:bg-slate-600"}`}
-                title={bleLive ? "Connected in this tab" : "Not connected — printing will pair it"}
-              />
+            <button
+              onClick={() => setTargetMenuOpen((v) => !v)}
+              className="relative z-20 rounded-md border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 text-sm px-2.5 py-2 transition flex items-center gap-1.5"
+              title="Where to print — a saved printer, or the system print dialog (⌘P)"
+            >
+              {defaultPrinter ? (
+                isBleDefault ? (
+                  <Bluetooth size={14} className={bleLive ? "text-emerald-500" : "text-faint"} />
+                ) : (
+                  <Wifi size={14} className="text-faint" />
+                )
+              ) : (
+                <Monitor size={14} className="text-faint" />
+              )}
+              <span className="font-medium max-w-[10rem] truncate">{defaultPrinter ? defaultPrinter.name : "System print"}</span>
+              {isBleDefault && (
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${bleLive ? "bg-emerald-500" : "bg-slate-400 dark:bg-slate-600"}`}
+                  title={bleLive ? "Connected in this tab" : "Not connected — printing will pair it"}
+                />
+              )}
+              <ChevronDown size={13} className="text-faint" />
+            </button>
+            {targetMenuOpen && (
+              <div className="absolute right-0 z-20 mt-1.5 min-w-[252px] rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-xl p-1.5">
+                <TargetItem
+                  icon={<Monitor size={15} />}
+                  title="System print"
+                  sub="Browser ⌘P · any media"
+                  active={!defaultPrinter}
+                  onClick={() => { setPickedTarget(SYSTEM_TARGET); setTargetMenuOpen(false); }}
+                />
+                {printers.map((p) => {
+                  const ble = p.driver === "browser-bluetooth";
+                  const live = ble && btConnected === p.name;
+                  return (
+                    <TargetItem
+                      key={p.id}
+                      icon={ble ? <Bluetooth size={15} /> : <Wifi size={15} />}
+                      title={p.name}
+                      sub={ble ? (live ? "Bluetooth · connected" : "Bluetooth · not connected") : "Network"}
+                      active={defaultPrinter?.id === p.id}
+                      onClick={() => { setPickedTarget(p.id); setTargetMenuOpen(false); }}
+                    />
+                  );
+                })}
+                <div className="h-px bg-line dark:bg-slate-700 my-1.5 mx-1" />
+                <TargetItem
+                  icon={<Plus size={15} className="text-accent" />}
+                  title="Connect a printer…"
+                  onClick={() => { setTargetMenuOpen(false); navigate("/configuration/print"); }}
+                />
+                {defaultPrinter && (
+                  <TargetItem
+                    icon={<Settings2 size={15} />}
+                    title={`${defaultPrinter.name} settings…`}
+                    onClick={() => { setTargetMenuOpen(false); if (isBleDefault) setPrinterConfigOpen(true); else navigate("/configuration/print"); }}
+                  />
+                )}
+                {defaultPrinter && (
+                  <TargetItem
+                    icon={<Trash2 size={15} />}
+                    title={`Forget ${defaultPrinter.name}…`}
+                    danger
+                    onClick={() => { setTargetMenuOpen(false); setConfirmForget({ id: defaultPrinter.id, name: defaultPrinter.name }); }}
+                  />
+                )}
+              </div>
             )}
-            <Settings2 size={13} className="text-faint" />
-          </button>
+          </div>
         )}
 
         {toolbar.configuredPrint && (
@@ -653,6 +806,28 @@ export function QueuePage() {
                 <option value="__new__">＋ New label size…</option>
               </select>
             </label>
+            {canRotate && (
+              <label
+                className="flex items-center gap-1.5"
+                title="Turn the label content 90°, so a landscape face (like 50 × 30 mm) prints portrait. The media itself is unchanged."
+              >
+                <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">turn</span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={rotate}
+                  onClick={() => setRotate((v) => !v)}
+                  className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition ${
+                    rotate
+                      ? "border-accent bg-accent/10 text-accent"
+                      : "border-slate-300 text-muted dark:border-slate-700 dark:text-slate-400"
+                  }`}
+                >
+                  <RotateCw className="h-3.5 w-3.5" />
+                  90°
+                </button>
+              </label>
+            )}
           </div>
         )}
       </div>
@@ -683,6 +858,7 @@ export function QueuePage() {
                     </span>
                     <EditableLabel
                       value={it.description}
+                      stockName={it.stock_title ?? undefined}
                       onSave={(v) => rename.mutate({ id: it.id, description: v })}
                     />
                     {codes.data?.[it.entity_id] && (
@@ -748,7 +924,9 @@ export function QueuePage() {
               printables={previewQr.data ?? []}
               paperW={paper?.width_in ?? 8.5}
               paperH={paper?.height_in ?? 11}
+              mediaLabel={mediaLabel}
               customSizes={customList}
+              rotate={effectiveRotate}
             />
           </div>
         </div>
@@ -780,7 +958,71 @@ export function QueuePage() {
           onClose={() => setPrinterConfigOpen(false)}
         />
       )}
+      <Modal
+        open={!!confirmForget}
+        onClose={() => setConfirmForget(null)}
+        title="Forget this printer?"
+        subtitle={confirmForget?.name}
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-muted dark:text-slate-400">
+            Removes <b className="text-content dark:text-mortar-100">{confirmForget?.name}</b> from this workspace.
+            You can pair or add it again later. To just print somewhere else for now, pick{" "}
+            <b className="text-content dark:text-mortar-100">System print</b> instead — no need to forget.
+          </p>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setConfirmForget(null)}
+              className="px-3 py-1.5 rounded-md text-sm border border-line dark:border-slate-700 hover:bg-subtle dark:hover:bg-slate-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => confirmForget && forget.mutate(confirmForget.id)}
+              disabled={forget.isPending}
+              className="px-3 py-1.5 rounded-md text-sm font-medium bg-rose-600 hover:bg-rose-700 text-white disabled:opacity-50"
+            >
+              {forget.isPending ? "Forgetting…" : "Forget printer"}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
+  );
+}
+
+/** One row in the print-target dropdown: an icon, a title + optional sub-label, and
+ *  a check when it's the active target. `danger` tints a destructive row (Forget). */
+function TargetItem({
+  icon,
+  title,
+  sub,
+  active,
+  danger,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  sub?: string;
+  active?: boolean;
+  danger?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm text-left transition hover:bg-subtle dark:hover:bg-slate-800 ${danger ? "text-rose-600 dark:text-rose-400" : "text-content dark:text-mortar-100"}`}
+    >
+      <span className={`shrink-0 ${danger ? "" : "text-faint"}`}>{icon}</span>
+      <span className="flex-1 min-w-0">
+        <span className="block truncate">{title}</span>
+        {sub && <span className="block text-[11px] text-faint dark:text-slate-500">{sub}</span>}
+      </span>
+      {active && <Check size={15} className="text-accent shrink-0" />}
+    </button>
   );
 }
 
@@ -788,22 +1030,50 @@ export function QueuePage() {
  *  (e.g. "2002 Honda Odyssey Minivan EX") can be trimmed to a short name that
  *  fits the label without wrapping — the abbreviation IS the fit, no ellipsis.
  *  Enter or blur saves; Escape cancels. */
-function EditableLabel({ value, onSave }: { value: string; onSave: (v: string) => void }) {
+function EditableLabel({
+  value,
+  stockName,
+  onSave,
+}: {
+  value: string;
+  /** The entity's stock system name — the revert target. When the caption has
+   *  been trimmed away from it, revert restores it. Absent when unresolved. */
+  stockName?: string;
+  onSave: (v: string) => void;
+}) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
+  // A trimmed caption can be put back to the entity's system name. Only when we
+  // know that name AND the caption differs from it (nothing to revert otherwise).
+  const canRevert = canRevertToStock(value, stockName);
   if (!editing) {
     return (
-      <button
-        type="button"
-        onClick={() => { setDraft(value); setEditing(true); }}
-        className="group/name flex items-center gap-1.5 flex-1 min-w-0 text-left text-content dark:text-mortar-100"
-        title="Click to rename this label"
-      >
-        <span className="truncate group-hover/name:underline decoration-dotted underline-offset-2">
-          {value || <span className="text-faint italic">no name</span>}
-        </span>
-        <Pencil size={12} className="shrink-0 text-faint opacity-60 group-hover/name:opacity-100 group-hover/name:text-accent transition" />
-      </button>
+      <span className="group/name flex items-center gap-1.5 flex-1 min-w-0">
+        <button
+          type="button"
+          onClick={() => { setDraft(value); setEditing(true); }}
+          className="flex items-center gap-1.5 flex-1 min-w-0 text-left text-content dark:text-mortar-100"
+          title="Click to rename this label"
+        >
+          <span className="truncate group-hover/name:underline decoration-dotted underline-offset-2">
+            {value || <span className="text-faint italic">no name</span>}
+          </span>
+          <Pencil size={12} className="shrink-0 text-faint opacity-60 group-hover/name:opacity-100 group-hover/name:text-accent transition" />
+        </button>
+        {/* One-tap revert to the system name, without entering edit mode. Shown
+            only when the caption differs from the stock name. */}
+        {canRevert && (
+          <button
+            type="button"
+            title={`Revert to the system name "${stockName}"`}
+            aria-label={`Revert to the system name "${stockName}"`}
+            onClick={() => onSave(stockName!)}
+            className="shrink-0 p-1 rounded text-faint hover:text-accent transition"
+          >
+            <RotateCcw size={13} />
+          </button>
+        )}
+      </span>
     );
   }
   const commit = () => {
@@ -812,18 +1082,34 @@ function EditableLabel({ value, onSave }: { value: string; onSave: (v: string) =
     if (v !== value) onSave(v);
   };
   return (
-    <input
-      autoFocus
-      value={draft}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") { e.preventDefault(); commit(); }
-        if (e.key === "Escape") { setDraft(value); setEditing(false); }
-      }}
-      maxLength={200}
-      className="input !py-0.5 !px-1.5 text-sm flex-1 min-w-0"
-    />
+    <span className="flex items-center gap-1 flex-1 min-w-0">
+      <input
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") { e.preventDefault(); commit(); }
+          if (e.key === "Escape") { setDraft(value); setEditing(false); }
+        }}
+        maxLength={200}
+        className="input !py-0.5 !px-1.5 text-sm flex-1 min-w-0"
+      />
+      {/* Revert the draft to the entity's SYSTEM name (not the last-saved caption:
+          Escape already restores that + closes). mouseDown+preventDefault keeps the
+          input focused (a blur would commit) so the reset sticks; disabled when
+          there's no stock name or the draft already equals it. */}
+      <button
+        type="button"
+        title={stockName ? `Revert to the system name "${stockName}"` : "No system name to revert to"}
+        aria-label="Revert to the system name"
+        onMouseDown={(e) => { e.preventDefault(); if (stockName) setDraft(stockName); }}
+        disabled={!canRevertToStock(draft, stockName)}
+        className="shrink-0 p-1 rounded text-faint hover:text-accent disabled:opacity-30 disabled:cursor-default transition"
+      >
+        <RotateCcw size={13} />
+      </button>
+    </span>
   );
 }
 
@@ -835,13 +1121,17 @@ function SheetPreview({
   printables,
   paperW,
   paperH,
+  mediaLabel,
   customSizes,
+  rotate,
 }: {
   sizeKey: string;
   printables: Printable[];
   paperW: number;
   paperH: number;
+  mediaLabel: string;
   customSizes: CustomLabelSize[];
+  rotate: boolean;
 }) {
   // ONE scale for the whole preview, so sizes stay comparable: a 2" label is bigger
   // than a 1.5", and a 2" single equals a 2" cell of a 4×6. But it must also be
@@ -874,7 +1164,7 @@ function SheetPreview({
   // sane width until the box is measured.
   const previewScale = (boxW > 0 ? boxW : 640) / (REFERENCE_IN * 96);
   const scale = actual ? actualScale : previewScale;
-  const html = renderPrintSheetHtml(printables, sizeKey, { previewOnly: true, customSizes });
+  const html = renderPrintSheetHtml(printables, sizeKey, { previewOnly: true, customSizes, rotate });
 
   // Physical scannability of the printed QR at THIS size — the "is it too small
   // to read?" sanity check. mm-per-module is a property of the printed inches, so
@@ -906,15 +1196,16 @@ function SheetPreview({
         renderPrintSheetHtml(per > 0 ? printables.slice(i * per, (i + 1) * per) : printables, sizeKey, {
           previewOnly: true,
           customSizes,
+          rotate,
         }),
       ),
-    [printables, per, shownSheets, sizeKey, customSizes],
+    [printables, per, shownSheets, sizeKey, customSizes, rotate],
   );
 
   return (
     <div>
       <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
-        // sheet preview <span className="text-faint dark:text-slate-500">— {paperW}″ × {paperH}″, {actual ? "first sheet, actual size" : sheetCount > 1 ? `${sheetCount} sheets` : "1 sheet"}</span>
+        // sheet preview <span className="text-faint dark:text-slate-500">{mediaLabel ? `${mediaLabel} · ` : ""}{actual ? "first sheet, actual size" : sheetCount > 1 ? `${sheetCount} sheets` : "1 sheet"}</span>
         {scan && (
           <span
             className="normal-case tracking-normal text-faint dark:text-slate-500"

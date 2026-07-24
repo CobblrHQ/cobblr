@@ -45,6 +45,22 @@ export interface NUpGrid {
   rowGapDots: number;
   marginLDots?: number;
   marginTDots?: number;
+  /** Draw a solid CUT GUIDE at each internal column/row seam — for continuous media
+   *  tiled n-up, which the user cuts apart. It lands in the labels' whitespace
+   *  margin, so it marks the cut without touching content. Off for die-cut stock
+   *  (already separated). */
+  divider?: boolean;
+}
+
+/** Paint a solid black vertical line (2 dots wide for visibility) down `bmp`. */
+function fillVLine(bmp: MonoBitmap, x: number, y0: number, y1: number): void {
+  for (let dx = 0; dx < 2; dx++) {
+    const tx = Math.round(x) + dx;
+    if (tx < 0 || tx >= bmp.width) continue;
+    for (let y = Math.max(0, y0); y < Math.min(bmp.height, y1); y++) {
+      bmp.rows[y * bmp.bytesPerLine + (tx >> 3)]! |= 0x80 >> (tx & 7);
+    }
+  }
 }
 
 /** Top-left dot position of each of the first `count` labels, laid FIFO onto the
@@ -80,6 +96,14 @@ export function composeNUp(labels: MonoBitmap[], mediaWDots: number, g: NUpGrid)
   const media = blankBitmap(mediaWDots, heightDots);
   const offsets = nUpOffsets(n, g);
   offsets.forEach((off, i) => blit(media, labels[i]!, off.x, off.y));
+  // Cut guide between tiled faces (continuous media): a solid seam in the gutter.
+  if (g.divider && cols > 1) {
+    const mL = g.marginLDots ?? 0;
+    for (let c = 1; c < cols; c++) {
+      const seamX = mL + c * (g.labelWDots + g.colGapDots) - Math.ceil(g.colGapDots / 2) - 1;
+      fillVLine(media, seamX, 0, heightDots);
+    }
+  }
   return media;
 }
 
@@ -103,6 +127,12 @@ export function composeMediaNUp(
     // feed direction carries the die-cut gap, between stacked physical labels.
     colGapDots: 0,
     rowGapDots: gapDots,
+    // Any 2-up tiling gets a printed cut guide between the columns — you always cut
+    // side-by-side faces apart. (It was gated on feed !== "die-cut", but the feed
+    // defaults to die-cut when a printer hasn't stored one, so a plain 50×30 roll
+    // printed 2-up got no line at all — the author, 2026-07.) It lands in the labels'
+    // whitespace gutter, so a rare pre-die-cut 2-up is unharmed.
+    divider: Math.max(1, cols) > 1,
   });
 }
 

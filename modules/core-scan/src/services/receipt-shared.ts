@@ -9,8 +9,30 @@ export interface ReceiptLine {
   line_total: number | null;
 }
 
+/** Title for the inbox session a parsed receipt becomes: the vendor when known
+ *  ("Receipt · Home Depot"), else a plain "Receipt", plus the order/invoice number
+ *  when stated ("Receipt · KC Tool #384602") so two receipts from one vendor are
+ *  distinct. The inbox adds the time (and "emailed") as the subtitle. */
+export function receiptSessionLabel(vendor: string | null | undefined, orderRef?: string | null): string {
+  const v = (vendor ?? "").trim();
+  const base = v ? `Receipt · ${v}` : "Receipt";
+  const ref = cleanOrderRef(orderRef ?? null);
+  return ref ? `${base} #${ref}` : base;
+}
+
+/** Inverse of receiptSessionLabel — recover the vendor from an existing session
+ *  label. Used when editing the order # of a session created before vendor got its
+ *  own column, so we can recompute the label. Null for a plain "Receipt". */
+export function vendorFromLabel(label: string | null | undefined): string | null {
+  const m = (label ?? "").match(/^Receipt · (.+?)(?:\s+#\S+)?$/);
+  return m?.[1]?.trim() || null;
+}
+
 export interface ParsedReceipt {
   vendor: string | null;
+  /** Order / invoice / reference number, when the receipt states one — makes two
+   *  receipts from the same vendor distinct (bare identifier, no "Order" word). */
+  order_ref: string | null;
   /** ISO YYYY-MM-DD when the receipt's date is parseable, else null. */
   date: string | null;
   /** ISO-4217 code, uppercased, when stated. */
@@ -59,6 +81,7 @@ export function isoDate(v: unknown): string | null {
  *  to the next tier. Drops blank-description lines; defaults qty to 1. */
 export function buildReceipt(parts: {
   vendor?: unknown;
+  order_ref?: unknown;
   date?: unknown;
   currency?: unknown;
   total?: unknown;
@@ -79,9 +102,21 @@ export function buildReceipt(parts: {
   const currency = str(parts.currency);
   return {
     vendor: str(parts.vendor),
+    order_ref: cleanOrderRef(str(parts.order_ref)),
     date: isoDate(parts.date),
     currency: currency ? currency.toUpperCase().slice(0, 3) : null,
     total: num(parts.total),
     items,
   };
+}
+
+/** Normalize a stated order/invoice number to a bare identifier: drop a leading
+ *  "Order/Invoice/Ref/No." word + "#", cap length. Null when there's nothing. */
+export function cleanOrderRef(ref: string | null): string | null {
+  const c = (ref ?? "")
+    .replace(/^(order|invoice|inv|ref(?:erence)?|no|number)\.?\s*#?\s*/i, "")
+    .replace(/^#/, "")
+    .trim()
+    .slice(0, 40);
+  return c || null;
 }

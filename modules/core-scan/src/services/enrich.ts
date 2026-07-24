@@ -12,6 +12,7 @@
 import net from "node:net";
 import type { Kysely } from "kysely";
 import { sql } from "kysely";
+import { browserImageHeaders } from "./image-fetch-headers.js";
 import { platform } from "@cobblr/platform-contract";
 import { lookupBarcode, type BarcodeHit } from "./barcode-lookup.js";
 import { resolveBarcodeViaWebSearch } from "./barcode-websearch.js";
@@ -1191,7 +1192,11 @@ export async function downloadCatalogImage(
     if (attempt > 0) await new Promise((r) => setTimeout(r, 500 * attempt));
     try {
       const dlRes = await fetch(imageUrl, {
-        headers: { "user-agent": "cobblr-core-scan/0.1" },
+        // Look like a BROWSER, not a bot: a real UA + a same-origin Referer +
+        // an image Accept. Hotlink protection keys on exactly these — a missing
+        // Referer / bot UA is why an image the user can SEE full-screen (their
+        // browser sends them) 403s when WE fetch it (the author, 2026-07-24).
+        headers: browserImageHeaders(imageUrl),
         signal: AbortSignal.timeout(8_000),
       });
       if (!dlRes.ok) continue; // 5xx/timeout/blocked → try again
