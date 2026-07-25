@@ -24,6 +24,22 @@ export function meaningfullyChanged(was: string | null | undefined, now: string 
   return norm(was) !== norm(now);
 }
 
+/** Where a barcode correction/reject POST goes. Prefers a directly-configured box
+ *  resolver (`COBBLR_BARCODE_RESOLVER_URL` + its correction token → `/correct`; the
+ *  token type decides verified-vs-propose resolver-side); else the hosted BIdb edge
+ *  (`COBBLR_BIDB_URL` + the per-install key → `/v1/correct`, which the edge forwards to
+ *  the primary as a proposal). The BIdb fallback is what wires the correction flywheel
+ *  on a BIdb-only deployment (e.g. `try`, where the resolver URL is unset). */
+export function correctionTarget(env: NodeJS.ProcessEnv = process.env): { endpoint: string; token: string } | null {
+  const resolver = (env.COBBLR_BARCODE_RESOLVER_URL ?? "").replace(/\/+$/, "");
+  const resolverTok = env.COBBLR_BARCODE_RESOLVER_CORRECTION_TOKEN ?? "";
+  if (resolver && resolverTok) return { endpoint: `${resolver}/correct`, token: resolverTok };
+  const bidb = (env.COBBLR_BIDB_URL ?? "").replace(/\/+$/, "");
+  const bidbKey = (env.COBBLR_BIDB_KEY ?? "").trim();
+  if (bidb && bidbKey) return { endpoint: `${bidb}/v1/correct`, token: bidbKey };
+  return null;
+}
+
 /** Opaque per-user actor id (HMAC) — never a username/workspace/PII (doc 13). */
 function opaqueActor(userId: string | null | undefined): string | null {
   const secret = process.env.JWT_SECRET ?? "";
@@ -69,18 +85,17 @@ export async function reportBarcodeCorrection(opts: {
    *  which is how photo corrections piled up as anonymous dead proposals. */
   orgId?: string | null;
 }): Promise<void> {
-  const base = (process.env.COBBLR_BARCODE_RESOLVER_URL ?? "").replace(/\/+$/, "");
-  const tok = process.env.COBBLR_BARCODE_RESOLVER_CORRECTION_TOKEN ?? "";
-  if (!base || !tok) return; // unconfigured → no-op
+  const target = correctionTarget();
+  if (!target) return; // no resolver + no BIdb configured → nowhere to send
   if (!/^[0-9]{6,14}$/.test(opts.upc)) return;
   if (!(opts.now ?? "").trim()) return; // never POST a blank value
   // A confirm or a commit-signal both affirm the CURRENT value, so neither needs
   // it to have changed; a photo/triage correction must be a real change.
   if (!opts.confirm && !opts.commitSignal && !meaningfullyChanged(opts.was, opts.now)) return;
   try {
-    await fetch(`${base}/correct`, {
+    await fetch(target.endpoint, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${tok}` },
+      headers: { "content-type": "application/json", authorization: `Bearer ${target.token}` },
       body: JSON.stringify({
         upc: opts.upc,
         field: opts.field,
@@ -117,16 +132,15 @@ export async function reportBarcodeReject(opts: {
   /** The scanning workspace — the voter unit (distinct orgs = distinct votes). */
   orgId: string | null;
 }): Promise<void> {
-  const base = (process.env.COBBLR_BARCODE_RESOLVER_URL ?? "").replace(/\/+$/, "");
-  const tok = process.env.COBBLR_BARCODE_RESOLVER_CORRECTION_TOKEN ?? "";
-  if (!base || !tok) return; // unconfigured → no-op
+  const target = correctionTarget();
+  if (!target) return; // no resolver + no BIdb configured → nowhere to send
   if (!/^[0-9]{6,14}$/.test(opts.upc)) return;
   const actor = opaqueOrgActor(opts.orgId);
   if (!actor) return; // an anonymous vote can never form consensus — don't bother
   try {
-    await fetch(`${base}/correct`, {
+    await fetch(target.endpoint, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${tok}` },
+      headers: { "content-type": "application/json", authorization: `Bearer ${target.token}` },
       body: JSON.stringify({
         upc: opts.upc,
         field: "reject",

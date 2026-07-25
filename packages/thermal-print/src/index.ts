@@ -20,3 +20,6 @@ export * from "./compose.js";
 export * from "./calibration.js";
 export * from "./profiles.js";
 export * from "./ble.js";
+
+// Which remembered BLE device belongs to a printer row (two same-model units).
+export { pickBoundDevice, type KnownDevice, type BindingReason, type BindingResult } from "./device-binding.js";

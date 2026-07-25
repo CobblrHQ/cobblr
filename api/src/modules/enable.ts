@@ -16,7 +16,7 @@ import { runMigrations } from "../db/migrate.js";
 import { getTenantPool, evictTenantPool } from "../db/tenant.js";
 import { getEntry, listEntries } from "./registry.js";
 import * as activity from "../platform/activity.js";
-import { isTrialDenied } from "../platform/trial.js";
+import { isTrialDenied, isTrialDeniedForOrg } from "../platform/trial.js";
 import { clearServerManagedCache } from "../platform/entities.js";
 import { clearRelationDefsCache } from "../platform/relation-fields.js";
 
@@ -128,8 +128,9 @@ export async function enableModuleForOrg(
 
   // On the trial tier, withheld modules can't be enabled at all — this guards
   // the manual enable route (the default-enable path filters them out earlier,
-  // so it never reaches here for a denied module). No-op off-trial.
-  if (isTrialDenied(moduleName)) {
+  // so it never reaches here for a denied module). A per-demo unlock for THIS
+  // workspace overrides the denial (Slice 4). No-op off-trial.
+  if (await isTrialDeniedForOrg(moduleName, orgId)) {
     throw new Error(`Module ${moduleName} is not available on the trial tier.`);
   }
 

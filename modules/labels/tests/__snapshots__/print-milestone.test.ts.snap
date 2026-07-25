@@ -26,7 +26,7 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
   .sheet:last-child { page-break-after: auto; }
   .label {
     position: absolute;
-    padding: 0.07in;
+    padding: 0.0600in 0.1100in;
     overflow: hidden;
   }
   /* Cut guide: a dark line ONLY on a seam BETWEEN two filled cells (drawn once, by
@@ -80,15 +80,15 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
   /* portrait — QR FIRST: a full-width square (the biggest it fits), the name fills
      the strip left on top. QR size is set by the face, never by the caption. */
   .label.portrait { display: flex; flex-direction: column; gap: 0; }
-  .label.portrait .desc { text-align: center; flex: 1; min-height: 0; align-items: flex-start; }
-  .label.portrait .qr { width: 100%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.04in; }
+  .label.portrait .desc { text-align: center; flex: 1; min-height: 0; }
+  .label.portrait .qr { width: 100%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.0000in; }
   /* square — QR is 82% width (leaves a caption strip); the name fills the strip. */
   .label.square { display: flex; flex-direction: column; gap: 0; }
-  .label.square .desc { text-align: center; flex: 1; min-height: 0; align-items: flex-start; }
-  .label.square .qr { width: 82%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.04in; }
+  .label.square .desc { text-align: center; flex: 1; min-height: 0; }
+  .label.square .qr { width: 82%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.0000in; }
   /* Cap caption lines so the preview + the thermal print (which hard-wraps to the
      same counts) agree — the fit sizes the font for these. Ellipsise rather than
-     push the QR down. (The rotated-cell variants live in ROTATE_CSS so the
+     push the QR down. (The rotated-cell variants live in rotateCss so the
      un-rotated sheet stays byte-identical.) */
   .label.portrait .desc > span, .label.square .desc > span { -webkit-line-clamp: 2; }
   .label.row .desc > span { -webkit-line-clamp: 3; }
@@ -101,19 +101,19 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
 <body>
   <div class="sheet">
     <div class="label row seam-r seam-b" style="left:0.1875in;top:0.5in;width:2.625in;height:1in">
-      <div class="desc" style="font-size:25.3pt"><span>Widget A</span></div>
+      <div class="desc" style="font-size:25.5pt"><span>Widget A</span></div>
       <div class="qr"><svg data-qr="1"></svg><span class="code code-circle" style="font-size:9.3pt">m1</span></div>
     </div>
     <div class="label row seam-r" style="left:2.9375in;top:0.5in;width:2.625in;height:1in">
-      <div class="desc" style="font-size:16.6pt"><span>Gadget with a longer name</span></div>
+      <div class="desc" style="font-size:17.0pt"><span>Gadget with a longer name</span></div>
       <div class="qr"><svg data-qr="1"></svg><span class="code code-pill" style="font-size:9.3pt">p42</span></div>
     </div>
     <div class="label row" style="left:5.6875in;top:0.5in;width:2.625in;height:1in">
-      <div class="desc" style="font-size:28.9pt"><span>No code</span></div>
+      <div class="desc" style="font-size:26.0pt"><span>No code</span></div>
       <div class="qr"><svg data-qr="1"></svg></div>
     </div>
     <div class="label row" style="left:0.1875in;top:1.5in;width:2.625in;height:1in">
-      <div class="desc" style="font-size:40.5pt"><span>Short</span></div>
+      <div class="desc" style="font-size:36.4pt"><span>Short</span></div>
       <div class="qr"><svg data-qr="1"></svg><span class="code code-circle" style="font-size:9.3pt">z</span></div>
     </div>
   </div>
@@ -147,7 +147,7 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
   .sheet:last-child { page-break-after: auto; }
   .label {
     position: absolute;
-    padding: 0.07in;
+    padding: 0.0900in 0.1650in;
     overflow: hidden;
   }
   /* Cut guide: a dark line ONLY on a seam BETWEEN two filled cells (drawn once, by
@@ -201,15 +201,15 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
   /* portrait — QR FIRST: a full-width square (the biggest it fits), the name fills
      the strip left on top. QR size is set by the face, never by the caption. */
   .label.portrait { display: flex; flex-direction: column; gap: 0; }
-  .label.portrait .desc { text-align: center; flex: 1; min-height: 0; align-items: flex-start; }
-  .label.portrait .qr { width: 100%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.04in; }
+  .label.portrait .desc { text-align: center; flex: 1; min-height: 0; }
+  .label.portrait .qr { width: 100%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.0450in; }
   /* square — QR is 82% width (leaves a caption strip); the name fills the strip. */
   .label.square { display: flex; flex-direction: column; gap: 0; }
-  .label.square .desc { text-align: center; flex: 1; min-height: 0; align-items: flex-start; }
-  .label.square .qr { width: 82%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.04in; }
+  .label.square .desc { text-align: center; flex: 1; min-height: 0; }
+  .label.square .qr { width: 82%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.0450in; }
   /* Cap caption lines so the preview + the thermal print (which hard-wraps to the
      same counts) agree — the fit sizes the font for these. Ellipsise rather than
-     push the QR down. (The rotated-cell variants live in ROTATE_CSS so the
+     push the QR down. (The rotated-cell variants live in rotateCss so the
      un-rotated sheet stays byte-identical.) */
   .label.portrait .desc > span, .label.square .desc > span { -webkit-line-clamp: 2; }
   .label.row .desc > span { -webkit-line-clamp: 3; }
@@ -222,19 +222,19 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
 <body>
   <div class="sheet">
     <div class="label square seam-r" style="left:0.7799in;top:0.5in;width:1.5in;height:1.5in">
-      <div class="desc" style="font-size:11.8pt"><span>Widget A</span></div>
+      <div class="desc" style="font-size:10.5pt"><span>Widget A</span></div>
       <div class="qr"><svg data-qr="1"></svg><span class="code code-circle" style="font-size:11.3pt">m1</span></div>
     </div>
     <div class="label square seam-r" style="left:2.5930999999999997in;top:0.5in;width:1.5in;height:1.5in">
-      <div class="desc" style="font-size:7.0pt"><span>Gadget with a longer name</span></div>
+      <div class="desc" style="font-size:5.8pt"><span>Gadget with a longer name</span></div>
       <div class="qr"><svg data-qr="1"></svg><span class="code code-pill" style="font-size:11.3pt">p42</span></div>
     </div>
     <div class="label square seam-r" style="left:4.4063in;top:0.5in;width:1.5in;height:1.5in">
-      <div class="desc" style="font-size:11.8pt"><span>No code</span></div>
+      <div class="desc" style="font-size:10.5pt"><span>No code</span></div>
       <div class="qr"><svg data-qr="1"></svg></div>
     </div>
     <div class="label square" style="left:6.2195in;top:0.5in;width:1.5in;height:1.5in">
-      <div class="desc" style="font-size:11.8pt"><span>Short</span></div>
+      <div class="desc" style="font-size:10.5pt"><span>Short</span></div>
       <div class="qr"><svg data-qr="1"></svg><span class="code code-circle" style="font-size:11.3pt">z</span></div>
     </div>
   </div>
@@ -268,7 +268,7 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
   .sheet:last-child { page-break-after: auto; }
   .label {
     position: absolute;
-    padding: 0.07in;
+    padding: 0.1200in 0.2200in;
     overflow: hidden;
   }
   /* Cut guide: a dark line ONLY on a seam BETWEEN two filled cells (drawn once, by
@@ -322,15 +322,15 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
   /* portrait — QR FIRST: a full-width square (the biggest it fits), the name fills
      the strip left on top. QR size is set by the face, never by the caption. */
   .label.portrait { display: flex; flex-direction: column; gap: 0; }
-  .label.portrait .desc { text-align: center; flex: 1; min-height: 0; align-items: flex-start; }
-  .label.portrait .qr { width: 100%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.04in; }
+  .label.portrait .desc { text-align: center; flex: 1; min-height: 0; }
+  .label.portrait .qr { width: 100%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.0600in; }
   /* square — QR is 82% width (leaves a caption strip); the name fills the strip. */
   .label.square { display: flex; flex-direction: column; gap: 0; }
-  .label.square .desc { text-align: center; flex: 1; min-height: 0; align-items: flex-start; }
-  .label.square .qr { width: 82%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.04in; }
+  .label.square .desc { text-align: center; flex: 1; min-height: 0; }
+  .label.square .qr { width: 82%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.0600in; }
   /* Cap caption lines so the preview + the thermal print (which hard-wraps to the
      same counts) agree — the fit sizes the font for these. Ellipsise rather than
-     push the QR down. (The rotated-cell variants live in ROTATE_CSS so the
+     push the QR down. (The rotated-cell variants live in rotateCss so the
      un-rotated sheet stays byte-identical.) */
   .label.portrait .desc > span, .label.square .desc > span { -webkit-line-clamp: 2; }
   .label.row .desc > span { -webkit-line-clamp: 3; }
@@ -343,19 +343,19 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
 <body>
   <div class="sheet">
     <div class="label square seam-r" style="left:0.25in;top:0.5in;width:2in;height:2in">
-      <div class="desc" style="font-size:17.1pt"><span>Widget A</span></div>
+      <div class="desc" style="font-size:14.0pt"><span>Widget A</span></div>
       <div class="qr"><svg data-qr="1"></svg><span class="code code-circle" style="font-size:15.1pt">m1</span></div>
     </div>
     <div class="label square seam-r" style="left:2.25in;top:0.5in;width:2in;height:2in">
-      <div class="desc" style="font-size:9.6pt"><span>Gadget with a longer name</span></div>
+      <div class="desc" style="font-size:7.7pt"><span>Gadget with a longer name</span></div>
       <div class="qr"><svg data-qr="1"></svg><span class="code code-pill" style="font-size:15.1pt">p42</span></div>
     </div>
     <div class="label square seam-r" style="left:4.25in;top:0.5in;width:2in;height:2in">
-      <div class="desc" style="font-size:17.1pt"><span>No code</span></div>
+      <div class="desc" style="font-size:14.0pt"><span>No code</span></div>
       <div class="qr"><svg data-qr="1"></svg></div>
     </div>
     <div class="label square" style="left:6.25in;top:0.5in;width:2in;height:2in">
-      <div class="desc" style="font-size:17.1pt"><span>Short</span></div>
+      <div class="desc" style="font-size:14.0pt"><span>Short</span></div>
       <div class="qr"><svg data-qr="1"></svg><span class="code code-circle" style="font-size:15.1pt">z</span></div>
     </div>
   </div>
@@ -389,7 +389,7 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
   .sheet:last-child { page-break-after: auto; }
   .label {
     position: absolute;
-    padding: 0.07in;
+    padding: 0.0900in 0.1650in;
     overflow: hidden;
   }
   /* Cut guide: a dark line ONLY on a seam BETWEEN two filled cells (drawn once, by
@@ -443,15 +443,15 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
   /* portrait — QR FIRST: a full-width square (the biggest it fits), the name fills
      the strip left on top. QR size is set by the face, never by the caption. */
   .label.portrait { display: flex; flex-direction: column; gap: 0; }
-  .label.portrait .desc { text-align: center; flex: 1; min-height: 0; align-items: flex-start; }
-  .label.portrait .qr { width: 100%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.04in; }
+  .label.portrait .desc { text-align: center; flex: 1; min-height: 0; }
+  .label.portrait .qr { width: 100%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.0450in; }
   /* square — QR is 82% width (leaves a caption strip); the name fills the strip. */
   .label.square { display: flex; flex-direction: column; gap: 0; }
-  .label.square .desc { text-align: center; flex: 1; min-height: 0; align-items: flex-start; }
-  .label.square .qr { width: 82%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.04in; }
+  .label.square .desc { text-align: center; flex: 1; min-height: 0; }
+  .label.square .qr { width: 82%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.0450in; }
   /* Cap caption lines so the preview + the thermal print (which hard-wraps to the
      same counts) agree — the fit sizes the font for these. Ellipsise rather than
-     push the QR down. (The rotated-cell variants live in ROTATE_CSS so the
+     push the QR down. (The rotated-cell variants live in rotateCss so the
      un-rotated sheet stays byte-identical.) */
   .label.portrait .desc > span, .label.square .desc > span { -webkit-line-clamp: 2; }
   .label.row .desc > span { -webkit-line-clamp: 3; }
@@ -464,19 +464,19 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
 <body>
   <div class="sheet">
     <div class="label square seam-r seam-b" style="left:0.5in;top:0in;width:1.5in;height:1.5in">
-      <div class="desc" style="font-size:11.8pt"><span>Widget A</span></div>
+      <div class="desc" style="font-size:10.5pt"><span>Widget A</span></div>
       <div class="qr"><svg data-qr="1"></svg><span class="code code-circle" style="font-size:11.3pt">m1</span></div>
     </div>
     <div class="label square seam-b" style="left:2in;top:0in;width:1.5in;height:1.5in">
-      <div class="desc" style="font-size:7.0pt"><span>Gadget with a longer name</span></div>
+      <div class="desc" style="font-size:5.8pt"><span>Gadget with a longer name</span></div>
       <div class="qr"><svg data-qr="1"></svg><span class="code code-pill" style="font-size:11.3pt">p42</span></div>
     </div>
     <div class="label square seam-r" style="left:0.5in;top:1.5in;width:1.5in;height:1.5in">
-      <div class="desc" style="font-size:11.8pt"><span>No code</span></div>
+      <div class="desc" style="font-size:10.5pt"><span>No code</span></div>
       <div class="qr"><svg data-qr="1"></svg></div>
     </div>
     <div class="label square" style="left:2in;top:1.5in;width:1.5in;height:1.5in">
-      <div class="desc" style="font-size:11.8pt"><span>Short</span></div>
+      <div class="desc" style="font-size:10.5pt"><span>Short</span></div>
       <div class="qr"><svg data-qr="1"></svg><span class="code code-circle" style="font-size:11.3pt">z</span></div>
     </div>
   </div>
@@ -510,7 +510,7 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
   .sheet:last-child { page-break-after: auto; }
   .label {
     position: absolute;
-    padding: 0.07in;
+    padding: 0.1200in 0.2200in;
     overflow: hidden;
   }
   /* Cut guide: a dark line ONLY on a seam BETWEEN two filled cells (drawn once, by
@@ -564,15 +564,15 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
   /* portrait — QR FIRST: a full-width square (the biggest it fits), the name fills
      the strip left on top. QR size is set by the face, never by the caption. */
   .label.portrait { display: flex; flex-direction: column; gap: 0; }
-  .label.portrait .desc { text-align: center; flex: 1; min-height: 0; align-items: flex-start; }
-  .label.portrait .qr { width: 100%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.04in; }
+  .label.portrait .desc { text-align: center; flex: 1; min-height: 0; }
+  .label.portrait .qr { width: 100%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.0600in; }
   /* square — QR is 82% width (leaves a caption strip); the name fills the strip. */
   .label.square { display: flex; flex-direction: column; gap: 0; }
-  .label.square .desc { text-align: center; flex: 1; min-height: 0; align-items: flex-start; }
-  .label.square .qr { width: 82%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.04in; }
+  .label.square .desc { text-align: center; flex: 1; min-height: 0; }
+  .label.square .qr { width: 82%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.0600in; }
   /* Cap caption lines so the preview + the thermal print (which hard-wraps to the
      same counts) agree — the fit sizes the font for these. Ellipsise rather than
-     push the QR down. (The rotated-cell variants live in ROTATE_CSS so the
+     push the QR down. (The rotated-cell variants live in rotateCss so the
      un-rotated sheet stays byte-identical.) */
   .label.portrait .desc > span, .label.square .desc > span { -webkit-line-clamp: 2; }
   .label.row .desc > span { -webkit-line-clamp: 3; }
@@ -585,19 +585,19 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
 <body>
   <div class="sheet">
     <div class="label square seam-r seam-b" style="left:0in;top:0in;width:2in;height:2in">
-      <div class="desc" style="font-size:17.1pt"><span>Widget A</span></div>
+      <div class="desc" style="font-size:14.0pt"><span>Widget A</span></div>
       <div class="qr"><svg data-qr="1"></svg><span class="code code-circle" style="font-size:15.1pt">m1</span></div>
     </div>
     <div class="label square seam-b" style="left:2in;top:0in;width:2in;height:2in">
-      <div class="desc" style="font-size:9.6pt"><span>Gadget with a longer name</span></div>
+      <div class="desc" style="font-size:7.7pt"><span>Gadget with a longer name</span></div>
       <div class="qr"><svg data-qr="1"></svg><span class="code code-pill" style="font-size:15.1pt">p42</span></div>
     </div>
     <div class="label square seam-r" style="left:0in;top:2in;width:2in;height:2in">
-      <div class="desc" style="font-size:17.1pt"><span>No code</span></div>
+      <div class="desc" style="font-size:14.0pt"><span>No code</span></div>
       <div class="qr"><svg data-qr="1"></svg></div>
     </div>
     <div class="label square" style="left:2in;top:2in;width:2in;height:2in">
-      <div class="desc" style="font-size:17.1pt"><span>Short</span></div>
+      <div class="desc" style="font-size:14.0pt"><span>Short</span></div>
       <div class="qr"><svg data-qr="1"></svg><span class="code code-circle" style="font-size:15.1pt">z</span></div>
     </div>
   </div>
@@ -631,7 +631,7 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
   .sheet:last-child { page-break-after: auto; }
   .label {
     position: absolute;
-    padding: 0.07in;
+    padding: 0.2400in 0.4400in;
     overflow: hidden;
   }
   /* Cut guide: a dark line ONLY on a seam BETWEEN two filled cells (drawn once, by
@@ -685,15 +685,15 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
   /* portrait — QR FIRST: a full-width square (the biggest it fits), the name fills
      the strip left on top. QR size is set by the face, never by the caption. */
   .label.portrait { display: flex; flex-direction: column; gap: 0; }
-  .label.portrait .desc { text-align: center; flex: 1; min-height: 0; align-items: flex-start; }
-  .label.portrait .qr { width: 100%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.04in; }
+  .label.portrait .desc { text-align: center; flex: 1; min-height: 0; }
+  .label.portrait .qr { width: 100%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.1200in; }
   /* square — QR is 82% width (leaves a caption strip); the name fills the strip. */
   .label.square { display: flex; flex-direction: column; gap: 0; }
-  .label.square .desc { text-align: center; flex: 1; min-height: 0; align-items: flex-start; }
-  .label.square .qr { width: 82%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.04in; }
+  .label.square .desc { text-align: center; flex: 1; min-height: 0; }
+  .label.square .qr { width: 82%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.1200in; }
   /* Cap caption lines so the preview + the thermal print (which hard-wraps to the
      same counts) agree — the fit sizes the font for these. Ellipsise rather than
-     push the QR down. (The rotated-cell variants live in ROTATE_CSS so the
+     push the QR down. (The rotated-cell variants live in rotateCss so the
      un-rotated sheet stays byte-identical.) */
   .label.portrait .desc > span, .label.square .desc > span { -webkit-line-clamp: 2; }
   .label.row .desc > span { -webkit-line-clamp: 3; }
@@ -706,25 +706,25 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
 <body>
   <div class="sheet">
     <div class="label portrait" style="left:0in;top:0in;width:4in;height:6in">
-      <div class="desc" style="font-size:62.8pt"><span>Widget A</span></div>
+      <div class="desc" style="font-size:51.4pt"><span>Widget A</span></div>
       <div class="qr"><svg data-qr="1"></svg><span class="code code-circle" style="font-size:30.0pt">m1</span></div>
     </div>
   </div>
   <div class="sheet">
     <div class="label portrait" style="left:0in;top:0in;width:4in;height:6in">
-      <div class="desc" style="font-size:38.7pt"><span>Gadget with a longer name</span></div>
+      <div class="desc" style="font-size:42.5pt"><span>Gadget with a longer name</span></div>
       <div class="qr"><svg data-qr="1"></svg><span class="code code-pill" style="font-size:30.0pt">p42</span></div>
     </div>
   </div>
   <div class="sheet">
     <div class="label portrait" style="left:0in;top:0in;width:4in;height:6in">
-      <div class="desc" style="font-size:71.8pt"><span>No code</span></div>
+      <div class="desc" style="font-size:54.8pt"><span>No code</span></div>
       <div class="qr"><svg data-qr="1"></svg></div>
     </div>
   </div>
   <div class="sheet">
     <div class="label portrait" style="left:0in;top:0in;width:4in;height:6in">
-      <div class="desc" style="font-size:100.5pt"><span>Short</span></div>
+      <div class="desc" style="font-size:76.8pt"><span>Short</span></div>
       <div class="qr"><svg data-qr="1"></svg><span class="code code-circle" style="font-size:30.0pt">z</span></div>
     </div>
   </div>
@@ -758,7 +758,7 @@ exports[`renderPrintSheetHtml (rotate — opt-in 90° content turn) > on ⇒ ren
   .sheet:last-child { page-break-after: auto; }
   .label {
     position: absolute;
-    padding: 0.07in;
+    padding: 0.0709in 0.1299in;
     overflow: hidden;
   }
   /* Cut guide: a dark line ONLY on a seam BETWEEN two filled cells (drawn once, by
@@ -812,15 +812,15 @@ exports[`renderPrintSheetHtml (rotate — opt-in 90° content turn) > on ⇒ ren
   /* portrait — QR FIRST: a full-width square (the biggest it fits), the name fills
      the strip left on top. QR size is set by the face, never by the caption. */
   .label.portrait { display: flex; flex-direction: column; gap: 0; }
-  .label.portrait .desc { text-align: center; flex: 1; min-height: 0; align-items: flex-start; }
-  .label.portrait .qr { width: 100%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.04in; }
+  .label.portrait .desc { text-align: center; flex: 1; min-height: 0; }
+  .label.portrait .qr { width: 100%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.0354in; }
   /* square — QR is 82% width (leaves a caption strip); the name fills the strip. */
   .label.square { display: flex; flex-direction: column; gap: 0; }
-  .label.square .desc { text-align: center; flex: 1; min-height: 0; align-items: flex-start; }
-  .label.square .qr { width: 82%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.04in; }
+  .label.square .desc { text-align: center; flex: 1; min-height: 0; }
+  .label.square .qr { width: 82%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.0354in; }
   /* Cap caption lines so the preview + the thermal print (which hard-wraps to the
      same counts) agree — the fit sizes the font for these. Ellipsise rather than
-     push the QR down. (The rotated-cell variants live in ROTATE_CSS so the
+     push the QR down. (The rotated-cell variants live in rotateCss so the
      un-rotated sheet stays byte-identical.) */
   .label.portrait .desc > span, .label.square .desc > span { -webkit-line-clamp: 2; }
   .label.row .desc > span { -webkit-line-clamp: 3; }
@@ -828,17 +828,22 @@ exports[`renderPrintSheetHtml (rotate — opt-in 90° content turn) > on ⇒ ren
   .label.rot .rot-inner {
     position: absolute; top: 50%; left: 50%;
     transform: translate(-50%, -50%) rotate(90deg);
-    padding: 0.07in; overflow: hidden;
+    /* SWAPPED relative to the upright cell: this box is turned 90 degrees, so its
+       CSS-horizontal padding lands on the label's PHYSICAL vertical. The wide
+       side margin exists to absorb lateral paper wander on the physical label,
+       so under rotation it must ride the CSS-VERTICAL axis or a rotated print
+       keeps only the narrow feed margin on the sides and clips right again. */
+    padding: 0.1299in 0.0709in; overflow: hidden;
   }
   .rot-inner.row { display: flex; align-items: center; gap: 0.08in; }
   .rot-inner.row .qr { height: 100%; aspect-ratio: 1; order: -1; }
   .rot-inner.row .desc { flex: 1; }
   .rot-inner.portrait { display: flex; flex-direction: column; gap: 0; }
-  .rot-inner.portrait .desc { text-align: center; flex: 1; min-height: 0; align-items: flex-start; }
-  .rot-inner.portrait .qr { width: 100%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.04in; }
+  .rot-inner.portrait .desc { text-align: center; flex: 1; min-height: 0; }
+  .rot-inner.portrait .qr { width: 100%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.0354in; }
   .rot-inner.square { display: flex; flex-direction: column; gap: 0; }
-  .rot-inner.square .desc { text-align: center; flex: 1; min-height: 0; align-items: flex-start; }
-  .rot-inner.square .qr { width: 82%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.04in; }
+  .rot-inner.square .desc { text-align: center; flex: 1; min-height: 0; }
+  .rot-inner.square .qr { width: 82%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.0354in; }
   .rot-inner.portrait .desc > span, .rot-inner.square .desc > span { -webkit-line-clamp: 2; }
   .rot-inner.row .desc > span { -webkit-line-clamp: 3; }
   @media print {
@@ -851,7 +856,7 @@ exports[`renderPrintSheetHtml (rotate — opt-in 90° content turn) > on ⇒ ren
   <div class="sheet">
     <div class="label rot" style="left:0in;top:0in;width:1.968503937007874in;height:1.1811023622047245in">
       <div class="rot-inner portrait" style="width:1.1811023622047245in;height:1.968503937007874in">
-        <div class="desc" style="font-size:21.6pt"><span>Widget A</span></div>
+        <div class="desc" style="font-size:20.5pt"><span>Widget A</span></div>
         <div class="qr"><svg data-qr="1"></svg><span class="code code-circle" style="font-size:11.0pt">m1</span></div>
       </div>
     </div>
@@ -859,7 +864,7 @@ exports[`renderPrintSheetHtml (rotate — opt-in 90° content turn) > on ⇒ ren
   <div class="sheet">
     <div class="label rot" style="left:0in;top:0in;width:1.968503937007874in;height:1.1811023622047245in">
       <div class="rot-inner portrait" style="width:1.1811023622047245in;height:1.968503937007874in">
-        <div class="desc" style="font-size:10.3pt"><span>Gadget with a longer name</span></div>
+        <div class="desc" style="font-size:14.2pt"><span>Gadget with a longer name</span></div>
         <div class="qr"><svg data-qr="1"></svg><span class="code code-pill" style="font-size:11.0pt">p42</span></div>
       </div>
     </div>

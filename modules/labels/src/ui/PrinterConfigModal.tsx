@@ -1,20 +1,29 @@
-// Inline printer config, opened from the labels-page printer chip — so a user
-// tunes the loaded media + "labels across" (and the name) RIGHT on the labels
-// page, instead of being bounced to Configuration. Bluetooth only (a network
-// printer's config is the manager URL, which belongs on the printers page); the
-// full field set (dialect, orientation, calibration) is one link away.
+// Inline printer config, opened from the labels-page printer chip.
+//
+// WHAT THIS OWNS, and why it is so short: the toolbar already picks the label
+// size, and bleSettingsForSize OVERRIDES the printer's stored media geometry from
+// that pick on every print. So the size fields this modal used to show were not
+// merely a duplicate of the toolbar — they were INERT. You could set "loaded label
+// 40x30" here and it changed nothing about what printed. A control that looks
+// authoritative and does nothing is worse than no control (the author, 2026-07:
+// "redundant and worse").
+//
+// So this owns exactly the settings the toolbar CANNOT know, which are the ones
+// bleSettingsForSize deliberately keeps from the printer: how the print sits on
+// the label (top margin), how dark it burns (density), and the printer's name.
+// The size is shown read-only, sourced from the same pick the toolbar uses, so the
+// modal tells the truth about what will print without pretending to set it.
+//
+// Bluetooth only (a network printer's config is the manager URL, which belongs on
+// the printers page); dialect, orientation and calibration stay one link away.
 
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { Modal, useToast } from "@cobblr/platform-web";
-import { printerCapability, presetsForPrinter } from "../label-sizes.js";
-import type { CustomLabelSize } from "./api";
 import { useLabels } from "./context";
 
-// mm -> dots at 203 dpi (PHOMEMO_DPI); kept inline so the labels module needn't
-// depend on thermal-print. The server re-validates the resulting settings.
-const mmToDots = (mm: number) => Math.round((mm / 25.4) * 203);
+const DOTS_PER_MM = 8; // 203 dpi
 
 interface PrinterLite {
   id: string;
@@ -27,16 +36,14 @@ export function PrinterConfigModal({
   printer,
   open,
   onClose,
-  otherPrinters = [],
-  customSizes = [],
+  loadedSizeLabel,
 }: {
   printer: PrinterLite;
   open: boolean;
   onClose: () => void;
-  /** Every OTHER printer, so we can offer "you've done this before" layouts. */
-  otherPrinters?: PrinterLite[];
-  /** The workspace's custom label sizes, offered as presets too. */
-  customSizes?: CustomLabelSize[];
+  /** The size the TOOLBAR is set to — the one that will actually print. Shown
+   *  read-only so this modal cannot disagree with what comes out. */
+  loadedSizeLabel?: string;
 }) {
   const { api, orgSlug } = useLabels();
   const qc = useQueryClient();
@@ -44,36 +51,18 @@ export function PrinterConfigModal({
   const navigate = useNavigate();
 
   const s0 = (printer.settings ?? {}) as Record<string, unknown>;
-  const m0 = (s0.media ?? null) as { widthMm?: number; heightMm?: number; feed?: string; gapMm?: number } | null;
-  const l0 = (s0.label ?? null) as { widthMm?: number } | null;
-  const initW = m0?.widthMm ?? Number((Number(s0.widthDots ?? 320) / 8).toFixed(1));
-  const initH = m0?.heightMm ?? Number(s0.labelHeightMm ?? 30);
-  const initAcross = m0?.widthMm && l0?.widthMm ? Math.max(1, Math.round(m0.widthMm / l0.widthMm)) : 1;
-
   const [name, setName] = useState(printer.name);
-  const [w, setW] = useState(String(initW));
-  const [h, setH] = useState(String(initH));
-  const [across, setAcross] = useState(String(initAcross));
+  // Print position in mm, not dots: nobody thinks in dots, and the reason this
+  // control exists at all is the physical complaint "it prints too low".
+  const [topMm, setTopMm] = useState(String(Number(((Number(s0.topMarginDots) || 0) / DOTS_PER_MM).toFixed(1))));
+  const [density, setDensity] = useState(String(Number(s0.density) || 8));
 
-  const wN = Number(w) || 0;
-  const acrossN = Math.max(1, Math.min(8, Math.round(Number(across) || 1)));
-  const faceW = wN / acrossN;
-
-  // One-tap presets for the loaded media, DERIVED from what this workspace already
-  // uses — layouts on other printers, its own custom sizes, then the platform's
-  // fitting library — not a hardcoded catalog. Typing 50×30 every time is the
-  // friction this removes; a tap sets width, height, and labels-across at once.
-  const cap = printerCapability(printer.driver, printer.settings);
-  const presets = presetsForPrinter(cap, { otherPrinters, customSizes });
+  const topMmN = Math.max(0, Number(topMm) || 0);
+  const densityN = Math.max(1, Math.min(15, Math.round(Number(density) || 8)));
 
   const save = useMutation({
     mutationFn: () => {
-      const hN = Number(h) || 0;
-      const feed = (m0?.feed ?? ((Number(s0.gapMm) || 0) > 0 ? "die-cut" : "continuous")) as string;
-      const gapMm = Number(m0?.gapMm ?? s0.gapMm ?? 0);
-      const media = { widthMm: wN, heightMm: hN, feed, gapMm };
-      const label = { widthMm: acrossN > 1 ? Number(faceW.toFixed(2)) : wN, heightMm: hN };
-      const settings = { ...s0, widthDots: mmToDots(wN), labelHeightMm: hN, gapMm, media, label };
+      const settings = { ...s0, topMarginDots: Math.round(topMmN * DOTS_PER_MM), density: densityN };
       return api.updatePrinter(printer.id, { name: name.trim() || undefined, settings });
     },
     onSuccess: () => {
@@ -85,7 +74,7 @@ export function PrinterConfigModal({
   });
 
   const field = "input !py-1.5 text-sm";
-  const canSave = wN >= 1 && (Number(h) || 0) >= 1 && !!name.trim();
+  const canSave = !!name.trim();
 
   return (
     <Modal open={open} onClose={onClose} title="Printer" subtitle={printer.name}>
@@ -95,48 +84,52 @@ export function PrinterConfigModal({
           <input className={field} value={name} onChange={(e) => setName(e.target.value)} />
         </label>
 
-        {presets.length > 0 && (
+        {loadedSizeLabel && (
           <div>
-            <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">sizes you&rsquo;ve used</span>
-            <div className="flex flex-wrap gap-1.5 mt-1">
-              {presets.map((p) => {
-                const active = wN === p.w && (Number(h) || 0) === p.h && acrossN === p.across;
-                return (
-                  <button
-                    key={p.key}
-                    type="button"
-                    title={p.from ? `${p.w}×${p.h}mm — from ${p.from}` : `${p.w}×${p.h}mm`}
-                    onClick={() => { setW(String(p.w)); setH(String(p.h)); setAcross(String(p.across)); }}
-                    className={
-                      "px-2 py-1 rounded-md border text-xs transition " +
-                      (active
-                        ? "border-cobble-500 bg-cobble-50 dark:bg-cobble-900/30 text-accent"
-                        : "border-line dark:border-slate-700 hover:border-accent hover:text-accent")
-                    }
-                  >
-                    {p.w}×{p.h}mm{p.across > 1 ? ` · ${p.across}-up` : ""}
-                  </button>
-                );
-              })}
+            <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">printing</span>
+            <div className="mt-1 text-sm text-content dark:text-mortar-100">{loadedSizeLabel}</div>
+            <div className="text-[11px] text-faint dark:text-slate-500 mt-0.5">
+              Set by the label picker on this page, so it always matches what prints.
             </div>
           </div>
         )}
 
-        <div>
-          <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">loaded label (mm)</span>
-          <div className="flex items-center gap-2 mt-1">
-            <input className={`${field} w-24`} type="number" step="0.1" min={1} value={w} onChange={(e) => setW(e.target.value)} aria-label="Label width mm" />
-            <span className="text-faint">×</span>
-            <input className={`${field} w-24`} type="number" step="0.1" min={1} value={h} onChange={(e) => setH(e.target.value)} aria-label="Label height mm" />
-            <span className="text-xs text-faint dark:text-slate-500">width × height</span>
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">print position</span>
+          <div className="flex items-center gap-2">
+            <input
+              className={`${field} w-24`}
+              type="number"
+              step="0.5"
+              min={0}
+              value={topMm}
+              onChange={(e) => setTopMm(e.target.value)}
+              aria-label="Top margin in mm"
+            />
+            <span className="text-xs text-faint dark:text-slate-500">mm from the top edge</span>
           </div>
-        </div>
+          <span className="text-[11px] text-faint dark:text-slate-500">
+            Printing too low? Lower this. At 0 the label is centred; raise it only if your printer
+            clips the top.
+          </span>
+        </label>
 
         <label className="flex flex-col gap-1">
-          <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">labels across</span>
-          <input className={`${field} w-24`} type="number" min={1} max={8} value={across} onChange={(e) => setAcross(e.target.value)} />
-          <span className="text-xs text-faint dark:text-slate-500">
-            {acrossN > 1 ? `${acrossN} labels of ${Number(faceW.toFixed(1))}mm across the ${wN || "?"}mm label` : "one label at a time"}
+          <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">darkness</span>
+          <div className="flex items-center gap-2">
+            <input
+              className="w-40"
+              type="range"
+              min={1}
+              max={15}
+              value={densityN}
+              onChange={(e) => setDensity(e.target.value)}
+              aria-label="Print density"
+            />
+            <span className="text-xs text-faint dark:text-slate-500">{densityN} of 15</span>
+          </div>
+          <span className="text-[11px] text-faint dark:text-slate-500">
+            Faint or patchy? Raise it. Smudged or bleeding? Lower it.
           </span>
         </label>
 

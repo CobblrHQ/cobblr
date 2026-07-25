@@ -52,9 +52,33 @@ export interface Connection {
 
 /** Present the chooser and let the user pick a printer. `candidateServices` MUST
  *  include every service you'll read post-connect (Web Bluetooth gates access to
- *  services not named here). */
-export async function requestPrinter(candidateServices: (number | string)[]): Promise<BleDevice> {
-  return bluetooth().requestDevice({ acceptAllDevices: true, optionalServices: candidateServices });
+ *  services not named here).
+ *
+ *  FILTERED by default: the chooser lists devices advertising a known printer
+ *  service, or whose name matches a known model. `acceptAllDevices` listed every
+ *  BLE object in range — headphones, phones, a neighbour's TV — and the user had
+ *  to identify their printer out of that pile (the author, 2026-07, comparing us
+ *  unfavourably with niim.blue, which filters).
+ *
+ *  ESCAPE HATCH, and it matters: a filter can only match what a device puts in its
+ *  ADVERTISEMENT, and plenty of cheap printers advertise neither their service UUID
+ *  nor a recognisable name. Filtering alone would make such a printer impossible to
+ *  pair — a worse bug than the clutter. So callers can pass `{ all: true }` to fall
+ *  back to the unfiltered list, and the UI must offer that as "don't see it?". */
+export async function requestPrinter(
+  candidateServices: (number | string)[],
+  opts: { all?: boolean; namePrefixes?: readonly string[] } = {},
+): Promise<BleDevice> {
+  const b = bluetooth();
+  if (opts.all) return b.requestDevice({ acceptAllDevices: true, optionalServices: candidateServices });
+  const filters: Array<{ services?: (number | string)[]; namePrefix?: string }> = [
+    ...candidateServices.map((s) => ({ services: [s] })),
+    ...(opts.namePrefixes ?? []).map((namePrefix) => ({ namePrefix })),
+  ];
+  // A filter list must be non-empty; with nothing to match on, show everything
+  // rather than throw.
+  if (filters.length === 0) return b.requestDevice({ acceptAllDevices: true, optionalServices: candidateServices });
+  return b.requestDevice({ filters, optionalServices: candidateServices });
 }
 
 /** Reconnect to a previously-granted device without the chooser (Chrome only). */

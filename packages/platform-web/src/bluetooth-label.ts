@@ -27,6 +27,7 @@ import {
   knownPrinters,
   KNOWN_PROFILES,
   matchProfile,
+  pickBoundDevice,
   mediaTiles,
   mmToDots,
   packMonoBitmap,
@@ -67,6 +68,14 @@ export interface BluetoothPrinterSettings {
    *  unchanged. See docs/design-decisions/label-media-and-accumulation.md D3. */
   media?: LabelMedia;
   label?: LabelFace;
+  /** Web Bluetooth's id for the physical unit this row is bound to. The only way
+   *  to tell two same-model printers apart; origin-scoped and randomised, so it is
+   *  stable per browser and absent on a new one (re-picked once, then re-bound). */
+  deviceId?: string;
+  /** Show EVERY BLE device in the chooser instead of just known printers. The
+   *  escape hatch for a printer that advertises neither a known service nor a
+   *  known name — it would otherwise be unpairable. Not persisted; set per attempt. */
+  showAllDevices?: boolean;
 }
 
 /** The single-label footprint this printer actually prints at: derived from
@@ -100,6 +109,9 @@ export interface PrinterSession {
   device: BleDevice;
   writeChar: BleCharacteristic;
   deviceName: string;
+  /** The physical unit this session actually reached. Callers persist it onto the
+   *  printer row so the next reconnect is unambiguous. */
+  deviceId: string;
   profileId?: string;
   /** True when we reconnected silently (no chooser shown). */
   reconnected: boolean;
@@ -159,7 +171,7 @@ export async function heldPrinterSession(settings: BluetoothPrinterSettings): Pr
 export async function printOneOverBluetooth(
   content: LabelContent,
   settings: BluetoothPrinterSettings,
-): Promise<{ deviceName: string; reconnected: boolean }> {
+): Promise<{ deviceName: string; deviceId: string; reconnected: boolean }> {
   if (!isWebBluetoothAvailable()) throw new Error(NO_WEB_BLUETOOTH);
   const session = await heldPrinterSession(settings);
   try {
@@ -171,7 +183,7 @@ export async function printOneOverBluetooth(
     releaseHeldPrinter();
     throw e;
   }
-  return { deviceName: session.deviceName, reconnected: session.reconnected };
+  return { deviceName: session.deviceName, deviceId: session.deviceId, reconnected: session.reconnected };
 }
 
 /** Open a session. Tries a silent reconnect to an already-granted printer first;
@@ -186,22 +198,27 @@ export async function connectPrinter(settings: BluetoothPrinterSettings): Promis
   // this is a best-effort fast path, never a requirement.
   try {
     const known = await knownPrinters();
-    if (known.length === 1) {
-      device = known[0]!;
+    // pickBoundDevice owns the rules (see device-binding.ts): a row bound to a
+    // device.id only ever reconnects to THAT unit, and two same-model units with
+    // nothing bound refuse to guess rather than print on the wrong machine.
+    const picked = pickBoundDevice(known, settings, (d, profileId) => !!d.name && matchProfile(d.name)?.id === profileId);
+    if (picked.device) {
+      device = picked.device;
       reconnected = true;
-    } else if (known.length > 1 && settings.profileId) {
-      const match = known.find((d) => d.name && matchProfile(d.name)?.id === settings.profileId);
-      if (match) {
-        device = match;
-        reconnected = true;
-      }
     }
   } catch {
     /* fall through to the chooser */
   }
 
   if (!device) {
-    device = await requestPrinter([...CANDIDATE_SERVICES]);
+    // Filtered to known printer services + model name prefixes, so the chooser is
+    // printers rather than every BLE object in range. `showAllDevices` is the
+    // caller's escape hatch for a printer that advertises neither (see
+    // requestPrinter) — without it such a printer could never be paired.
+    device = await requestPrinter([...CANDIDATE_SERVICES], {
+      all: settings.showAllDevices,
+      namePrefixes: KNOWN_PROFILES.flatMap((p) => p.namePrefixes),
+    });
     reconnected = false;
   }
 
@@ -222,6 +239,7 @@ export async function connectPrinter(settings: BluetoothPrinterSettings): Promis
     device,
     writeChar,
     deviceName: device.name ?? "(unnamed)",
+    deviceId: device.id,
     profileId: (device.name ? matchProfile(device.name)?.id : undefined) ?? settings.profileId,
     reconnected,
   };
@@ -266,17 +284,24 @@ export function settingsFromProfile(p: PrinterProfile): BluetoothPrinterSettings
  *  recognise — the caller then sends the user to the manual fields. The detection
  *  session is closed right after; the real print re-opens the now-granted device
  *  with no chooser. */
-export async function pairBluetoothPrinter(): Promise<{
+export async function pairBluetoothPrinter(opts: { showAllDevices?: boolean } = {}): Promise<{
   deviceName: string;
   profile: PrinterProfile | null;
   settings: BluetoothPrinterSettings | null;
 }> {
   // Width here is a throwaway — pairing ignores it; the profile carries the real one.
-  const session = await connectPrinter({ protocol: "tspl", widthDots: 320 });
+  const session = await connectPrinter({
+    protocol: "tspl",
+    widthDots: 320,
+    showAllDevices: opts.showAllDevices,
+  });
   const profile =
     (session.profileId ? KNOWN_PROFILES.find((p) => p.id === session.profileId) : null) ?? matchProfile(session.deviceName) ?? null;
   closePrinter(session);
-  return { deviceName: session.deviceName, profile, settings: profile ? settingsFromProfile(profile) : null };
+  // Bind the row to the physical unit chosen in the chooser — the one moment a
+  // human disambiguates two identical printers.
+  const settings = profile ? { ...settingsFromProfile(profile), deviceId: session.deviceId } : null;
+  return { deviceName: session.deviceName, profile, settings };
 }
 
 async function findChar(device: BleDevice, charUuid: string): Promise<BleCharacteristic | null> {
@@ -303,19 +328,13 @@ export function closePrinter(session: PrinterSession): void {
 
 // ── render + encode ─────────────────────────────────────────────────────────
 
-/** The inner layout of one label cell, by aspect. MIRRORS pickCellLayout in
- *  modules/labels/src/label-sizes.ts so the thermal print matches the on-screen
- *  preview + the ⌘P/PDF renderers. (A module can't be imported here, so the two
- *  thresholds are kept identical by test — see bluetooth-label.test.ts.) */
-export type LabelLayout = "row" | "portrait" | "square";
-export function labelLayoutFor(widthDots: number, heightDots: number): LabelLayout {
-  // Aspect is unit-independent, so this matches pickCellLayout for dots OR inches;
-  // guard only a non-positive height (degenerate → treat as wide).
-  const aspect = heightDots > 0 ? widthDots / heightDots : 999;
-  if (aspect <= 0.85) return "portrait";
-  if (aspect < 1.2) return "square";
-  return "row";
-}
+// The cell layout + caption geometry live in @cobblr/platform-contract: the
+// server-side PDF renderer needs the SAME numbers and cannot import this package
+// (browser deps), so a shared home had to be reachable from both. Re-exported
+// here so existing importers are unaffected. labelLayoutFor still mirrors
+// pickCellLayout in modules/labels/src/label-sizes.ts, pinned by sizes.test.ts.
+export { captionBox, labelLayoutFor, type CaptionBox, type LabelLayout } from "@cobblr/platform-contract/label-geometry";
+import { captionBox, labelLayoutFor, MARGIN_FRAC } from "@cobblr/platform-contract/label-geometry";
 
 /** The caption font size that best FILLS a text box: a short name ("Office") prints
  *  large, a long one ("2019 Honda Civic") shrinks and wraps to fit (up to maxLines).
@@ -328,7 +347,7 @@ export function fitCaptionPx(
   text: string,
   boxW: number,
   boxH: number,
-  opts: { maxLines?: number; min?: number; max?: number } = {},
+  opts: { maxLines?: number; min?: number; max?: number; measure?: (text: string) => number } = {},
 ): number {
   const t = (text ?? "").trim();
   // Units are the caller's (px or inches), so min/max default to no clamp — the
@@ -346,12 +365,29 @@ export function fitCaptionPx(
   // the label's left/right extents (the author, 2026-07: "2019 Honda Civic is way too
   // small ... scale to the extents").
   const CHAR = 0.55;
+  // Real text width at font-size 1, when the caller can measure (canvas 2d). The
+  // CHAR estimate averages ~0.5 for mixed case but "Thumper" runs ~0.62 and "M8"
+  // 0.755 — an estimate-sized font then overflows the box and clips. Guarded:
+  // a mock/broken canvas returning 0 falls back to the estimate.
+  const measured = opts.measure ? opts.measure(t) : NaN;
+  const w1 = Number.isFinite(measured) && measured > 0 ? measured : n * CHAR;
   const LINE = 1.12;
+  // CHAR is an ESTIMATE, so a font it says fits on `lc` lines can still wrap to
+  // lc+1 in the browser and then overrun the box (a digit-heavy name — wide
+  // glyphs — overflowed a 1.5in square strip by ~5px). Keep a small margin on the
+  // WIDTH bound so "fits on lc lines" is true when rendered.
+  //
+  // Do NOT instead require the font to also fit lc+1 lines: that halves every
+  // caption whose word count allows wrapping, while leaving one-word captions
+  // untouched (maxLines collapses to 1 for those). It shipped once and made
+  // "Prusa MINI+" print at half the size of "Thumper" beside it — the author, 2026-07.
+  const WIDTH_SAFETY = 0.94;
   const maxLines = Math.max(1, Math.min(opts.maxLines ?? 2, words.length));
   let best = 0;
   for (let lc = 1; lc <= maxLines; lc++) {
-    const perLine = Math.ceil(n / lc);
-    best = Math.max(best, Math.min(boxW / (perLine * CHAR), boxH / (lc * LINE)));
+    const byWidth = (boxW * WIDTH_SAFETY) / (w1 / lc);
+    const byHeight = boxH / (lc * LINE);
+    best = Math.max(best, Math.min(byWidth, byHeight));
   }
   return Math.max(min, Math.min(max, best));
 }
@@ -461,12 +497,18 @@ export async function renderLabelBitmap(
   ctx.fillRect(0, 0, W, H);
   ctx.imageSmoothingEnabled = false;
 
-  // Whitespace margin: ~6% of the shorter side, so a 50 mm label prints ~46 mm
-  // centred rather than filling the head to a clipped edge.
-  const m = Math.max(6, Math.round(Math.min(W, H) * 0.06));
-  const cx = m, cy = m, cw = Math.max(1, W - 2 * m), chAll = Math.max(1, H - 2 * m);
   const caption = content.caption?.trim() ?? "";
   const layout = labelLayoutFor(W, H);
+  // Geometry comes from the SHARED captionBox (in dots here, inches in the HTML
+  // sheet) so the thermal print and the preview lay out identically.
+  const box = captionBox(W, H, layout);
+  // Position at the margins the box was computed FROM — the sides are wider than
+  // the feed direction to absorb lateral paper wander, so a single symmetric `m`
+  // here would put content where the box does not expect it.
+  const m = Math.max(4, Math.round(box.marginY));
+  const cx = Math.max(4, Math.round(box.marginX)), cy = m;
+  const cw = Math.max(1, Math.round(box.contentW));
+  const chAll = Math.max(1, Math.round(box.contentH));
 
   const drawQr = async (qx: number, qy: number, size: number): Promise<void> => {
     const s = Math.max(1, Math.round(size));
@@ -481,32 +523,33 @@ export async function renderLabelBitmap(
     if (content.centerCode) drawCenterCode(ctx, content.centerCode, qx + s / 2, qy + s / 2, s);
   };
 
+  const qrSize = Math.round(box.qrSize);
   if (layout === "row") {
     // QR left (square, full content height); caption right, auto-fit to its box.
-    const qrSize = Math.min(chAll, cw * 0.5);
     await drawQr(cx, cy + (chAll - qrSize) / 2, qrSize);
     if (caption) {
-      const tx = cx + qrSize + Math.round(m * 0.8);
-      const tw = Math.max(1, cx + cw - tx);
-      const fontPx = fitCaptionPx(caption, tw, chAll, { maxLines: 3, min: 10 });
+      const tw = Math.max(1, Math.round(box.fitW));
+      const tx = cx + cw - tw; // right-hand column, gutter already in box.fitW
+      const fontPx = fitCaptionPx(caption, tw, box.fitH, { maxLines: box.maxLines, min: box.minFont, max: box.fitH });
       ctx.font = `bold ${fontPx}px system-ui, sans-serif`;
-      drawCaption(ctx, wrapLines(ctx, caption, tw, 3), tx, cy, tw, chAll, fontPx, "left");
+      drawCaption(ctx, wrapLines(ctx, caption, tw, box.maxLines), tx, cy, tw, chAll, fontPx, "left");
     }
   } else {
-    // Caption TOP, QR anchored to a FLOOR at the bottom (the author, 2026-07: "the QRs
-    // should have a floor they anchor to" — so every label's QR bottom lines up). The
-    // QR is the fixed max square (full content width for a portrait face, 82% for a
-    // square) sitting just above the bottom with a small floor margin; the caption
-    // fills the space above it, top-aligned. Mirrors the HTML sheet's space-between.
-    const qrSize = layout === "square" ? Math.round(cw * 0.82) : Math.min(cw, chAll);
-    const floor = Math.max(2, Math.round(m * 0.5)); // margin below the QR so it isn't at the edge
-    const strip = Math.max(0, chAll - qrSize - floor); // caption space above the QR
+    // Caption TOP, QR anchored to the FLOOR at the bottom (the author, 2026-07: "the QRs
+    // should have a floor they anchor to" — so every label's QR bottom lines up).
+    // Every dimension comes from the shared captionBox, so this matches the preview.
+    const floor = Math.round(box.floor);
+    const strip = Math.round(box.strip);
     if (caption && strip > 4) {
-      const fitH = strip * 0.9;
-      const fMin = Math.min(9, (strip * 0.85) / (2 * 1.15));
-      const fontPx = fitCaptionPx(caption, cw, fitH, { maxLines: 2, min: fMin, max: fitH });
+      const measure = (text: string) => {
+        ctx.font = "bold 100px system-ui, sans-serif";
+        return ctx.measureText(text).width / 100;
+      };
+      const fontPx = fitCaptionPx(caption, cw, box.fitH, { maxLines: box.maxLines, min: box.minFont, max: box.fitH, measure });
       ctx.font = `bold ${fontPx}px system-ui, sans-serif`;
-      drawCaption(ctx, wrapLines(ctx, caption, cw, 2), cx, cy, cw, strip, fontPx, "center", "top");
+      // Centred in the strip between the label top and the QR — the approved
+      // placement (a top-hugging caption reads as floating away from its QR).
+      drawCaption(ctx, wrapLines(ctx, caption, cw, box.maxLines), cx, cy, cw, strip, fontPx, "center", "middle");
     }
     await drawQr(cx + (cw - qrSize) / 2, cy + chAll - qrSize - floor, qrSize);
   }
@@ -535,7 +578,35 @@ export function encodeForPrinter(bmp: MonoBitmap, s: BluetoothPrinterSettings): 
         };
   // BITMAP rather than TSPL's QRCODE: some firmware omits QRCODE entirely and
   // silently drops the object. Rasterising always works. Polarity inverts inside.
-  return encodeTsplParts(media, [tsplBitmap(0, s.topMarginDots ?? 0, bmp)]);
+  return encodeTsplParts(media, [tsplBitmap(0, topOffsetDots(s), bmp)]);
+}
+
+/** The y offset (dots) to draw a rendered bitmap at.
+ *
+ *  Two margins used to STACK. A profile's `topMarginDots` exists to clear the
+ *  printer's physical dead zone at the top of the label, but renderLabelBitmap
+ *  ALREADY leaves its own whitespace margin inside the bitmap — so shifting the
+ *  whole bitmap down by the dead zone added the two together. On a PM220S / 50x30
+ *  label that put the first ink 4.8 mm down (3.0 dead zone + 1.8 internal) while
+ *  the bottom kept only 1.8 mm, and the print visibly sat low (the author, 2026-07).
+ *
+ *  The bitmap's own white already satisfies part of the dead zone, so only the
+ *  DIFFERENCE needs shifting: the total top inset becomes max(internal, deadzone)
+ *  rather than their sum. Lowering "Top margin" on the Printers page then moves the
+ *  print further up; at 0 the top and bottom margins match and the content is
+ *  vertically centred on the label. */
+export function topOffsetDots(s: BluetoothPrinterSettings): number {
+  const deadZone = s.topMarginDots ?? 0;
+  // Derive the internal margin from the LABEL FACE, not from the bitmap handed in:
+  // a tiled sheet is many faces tall, and a synthetic bitmap has no margin at all,
+  // so measuring the argument would give a number unrelated to the white that
+  // renderLabelBitmap actually left at the top of the first label.
+  const f = effectiveFootprint(s);
+  const faceH = Math.round(mmToDots(f.labelHeightMm));
+  // Floor of 4 matches renderLabelBitmap's own positioning floor exactly — a
+  // different floor here would re-introduce a tiny stack on very small faces.
+  const internal = Math.max(4, Math.round(Math.min(f.widthDots, faceH) * MARGIN_FRAC));
+  return Math.max(0, deadZone - internal);
 }
 
 /** Encode a COMPOSED media sheet (several labels tiled onto the loaded media, D8).
@@ -554,7 +625,7 @@ function encodeTiledSheet(sheet: MonoBitmap, s: BluetoothPrinterSettings): Uint8
     density: s.density,
     speed: s.speed,
   };
-  return encodeTsplParts(media, [tsplBitmap(0, s.topMarginDots ?? 0, sheet)]);
+  return encodeTsplParts(media, [tsplBitmap(0, topOffsetDots(s), sheet)]);
 }
 
 // ── printing ────────────────────────────────────────────────────────────────
@@ -583,6 +654,10 @@ export interface BatchResult {
   printed: BatchItem[];
   failed: { item: BatchItem; error: string }[];
   deviceName: string;
+  /** The physical unit this batch actually printed on. Callers persist it onto
+   *  the printer row, which binds an ALREADY-PAIRED printer on its next print —
+   *  otherwise only newly-paired rows would ever get a binding. */
+  deviceId: string;
   reconnected: boolean;
 }
 
@@ -664,7 +739,7 @@ export async function printBatchOverBluetooth(
     const perSheet = tileCount(settings);
     if (perSheet > 1) {
       const { printed, failed } = await runTiled(session, items, settings, perSheet, report);
-      return { printed, failed, deviceName: session.deviceName, reconnected: session.reconnected };
+      return { printed, failed, deviceName: session.deviceName, deviceId: session.deviceId, reconnected: session.reconnected };
     }
     // One-up: a feed per label (per copy), reporting exactly what failed.
     const printed: BatchItem[] = [];
@@ -685,7 +760,7 @@ export async function printBatchOverBluetooth(
       if (!failed.some((f) => f.item === item)) printed.push(item);
     }
     report(done, total);
-    return { printed, failed, deviceName: session.deviceName, reconnected: session.reconnected };
+    return { printed, failed, deviceName: session.deviceName, deviceId: session.deviceId, reconnected: session.reconnected };
   } finally {
     setPrintProgress(null);
     // Session stays HELD for the next print (no closePrinter) — releaseHeldPrinter

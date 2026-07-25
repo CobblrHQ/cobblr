@@ -21,6 +21,8 @@ import { log as activityLog } from "../platform/activity.js";
 import { meta } from "../db/meta.js";
 import { getTenantDb } from "../db/tenant.js";
 import { hardDeleteOrg } from "../platform/delete-org.js";
+import { provisionDemoForUser } from "../platform/provision-demo.js";
+import { BlueprintManifest } from "./blueprint.js";
 import { getCpuStats, getInvocationStats } from "../sandbox/pool.js";
 import { hasAuthEmailSender, sendAuthEmail } from "../platform/hosted-seams.js";
 import { notifyAccount } from "../platform/notifications.js";
@@ -172,6 +174,53 @@ superAdminRouter.patch("/workspaces/:id", async (req, res, next) => {
       return;
     }
     res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /super-admin/demos — provision a time-boxed, blueprint-seeded DEMO workspace into
+// an existing user's account (Slice 4). Interactive + reset-able; the reaper sweeps it at
+// expiry. `unlock` lifts specific trial caps for THIS workspace only (e.g. ["files.upload",
+// "core-ai"]) so the demo can show off what real trials lock. Target the user by email.
+const DemoBody = z.object({
+  email: z.string().email(),
+  name: z.string().min(1).max(120).optional(),
+  expiresInDays: z.number().int().positive().optional(),
+  unlock: z.array(z.string().min(1)).max(50).optional(),
+  blueprint: BlueprintManifest.optional(),
+});
+superAdminRouter.post("/demos", async (req, res, next) => {
+  try {
+    const parsed = DemoBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Bad demo payload", details: parsed.error.issues } });
+      return;
+    }
+    const target = await meta
+      .selectFrom("users")
+      .select(["id"])
+      .where("email", "=", parsed.data.email.toLowerCase().trim())
+      .executeTakeFirst();
+    if (!target) {
+      res.status(404).json({ error: { code: "no_such_user", message: "No account with that email — they must have signed up first." } });
+      return;
+    }
+    const result = await provisionDemoForUser({
+      userId: target.id,
+      orgName: parsed.data.name ?? "Demo workspace",
+      blueprint: parsed.data.blueprint ?? null,
+      expiresInDays: parsed.data.expiresInDays,
+      unlock: parsed.data.unlock,
+    });
+    await activityLog({
+      orgId: result.orgId,
+      userId: target.id,
+      action: "demo_provisioned",
+      ref: { module: null, entityType: "org", entityId: result.orgId },
+      diff: { unlocks: result.unlocks, expires_at: result.expiresAt.toISOString() },
+    });
+    res.status(201).json(result);
   } catch (err) {
     next(err);
   }

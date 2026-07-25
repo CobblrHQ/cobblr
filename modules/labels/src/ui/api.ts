@@ -14,6 +14,10 @@ export interface QueueItem {
   /** The source entity's current system title, resolved live (instance-aware).
    *  The caption's "revert to system name" target; null when the entity is gone. */
   stock_title?: string | null;
+  /** The entity's INSTANCE-AWARE kind name ("3D Printers"), for the row prefix —
+   *  so a machine filed under a named instance reads as its instance, not the raw
+   *  `machines/machine`. Null falls the row back to `module_name/entity_type`. */
+  kind_label?: string | null;
 }
 
 export interface Printable {

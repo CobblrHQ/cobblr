@@ -1,0 +1,59 @@
+// What a printer remembers about the stock loaded in it.
+//
+// The label size used to live in this browser's localStorage, so it did not follow
+// you to another computer and each printer forgot the stock actually in it. The
+// printer row already persists in the workspace, so the memory belongs there.
+//
+// Pure helpers, kept out of the React effect so the rules are testable: the write
+// must not loop against the refetch it triggers, and a restore must not be mistaken
+// for a user edit.
+
+/** The size fields we stash on a printer's settings blob. */
+export interface PrinterMemory {
+  lastSizeKey?: string;
+  lastPaperKey?: string;
+  lastRotate?: boolean;
+  lastUsedAt?: string;
+}
+
+/** What to restore when this printer becomes the active target. Returns only the
+ *  fields actually remembered, so an unset one keeps the current selection rather
+ *  than snapping it to a default. */
+export function rememberedSelection(settings: Record<string, unknown> | undefined): {
+  sizeKey?: string;
+  paperKey?: string;
+  rotate?: boolean;
+} {
+  const s = settings ?? {};
+  const out: { sizeKey?: string; paperKey?: string; rotate?: boolean } = {};
+  if (typeof s.lastSizeKey === "string" && s.lastSizeKey) out.sizeKey = s.lastSizeKey;
+  if (typeof s.lastPaperKey === "string" && s.lastPaperKey) out.paperKey = s.lastPaperKey;
+  if (typeof s.lastRotate === "boolean") out.rotate = s.lastRotate;
+  return out;
+}
+
+/** True when the printer's memory differs from what is selected now.
+ *
+ *  This is the loop guard: saving triggers a printers refetch, which re-runs the
+ *  effect with a NEW printer object. Without this equality check that would save
+ *  again, forever. */
+export function needsRemember(
+  settings: Record<string, unknown> | undefined,
+  sel: { sizeKey: string; paperKey: string; rotate: boolean },
+): boolean {
+  if (!sel.sizeKey) return false; // nothing meaningful to remember yet
+  const s = settings ?? {};
+  return s.lastSizeKey !== sel.sizeKey || s.lastPaperKey !== sel.paperKey || s.lastRotate !== sel.rotate;
+}
+
+/** Printers most-recently-used first — device history, so the target picker leads
+ *  with the machine you actually print on. Never used sorts last, and ties fall
+ *  back to name so the order is stable rather than arbitrary. */
+export function byRecentlyUsed<T extends { name: string; settings?: Record<string, unknown> }>(printers: T[]): T[] {
+  const at = (p: T) => {
+    const v = (p.settings ?? {}).lastUsedAt;
+    const t = typeof v === "string" ? Date.parse(v) : NaN;
+    return Number.isNaN(t) ? -Infinity : t;
+  };
+  return [...printers].sort((a, b) => at(b) - at(a) || a.name.localeCompare(b.name));
+}

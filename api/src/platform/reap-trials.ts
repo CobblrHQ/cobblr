@@ -30,6 +30,21 @@ export function reapMode(env: NodeJS.ProcessEnv = process.env): ReapMode {
   return v === "live" ? "live" : v === "dry" ? "dry" : "off";
 }
 
+/** Grace days from env, fail-safe: a non-numeric value falls back to 3 (never NaN, which
+ *  would make the reap cutoff NaN and silently reap nothing). Pure. */
+export function reapGraceDays(env: NodeJS.ProcessEnv = process.env): number {
+  const g = Number(env.COBBLR_TRIAL_REAP_GRACE_DAYS);
+  return Number.isFinite(g) && g >= 0 ? g : 3;
+}
+
+/** Sweep interval from env, fail-safe: a non-numeric or sub-60s value falls back to 6h.
+ *  CRITICAL — a NaN here would make setInterval fire at ~0ms and hot-loop the DESTRUCTIVE
+ *  sweep against cobblr_meta. Pure. */
+export function reapIntervalMs(env: NodeJS.ProcessEnv = process.env): number {
+  const i = Number(env.COBBLR_TRIAL_REAP_INTERVAL_MS);
+  return Number.isFinite(i) && i >= 60_000 ? i : 6 * 3_600_000;
+}
+
 export interface TrialOrg {
   id: string;
   slug: string;
@@ -75,7 +90,7 @@ export async function reapExpiredTrials(deps: ReapDeps = {}): Promise<{
 
   const listTrialOrgs = deps.listTrialOrgs ?? defaultListTrialOrgs;
   const now = deps.now ?? Date.now();
-  const graceDays = deps.graceDays ?? Number(process.env.COBBLR_TRIAL_REAP_GRACE_DAYS || 3);
+  const graceDays = deps.graceDays ?? reapGraceDays();
 
   const reapable = reapableOrgs(await listTrialOrgs(), graceDays, now);
   if (reapable.length === 0) return { mode, found: 0, reaped: 0 };
@@ -108,8 +123,9 @@ let timer: NodeJS.Timeout | null = null;
 export function startTrialReaper(): void {
   const mode = reapMode();
   if (mode === "off") return;
-  const intervalMs = Math.max(Number(process.env.COBBLR_TRIAL_REAP_INTERVAL_MS || 6 * 3_600_000), 60_000);
-  const graceDays = Number(process.env.COBBLR_TRIAL_REAP_GRACE_DAYS || 3);
+  if (timer) return; // already running — a second call must not orphan the first interval
+  const intervalMs = reapIntervalMs();
+  const graceDays = reapGraceDays();
   const run = () =>
     reapExpiredTrials().catch((err) => console.error("[reap-trials] sweep failed:", (err as Error).message));
   void run(); // initial pass at boot

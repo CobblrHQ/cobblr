@@ -28,6 +28,7 @@ function dummyPasswordHash(): Promise<string> {
   return _dummyHash;
 }
 import { signSession } from "../auth/jwt.js";
+import { identityEnabled, verifyIdentityToken } from "../auth/identity-client.js";
 import { isPlatformAdmin, requireAuth } from "../auth/middleware.js";
 import { publicSignupEnabled, managedAppSignupEnabled, selfServeInvitesEnabled } from "../auth/signup-gate.js";
 import { dispatch } from "../platform/notifications.js";
@@ -285,7 +286,7 @@ export async function buildAuthResponse(userId: string): Promise<AuthResponse> {
   const orgs = await meta
     .selectFrom("org_memberships as m")
     .innerJoin("orgs as o", "o.id", "m.org_id")
-    .select((eb) => ["o.id", "o.name", "o.slug", "o.app_mode", "m.role", eb.selectFrom("org_memberships as om").innerJoin("users as ou", "ou.id", "om.user_id").select("ou.display_name").whereRef("om.org_id", "=", "o.id").where("om.role", "=", "owner").limit(1).as("owner_name")])
+    .select((eb) => ["o.id", "o.name", "o.slug", "o.app_mode", "o.trial_expires_at", "m.role", eb.selectFrom("org_memberships as om").innerJoin("users as ou", "ou.id", "om.user_id").select("ou.display_name").whereRef("om.org_id", "=", "o.id").where("om.role", "=", "owner").limit(1).as("owner_name")])
     .where("m.user_id", "=", userId)
     .execute();
 
@@ -598,6 +599,47 @@ authRouter.post("/login", async (req, res, next) => {
       return res.status(400).json({
         error: { code: "invalid_body", message: "Bad login payload", details: err.issues },
       });
+    }
+    return next(err);
+  }
+});
+
+// ─────────────── POST /identity/exchange (central identity SSO) ───────────────
+//
+// Slice 3: a caller presents a token minted by the central identity service; this
+// surface verifies it against the service's JWKS, maps the global identity to its LOCAL
+// user (the id set by the backfill reconcile), and issues a normal local session. The
+// surface keeps owning sessions + memberships; the central token only proves *who*.
+// 404s when this identity has no linked user here (e.g. never provisioned on this
+// surface) — Slice 4's demo-provision is what would create one. No-op unless wired.
+
+const IdentityExchangeBody = z.object({ token: z.string().min(1) });
+
+authRouter.post("/identity/exchange", async (req, res, next) => {
+  try {
+    if (!identityEnabled()) {
+      return res.status(404).json({ error: { code: "identity_disabled", message: "Central identity is not enabled on this surface." } });
+    }
+    const { token } = IdentityExchangeBody.parse(req.body);
+    let identityId: string;
+    try {
+      identityId = await verifyIdentityToken(token);
+    } catch {
+      return res.status(401).json({ error: { code: "invalid_identity_token", message: "Identity token is invalid or expired." } });
+    }
+    const user = await meta
+      .selectFrom("users")
+      .select(["id", "active"])
+      .where("identity_id", "=", identityId)
+      .executeTakeFirst();
+    if (!user || !user.active) {
+      return res.status(404).json({ error: { code: "no_local_account", message: "No workspace for this account on this surface." } });
+    }
+    await meta.updateTable("users").set({ last_login_at: new Date() }).where("id", "=", user.id).execute();
+    return res.json(await buildAuthResponse(user.id));
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: { code: "invalid_body", message: "Bad exchange payload", details: err.issues } });
     }
     return next(err);
   }

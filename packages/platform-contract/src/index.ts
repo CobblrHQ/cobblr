@@ -1986,6 +1986,12 @@ export interface PlatformEntities {
    *  named instances. Lets a caller (the label queue) offer "revert this trimmed
    *  caption to the system name". null when the entity no longer resolves. */
   titleForEntity(orgId: string, kind: string, id: string): Promise<string | null>;
+  /** The kind id an entity ACTUALLY lives under, INSTANCE AWARE: the given base
+   *  `kind` for a default-instance entity, or `<instance_name>:item` when it's in
+   *  a named instance the base kind can't see (a machine under "3D Printers").
+   *  Pair with a kind's display label (listKindsForOrg) to show an instance-aware
+   *  name instead of the raw `module:kind`. Falls back to `kind` when unresolved. */
+  resolvedKindForEntity(orgId: string, kind: string, id: string): Promise<string>;
   /** The MODULE kind behind a kind string: identity for a registered kind,
    *  `<instance>:item` → its owning module's primary kind.
    *
@@ -3887,3 +3893,4 @@ export function parseJsonReply<T = unknown>(content: string): T | null {
   }
   return null;
 }
+

@@ -39,6 +39,7 @@ import {
   type MediaTypeFilter,
 } from "../label-sizes";
 import { bleSettingsForSize } from "../ble-media";
+import { rememberedSelection, needsRemember } from "../printer-memory";
 import { assessScannability } from "../print/qr-overlay";
 import type { CustomLabelSize, Printable } from "./api";
 import { NewSizeModal } from "./NewSizeModal";
@@ -266,6 +267,51 @@ export function QueuePage() {
     if (sizeKey) localStorage.setItem(SIZE_LS, sizeKey);
   }, [sizeKey]);
 
+  // ── the loaded size lives with the PRINTER, not this browser ───────────────
+  // localStorage only remembers on the machine you set it from, so printing from a
+  // laptop and then a phone (or a new computer) started from defaults, and each
+  // printer forgot the stock actually loaded in it. The printer row already
+  // persists in the workspace, so the fact "the PM220S has 40x30 loaded" belongs
+  // there — which is also what makes the printer panel's read-only size truthful
+  // rather than a mirror of a browser value.
+  //
+  // localStorage stays as the fallback: System print has no printer to remember on.
+  const restoredFor = useRef<string | null>(null);
+  // Set on restore, consumed by the write effect: React runs both effects in the
+  // SAME commit when the target printer changes, so the write effect still sees the
+  // PREVIOUS printer's sizeKey and would stamp it onto the new printer before the
+  // restore's setState lands. Skipping exactly one write closes that gap.
+  const skipWriteOnce = useRef(false);
+  useEffect(() => {
+    const p = defaultPrinter;
+    if (!p) return;
+    if (restoredFor.current === p.id) return; // already restored; a refetch is not a switch
+    restoredFor.current = p.id;
+    skipWriteOnce.current = true;
+    const remembered = rememberedSelection(p.settings as Record<string, unknown> | undefined);
+    if (remembered.paperKey) setPaperKey(remembered.paperKey);
+    if (remembered.sizeKey) setPickedSize(remembered.sizeKey);
+    if (remembered.rotate !== undefined) setRotate(remembered.rotate);
+  }, [defaultPrinter]);
+
+  // Write the pick back to the printer. Gated on the restore having run for THIS
+  // printer, or the first render would stamp this browser's localStorage over what
+  // the printer already remembered. The equality check stops the refetch that
+  // follows an update from looping.
+  useEffect(() => {
+    const p = defaultPrinter;
+    if (!p || !sizeKey || restoredFor.current !== p.id) return;
+    if (skipWriteOnce.current) { skipWriteOnce.current = false; return; }
+    const st = (p.settings ?? {}) as Record<string, unknown>;
+    if (!needsRemember(st, { sizeKey, paperKey, rotate })) return;
+    // Best-effort: a remembered size is a convenience and must never block printing.
+    void api
+      .updatePrinter(p.id, {
+        settings: { ...st, lastSizeKey: sizeKey, lastPaperKey: paperKey, lastRotate: rotate, lastUsedAt: new Date().toISOString() },
+      })
+      .catch(() => {});
+  }, [defaultPrinter, sizeKey, paperKey, rotate, api]);
+
   const items = list.data?.items ?? [];
   const total = items.reduce((acc, i) => acc + i.qty, 0);
 
@@ -461,6 +507,16 @@ export function QueuePage() {
         }));
         const res = await printBatchOverBluetooth(batch, settings, (done, total) => setBtProgress({ done, total }));
         setBtProgress(null);
+        // Bind this row to the physical unit it just printed on. Without this only
+        // NEWLY paired printers would ever carry a device id, and every printer
+        // paired before today would stay ambiguous against a same-model twin.
+        // Best-effort: a binding is a convenience and must never fail a print.
+        if (defaultPrinter && res.deviceId) {
+          const st = (defaultPrinter.settings ?? {}) as Record<string, unknown>;
+          if (st.deviceId !== res.deviceId) {
+            void api.updatePrinter(defaultPrinter.id, { settings: { ...st, deviceId: res.deviceId } }).catch(() => {});
+          }
+        }
         // The server never saw this job, so tell it what reached paper: history,
         // frozen codes, and those rows out of the queue. Only the rows that
         // actually printed — a jam at row 7 leaves 8 onward queued to retry.
@@ -854,7 +910,7 @@ export function QueuePage() {
                   {/* Line 1 — identity + controls. */}
                   <div className="flex items-baseline gap-3">
                     <span className="font-mono text-[10px] text-faint dark:text-slate-500 shrink-0">
-                      {it.module_name}/{it.entity_type}
+                      {it.kind_label ?? `${it.module_name}/${it.entity_type}`}
                     </span>
                     <EditableLabel
                       value={it.description}
@@ -952,8 +1008,10 @@ export function QueuePage() {
       {defaultPrinter && isBleDefault && (
         <PrinterConfigModal
           printer={defaultPrinter}
-          otherPrinters={printers.filter((p) => p.id !== defaultPrinter.id)}
-          customSizes={customList}
+          // The size comes FROM the toolbar rather than being re-entered in the
+          // modal: bleSettingsForSize overrides the printer's stored media from
+          // this pick on every print, so any field there would have been inert.
+          loadedSizeLabel={mediaLabel || undefined}
           open={printerConfigOpen}
           onClose={() => setPrinterConfigOpen(false)}
         />

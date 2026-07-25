@@ -1211,33 +1211,57 @@ export function ScanPage() {
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
-  // Send a whole session's committed items back to the inbox at once.
-  const [sendingBackAll, setSendingBackAll] = useState<string | null>(null);
-  const sendBackSession = async (key: string, ids: string[]) => {
-    setSendingBackAll(key);
-    try {
-      await Promise.allSettled(ids.map((id) => api.unconfirmScanItem(activeSlug, id)));
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] }),
-        qc.invalidateQueries({ queryKey: ["scan-inbox-resolved", activeSlug] }),
-        qc.invalidateQueries({ queryKey: ["scan-stats", activeSlug] }),
-      ]);
-      toast.success(`Sent ${ids.length} item${ids.length === 1 ? "" : "s"} back to the inbox.`);
-    } finally {
-      setSendingBackAll(null);
-    }
-  };
-  // Revert a set of just-committed items (used by the "Undo" on a receipt/PO
-  // commit): send each back to the inbox and drop the created part.
-  const undoCommittedIds = async (ids: string[]) => {
-    if (ids.length === 0) return;
-    await Promise.allSettled(ids.map((id) => api.unconfirmScanItem(activeSlug, id)));
+  // Revert a set of committed items. Returns how many ACTUALLY went back —
+  // allSettled hides per-item failures (a split parent 409s, an already-pending
+  // item 422s), so the caller can report the truth instead of always "N sent".
+  const revertIds = async (ids: string[]): Promise<{ ok: number; failed: number }> => {
+    const results = await Promise.allSettled(ids.map((id) => api.unconfirmScanItem(activeSlug, id)));
+    const ok = results.filter((r) => r.status === "fulfilled").length;
     await Promise.all([
       qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] }),
       qc.invalidateQueries({ queryKey: ["scan-inbox-resolved", activeSlug] }),
       qc.invalidateQueries({ queryKey: ["scan-stats", activeSlug] }),
     ]);
-    toast.success(`Sent ${ids.length} item${ids.length === 1 ? "" : "s"} back to the inbox.`);
+    return { ok, failed: ids.length - ok };
+  };
+  const reportRevert = ({ ok, failed }: { ok: number; failed: number }) => {
+    if (ok) toast.success(`Sent ${ok} item${ok === 1 ? "" : "s"} back to the inbox.`);
+    if (failed)
+      toast.error(
+        `${failed} item${failed === 1 ? "" : "s"} couldn't be sent back — open ${failed === 1 ? "it" : "them"} to see why.`,
+      );
+  };
+  // Send a whole session's committed items back to the inbox at once.
+  const [sendingBackAll, setSendingBackAll] = useState<string | null>(null);
+  const sendBackSession = async (key: string, batchId: string | null, visibleIds: string[]) => {
+    setSendingBackAll(key);
+    try {
+      let ids = visibleIds;
+      if (batchId) {
+        // The recently-committed list is a capped window; fetch the batch's FULL
+        // resolved set so "Send all back" reverts the WHOLE session, not just the
+        // rows that happen to be visible (the author, 2026-07-25).
+        try {
+          const full = await api.listScanInbox(activeSlug, {
+            status: "resolved",
+            batch_id: batchId,
+            limit: 200,
+          });
+          const fullIds = (full.items ?? []).map((i) => i.id);
+          if (fullIds.length) ids = Array.from(new Set([...ids, ...fullIds]));
+        } catch {
+          /* fall back to the visible ids */
+        }
+      }
+      reportRevert(await revertIds(ids));
+    } finally {
+      setSendingBackAll(null);
+    }
+  };
+  // Revert a set of just-committed items (used by the "Undo" on a receipt/PO commit).
+  const undoCommittedIds = async (ids: string[]) => {
+    if (ids.length === 0) return;
+    reportRevert(await revertIds(ids));
   };
 
   // Hardware barcode scanners (USB/Bluetooth HID, 1D or 2D) "type" the code +
@@ -2904,15 +2928,23 @@ export function ScanPage() {
                 grp.batchId && grp.items.length > 1 ? (
                   <div key={grp.key} className="rounded-md border border-line dark:border-slate-700 bg-surface/50 dark:bg-slate-800/30">
                     <div className="flex items-center gap-2 px-3 py-1.5 border-b border-line/70 dark:border-slate-700/70">
-                      <span className="text-xs text-muted">Session — {grp.items.length} items committed together</span>
+                      <span className="text-xs text-muted">
+                        {grp.items.length} item{grp.items.length === 1 ? "" : "s"} from one session
+                      </span>
                       <div className="flex-1" />
                       <button
                         type="button"
-                        onClick={() => void sendBackSession(grp.key, grp.items.map((i) => i.id))}
+                        onClick={() =>
+                          void sendBackSession(
+                            grp.key,
+                            grp.batchId,
+                            grp.items.map((i) => i.id),
+                          )
+                        }
                         disabled={sendingBackAll === grp.key}
                         className="shrink-0 inline-flex items-center gap-1 text-xs rounded border border-line px-2 py-1 text-muted hover:text-content disabled:opacity-50"
                       >
-                        <RotateCcw size={12} className={sendingBackAll === grp.key ? "animate-spin" : ""} /> Send all {grp.items.length} back
+                        <RotateCcw size={12} className={sendingBackAll === grp.key ? "animate-spin" : ""} /> Send whole session back
                       </button>
                     </div>
                     {grp.items.map((d) => (

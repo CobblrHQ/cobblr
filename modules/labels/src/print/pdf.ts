@@ -15,6 +15,9 @@ import { findSize, type LabelSheet } from "./layout.js";
 import { packShelvesBigFirst } from "./pack.js";
 import { computeCapsule, validateOverlay } from "./qr-overlay.js";
 import { pickCellLayout, type CellLayout } from "../label-sizes.js";
+// Shared label geometry — the same box the preview and the Bluetooth raster use.
+// It lives in platform-contract precisely so this SERVER renderer can reach it.
+import { captionBox, RENDER_LINE, MARGIN_FRAC, SIDE_MARGIN_FRAC } from "@cobblr/platform-contract/label-geometry";
 
 /** A label whose center code would make its QR hard/impossible to scan. The
  *  render still emits the label; the caller surfaces these so the user can
@@ -248,7 +251,13 @@ async function placeLabel(
   if (borders.right)  page.drawLine({ start: { x: x + w, y }, end: { x: x + w, y: y + h }, thickness: lw, color: col });
 
   const layout = pickLayout(w, h);
-  const pad = 0.08 * PT;
+  // Cell padding, SPLIT BY AXIS. A roll wanders laterally in the feed path while
+  // the gap sensor holds it straight down the feed, so the sides need more
+  // clearance than the top and bottom — the same asymmetry the browser renderers
+  // use, scaled by the same ratio so the three stay in step. padY is unchanged
+  // from the symmetric value, so nothing about the vertical layout moves.
+  const padY = 0.08 * PT;
+  const padX = padY * (SIDE_MARGIN_FRAC / MARGIN_FRAC);
   const png = await qrPng(item.url, item.centerCode);
   const qrImg = await doc.embedPng(png);
 
@@ -276,18 +285,18 @@ async function placeLabel(
 
   if (layout === "row") {
     // QR on the left, text on the right.
-    const qrSize = h - 2 * pad;
-    const qrX = x + pad;
-    const qrY = y + pad;
+    const qrSize = h - 2 * padY;
+    const qrX = x + padX;
+    const qrY = y + padY;
     page.drawImage(qrImg, { x: qrX, y: qrY, width: qrSize, height: qrSize });
     overlay(qrX, qrY, qrSize);
 
     const textX = qrX + qrSize + 0.04 * PT;
-    const textW = x + w - pad - textX;
+    const textW = x + w - padX - textX;
     if (textW > 4) {
-      const titleSize = pickFontSize(w, h, item.title);
+      const titleSize = titleSizeFor(boldFont, w, h, item.title);
       const titleLines = wrapToLines(boldFont, item.title, titleSize, textW, 2);
-      let cursorY = y + h - pad - titleSize;
+      let cursorY = y + h - padY - titleSize;
       for (const line of titleLines) {
         drawTextWithArrows(page, boldFont, textX, cursorY, titleSize, rgb(0, 0, 0), line);
         cursorY -= titleSize * 1.1;
@@ -299,7 +308,7 @@ async function placeLabel(
         for (const line of descLines) {
           drawTextWithArrows(page, font, textX, cursorY, descSize, rgb(0, 0, 0), line);
           cursorY -= descSize * 1.15;
-          if (cursorY < y + pad) break;
+          if (cursorY < y + padY) break;
         }
       }
     }
@@ -311,16 +320,16 @@ async function placeLabel(
     const halfH = h / 2;
     const topMargin = 0.12 * PT;     // breathing room from the cell top
     const bottomMargin = 0.12 * PT;  // breathing room from the cell bottom
-    const titleSize = pickFontSize(w, h, item.title);
-    const titleLines = wrapToLines(boldFont, item.title, titleSize, w - 2 * pad, 2);
+    const titleSize = titleSizeFor(boldFont, w, h, item.title);
+    const titleLines = wrapToLines(boldFont, item.title, titleSize, w - 2 * padX, 2);
     const titleTop = y + h - topMargin - titleSize;
     let cursorY = drawCenteredBlock(titleLines, titleTop, titleSize, boldFont, rgb(0, 0, 0));
     if (item.description) {
       const descSize = Math.max(9, titleSize * 0.8);
-      const descLines = wrapToLines(font, item.description, descSize, w - 2 * pad, 8);
+      const descLines = wrapToLines(font, item.description, descSize, w - 2 * padX, 8);
       cursorY -= 0.04 * PT;
       for (const line of descLines) {
-        if (cursorY < y + halfH + pad) break; // never bleed into QR half
+        if (cursorY < y + halfH + padY) break; // never bleed into QR half
         const lineW = measureText(font, line, descSize);
         drawTextWithArrows(page, font, x + (w - lineW) / 2, cursorY, descSize, rgb(0, 0, 0), line);
         cursorY -= descSize * 1.15;
@@ -328,7 +337,7 @@ async function placeLabel(
     }
     // QR: top edge at the midline (y + halfH), bottom edge at
     // y + bottomMargin. Square, fits width and height. Centered horizontally.
-    const qrSize = Math.min(w - 2 * pad, halfH - bottomMargin);
+    const qrSize = Math.min(w - 2 * padX, halfH - bottomMargin);
     const qrX = x + (w - qrSize) / 2;
     const qrY = y + halfH - qrSize; // top of QR at the midline
     // Push QR DOWN if there's slack between qrSize and the available
@@ -343,13 +352,13 @@ async function placeLabel(
     // extra line comes out of the vertical slack above the QR rather
     // than shrinking it. `pickFontSize(..., 1)` keeps the size fixed
     // (no shrink-to-fit); `wrapToLines(..., 2)` does the wrap.
-    const titleSize = pickFontSize(w, h, item.title, 1);
-    const titleLines = wrapToLines(boldFont, item.title, titleSize, w - 2 * pad, 2);
-    const titleTop = y + h - pad - titleSize;
+    const titleSize = titleSizeFor(boldFont, w, h, item.title, 2);
+    const titleLines = wrapToLines(boldFont, item.title, titleSize, w - 2 * padX, 2);
+    const titleTop = y + h - padY - titleSize;
     const cursorY = drawCenteredBlock(titleLines, titleTop, titleSize, boldFont, rgb(0, 0, 0));
     const qrTop = cursorY - 0.04 * PT;
-    const qrBot = y + pad;
-    const qrSize = Math.min(w - 2 * pad, qrTop - qrBot);
+    const qrBot = y + padY;
+    const qrSize = Math.min(w - 2 * padX, qrTop - qrBot);
     const qrX = x + (w - qrSize) / 2;
     const qrY = qrBot + (qrTop - qrBot - qrSize) / 2;
     page.drawImage(qrImg, { x: qrX, y: qrY, width: qrSize, height: qrSize });
@@ -391,33 +400,46 @@ function drawCenterOverlay(
   return validateOverlay(payload, cap);
 }
 
-function pickFontSize(cellW: number, cellH: number, title: string, maxLines = 2): number {
-  // Width-first heuristic, in points. Roughly mirrors the rem-based
-  // ladder on the web — bigger cells get bolder titles, narrow cells
-  // shrink to fit. Sizes bumped ~25-30% over the original ladder
-  // because the Rollo X1038's 1-bit thermal output renders small
-  // text mushy — anything under ~10pt loses legibility on the print.
-  const minDim = Math.min(cellW, cellH);
-  let base: number;
-  if (minDim >= 4 * PT) base = 30;
-  else if (minDim >= 3 * PT) base = 22;
-  else if (cellW >= 4 * PT) base = 18;
-  else if (cellH >= 3 * PT) base = 14;
-  else if (cellW >= 2.5 * PT) base = 15;
-  else if (cellW >= 1.4 * PT) base = 12;
-  else base = 9;
-  // maxLines=1 here means "don't shrink to fit" — the square layout
-  // passes 1 so titles keep a fixed size across labels (the QR below
-  // is then identical too). The caller is free to wrap the result to
-  // multiple lines via wrapToLines (square allows 2). Callers that
-  // also want auto-shrink for narrow cells pass maxLines>1.
-  if (maxLines > 1) {
-    const linesNeeded = title.length / Math.max(1, cellW / (base * 0.55));
-    if (linesNeeded > 2) base *= 0.85;
-    if (linesNeeded > 2.6) base *= 0.85;
+/** Thermal legibility floor (pt). A 1-bit thermal head turns small text to mush,
+ *  so the PDF never shrinks a title past this even when the shared geometry would
+ *  allow it. This is the deliberate difference from the on-screen preview, which
+ *  can render 5pt cleanly; it is why a very long name on a small label prints
+ *  slightly larger here than it previews. */
+const THERMAL_FLOOR_PT = 9;
+
+/** The largest font (pt) at which `text` fits `boxW`×`boxH` within `maxLines`,
+ *  measured with the REAL font metrics pdf-lib provides — no glyph-width estimate
+ *  needed here, unlike the browser renderers. Monotonic, so binary search. */
+function fitToBox(font: PDFFont, text: string, boxW: number, boxH: number, maxLines: number): number {
+  const t = text.trim();
+  if (!t || boxW <= 0 || boxH <= 0) return THERMAL_FLOOR_PT;
+  let lo = THERMAL_FLOOR_PT;
+  let hi = Math.max(THERMAL_FLOOR_PT, boxH); // one line can never exceed the box height
+  for (let i = 0; i < 20; i++) {
+    const mid = (lo + hi) / 2;
+    const lines = wrapToLines(font, t, mid, boxW, maxLines);
+    // wrapToLines ellipsises when it runs out of lines; a truncated result is NOT
+    // a fit, or "fits" would be true for a font far too large.
+    const truncated = lines.some((l) => l.endsWith("…"));
+    const fits =
+      !truncated &&
+      lines.length * mid * RENDER_LINE <= boxH &&
+      lines.every((l) => measureText(font, l, mid) <= boxW);
+    if (fits) lo = mid;
+    else hi = mid;
   }
-  return base;
+  return Math.max(THERMAL_FLOOR_PT, Math.round(lo * 10) / 10);
 }
+
+/** The title size for a cell: the shared captionBox geometry (so the PDF fills the
+ *  same proportion of the face as the preview and the Bluetooth print), fitted with
+ *  real metrics, floored for thermal. Replaces a hardcoded ladder that ignored the
+ *  cell's actual free space and so ran 0.37x to 2.28x off the other renderers. */
+function titleSizeFor(font: PDFFont, cellW: number, cellH: number, title: string, maxLines = 2): number {
+  const box = captionBox(cellW, cellH, pickLayout(cellW, cellH));
+  return fitToBox(font, title, box.fitW, box.fitH, maxLines);
+}
+
 
 export interface RenderInput {
   /** Default size for items without their own `sizeKey`. */

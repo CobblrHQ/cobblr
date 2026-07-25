@@ -4,6 +4,7 @@
 // See docs/design-decisions/try-instance.md.
 
 import { env } from "../env.js";
+import { meta } from "../db/meta.js";
 import { registerEntitlementGuard, type EntitlementGuard } from "./hosted-seams.js";
 
 /** True on the `try` instance only. */
@@ -40,6 +41,40 @@ export function isTrialDenied(moduleName: string): boolean {
   return TRIAL_MODE && TRIAL_DENIED_MODULES.has(moduleName);
 }
 
+// ── per-demo unlocks (Slice 4) ─────────────────────────────────────────────
+// A demo workspace carries an allow-list (orgs.demo_unlocks) of feature keys + module
+// names it may use despite the trial cap. Load it once per check; a real trial (empty
+// list) costs one indexed lookup and unlocks nothing.
+export async function orgDemoUnlocks(orgId: string): Promise<ReadonlySet<string>> {
+  if (!TRIAL_MODE) return EMPTY;
+  const row = await meta.selectFrom("orgs").select("demo_unlocks").where("id", "=", orgId).executeTakeFirst();
+  return row && row.demo_unlocks.length ? new Set(row.demo_unlocks) : EMPTY;
+}
+const EMPTY: ReadonlySet<string> = new Set();
+
+/** Like isTrialDenied, but a per-demo unlock for this module overrides the denial —
+ *  so an operator-provisioned demo can enable e.g. core-ai while real trials can't. */
+export async function isTrialDeniedForOrg(moduleName: string, orgId: string): Promise<boolean> {
+  if (!isTrialDenied(moduleName)) return false;
+  return !(await orgDemoUnlocks(orgId)).has(moduleName);
+}
+
+/** The pure decision: does the trial tier withhold this feature, given the workspace's
+ *  unlock list? Extracted so the (async, DB-touching) guard stays a thin wrapper. */
+export function trialFeatureDecision(feature: string, unlocks: ReadonlySet<string>): { allow: boolean; reason?: string } {
+  if (unlocks.has(feature)) return { allow: true }; // this demo is unlocked for it
+  switch (feature) {
+    case "workspaces.create":
+      return { allow: false, reason: "The free trial is limited to one workspace — upgrade to add more." };
+    case "members.add":
+      return { allow: false, reason: "The free trial is single-user — upgrade to invite members." };
+    case "files.upload":
+      return { allow: false, reason: "The free trial doesn't support file uploads — items you scan still get their image automatically." };
+    default:
+      return { allow: true };
+  }
+}
+
 // Trial entitlement caps. This guard denies the plan-limited actions the trial
 // withholds: extra workspaces, extra members, and USER file uploads (enforced in
 // the core-files upload route via entitlements.check). The anti-hosting rule is
@@ -48,19 +83,10 @@ export function isTrialDenied(moduleName: string): boolean {
 // route. The rest is structural: the module denylist above + strict egress
 // (COBBLR_HOSTED=true).
 export const trialEntitlementGuard: EntitlementGuard = async (ctx) => {
-  switch (ctx.feature) {
-    case "workspaces.create":
-      return { allow: false, reason: "The free trial is limited to one workspace — upgrade to add more." };
-    case "members.add":
-      return { allow: false, reason: "The free trial is single-user — upgrade to invite members." };
-    case "files.upload":
-      return {
-        allow: false,
-        reason: "The free trial doesn't support file uploads — items you scan still get their image automatically.",
-      };
-    default:
-      return { allow: true };
-  }
+  // Only pay the unlock lookup for a feature the trial actually caps.
+  const capped = ctx.feature === "workspaces.create" || ctx.feature === "members.add" || ctx.feature === "files.upload";
+  const unlocks = capped ? await orgDemoUnlocks(ctx.orgId) : EMPTY;
+  return trialFeatureDecision(ctx.feature, unlocks);
 };
 
 /** Call once at boot. No-op unless COBBLR_TIER=trial. */

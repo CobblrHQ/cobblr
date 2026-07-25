@@ -35,6 +35,10 @@ export interface UsersTable {
    *  is rejected by requireAuth. Set to now() on password change/reset. NULL =
    *  no tokens invalidated yet. */
   tokens_valid_from: Date | null;
+  /** Slice 3 (central identity): this local user's global identity id, set by the
+   *  backfill reconcile once IDENTITY_URL is wired. A verified central token's `sub`
+   *  maps to this row through this column. NULL = not yet linked (or identity off). */
+  identity_id: string | null;
 }
 
 export interface OrgsTable {
@@ -86,6 +90,11 @@ export interface OrgsTable {
    *  yet. NULL = a normal workspace (every non-`try` instance). See
    *  docs/design-decisions/try-instance.md. */
   trial_expires_at: Generated<Date | null>;
+  /** Slice 4 (demo workspaces): per-workspace entitlement overrides — an allow-list of
+   *  feature keys ("files.upload", "workspaces.create") and module names ("core-ai") the
+   *  trial guard + module-enable gate honour for THIS workspace, so an operator-provisioned
+   *  demo can use what real trials can't. Empty everywhere else. */
+  demo_unlocks: Generated<string[]>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }

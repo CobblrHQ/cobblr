@@ -111,6 +111,23 @@ const Schema = z.object({
   // Belt-and-suspenders: COBBLR_AI_ENABLED=false + COBBLR_HOSTED=true mean a
   // missing entry still can't turn AI or SSRF on. See platform/trial.ts.
   COBBLR_TRIAL_DENY_MODULES: z.string().optional(),
+
+  // Central identity federation (Slice 3). ALL optional — unset = this surface
+  // owns its own accounts as before (no central identity, no behaviour change).
+  //  • IDENTITY_URL — base URL of the central identity service (e.g.
+  //    http://192.168.1.138:8790). Set = enable federation (JWKS verify + the
+  //    boot backfill that links local users to global identities by email).
+  //  • IDENTITY_ISSUER / IDENTITY_AUDIENCE — must match what the identity service
+  //    signs (defaults mirror the service's own defaults).
+  //  • IDENTITY_ADMIN_TOKEN — the identity service's admin token (gates
+  //    POST /admin/backfill); required for the backfill pass to run.
+  //  • COBBLR_DEPLOYMENT — this surface's stable id in the identity map
+  //    (deployment_links), e.g. "try" or "cobblr.me". Defaults to COBBLR_ENV.
+  IDENTITY_URL: z.string().optional(),
+  IDENTITY_ISSUER: z.string().default("cobblr-identity"),
+  IDENTITY_AUDIENCE: z.string().default("cobblr"),
+  IDENTITY_ADMIN_TOKEN: z.string().optional(),
+  COBBLR_DEPLOYMENT: z.string().optional(),
 });
 
 export type Env = z.infer<typeof Schema>;

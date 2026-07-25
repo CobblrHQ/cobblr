@@ -875,6 +875,23 @@ export async function titleForEntity(orgId: string, kind: string, id: string): P
   return probed && probed.entity.title ? probed.entity.title : null;
 }
 
+/** The kind id an entity ACTUALLY lives under: the given base `kind` when the
+ *  entity is in its module's default instance, or `<instance_name>:item` when it
+ *  lives in a named instance (a machine filed under the "3D Printers" instance,
+ *  which the base `machines:machine` kind can't see). Mirrors titleForEntity's
+ *  probe. Pair it with a kind's display label (listKindsForOrg) to show an
+ *  instance-aware name instead of the raw `module:kind`. Falls back to the given
+ *  kind when nothing resolves. */
+export async function resolvedKindForEntity(orgId: string, kind: string, id: string): Promise<string> {
+  // Probe the module's NAMED instances first: if the entity lives in one, that's
+  // its kind. Doing this before the base lookup means the result is right even if
+  // the base kind reader doesn't filter instance rows out. Falls back to the
+  // given kind (default instance, or no named instance holds it).
+  const module = kind.split(":")[0] ?? "";
+  const probed = await probeNamedInstance(orgId, module, id).catch(() => null);
+  return probed ? `${probed.instance}:item` : kind;
+}
+
 /** The kinds a WORKSPACE sees: every manifest kind, plus one synthesized
  *  `<instance_name>:item` kind per named (non-default) instance in this org.
  *  A synthesized kind copies its module's PRIMARY kind's shape (fields,

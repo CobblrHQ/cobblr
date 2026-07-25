@@ -97,14 +97,17 @@ export function PrintPage() {
   // Connect a Bluetooth printer right here: pair, auto-detect from its known
   // profile, and save it — no form. An unrecognised model drops into the manual
   // add form (pre-set to Bluetooth) instead.
-  const connectBluetooth = async () => {
+  // showAll: the chooser is filtered to known printers by default, but a printer
+  // that advertises neither a known service nor a known name would then be
+  // unpairable — so the UI offers an explicit unfiltered retry.
+  const connectBluetooth = async (showAll = false) => {
     if (!isWebBluetoothAvailable()) {
       toast.error(NO_WEB_BLUETOOTH);
       return;
     }
     setConnecting(true);
     try {
-      const { deviceName, profile, settings } = await pairBluetoothPrinter();
+      const { deviceName, profile, settings } = await pairBluetoothPrinter({ showAllDevices: showAll });
       if (!profile || !settings) {
         toast.error(`Paired "${deviceName}", but it isn't a model we know yet. Fill in the fields to finish.`);
         setNewDriver("browser-bluetooth");
@@ -154,19 +157,30 @@ export function PrintPage() {
       {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {!list.isLoading && items.length === 0 && (
         <div className="grid sm:grid-cols-2 gap-3 max-w-2xl">
-          <button
-            onClick={connectBluetooth}
-            disabled={connecting}
-            className="text-left rounded-xl border border-line dark:border-slate-700 hover:border-accent bg-surface dark:bg-slate-900 p-4 transition disabled:opacity-60"
-          >
-            <div className="flex items-center gap-2 mb-1">
-              <Bluetooth size={16} className="text-accent" />
-              <span className="font-medium text-content dark:text-mortar-100">{connecting ? "Pairing…" : "Bluetooth label printer"}</span>
-            </div>
-            <p className="text-xs text-muted dark:text-slate-400">
-              A thermal label printer over Bluetooth (Phomemo, POLONO, and similar). Click to pair and auto-detect its settings. Prints from this browser (Chrome or Edge, desktop or Android).
-            </p>
-          </button>
+          <div className="rounded-xl border border-line dark:border-slate-700 hover:border-accent bg-surface dark:bg-slate-900 p-4 transition">
+            {/* onClick must WRAP the call: passing the handler directly hands React's
+                MouseEvent in as the first argument, which is truthy and would make
+                every pairing use the unfiltered chooser. */}
+            <button onClick={() => void connectBluetooth()} disabled={connecting} className="text-left w-full disabled:opacity-60">
+              <div className="flex items-center gap-2 mb-1">
+                <Bluetooth size={16} className="text-accent" />
+                <span className="font-medium text-content dark:text-mortar-100">{connecting ? "Pairing…" : "Bluetooth label printer"}</span>
+              </div>
+              <p className="text-xs text-muted dark:text-slate-400">
+                A thermal label printer over Bluetooth (Phomemo, POLONO, and similar). Click to pair and auto-detect its settings. Prints from this browser (Chrome or Edge, desktop or Android).
+              </p>
+            </button>
+            {/* The chooser lists PRINTERS, not every Bluetooth object in range. A
+                printer advertising neither a known service nor a known name would be
+                invisible there, so offer the unfiltered list explicitly. */}
+            <button
+              onClick={() => void connectBluetooth(true)}
+              disabled={connecting}
+              className="mt-2 text-xs text-accent hover:underline disabled:opacity-60"
+            >
+              Don&apos;t see your printer? Show all Bluetooth devices
+            </button>
+          </div>
           <button
             onClick={() => { setNewDriver("cups"); setEditing("new"); }}
             className="text-left rounded-xl border border-line dark:border-slate-700 hover:border-accent bg-surface dark:bg-slate-900 p-4 transition"
@@ -596,7 +610,12 @@ function PrinterModal({
                 </label>
                 <label className="block">
                   <div className="text-xs text-muted mb-1">Top margin (dots)</div>
-                  <input className={field} type="number" value={btTopMargin} onChange={(e) => setBtTopMargin(e.target.value)} />
+                  <input className={field} type="number" min={0} value={btTopMargin} onChange={(e) => setBtTopMargin(e.target.value)} />
+                  <div className="text-[11px] text-faint mt-1">
+                    The dead zone at the top of the label your printer physically can&apos;t print in.
+                    Printing too low? Lower this and the whole print moves up
+                    {Number(btTopMargin) > 0 ? ` (${(Number(btTopMargin) / 8).toFixed(1)} mm today)` : ""}. 8 dots = 1 mm.
+                  </div>
                 </label>
                 <label className="block">
                   <div className="text-xs text-muted mb-1">Labels across</div>

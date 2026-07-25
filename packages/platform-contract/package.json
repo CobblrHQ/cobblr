@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./qr-token": "./src/qr-token.ts",
-    "./resolvables": "./src/resolvables.ts"
+    "./resolvables": "./src/resolvables.ts",
+    "./label-geometry": "./src/label-geometry.ts"
   },
   "types": "src/index.ts",
   "scripts": {

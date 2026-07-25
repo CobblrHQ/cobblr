@@ -2,6 +2,21 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-07-25
+
+### Features
+- Pairing a Bluetooth label printer now lists printers instead of every Bluetooth device in range, with a fallback for printers that do not announce themselves.
+- Each printer now remembers the label size loaded in it, saved with your workspace, so it is right when you come back or print from another computer.
+
+### Improvements
+- Groundwork for one Cobblr account across every surface: a surface can now verify a central identity token and link its existing users to that global account by email. Off by default (unset IDENTITY_URL keeps each surface owning its own accounts, unchanged).
+- Groundwork for time-boxed demo workspaces: an operator can provision a blueprint-seeded demo into an existing account with its own expiry and per-demo feature unlocks (so a demo can use what the free trial locks), and the owner can convert a trial or demo into a kept workspace. Backend only for now; the expiry banner and Keep button come next.
+- The printer panel on the Labels page now shows print position and darkness, and reads the label size from the page's own picker instead of asking for it twice.
+
+### Fixes
+- Committing a receipt or scan no longer drops item images that were still being fetched, and you can now send a whole committed session back to the inbox in one tap (plus an Undo right on the "Confirm all" toast) instead of reverting items one by one.
+- Sending a receipt's committed items back to the inbox now also removes their purchase-order line items and deletes the order once it is empty, so undo leaves no orphan order behind. Committing a big receipt is faster too: the item image is downloaded in the background instead of blocking the commit. "Send whole session back" now reverts the entire session even when it is larger than the recently committed list shows.
+
 ## 2026-07-24
 
 ### Features

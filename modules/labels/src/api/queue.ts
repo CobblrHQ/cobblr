@@ -49,19 +49,30 @@ queueRouter.get(
     // Best-effort per row — a deleted entity or a resolve error just yields null
     // (the client then hides revert), never a 500 on the whole queue. In-process
     // lookups over a small per-user set.
+    //
+    // kind_label: the entity's INSTANCE-AWARE kind name ("3D Printers"), so the row
+    // shows that instead of the raw `machines/machine`. The workspace's kind labels
+    // are fetched ONCE here; each row resolves its actual kind (base vs named
+    // instance) and looks up the display name.
+    const kinds = await platform().entities.listKindsForOrg(ctx.org.id).catch(() => []);
+    const labelByKind = new Map(kinds.map((k) => [k.id, k.display_name_plural ?? k.display_name]));
     const items = await Promise.all(
       rows.map(async (r) => {
+        const baseKind = `${r.module_name}:${r.entity_type}`;
         let stock_title: string | null = null;
+        let kind_label: string | null = null;
         try {
-          stock_title = await platform().entities.titleForEntity(
-            ctx.org.id,
-            `${r.module_name}:${r.entity_type}`,
-            r.entity_id,
-          );
+          stock_title = await platform().entities.titleForEntity(ctx.org.id, baseKind, r.entity_id);
         } catch {
           stock_title = null;
         }
-        return { ...r, stock_title };
+        try {
+          const rk = await platform().entities.resolvedKindForEntity(ctx.org.id, baseKind, r.entity_id);
+          kind_label = labelByKind.get(rk) ?? null;
+        } catch {
+          kind_label = null;
+        }
+        return { ...r, stock_title, kind_label };
       }),
     );
     res.json({ items });

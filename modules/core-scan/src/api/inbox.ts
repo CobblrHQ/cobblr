@@ -867,16 +867,41 @@ inboxRouter.post(
       const partId = created?.id ?? null;
       if (orderId && partId) {
         const m = (row.suggested_metadata ?? {}) as Record<string, unknown>;
-        await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/purchases/orders/${orderId}/items`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            part_id: partId,
-            description: row.suggested_name ?? undefined,
-            qty: Number(row.quantity ?? 1),
-            unit_cost: typeof m.unit_price === "number" ? m.unit_price : undefined,
-          }),
-        }).catch((err) => console.warn("[core-scan] receipt PO add-item threw:", (err as Error).message));
+        try {
+          const itemRes = await fetch(
+            `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/purchases/orders/${orderId}/items`,
+            {
+              method: "POST",
+              headers,
+              body: JSON.stringify({
+                part_id: partId,
+                description: row.suggested_name ?? undefined,
+                qty: Number(row.quantity ?? 1),
+                unit_cost: typeof m.unit_price === "number" ? m.unit_price : undefined,
+              }),
+            },
+          );
+          // Stamp the order + line-item ids onto the scan item so a later
+          // unconfirm can remove BOTH the part and its order line (and drop the
+          // order if it empties) — without this the undo left an orphan order
+          // pointing at a deleted part (the author, 2026-07-25).
+          if (itemRes.ok) {
+            const lineItem = (await itemRes.json()) as { id?: string };
+            await db
+              .updateTable("core_scan_inbox_items")
+              .set({
+                suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({
+                  receipt_order_id: orderId,
+                  receipt_order_item_id: lineItem.id ?? null,
+                })}::jsonb` as never,
+                updated_at: new Date(),
+              })
+              .where("id", "=", row.id)
+              .execute();
+          }
+        } catch (err) {
+          console.warn("[core-scan] receipt PO add-item threw:", (err as Error).message);
+        }
       }
       confirmed.push({ itemId: row.id, partId });
     }
@@ -1831,23 +1856,36 @@ inboxRouter.post(
       // Carry the scan's image onto the part. It USED to transfer ONLY a stored
       // file (catalog_image_file_id) — so an item whose image was still a raw
       // web URL (not downloaded yet, or committed mid-enrich) lost its image on
-      // commit (the author, 2026-07-24). Now: prefer the stored file; else download the
-      // URL right here (browser headers → beats hotlinking) for a STABLE image;
-      // else fall back to the raw URL so the image is NEVER just dropped.
-      let imgFileId = row.catalog_image_file_id;
-      if (!imgFileId && row.catalog_image_url) {
-        const ok = await downloadCatalogImage({ db, orgId: ctx.org.id, itemId: id }, row.catalog_image_url).catch(() => false);
-        if (ok) {
-          const fresh = await db
-            .selectFrom("core_scan_inbox_items")
-            .select(["catalog_image_file_id"])
-            .where("id", "=", id)
-            .executeTakeFirst();
-          imgFileId = fresh?.catalog_image_file_id ?? null;
-        }
-      }
-      const imagePath = committedImagePath(ctx.org.slug, imgFileId, row.catalog_image_url);
+      // commit (the author, 2026-07-24). Prefer the stored file; else fall back to the
+      // raw URL so the image is NEVER dropped — set INSTANTLY (no network in the
+      // commit path: downloading inline made a bulk "Confirm all" hang, ~25s per
+      // line worst case, the author 2026-07-25). A raw catalog URL can be hotlink-blocked
+      // and render broken, so we ALSO kick off a background download that repoints
+      // the part at a stored same-origin file once it lands — commit stays fast.
+      const imagePath = committedImagePath(ctx.org.slug, row.catalog_image_file_id, row.catalog_image_url);
       if (imagePath) fields.image_path = imagePath;
+      if (!row.catalog_image_file_id && row.catalog_image_url) {
+        const url = row.catalog_image_url;
+        const itemId = id;
+        void (async () => {
+          try {
+            const ok = await downloadCatalogImage({ db, orgId: ctx.org.id, itemId }, url);
+            if (!ok) return;
+            const fresh = await db
+              .selectFrom("core_scan_inbox_items")
+              .select(["catalog_image_file_id"])
+              .where("id", "=", itemId)
+              .executeTakeFirst();
+            const fid = fresh?.catalog_image_file_id;
+            if (fid) {
+              const stored = committedImagePath(ctx.org.slug, fid, null);
+              if (stored) await writer.update(ctx.org.id, locId, { image_path: stored });
+            }
+          } catch (err) {
+            console.warn("[core-scan] background catalog-image upgrade failed:", (err as Error).message);
+          }
+        })();
+      }
     }
     await writer.update(ctx.org.id, locId, fields);
 
@@ -2812,6 +2850,46 @@ inboxRouter.post(
       }
     }
 
+    // If this line was committed into a receipt purchase order, remove its order
+    // line item too — part_id has no FK cascade, so deleting the part alone left
+    // the order pointing at a ghost. Drop the order entirely once its last line
+    // is gone, so an undone "Confirm all" leaves no empty order behind (the author, 2026-07-25).
+    const receiptOrderId = typeof meta.receipt_order_id === "string" ? meta.receipt_order_id : null;
+    const receiptOrderItemId =
+      typeof meta.receipt_order_item_id === "string" ? meta.receipt_order_item_id : null;
+    if (receiptOrderId) {
+      const token = bearer(req);
+      const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+      if (token) {
+        const oHeaders = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+        const ordersBase = `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/purchases/orders`;
+        try {
+          let itemsRemaining: number | null = null;
+          if (receiptOrderItemId) {
+            const delRes = await fetch(`${ordersBase}/${receiptOrderId}/items/${receiptOrderItemId}`, {
+              method: "DELETE",
+              headers: oHeaders,
+            });
+            if (delRes.ok) {
+              itemsRemaining = ((await delRes.json()) as { items_remaining?: number }).items_remaining ?? null;
+            }
+          }
+          if (itemsRemaining === null) {
+            // Older commit with no stamped line id, or the item delete missed —
+            // fall back to counting the order's live items.
+            const listRes = await fetch(`${ordersBase}/${receiptOrderId}/items`, { headers: oHeaders });
+            if (listRes.ok) itemsRemaining = ((await listRes.json()) as { items?: unknown[] }).items?.length ?? null;
+          }
+          if (itemsRemaining === 0) {
+            await fetch(`${ordersBase}/${receiptOrderId}`, { method: "DELETE", headers: oHeaders });
+            note = note ? `${note} The now-empty purchase order was removed.` : "The now-empty purchase order was removed.";
+          }
+        } catch (err) {
+          console.warn("[core-scan] receipt PO cleanup on unconfirm threw:", (err as Error).message);
+        }
+      }
+    }
+
     // Reopen: back to pending, resolution cleared, RESTORED to its original
     // spot — un-confirm is an UNDO, not a re-scan. created_at stays (it's when
     // the item was scanned, immutable history); rewriting it to now() dragged
@@ -2826,9 +2904,14 @@ inboxRouter.post(
         target_kind: null,
         target_entity_id: null,
         resolved_at: null,
-        // Unconfirm just clears the attach link — DB-side delete of that one key,
-        // leaving every other pass's keys intact (this used to full-replace).
-        suggested_metadata: mergeMeta({}, ["attached_to"]) as never,
+        // Unconfirm clears the attach link + the receipt-order linkage (the order
+        // line is gone now) — DB-side delete of just those keys, leaving every
+        // other pass's keys intact (this used to full-replace).
+        suggested_metadata: mergeMeta({}, [
+          "attached_to",
+          "receipt_order_id",
+          "receipt_order_item_id",
+        ]) as never,
         updated_at: new Date(),
       })
       .where("id", "=", id)

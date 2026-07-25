@@ -131,8 +131,29 @@ const PHOMEMO_DEFAULTS: Required<PhomemoOptions> = {
 // PM220S: bench-confirmed 2026-07-20 (below). It cost ONE new encoder family (TSPL)
 // rather than zero code — the profile-as-data claim holds for everything else about
 // it (pipe, width, orientation, calibrated geometry, quirks).
-// STILL INCOMING: TYPONOS PM240 (Bluetooth + USB) — the USB path needs a serial
-// transport beside ble.ts. Do not guess its UUIDs; bench it.
+// TYPONOS PM240 — BENCHED 2026-07-24, NOT SUPPORTED over BLE. Deliberately absent
+// from KNOWN_PROFILES: matching it would offer the user a printer we cannot drive
+// and then fail silently, which is exactly how this cost a session.
+//
+// It pairs, accepts every write (zero GATT rejections) and then does nothing, ever.
+// What was ruled out ON HARDWARE, so nobody repeats it:
+//   · dialect — ESC-POS (3 forms), TSPL (2), CPCL, EPL, ZPL, Niimbot (2): 60 combos
+//     over every writable char × 20-byte and 180-byte chunks. All silent.
+//   · pipe — all three writable chars (ff02, ff04 writeNR; ff10 write+read).
+//   · Bluetooth Classic / SPP — ruled out BY THE OS: macOS system_profiler reports
+//     "PM240: Services: 0x400000 < BLE >". BLE-only, so 0xff00 IS the data path.
+//   · missed replies — both notify chars (ff01, ff03) carry a real CCCD (0x2902),
+//     so the subscriptions worked. The printer never notified once in ~110 writes.
+//   · identity — NO Device Information service (0x180A); the firmware is anonymous,
+//     so there is no vendor/model string to look a protocol up by.
+//   · replies via register — writing each dialect then re-reading every readable
+//     characteristic showed no byte ever change. The firmware parsed none of it.
+// GATT is one vendor service 0xff00; ff10 reads back "0d 0a 00 00".
+//
+// The framing is proprietary and is NOT recoverable by probing. The only honest
+// next step is capturing what its own app (Labelnize) sends — an Android Bluetooth
+// HCI snoop log taken while printing one label. Until someone does that, it stays
+// unsupported. The USB path would need a serial transport beside ble.ts; unexplored.
 // See docs/modules/bluetooth-printer-self-test.md § "Validating the harvest loop".
 
 /** Bundled, hardware-confirmed profiles. */

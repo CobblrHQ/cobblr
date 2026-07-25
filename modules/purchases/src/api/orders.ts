@@ -344,5 +344,49 @@ ordersRouter.get(
   }),
 );
 
+// Remove one line item from an order. Used when a receipt-created part is
+// sent back to the scan inbox (unconfirm): its line item must go too, else the
+// order is left with a row pointing at a now-deleted part (part_id has no FK
+// cascade). Returns whether the order still has any items left, so the caller
+// can drop a now-empty order in the same flow.
+// AI-REACH: exempt — internal reconciliation surface for scan-undo, not a user
+// or Cobb action (a person edits an order via the order UI, not this endpoint).
+ordersRouter.delete(
+  "/:id/items/:itemId",
+  asyncHandler(async (req, res) => {
+    const orderId = req.params.id;
+    const itemId = req.params.itemId;
+    if (!orderId || !itemId) {
+      res.status(400).json({ error: { code: "missing_id", message: "id + itemId required" } });
+      return;
+    }
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const deleted = await db
+      .deleteFrom("purchases_order_items")
+      .where("id", "=", itemId)
+      .where("order_id", "=", orderId)
+      .returning("id")
+      .executeTakeFirst();
+    if (!deleted) {
+      res.status(404).json({ error: { code: "not_found", message: "order item not found" } });
+      return;
+    }
+    const remaining = await db
+      .selectFrom("purchases_order_items")
+      .select(({ fn }) => fn.countAll<number>().as("n"))
+      .where("order_id", "=", orderId)
+      .executeTakeFirst();
+    await platform().activity.log({
+      orgId: ctx.org.id,
+      userId: sessionUser(req).id,
+      action: "order_item_removed",
+      ref: { module: "purchases", entityType: "order_item", entityId: itemId },
+      diff: { order_id: orderId },
+    });
+    res.json({ deleted: itemId, items_remaining: Number(remaining?.n ?? 0) });
+  }),
+);
+
 // silence unused-import (kept for future cost-rollup queries)
 void sql;

@@ -67,6 +67,7 @@ import { migrateBookshelfToInstance } from "./platform/migrate-bookshelf-to-inst
 import { mergeLabelsQr } from "./platform/merge-labels-qr.js";
 import { backfillPlacements } from "./platform/migrate-location-to-placement.js";
 import { backfillDefaultBindings } from "./platform/seed-bindings.js";
+import { backfillIdentityLinks } from "./platform/backfill-identity.js";
 import { startTrialReaper } from "./platform/reap-trials.js";
 import { reconcileScanCategoryFields } from "./platform/reconcile-scan-category.js";
 import { backfillBundleClaims } from "./platform/backfill-bundle-claims.js";
@@ -169,6 +170,7 @@ async function boot() {
       getKind: entities.getKind,
       detailPathForEntity: entities.detailPathForEntity,
       titleForEntity: entities.titleForEntity,
+      resolvedKindForEntity: entities.resolvedKindForEntity,
       baseKindOf: entities.baseKindOf,
       serverManagedFields: entities.serverManagedFields,
     },
@@ -935,6 +937,14 @@ async function boot() {
   const claimsOrgs = await T("backfillBundleClaims", backfillBundleClaims());
   if (claimsOrgs > 0) {
     console.log(`[cobblr-api] bundle-resource claims backfilled for ${claimsOrgs} org(s)`);
+  }
+
+  // Central identity federation (Slice 3): link any unlinked local user to its global
+  // identity by email. No-op unless IDENTITY_URL is wired. Meta-only, idempotent,
+  // resilient — a failed batch never blocks boot.
+  const idLinks = await T("backfillIdentityLinks", backfillIdentityLinks());
+  if (idLinks.linked > 0) {
+    console.log(`[cobblr-api] central identity: linked ${idLinks.linked} local user(s)`);
   }
 
   console.log(`[bootphase] === pre-createApp total: ${Date.now() - bootT0}ms ===`);

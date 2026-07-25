@@ -5,7 +5,7 @@
 // aspect ratio. `@page size` is set to the paper so the browser
 // prints 1:1 with no scaling.
 
-import { fitCaptionPx } from "@cobblr/platform-web";
+import { captionBox, fitCaptionPx } from "@cobblr/platform-web";
 import type { CustomLabelSize, Printable } from "./api";
 import {
   cellLayout,
@@ -20,42 +20,46 @@ import {
 } from "../label-sizes";
 
 /** The caption font (pt) for ONE label — auto-fit so a short name prints large and
- *  a long one shrinks/wraps. Uses the SAME shared fitCaptionPx as the Bluetooth
- *  renderer, over the caption's box in this layout, so preview and print size text
- *  the same. Dimensions are inches; fitCaptionPx returns inches, ×72 → points. */
-export function captionFontPt(caption: string, size: LabelSize, layout: CellLayout): number {
-  const w = size.label_w, h = size.label_h;
-  const PAD = 0.16; // width bias so the HTML doesn't re-wrap to an extra line
-  if (layout === "row") {
-    // QR is an h×h square on the left; the caption is the column to its right at full
-    // content height. Same accurate-box + dynamic-floor treatment as the others so a
-    // long name shrinks to fit rather than ellipsising.
-    const contentW = Math.max(0.1, w - 0.14), contentH = Math.max(0.1, h - 0.14);
-    const boxW = Math.max(0.1, contentW - contentH - 0.08); // minus the QR square + flex gap
-    const boxH = contentH * 0.9;
-    const min = Math.min(10 / 72, (boxH * 0.85) / (3 * 1.15));
-    return fitCaptionPx(caption, boxW, boxH, { maxLines: 3, min, max: boxH }) * 72;
+ *  a long one shrinks/wraps.
+ *
+ *  Geometry comes from the SHARED captionBox (inches here, dots in the Bluetooth
+ *  renderer), so the preview and the thermal print size the caption identically.
+ *  This used to recompute the box with its own hand-copied constants, and the two
+ *  drifted: the same name came out up to 14% larger on the print than on screen.
+ *  Now this only converts to points; a cross-package test pins the two in agreement. */
+// Measure caption text with the SAME font the .desc renders in, so the fitted
+// size is true for the glyphs actually printed instead of an average-width
+// estimate (which undersizes narrow names and CLIPS wide ones — "Thumper" lost
+// its r). Lazy + guarded: in node (tests/goldens) or a canvas-less environment it
+// returns undefined and the fitter falls back to its estimate, keeping goldens
+// deterministic.
+let measureCtx: CanvasRenderingContext2D | null | undefined;
+function descMeasure(): ((text: string) => number) | undefined {
+  if (measureCtx === undefined) {
+    try {
+      measureCtx = typeof document !== "undefined" ? document.createElement("canvas").getContext("2d") : null;
+    } catch {
+      measureCtx = null;
+    }
   }
-  // portrait / square: the QR is a FIXED square below the caption; the caption gets
-  // the strip left ABOVE it. Size the font to the ACTUAL strip height — content height
-  // MINUS the QR square MINUS the flex gap — and bias it small: the CSS line-height
-  // (1.15) is taller than the 1.12 the fitter assumes and browser glyph metrics vary,
-  // so a font sized to the raw strip overruns it and overflow:hidden cuts the caption.
-  // (the author 2026-07: the fixed-QR change sized to h−w, ignoring the gap + padding, so
-  // BOTH a 1-line and a 2-line name got clipped.)
-  const contentW = Math.max(0.1, w - 0.14), contentH = Math.max(0.1, h - 0.14);
-  const qrH = (layout === "square" ? 0.82 : 1) * contentW; // matches the .qr width in CSS
-  // The caption fills the space ABOVE the QR. The QR is bottom-anchored to a floor
-  // 0.04in above the edge (so its bottom lines up across a row — the author, 2026-07);
-  // subtract that floor margin so the caption box matches the real desc height.
-  const strip = Math.max(0.06, contentH - qrH - 0.04);
-  const boxH = strip * 0.9; // safety margin so the rendered line-box fits the box
-  const maxLines = 2;
-  // Floor the font for readability (raised per the author so a long name is not tiny), but
-  // NEVER above what the strip can actually hold (else the floor itself clips a
-  // near-square face where the strip is tiny).
-  const min = Math.min(10 / 72, (strip * 0.85) / (maxLines * 1.15));
-  return fitCaptionPx(caption, Math.max(0.1, w - PAD), boxH, { maxLines, min, max: boxH }) * 72;
+  const ctx = measureCtx;
+  if (!ctx) return undefined;
+  return (text: string) => {
+    ctx.font = '600 100px Inter, system-ui, -apple-system, sans-serif';
+    return ctx.measureText(text).width / 100;
+  };
+}
+
+export function captionFontPt(caption: string, size: LabelSize, layout: CellLayout): number {
+  const box = captionBox(size.label_w, size.label_h, layout);
+  return (
+    fitCaptionPx(caption, box.fitW, box.fitH, {
+      maxLines: box.maxLines,
+      min: box.minFont,
+      max: box.fitH,
+      measure: descMeasure(),
+    }) * 72
+  );
 }
 
 interface RenderOpts {
@@ -100,21 +104,26 @@ export function codeBadgeClass(code: string): "code-circle" | "code-pill" {
 // three cell layouts as an upright label — but on `.rot-inner`, since `.label`
 // no longer carries the layout class. The base `.label .qr` / `.desc` / `.code`
 // rules still apply by descendant match, so QR sizing + badges are unchanged.
-const ROTATE_CSS = `  .label.rot { padding: 0; }
+const rotateCss = (padIn: string, padXIn: string, floorIn: string) => `  .label.rot { padding: 0; }
   .label.rot .rot-inner {
     position: absolute; top: 50%; left: 50%;
     transform: translate(-50%, -50%) rotate(90deg);
-    padding: 0.07in; overflow: hidden;
+    /* SWAPPED relative to the upright cell: this box is turned 90 degrees, so its
+       CSS-horizontal padding lands on the label's PHYSICAL vertical. The wide
+       side margin exists to absorb lateral paper wander on the physical label,
+       so under rotation it must ride the CSS-VERTICAL axis or a rotated print
+       keeps only the narrow feed margin on the sides and clips right again. */
+    padding: ${padXIn}in ${padIn}in; overflow: hidden;
   }
   .rot-inner.row { display: flex; align-items: center; gap: 0.08in; }
   .rot-inner.row .qr { height: 100%; aspect-ratio: 1; order: -1; }
   .rot-inner.row .desc { flex: 1; }
   .rot-inner.portrait { display: flex; flex-direction: column; gap: 0; }
-  .rot-inner.portrait .desc { text-align: center; flex: 1; min-height: 0; align-items: flex-start; }
-  .rot-inner.portrait .qr { width: 100%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.04in; }
+  .rot-inner.portrait .desc { text-align: center; flex: 1; min-height: 0; }
+  .rot-inner.portrait .qr { width: 100%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto ${floorIn}in; }
   .rot-inner.square { display: flex; flex-direction: column; gap: 0; }
-  .rot-inner.square .desc { text-align: center; flex: 1; min-height: 0; align-items: flex-start; }
-  .rot-inner.square .qr { width: 82%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.04in; }
+  .rot-inner.square .desc { text-align: center; flex: 1; min-height: 0; }
+  .rot-inner.square .qr { width: 82%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto ${floorIn}in; }
   .rot-inner.portrait .desc > span, .rot-inner.square .desc > span { -webkit-line-clamp: 2; }
   .rot-inner.row .desc > span { -webkit-line-clamp: 3; }
 `;
@@ -141,6 +150,15 @@ export function renderPrintSheetHtml(
 
   const rotate = opts.rotate ?? false;
   const sheets = pages.map((page) => renderSheet(page, size, rotate)).join("\n");
+  // Cell padding + the QR's floor margin come from the SAME shared captionBox the
+  // font sizing uses, so the CSS box the browser lays out IS the box the fitter
+  // sized text for. Hard-coded 0.07in/0.04in here (with captionBox using a 6%
+  // margin) is exactly how the preview and the print drifted apart before.
+  const layoutSizeForCss = rotate ? { ...size, label_w: size.label_h, label_h: size.label_w } : size;
+  const cssBox = captionBox(layoutSizeForCss.label_w, layoutSizeForCss.label_h, cellLayout(layoutSizeForCss));
+  const padIn = cssBox.marginY.toFixed(4);
+  const padXIn = cssBox.marginX.toFixed(4);
+  const floorIn = cssBox.floor.toFixed(4);
   // Caption font is per-label now (captionFontPt), set inline on each .desc, so a
   // short name fills its box while a long one shrinks — the sheet no longer carries
   // one fixed size.
@@ -170,7 +188,7 @@ export function renderPrintSheetHtml(
   .sheet:last-child { page-break-after: auto; }
   .label {
     position: absolute;
-    padding: 0.07in;
+    padding: ${padIn}in ${padXIn}in;
     overflow: hidden;
   }
   /* Cut guide: a dark line ONLY on a seam BETWEEN two filled cells (drawn once, by
@@ -224,19 +242,19 @@ export function renderPrintSheetHtml(
   /* portrait — QR FIRST: a full-width square (the biggest it fits), the name fills
      the strip left on top. QR size is set by the face, never by the caption. */
   .label.portrait { display: flex; flex-direction: column; gap: 0; }
-  .label.portrait .desc { text-align: center; flex: 1; min-height: 0; align-items: flex-start; }
-  .label.portrait .qr { width: 100%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.04in; }
+  .label.portrait .desc { text-align: center; flex: 1; min-height: 0; }
+  .label.portrait .qr { width: 100%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto ${floorIn}in; }
   /* square — QR is 82% width (leaves a caption strip); the name fills the strip. */
   .label.square { display: flex; flex-direction: column; gap: 0; }
-  .label.square .desc { text-align: center; flex: 1; min-height: 0; align-items: flex-start; }
-  .label.square .qr { width: 82%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto 0.04in; }
+  .label.square .desc { text-align: center; flex: 1; min-height: 0; }
+  .label.square .qr { width: 82%; aspect-ratio: 1; flex-shrink: 0; margin: 0 auto ${floorIn}in; }
   /* Cap caption lines so the preview + the thermal print (which hard-wraps to the
      same counts) agree — the fit sizes the font for these. Ellipsise rather than
-     push the QR down. (The rotated-cell variants live in ROTATE_CSS so the
+     push the QR down. (The rotated-cell variants live in rotateCss so the
      un-rotated sheet stays byte-identical.) */
   .label.portrait .desc > span, .label.square .desc > span { -webkit-line-clamp: 2; }
   .label.row .desc > span { -webkit-line-clamp: 3; }
-${rotate ? ROTATE_CSS : ""}  @media print {
+${rotate ? rotateCss(padIn, padXIn, floorIn) : ""}  @media print {
     .label.seam-r { border-right-color: #000; }
     .label.seam-b { border-bottom-color: #000; }
   }
@@ -277,7 +295,7 @@ function renderSheet(items: Printable[], size: LabelSize, rotate: boolean): stri
       const descPt = captionFontPt(it.description, layoutSize, layout).toFixed(1);
       if (rotate) {
         // Label box stays at on-paper w×h (grid/cut-guides unchanged); the inner
-        // box is the SWAPPED size, turned 90° by ROTATE_CSS to fill the cell.
+        // box is the SWAPPED size, turned 90° by rotateCss to fill the cell.
         return `    <div class="label rot${seams}" style="left:${left}in;top:${top}in;width:${size.label_w}in;height:${size.label_h}in">
       <div class="rot-inner ${layout}" style="width:${size.label_h}in;height:${size.label_w}in">
         <div class="desc" style="font-size:${descPt}pt"><span>${escapeHtml(it.description)}</span></div>

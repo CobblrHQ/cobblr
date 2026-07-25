@@ -1225,6 +1225,9 @@ importers:
 
   packages/platform-web:
     dependencies:
+      '@cobblr/platform-contract':
+        specifier: workspace:*
+        version: link:../platform-contract
       '@cobblr/thermal-print':
         specifier: workspace:*
         version: link:../thermal-print

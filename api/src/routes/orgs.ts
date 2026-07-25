@@ -16,6 +16,7 @@ import { z } from "zod";
 import { meta } from "../db/meta.js";
 import { getManagedApp } from "../platform/managed-apps.js";
 import { hardDeleteOrg } from "../platform/delete-org.js";
+import { convertDemoToKeep } from "../platform/provision-demo.js";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import * as activity from "../platform/activity.js";
@@ -42,7 +43,7 @@ orgsRouter.get("/", requireAuth, async (req, res, next) => {
     const orgs = await meta
       .selectFrom("org_memberships as m")
       .innerJoin("orgs as o", "o.id", "m.org_id")
-      .select((eb) => ["o.id", "o.name", "o.slug", "o.app_mode", "o.focused", "m.role", eb.selectFrom("org_memberships as om").innerJoin("users as ou", "ou.id", "om.user_id").select("ou.display_name").whereRef("om.org_id", "=", "o.id").where("om.role", "=", "owner").limit(1).as("owner_name")])
+      .select((eb) => ["o.id", "o.name", "o.slug", "o.app_mode", "o.focused", "o.trial_expires_at", "m.role", eb.selectFrom("org_memberships as om").innerJoin("users as ou", "ou.id", "om.user_id").select("ou.display_name").whereRef("om.org_id", "=", "o.id").where("om.role", "=", "owner").limit(1).as("owner_name")])
       .where("m.user_id", "=", req.session!.id)
       .orderBy("o.created_at")
       .execute();
@@ -221,6 +222,28 @@ orgsRouter.delete("/:slug", requireAuth, withTenant, async (req, res, next) => {
     // Shared with the operator console's delete (platform/delete-org.ts).
     await hardDeleteOrg(req.tenant!.org.id);
     res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /orgs/:slug/convert-to-keep — owner-only. Turn a trial/demo workspace into a kept
+// one: clear its expiry + per-demo unlocks and move it to a paid plan, so the reaper never
+// touches it and the trial caps no longer apply. The conversion funnel at a demo's expiry.
+orgsRouter.post("/:slug/convert-to-keep", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (req.tenant!.role !== "owner") {
+      res.status(403).json({ error: { code: "forbidden", message: "Only the workspace owner can keep it." } });
+      return;
+    }
+    const orgId = req.tenant!.org.id;
+    const row = await meta.selectFrom("orgs").select("trial_expires_at").where("id", "=", orgId).executeTakeFirst();
+    if (!row || row.trial_expires_at == null) {
+      res.status(409).json({ error: { code: "not_a_trial", message: "This workspace isn't a trial or demo." } });
+      return;
+    }
+    await convertDemoToKeep(orgId);
+    res.json({ ok: true, plan: "paid" });
   } catch (err) {
     next(err);
   }
@@ -499,7 +522,7 @@ orgsRouter.post("/", requireAuth, async (req, res, next) => {
     const row = await meta
       .selectFrom("org_memberships as m")
       .innerJoin("orgs as o", "o.id", "m.org_id")
-      .select((eb) => ["o.id", "o.name", "o.slug", "o.app_mode", "o.focused", "m.role", eb.selectFrom("org_memberships as om").innerJoin("users as ou", "ou.id", "om.user_id").select("ou.display_name").whereRef("om.org_id", "=", "o.id").where("om.role", "=", "owner").limit(1).as("owner_name")])
+      .select((eb) => ["o.id", "o.name", "o.slug", "o.app_mode", "o.focused", "o.trial_expires_at", "m.role", eb.selectFrom("org_memberships as om").innerJoin("users as ou", "ou.id", "om.user_id").select("ou.display_name").whereRef("om.org_id", "=", "o.id").where("om.role", "=", "owner").limit(1).as("owner_name")])
       .where("m.user_id", "=", req.session!.id)
       .where("o.id", "=", orgId)
       .executeTakeFirstOrThrow();
