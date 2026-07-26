@@ -5,9 +5,15 @@
 //
 //   CSV          → parseCsvReceipt           (header-mapped, no AI)
 //   text PDF     → parsePdfTableReceipt      (pdf-parse getTable, no AI)
-//                  └ no usable table → core-ai `chat` on the text
+//                  └ no usable table → parseTextReceipt (line-wise, no AI)
+//                     └ doesn't reconcile → core-ai `chat` on the text
+//   plain text   → parseTextReceipt (no AI) → core-ai `chat`
 //   image        → core-ai `classify-image`  (vision OCR + structuring)
 //   scanned PDF  → no text → "upload a photo instead"
+//
+// The text tier only wins when the line items ADD UP to the receipt's own
+// subtotal, so it can never beat AI with a confident wrong answer — see
+// receipt-text.ts.
 //
 // The caller drops one scan-inbox row per line item (source_kind "receipt") so
 // each line rides the SAME matchmaker + confirm flow a barcode/photo scan does
@@ -24,6 +30,7 @@ import {
   parseCsvReceipt,
   parsePdfTableReceipt,
 } from "./receipt-deterministic.js";
+import { parseTextReceipt } from "./receipt-text.js";
 
 // Re-export the shared types + the pure shaper so existing importers (the route,
 // the unit test) keep their import site.
@@ -169,6 +176,10 @@ export async function parseReceipt(orgId: string, fileId: string, userId?: strin
         reason: "That PDF has no extractable text (a scan?). Upload a photo of the receipt instead.",
       };
     }
+    // No ruled table, but a till-style PDF is still line-structured. Free, and
+    // it only accepts a parse whose items reconcile.
+    const byLine = parseTextReceipt(pdf.text);
+    if (byLine) return { ok: true, receipt: byLine.receipt, method: "text-lines" };
     try {
       const receipt = shapeReceipt(await chatExtract(orgId, pdf.text, fileId, userId));
       if (!receipt) return { ok: false, reason: "Couldn't find any line items on that receipt." };
@@ -189,9 +200,12 @@ export async function parseReceipt(orgId: string, fileId: string, userId?: strin
     }
   }
 
-  // ── Non-CSV text file → AI on the raw text ─────────────────────────────────
+  // ── Non-CSV text file → line-wise parse first, AI on the raw text ──────────
+  const asText = bytes.toString("utf8");
+  const byLine = parseTextReceipt(asText);
+  if (byLine) return { ok: true, receipt: byLine.receipt, method: "text-lines" };
   try {
-    const receipt = shapeReceipt(await chatExtract(orgId, bytes.toString("utf8"), fileId, userId));
+    const receipt = shapeReceipt(await chatExtract(orgId, asText, fileId, userId));
     if (!receipt) return { ok: false, reason: "Couldn't find any line items on that receipt." };
     return { ok: true, receipt, method: "ai-chat" };
   } catch (e) {

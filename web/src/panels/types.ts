@@ -17,12 +17,7 @@ export interface ModulePageTabCtx {
 }
 
 /** Context for `surface: "entity-detail-panel"` — a panel inside the target
- *  kind's detail modal (e.g. the Print manager on a machine). */
-export interface EntityDetailPanelCtx {
-  slug: string;
-  entityId: string;
-  entityTitle: string;
-  /** Free-form host hints (e.g. the machine's `printer_kind` metadata) —
-   *  interpretation is the contributor's business, presence is optional. */
-  hints?: Record<string, string | undefined>;
-}
+ *  kind's detail modal (e.g. the Print manager on a machine). Defined in
+ *  platform-web (module-owned detail pages host these too) and re-exported
+ *  here so both halves of the seam read the same shape. */
+export type { EntityDetailPanelCtx } from "@cobblr/platform-web";

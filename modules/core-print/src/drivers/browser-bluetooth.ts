@@ -19,7 +19,10 @@ import type { PrintDoc, PrintDriver, PrintJobResult, PrinterConfig } from "./typ
 export const BROWSER_BLUETOOTH_KIND = "browser-bluetooth";
 
 export class BrowserBluetoothDriver implements PrintDriver {
-  constructor(private cfg: PrinterConfig) {}
+  /** Also serves driver kind "browser-serial" — the config it carries and the
+   *  server's inability to print are identical; only the transport name in the
+   *  refusal message differs. */
+  constructor(private cfg: PrinterConfig, private transport: string = "Bluetooth") {}
 
   /** Config-only validation — there is nothing on the network to ping. */
   async test(): Promise<{ ok: boolean; error?: string }> {
@@ -34,7 +37,7 @@ export class BrowserBluetoothDriver implements PrintDriver {
 
   async print(_doc: PrintDoc): Promise<PrintJobResult> {
     throw new Error(
-      "This printer is driven from the browser over Bluetooth, so the server cannot print to it. " +
+      `This printer is driven from the browser over ${this.transport}, so the server cannot print to it. ` +
         "Print from a Chrome/Edge tab on a desktop or Android device. " +
         "For server-initiated or iOS printing, attach the printer to an edge bridge and give this printer a cobblr-edge:// manager URL instead.",
     );

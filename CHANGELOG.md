@@ -2,6 +2,40 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-07-26
+
+### Features
+- Any part you have bought before now shows a Price history panel on its own page: what you paid last time, how much it moved since the purchase before, a chart of the unit price over time, and every purchase with its date, vendor and order. Needs Inventory and Purchases both on; parts you have never bought show nothing.
+- Label printers now report the roll they have loaded and how much battery is left, so you can check before starting a run instead of after wasting labels. Printers connected through an edge bridge are asked automatically, and the Labels page sets the media to the roll they report.
+- The Purchases list got a real overview: a stat strip across the top (orders, in transit, how many came from receipts, and total spend for the current filter), vendor chips, a receipt icon on receipt-imported orders, an item-count column, a running total in the footer, and sortable columns.
+- Purchase orders got a real detail view: line items now link to the inventory item they created (with a thumbnail, and a clear flag if the part was deleted), receipt-imported orders show the actual receipt inline with a View button, and the vendor, order number, date, and total are filled in automatically at import instead of leaving the order blank. The footer reconciles the line items against the order total so a mis-read receipt is obvious.
+- Purchases now shows the "Email receipts to <address>" forwarding chip (the same one on the Scan page), and a "N receipts pending confirmation" banner for receipts you've forwarded but not yet turned into orders, linking straight to the scan inbox to confirm them.
+- Forwarding or uploading a receipt you already imported (same store and order number) no longer silently duplicates every line. Cobblr tells you it's already in your scan inbox and offers "Import anyway" if you really want a second copy. A receipt you'd discarded re-imports normally, and a receipt with no order number is never treated as a duplicate.
+- Receipts that aren't a neat table now read without AI. A PDF or emailed receipt with no ruled line-item table used to cost an AI call; it's now read line by line for free. The reader only accepts a result when the line items add up to the receipt's own subtotal, so it can't hand you a confident wrong price: if the arithmetic doesn't reconcile it passes the job to AI instead. On a test corpus of eight store layouts it read every amount correctly, and invented nothing.
+- Connecting a serial label printer now detects the loaded roll size automatically, so there is nothing to fill in.
+- Label printers that connect as a serial port, including Bluetooth Classic models a browser cannot reach over Bluetooth, can now print from Cobblr.
+- Two printers of the same model are now told apart, so a job cannot print on the wrong machine, and network label prints get the same edge protection against paper drift as Bluetooth ones.
+
+### Improvements
+- The label size and printer pickers now lead with what you actually print, ordered by most recently used.
+- Connecting a label printer is now a single "Connect a printer" step that finds your printer for you, instead of asking you to choose between Bluetooth and serial, which are two ways Cobblr reaches the same kind of printer rather than two kinds of printer.
+- The printer picker now shows the roll size and battery your printer last reported, instead of a bare "Bluetooth" line, so you can see what is loaded before you print.
+- The Purchases page now shows an insights panel: your spend over the last six months and your top vendors by spend, both computed live from your orders.
+- Viewing a receipt now shows a clean, itemised receipt built from the parsed order data instead of a raw email/text dump, with a "View original" link to the untouched photo, PDF, or email. A Tax / other line fills any gap between the line items and the total so the figures always reconcile.
+- Click a vendor to open its record: total orders, total spent, and typical lead time, plus contact details and the full list of that vendor's orders (click one to jump to it).
+- Receipt lines now recognise the part you already have when the receipt abbreviates its name. A line reading "SHRD MOZZ 8Z" finds your "Shredded Mozzarella" and offers to add to it, instead of quietly creating a second part every shopping trip (which also split that part's price history). Works both ways and on anything, not just groceries: "GALV WSHR" finds "Galvanized Washer".
+- Forwarding a receipt that couldn't be split into line items now says so honestly ("saved as one note to sort") instead of a vague "we've got your receipt", and the exact same email delivered twice no longer re-imports and re-notifies. Re-forwarding a receipt is still treated as a new action.
+- Added a setting that asks a label printer not to feed to the tear bar between prints, aimed at plain rolls with no size code costing a blank label per print, and the printer now says when it cannot read a roll instead of leaving the readout blank.
+
+### Fixes
+- A printer that cannot report its media size now says so and asks you to set the label size, instead of quietly assuming 40 x 30 mm and printing that guess onto real labels.
+- Fixed the printer connect buttons disappearing once you had one printer, made "Connect a printer" in the labels queue open the Bluetooth chooser instead of navigating to settings, and replaced the browser's "Unsupported device" error with an explanation and the route that actually works.
+- Fixed connecting a serial label printer failing at the final save step, made the roll and battery queries take turns so the battery reading actually arrives, and a printer with a plain uncoded roll now connects with sensible defaults instead of being reported as silent.
+- Fixed a serial printer being reported as "didn't identify itself" when it had actually answered, by waiting long enough for a Bluetooth link to wake and matching each reply to its question by content rather than by the order it arrived in.
+- Fixed connecting a serial label printer failing with "the port is already open" when that port had been opened earlier in the same visit.
+- Fixed a serial-connected label printer being treated as a sheet printer, so it defaulted to US Letter with 20 labels per page instead of its own roll, was skipped by auto-print, and was ignored when a module asked to print something.
+- Fixed a label printer failing to report its roll size whenever it was plugged in to charge.
+
 ## 2026-07-25
 
 ### Features

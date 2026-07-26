@@ -44,7 +44,7 @@ export interface ParsedReceipt {
 /** How a receipt was read — surfaced on the result + stamped into each inbox
  *  row's metadata so triage (and debugging) knows whether a line came from a
  *  deterministic parse or the AI fallback. */
-export type ParseMethod = "csv" | "pdf-table" | "ai-chat" | "ai-vision";
+export type ParseMethod = "csv" | "pdf-table" | "text-lines" | "ai-chat" | "ai-vision";
 
 export type ReceiptResult =
   | { ok: true; receipt: ParsedReceipt; method: ParseMethod }
@@ -119,4 +119,23 @@ export function cleanOrderRef(ref: string | null): string | null {
     .trim()
     .slice(0, 40);
   return c || null;
+}
+
+/** A vendor name reduced to a comparison key: lowercase, alphanumerics only, so
+ *  "KC Tool", "kc  tool", and "KC-Tool" all collapse to "kctool". */
+export function normalizeVendorKey(vendor: string | null | undefined): string {
+  return (vendor ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+/** The identity of a receipt for duplicate detection: a store's order number is
+ *  unique per vendor, so (normalized vendor, cleaned order #) names the receipt.
+ *  Null when there's no order number to key on — without it we can't safely say
+ *  two receipts are the same, so the caller must NOT dedup (avoids false hits). */
+export function receiptDedupKey(
+  vendor: string | null | undefined,
+  orderRef: string | null | undefined,
+): { vendor: string; orderRef: string } | null {
+  const orderKey = cleanOrderRef(orderRef ?? null);
+  if (!orderKey) return null;
+  return { vendor: normalizeVendorKey(vendor), orderRef: orderKey };
 }

@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "inventory",
-  version: "0.18.0",
+  version: "0.19.0",
   displayName: "Inventory",
   description:
     "Parts, locations, categories, stock tracking, polymorphic allocations. The generalised toolkit you'd otherwise Frankenstein from a spreadsheet.",

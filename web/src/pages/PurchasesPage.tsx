@@ -4,16 +4,195 @@
 // child collection, not their own top-level entity).
 
 import { useEffect, useState, type FormEvent } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Plus, Search, Store, Trash2 } from "lucide-react";
-import { ApiError, api, type Order, type VendorSummary } from "../lib/api";
+import { ChevronRight, FileText, Plus, Receipt, Search, Store, Trash2 } from "lucide-react";
+import { ApiError, api, type Order, type OrderItem, type VendorSummary } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
+import { useDetailRoute } from "../lib/useDetailRoute";
+import { ReceiptSourceViewer } from "../components/ReceiptSourceViewer";
 import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
 import { ModulePurposeHint } from "../components/ModulePurposeHint";
 import { usePublishChatContext } from "../lib/chat-context";
-import { BulkActionBar, EntityActionsBar, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { BulkActionBar, EntityActionsBar, EntityThumb, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+
+function fmtOrderDate(d: string | null): string | null {
+  if (!d) return null;
+  const dt = new Date(d.length <= 10 ? `${d}T00:00:00` : d);
+  return Number.isNaN(dt.getTime()) ? d : dt.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function money(v: string | number | null | undefined): string | null {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isNaN(n) ? null : `$${n.toFixed(2)}`;
+}
+
+type SortKey = "vendor" | "ordered_at" | "arrived_at" | "total" | "status" | "items";
+const STATUS_ORDER: Record<Order["status"], number> = {
+  planned: 0,
+  ordered: 1,
+  "in-transit": 2,
+  arrived: 3,
+  cancelled: 4,
+};
+function sortOrders(list: Order[], sort: { key: SortKey; dir: "asc" | "desc" }): Order[] {
+  const dir = sort.dir === "asc" ? 1 : -1;
+  const val = (o: Order): string | number => {
+    switch (sort.key) {
+      case "vendor":
+        return (o.vendor ?? "").toLowerCase();
+      case "ordered_at":
+        return o.ordered_at ?? "";
+      case "arrived_at":
+        return o.arrived_at ?? "";
+      case "total":
+        return o.total_cost ? Number(o.total_cost) : -1;
+      case "status":
+        return STATUS_ORDER[o.status];
+      case "items":
+        return o.item_count ?? 0;
+    }
+  };
+  return [...list].sort((a, b) => {
+    const av = val(a);
+    const bv = val(b);
+    if (av < bv) return -dir;
+    if (av > bv) return dir;
+    return 0;
+  });
+}
+function orderHasReceipt(o: Order): boolean {
+  return typeof (o.metadata as Record<string, unknown> | null)?.receipt_file_id === "string";
+}
+
+function VendorChip({ name }: { name: string | null }) {
+  if (!name) return <span className="text-faint">—</span>;
+  const initial = name.trim().charAt(0).toUpperCase() || "?";
+  return (
+    <span className="inline-flex items-center gap-2 min-w-0">
+      <span className="grid place-items-center w-5 h-5 rounded bg-accent/85 text-[10px] font-bold text-mortar-50 dark:text-slate-900 shrink-0">
+        {initial}
+      </span>
+      <span className="truncate text-content dark:text-mortar-100 font-medium">{name}</span>
+    </span>
+  );
+}
+
+// Spend insights derived entirely from the orders already loaded — no extra
+// fetch. Single-hue bars (brand accent) with the value always labelled, so the
+// bar is a quick shape read and the number stays exact.
+function PurchasesInsights({ orders }: { orders: Order[] }) {
+  const withSpend = orders.filter((o) => o.total_cost != null);
+  const totalSpend = withSpend.reduce((s, o) => s + Number(o.total_cost), 0);
+  if (totalSpend <= 0) return null;
+
+  const now = new Date();
+  const months = Array.from({ length: 6 }, (_, idx) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - (5 - idx), 1);
+    return {
+      key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`,
+      label: d.toLocaleDateString(undefined, { month: "short" }),
+    };
+  });
+  const monthTotals: Record<string, number> = {};
+  const vendorTotals: Record<string, number> = {};
+  for (const o of withSpend) {
+    const mk = (o.ordered_at ?? o.created_at).slice(0, 7);
+    monthTotals[mk] = (monthTotals[mk] ?? 0) + Number(o.total_cost);
+    const vn = o.vendor ?? "(no vendor)";
+    vendorTotals[vn] = (vendorTotals[vn] ?? 0) + Number(o.total_cost);
+  }
+  const maxMonth = Math.max(1, ...months.map((m) => monthTotals[m.key] ?? 0));
+  const topVendors = Object.entries(vendorTotals).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const maxVendor = Math.max(1, ...topVendors.map(([, v]) => v));
+  const head = "text-[10px] font-mono uppercase tracking-widest text-accent";
+  const card = "rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4";
+
+  return (
+    <div className="grid md:grid-cols-2 gap-3">
+      <div className={card}>
+        <div className={head}>// spend, last 6 months</div>
+        <div className="flex items-end gap-2 h-28 mt-3">
+          {months.map((m) => {
+            const total = monthTotals[m.key] ?? 0;
+            return (
+              <div
+                key={m.key}
+                className="flex-1 flex flex-col items-center gap-1 h-full justify-end"
+                title={`${m.label}: ${money(total) ?? "$0.00"}`}
+              >
+                <span className="text-[9px] font-mono text-faint">{total > 0 ? `$${Math.round(total)}` : ""}</span>
+                <div
+                  className="w-full rounded-t bg-accent/80"
+                  style={{ height: `${Math.round((total / maxMonth) * 100)}%`, minHeight: total > 0 ? 3 : 0 }}
+                />
+                <span className="text-[9px] text-faint">{m.label}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div className={card}>
+        <div className={head}>// top vendors by spend</div>
+        <div className="space-y-2 mt-3">
+          {topVendors.map(([name, val]) => (
+            <div key={name}>
+              <div className="flex justify-between text-xs mb-0.5">
+                <span className="truncate text-content dark:text-mortar-100">{name}</span>
+                <span className="font-mono text-muted shrink-0 ml-2">{money(val)}</span>
+              </div>
+              <div className="h-2 rounded bg-subtle dark:bg-slate-800 overflow-hidden">
+                <div className="h-full bg-accent/80 rounded" style={{ width: `${Math.round((val / maxVendor) * 100)}%` }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3.5 py-2.5">
+      <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">{label}</div>
+      <div className="text-lg font-bold text-content dark:text-mortar-100 leading-tight mt-0.5">{value}</div>
+      {hint && <div className="text-[10px] text-faint mt-0.5">{hint}</div>}
+    </div>
+  );
+}
+
+function SortTh({
+  label,
+  sortKey,
+  sort,
+  onSort,
+  align = "left",
+}: {
+  label: string;
+  sortKey: SortKey;
+  sort: { key: SortKey; dir: "asc" | "desc" };
+  onSort: (k: SortKey) => void;
+  align?: "left" | "right";
+}) {
+  const active = sort.key === sortKey;
+  return (
+    <th className={`px-3 py-2 ${align === "right" ? "text-right" : "text-left"}`}>
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className={`inline-flex items-center gap-1 hover:text-content dark:hover:text-mortar-100 transition ${
+          align === "right" ? "w-full justify-end" : ""
+        } ${active ? "text-content dark:text-mortar-100" : ""}`}
+      >
+        {label}
+        <span className={active ? "" : "opacity-0"}>{sort.dir === "asc" ? "▲" : "▼"}</span>
+      </button>
+    </th>
+  );
+}
 
 const STATUSES: Order["status"][] = ["planned", "ordered", "in-transit", "arrived", "cancelled"];
 
@@ -37,6 +216,30 @@ export function PurchasesPage() {
     enabled: !!activeSlug,
     staleTime: 30_000,
   });
+  // Forward-a-receipt address (platform route, works even without Scan enabled),
+  // shown here so Purchases is a place you can start a receipt from — not only Scan.
+  const receiptAddrQ = useQuery({
+    queryKey: ["receipt-address", activeSlug],
+    queryFn: () => api.getReceiptAddress(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 5 * 60_000,
+  });
+  const receiptAddress = receiptAddrQ.data?.configured ? receiptAddrQ.data.address : null;
+  // Scan-owned pending receipt sessions (imported, not yet confirmed into a PO).
+  const modulesQ = useQuery({
+    queryKey: ["modules", activeSlug],
+    queryFn: () => api.orgModules(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 60_000,
+  });
+  const scanEnabled = (modulesQ.data?.items ?? []).some((m) => m.name === "core-scan" && m.enabled);
+  const pendingReceiptsQ = useQuery({
+    queryKey: ["pending-receipt-groups", activeSlug],
+    queryFn: () => api.getPendingReceiptGroups(activeSlug),
+    enabled: !!activeSlug && scanEnabled,
+    staleTime: 30_000,
+  });
+  const pendingReceipts = pendingReceiptsQ.data?.groups ?? [];
 
   const allRows = orders.data?.items ?? [];
   // Tell Ask Cobb what's on this screen (uses the order module's own statuses).
@@ -54,6 +257,7 @@ export function PurchasesPage() {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"" | Order["status"]>("");
 
+  const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "ordered_at", dir: "desc" });
   let filtered = allRows;
   if (statusFilter) filtered = filtered.filter((o) => o.status === statusFilter);
   if (query) {
@@ -63,6 +267,12 @@ export function PurchasesPage() {
         .some((v) => v!.toLowerCase().includes(query.toLowerCase())),
     );
   }
+  const rows = sortOrders(filtered, sort);
+  const toggleSort = (key: SortKey) =>
+    setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: "desc" }));
+  // Header stats — open pipeline + spend of what's currently filtered.
+  const filteredSpend = filtered.reduce((s, o) => s + (o.total_cost ? Number(o.total_cost) : 0), 0);
+  const receiptsCount = allRows.filter(orderHasReceipt).length;
 
   const [newOpen, setNewOpen] = useState(false);
   const [vendorsOpen, setVendorsOpen] = useState(false);
@@ -136,6 +346,64 @@ export function PurchasesPage() {
         </button>
       </div>
 
+      {receiptAddress && (
+        <div className="flex items-center gap-1.5 text-xs text-muted dark:text-slate-400">
+          <FileText size={13} className="text-faint shrink-0" />
+          <span className="shrink-0">Email receipts to</span>
+          <code className="block max-w-[9rem] sm:max-w-[16rem] overflow-x-auto whitespace-nowrap rounded bg-mortar-100 dark:bg-slate-800 px-1.5 py-0.5 text-content dark:text-mortar-100 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {receiptAddress}
+          </code>
+          <button
+            type="button"
+            className="shrink-0 text-accent hover:underline"
+            onClick={() => {
+              void navigator.clipboard?.writeText(receiptAddress);
+              toastP.success("Address copied");
+            }}
+          >
+            Copy
+          </button>
+        </div>
+      )}
+
+      {pendingReceipts.length > 0 && (
+        <button
+          type="button"
+          onClick={() => navigate("/scan")}
+          className="w-full flex items-center gap-3 rounded-xl border border-cobble-300/50 dark:border-cobble-700/50 bg-cobble-50/60 dark:bg-cobble-900/20 px-4 py-3 text-left hover:border-accent transition"
+        >
+          <Receipt size={18} className="text-accent shrink-0" />
+          <span className="flex-1 min-w-0">
+            <span className="block text-sm font-medium text-content dark:text-mortar-100">
+              {pendingReceipts.length} receipt{pendingReceipts.length === 1 ? "" : "s"} pending confirmation
+            </span>
+            <span className="block text-xs text-muted dark:text-slate-400 truncate">
+              {pendingReceipts
+                .map((g) => `${g.vendor ?? "Receipt"} (${g.count})`)
+                .slice(0, 4)
+                .join(" · ")}
+              {pendingReceipts.length > 4 ? " · …" : ""} — not yet purchase orders
+            </span>
+          </span>
+          <span className="text-xs font-medium text-accent whitespace-nowrap shrink-0">Review in scan inbox →</span>
+        </button>
+      )}
+
+      {allRows.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <StatCard label="Orders" value={String(allRows.length)} hint={`${openOrders} open`} />
+          <StatCard label="In transit" value={String(inTransit)} />
+          <StatCard label="From receipts" value={String(receiptsCount)} />
+          <StatCard
+            label={statusFilter || query ? "Spend (filtered)" : "Total spend"}
+            value={money(filteredSpend) ?? "$0.00"}
+            hint={`${filtered.length} order${filtered.length === 1 ? "" : "s"}`}
+          />
+        </div>
+      )}
+
+      {allRows.length > 0 && <PurchasesInsights orders={allRows} />}
+
       {orders.isSuccess && allRows.length === 0 && <ModulePurposeHint moduleName="purchases" />}
 
       {allRows.length === 0 && (orderInstances.data?.items.length ?? 0) > 0 ? (
@@ -156,17 +424,18 @@ export function PurchasesPage() {
                   aria-label="Select all"
                 />
               </th>
-              <th className="text-left px-3 py-2">Vendor</th>
+              <SortTh label="Vendor" sortKey="vendor" sort={sort} onSort={toggleSort} />
               <th className="text-left px-3 py-2">Order #</th>
-              <th className="text-left px-3 py-2">Status</th>
-              <th className="text-left px-3 py-2">Ordered</th>
-              <th className="text-left px-3 py-2">Arrived</th>
-              <th className="text-right px-3 py-2">Total</th>
+              <SortTh label="Status" sortKey="status" sort={sort} onSort={toggleSort} />
+              <SortTh label="Ordered" sortKey="ordered_at" sort={sort} onSort={toggleSort} />
+              <SortTh label="Arrived" sortKey="arrived_at" sort={sort} onSort={toggleSort} />
+              <SortTh label="Items" sortKey="items" sort={sort} onSort={toggleSort} align="right" />
+              <SortTh label="Total" sortKey="total" sort={sort} onSort={toggleSort} align="right" />
               <th className="w-6"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line dark:divide-slate-700">
-            {filtered.map((o) => (
+            {rows.map((o) => (
               <tr
                 key={o.id}
                 onClick={() => navigate(`/purchases/${o.id}`)}
@@ -184,32 +453,40 @@ export function PurchasesPage() {
                     aria-label={`Select ${o.vendor || o.order_number}`}
                   />
                 </td>
-                <td className="px-3 py-2 text-content dark:text-mortar-100 font-medium">
-                  {o.vendor || "—"}
+                <td className="px-3 py-2 max-w-[220px]">
+                  <VendorChip name={o.vendor} />
                 </td>
                 <td className="px-3 py-2 text-muted dark:text-slate-400 font-mono text-xs">
-                  {o.order_number || "—"}
+                  <span className="inline-flex items-center gap-1.5">
+                    {o.order_number || "—"}
+                    {orderHasReceipt(o) && (
+                      <Receipt size={12} className="text-accent shrink-0" aria-label="Imported from a receipt" />
+                    )}
+                  </span>
                 </td>
                 <td className="px-3 py-2">
                   <StatusPill status={o.status} />
                 </td>
-                <td className="px-3 py-2 text-muted dark:text-slate-400 text-xs">
-                  {o.ordered_at ? new Date(o.ordered_at).toLocaleDateString() : "—"}
+                <td className="px-3 py-2 text-muted dark:text-slate-400 text-xs whitespace-nowrap">
+                  {fmtOrderDate(o.ordered_at) ?? "—"}
                 </td>
-                <td className="px-3 py-2 text-muted dark:text-slate-400 text-xs">
-                  {o.arrived_at ? new Date(o.arrived_at).toLocaleDateString() : "—"}
+                <td className="px-3 py-2 text-muted dark:text-slate-400 text-xs whitespace-nowrap">
+                  {fmtOrderDate(o.arrived_at) ?? "—"}
+                </td>
+                <td className="px-3 py-2 text-right text-muted dark:text-slate-400 font-mono text-xs">
+                  {o.item_count ?? "—"}
                 </td>
                 <td className="px-3 py-2 text-right font-mono text-xs text-content dark:text-mortar-200">
-                  {o.total_cost ? `$${Number(o.total_cost).toFixed(2)}` : "—"}
+                  {money(o.total_cost) ?? "—"}
                 </td>
                 <td className="px-2 py-2 text-faint dark:text-slate-600">
                   <ChevronRight size={14} />
                 </td>
               </tr>
             ))}
-            {filtered.length === 0 && (
+            {rows.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-3 py-10 text-center text-xs text-faint italic">
+                <td colSpan={9} className="px-3 py-10 text-center text-xs text-faint italic">
                   {allRows.length === 0
                     ? "No orders yet. Click + new to log one."
                     : "No matches with the current filters."}
@@ -217,6 +494,18 @@ export function PurchasesPage() {
               </tr>
             )}
           </tbody>
+          {rows.length > 0 && (
+            <tfoot className="border-t-2 border-line dark:border-slate-700">
+              <tr className="text-xs font-mono">
+                <td colSpan={6} />
+                <td className="px-3 py-2 text-right text-[10px] uppercase tracking-widest text-faint">Total</td>
+                <td className="px-3 py-2 text-right font-semibold text-content dark:text-mortar-100">
+                  {money(filteredSpend)}
+                </td>
+                <td />
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
       )}
@@ -265,6 +554,89 @@ function StatusPill({ status }: { status: Order["status"] }) {
   );
 }
 
+// A clean, paper-styled render of a receipt built from the order's own parsed
+// data (vendor, order #, date, line items, totals) — far nicer than dumping the
+// raw email body / text source. Stays truthful: any gap between the line-item
+// subtotal + shipping and the recorded total shows as a "Tax / other" line so
+// the figures always reconcile, and "View original" keeps the raw source one tap
+// away for full fidelity (the author, 2026-07-26).
+function ReceiptRenderModal({
+  order,
+  onViewOriginal,
+  onClose,
+}: {
+  order: Order & { items: OrderItem[] };
+  onViewOriginal: (() => void) | null;
+  onClose: () => void;
+}) {
+  const items = order.items ?? [];
+  const subtotal = items.reduce((s, it) => s + (it.unit_cost != null ? Number(it.qty) * Number(it.unit_cost) : 0), 0);
+  const shipping = order.shipping_cost != null ? Number(order.shipping_cost) : 0;
+  const total = order.total_cost != null ? Number(order.total_cost) : subtotal + shipping;
+  const other = total - subtotal - shipping;
+  const host = order.url ? order.url.replace(/^https?:\/\//, "").replace(/\/.*$/, "") : null;
+  const meta = [host, order.order_number ? `Order #${order.order_number}` : null, fmtOrderDate(order.ordered_at)]
+    .filter(Boolean)
+    .join("  ·  ");
+  return (
+    <Modal open onClose={onClose} title="Receipt" size="content">
+      <div className="mx-auto w-full max-w-sm rounded-lg bg-[#efe9dc] text-[#33302a] p-6 font-mono shadow-inner">
+        <div className="text-lg font-bold tracking-wide">{(order.vendor || "Receipt").toUpperCase()}</div>
+        {meta && <div className="text-[11px] text-[#7a7263] mb-4">{meta}</div>}
+        {items.length === 0 ? (
+          <div className="text-xs text-[#7a7263] italic py-2">No itemised lines were parsed from this receipt.</div>
+        ) : (
+          <div>
+            {items.map((it) => {
+              const qty = Number(it.qty);
+              const ext = it.unit_cost != null ? qty * Number(it.unit_cost) : null;
+              return (
+                <div key={it.id} className="flex justify-between gap-3 text-sm border-b border-dotted border-[#bcb4a2] py-1.5">
+                  <span className="min-w-0 break-words">
+                    {it.description ?? "—"}
+                    {qty > 1 ? `  ×${qty}` : ""}
+                  </span>
+                  <span className="shrink-0 tabular-nums">{ext != null ? ext.toFixed(2) : ""}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div className="mt-3 space-y-1 text-xs">
+          <div className="flex justify-between">
+            <span>Subtotal</span>
+            <span className="tabular-nums">{subtotal.toFixed(2)}</span>
+          </div>
+          {shipping > 0 && (
+            <div className="flex justify-between">
+              <span>Shipping</span>
+              <span className="tabular-nums">{shipping.toFixed(2)}</span>
+            </div>
+          )}
+          {Math.abs(other) >= 0.01 && (
+            <div className="flex justify-between">
+              <span>Tax / other</span>
+              <span className="tabular-nums">{other.toFixed(2)}</span>
+            </div>
+          )}
+          <div className="flex justify-between font-bold text-sm border-t border-[#bcb4a2] pt-1.5 mt-1.5">
+            <span>TOTAL</span>
+            <span className="tabular-nums">{total.toFixed(2)}</span>
+          </div>
+        </div>
+        {onViewOriginal && (
+          <button
+            onClick={onViewOriginal}
+            className="mt-5 text-[11px] text-[#7a7263] hover:text-[#33302a] underline underline-offset-2"
+          >
+            View original email / photo
+          </button>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClose: () => void }) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
@@ -285,6 +657,7 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
   // Native-field presentation (relabel + show/hide via bundle/config); no-op
   // until an override exists. Same pattern as AssetsPage.
   const fp = useFieldPresentation("purchases:order");
+  const routeFor = useDetailRoute(activeSlug);
   const remove = useMutation({
     mutationFn: () => api.deleteOrder(activeSlug, orderId!),
     onSuccess: () => {
@@ -294,8 +667,19 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
     },
     onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't delete."),
   });
+  const [receiptView, setReceiptView] = useState<"none" | "render" | "original">("none");
 
   const o = order.data;
+  const items: OrderItem[] = o?.items ?? [];
+  const receiptFileId = typeof o?.metadata?.receipt_file_id === "string" ? (o.metadata.receipt_file_id as string) : null;
+  // Reconcile the line items against the order total so a mis-parsed receipt is
+  // obvious: Σ(qty × unit) + shipping vs the recorded total.
+  const subtotal = items.reduce((s, it) => s + (it.unit_cost != null ? Number(it.qty) * Number(it.unit_cost) : 0), 0);
+  const shipping = o?.shipping_cost != null ? Number(o.shipping_cost) : 0;
+  const computed = subtotal + shipping;
+  const totalNum = o?.total_cost != null ? Number(o.total_cost) : null;
+  const reconciles = totalNum != null && Math.abs(totalNum - computed) < 0.01;
+
   async function handleDelete() {
     if (!o) return;
     const ok = await confirm({
@@ -308,16 +692,71 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
   }
 
   return (
+    <>
+    {receiptView === "render" && o && (
+      <ReceiptRenderModal
+        order={o}
+        onViewOriginal={receiptFileId ? () => setReceiptView("original") : null}
+        onClose={() => setReceiptView("none")}
+      />
+    )}
+    {receiptView === "original" && receiptFileId && (
+      <ReceiptSourceViewer slug={activeSlug} fileId={receiptFileId} onClose={() => setReceiptView("none")} />
+    )}
     <Modal
       open={!!orderId}
       onClose={onClose}
-      title={o?.vendor || o?.order_number || "loading…"}
-      subtitle={o ? `${o.status}${o.order_number && o.vendor ? ` · ${o.order_number}` : ""}` : undefined}
+      title={
+        o ? (
+          <span className="inline-flex items-baseline gap-1.5">
+            <span className="font-bold">{o.vendor || "Order"}</span>
+            {o.order_number && (
+              <span className="font-mono text-[0.8em] font-medium text-muted dark:text-slate-400">#{o.order_number}</span>
+            )}
+          </span>
+        ) : (
+          "loading…"
+        )
+      }
+      subtitle={
+        o ? (
+          <span className="inline-flex items-center gap-2 flex-wrap">
+            {fmtOrderDate(o.ordered_at) && <span>{fmtOrderDate(o.ordered_at)}</span>}
+            <StatusPill status={o.status} />
+            {money(o.total_cost) && (
+              <span className="font-mono text-content dark:text-mortar-100 font-semibold">
+                {money(o.total_cost)}
+                <span className="text-faint font-normal"> · {items.length} item{items.length === 1 ? "" : "s"}</span>
+              </span>
+            )}
+          </span>
+        ) : undefined
+      }
       size="lg"
     >
       {o ? (
         <div className="space-y-4">
           <EntityActionsBar entityKind="purchases:order" entityId={o.id} />
+          {receiptFileId && (
+            <button
+              type="button"
+              onClick={() => setReceiptView(items.length > 0 ? "render" : "original")}
+              className="w-full flex items-center gap-3 rounded-xl border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800/40 px-3.5 py-2.5 text-left hover:border-accent transition"
+            >
+              <span className="grid place-items-center w-9 h-9 rounded-lg bg-surface dark:bg-slate-900 border border-line dark:border-slate-700 shrink-0">
+                <Receipt size={16} className="text-accent" />
+              </span>
+              <span className="flex-1 min-w-0">
+                <span className="block text-sm font-medium text-content dark:text-mortar-100">Receipt{o.vendor ? ` · ${o.vendor}` : ""}</span>
+                <span className="block text-xs text-faint">
+                  {[fmtOrderDate(o.ordered_at), o.order_number ? `#${o.order_number}` : null, `${items.length} line${items.length === 1 ? "" : "s"}`]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
+              </span>
+              <span className="text-xs font-medium text-accent whitespace-nowrap">View receipt →</span>
+            </button>
+          )}
           <dl className="grid grid-cols-2 gap-3 text-xs">
             {!fp.hidden("vendor") && (
               <div>
@@ -344,32 +783,45 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
 
           <div>
             <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
-              // line items ({o.items?.length ?? 0})
+              // line items ({items.length})
             </div>
-            {!o.items || o.items.length === 0 ? (
+            {items.length === 0 ? (
               <div className="text-xs text-faint italic">No items on this order.</div>
             ) : (
-              <ul className="space-y-1 text-sm">
-                {o.items.map((it) => (
-                  <li
-                    key={it.id}
-                    className="flex items-baseline gap-3 px-2 py-1.5 rounded border border-line dark:border-slate-700"
-                  >
-                    <span className="flex-1 text-content dark:text-mortar-100">
-                      {it.description ?? "—"}
-                    </span>
-                    <span className="font-mono text-xs text-muted">
-                      {Number(it.qty).toFixed(0)} ×
-                    </span>
-                    <span className="font-mono text-xs text-muted">
-                      {it.unit_cost ? `$${Number(it.unit_cost).toFixed(2)}` : "—"}
-                    </span>
-                    <span className="font-mono text-xs text-content dark:text-mortar-100">
-                      {it.unit_cost ? `$${(Number(it.qty) * Number(it.unit_cost)).toFixed(2)}` : ""}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              <>
+                <ul className="space-y-1.5">
+                  {items.map((it) => (
+                    <OrderLineItem key={it.id} slug={activeSlug} item={it} routeFor={routeFor} />
+                  ))}
+                </ul>
+                <div className="mt-3 pt-2.5 border-t border-dashed border-line dark:border-slate-700 space-y-1 text-sm">
+                  <div className="flex justify-between text-muted">
+                    <span>Subtotal ({items.length} line{items.length === 1 ? "" : "s"})</span>
+                    <span className="font-mono">{money(subtotal)}</span>
+                  </div>
+                  {shipping > 0 && (
+                    <div className="flex justify-between text-muted">
+                      <span>Shipping</span>
+                      <span className="font-mono">{money(shipping)}</span>
+                    </div>
+                  )}
+                  {totalNum != null && (
+                    <div className="flex justify-between font-semibold text-content dark:text-mortar-100">
+                      <span className="inline-flex items-center gap-2">
+                        Total
+                        {reconciles ? (
+                          <span className="text-[10px] font-mono text-moss-600 dark:text-moss-400">✓ matches</span>
+                        ) : (
+                          <span className="text-[10px] font-mono text-ember-500" title={`Line items + shipping = ${money(computed)}`}>
+                            ⚠ off by {money(Math.abs(totalNum - computed))}
+                          </span>
+                        )}
+                      </span>
+                      <span className="font-mono">{money(totalNum)}</span>
+                    </div>
+                  )}
+                </div>
+              </>
             )}
           </div>
 
@@ -392,6 +844,74 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
         <div className="text-xs text-faint">loading…</div>
       )}
     </Modal>
+    </>
+  );
+}
+
+// One order line item: resolves its part (inventory:part) to a live thumbnail +
+// name that links to the item's page. If the part was deleted (lookup 404s) the
+// line stays visible but is struck through + flagged, never a silent dead row.
+function OrderLineItem({
+  slug,
+  item,
+  routeFor,
+}: {
+  slug: string;
+  item: OrderItem;
+  routeFor: (kind: string, id: string) => string | null;
+}) {
+  const resolved = useQuery({
+    queryKey: ["entity", slug, "inventory:part", item.part_id],
+    queryFn: () => api.lookupEntity(slug, "inventory:part", item.part_id!),
+    enabled: !!item.part_id,
+    retry: false,
+    staleTime: 60_000,
+  });
+  const ent = resolved.data;
+  const partDeleted = !!item.part_id && resolved.isError;
+  const name = ent?.title ?? item.description ?? "—";
+  const href = ent?.detailUrl ?? (item.part_id ? routeFor("inventory:part", item.part_id) : null);
+  const qty = Number(item.qty);
+  const unit = item.unit_cost != null ? Number(item.unit_cost) : null;
+  const ext = unit != null ? qty * unit : null;
+
+  const inner = (
+    <>
+      <EntityThumb
+        src={partDeleted ? null : (ent?.image_path ?? null)}
+        alt={name}
+        size={36}
+        className="rounded-lg ring-1 ring-line dark:ring-slate-700 shrink-0"
+      />
+      <span className="flex-1 min-w-0">
+        <span className={partDeleted ? "text-faint line-through text-sm" : "text-content dark:text-mortar-100 text-sm"}>{name}</span>
+        {partDeleted && (
+          <span className="ml-2 text-[9px] font-mono uppercase tracking-wider text-ember-500 border border-ember-500/40 bg-ember-500/10 rounded px-1.5 py-0.5">
+            part deleted
+          </span>
+        )}
+      </span>
+      <span className="font-mono text-xs text-muted whitespace-nowrap">
+        {qty.toFixed(0)} × {unit != null ? `$${unit.toFixed(2)}` : "—"}
+      </span>
+      <span className="font-mono text-xs text-content dark:text-mortar-100 w-16 text-right shrink-0">
+        {ext != null ? `$${ext.toFixed(2)}` : ""}
+      </span>
+    </>
+  );
+
+  const cls =
+    "flex items-center gap-3 px-2.5 py-2 rounded-lg border border-line dark:border-slate-700 transition";
+  return (
+    <li style={{ listStyle: "none" }}>
+      {href && !partDeleted ? (
+        <Link to={href} className={`${cls} hover:border-accent hover:bg-subtle dark:hover:bg-slate-800/50`}>
+          {inner}
+        </Link>
+      ) : (
+        <div className={cls}>{inner}</div>
+      )}
+    </li>
   );
 }
 
@@ -592,11 +1112,17 @@ function VendorPicker({
 // delete. Opened from the Purchases header.
 function VendorsModal({ onClose }: { onClose: () => void }) {
   const { activeSlug } = useActiveOrg();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
   const vendors = useQuery({ queryKey: ["vendors", activeSlug], queryFn: () => api.listVendors(activeSlug), enabled: !!activeSlug });
   const [editing, setEditing] = useState<string | "new" | null>(null);
+  const [viewing, setViewing] = useState<string | null>(null);
+  const openOrder = (orderId: string) => {
+    onClose();
+    navigate(`/purchases/${orderId}`);
+  };
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["vendors", activeSlug] });
@@ -607,6 +1133,20 @@ function VendorsModal({ onClose }: { onClose: () => void }) {
     onSuccess: () => { toast.success("Vendor deleted."); invalidate(); },
     onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't delete."),
   });
+
+  if (viewing) {
+    return (
+      <Modal open onClose={onClose} title="Vendor" size="md">
+        <VendorDetailPane
+          slug={activeSlug}
+          vendorId={viewing}
+          onBack={() => setViewing(null)}
+          onOpenOrder={openOrder}
+          onChanged={invalidate}
+        />
+      </Modal>
+    );
+  }
 
   return (
     <Modal open onClose={onClose} title="Vendors" size="md">
@@ -622,7 +1162,13 @@ function VendorsModal({ onClose }: { onClose: () => void }) {
               {editing === v.id ? (
                 <VendorForm slug={activeSlug} vendor={v} onDone={() => { setEditing(null); invalidate(); }} onCancel={() => setEditing(null)} />
               ) : (
-                <div className="flex items-center gap-3 rounded-lg border border-line dark:border-slate-700 p-3">
+                <div
+                  onClick={() => setViewing(v.id)}
+                  className="flex items-center gap-3 rounded-lg border border-line dark:border-slate-700 p-3 cursor-pointer hover:border-accent transition"
+                >
+                  <span className="grid place-items-center w-7 h-7 rounded bg-accent/85 text-xs font-bold text-mortar-50 dark:text-slate-900 shrink-0">
+                    {v.name.trim().charAt(0).toUpperCase() || "?"}
+                  </span>
                   <div className="flex-1 min-w-0">
                     <div className="font-medium text-content dark:text-mortar-100 truncate">{v.name}</div>
                     <div className="text-xs text-muted">
@@ -632,12 +1178,13 @@ function VendorsModal({ onClose }: { onClose: () => void }) {
                     </div>
                   </div>
                   {v.website && (
-                    <a href={v.website} target="_blank" rel="noreferrer" className="text-xs text-accent hover:underline shrink-0">site ↗</a>
+                    <a href={v.website} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-xs text-accent hover:underline shrink-0">site ↗</a>
                   )}
-                  <button type="button" onClick={() => setEditing(v.id)} className="text-xs text-muted hover:text-accent shrink-0">Edit</button>
+                  <button type="button" onClick={(e) => { e.stopPropagation(); setEditing(v.id); }} className="text-xs text-muted hover:text-accent shrink-0">Edit</button>
                   <button
                     type="button"
-                    onClick={async () => {
+                    onClick={async (e) => {
+                      e.stopPropagation();
                       if (await confirm({ title: `Delete "${v.name}"?`, message: "Orders linked to this vendor keep their vendor name but lose the link.", confirmLabel: "Delete", destructive: true })) {
                         remove.mutate(v.id);
                       }
@@ -662,6 +1209,131 @@ function VendorsModal({ onClose }: { onClose: () => void }) {
         )}
       </div>
     </Modal>
+  );
+}
+
+function VendorDetailPane({
+  slug,
+  vendorId,
+  onBack,
+  onOpenOrder,
+  onChanged,
+}: {
+  slug: string;
+  vendorId: string;
+  onBack: () => void;
+  onOpenOrder: (orderId: string) => void;
+  onChanged: () => void;
+}) {
+  const [edit, setEdit] = useState(false);
+  const vendor = useQuery({
+    queryKey: ["vendor", slug, vendorId],
+    queryFn: () => api.getVendor(slug, vendorId),
+    enabled: !!vendorId,
+  });
+  const v = vendor.data;
+  const back = (
+    <button onClick={onBack} className="text-xs text-muted hover:text-accent inline-flex items-center gap-1">
+      <ChevronRight size={12} className="rotate-180" /> All vendors
+    </button>
+  );
+  if (edit && v) {
+    return (
+      <div className="space-y-3">
+        {back}
+        <VendorForm
+          slug={slug}
+          vendor={v}
+          onDone={() => {
+            setEdit(false);
+            onChanged();
+            void vendor.refetch();
+          }}
+          onCancel={() => setEdit(false)}
+        />
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-4">
+      {back}
+      {vendor.isLoading || !v ? (
+        <div className="text-sm text-muted">Loading…</div>
+      ) : (
+        <>
+          <div className="flex items-center gap-3">
+            <span className="grid place-items-center w-10 h-10 rounded-lg bg-accent/85 text-sm font-bold text-mortar-50 dark:text-slate-900 shrink-0">
+              {v.name.trim().charAt(0).toUpperCase() || "?"}
+            </span>
+            <div className="min-w-0">
+              <div className="text-lg font-bold text-content dark:text-mortar-100 truncate">{v.name}</div>
+              {v.website && (
+                <a href={v.website} target="_blank" rel="noreferrer" className="text-xs text-accent hover:underline">
+                  {v.website.replace(/^https?:\/\//, "")} ↗
+                </a>
+              )}
+            </div>
+            <div className="flex-1" />
+            <button onClick={() => setEdit(true)} className="text-xs text-muted hover:text-accent shrink-0">
+              Edit
+            </button>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2">
+            <StatCard label="Orders" value={String(v.order_count)} />
+            <StatCard label="Total spent" value={money(v.total_spend) ?? "$0.00"} />
+            <StatCard label="Lead time" value={v.lead_time_days != null ? `${v.lead_time_days}d` : "—"} />
+          </div>
+
+          {(v.account_number || v.contact || v.notes) && (
+            <dl className="text-xs space-y-1">
+              {v.account_number && (
+                <div className="flex gap-2">
+                  <dt className="text-faint w-20 shrink-0">Account #</dt>
+                  <dd className="text-content dark:text-mortar-100">{v.account_number}</dd>
+                </div>
+              )}
+              {v.contact && (
+                <div className="flex gap-2">
+                  <dt className="text-faint w-20 shrink-0">Contact</dt>
+                  <dd className="text-content dark:text-mortar-100">{v.contact}</dd>
+                </div>
+              )}
+              {v.notes && (
+                <div className="flex gap-2">
+                  <dt className="text-faint w-20 shrink-0">Notes</dt>
+                  <dd className="text-muted">{v.notes}</dd>
+                </div>
+              )}
+            </dl>
+          )}
+
+          <div>
+            <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">// orders ({v.orders.length})</div>
+            {v.orders.length === 0 ? (
+              <div className="text-xs text-faint italic">No orders from this vendor yet.</div>
+            ) : (
+              <ul className="space-y-1">
+                {v.orders.map((o) => (
+                  <li key={o.id}>
+                    <button
+                      type="button"
+                      onClick={() => onOpenOrder(o.id)}
+                      className="w-full flex items-center gap-3 px-2.5 py-2 rounded-lg border border-line dark:border-slate-700 hover:border-accent hover:bg-subtle dark:hover:bg-slate-800/50 transition text-left"
+                    >
+                      <span className="font-mono text-xs text-muted w-24 shrink-0 truncate">{o.order_number || "—"}</span>
+                      <StatusPill status={o.status} />
+                      <span className="text-xs text-muted flex-1 whitespace-nowrap">{fmtOrderDate(o.ordered_at) ?? ""}</span>
+                      <span className="font-mono text-xs text-content dark:text-mortar-100">{money(o.total_cost) ?? "—"}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

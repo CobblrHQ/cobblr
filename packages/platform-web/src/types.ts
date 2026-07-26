@@ -2,6 +2,8 @@
 // components can be strongly typed without depending on the host
 // app's api client. Each host injects an api adapter (see api.ts).
 
+import type { ContributedPanelSpec } from "./panels";
+
 export interface PlatformAction {
   id: string;
   module_name: string;
@@ -143,6 +145,10 @@ export interface PlatformWebApi {
     q?: string,
   ): Promise<{ items: PlatformResolvedEntity[] }>;
   listFieldDefs(slug: string, kind: string): Promise<{ items: PlatformFieldDef[]; sections?: FieldSection[] }>;
+  /** Manifest-declared UI contributions from the workspace's ENABLED modules
+   *  (`contributes.panels`). Optional: a host that doesn't wire it simply
+   *  renders no contributed panels. See panels.tsx. */
+  listContributedPanels?(slug: string): Promise<ContributedPanelSpec[]>;
   /** Append a new choice to a text field-def's `choices` array. The
    *  CustomFieldsPanel's "+ add new" affordance calls this. */
   appendFieldDefChoice?(slug: string, id: string, value: string): Promise<PlatformFieldDef>;

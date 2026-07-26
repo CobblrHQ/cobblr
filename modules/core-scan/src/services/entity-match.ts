@@ -58,14 +58,73 @@ export function probeTokens(name: string): string[] {
   return [...new Set(tokens(name))].sort((a, b) => b.length - a.length).slice(0, 3);
 }
 
+// Known limit of probing a substring LIKE: a TRUNCATED abbreviation is still a
+// substring of its full word ("mozz" ⊂ "mozzarella"), so the row comes back and
+// the ranking below reunites them. A VOWEL-DROPPED one is not ("shrd" ⊄
+// "shredded"), so it only surfaces when another token on the same line fetches
+// the row — "SHRD MOZZ" works, "CHKN BRST" does not. Finding a row by a
+// skeleton alone needs a different index (trigram / a normalized column), not a
+// looser ranking.
+
+/** Shortest abbreviation we'll believe. Three letters matches far too much
+ *  ("red" would abbreviate "reduced"), and the cost of being wrong is offering
+ *  a merge into the wrong entity. */
+const MIN_ABBREV = 4;
+/** How much longer the full word may be than its abbreviation. Without a cap,
+ *  "cat" abbreviates "concatenation". */
+const MAX_STRETCH = 3;
+
+/** Does `abbr` look like `full` shortened the way a receipt shortens it?
+ *
+ *  A till printer has ~40 characters per line, so it drops vowels ("SHRD" for
+ *  shredded) or cuts the tail ("MOZZ" for mozzarella) — and which one it did is
+ *  not knowable, so this tests the shape both share: every letter of the short
+ *  form appears in the long one, in order, from the same first letter. Purely
+ *  structural, no dictionary of grocery words: the same rule that reunites
+ *  "SHRD MOZZ" with "Shredded Mozzarella" reunites "GALV WSHR" with
+ *  "Galvanized Washer" without knowing what either is. */
+export function looksAbbreviated(abbr: string, full: string): boolean {
+  if (abbr.length < MIN_ABBREV) return false;
+  if (full.length <= abbr.length) return false;
+  if (full.length > abbr.length * MAX_STRETCH) return false;
+  if (abbr[0] !== full[0]) return false;
+  let i = 0;
+  for (const ch of full) {
+    if (ch === abbr[i]) i += 1;
+    if (i === abbr.length) return true;
+  }
+  return false;
+}
+
+/** One scan token against one stored token: equal, or either is the other's
+ *  abbreviation (the part may have been created from the receipt first, in
+ *  which case the ABBREVIATED name is the stored one). */
+function tokenMatches(want: string, have: string): boolean {
+  return want === have || looksAbbreviated(want, have) || looksAbbreviated(have, want);
+}
+
 /** The name-tier match decision + strength for a (scan tokens, stored title)
  *  pair: ≥2 shared significant tokens covering most of the shorter name (or the
  *  single word when the scan is one word). Exported so the rule — the Honda-Civic
- *  class the phrase-LIKE probe silently broke — is unit-tested directly. */
+ *  class the phrase-LIKE probe silently broke — is unit-tested directly.
+ *
+ *  A token counts as shared when it's equal OR an abbreviation of a stored one,
+ *  so a receipt line ("SHRD MOZZ 8Z") finds the part a fuller name created —
+ *  the case that otherwise made every weekly repeat purchase a NEW part and
+ *  quietly split its own price history in half. Each stored token is spent at
+ *  most once, so a two-word scan can't score 2 against a single stored word. */
 export function nameOverlap(want: string[], storedTitle: string): { shared: number; pass: boolean } {
-  const have = new Set(tokens(storedTitle));
-  const shared = want.filter((t) => have.has(t)).length;
-  const ratio = shared / Math.max(1, Math.min(want.length, have.size));
+  const have = tokens(storedTitle);
+  const spent = new Set<number>();
+  let shared = 0;
+  for (const w of want) {
+    const hit = have.findIndex((h, i) => !spent.has(i) && tokenMatches(w, h));
+    if (hit >= 0) {
+      spent.add(hit);
+      shared += 1;
+    }
+  }
+  const ratio = shared / Math.max(1, Math.min(want.length, new Set(have).size));
   const pass = want.length === 1 ? shared === 1 : shared >= 2 && ratio >= 0.6;
   return { shared, pass };
 }

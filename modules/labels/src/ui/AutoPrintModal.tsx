@@ -49,7 +49,7 @@ export function AutoPrintModal({ open, onClose }: { open: boolean; onClose: () =
   // and fires from the browser (the ClientAutoflushMount loop).
   const printers = printersQ.data?.items ?? [];
   const selectedPrinter = printers.find((p) => p.id === printerId);
-  const isBle = selectedPrinter?.driver === "browser-bluetooth";
+  const isBle = selectedPrinter?.driver === "browser-bluetooth" || selectedPrinter?.driver === "browser-serial";
   const customSizes = customQ.data?.items ?? [];
   // Funnel the size options to what THIS printer can run (its kind + max width),
   // so a 2" printer never lists a 4×6 and an inkjet never lists a thermal roll.

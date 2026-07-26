@@ -19,7 +19,6 @@ import {
   printBatchOverBluetooth,
   isWebBluetoothAvailable,
   heldPrinterName,
-  pairBluetoothPrinter,
   setPrintProgress,
   NO_WEB_BLUETOOTH,
   type BluetoothPrinterSettings,
@@ -39,7 +38,10 @@ import {
   type MediaTypeFilter,
 } from "../label-sizes";
 import { bleSettingsForSize } from "../ble-media";
-import { rememberedSelection, needsRemember } from "../printer-memory";
+// Serial transport for Bluetooth-CLASSIC printers a browser cannot reach over Web
+// Bluetooth. Same renderer + encoder as the Bluetooth path; only the pipe differs.
+import { isWebSerialAvailable, NO_WEB_SERIAL, printBatchOverSerial, ConnectPrinterModal, usePrinterStatus, describePrinterStatus, getPrinterStatus } from "@cobblr/platform-web";
+import { rememberedSelection, needsRemember, byRecentlyUsed, recentSizeKeys } from "../printer-memory";
 import { assessScannability } from "../print/qr-overlay";
 import type { CustomLabelSize, Printable } from "./api";
 import { NewSizeModal } from "./NewSizeModal";
@@ -135,7 +137,22 @@ export function QueuePage() {
   // `defaultPrinter`, so switching targets needs no change anywhere but here.
   const [pickedTarget, setPickedTarget] = useState<string | null>(null);
   const defaultPrinter = resolvePrintTarget(pickedTarget, printers, SYSTEM_TARGET);
-  const isBleDefault = defaultPrinter?.driver === "browser-bluetooth";
+  /** What to say under a printer in the picker. A remembered roll/battery reading
+   *  beats any transport word — it is what the person actually wants to know
+   *  before pressing print. Falls back to connection state, and never claims
+   *  "not connected" for a serial printer, whose link is opened on demand and
+   *  therefore has no tracked state to report. */
+  const printerSub = (p: { id: string; driver: string }, live: boolean): string => {
+    const known = describePrinterStatus(getPrinterStatus(p.id));
+    if (known) return known;
+    // bluetooth-only: BLE is the only transport with a live session we track.
+    if (p.driver === "browser-bluetooth") return live ? "Bluetooth · connected" : "Bluetooth · not connected";
+    if (p.driver === "browser-serial") return "Bluetooth";
+    return "Network";
+  };
+
+  const isBleDefault =
+    defaultPrinter?.driver === "browser-bluetooth" || defaultPrinter?.driver === "browser-serial";
   const [targetMenuOpen, setTargetMenuOpen] = useState(false);
   // One source of truth for which toolbar parts show. The sheet/label pickers and
   // the browser Print button share `sheetControls`/`browserPrint` so they can never
@@ -164,37 +181,11 @@ export function QueuePage() {
   }, []);
   const bleLive = isBleDefault && btConnected === defaultPrinter?.name;
 
-  // Connect a Bluetooth printer WITHOUT leaving this page: pair, auto-detect from
-  // its known profile, and save it as the default — then you're printing. An
-  // unrecognised model falls back to the full manual setup on the printers page.
-  const [connecting, setConnecting] = useState(false);
-  const connectBluetooth = async () => {
-    if (!isWebBluetoothAvailable()) {
-      toast.error(NO_WEB_BLUETOOTH);
-      return;
-    }
-    setConnecting(true);
-    try {
-      const { deviceName, profile, settings } = await pairBluetoothPrinter();
-      if (!profile || !settings) {
-        toast.error(`Paired "${deviceName}", but it isn't a model I know yet. Add it under Configuration → Printers.`);
-        navigate("/configuration/print");
-        return;
-      }
-      await api.createPrinter({
-        name: profile.label,
-        driver: "browser-bluetooth",
-        settings: settings as unknown as Record<string, unknown>,
-        is_default: true,
-      });
-      await qc.invalidateQueries({ queryKey: ["labels-printers", orgSlug] });
-      toast.success(`${profile.label} connected — you're ready to print.`);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e));
-    } finally {
-      setConnecting(false);
-    }
-  };
+  // Connecting a printer lives in ConnectPrinterModal (platform-web): one door,
+  // no transport choice pushed onto the user.
+  const [connectOpen, setConnectOpen] = useState(false);
+  // Re-render the picker when any printer reports in.
+  usePrinterStatus(defaultPrinter?.id ?? null);
 
   // Paper + label-size selection, persisted so a workshop keeps its
   // printer setup between visits.
@@ -219,6 +210,16 @@ export function QueuePage() {
   });
   const customList = customSizes.data?.items ?? [];
   const sizesForPaper = labelSizesForPaper(paperKey);
+  // Media history: the sizes this workspace actually prints, newest first. Only
+  // those valid for the CURRENT paper are offered — a recent size the loaded media
+  // cannot feed would just be an invalid pick. Restricted to built-ins because a
+  // custom size already has its own "Your sizes" group below.
+  const recentSizes = useMemo(() => {
+    const keys = recentSizeKeys(printers);
+    return keys
+      .map((k) => sizesForPaper.find((s) => s.key === k))
+      .filter((s): s is NonNullable<typeof s> => !!s);
+  }, [printers, sizesForPaper]);
 
   // Effective label size: a custom pick (custom:<id>), else the user's built-in
   // pick if valid for the current paper, else that paper's first size. Derived
@@ -483,8 +484,13 @@ export function QueuePage() {
       // payload and description. The device chooser needs a user gesture, which
       // this click is — and the session is reused across rows so it prompts once,
       // not once per label.
-      if (printer.driver === "browser-bluetooth") {
-        if (!isWebBluetoothAvailable()) throw new Error(NO_WEB_BLUETOOTH);
+      // Both browser-driven transports resolve settings identically — the media
+      // geometry is a property of the label, not of the wire.
+      const serialDriver = printer.driver === "browser-serial";
+      if (printer.driver === "browser-bluetooth" || serialDriver) {
+        if (serialDriver) {
+          if (!isWebSerialAvailable()) throw new Error(NO_WEB_SERIAL);
+        } else if (!isWebBluetoothAvailable()) throw new Error(NO_WEB_BLUETOOTH);
         const stored = (printer.settings ?? {}) as unknown as BluetoothPrinterSettings;
         // The media/label you pick in the toolbar drives the print (the author's fix),
         // keeping the printer's protocol + calibration; fall back to the stored
@@ -505,7 +511,12 @@ export function QueuePage() {
           centerCode: codes.data?.[it.entity_id] || undefined,  // the QR-centre badge, as on screen
           copies: it.qty,
         }));
-        const res = await printBatchOverBluetooth(batch, settings, (done, total) => setBtProgress({ done, total }));
+        // The ONE branch that cares about transport. Serial has no device id to
+        // bind (the OS owns the port), so it reports the printer's own name.
+        const res = serialDriver
+          ? await printBatchOverSerial(batch, settings, (done, total) => setBtProgress({ done, total }))
+              .then((r) => ({ ...r, deviceName: printer.name, deviceId: "", reconnected: false }))
+          : await printBatchOverBluetooth(batch, settings, (done, total) => setBtProgress({ done, total }));
         setBtProgress(null);
         // Bind this row to the physical unit it just printed on. Without this only
         // NEWLY paired printers would ever carry a device id, and every printer
@@ -651,12 +662,11 @@ export function QueuePage() {
         {!hasPrinter ? (
           <>
             <button
-              onClick={connectBluetooth}
-              disabled={connecting}
-              className="rounded-md border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
-              title="Pair a Bluetooth label printer and set it up automatically — no forms, no leaving this page"
+              onClick={() => setConnectOpen(true)}
+              className="rounded-md border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
+              title="Find your label printer and set it up automatically — no forms, no leaving this page"
             >
-              <Bluetooth size={14} /> {connecting ? "Pairing…" : "Pair a Bluetooth printer"}
+              <Bluetooth size={14} /> Connect a printer
             </button>
             <button
               onClick={() => navigate("/configuration/print")}
@@ -707,24 +717,33 @@ export function QueuePage() {
                   active={!defaultPrinter}
                   onClick={() => { setPickedTarget(SYSTEM_TARGET); setTargetMenuOpen(false); }}
                 />
-                {printers.map((p) => {
-                  const ble = p.driver === "browser-bluetooth";
+                {byRecentlyUsed(printers).map((p) => {
+                  const ble = p.driver === "browser-bluetooth" || p.driver === "browser-serial";
                   const live = ble && btConnected === p.name;
                   return (
                     <TargetItem
                       key={p.id}
                       icon={ble ? <Bluetooth size={15} /> : <Wifi size={15} />}
                       title={p.name}
-                      sub={ble ? (live ? "Bluetooth · connected" : "Bluetooth · not connected") : "Network"}
+                      sub={printerSub(p, live)}
                       active={defaultPrinter?.id === p.id}
                       onClick={() => { setPickedTarget(p.id); setTargetMenuOpen(false); }}
                     />
                   );
                 })}
                 <div className="h-px bg-line dark:bg-slate-700 my-1.5 mx-1" />
+                {/* ONE entry. Bluetooth-vs-serial is our transport split, not a
+                    distinction the user can make: both are "my Bluetooth label
+                    printer" to them. The modal tries the common path and offers
+                    the other as "look again" if the printer is not found. */}
                 <TargetItem
                   icon={<Plus size={15} className="text-accent" />}
                   title="Connect a printer…"
+                  onClick={() => { setTargetMenuOpen(false); setConnectOpen(true); }}
+                />
+                <TargetItem
+                  icon={<Settings2 size={15} />}
+                  title="All printer settings…"
                   onClick={() => { setTargetMenuOpen(false); navigate("/configuration/print"); }}
                 />
                 {defaultPrinter && (
@@ -847,6 +866,13 @@ export function QueuePage() {
                 }}
                 className="input !w-72 !py-1 text-xs"
               >
+                {recentSizes.length > 0 && (
+                  <optgroup label="Recently used">
+                    {recentSizes.map((s) => (
+                      <option key={`recent-${s.key}`} value={s.key}>{s.label}</option>
+                    ))}
+                  </optgroup>
+                )}
                 {sizesForPaper.map((s) => (
                   <option key={s.key} value={s.key}>{s.label}</option>
                 ))}
@@ -1016,6 +1042,22 @@ export function QueuePage() {
           onClose={() => setPrinterConfigOpen(false)}
         />
       )}
+      <ConnectPrinterModal
+        open={connectOpen}
+        onClose={() => setConnectOpen(false)}
+        createPrinter={async (input) => {
+          const created = await api.createPrinter({
+            name: input.name,
+            driver: input.driver,
+            settings: input.settings,
+            is_default: true,
+          });
+          await qc.invalidateQueries({ queryKey: ["labels-printers", orgSlug] });
+          return (created as { id?: string } | undefined)?.id;
+        }}
+        onNeedsManualSetup={() => navigate("/configuration/print")}
+        onConnected={(name) => toast.success(`${name} connected — you're ready to print.`)}
+      />
       <Modal
         open={!!confirmForget}
         onClose={() => setConfirmForget(null)}

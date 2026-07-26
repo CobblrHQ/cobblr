@@ -23,6 +23,19 @@ const ORDER_SORTABLE = new Set([
   "updated_at",
 ]);
 const VENDOR_SORTABLE = new Set(["name", "created_at", "updated_at"]);
+// Line items live across a join, so a sortable name maps to a QUALIFIED column
+// — an unqualified `created_at` would be ambiguous SQL against both tables.
+const ITEM_SORT_COL: Record<string, string> = {
+  description: "i.description",
+  qty: "i.qty",
+  unit_cost: "i.unit_cost",
+  received_at: "i.received_at",
+  created_at: "i.created_at",
+  updated_at: "i.updated_at",
+  ordered_at: "o.ordered_at",
+  vendor: "o.vendor",
+};
+const ITEM_SORTABLE = new Set(Object.keys(ITEM_SORT_COL));
 
 export function registerPurchasesResolvers(): void {
   if (registered) return;
@@ -68,6 +81,82 @@ export function registerPurchasesResolvers(): void {
       };
     },
   );
+
+  // Line items ARE listable — "every time this part was bought", "everything
+  // consumed by that project". Without this, an order_item could only be
+  // resolved one-by-one once you already had its id, so no saved view, app
+  // block or agent could ever ask the question. Each row carries its order's
+  // vendor / number / purchase date so a consumer never has to join back.
+  //
+  // `unit_cost` is projected out for foreign callers by the kind's
+  // exposableFields (costs stay private to purchases) — the module's own
+  // /items route serves the full-fat rows the price panel needs.
+  platform().entities.registerListResolver("purchases:order_item", async (orgId, query) => {
+    const db = (await platform().tenants.getDb(orgId)) as Kysely<PurchasesDB>;
+    const purchasedAt = sql<Date | null>`coalesce(i.received_at, o.arrived_at, o.ordered_at, i.created_at::date)`;
+    let q = db
+      .selectFrom("purchases_order_items as i")
+      .innerJoin("purchases_orders as o", "o.id", "i.order_id")
+      .selectAll("i")
+      .select([
+        "o.vendor as order_vendor",
+        "o.order_number",
+        "o.status as order_status",
+        "o.ordered_at",
+      ])
+      .select(purchasedAt.as("purchased_at"));
+    if (query.q) {
+      const needle = `%${query.q.toLowerCase()}%`;
+      q = q.where((eb) => eb(eb.fn("lower", ["i.description"]), "like", needle));
+    }
+    if (query.filter) {
+      // Qualified refs: every one of these columns exists on BOTH joined
+      // tables or would otherwise be ambiguous in SQL.
+      const NATIVE: Record<string, string> = {
+        part_id: "i.part_id",
+        order_id: "i.order_id",
+        instance: "i.instance",
+        consumed_by_module: "i.consumed_by_module",
+        consumed_by_entity_type: "i.consumed_by_entity_type",
+        consumed_by_entity_id: "i.consumed_by_entity_id",
+        order_status: "o.status",
+        vendor: "o.vendor",
+      };
+      for (const [key, val] of Object.entries(query.filter)) {
+        if (val === undefined || val === null) continue;
+        const col = NATIVE[key];
+        if (col) {
+          if (Array.isArray(val)) {
+            const vals = val.filter((v): v is string => typeof v === "string");
+            if (vals.length > 0) q = q.where(col as never, "in", vals as never);
+          } else if (typeof val === "string") {
+            q = q.where(col as never, "=", val as never);
+          }
+          continue;
+        }
+        q = q.where(sql<boolean>`i.metadata ->> ${key} = ${String(val)}`);
+      }
+    }
+    const order = parseSort(query.sort, ITEM_SORTABLE);
+    for (const { col, dir } of order) q = q.orderBy(ITEM_SORT_COL[col]! as never, dir);
+    // Oldest-first by default: a line-item list is read as a history, and a
+    // trend renderer wants its points in time order.
+    if (order.length === 0) q = q.orderBy(purchasedAt, "asc").orderBy("i.created_at", "asc");
+    const rows = await q
+      .limit(Math.min(query.limit ?? 50, 200))
+      .offset(query.offset ?? 0)
+      .execute();
+    return {
+      items: rows.map((row) => ({
+        kind: "purchases:order_item",
+        id: row.id,
+        title: row.description ?? "(item)",
+        subtitle: row.order_vendor ? `qty ${row.qty} · ${row.order_vendor}` : `qty ${row.qty}`,
+        detailUrl: `/purchases/${row.order_id}`,
+        fields: { ...row } as Record<string, unknown>,
+      })),
+    };
+  });
 
   platform().entities.registerListResolver("purchases:order", async (orgId, query) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<PurchasesDB>;

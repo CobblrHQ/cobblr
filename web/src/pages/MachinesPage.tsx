@@ -19,8 +19,7 @@ import { usePersistedState } from "../lib/use-persisted-state";
 import { usePublishChatContext } from "../lib/chat-context";
 import { ApiError, api, type Machine, type OrgModuleListItem, type PlatformFieldDef, type SavedView, type BambuDiscoveredDevice, type DigifabConnection, type DigifabDevice, type DigifabFleetDevice } from "../lib/api";
 import { fleetStatusChip, indexFleetByMachine } from "../lib/fleet-status";
-import { ContributedPageTab, ContributedDetailPanel, hasPageTab, hasDetailPanel } from "../panels/registry";
-import type { ContributedPanel } from "../lib/api";
+import { ContributedPageTab, ContributedDetailPanels, hasPageTab } from "../panels/registry";
 import { DirectManagerConnect } from "../components/DirectManagerConnect";
 import { EntityImageEdit } from "../components/EntityImageEdit";
 import { ImageSearchPicker } from "../components/ImageSearchPicker";
@@ -318,9 +317,6 @@ export function MachinesPage({
   const contributedTabs = enabledModules
     .flatMap((m) => m.panels ?? [])
     .filter((p) => p.surface === "module-page-tab" && p.target === "machines" && hasPageTab(p.id));
-  const contributedDetailPanels = enabledModules
-    .flatMap((m) => m.panels ?? [])
-    .filter((p) => p.surface === "entity-detail-panel" && p.target === "machines:machine" && hasDetailPanel(p.id));
   // Persisted so the tab you're on (items vs a contributed tab) survives a
   // refresh. A stale persisted id (module disabled since) falls back to items.
   const [pageTabRaw, setPageTab] = usePersistedState<string>("machines.tab", "items");
@@ -651,7 +647,6 @@ export function MachinesPage({
       <MachineDetailModal
         machineId={selectedId}
         instance={instance}
-        detailPanels={contributedDetailPanels}
         specialisations={instance ? [] : availableLenses}
         onClose={closeDetail}
       />
@@ -1154,14 +1149,11 @@ function MachineTileGrid({
 function MachineDetailModal({
   machineId,
   instance,
-  detailPanels = [],
   specialisations,
   onClose,
 }: {
   machineId: string | null;
   instance?: string;
-  /** Contributed entity-detail panels for machines:machine (panel registry). */
-  detailPanels?: ContributedPanel[];
   specialisations: { name: string; label: string }[];
   onClose: () => void;
 }) {
@@ -1429,18 +1421,15 @@ function MachineDetailModal({
           {/* Contributed detail panels (e.g. digifab's Print manager) — the
               panel registry renders whatever enabled modules declare for
               machines:machine; this modal names no contributor. */}
-          {detailPanels.map((p) => (
-            <ContributedDetailPanel
-              key={p.id}
-              id={p.id}
-              ctx={{
-                slug: activeSlug,
-                entityId: m.id,
-                entityTitle: m.name,
-                hints: { printer_kind: typeof m.metadata?.printer_kind === "string" ? (m.metadata.printer_kind as string) : undefined },
-              }}
-            />
-          ))}
+          <ContributedDetailPanels
+            target="machines:machine"
+            ctx={{
+              slug: activeSlug,
+              entityId: m.id,
+              entityTitle: m.name,
+              hints: { printer_kind: typeof m.metadata?.printer_kind === "string" ? (m.metadata.printer_kind as string) : undefined },
+            }}
+          />
 
           {/* Secondary stuff stays out of the way: small add-pills (Tag / File /
               Link / Note) that only grow into full fields once used — so the

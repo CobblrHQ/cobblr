@@ -176,7 +176,10 @@ export const KNOWN_PROFILES: readonly PrinterProfile[] = [
     quirks: [
       "Silent to ESC/POS on every characteristic — TSPL only.",
       "TSPL GAPDETECT is a no-op; use the printed-ruler calibration instead.",
-      "Never answers notifications (ff01/ff03/2af0/1e4d) — no status feedback.",
+      "Never answers notifications over BLE (ff01/ff03/2af0/1e4d) — but it is NOT",
+      "  mute: over Bluetooth CLASSIC it answers BATTERY? and ESC ! o with its",
+      "  battery and the roll it has sensed (HCI capture 2026-07-26). Reachable",
+      "  from a browser via Web Serial only. Read 'no status' as BLE-specific.",
       "Buffers commands while not ready; a lid open/close releases them.",
       "Exposes 5 writable pipes (ISSC/JieLi/Phomemo/18f0) — only ff02 verified.",
       "TSPL QRCODE is NOT implemented — rasterize the QR and send TSPL BITMAP",

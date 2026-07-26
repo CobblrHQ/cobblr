@@ -62,6 +62,10 @@ export interface BluetoothPrinterSettings {
   topMarginDots?: number;
   density?: number;
   speed?: number;
+  /** Stop the printer advancing to the tear bar after each label. Worth setting
+   *  when an UNCODED roll costs a blank label per print: the printer cannot
+   *  back-feed media whose geometry it was never told. */
+  tearOff?: boolean;
   /** The unified media+label model (D3). When both are present they are the SOURCE
    *  and the footprint (widthDots/labelHeightMm/gapMm) is derived from them; when
    *  absent a pre-D3 printer keeps using the raw footprint fields, byte-for-byte
@@ -567,12 +571,13 @@ export function encodeForPrinter(bmp: MonoBitmap, s: BluetoothPrinterSettings): 
   // pre-D3 printer keeps the historical widthDots/8 approximation, byte-for-byte.
   const media: TsplMedia =
     s.media && s.label
-      ? tsplMediaFrom(s.media, s.label, { direction: s.direction ?? 0, density: s.density, speed: s.speed })
+      ? { ...tsplMediaFrom(s.media, s.label, { direction: s.direction ?? 0, density: s.density, speed: s.speed }), tearOff: s.tearOff }
       : {
           widthMm: Number((s.widthDots / 8).toFixed(2)), // 203 dpi = 8 dots/mm
           heightMm: s.labelHeightMm ?? 30,
           gapMm: s.gapMm ?? 2,
           direction: s.direction ?? 0,
+          tearOff: s.tearOff,
           density: s.density,
           speed: s.speed,
         };
@@ -622,6 +627,7 @@ function encodeTiledSheet(sheet: MonoBitmap, s: BluetoothPrinterSettings): Uint8
     heightMm: Number(dotsToMm(sheet.height).toFixed(2)),
     gapMm: s.media?.feed === "die-cut" ? (s.media.gapMm ?? 0) : 0,
     direction: s.direction ?? 0,
+    tearOff: s.tearOff,
     density: s.density,
     speed: s.speed,
   };

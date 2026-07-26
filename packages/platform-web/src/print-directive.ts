@@ -23,6 +23,7 @@ import {
   type BluetoothPrinterSettings,
   type LabelContent,
 } from "./bluetooth-label";
+import { isWebSerialAvailable, printOneOverSerial } from "./serial-printer.js";
 
 /** What a module asks the platform to put on paper. */
 export interface PrintDirective {
@@ -39,7 +40,7 @@ export interface PrintDirectiveResult {
    *  exists either way, so this is a bookkeeping warning, not a print failure. */
   recordError?: string;
   /** Why nothing printed, when nothing printed. Absent on success. */
-  skipped?: "no-browser-printer" | "no-web-bluetooth" | "no-width";
+  skipped?: "no-browser-printer" | "no-web-bluetooth" | "no-web-serial" | "no-width";
 }
 
 interface PrinterRow {
@@ -64,15 +65,27 @@ export async function runPrintDirective(
 ): Promise<PrintDirectiveResult> {
   const { items } = await deps.listPrinters();
   const target = items.find((p) => p.is_default) ?? items[0];
-  if (!target || target.driver !== "browser-bluetooth") {
+  // Both browser drivers can take a directive; only the pipe differs. Gating on
+  // Bluetooth alone silently skipped every serial printer, so a module asking the
+  // platform to put something on paper got "no-browser-printer" from a workspace
+  // that had a perfectly good printer connected.
+  const isSerial = target?.driver === "browser-serial";
+  if (!target || (target.driver !== "browser-bluetooth" && !isSerial)) {
     return { printed: false, skipped: "no-browser-printer" };
   }
-  if (!isWebBluetoothAvailable()) return { printed: false, skipped: "no-web-bluetooth" };
+  if (isSerial ? !isWebSerialAvailable() : !isWebBluetoothAvailable()) {
+    return { printed: false, skipped: isSerial ? "no-web-serial" : "no-web-bluetooth" };
+  }
 
   const settings = (target.settings ?? {}) as BluetoothPrinterSettings;
   if (!settings.widthDots) return { printed: false, skipped: "no-width" };
 
-  const { deviceName } = await printOneOverBluetooth(directive.content, settings);
+  let deviceName = "Label printer";
+  if (isSerial) {
+    await printOneOverSerial(directive.content, settings);
+  } else {
+    ({ deviceName } = await printOneOverBluetooth(directive.content, settings));
+  }
 
   // Paper exists now. Telling the module is best-effort: a failure here leaves
   // stale bookkeeping, not a lost label, so it is reported separately rather

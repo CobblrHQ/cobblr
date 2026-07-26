@@ -675,15 +675,35 @@ export function ScanPage() {
 
   // A receipt PDF/photo → core-ai pulls out the line items → one inbox row
   // per item, each triaged into a part below like any other scan.
+  async function importReceiptFile(fileId: string, force: boolean) {
+    const out = await api.scanReceipt(activeSlug, fileId, { origin: "upload", force });
+    if (out.duplicate) {
+      const ex = out.existing;
+      // Already imported this exact receipt (same vendor + order #). Offer to
+      // import it anyway rather than silently duplicating every line.
+      toast.action(
+        `You already imported this receipt${ex.order_ref ? ` (#${ex.order_ref})` : ""}${ex.vendor ? ` from ${ex.vendor}` : ""} — ${ex.item_count} item${ex.item_count === 1 ? "" : "s"} already in your inbox.`,
+        {
+          actionLabel: "Import anyway",
+          duration: 10000,
+          onAction: () => void importReceiptFile(fileId, true),
+        },
+      );
+      return;
+    }
+    const n = out.receipt.item_count;
+    const from = out.receipt.vendor ? ` from ${out.receipt.vendor}` : "";
+    toast.success(`${force ? "Imported" : "Found"} ${n} item${n === 1 ? "" : "s"}${from} — review below`);
+    void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+  }
+
+  // A receipt PDF/photo → core-ai pulls out the line items → one inbox row
+  // per item, each triaged into a part below like any other scan.
   async function uploadReceipt(file: File) {
     setUploading(true);
     try {
       const rec = await api.uploadFile(activeSlug, file);
-      const out = await api.scanReceipt(activeSlug, rec.id);
-      const n = out.receipt.item_count;
-      const from = out.receipt.vendor ? ` from ${out.receipt.vendor}` : "";
-      toast.success(`Found ${n} item${n === 1 ? "" : "s"}${from} — review below`);
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      await importReceiptFile(rec.id, false);
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : String(e));
     } finally {
@@ -691,6 +711,33 @@ export function ScanPage() {
       if (receiptRef.current) receiptRef.current.value = "";
     }
   }
+
+  // ?reimport_file=<id> — arrived from the "import this copy anyway" link in a
+  // duplicate-receipt email. Confirm once (a toast action), never auto-import,
+  // then strip the params so a refresh doesn't re-prompt.
+  const reimportFile = params.get("reimport_file");
+  const reimportRef = params.get("ref");
+  const reimportFired = useRef(false);
+  useEffect(() => {
+    if (!reimportFile || reimportFired.current) return;
+    reimportFired.current = true;
+    const next = new URLSearchParams(params);
+    next.delete("reimport_file");
+    next.delete("ref");
+    setParams(next, { replace: true });
+    toast.action(
+      `Re-import this receipt${reimportRef ? ` (#${reimportRef})` : ""} anyway? It looks like one you already imported.`,
+      {
+        actionLabel: "Import anyway",
+        duration: 15000,
+        onAction: () =>
+          void importReceiptFile(reimportFile, true).catch((e) =>
+            toast.error(e instanceof ApiError ? e.message : String(e)),
+          ),
+      },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reimportFile]);
 
   // ?batch=<id> scopes the inbox to one scanner session — the camera's
   // "Done" lands here so you review exactly what you just walked around
@@ -1596,7 +1643,7 @@ export function ScanPage() {
   })();
   // The organize plan's item accordion renders the REAL card inline, in
   // identity-fixer mode (planContext: no confirm form, no chips, no discard).
-  const renderPlanItemCard = (id: string) => {
+  const renderPlanItemCard = (id: string, onCollapse: () => void) => {
     const it = items.find((i) => i.id === id);
     if (!it || it.status !== "pending") return null;
     return (
@@ -1608,6 +1655,7 @@ export function ScanPage() {
         rateLimitGaveUp={rlGaveUp.has(it.id)}
         defaultExpanded
         planContext
+        onCollapse={onCollapse}
       />
     );
   };
@@ -3173,6 +3221,7 @@ function InboxCard({
   rateLimitGaveUp,
   defaultExpanded,
   planContext,
+  onCollapse,
 }: {
   item: ScanInboxItem;
   pageTarget: ScanTarget | null;
@@ -3189,6 +3238,10 @@ function InboxCard({
    *  trap the author hit). Hides the confirm form, table chips, and
    *  discard; the accordion owns collapse. */
   planContext?: boolean;
+  /** In planContext, fully close the accordion row (the card is always expanded
+   *  there, so the ▲ chevron delegates here instead of toggling its own body,
+   *  which would leave the outer "Done fixing" box behind). */
+  onCollapse?: () => void;
 }) {
   const { activeSlug, activeOrg } = useActiveOrg();
   const qc = useQueryClient();
@@ -3765,7 +3818,7 @@ function InboxCard({
       {/* ── collapsed header row (click = expand) ───────────────────── */}
       <div
         className="flex items-stretch cursor-pointer"
-        onClick={() => (expanded ? setExpanded(false) : openForm())}
+        onClick={() => (planContext && onCollapse ? onCollapse() : expanded ? setExpanded(false) : openForm())}
       >
         {/* Photo column: a CONSISTENT WIDTH (so every card's text starts at the
             same x), stretched to the row's full height — a book cover / product
@@ -4301,7 +4354,7 @@ function InboxCard({
           )}
           <button
             type="button"
-            onClick={() => (expanded ? setExpanded(false) : openForm())}
+            onClick={() => (planContext && onCollapse ? onCollapse() : expanded ? setExpanded(false) : openForm())}
             aria-label={expanded ? "Collapse" : "Expand"}
             aria-expanded={expanded}
             className="text-faint hover:text-accent p-1.5"

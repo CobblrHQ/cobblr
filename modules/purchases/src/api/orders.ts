@@ -87,11 +87,18 @@ ordersRouter.get(
   asyncHandler(async (req, res) => {
     const db = tenantDb(req);
     const items = await db
-      .selectFrom("purchases_orders")
-      .selectAll()
-      .where("instance", "=", instanceOf(req))
-      .orderBy("ordered_at", "desc")
-      .orderBy("created_at", "desc")
+      .selectFrom("purchases_orders as o")
+      .selectAll("o")
+      .select((eb) =>
+        eb
+          .selectFrom("purchases_order_items as i")
+          .whereRef("i.order_id", "=", "o.id")
+          .select(eb.fn.countAll<number>().as("c"))
+          .as("item_count"),
+      )
+      .where("o.instance", "=", instanceOf(req))
+      .orderBy("o.ordered_at", "desc")
+      .orderBy("o.created_at", "desc")
       .limit(500)
       .execute();
     res.json({ items });

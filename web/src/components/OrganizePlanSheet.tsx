@@ -176,9 +176,11 @@ export function SortingPlanView({
   refs?: string[];
   /** Render the REAL inbox card INLINE under a row (accordion) so a wrong
    *  identification is fixable without leaving the plan — no modal stacking.
-   *  The page owns the card; the sheet owns the accordion. Only meaningful
-   *  for inbox subjects. */
-  renderItemCard?: (itemId: string) => ReactNode;
+   *  The page owns the card; the sheet owns the accordion. `onCollapse` closes
+   *  this accordion row, so the card's own ▲ chevron can fully close it (not just
+   *  collapse the card's body and leave the outer box "Done fixing" remnant).
+   *  Only meaningful for inbox subjects. */
+  renderItemCard?: (itemId: string, onCollapse: () => void) => ReactNode;
 }) {
   const toast = useToast();
   const aiStatus = useAiStatus();
@@ -841,7 +843,7 @@ export function SortingPlanView({
                           ))}
                         {expandedItem === id && renderItemCard && item && (
                           <div className="w-full basis-full mt-1 rounded-lg border border-accent/30 bg-subtle/50 dark:bg-slate-900/60 p-2">
-                            {renderItemCard(id)}
+                            {renderItemCard(id, () => setExpandedItem(null))}
                             <div className="mt-1 text-right">
                               <button
                                 type="button"
@@ -968,7 +970,7 @@ export function OrganizePlanSheet({
   onStartWalk?: () => void;
   scope?: "unplaced" | "pending" | "refs";
   refs?: string[];
-  renderItemCard?: (itemId: string) => ReactNode;
+  renderItemCard?: (itemId: string, onCollapse: () => void) => ReactNode;
 }) {
   return (
     <Modal

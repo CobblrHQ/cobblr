@@ -40,7 +40,7 @@ async function tick(): Promise<void> {
     const policy = await api.getAutoflush();
     if (!policy.enabled || !policy.client_fired || !policy.printer_id) return;
     const printer = (await api.listPrinters()).items.find((p) => p.id === policy.printer_id);
-    if (!printer || printer.driver !== "browser-bluetooth") return;
+    if (!printer || (printer.driver !== "browser-bluetooth" && printer.driver !== "browser-serial")) return;
     // Fire only the printer this tab actually holds — never drive a session the
     // user connected for something else.
     if (printer.name !== heldName) return;

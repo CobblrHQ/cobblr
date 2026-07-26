@@ -3,27 +3,38 @@
 // it contributes UI (gated on `operatesOn` at manifest validation); this
 // registry says WHICH component renders for each declared panel id. Host
 // pages query enabled modules' `panels` (from /orgs/:slug/modules), then
-// render through ContributedPageTab / ContributedDetailPanel — no host ever
+// render through ContributedPageTab / ContributedDetailPanels — no host ever
 // imports a contributor's page, and lint-page-imports keeps it that way.
+//
+// DETAIL panels now live in platform-web's registry (registerDetailPanel), so
+// a MODULE-owned detail page can host them too: inventory's part modal shows
+// purchases' price history through exactly this seam, without inventory ever
+// naming purchases. Page tabs remain a web-page concern and stay local.
 //
 // Adding a panel: declare it in the module manifest (contributes.panels),
 // put the component in web/src/features/<module>/, and map its id here.
-// An id declared in a manifest but missing here renders nothing (the host
-// shows the tab only if hasPageTab(id) — a typo is invisible, not a crash).
+// An id declared in a manifest but missing here renders nothing (a typo is
+// invisible, not a crash).
 
 import { lazy, Suspense, type ComponentType, type LazyExoticComponent } from "react";
-import type { ModulePageTabCtx, EntityDetailPanelCtx } from "./types";
+import { ContributedDetailPanels, registerDetailPanel, hasDetailPanel } from "@cobblr/platform-web";
+import type { ModulePageTabCtx } from "./types";
 
 const PAGE_TABS: Record<string, LazyExoticComponent<ComponentType<{ ctx: ModulePageTabCtx }>>> = {
   "digifab:fleet-tab": lazy(() => import("../features/digifab/fleet").then((m) => ({ default: m.FleetPageTab }))),
 };
 
-const DETAIL_PANELS: Record<string, LazyExoticComponent<ComponentType<{ ctx: EntityDetailPanelCtx }>>> = {
-  "digifab:cockpit": lazy(() => import("../features/digifab/fleet").then((m) => ({ default: m.MachineCockpitPanel }))),
-};
+registerDetailPanel(
+  "digifab:cockpit",
+  lazy(() => import("../features/digifab/fleet").then((m) => ({ default: m.MachineCockpitPanel }))),
+);
+registerDetailPanel(
+  "purchases:price-history",
+  lazy(() => import("../features/purchases/priceHistory").then((m) => ({ default: m.PriceHistoryPanel }))),
+);
 
 export const hasPageTab = (id: string): boolean => !!PAGE_TABS[id];
-export const hasDetailPanel = (id: string): boolean => !!DETAIL_PANELS[id];
+export { hasDetailPanel, ContributedDetailPanels };
 
 const spinner = (
   <div className="text-xs text-faint italic py-4" aria-busy="true">
@@ -33,16 +44,6 @@ const spinner = (
 
 export function ContributedPageTab({ id, ctx }: { id: string; ctx: ModulePageTabCtx }) {
   const C = PAGE_TABS[id];
-  if (!C) return null;
-  return (
-    <Suspense fallback={spinner}>
-      <C ctx={ctx} />
-    </Suspense>
-  );
-}
-
-export function ContributedDetailPanel({ id, ctx }: { id: string; ctx: EntityDetailPanelCtx }) {
-  const C = DETAIL_PANELS[id];
   if (!C) return null;
   return (
     <Suspense fallback={spinner}>

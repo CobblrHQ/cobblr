@@ -50,7 +50,7 @@ import { lookupBookIsbn } from "../services/book-lookup.js";
 import { resolvePaintColorFromText } from "../services/paint-code.js";
 import { resolvePaintCodeViaWeb } from "../services/paint-code-websearch.js";
 import { parseReceipt } from "../services/receipt.js";
-import { cleanOrderRef, receiptSessionLabel, vendorFromLabel, type ParsedReceipt, type ParseMethod } from "../services/receipt-shared.js";
+import { cleanOrderRef, receiptDedupKey, receiptSessionLabel, vendorFromLabel, type ParsedReceipt, type ParseMethod } from "../services/receipt-shared.js";
 import { reportBarcodeCorrection, meaningfullyChanged } from "../services/barcode-corrections.js";
 import { findBinContents, findTracked } from "../services/entity-match.js";
 import { cropRegion, detectSplitItems, rotateImage } from "../services/image-ops.js";
@@ -102,6 +102,33 @@ inboxRouter.get(
       unfiled: Number(row.unfiled),
       ready: Number(row.ready),
     });
+  }),
+);
+
+// ──────────────── GET /inbox/receipt-groups/pending ─────────────────
+// Receipt sessions still awaiting confirmation into a purchase order — powers
+// the "N receipts pending" banner on the Purchases page, so a receipt that was
+// imported but not yet confirmed is visible from Purchases, not only from Scan
+// (the author, 2026-07-26). One grouped SQL; no per-item rows.
+inboxRouter.get(
+  "/inbox/receipt-groups/pending",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member", "guest")) return;
+    const db = tenantDb(req);
+    const rows = await db
+      .selectFrom("core_scan_inbox_items")
+      .select((eb) => [
+        sql<string>`suggested_metadata->>'receipt_group_id'`.as("group_id"),
+        sql<string | null>`max(suggested_metadata->>'receipt_vendor')`.as("vendor"),
+        eb.fn.countAll<number>().as("count"),
+      ])
+      .where("source_kind", "=", "receipt")
+      .where("status", "in", ["pending", "enriching"])
+      .where(sql<boolean>`suggested_metadata->>'receipt_group_id' is not null`)
+      .groupBy(sql`suggested_metadata->>'receipt_group_id'`)
+      .execute();
+    const groups = rows.map((r) => ({ groupId: String(r.group_id), vendor: r.vendor, count: Number(r.count) }));
+    res.json({ groups, total_items: groups.reduce((s, g) => s + g.count, 0) });
   }),
 );
 
@@ -566,6 +593,9 @@ const ReceiptBody = z.object({
   /** Where the receipt came from — "email" makes the inbox session read
    *  "Receipt · emailed <when>". Absent → an ordinary in-app upload. */
   origin: z.enum(["email", "upload"]).optional(),
+  /** Skip the "you already imported this receipt" guard and import it anyway
+   *  (the user chose to, or it's a re-forward of one they'd discarded). */
+  force: z.boolean().optional(),
 });
 
 inboxRouter.post(
@@ -587,13 +617,59 @@ inboxRouter.post(
       return;
     }
     const { receipt, method } = result;
+    const orderRef = cleanOrderRef(receipt.order_ref);
+
+    // Already imported? A store's order number is unique per vendor, so the same
+    // (vendor, order #) means this receipt is already here — re-forwarding it (a
+    // NEW email) shouldn't silently duplicate every line. Only LIVE prior imports
+    // count (a batch with at least one non-discarded item); a receipt you threw
+    // away re-imports. `force` (user chose "import anyway") skips the guard.
+    const dupKey = receiptDedupKey(receipt.vendor, orderRef);
+    if (dupKey && !parsed.data.force) {
+      const prior = await db
+        .selectFrom("core_scan_batches as b")
+        .select(["b.id", "b.label", "b.vendor", "b.order_ref"])
+        .where(sql<boolean>`lower(regexp_replace(coalesce(b.vendor, ''), '[^a-zA-Z0-9]', '', 'g')) = ${dupKey.vendor}`)
+        .where("b.order_ref", "=", dupKey.orderRef)
+        .where((eb) =>
+          eb.exists(
+            eb
+              .selectFrom("core_scan_inbox_items as i")
+              .select("i.id")
+              .whereRef("i.scan_batch_id", "=", "b.id")
+              .where("i.status", "!=", "discarded"),
+          ),
+        )
+        .orderBy("b.created_at", "desc")
+        .limit(1)
+        .executeTakeFirst();
+      if (prior) {
+        const live = await db
+          .selectFrom("core_scan_inbox_items")
+          .select((eb) => eb.fn.countAll<number>().as("n"))
+          .where("scan_batch_id", "=", prior.id)
+          .where("status", "!=", "discarded")
+          .executeTakeFirst();
+        res.status(200).json({
+          duplicate: true,
+          existing: {
+            batch_id: prior.id,
+            label: prior.label,
+            vendor: prior.vendor,
+            order_ref: prior.order_ref,
+            item_count: Number(live?.n ?? 0),
+          },
+        });
+        return;
+      }
+    }
 
     // A receipt is its OWN inbox session: one batch holds all its lines, so the
     // header reads "Receipt · <vendor>" (or "Receipt" when the vendor is unknown)
     // instead of a bare timestamp, and the lines can't time-cluster with unrelated
     // items. origin="email" makes the inbox add "emailed <when>". (Falls back to a
     // batch-less group only if the batch insert somehow fails.)
-    const batchLabel = receiptSessionLabel(receipt.vendor, receipt.order_ref);
+    const batchLabel = receiptSessionLabel(receipt.vendor, orderRef);
     const batch = await db
       .insertInto("core_scan_batches")
       .values({
@@ -604,7 +680,7 @@ inboxRouter.post(
         source_file_id: parsed.data.file_id,
         // Vendor + order # as their own fields so the order # is editable later.
         vendor: receipt.vendor,
-        order_ref: receipt.order_ref,
+        order_ref: orderRef,
       })
       .returning("id")
       .executeTakeFirst();
@@ -819,6 +895,42 @@ inboxRouter.post(
 
     const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
+    // The batch carries the stored receipt file + the parsed order ref, so the
+    // order can show the actual receipt and its number — not a bare note.
+    const batchId = rows[0]!.scan_batch_id;
+    let sourceFileId: string | null = null;
+    let orderRef: string | null = typeof meta0.receipt_order_ref === "string" ? meta0.receipt_order_ref : null;
+    if (batchId) {
+      const batch = await db
+        .selectFrom("core_scan_batches")
+        .select(["source_file_id", "order_ref"])
+        .where("id", "=", batchId)
+        .executeTakeFirst();
+      sourceFileId = batch?.source_file_id ?? null;
+      if (!orderRef && batch?.order_ref) orderRef = batch.order_ref;
+    }
+
+    // Link the order to a real vendor record (find-or-create by name) instead of
+    // leaving it as free text. Best-effort — degrades to the legacy vendor string.
+    let vendorId: string | null = null;
+    if (vendor) {
+      try {
+        const vBase = `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/purchases/vendors`;
+        const listRes = await fetch(vBase, { headers });
+        if (listRes.ok) {
+          const items = ((await listRes.json()) as { items?: Array<{ id: string; name: string }> }).items ?? [];
+          const hit = items.find((v) => v.name.trim().toLowerCase() === vendor.trim().toLowerCase());
+          if (hit) vendorId = hit.id;
+          else {
+            const cRes = await fetch(vBase, { method: "POST", headers, body: JSON.stringify({ name: vendor }) });
+            if (cRes.ok) vendorId = ((await cRes.json()) as { id: string }).id;
+          }
+        }
+      } catch (err) {
+        console.warn("[core-scan] receipt vendor link threw:", (err as Error).message);
+      }
+    }
+
     // Create the order (best-effort — skipped if purchases isn't enabled).
     let orderId: string | null = null;
     try {
@@ -826,12 +938,15 @@ inboxRouter.post(
         method: "POST",
         headers,
         body: JSON.stringify({
-          vendor,
+          vendor_id: vendorId ?? undefined,
+          vendor: vendorId ? undefined : vendor, // vendor_id dual-writes the name text
+          order_number: orderRef ?? undefined,
           ordered_at: orderedAt,
+          arrived_at: orderedAt, // a receipt is already fulfilled — arrived when bought
           status: "arrived", // a receipt is an already-fulfilled purchase
           total_cost: sawAmount ? Number(total.toFixed(2)) : undefined,
           notes: "Imported from a receipt.",
-          metadata: { receipt_group_id: groupId, source: "receipt" },
+          metadata: { receipt_group_id: groupId, source: "receipt", receipt_file_id: sourceFileId ?? undefined },
         }),
       });
       if (orderRes.ok) {

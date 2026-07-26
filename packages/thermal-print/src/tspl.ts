@@ -22,6 +22,16 @@ export interface TsplMedia {
   direction: TsplDirection;
   /** Feed offset in mm applied after calibration (TSPL OFFSET). */
   offsetMm?: number;
+  /** Stop the printer advancing to the tear bar after each label
+   *  (TSPL `SET TEAR OFF`).
+   *
+   *  WHY IT MATTERS: with tear on, the printer feeds a finished label out to be
+   *  torn off and is meant to back-feed before printing the next one. A printer
+   *  that does not know its media geometry — a roll with no code in it — cannot
+   *  back-feed accurately, so it advances a whole label per print and one is
+   *  wasted every time. Off keeps the stock where it is; the last label gets fed
+   *  by hand. */
+  tearOff?: boolean;
   /** 0–15ish; printer-specific darkness. */
   density?: number;
   /** 1–5ish; slower is crisper. */
@@ -37,6 +47,9 @@ export function tsplHeader(m: TsplMedia): string {
     `GAP ${m.gapMm} mm,0 mm`,
     `DIRECTION ${m.direction}`,
   ];
+  // Only ever emitted to turn tear OFF. Sending "SET TEAR ON" would override a
+  // printer whose own default already works, which is the majority.
+  if (m.tearOff) lines.push("SET TEAR OFF");
   if (m.offsetMm != null && m.offsetMm !== 0) lines.push(`OFFSET ${m.offsetMm} mm`);
   if (m.density != null) lines.push(`DENSITY ${m.density}`);
   if (m.speed != null) lines.push(`SPEED ${m.speed}`);

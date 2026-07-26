@@ -23,3 +23,10 @@ export * from "./ble.js";
 
 // Which remembered BLE device belongs to a printer row (two same-model units).
 export { pickBoundDevice, type KnownDevice, type BindingReason, type BindingResult } from "./device-binding.js";
+
+// What a printer reports about itself: the roll it has sensed, and its battery.
+// Pure decode, so the serial path, the BLE path and the edge bridge share it.
+export {
+  parseMediaReading, parseBatteryReply, readBattery,
+  type MediaReading, type BatteryReading,
+} from "./status.js";

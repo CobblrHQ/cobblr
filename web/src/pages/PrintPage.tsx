@@ -5,13 +5,14 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Printer as PrinterIcon, Wifi, Send, Pencil, Star, Bluetooth } from "lucide-react";
+import { Plus, Trash2, Printer as PrinterIcon, Wifi, Send, Pencil, Star, Bluetooth, Activity } from "lucide-react";
 import { ApiError, api, type Printer, type PrinterInput } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useToast, useConfirm, usePageTitle, printLabelOverBluetooth, connectPrinter, closePrinter, pairBluetoothPrinter, isWebBluetoothAvailable, NO_WEB_BLUETOOTH, type BluetoothPrinterSettings } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, usePageTitle, printLabelOverBluetooth, connectPrinter, closePrinter, isWebBluetoothAvailable, NO_WEB_BLUETOOTH, readSerialPrinterStatus, ConnectPrinterModal, setPrinterStatus, clearPrinterStatus, type SerialPrinterIdentity, type BluetoothPrinterSettings } from "@cobblr/platform-web";
 import { mmToDots, dotsToMm, mmToInch, thermalFootprint, matchProfile, type FeedType } from "@cobblr/thermal-print";
 
 import { EdgeConnectField, type EdgeConnectValue } from "../components/EdgeConnectField";
+import { PrinterStatusChip } from "../components/PrinterStatusChip";
 
 /** UTF-8-safe base64 — btoa() alone throws on non-Latin1 chars (em dash, etc.). */
 function toBase64(s: string): string {
@@ -28,9 +29,15 @@ export function PrintPage() {
   const toast = useToast();
   const confirm = useConfirm();
   const [editing, setEditing] = useState<Printer | "new" | null>(null);
+  // Live readings, keyed by printer. Held in component state rather than saved:
+  // the roll gets swapped and the battery drains, so a persisted reading would
+  // go stale silently, which is worse than showing nothing.
+  const [serialStatus, setSerialStatus] = useState<Record<string, SerialPrinterIdentity | "reading">>({});
   const [newDriver, setNewDriver] = useState<string | null>(null);
   const [btBusy, setBtBusy] = useState<string | null>(null);
-  const [connecting, setConnecting] = useState(false);
+  // Raised when a pairing failure tells us the printer is Bluetooth Classic, so
+  // the serial route gets offered instead of the user having to know it exists.
+  const [connectOpen, setConnectOpen] = useState(false);
 
   /** Bluetooth printers are driven from THIS browser — the server has no route to
    *  them — so the test print runs here rather than through the print API. */
@@ -94,42 +101,8 @@ export function PrintPage() {
 
   const items = list.data?.items ?? [];
 
-  // Connect a Bluetooth printer right here: pair, auto-detect from its known
-  // profile, and save it — no form. An unrecognised model drops into the manual
-  // add form (pre-set to Bluetooth) instead.
-  // showAll: the chooser is filtered to known printers by default, but a printer
-  // that advertises neither a known service nor a known name would then be
-  // unpairable — so the UI offers an explicit unfiltered retry.
-  const connectBluetooth = async (showAll = false) => {
-    if (!isWebBluetoothAvailable()) {
-      toast.error(NO_WEB_BLUETOOTH);
-      return;
-    }
-    setConnecting(true);
-    try {
-      const { deviceName, profile, settings } = await pairBluetoothPrinter({ showAllDevices: showAll });
-      if (!profile || !settings) {
-        toast.error(`Paired "${deviceName}", but it isn't a model we know yet. Fill in the fields to finish.`);
-        setNewDriver("browser-bluetooth");
-        setEditing("new");
-        return;
-      }
-      await api.createPrinter(activeSlug, {
-        name: profile.label,
-        driver: "browser-bluetooth",
-        base_url: "",
-        queue: "",
-        settings: settings as unknown as Record<string, unknown>,
-        is_default: items.length === 0,
-      });
-      toast.success(`${profile.label} connected.`);
-      void invalidate();
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : String(e));
-    } finally {
-      setConnecting(false);
-    }
-  };
+  // Connecting lives in ConnectPrinterModal (platform-web): one door, and the
+  // Bluetooth-vs-serial split stays our problem instead of the user's.
 
   return (
     <div className="space-y-4">
@@ -139,6 +112,19 @@ export function PrintPage() {
           {items.length} printer{items.length === 1 ? "" : "s"}
         </span>
         <div className="flex-1" />
+        {/* These MUST NOT live only in the empty state. They used to, so once a
+            workspace had a single printer there was no way left to pair a second
+            one or to reach the serial route at all — the only remaining button
+            opened the manual form. */}
+        {/* ONE button. Which browser API reaches the printer is our problem, not
+            a choice to hand the user — see ConnectPrinterModal's header. */}
+        <button
+          onClick={() => setConnectOpen(true)}
+          className="inline-flex items-center gap-2 rounded border border-line dark:border-slate-600 hover:border-accent px-3 py-1.5 text-sm transition"
+          title="Find your label printer and set it up automatically"
+        >
+          <Bluetooth size={14} /> Connect a printer
+        </button>
         <button
           onClick={() => { setNewDriver(null); setEditing("new"); }}
           className="inline-flex items-center gap-2 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition"
@@ -161,25 +147,17 @@ export function PrintPage() {
             {/* onClick must WRAP the call: passing the handler directly hands React's
                 MouseEvent in as the first argument, which is truthy and would make
                 every pairing use the unfiltered chooser. */}
-            <button onClick={() => void connectBluetooth()} disabled={connecting} className="text-left w-full disabled:opacity-60">
+            <button onClick={() => setConnectOpen(true)} className="text-left w-full">
               <div className="flex items-center gap-2 mb-1">
                 <Bluetooth size={16} className="text-accent" />
-                <span className="font-medium text-content dark:text-mortar-100">{connecting ? "Pairing…" : "Bluetooth label printer"}</span>
+                <span className="font-medium text-content dark:text-mortar-100">Bluetooth label printer</span>
               </div>
               <p className="text-xs text-muted dark:text-slate-400">
                 A thermal label printer over Bluetooth (Phomemo, POLONO, and similar). Click to pair and auto-detect its settings. Prints from this browser (Chrome or Edge, desktop or Android).
               </p>
             </button>
-            {/* The chooser lists PRINTERS, not every Bluetooth object in range. A
-                printer advertising neither a known service nor a known name would be
-                invisible there, so offer the unfiltered list explicitly. */}
-            <button
-              onClick={() => void connectBluetooth(true)}
-              disabled={connecting}
-              className="mt-2 text-xs text-accent hover:underline disabled:opacity-60"
-            >
-              Don&apos;t see your printer? Show all Bluetooth devices
-            </button>
+            {/* The "can't find it" paths live inside the modal now, in the order a
+                person would actually try them. */}
           </div>
           <button
             onClick={() => { setNewDriver("cups"); setEditing("new"); }}
@@ -196,6 +174,25 @@ export function PrintPage() {
         </div>
       )}
 
+      <ConnectPrinterModal
+        open={connectOpen}
+        onClose={() => setConnectOpen(false)}
+        createPrinter={async (input) => {
+          const created = await api.createPrinter(activeSlug, {
+            name: input.name,
+            driver: input.driver,
+            base_url: "",
+            queue: "",
+            settings: input.settings,
+            is_default: items.length === 0,
+          });
+          void invalidate();
+          return (created as { id?: string } | undefined)?.id;
+        }}
+        onNeedsManualSetup={(driver) => { setNewDriver(driver); setEditing("new"); }}
+        onConnected={(name) => toast.success(`${name} connected.`)}
+      />
+
       <div className="grid gap-3">
         {items.map((p) => (
           <div key={p.id} className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
@@ -208,13 +205,15 @@ export function PrintPage() {
                 </span>
               )}
               <span className="px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider bg-subtle dark:bg-slate-800 text-muted dark:text-slate-400">
-                {p.driver}
+                {/* browser-bluetooth and browser-serial are two ways WE reach the
+                    same class of device; to the owner both are just Bluetooth. */}
+                {p.driver === "browser-bluetooth" || p.driver === "browser-serial" ? "bluetooth" : p.driver}
               </span>
               {/* A network printer with no declared type/width is assumed an 8.5" sheet
                   printer by the size funnel — fine for an inkjet, wrong for a thermal
                   roll. Nudge the user to set it (one click into edit) rather than
                   silently mis-funnel an existing printer. */}
-              {p.driver !== "browser-bluetooth" && !(p.settings as Record<string, unknown> | undefined)?.printerKind && (
+              {p.driver !== "browser-bluetooth" && p.driver !== "browser-serial" && !(p.settings as Record<string, unknown> | undefined)?.printerKind && (
                 <button
                   onClick={() => setEditing(p)}
                   className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 hover:brightness-105 transition"
@@ -224,6 +223,8 @@ export function PrintPage() {
                 </button>
               )}
               <div className="flex-1" />
+              {/* bluetooth-only: this test print drives a GATT session directly;
+                  a serial printer uses the Check button beside it instead. */}
               {p.driver === "browser-bluetooth" ? (
                 <button
                   onClick={() => printBluetoothTest(p)}
@@ -232,6 +233,28 @@ export function PrintPage() {
                   title="Connect over Bluetooth and print a test QR label from this browser"
                 >
                   <Send size={13} /> {btBusy?.startsWith(p.id) ? (btBusy.split(":")[1] ?? "working") + "…" : "Print test"}
+                </button>
+              ) : p.driver === "browser-serial" ? (
+                <button
+                  onClick={async () => {
+                    setSerialStatus((s) => ({ ...s, [p.id]: "reading" }));
+                    try {
+                      const reading = await readSerialPrinterStatus();
+                      setSerialStatus((s) => ({ ...s, [p.id]: reading }));
+                      setPrinterStatus(p.id, {
+                        widthMm: reading.widthMm, heightMm: reading.heightMm,
+                        battery: reading.battery, responded: reading.responded,
+                      });
+                    } catch (e) {
+                      setSerialStatus((s) => { const n = { ...s }; delete n[p.id]; return n; });
+                      toast.error(e instanceof Error ? e.message : String(e));
+                    }
+                  }}
+                  disabled={serialStatus[p.id] === "reading"}
+                  className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 hover:border-accent px-2.5 py-1 text-xs transition"
+                  title="Ask the printer which roll is loaded and how its battery is doing"
+                >
+                  <Activity size={13} /> {serialStatus[p.id] === "reading" ? "Asking…" : "Check"}
                 </button>
               ) : (
                 <>
@@ -249,6 +272,7 @@ export function PrintPage() {
               <button
                 onClick={async () => {
                   if (await confirm({ title: `Remove ${p.name}?`, message: "This deletes the printer connection.", confirmLabel: "Remove", destructive: true })) {
+                    clearPrinterStatus(p.id);
                     del.mutate(p.id);
                   }
                 }}
@@ -259,7 +283,10 @@ export function PrintPage() {
               </button>
             </div>
             <div className="mt-2 text-xs text-muted dark:text-slate-400 font-mono">
-              {p.driver === "browser-bluetooth" ? (
+              {/* Serial belongs with Bluetooth here, not with network: it has no
+                  base_url or queue, so the network branch rendered "· queue" with
+                  two blanks either side. */}
+              {p.driver === "browser-bluetooth" || p.driver === "browser-serial" ? (
                 (() => {
                   const s = (p.settings ?? {}) as Record<string, unknown>;
                   const w = Number(s.widthDots) || 0;
@@ -272,6 +299,23 @@ export function PrintPage() {
                 </>
               )}
             </div>
+            {(() => {
+              const st = serialStatus[p.id];
+              if (!st || st === "reading") return null;
+              // Silent entirely — distinct from "answered, but has no coded roll",
+              // which the chip reports itself.
+              if (!st.responded) {
+                return <div className="mt-1.5 text-[11px] text-muted dark:text-slate-400">This printer did not answer. Power-cycle it; if that is not enough, remove the pairing and pair it again.</div>;
+              }
+              if (!st.widthMm && !st.battery) {
+                return <div className="mt-1.5 text-[11px] text-muted dark:text-slate-400">It answered, but reported nothing usable.</div>;
+              }
+              return (
+                <div className="mt-1.5">
+                  <PrinterStatusChip widthMm={st.widthMm} heightMm={st.heightMm} battery={st.battery} />
+                </div>
+              );
+            })()}
             {p.notes && <div className="mt-1 text-xs text-muted dark:text-slate-400">{p.notes}</div>}
           </div>
         ))}
@@ -282,6 +326,8 @@ export function PrintPage() {
           slug={activeSlug}
           printer={editing === "new" ? null : editing}
           initialDriver={newDriver ?? undefined}
+          // bluetooth-only: same-model binding keys off Web Bluetooth device ids,
+          // which a serial port has no equivalent of.
           existingPrinters={items.filter((p) => p.driver === "browser-bluetooth" && (editing === "new" || p.id !== editing.id))}
           onClose={() => { setNewDriver(null); setEditing(null); }}
           onSaved={() => {
@@ -360,7 +406,12 @@ function PrinterModal({
   const label0 = (bt0.label ?? null) as { widthMm?: number } | null;
   const initAcross = media0?.widthMm && label0?.widthMm ? Math.max(1, Math.round(media0.widthMm / label0.widthMm)) : 1;
   const [btAcross, setBtAcross] = useState(String(initAcross));
-  const isBluetooth = driver === "browser-bluetooth";
+  const [btTearOff, setBtTearOff] = useState(Boolean(bt0.tearOff));
+  // Serial printers are thermal label printers too: same TSPL settings, same
+  // form fields, just a different pipe. Gating on Bluetooth alone sent a serial
+  // printer down the NETWORK branch, where it was asked for a manager URL and
+  // queue it does not have and quietly lost its media settings on save.
+  const isBrowserThermal = driver === "browser-bluetooth" || driver === "browser-serial";
   // Derived, shown live and stored on save — the raster path + any pre-D3 reader
   // still get widthDots/labelHeightMm/gapMm; media/label are the source of truth.
   const btMediaW = Number(btMediaWmm) || 0;
@@ -447,7 +498,7 @@ function PrinterModal({
     }
     // A Bluetooth printer has no manager URL and no queue — the browser holds the
     // radio — so its own settings are what must be valid.
-    if (isBluetooth) {
+    if (isBrowserThermal) {
       if (btMediaW < 1 || btDerivedWidthDots < 8) {
         toast.error("Media width is required in mm (about 40 mm for a common roll)");
         return;
@@ -466,7 +517,7 @@ function PrinterModal({
       is_default: isDefault,
       notes: notes.trim() || undefined,
       ...(creds ? { credentials: creds } : {}),
-      ...(isBluetooth
+      ...(isBrowserThermal
         ? {
             settings: (() => {
               // media+label are the source; the footprint is DERIVED so the raster
@@ -482,6 +533,7 @@ function PrinterModal({
                 gapMm: fp.gapMm,
                 direction: Number(btDirection) === 1 ? 1 : 0,
                 topMarginDots: Number(btTopMargin) || 0,
+                tearOff: btTearOff,
                 media,
                 label,
               };
@@ -526,10 +578,11 @@ function PrinterModal({
                 not a driver: an "edge" option here 400s on save. */}
             <option value="cups">CUPS (IPP)</option>
             <option value="browser-bluetooth">Bluetooth label printer (prints from this browser)</option>
+            <option value="browser-serial">Bluetooth label printer, paired in your computer (prints from this browser)</option>
             <option value="mock">Mock (test)</option>
           </select>
         </label>
-        {isBluetooth ? (
+        {isBrowserThermal ? (
           <div className="space-y-3 rounded border border-line dark:border-slate-600 p-3">
             <div className="text-[11px] text-faint">
               This printer is driven from <b>this browser</b> over Bluetooth — the server cannot reach it.
@@ -601,6 +654,23 @@ function PrinterModal({
                     <div className="text-[11px] text-faint mt-1">Wrong value drifts each label off the edge.</div>
                   </label>
                 )}
+                <label className="flex items-start gap-2 sm:col-span-2">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={btTearOff}
+                    onChange={(e) => setBtTearOff(e.target.checked)}
+                  />
+                  <span>
+                    <span className="text-xs text-muted">Don&apos;t feed to the tear bar</span>
+                    <span className="block text-[11px] text-faint mt-0.5">
+                      Turn this on if a blank label comes out between prints. Printers push the
+                      finished label out to be torn off, then pull it back before the next one — but
+                      a roll with no code in it leaves the printer guessing, so it feeds forward and
+                      never comes back.
+                    </span>
+                  </span>
+                </label>
                 <label className="block">
                   <div className="text-xs text-muted mb-1">Orientation</div>
                   <select className={field} value={btDirection} onChange={(e) => setBtDirection(e.target.value)}>

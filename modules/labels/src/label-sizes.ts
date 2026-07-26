@@ -171,7 +171,10 @@ export interface PrinterCapability {
  *  sheet printer. */
 export function printerCapability(driver: string, settings?: Record<string, unknown> | null): PrinterCapability {
   const s = settings ?? {};
-  if (driver === "browser-bluetooth") {
+  // Both browser drivers are ROLL printers. Checking only browser-bluetooth
+  // funnelled a serial-connected roll printer to SHEET media, so a freshly
+  // connected one defaulted to "US Letter 8.5 x 11, 2x2 square, 20 up".
+  if (driver === "browser-bluetooth" || driver === "browser-serial") {
     const max = Number(s.maxWidthMm) || (Number(s.widthDots) ? Number(s.widthDots) / 8 : 0) || 54;
     return { kind: "thermal", maxWidthMm: max };
   }
@@ -204,65 +207,11 @@ export function customWidthFits(mediaWIn: number, cap: PrinterCapability): boole
   return mediaWIn <= cap.maxWidthMm / MM_PER_IN + 0.05;
 }
 
-/** A loaded-media preset for the inline printer config: a width×height (mm) and
- *  "labels across", tappable to set the printer's media in one go. */
-export interface SizePreset {
-  key: string;
-  /** Media width, mm. */
-  w: number;
-  /** Media height, mm. */
-  h: number;
-  /** Faces across the media (n-up); 1 for a plain roll. */
-  across: number;
-  /** Where it came from, for a tooltip ("from Shop Rollo"); absent for the
-   *  platform library. */
-  from?: string;
-}
 
-/** One-tap loaded-media presets for a printer, DERIVED from what the workspace
- *  actually uses rather than a hardcoded catalog — the "you've done this before"
- *  presets the author asked for. In priority order, deduped, and filtered to what the
- *  printer can feed:
- *   1. layouts already set up on OTHER printers (their media + labels-across),
- *   2. the workspace's own custom label sizes,
- *   3. the platform's funnel-filtered label library (`labelSizesForPrinter`) as a
- *      baseline, so a fresh workspace with one printer still gets useful taps.
- *  There is no parallel hardcoded size list: (3) is the same canonical library
- *  every other size surface funnels, so the platform stays consistent. */
-export function presetsForPrinter(
-  cap: PrinterCapability,
-  opts: {
-    otherPrinters?: { name: string; settings?: Record<string, unknown> | null }[];
-    customSizes?: { name: string; media_w: number; media_h: number; label_w: number }[];
-  } = {},
-): SizePreset[] {
-  const out: SizePreset[] = [];
-  const seen = new Set<string>();
-  const round1 = (n: number) => Math.round(n * 10) / 10;
-  const push = (w: number, h: number, across: number, from?: string) => {
-    if (!(w >= 1) || !(h >= 1)) return;
-    if (!customWidthFits(w / MM_PER_IN, cap)) return;
-    const a = Math.max(1, Math.round(across || 1));
-    const key = `${round1(w)}x${round1(h)}x${a}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    out.push({ key, w: round1(w), h: round1(h), across: a, from });
-  };
-  // 1. Sizes already configured on OTHER printers — "you've done this before".
-  for (const p of opts.otherPrinters ?? []) {
-    const s = (p.settings ?? {}) as Record<string, unknown>;
-    const m = (s.media ?? null) as { widthMm?: number; heightMm?: number } | null;
-    const l = (s.label ?? null) as { widthMm?: number } | null;
-    if (m?.widthMm && m?.heightMm) push(m.widthMm, m.heightMm, l?.widthMm ? m.widthMm / l.widthMm : 1, p.name);
-  }
-  // 2. The workspace's own custom label sizes (inches → mm).
-  for (const c of opts.customSizes ?? []) {
-    push(c.media_w * MM_PER_IN, c.media_h * MM_PER_IN, c.label_w ? c.media_w / c.label_w : 1, c.name);
-  }
-  // 3. The platform library, funnel-filtered — the same list every surface uses.
-  for (const s of labelSizesForPrinter(cap)) push(s.label_w * MM_PER_IN, s.label_h * MM_PER_IN, 1);
-  return out.slice(0, 8);
-}
+// presetsForPrinter lived here: it GUESSED the sizes a workspace uses by reading
+// the media configured on other printers. Every print now records lastSizeKey +
+// lastUsedAt on the printer it went to, so recentSizeKeys (printer-memory.ts)
+// reads the real history instead of inferring it, and the guess is retired.
 
 /** Items per physical sheet for a label size. */
 export function perSheet(size: LabelSize): number {

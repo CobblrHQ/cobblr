@@ -143,17 +143,18 @@ export function Dashboard() {
           trackers' own field semantics. Renders nothing when nothing needs you. */}
       <AttentionFeed slug={activeSlug} />
 
-      {/* The put-away front door (put-away.md §5): scanned-but-homeless items
-          are THE founding mess — when any exist, say so and offer both tempos.
-          Renders nothing when everything has a home. */}
-      <PutAwayCard slug={activeSlug} />
-
-      {/* Scanned-but-unrouted: captures that fit a bundle this workspace hasn't
-          installed (a pile of VIN scans → Vehicles). The first-run hero shows
-          this on an empty workspace and collapses once there's content — this
-          resurfaces it on an established dashboard. Renders nothing when there's
-          nothing to suggest. */}
-      <BundleSuggestionsCard slug={activeSlug} enabled={enabled} role={activeOrg.role} />
+      {/* The two scanner CTAs share a row so they cost ONE band of vertical space,
+          not two (the author, 2026-07-26). flex-1 means whichever one is present alone
+          still spans full width; `empty:hidden` drops the row entirely when both
+          self-hide, so it never leaves a dead gap.
+          - PutAwayCard: scanned-but-homeless items (put-away.md §5) — the founding
+            mess; renders nothing when everything has a home.
+          - BundleSuggestionsCard: captures that fit an uninstalled bundle (a pile
+            of VIN scans → Vehicles); renders nothing when there's nothing to suggest. */}
+      <div className="flex flex-col md:flex-row gap-3 md:items-stretch empty:hidden">
+        <PutAwayCard slug={activeSlug} />
+        <BundleSuggestionsCard slug={activeSlug} enabled={enabled} role={activeOrg.role} />
+      </div>
 
       {/* Quick links to the things this workspace uses most (Scan Inbox, Yarn,
           …). High up + big tap targets so a phone user isn't forced to find the
@@ -223,7 +224,7 @@ function PutAwayCard({ slug }: { slug: string }) {
     // in a half-width column while the button sat in space. Below sm the copy
     // gets the full width and the button goes underneath it.
     <section
-      className="rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-4 py-3 flex flex-col items-start gap-3 sm:flex-row sm:items-center"
+      className="md:flex-1 md:min-w-0 rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-4 py-3 flex flex-col items-start gap-3 sm:flex-row sm:items-center"
       data-testid="putaway-card"
     >
       <div className="flex min-w-0 flex-1 items-start gap-3">
@@ -307,7 +308,7 @@ function BundleSuggestionsCard({ slug, enabled, role }: { slug: string; enabled:
   if (suggestions.length === 0) return null;
   return (
     <section
-      className="rounded-lg border border-accent/40 bg-accent/[0.06] dark:bg-accent/10 px-4 py-3 space-y-2"
+      className="md:flex-1 md:min-w-0 rounded-lg border border-accent/40 bg-accent/[0.06] dark:bg-accent/10 px-4 py-3 space-y-2"
       data-testid="bundle-suggestions"
     >
       <div className="flex items-center gap-2 text-sm font-semibold text-content dark:text-mortar-100">
@@ -742,12 +743,12 @@ function GettingStartedPanel({
     // dashboard row (the author, 2026-07-18: "works a lot better as a 1/2 or 1/3
     // width col"). The empty-state hero below keeps full width: on a blank
     // workspace it IS the dashboard.
+    // Half-width applies to the GUIDED box only (guidedHalfWidth), not the whole
+    // panel: the "waiting to file" scanner strips inside it stay full width. The
+    // old max-w-2xl wrapper capped both and dragged the scan section narrow (the author,
+    // 2026-07-26).
     if (collapsedOnly)
-      return hasContent ? (
-        <div className="max-w-2xl">
-          <WhatToDoPanel slug={slug} startCollapsed />
-        </div>
-      ) : null;
+      return hasContent ? <WhatToDoPanel slug={slug} startCollapsed guidedHalfWidth /> : null;
     if (hasContent) return null;
     return <WhatToDoPanel slug={slug} startCollapsed={false} />;
   }
@@ -1978,7 +1979,11 @@ function RecentActivity({ slug, editing = false }: { slug: string; editing?: boo
         <div className="text-xs text-faint italic">no activity yet</div>
       )}
       {groups.length > 0 && (
-        <ul className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 divide-y divide-line dark:divide-slate-800">
+        // Capped + scrollable: recent activity was the single longest element on
+        // the page (it renders every group), so it's bounded to a fixed height and
+        // scrolls internally — glanceable without dominating the page (the author,
+        // 2026-07-26).
+        <ul className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 divide-y divide-line dark:divide-slate-800 max-h-[28rem] overflow-y-auto">
           {groups.map((g) => {
             const first = g.items[0];
             if (!first) return null;

@@ -7,13 +7,17 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "purchases",
-  version: "0.4.1",
+  version: "0.6.0",
   displayName: "Purchases",
   description:
     "Orders, line items, and cost rollup. Each order is a vendor purchase; line items can link to inventory parts and to whatever consumed them — printer mods, projects, anything.",
   icon: "shopping-bag",
   band: "stock",
   instanceability: "multi",
+  // Purchases already writes ONTO inventory parts (draft-po, receipt roll-up),
+  // so it declares that reach — which is also what earns it the price panel on
+  // a part's own page (the manifest rejects a panel into an undeclared module).
+  operatesOn: ["inventory"],
 
   schema: {
     tablePrefix: "purchases_",
@@ -77,6 +81,11 @@ export default defineModule({
         // Line description + qty + received-at for cross-module display
         // ("3 of these were received last week"). Unit cost private.
         exposableFields: ["description", "qty", "received_at"],
+        // The module's own full-fat list (costs included, own role gating) —
+        // `?part_id=` is a part's purchase history, `?order_id=` an order's
+        // lines. The projected /entities/:kind list deliberately can't carry
+        // unit_cost, so price-aware readers come through here.
+        listEndpoint: "/items",
       },
       {
         id: "purchases:vendor",
@@ -142,6 +151,17 @@ export default defineModule({
 
   contributes: {
     fieldDefs: [],
+    // What you paid for this thing, last time and every time before — on the
+    // thing's own page, because that's where the question gets asked. Only
+    // renders where purchases is enabled; the part page names no contributor.
+    panels: [
+      {
+        id: "purchases:price-history",
+        surface: "entity-detail-panel" as const,
+        target: "inventory:part",
+        title: "Price history",
+      },
+    ],
     wires: [
       {
         // The homepage sentence, verbatim: "When a part runs low → draft a

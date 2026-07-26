@@ -5,7 +5,7 @@
 import { useState, type FocusEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, Copy, Library, Minus, Plus, Printer, ShieldCheck, Trash2 } from "lucide-react";
-import { ContentsPanel, CustomFieldsPanel, EntityActionsBar, EntityThumb, Modal, UnitInput, useConfirm, usePageTitle, useToast, useUnits } from "@cobblr/platform-web";
+import { ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, EntityThumb, Modal, UnitInput, useConfirm, usePageTitle, useToast, useUnits } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { NewPartDialog } from "./NewPartDialog";
 import { ParentPicker } from "./ParentPicker";
@@ -654,6 +654,14 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
         container={{ kind: "inventory:part", id: p.id }}
         title="Contents"
         scanIntoHref={`/scan/camera?container_kind=${encodeURIComponent("inventory:part")}&container_id=${encodeURIComponent(p.id)}`}
+      />
+
+      {/* Whatever ENABLED modules declare for inventory:part in their manifest
+          (contributes.panels) — purchases' price history arrives this way.
+          This page names no contributor and imports nothing from one. */}
+      <ContributedDetailPanels
+        target="inventory:part"
+        ctx={{ slug: orgSlug, entityId: p.id, entityTitle: p.name }}
       />
 
       <div className="flex items-center justify-center gap-4 pt-4">

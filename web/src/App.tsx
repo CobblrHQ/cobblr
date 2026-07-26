@@ -436,6 +436,13 @@ function ActiveOrgScopedRoutes() {
         postToModulePath: (slug, path, body) => api.postToModulePath(slug, path, body),
         listEntities: (slug, kind, q) => api.listEntities(slug, kind, q),
         listFieldDefs: (slug, kind) => api.listFieldDefs(slug, kind),
+        // Contributed panels: what ENABLED modules declare for other modules'
+        // detail pages. platform-web renders them; this is the gate that keeps
+        // a disabled module's panel off the page.
+        listContributedPanels: (slug) =>
+          api
+            .orgModules(slug)
+            .then((r) => r.items.filter((m) => m.enabled).flatMap((m) => m.panels ?? [])),
         appendFieldDefChoice: (slug, id, value) =>
           api.appendFieldDefChoice(slug, id, value),
         listUnits: (slug) => api.listUnits(slug),

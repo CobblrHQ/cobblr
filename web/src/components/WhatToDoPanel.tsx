@@ -228,7 +228,19 @@ function rankMatch(q: string, name: string, rest: string): number {
 // routes (verified against the bundle menu), so the demo never dead-ends.
 const STARTER_CHIPS = ["a spool of black PLA", "my passport", "blue worsted yarn", "a monstera plant"];
 
-export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; startCollapsed?: boolean }) {
+export function WhatToDoPanel({
+  slug,
+  startCollapsed = false,
+  guidedHalfWidth = false,
+}: {
+  slug: string;
+  startCollapsed?: boolean;
+  /** Cap ONLY the guided "What do you want to do?" box to a half column (the
+   *  growth affordance on an established workspace). The scanner "waiting to file"
+   *  strips below it stay FULL width — capping the whole panel dragged them narrow
+   *  too, which read as a regression (the author, 2026-07-26). */
+  guidedHalfWidth?: boolean;
+}) {
   const toast = useToast();
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -786,7 +798,11 @@ export function WhatToDoPanel({ slug, startCollapsed = false }: { slug: string; 
             nothing → the freeform "type what you've got". */}
         <div className={
           "order-first md:col-span-2 rounded-xl border p-3 transition " +
-          (selectedRecipe || selectedModuleObj ? "border-accent/60 bg-accent/5 dark:bg-cobble-900/15" : "border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/40")
+          (selectedRecipe || selectedModuleObj ? "border-accent/60 bg-accent/5 dark:bg-cobble-900/15" : "border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/40") +
+          // The growth-affordance panel keeps its dashed box FULL width, but the
+          // "just add it" input itself reads better as a partial column than a
+          // super-wide field with a lot of empty box around it (the author, 2026-07-26).
+          (guidedHalfWidth ? " max-w-2xl" : "")
         }>
           <LaneHeader
             kicker="// just add it"

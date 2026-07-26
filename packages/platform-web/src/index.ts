@@ -68,6 +68,19 @@ export { BackToTop } from "./BackToTop";
 export { CatalogTypeahead, type CatalogTypeaheadHit } from "./CatalogTypeahead";
 export { usePageTitle } from "./usePageTitle";
 export { usePublishChatContext, getChatPageContext, type ChatPageContext } from "./chat-context";
+// Contributed detail panels — a module putting UI on another module's detail
+// page without either side importing the other. Host registers components,
+// manifests declare placement.
+export {
+  ContributedDetailPanels,
+  useContributedDetailPanels,
+  registerDetailPanel,
+  unregisterDetailPanel,
+  hasDetailPanel,
+  type EntityDetailPanelCtx,
+  type ContributedPanelSpec,
+  type DetailPanelComponent,
+} from "./panels";
 export { Modal } from "./Modal";
 export { ContentsPanel } from "./ContentsPanel";
 export { ToastProvider, useToast } from "./ToastContext";
@@ -122,3 +135,27 @@ export {
   runPrintDirective, printDirectiveOf,
   type PrintDirective, type PrintDirectiveResult,
 } from "./print-directive";
+
+// Serial (Web Serial) printing — for Bluetooth CLASSIC / SPP label printers a
+// browser cannot reach over Web Bluetooth. Shares renderLabelBitmap +
+// encodeForPrinter with the Bluetooth path; only the pipe differs.
+export {
+  isWebSerialAvailable, NO_WEB_SERIAL,
+  pairSerialPrinter, heldSerialSession, heldSerialPrinterOpen, releaseHeldSerialPrinter,
+  printOneOverSerial, printBatchOverSerial, identifySerialPrinter, readSerialPrinterStatus,
+  type SerialSession, type SerialBatchItem, type SerialBatchResult, type SerialPortLike,
+  type SerialPrinterIdentity,
+} from "./serial-printer.js";
+
+// Turns a browser pairing failure into something actionable — notably Chrome's
+// "Unsupported device.", which is the signature of a Bluetooth CLASSIC printer
+// that needs the serial route rather than a defective one.
+export { explainPairingFailure, type PairingFailure, type PairingRemedy } from "./pairing-errors.js";
+
+// ONE door for connecting a label printer. The Bluetooth-vs-serial split is our
+// transport detail, never the user's choice — see the file header.
+export {
+  getPrinterStatus, setPrinterStatus, clearPrinterStatus, subscribePrinterStatus,
+  usePrinterStatus, describePrinterStatus, type PrinterStatusReading,
+} from "./printer-status.js";
+export { ConnectPrinterModal, type ConnectPrinterModalProps, type ConnectPrinterInput } from "./ConnectPrinterModal";

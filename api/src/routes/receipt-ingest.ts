@@ -138,6 +138,34 @@ export async function ingestReceiptEmail(
   if (!membership) return { status: 200, body: { ignored: true, reason: "not_a_member" } };
 
   const slug = membership.slug;
+
+  // Idempotency: the SAME email delivered twice (a provider retry / double-send
+  // — identical Message-ID) must not re-import + re-notify. A genuine re-FORWARD
+  // carries a NEW Message-ID, so it stays a distinct action (one input, one
+  // output). We key on a PRIOR archive row for this Message-ID that already
+  // landed something (items OR a saved note); the current in-flight row has no
+  // outcome yet so it's excluded, and operator reprocess only targets
+  // zero-outcome rows so it's never blocked either.
+  const msgId = (message_id ?? "").trim();
+  if (msgId) {
+    const priorSuccess = await meta
+      .selectFrom("inbound_emails")
+      .select(["id"])
+      .where("message_id", "=", msgId)
+      .where("processed_at", "is not", null)
+      .where(sql<boolean>`coalesce(outcome->>'item_count','0') <> '0' or coalesce((outcome->>'note')::boolean, false)`)
+      .limit(1)
+      .executeTakeFirst();
+    if (priorSuccess) {
+      return {
+        status: 200,
+        body: { duplicate: true, reason: "already_processed", workspace: slug, item_count: 0 },
+        orgId,
+        userId,
+      };
+    }
+  }
+
   const scanUrl = absoluteAppUrl(`/w/${slug}/scan`);
   const sessionToken = await signSession(userId);
   const post = (path: string, payload: Record<string, unknown>) =>
@@ -154,6 +182,10 @@ export async function ingestReceiptEmail(
   // saved as one note "1 item".
   let parsedCount = 0;
   let noteCreated = false;
+  // Set when the receipt route reports this receipt is already imported (same
+  // vendor + order #). Carries the file so the notification can offer a
+  // one-click "import anyway" (re-runs the route with force).
+  let duplicate: { fileId: string; order_ref: string | null; vendor: string | null; item_count: number } | null = null;
 
   // 1. File attachments → core-files → core-scan's receipt parser (one row per
   //    line item). Written via the server-side seam (system capture, not a user
@@ -172,8 +204,20 @@ export async function ingestReceiptEmail(
       const r = await post(`/modules/core-scan/scan/receipt`, { file_id: written.fileId, origin: "email" });
       const body = (await r.json().catch(() => ({}))) as {
         receipt?: { item_count?: number; method?: string; vendor?: string | null };
+        duplicate?: boolean;
+        existing?: { order_ref?: string | null; vendor?: string | null; item_count?: number };
         error?: { code?: string; message?: string };
       };
+      if (r.ok && body.duplicate) {
+        duplicate = {
+          fileId: written.fileId,
+          order_ref: body.existing?.order_ref ?? null,
+          vendor: body.existing?.vendor ?? null,
+          item_count: body.existing?.item_count ?? 0,
+        };
+        results.push({ filename: a.filename ?? null, duplicate: true, existing: body.existing ?? null });
+        continue;
+      }
       if (r.ok) parsedCount += body.receipt?.item_count ?? 0;
       results.push(
         r.ok
@@ -201,8 +245,20 @@ export async function ingestReceiptEmail(
       });
       if (written) {
         const r = await post(`/modules/core-scan/scan/receipt`, { file_id: written.fileId, origin: "email" });
-        const rb = (await r.json().catch(() => ({}))) as { receipt?: { item_count?: number } };
-        if (r.ok) {
+        const rb = (await r.json().catch(() => ({}))) as {
+          receipt?: { item_count?: number };
+          duplicate?: boolean;
+          existing?: { order_ref?: string | null; vendor?: string | null; item_count?: number };
+        };
+        if (r.ok && rb.duplicate) {
+          duplicate = {
+            fileId: written.fileId,
+            order_ref: rb.existing?.order_ref ?? null,
+            vendor: rb.existing?.vendor ?? null,
+            item_count: rb.existing?.item_count ?? 0,
+          };
+          results.push({ source: "body", duplicate: true, existing: rb.existing ?? null });
+        } else if (r.ok) {
           parsedCount += rb.receipt?.item_count ?? 0;
           results.push({ source: "body", ok: true, item_count: rb.receipt?.item_count ?? 0 });
         }
@@ -210,7 +266,7 @@ export async function ingestReceiptEmail(
     } catch (err) {
       results.push({ source: "body", error: "exception", message: (err as Error).message });
     }
-    if (parsedCount === 0) {
+    if (parsedCount === 0 && !duplicate) {
       // The parser found nothing usable (e.g. a real receipt but no AI to split it)
       // — capture the whole body as one note item so it never silently disappears.
       const r = await post(`/modules/core-scan/scan/note`, { text: body.slice(0, 2000) });
@@ -227,8 +283,9 @@ export async function ingestReceiptEmail(
   //    reply-with-attachment loops back in). Three cases, so a whole receipt saved
   //    as ONE note is never miscounted as "1 item":
   //      parsedCount > 0 → the accurate line-item count
-  //      noteCreated     → "we've got your receipt" (no count; the UI flags that
-  //                        it wasn't split — the email stays short)
+  //      duplicate       → already imported (same vendor + order #); offer
+  //                        "import anyway" rather than silently duplicating
+  //      noteCreated     → saved as one note (couldn't split into line items)
   //      neither         → "couldn't find a receipt"
   //    Goes to the resolved account (in-app + their registered email), never the
   //    raw sender, so no backscatter.
@@ -249,16 +306,37 @@ export async function ingestReceiptEmail(
         ...replyHeaders,
       },
     }).catch(() => {});
+  } else if (duplicate) {
+    const refLabel = duplicate.order_ref ? ` (order #${duplicate.order_ref})` : "";
+    const fromLabel = duplicate.vendor ? ` from ${duplicate.vendor}` : "";
+    const n = duplicate.item_count;
+    // Deep link that re-runs the import with force for THIS file if the user
+    // really wants the duplicate; the scan page confirms before importing.
+    const reimportUrl = absoluteAppUrl(
+      `/w/${slug}/scan?reimport_file=${duplicate.fileId}${duplicate.order_ref ? `&ref=${encodeURIComponent(duplicate.order_ref)}` : ""}`,
+    );
+    await notifyAccount({
+      userId,
+      representativeOrgId: orgId,
+      notificationType: "core-scan.email.duplicate",
+      message: `You already imported this receipt${refLabel}${fromLabel} — its ${n} item${n === 1 ? "" : "s"} ${n === 1 ? "is" : "are"} already in your scan inbox. Open it there, or import this copy anyway.`,
+      link_url: reimportUrl,
+      email: {
+        subject: reSubject("You already imported this receipt"),
+        text: `Looks like you already imported this receipt${refLabel}. Its items are already in your scan inbox. To import this copy anyway:\n${reimportUrl}`,
+        ...replyHeaders,
+      },
+    }).catch(() => {});
   } else if (noteCreated) {
     await notifyAccount({
       userId,
       representativeOrgId: orgId,
       notificationType: "core-scan.email.received",
-      message: "We've got your emailed receipt — see it in your scan inbox.",
+      message: `Saved your emailed receipt${subj ? ` "${subj}"` : ""} to your scan inbox — I couldn't split it into line items, so it's there as one note to sort.`,
       link_url: scanUrl,
       email: {
-        subject: reSubject("We've got your receipt"),
-        text: `We've got your receipt — see it in your scan inbox:\n${scanUrl}`,
+        subject: reSubject("Your receipt is in your scan inbox (as a note)"),
+        text: `We saved your receipt to your scan inbox. We couldn't split it into line items automatically, so it's there as a single note for you to sort:\n${scanUrl}`,
         ...replyHeaders,
       },
     }).catch(() => {});
@@ -279,7 +357,7 @@ export async function ingestReceiptEmail(
 
   return {
     status: 200,
-    body: { workspace: slug, item_count: parsedCount, note: noteCreated, results },
+    body: { workspace: slug, item_count: parsedCount, note: noteCreated, duplicate: !!duplicate, results },
     orgId,
     userId,
   };

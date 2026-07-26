@@ -65,4 +65,38 @@ if (dead.length > 0 || missing.length > 0) {
   process.exit(1);
 }
 
-console.log(`print-driver-options lint: dropdown matches DRIVER_KINDS (${kinds.join(", ")}) ✓`);
+// Third direction: code that CREATES printers with a hardcoded driver string.
+// The dropdown check above cannot see these — the serial connect flow shipped
+// `driver: "browser-serial"` from two pages while the registry lacked the kind,
+// so every save 400d as an unknown driver, and only a live click could reveal
+// it. A driver literal in a create/update call must name a registered kind.
+import { globSync } from "node:fs";
+
+const literalFindings: string[] = [];
+for (const pattern of ["web/src/**/*.tsx", "web/src/**/*.ts", "modules/*/src/**/*.tsx", "modules/*/src/**/*.ts"]) {
+  for (const file of globSync(pattern, { cwd: process.cwd() })) {
+    if (file.includes("core-print/src/drivers")) continue;   // the registry itself
+    const src = readFileSync(file, "utf8");
+    // "driver" is an overloaded word (backup drivers, machine drivers), so only
+    // literals inside a createPrinter(...) call are in scope.
+    for (const call of src.matchAll(/createPrinter\s*\(/g)) {
+      const window = src.slice(call.index ?? 0, (call.index ?? 0) + 800);
+      const m = /\bdriver:\s*"([^"]+)"/.exec(window);
+      if (!m) continue;
+      const kind = m[1]!;
+      if (kinds.includes(kind)) continue;
+      const line = src.slice(0, (call.index ?? 0) + m.index).split("\n").length;
+      literalFindings.push(`    ❌ ${file}:${line}  driver: "${kind}"`);
+    }
+  }
+}
+if (literalFindings.length > 0) {
+  console.error(`print-driver-options lint: driver literals that the API will reject:\n`);
+  for (const f of literalFindings) console.error(f);
+  console.error(`\n  DRIVER_KINDS: ${kinds.join(", ")}` +
+    `\n  Creating a printer with an unregistered driver 400s at save. Register the` +
+    `\n  kind in ${REGISTRY} (and the form dropdown) or fix the literal.`);
+  process.exit(1);
+}
+
+console.log(`print-driver-options lint: dropdown + driver literals match DRIVER_KINDS (${kinds.join(", ")}) ✓`);

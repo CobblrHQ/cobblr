@@ -7,7 +7,11 @@ import { MockDriver } from "./mock.js";
 import { BrowserBluetoothDriver } from "./browser-bluetooth.js";
 import { EdgePrintDriver, type EdgeRelay } from "./edge-print.js";
 
-export const DRIVER_KINDS = ["cups", "browser-bluetooth", "mock"] as const;
+// browser-serial: a Bluetooth CLASSIC printer driven from the browser over Web
+// Serial. Same server posture as browser-bluetooth (the server cannot reach it);
+// it was missing from this list, so creating one 400d as an unknown driver and
+// the whole serial connect flow died at its final step.
+export const DRIVER_KINDS = ["cups", "browser-bluetooth", "browser-serial", "mock"] as const;
 export type DriverKind = (typeof DRIVER_KINDS)[number];
 
 export function isDriverKind(s: string): s is DriverKind {
@@ -25,14 +29,14 @@ export function isEdgeManagerUrl(baseUrl: string): boolean {
  *  A different axis from the edge transport above — an edge-bridged printer IS
  *  server-reachable (the bridge relays), a Bluetooth one genuinely is not. */
 export function isClientSideDriver(kind: string): boolean {
-  return kind === "browser-bluetooth";
+  return kind === "browser-bluetooth" || kind === "browser-serial";
 }
 
 export function buildDriver(kind: string, cfg: PrinterConfig, relay?: EdgeRelay | null): PrintDriver {
   // A cobblr-edge:// manager rides the bridge whatever the nominal driver — the
   // bridge speaks IPP to CUPS locally. `mock` stays mock (tests/dev never bridge),
   // and browser-bluetooth is excluded because there is no server-side path to relay.
-  if (kind !== "mock" && kind !== "browser-bluetooth" && isEdgeManagerUrl(cfg.baseUrl)) {
+  if (kind !== "mock" && !isClientSideDriver(kind) && isEdgeManagerUrl(cfg.baseUrl)) {
     return new EdgePrintDriver(cfg, relay ?? null);
   }
   switch (kind) {
@@ -40,6 +44,8 @@ export function buildDriver(kind: string, cfg: PrinterConfig, relay?: EdgeRelay 
       return new CupsDriver(cfg);
     case "browser-bluetooth":
       return new BrowserBluetoothDriver(cfg);
+    case "browser-serial":
+      return new BrowserBluetoothDriver(cfg, "a serial port");
     case "mock":
       return new MockDriver(cfg);
     default:

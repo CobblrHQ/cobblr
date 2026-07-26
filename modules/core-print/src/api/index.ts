@@ -171,9 +171,10 @@ router.post(
       return;
     }
     // Per-driver requirements: network drivers need somewhere to send bytes; a
-    // browser-Bluetooth printer needs its dialect/geometry instead, since the
-    // browser — not the server — does the talking.
-    if (body.driver === "browser-bluetooth") {
+    // browser-driven printer (Bluetooth or serial) needs its dialect/geometry
+    // instead, since the browser — not the server — does the talking. Both share
+    // the same settings shape; only the pipe differs.
+    if (body.driver === "browser-bluetooth" || body.driver === "browser-serial") {
       const parsed = BluetoothSettings.safeParse(body.settings ?? {});
       if (!parsed.success) {
         res.status(400).json({

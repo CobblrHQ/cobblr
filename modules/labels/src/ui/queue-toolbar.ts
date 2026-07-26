@@ -60,7 +60,9 @@ export function canRevertToStock(current: string, stockName?: string | null): bo
 /** Derive the toolbar's parts from the default printer (or its absence). */
 export function queueToolbarMode(defaultPrinter?: { driver: string } | null): QueueToolbarMode {
   const hasPrinter = !!defaultPrinter;
-  const isBle = defaultPrinter?.driver === "browser-bluetooth";
+  // Roll printers print over their own link, so there is no browser/system
+  // print for them — true of BOTH browser drivers, not just Bluetooth.
+  const isBle = defaultPrinter?.driver === "browser-bluetooth" || defaultPrinter?.driver === "browser-serial";
   return {
     connectCtas: !hasPrinter,
     sheetControls: true,

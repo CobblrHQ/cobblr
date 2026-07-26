@@ -461,6 +461,13 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
     printerControl && !onIcons.some((c) => c.id === printerControl.id) ? [printerControl, ...onIcons] : onIcons;
 
   if (mode === "sidebar") {
+    // Nothing is actually LIVE — no armed control, no batch printing — so this is
+    // just a dormant toggle, not an "ongoing session mode". Don't spend a whole
+    // sidebar row on a single idle status icon (the author, 2026-07-26); it reappears the
+    // moment auto-print is armed or a job runs. The controls stay armable from
+    // their own surfaces (e.g. the Labels page's Auto-print button). An OFFER has
+    // already returned above and is unaffected.
+    if (onIcons.length === 0 && printing === 0) return null;
     // Bare ring row in the sidebar foot; expands into a right-flyout panel.
     return (
       <div className="relative">

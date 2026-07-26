@@ -401,6 +401,8 @@ export interface Order {
   tracking_number: string | null;
   notes: string | null;
   metadata: Record<string, unknown>;
+  /** Line-item count — present on the list endpoint (GET /orders), absent on detail. */
+  item_count?: number;
   created_at: string;
   updated_at: string;
 }
@@ -453,6 +455,41 @@ export interface RecordItem {
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+}
+
+/** One purchase of one part — a line item flattened with its order's date and
+ *  vendor. Mirrors purchases' PricePoint. */
+export interface PurchasePricePoint {
+  id: string;
+  order_id: string;
+  order_number: string | null;
+  vendor: string | null;
+  purchased_at: string | null;
+  description: string | null;
+  qty: number;
+  unit_cost: number | null;
+}
+
+export interface PurchasePriceStats {
+  purchases: number;
+  priced: number;
+  latest: number | null;
+  previous: number | null;
+  change_abs: number | null;
+  change_pct: number | null;
+  direction: "up" | "down" | "flat" | null;
+  min: number | null;
+  max: number | null;
+  avg: number | null;
+  first_purchased_at: string | null;
+  last_purchased_at: string | null;
+  total_spent: number | null;
+}
+
+export interface PurchasePriceHistory {
+  part_id: string | null;
+  items: PurchasePricePoint[];
+  stats: PurchasePriceStats;
 }
 
 /** A manifest-declared UI contribution (contributes.panels) — a tab on the
@@ -1088,6 +1125,14 @@ export const api = {
       `/orgs/${slug}/field-defs${qs}`,
     );
   },
+  /** A part's purchase history + price stats, from purchases' own full-fat
+   *  /items route (the generic entities list can't carry unit_cost — costs
+   *  aren't in the kind's exposableFields). Empty items = never bought. */
+  purchasesPriceHistory: (slug: string, partId: string) =>
+    request<PurchasePriceHistory>(
+      "GET",
+      `/orgs/${slug}/modules/purchases/items?part_id=${encodeURIComponent(partId)}`,
+    ),
   createFieldDef: (slug: string, body: Partial<PlatformFieldDef>) =>
     request<PlatformFieldDef>("POST", `/orgs/${slug}/field-defs`, body),
   updateFieldDef: (slug: string, id: string, body: Partial<PlatformFieldDef>) =>
@@ -2665,6 +2710,12 @@ export const api = {
       "GET",
       `/orgs/${slug}/modules/core-scan/inbox/stats`,
     ),
+  /** Receipt sessions imported but not yet confirmed into a purchase order. */
+  getPendingReceiptGroups: (slug: string) =>
+    request<{ groups: Array<{ groupId: string; vendor: string | null; count: number }>; total_items: number }>(
+      "GET",
+      `/orgs/${slug}/modules/core-scan/inbox/receipt-groups/pending`,
+    ),
   /** Guided Organize: accept groups (optionally overriding destinations). */
   organizeApply: (
     slug: string,
@@ -2910,18 +2961,29 @@ export const api = {
   // Parse an uploaded receipt (CSV / PDF / photo) into one inbox row per line
   // item — each then triages into a part via the normal confirm flow. CSV and
   // text-PDF tables parse deterministically (no AI); everything else falls to AI.
-  scanReceipt: (slug: string, file_id: string) =>
-    request<{
-      receipt: {
-        vendor: string | null;
-        date: string | null;
-        currency: string | null;
-        total: number | null;
-        item_count: number;
-        method: "csv" | "pdf-table" | "ai-chat" | "ai-vision";
-      };
-      items: ScanInboxItem[];
-    }>("POST", `/orgs/${slug}/modules/core-scan/scan/receipt`, { file_id }),
+  scanReceipt: (slug: string, file_id: string, opts?: { force?: boolean; origin?: "email" | "upload" }) =>
+    request<
+      | {
+          receipt: {
+            vendor: string | null;
+            date: string | null;
+            currency: string | null;
+            total: number | null;
+            item_count: number;
+            method: "csv" | "pdf-table" | "ai-chat" | "ai-vision";
+          };
+          items: ScanInboxItem[];
+          duplicate?: undefined;
+        }
+      | {
+          duplicate: true;
+          existing: { batch_id: string; label: string | null; vendor: string | null; order_ref: string | null; item_count: number };
+        }
+    >("POST", `/orgs/${slug}/modules/core-scan/scan/receipt`, {
+      file_id,
+      ...(opts?.force ? { force: true } : {}),
+      ...(opts?.origin ? { origin: opts.origin } : {}),
+    }),
   // Collapse a receipt's pending lines into ONE purchases order (vendor + line
   // items) instead of N orphan parts. Each line is still confirmed into a part;
   // the order links them. Degrades to parts-only if purchases isn't enabled.

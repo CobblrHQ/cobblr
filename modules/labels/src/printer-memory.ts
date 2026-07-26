@@ -57,3 +57,29 @@ export function byRecentlyUsed<T extends { name: string; settings?: Record<strin
   };
   return [...printers].sort((a, b) => at(b) - at(a) || a.name.localeCompare(b.name));
 }
+
+/** Label sizes this workspace ACTUALLY prints, most-recently-used first.
+ *
+ *  Real media history. The old presetsForPrinter GUESSED at this by reading the
+ *  media currently configured on other printers, which is why its "sizes you've
+ *  used" chips could show sizes nobody had printed. Now that every print records
+ *  lastSizeKey + lastUsedAt on the printer it went to, the history is simply read
+ *  back instead of inferred.
+ *
+ *  Deduped by size key, keeping the most recent timestamp for each. */
+export function recentSizeKeys(
+  printers: readonly { settings?: Record<string, unknown> }[],
+  limit = 4,
+): string[] {
+  const at = new Map<string, number>();
+  for (const p of printers) {
+    const s = p.settings ?? {};
+    const key = typeof s.lastSizeKey === "string" ? s.lastSizeKey : "";
+    if (!key) continue;
+    const raw = s.lastUsedAt;
+    const t = typeof raw === "string" ? Date.parse(raw) : NaN;
+    const when = Number.isNaN(t) ? 0 : t;
+    if (when >= (at.get(key) ?? -1)) at.set(key, when);
+  }
+  return [...at.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([k]) => k);
+}
