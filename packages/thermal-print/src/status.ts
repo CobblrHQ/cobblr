@@ -87,42 +87,47 @@ export function parseMediaReading(bytes: Uint8Array): MediaReading | null {
   return null;
 }
 
-/** Raw battery byte -> volts.
+/** Battery as a fraction of the highest reading ever observed.
  *
- *  HYPOTHESIS, not a datasheet: the observed values are 117, 128 and 153, which
- *  are not percentages. Read as volts x 32 they become 3.66 V, 4.00 V and
- *  4.78 V — a coherent 1S lithium cell plus a USB rail, and the 4.00 V reading
- *  came from a printer displaying 4 of 5 bars on its own screen, which is where
- *  a 1S cell sits at 4.00 V. One anchor point, so treat the number as
- *  approximate and keep the raw byte for recalibration. */
-const VOLTS_PER_COUNT = 1 / 32;
-
-/** Above a full 1S charge (4.2 V) the reading is the charger, not the cell. */
-const CHARGING_VOLTS = 4.35;
-
-/** Bar thresholds down a 1S lithium discharge curve. Coarse ON PURPOSE: the
- *  printers and their vendor apps show bars, so showing a percentage derived
- *  from a single-point voltage estimate would be inventing precision. */
-const BAR_VOLTS = [3.55, 3.7, 3.82, 3.95, 4.1] as const;
+ *  NOT VOLTS. An earlier version read the byte as volts x 32, which made 0x99
+ *  come out at 4.78V and get labelled "charging" — until the owner confirmed the
+ *  printer was on BATTERY and merely freshly charged. 4.78V is impossible for a
+ *  1S cell, so the mapping was wrong and the charging label was invented on top
+ *  of it. A fully charged printer was being shown as plugged in.
+ *
+ *  What is actually known, from hardware:
+ *    0x99 (153) — freshly charged, unplugged. Treated as full.
+ *    0x80 (128) — a printer displaying 4 of 5 bars on its own screen.
+ *    0x75 (117) — the same printer lower down.
+ *  round(raw / 153 * 5) puts 153 at 5 bars and 128 at 4, matching the one
+ *  hardware anchor there is.
+ *
+ *  CHARGE STATE comes from the byte AFTER the level, not from the level itself:
+ *  the same printer at the same level 0x99 reported 0x00 unplugged and 0x01 the
+ *  moment it was plugged in. Every earlier capture agrees (0x75 00, 0x80 00,
+ *  both on battery). An earlier version inferred charging from an impossible
+ *  voltage instead and labelled a full battery as plugged in. The raw bytes are
+ *  always carried so a better scale can replace this without new captures. */
+const FULL_RAW = 0x99;
+const BARS = 5;
 
 export interface BatteryReading {
-  /** The byte as received, so a future calibration can reinterpret it. */
+  /** The byte as received, so a future calibration can reinterpret it without
+   *  needing new hardware captures. */
   raw: number;
-  volts: number;
+  /** 0..1 against the fullest reading ever observed (0x99, from a freshly
+   *  charged printer that was not plugged in). */
+  fraction: number;
   /** 0 to 5, matching the granularity the hardware itself displays. */
   bars: number;
-  /** Reading sits above a full cell, i.e. running on external power. */
+  /** Running on external power. Read from the flag byte that follows the level,
+   *  verified by plugging the printer in and watching only that byte change. */
   charging: boolean;
 }
 
-export function readBattery(raw: number): BatteryReading {
-  const volts = raw * VOLTS_PER_COUNT;
-  const charging = volts >= CHARGING_VOLTS;
-  // While charging the rail voltage says nothing about the cell, so report a
-  // full bar count rather than a misleading one derived from the charger.
-  let bars = charging ? BAR_VOLTS.length : 0;
-  if (!charging) for (const v of BAR_VOLTS) if (volts >= v) bars++;
-  return { raw, volts, bars, charging };
+export function readBattery(raw: number, chargeFlag = 0): BatteryReading {
+  const fraction = Math.max(0, Math.min(1, raw / FULL_RAW));
+  return { raw, fraction, bars: Math.round(fraction * BARS), charging: chargeFlag === 1 };
 }
 
 /** Find `BATTERY <byte>` in a reply. The level is a raw byte, not ASCII digits,
@@ -134,5 +139,7 @@ export function parseBatteryReply(bytes: Uint8Array): BatteryReading | null {
   if (at < 0) return null;
   const raw = bytes[at + label.length];
   if (raw === undefined) return null;
-  return readBattery(raw);
+  // The flag byte may be absent on a truncated read; absent means "unknown",
+  // which we report as not charging rather than guessing.
+  return readBattery(raw, bytes[at + label.length + 1] ?? 0);
 }

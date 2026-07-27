@@ -178,11 +178,17 @@ export async function printOneOverSerial(
   try {
     await writeAll(session, encodeForPrinter(bmp, settings));
   } catch (e) {
-    // A write that fails on a session we believed live usually means the port
-    // died between prints. Drop it so the next attempt re-opens cleanly rather
-    // than failing forever against a dead handle.
+    // A write that fails on a session we believed live means the port died
+    // between prints. Drop it so the next attempt re-opens rather than failing
+    // forever against a dead handle — but be honest that re-opening usually is
+    // NOT enough: measured on hardware, the FIRST open after pairing works and
+    // later ones go silent (1 of 3), so a lost link generally needs the printer
+    // power-cycled. Saying so beats a second silent failure.
     await releaseHeldSerialPrinter();
-    throw e;
+    throw new Error(
+      `${e instanceof Error ? e.message : String(e)} — the printer stopped responding. ` +
+      `Switch it off and on again before retrying; reconnecting alone usually is not enough.`,
+    );
   }
 }
 

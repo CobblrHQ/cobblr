@@ -65,6 +65,6 @@ export function describePrinterStatus(r: PrinterStatusReading | null): string | 
   if (!r || !r.responded) return null;
   const parts: string[] = [];
   if (r.widthMm && r.heightMm) parts.push(`${r.widthMm} × ${r.heightMm} mm`);
-  if (r.battery) parts.push(r.battery.charging ? "charging" : `battery ${r.battery.bars}/5`);
+  if (r.battery) parts.push(r.battery.charging ? `charging ${r.battery.bars}/5` : `battery ${r.battery.bars}/5`);
   return parts.length ? parts.join(" · ") : null;
 }

@@ -99,8 +99,10 @@ export function ConnectPrinterModal(props: ConnectPrinterModalProps) {
       const id = await identifySerialPrinter(session);
       if (!id.responded) {
         setError(
-          "Found the printer but it did not respond. Switch it off and on, then try again. " +
-          "If it stays quiet, remove it from your computer's Bluetooth settings and pair it again.",
+          "Found the printer but it did not respond. Switch it off and on and try once more. " +
+          "If it stays quiet, this printer probably cannot be driven from a browser — some " +
+          "Bluetooth printers only respond to a native connection. It will still work through " +
+          "an on-site bridge.",
         );
         return;
       }
@@ -192,8 +194,8 @@ export function ConnectPrinterModal(props: ConnectPrinterModalProps) {
               <li>Pair the printer in your computer&apos;s Bluetooth settings.</li>
               <li>Press the button below and pick your printer from the list.</li>
               <li>
-                If it appears more than once, try each one — which entry works varies
-                by computer and printer.
+                If it appears more than once, try each one. Be aware that some printers
+                will not connect through a browser at all, whichever entry you pick.
               </li>
             </ol>
             <button

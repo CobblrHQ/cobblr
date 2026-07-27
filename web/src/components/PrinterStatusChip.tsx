@@ -18,7 +18,7 @@ export interface PrinterStatusChipProps {
  *  bars, and the voltage mapping behind the number rests on a single
  *  calibration point — so a "78%" would be precision we have not earned. */
 function BatteryBit({ battery }: { battery: BatteryReading }) {
-  const { bars, charging, volts } = battery;
+  const { bars, charging } = battery;
   const Icon = charging ? BatteryCharging : bars >= 4 ? BatteryFull : bars >= 2 ? BatteryMedium : BatteryLow;
   const tone = charging
     ? "text-cobble-600 dark:text-cobble-400"
@@ -28,14 +28,13 @@ function BatteryBit({ battery }: { battery: BatteryReading }) {
   return (
     <span
       className={`inline-flex items-center gap-1 ${tone}`}
-      // The raw byte is in the tooltip on purpose: if the mapping is ever wrong
-      // on new hardware, the number needed to fix it is already on screen.
-      title={charging
-        ? `Charging (${volts.toFixed(2)}V rail, raw 0x${battery.raw.toString(16)})`
-        : `About ${bars} of 5 bars — approximately ${volts.toFixed(2)}V (raw 0x${battery.raw.toString(16)})`}
+      // The raw byte is in the tooltip on purpose: the scale is anchored on a
+      // single freshly-charged reading, so if it is wrong on other hardware the
+      // number needed to fix it is already on screen.
+      title={`About ${bars} of 5 bars${charging ? ", charging" : ""} (raw 0x${battery.raw.toString(16)})`}
     >
       <Icon size={13} />
-      {charging ? "charging" : `${bars}/5`}
+      {bars}/5
     </span>
   );
 }
