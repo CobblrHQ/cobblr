@@ -159,28 +159,125 @@ export function labelSizesForPaper(paperKey: string): LabelSize[] {
 // printer has a KIND (inkjet/laser sheet vs thermal roll) and a MAX WIDTH it can
 // feed, and it is only ever offered the sizes that fit. Derived from the printer,
 // never from the loaded label (a thermal printer can't report what's loaded).
+/** A device record as the bridge reported it. Deliberately open: the bridge
+ *  sends everything it knows about the machine, and each consumer reads the
+ *  keys it needs. Narrowing this to today's field is what turned every new
+ *  requirement into a release on both sides. */
+export interface BridgeDeviceRecord {
+  id?: string;
+  name?: string;
+  state?: string;
+  media?: {
+    widthDots?: number;
+    widthMm?: number;
+    dpi?: number;
+    labelHeightMm?: number;
+    gapMm?: number;
+    protocol?: string;
+  };
+}
+
+interface BridgeSettings {
+  instance?: string;
+  driver?: string;
+  bridgeUrl?: string;
+  device?: BridgeDeviceRecord;
+}
+
 export type PrinterKind = "inkjet-laser" | "thermal";
 export interface PrinterCapability {
   kind: PrinterKind;
   maxWidthMm: number;
 }
 
-/** A printer's media capability, from its driver + saved settings. Bluetooth =
- *  thermal, max from the matched profile; network (CUPS/edge) = whatever the user
- *  set on the printers page (a manager can't report it), defaulting to a desktop
- *  sheet printer. */
-export function printerCapability(driver: string, settings?: Record<string, unknown> | null): PrinterCapability {
+/** Evidence, in a printer's saved settings, that it runs a ROLL rather than
+ *  sheets — regardless of which driver carries it.
+ *
+ *  This is deliberately not a list of driver names. That list was wrong three
+ *  times running: first it knew only `browser-bluetooth`, so a serial-connected
+ *  roll printer funnelled to sheet media; then it learned `browser-serial`, and
+ *  an edge-bridged one (nominally `cups`, because the bridge is a TRANSPORT and
+ *  not a driver kind) funnelled to sheet media too — a 50mm label printer
+ *  offering "US Letter 8.5 x 11, 2x2 square, 20 up". Each fix taught it one more
+ *  name and left the next transport to fail the same way.
+ *
+ *  A label printer cannot be configured without label geometry, so the geometry
+ *  is the signal. Any new transport is covered the day it is added, without
+ *  touching this file. */
+function looksThermal(s: Record<string, unknown>): boolean {
+  if (s.printerKind === "thermal") return true;
+  const bridge = s.bridge as BridgeSettings | null | undefined;
+  // A bridge reports what kind of machine it is fronting; `thermal` is a roll.
+  if (bridge?.driver === "thermal") return true;
+  // ...and a device that reports label geometry is a label printer, whatever
+  // anyone called its driver.
+  if (bridge?.device?.media?.widthMm || bridge?.device?.media?.widthDots) return true;
+  // Roll calibration only exists on a printer that runs a roll.
+  return Number(s.widthDots) > 0 || !!s.profileId || !!(s.media as { feed?: unknown } | null)?.feed;
+}
+
+/** Settings with the bridge's driver kind filled in from what the bridge says,
+ *  for a printer saved before that kind was recorded.
+ *
+ *  Those rows carry an instance and an address and nothing that identifies a
+ *  roll printer, so they funnel to sheet media — which is how a 40mm label
+ *  printer opened on US Letter. Rewriting them would need a migration that
+ *  could only run where the bridge is reachable, which is the browser; asking
+ *  the bridge costs one call and heals the row wherever it is used. Anything
+ *  already recorded wins, so this can never override a real setting. */
+export function healedSettings(
+  settings: Record<string, unknown> | null | undefined,
+  instanceInfo: Record<string, { driver: string; device?: BridgeDeviceRecord }>,
+): Record<string, unknown> | null {
+  const s = settings ?? null;
+  if (!s) return s;
+  const bridge = s.bridge as BridgeSettings | undefined;
+  if (!bridge?.instance) return s;
+  const info = instanceInfo[bridge.instance];
+  if (!info) return s;
+  // driver: stored wins — it is intent someone may have set. device: LIVE wins —
+  // the stored copy is a cache of the same source, and letting it win pinned a
+  // recalibrated bridge to its old width forever. A width the USER set wins over
+  // both anyway, via maxWidthMm in printerCapability.
+  const driver = bridge.driver ?? info.driver;
+  const device = info.device ?? bridge.device;
+  if (driver === bridge.driver && device === bridge.device) return s;
+  return { ...s, bridge: { ...bridge, driver, device } };
+}
+
+/** A printer's media capability, from its saved settings (falling back to the
+ *  driver only for the browser transports, which always hold a roll printer).
+ *  A network manager can't report its own media, so a sheet printer is the
+ *  default — but see looksThermal: anything carrying roll geometry says so. */
+export function printerCapability(
+  driver: string,
+  settings?: Record<string, unknown> | null,
+): PrinterCapability {
   const s = settings ?? {};
-  // Both browser drivers are ROLL printers. Checking only browser-bluetooth
-  // funnelled a serial-connected roll printer to SHEET media, so a freshly
-  // connected one defaulted to "US Letter 8.5 x 11, 2x2 square, 20 up".
-  if (driver === "browser-bluetooth" || driver === "browser-serial") {
-    const max = Number(s.maxWidthMm) || (Number(s.widthDots) ? Number(s.widthDots) / 8 : 0) || 54;
+  const browserRadio = driver === "browser-bluetooth" || driver === "browser-serial";
+  if (browserRadio || looksThermal(s)) {
+    const max =
+      Number(s.maxWidthMm) ||
+      // What the bridge reported about the device itself. The operator set this
+      // to make the printer work at all, so it beats any guess.
+      Number((s.bridge as BridgeSettings | null | undefined)?.device?.media?.widthMm) ||
+      (Number(s.widthDots) ? Number(s.widthDots) / 8 : 0) ||
+      // Last resort, and deliberately the NARROW end of the label-printer
+      // range: too narrow only hides sizes someone can still pick on purpose,
+      // while too wide offers media the printer cannot feed and ruins a label.
+      // Guess toward the recoverable mistake.
+      //
+      // A known model's width is NOT consulted here, and does not need to be.
+      // A browser-paired printer stores maxWidthMm from its profile when it is
+      // paired, and a bridged one reports its real head width — which is better
+      // than the table anyway (the table says 54mm for a PM240; the bridge says
+      // the 40mm it is actually calibrated for). Reaching for the profile
+      // package from here dragged the Bluetooth encoder into the API's module
+      // mount and took the Labels page down in production.
+      54;
     return { kind: "thermal", maxWidthMm: max };
   }
-  const kind: PrinterKind = s.printerKind === "thermal" ? "thermal" : "inkjet-laser";
-  const max = Number(s.maxWidthMm) || (kind === "thermal" ? 104 : 216); // 4" roll or 8.5" sheet
-  return { kind, maxWidthMm: max };
+  return { kind: "inkjet-laser", maxWidthMm: Number(s.maxWidthMm) || 216 };
 }
 
 /** The max width is the real constraint — nothing wider than the printer can feed.
@@ -201,6 +298,31 @@ export function labelSizesForPrinter(cap: PrinterCapability): LabelSize[] {
   const keys = new Set(papersForPrinter(cap).map((p) => p.key));
   return LABEL_SIZES.filter((s) => keys.has(s.paper));
 }
+/** The media + layout matching a roll the printer itself reported, in mm.
+ *
+ *  A coded roll tells the printer its own size, so the person should not have to
+ *  tell Cobblr a second time — and until this existed they could not even be
+ *  right by accident: the printer's reading was rendered as a sentence and
+ *  discarded, so a 40 x 30 roll sat behind a US Letter default.
+ *
+ *  Returns the 1-up layout: one label per feed is what a die-cut roll is FOR,
+ *  and an n-up on die-cut stock prints across the gaps. Null when nothing
+ *  matches, which leaves the person's own choice alone rather than snapping it
+ *  to something close but wrong. */
+export function mediaForReading(widthMm: number, heightMm: number): { paperKey: string; sizeKey: string } | null {
+  const TOL_MM = 1; // the reading is whole mm; the registry is inches round-tripped
+  const paper = PAPER_SIZES.find(
+    (p) =>
+      p.class === "roll" &&
+      Math.abs(p.width_in * MM_PER_IN - widthMm) <= TOL_MM &&
+      Math.abs(p.height_in * MM_PER_IN - heightMm) <= TOL_MM,
+  );
+  if (!paper) return null;
+  const sizes = LABEL_SIZES.filter((s) => s.paper === paper.key);
+  const oneUp = sizes.find((s) => s.cols === 1 && s.rows === 1) ?? sizes[0];
+  return oneUp ? { paperKey: paper.key, sizeKey: oneUp.key } : null;
+}
+
 /** Whether a custom size (media width, inches) fits the printer. */
 export function customWidthFits(mediaWIn: number, cap: PrinterCapability): boolean {
   if (cap.kind === "inkjet-laser") return true;
@@ -371,6 +493,33 @@ export function cellLayout(size: LabelSize): CellLayout {
  *  only appears where it helps. */
 export function labelRotatable(labelW: number, labelH: number): boolean {
   return pickCellLayout(labelW, labelH) === "row";
+}
+
+/** Whether a label of these cell dimensions should print TURNED by default.
+ *
+ *  Derived from the row layout's own geometry rather than a tuned constant. A
+ *  `row` cell puts the QR on the left as a square of the cell HEIGHT, so the
+ *  caption is left with roughly `w - h` of width. Turning the cell makes it
+ *  portrait: the title then spans the face, giving the caption `h`. So turning
+ *  wins exactly when
+ *
+ *      h > w - h        i.e.   w / h < 2
+ *
+ *  and the crossover is aspect 2 with nothing to tune. The QR barely changes
+ *  size across the turn (row gives it h - 0.14in, portrait gives it 0.86w of
+ *  the turned face), so this is close to free width for the text.
+ *
+ *  Worked against every stock size: a 40x30 roll goes from a 10mm caption
+ *  column to 30mm (it was wrapping "Thumper" to "Th/um/per" and truncating
+ *  "Prusa MINI+"), 50x30 from 20mm to 30mm. A 40x20 and a 4x2 banner sit
+ *  exactly at 2 — a wash, so they are left alone — and an address label like
+ *  Avery 5160 (aspect 2.6) keeps its natural horizontal reading.
+ *
+ *  Only ever true where the turn toggle applies at all (see labelRotatable): a
+ *  portrait or square cell is never turned. */
+export function shouldAutoRotate(labelW: number, labelH: number): boolean {
+  if (!labelRotatable(labelW, labelH)) return false;
+  return labelH > labelW - labelH;
 }
 
 /** The QR's printed side, in INCHES, for a label — the single source of truth

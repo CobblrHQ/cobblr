@@ -11,11 +11,13 @@
 // transport, which is the one route to a Classic device from a browser. An error
 // whose remedy we know must name that remedy.
 
-export type PairingRemedy = "serial" | "none";
+export type PairingRemedy = "serial" | "bridge" | "none";
 
 export interface PairingFailure {
   message: string;
-  /** What the UI should offer next. "serial" means show the connect-as-a-serial-port action. */
+  /** What the UI should offer next. "serial" shows the connect-as-a-serial-port
+   *  action; "bridge" means no browser can get there and the edge bridge is the
+   *  route, so the UI must offer that door rather than dead-ending on an error. */
   remedy: PairingRemedy;
 }
 
@@ -31,11 +33,32 @@ const CLASSIC_SIGNATURES = [
 
 const NOT_FOUND = /No Services found|NotFoundError.*services/i;
 
+/** Chrome refusing to open a Bluetooth Classic serial port.
+ *
+ *  On macOS this is not the printer and not the user: Chrome performs a
+ *  mandatory SDP query before every open and it times out for EVERY paired
+ *  Classic device — two label printers, an iPhone and an Apple Watch all failed
+ *  identically, while native code opened the same printer first try. Filed as
+ *  crbug 539890521. Telling someone to re-pair, restart or buy a different cable
+ *  wastes their evening; the honest answer is that this door does not open and
+ *  another one does. */
+const SERIAL_OPEN_FAILED = /Failed to open serial port|open.*on .?SerialPort/i;
+
 export function explainPairingFailure(e: unknown): PairingFailure {
   const raw = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
 
   // A cancelled chooser is a normal outcome; callers drop it rather than shout.
   if (/No device selected|cancell?ed/i.test(raw)) return { message: "", remedy: "none" };
+
+  if (SERIAL_OPEN_FAILED.test(raw)) {
+    return {
+      remedy: "bridge",
+      message:
+        "Your browser could not open this printer's serial port. On macOS that fails for every " +
+        "Bluetooth Classic device — it is a known browser bug, not something wrong with your " +
+        "printer or your setup. An edge bridge talks to it directly and does work.",
+    };
+  }
 
   if (CLASSIC_SIGNATURES.some((re) => re.test(raw))) {
     return {

@@ -53,11 +53,19 @@ export interface PrinterConfig {
   apiKey?: string;
   /** Only for driver kind "browser-bluetooth". */
   bluetooth?: BluetoothPrinterSettings;
+  /** Edge-bridge routing (shape shared with the browser path — one home for the
+   *  settings type). `instance` names the bridge instance; `bridgeName` picks the
+   *  tunnel channel; `bridgeUrl` marks a bridge on the user's own machine, which
+   *  the BROWSER prints to — this driver layer never fetches it. */
+  bridge?: import("@cobblr/platform-contract/edge-bridge-client").BridgePrinterSettings;
 }
 
 export interface PrintDriver {
-  /** Cheap reachability check. */
-  test(): Promise<{ ok: boolean; error?: string }>;
+  /** Cheap reachability check. `detail` is an optional human-readable line the
+   *  printer reported about ITSELF — a thermal printer's loaded roll and battery,
+   *  say. Reachability alone answers "is it plugged in"; the detail answers "is
+   *  it ready to print", which is the question someone is actually asking. */
+  test(): Promise<{ ok: boolean; error?: string; detail?: string }>;
   /** Submit one document to the queue. */
   print(doc: PrintDoc, opts?: { copies?: number; jobName?: string }): Promise<PrintJobResult>;
 }

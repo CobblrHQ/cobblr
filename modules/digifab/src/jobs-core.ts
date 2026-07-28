@@ -3,6 +3,7 @@
 // and the core-queue poll worker use the same code.
 
 import { platform } from "@cobblr/platform-contract";
+import { isEdgeManagerUrl, edgeInstanceOf } from "@cobblr/platform-contract/edge-bridge-client";
 import type { Kysely } from "kysely";
 import type { DigifabDB } from "./db.js";
 import { resolveDriver } from "./drivers/registry.js";
@@ -181,8 +182,8 @@ export function buildEdgeRelay(
   edge?: { driver?: unknown; config?: unknown } | null,
   shared?: { owner_org?: unknown; owner_conn_id?: unknown; share_id?: unknown; scope?: unknown } | null,
 ): EdgeRelay | null {
-  if (!/^cobblr-edge:/i.test(baseUrl)) return null;
-  const id = (/^cobblr-edge:\/\/(.*)$/i.exec(baseUrl)?.[1] ?? "").replace(/^\/+|\/+$/g, "");
+  if (!isEdgeManagerUrl(baseUrl)) return null;
+  const id = edgeInstanceOf(baseUrl) ?? "";
 
   // SHARED pointer (this connection was redeemed from another workspace's invite).
   // Route through the OWNER's bridge channel, assembling the request from the

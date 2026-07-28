@@ -147,6 +147,12 @@ export {
   type SerialPrinterIdentity,
 } from "./serial-printer.js";
 
+// Testing a bridge on the user's own machine — the server cannot reach it.
+export {
+  isLocalBridgePrinter, testLocalBridge, clientFor, readLocalBridgeStatus, printerDisplayName, bridgeInstanceInfo,
+  discoverLocalPrinters, LOCAL_BRIDGE_URL, LABEL_PRINTER_DRIVERS, type DiscoveredPrinter,
+} from "./bridge-printer.js";
+
 // Turns a browser pairing failure into something actionable — notably Chrome's
 // "Unsupported device.", which is the signature of a Bluetooth CLASSIC printer
 // that needs the serial route rather than a defective one.
@@ -157,5 +163,18 @@ export { explainPairingFailure, type PairingFailure, type PairingRemedy } from "
 export {
   getPrinterStatus, setPrinterStatus, clearPrinterStatus, subscribePrinterStatus,
   usePrinterStatus, describePrinterStatus, type PrinterStatusReading,
+  reportedMedia, needsReportedRemember, describeReportedMedia, type ReportedMedia,
 } from "./printer-status.js";
+// How a printer is REACHED — what tells two entries for one machine apart.
+export {
+  printerReach, printerConnectionLabel, isTabHeldConnection, hasDuplicateName,
+  type PrinterReach,
+} from "./printer-connection.js";
+// The local bridge's live view — what it holds, and the controls to change it.
+export {
+  useBridgeLive, readBridgeLive, setBridgeLink,
+  type BridgeLive, type BridgeInstanceLive, type BridgeLinkState,
+} from "./bridge-live.js";
+export { BridgePrinterCard } from "./BridgePrinterCard";
+export { BatteryGauge, PrinterReadout, batteryTone } from "./BatteryGauge";
 export { ConnectPrinterModal, type ConnectPrinterModalProps, type ConnectPrinterInput } from "./ConnectPrinterModal";

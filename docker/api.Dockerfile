@@ -23,6 +23,7 @@ COPY web/package.json ./web/
 COPY packages/platform-contract/package.json ./packages/platform-contract/
 COPY packages/platform-web/package.json ./packages/platform-web/
 COPY packages/workspace-tools/package.json ./packages/workspace-tools/
+COPY packages/thermal-print/package.json ./packages/thermal-print/
 COPY modules/inventory/package.json ./modules/inventory/
 COPY modules/labels/package.json ./modules/labels/
 COPY modules/projects/package.json ./modules/projects/
@@ -80,6 +81,9 @@ COPY packages/platform-contract ./packages/platform-contract
 # ships dist (built by the fast-build pass below) — type-stripping cannot
 # follow its internal .js relative imports.
 COPY packages/workspace-tools ./packages/workspace-tools
+# The known-model table: labels reads it to size media to the printer.
+COPY packages/thermal-print ./packages/thermal-print
+
 # platform-web is only referenced by module UI code (e.g. inventory's
 # PartDetailPage) — types resolve via tsc but never ship in the api
 # runtime image. Source copy is still required for the inventory tsc

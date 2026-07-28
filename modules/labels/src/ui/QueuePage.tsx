@@ -12,6 +12,7 @@ import { useLabels } from "./context";
 import { BrowsePanel } from "./BrowsePanel";
 import { CodesPanel } from "./CodesPanel";
 import { renderPrintSheetHtml } from "./renderPrintSheet";
+import { LabelPrintLayer } from "./LabelPrintLayer";
 import { useScreenCalibration } from "./useScreenCalibration";
 import { ActualSizeControl } from "./ActualSizeControl";
 import { liveQrUrl } from "../live-qr-url";
@@ -33,15 +34,19 @@ import {
   papersForPrinter,
   groupPapersByClass,
   papersOfType,
+  mediaForReading,
+  healedSettings,
   qrSideForLabel,
   labelRotatable,
+  shouldAutoRotate,
   type MediaTypeFilter,
 } from "../label-sizes";
 import { bleSettingsForSize } from "../ble-media";
 // Serial transport for Bluetooth-CLASSIC printers a browser cannot reach over Web
 // Bluetooth. Same renderer + encoder as the Bluetooth path; only the pipe differs.
-import { isWebSerialAvailable, NO_WEB_SERIAL, printBatchOverSerial, ConnectPrinterModal, usePrinterStatus, describePrinterStatus, getPrinterStatus } from "@cobblr/platform-web";
-import { rememberedSelection, needsRemember, byRecentlyUsed, recentSizeKeys } from "../printer-memory";
+import { isWebSerialAvailable, NO_WEB_SERIAL, printBatchOverSerial, ConnectPrinterModal, usePrinterStatus, describePrinterStatus, getPrinterStatus,
+  isLocalBridgePrinter, readLocalBridgeStatus, setPrinterStatus, bridgeInstanceInfo, printerDisplayName, reportedMedia, needsReportedRemember, BatteryGauge, printerConnectionLabel, printerReach } from "@cobblr/platform-web";
+import { rememberedSelection, needsRemember, byRecentlyUsed, recentSizeKeys, sizeByPaper, withSizeForPaper } from "../printer-memory";
 import { assessScannability } from "../print/qr-overlay";
 import type { CustomLabelSize, Printable } from "./api";
 import { NewSizeModal } from "./NewSizeModal";
@@ -52,6 +57,8 @@ import { queueToolbarMode, canRevertToStock, resolvePrintTarget } from "./queue-
 const PAPER_LS = "cobblr:label-paper";
 const SIZE_LS = "cobblr:label-size";
 const ROTATE_LS = "cobblr:label-rotate";
+// Whether the turn above was a person's choice rather than the shape rule.
+const ROTATE_EXPLICIT_LS = "cobblr:label-rotate-explicit";
 // Sentinel print target: the browser/system print dialog (⌘P), always available.
 // Distinct from a printer id so a saved printer is never confused with it.
 const SYSTEM_TARGET = "__system__";
@@ -68,32 +75,6 @@ function qrSvg(payload: string, ecLevel: "M" | "H" = "M"): Promise<string> {
  *  SVG uses, so the scannability read reflects the real symbol drawn. */
 function qrModuleCount(payload: string, ecLevel: "M" | "H"): number {
   return QRCode.create(payload, { errorCorrectionLevel: ecLevel }).modules.size;
-}
-
-/** Print a self-contained HTML sheet from the CURRENT page — no new tab or window.
- *  Mount it in a hidden iframe, print THAT iframe (it carries its own @page size,
- *  so it prints 1:1), and clean up once the dialog resolves. srcdoc's onload fires
- *  after the inline QR SVGs have parsed, so there's no render-race timeout. */
-function printHtmlViaIframe(html: string): void {
-  const iframe = document.createElement("iframe");
-  iframe.setAttribute("aria-hidden", "true");
-  iframe.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;";
-  iframe.srcdoc = html;
-  iframe.onload = () => {
-    const win = iframe.contentWindow;
-    if (!win) {
-      iframe.remove();
-      return;
-    }
-    // Chrome fires onafterprint on both accept AND cancel; a long fallback covers
-    // browsers that don't, so a cancelled dialog never leaks the iframe.
-    const cleanup = () => iframe.remove();
-    win.onafterprint = cleanup;
-    setTimeout(cleanup, 120_000);
-    win.focus();
-    win.print();
-  };
-  document.body.appendChild(iframe);
 }
 
 export function QueuePage() {
@@ -142,13 +123,26 @@ export function QueuePage() {
    *  before pressing print. Falls back to connection state, and never claims
    *  "not connected" for a serial printer, whose link is opened on demand and
    *  therefore has no tracked state to report. */
-  const printerSub = (p: { id: string; driver: string }, live: boolean): string => {
+  /** What to say under a printer in the picker.
+   *
+   *  The ROUTE always leads, because it is the only thing that tells two entries
+   *  for the same machine apart — a PM220S through the bridge and the same
+   *  PM220S through this browser are one printer with two very different
+   *  lifetimes. A reading used to REPLACE this line, so the moment a printer was
+   *  working well enough to report its roll, the fact that distinguished it
+   *  vanished. It appends instead. */
+  const printerSub = (
+    p: { id: string; driver: string; base_url?: string | null; settings?: Record<string, unknown> },
+    live: boolean,
+  ): string => {
+    const parts = [printerConnectionLabel(p)];
+    // bluetooth-only: BLE is the only transport with a LIVE session we track
+    // (heldPrinterName). A serial link is opened on demand and has no tracked
+    // state, so claiming "not connected" for one would be inventing a fault.
+    if (p.driver === "browser-bluetooth") parts.push(live ? "connected" : "not connected");
     const known = describePrinterStatus(getPrinterStatus(p.id));
-    if (known) return known;
-    // bluetooth-only: BLE is the only transport with a live session we track.
-    if (p.driver === "browser-bluetooth") return live ? "Bluetooth · connected" : "Bluetooth · not connected";
-    if (p.driver === "browser-serial") return "Bluetooth";
-    return "Network";
+    if (known) parts.push(known);
+    return parts.join(" · ");
   };
 
   const isBleDefault =
@@ -159,9 +153,47 @@ export function QueuePage() {
   // be gated apart again (the regression: no printer hid the pickers but kept Print,
   // so system-printing to a normal printer had no way to pick sheet + label size).
   const toolbar = queueToolbarMode(defaultPrinter);
+  // What the local bridge is fronting on each instance. Printers added before
+  // the bridge's driver kind was recorded carry no clue that they run a roll,
+  // so without this they funnel to sheet media and open on US Letter. The
+  // bridge can always answer, so the heal is a question rather than a
+  // migration. One call, no device touched.
+  const [instanceInfo, setInstanceInfo] = useState<Parameters<typeof healedSettings>[1]>({});
+  const hasLocalBridge = !!defaultPrinter && isLocalBridgePrinter(defaultPrinter.settings);
+  useEffect(() => {
+    if (!hasLocalBridge) return;
+    let live = true;
+    void bridgeInstanceInfo().then((m) => { if (live) setInstanceInfo(m); });
+    return () => { live = false; };
+  }, [hasLocalBridge, defaultPrinter?.id]);
+  // Write what the bridge reported back onto the row, so the NEXT load knows
+  // the width before any fetch answers — the async gap here is what let the
+  // capability flicker (unknown → guess → real) and double-snap a remembered
+  // 40×30 down to 1½×1½". Live info still wins at render (healedSettings), so
+  // this copy can never pin a recalibrated bridge.
+  useEffect(() => {
+    const p = defaultPrinter;
+    if (!p || !hasLocalBridge) return;
+    const st = (p.settings ?? {}) as Record<string, unknown>;
+    const bridge = st.bridge as { instance?: string; driver?: string; device?: unknown } | undefined;
+    const info = bridge?.instance ? instanceInfo[bridge.instance] : undefined;
+    if (!info) return;
+    const next = { ...bridge, driver: bridge?.driver ?? info.driver, device: info.device };
+    if (JSON.stringify(next) === JSON.stringify(bridge)) return; // refetch after save re-enters here
+    void api.updatePrinter(p.id, { settings: { ...st, bridge: next } }).catch(() => {});
+  }, [defaultPrinter, instanceInfo, hasLocalBridge, api])
+  // What this printer last told us about ITSELF. Subscribed here rather than
+  // further down because the capability below prefers it: a printer that has
+  // reported a 40 x 30 roll has settled the question of what it can feed, and
+  // no stored setting should be allowed to argue with it.
+  const reading = usePrinterStatus(defaultPrinter?.id ?? null);
   // Funnel the paper options to what the default printer can feed (its kind + max
   // width) — the same rule as the auto-print modal, so the platform is consistent.
-  const cap = defaultPrinter ? printerCapability(defaultPrinter.driver, defaultPrinter.settings) : null;
+  const cap = defaultPrinter
+    ? reading?.widthMm
+      ? { kind: "thermal" as const, maxWidthMm: reading.widthMm }
+      : printerCapability(defaultPrinter.driver, healedSettings(defaultPrinter.settings, instanceInfo))
+    : null;
   const funnelPapers = cap ? papersForPrinter(cap) : PAPER_SIZES;
   // When a printer's capability isn't narrowing the list (system print, no printer),
   // let the user say what they're printing on — roll vs sheet — to filter down to,
@@ -184,14 +216,14 @@ export function QueuePage() {
   // Connecting a printer lives in ConnectPrinterModal (platform-web): one door,
   // no transport choice pushed onto the user.
   const [connectOpen, setConnectOpen] = useState(false);
-  // Re-render the picker when any printer reports in.
-  usePrinterStatus(defaultPrinter?.id ?? null);
 
   // Paper + label-size selection, persisted so a workshop keeps its
   // printer setup between visits.
   const [btProgress, setBtProgress] = useState<{ done: number; total: number } | null>(null);
   const [paperKey, setPaperKey] = useState(
-    () => localStorage.getItem(PAPER_LS) ?? PAPER_SIZES[0]!.key,
+    // `||` not `??`: a cleared pick persists as "" and must fall through to the
+    // default here; the restore/snap effects below then set the truthful value.
+    () => localStorage.getItem(PAPER_LS) || PAPER_SIZES[0]!.key,
   );
   const [pickedSize, setPickedSize] = useState(
     () => localStorage.getItem(SIZE_LS) ?? "",
@@ -199,7 +231,92 @@ export function QueuePage() {
   // Turn the label content 90° (portrait from a landscape face). Remembered, but
   // only ever APPLIED to a non-square size (see effectiveRotate) so it can't
   // silently rotate a square where the toggle is hidden.
+  // How each media was last tiled, so returning to a roll returns to the layout
+  // you chose on it. Seeded per printer by the restore effect below.
+  const [sizeForPaper, setSizeForPaper] = useState<Record<string, string>>({});
   const [rotate, setRotate] = useState(() => localStorage.getItem(ROTATE_LS) === "1");
+  // Whether the TURN came from a person or from the aspect rule. Only a real
+  // toggle survives a size change; an auto-derived turn re-derives, so picking
+  // a differently-shaped label gets the right default instead of inheriting a
+  // turn that suited the previous one.
+  const rotateExplicit = useRef(localStorage.getItem(ROTATE_EXPLICIT_LS) === "1");
+
+  // Ask a bridged printer what it has loaded, as soon as it is the target.
+  //
+  // Nobody should have to press a button to find out what is already in the
+  // machine, and until this ran the page opened on whatever media was last
+  // stored — US Letter, on a 40mm label printer, with the printer sitting there
+  // able to answer. One read per printer per tab: the answer changes only when
+  // someone swaps the roll, and on a Bluetooth Classic printer each read costs a
+  // real serial session.
+  const [checking, setChecking] = useState(false);
+  /** Persist the printer's own report on its row, so it survives the printer
+   *  being off and follows to other computers. Best-effort with a loop guard,
+   *  the same contract as the size memory below. Media only — battery drains,
+   *  so a stored battery would come back confidently wrong. */
+  const rememberReading = (p: { id: string; settings?: Record<string, unknown> }, r: { widthMm?: number; heightMm?: number }) => {
+    const st = (p.settings ?? {}) as Record<string, unknown>;
+    if (!needsReportedRemember(st, r)) return;
+    void api.updatePrinter(p.id, {
+      settings: { ...st, lastReportedMediaMm: { widthMm: r.widthMm, heightMm: r.heightMm, at: new Date().toISOString() } },
+    }).catch(() => {});
+  };
+  /** Ask the printer what it has loaded. Used by the automatic read below and
+   *  by the Check button, so a manual check can never diverge from the one the
+   *  page does for you. */
+  const readPrinter = async (p: { id: string; settings?: Record<string, unknown> }): Promise<void> => {
+    if (!isLocalBridgePrinter(p.settings)) return;
+    setChecking(true);
+    try {
+      const r = await readLocalBridgeStatus(p.settings.bridge);
+      if (r.responded) { setPrinterStatus(p.id, r); rememberReading(p, r); }
+      else toast.info("This printer did not report what it has loaded. Pick the label size below.");
+    } catch {
+      toast.error("Could not reach the printer through the bridge. Is the bridge running?");
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const askedRef = useRef(new Set<string>());
+  useEffect(() => {
+    const p = defaultPrinter;
+    if (!p || !isLocalBridgePrinter(p.settings) || askedRef.current.has(p.id)) return;
+    askedRef.current.add(p.id);
+    // Silent on the automatic pass: a printer that cannot answer is not an
+    // error, most cannot, and an unprompted complaint about it is noise. The
+    // Check button says so explicitly, because there someone asked.
+    void readLocalBridgeStatus((p.settings as { bridge: Parameters<typeof readLocalBridgeStatus>[0] }).bridge)
+      .then((r) => { if (r.responded) { setPrinterStatus(p.id, r); rememberReading(p, r); } })
+      .catch(() => {});
+  }, [defaultPrinter?.id]);
+
+  // Follow the roll the printer reported. Only when it names a size we stock, and
+  // only away from a media the printer cannot physically feed — someone who has
+  // deliberately chosen another roll of the same width keeps their choice.
+  useEffect(() => {
+    if (!reading?.widthMm || !reading.heightMm) return;
+    const match = mediaForReading(reading.widthMm, reading.heightMm);
+    if (!match || match.paperKey === paperKey) return;
+    setPaperKey(match.paperKey);
+    setPickedSize(match.sizeKey);
+  }, [reading?.widthMm, reading?.heightMm]);
+
+  /** What the printer says is loaded: this tab's live reading, else the roll
+   *  remembered on its row (which survives the printer being off). */
+  const reportedRoll =
+    reading?.widthMm && reading?.heightMm
+      ? { widthMm: reading.widthMm, heightMm: reading.heightMm }
+      : reportedMedia(defaultPrinter?.settings);
+  /** The media the reported roll corresponds to, and whether we are on it.
+   *
+   *  The annotation repeats the SIZE only when it disagrees with the picker.
+   *  Agreement needs no number — the dropdown two inches away already shows it,
+   *  and restating it was the duplication that made the first attempt at this
+   *  read like a second media selector. Disagreement is news worth the words. */
+  const reportedPaperKey = reportedRoll ? mediaForReading(reportedRoll.widthMm, reportedRoll.heightMm)?.paperKey : undefined;
+  const onReportedMedia = !!reportedPaperKey && reportedPaperKey === paperKey;
+
   const [codesOpen, setCodesOpen] = useState(false);
   const [newSizeOpen, setNewSizeOpen] = useState(false);
   // Workspace-defined sizes (dimensions in; grid derived server-side).
@@ -255,18 +372,51 @@ export function QueuePage() {
       : null;
   const canRotate = !!faceWH && labelRotatable(faceWH.w, faceWH.h);
   const effectiveRotate = rotate && canRotate;
-  useEffect(() => localStorage.setItem(ROTATE_LS, rotate ? "1" : "0"), [rotate]);
-  useEffect(() => localStorage.setItem(PAPER_LS, paperKey), [paperKey]);
-  // Snap the paper to one the default printer can feed (a persisted 4×6 must not
-  // stick on a 2" printer).
+  // Default the TURN from the label's shape, unless a person has set it. A row
+  // cell gives its caption only (width - height) because the QR takes a
+  // height-square; turning hands the caption the full face. See
+  // shouldAutoRotate for the derivation — the crossover is aspect 2 exactly.
   useEffect(() => {
-    if (visiblePapers.length && !visiblePapers.some((p) => p.key === paperKey)) {
-      setPaperKey(visiblePapers[0]!.key);
-    }
-  }, [visiblePapers, paperKey]);
+    if (rotateExplicit.current || !faceWH) return;
+    const want = shouldAutoRotate(faceWH.w, faceWH.h);
+    setRotate((cur) => (cur === want ? cur : want));
+  }, [faceWH?.w, faceWH?.h]);
+  useEffect(() => {
+    localStorage.setItem(ROTATE_LS, rotate ? "1" : "0");
+    localStorage.setItem(ROTATE_EXPLICIT_LS, rotateExplicit.current ? "1" : "0");
+  }, [rotate]);
+  useEffect(() => localStorage.setItem(PAPER_LS, paperKey), [paperKey]);
+  // A pick the target printer cannot feed is CLEARED, never replaced. Snapping
+  // to the first fitting preset invented a size — a powered-off PM240 landed on
+  // 1½×1½", stock nobody chose — and the memory write-back below then stamped
+  // that invention over the printer's real remembered roll. Blank means "pick
+  // yourself" and writes nothing. System print (no printer capability) keeps
+  // its old snap: there is no machine to be wrong about.
+  const printerFunnel = !!cap;
+  useEffect(() => {
+    if (!paperKey || !visiblePapers.length || visiblePapers.some((p) => p.key === paperKey)) return;
+    setPaperKey(printerFunnel ? "" : visiblePapers[0]!.key);
+  }, [visiblePapers, paperKey, printerFunnel]);
   useEffect(() => {
     if (sizeKey) localStorage.setItem(SIZE_LS, sizeKey);
   }, [sizeKey]);
+
+  // Returning to a media returns to how you last tiled IT. Without this the
+  // picker fell to that paper's first entry, so a 50 × 30 chosen as 2-up came
+  // back as 1-up after any detour through another size.
+  useEffect(() => {
+    const want = sizeForPaper[paperKey];
+    if (want && want !== pickedSize) setPickedSize(want);
+    // sizeForPaper is read, not depended on: it changes when a choice is
+    // recorded below, and re-running then would fight a fresh pick.
+  }, [paperKey]);
+
+  // Record the pick against its media. Derived state (sizeKey) rather than the
+  // raw pick, so a fallback the user never chose is never stored as a choice.
+  useEffect(() => {
+    if (!paperKey || !sizeKey) return;
+    setSizeForPaper((cur) => (cur[paperKey] === sizeKey ? cur : { ...cur, [paperKey]: sizeKey }));
+  }, [paperKey, sizeKey]);
 
   // ── the loaded size lives with the PRINTER, not this browser ───────────────
   // localStorage only remembers on the machine you set it from, so printing from a
@@ -289,10 +439,24 @@ export function QueuePage() {
     if (restoredFor.current === p.id) return; // already restored; a refetch is not a switch
     restoredFor.current = p.id;
     skipWriteOnce.current = true;
+    setSizeForPaper(sizeByPaper(p.settings as Record<string, unknown> | undefined));
     const remembered = rememberedSelection(p.settings as Record<string, unknown> | undefined);
     if (remembered.paperKey) setPaperKey(remembered.paperKey);
     if (remembered.sizeKey) setPickedSize(remembered.sizeKey);
+    rotateExplicit.current = remembered.rotateExplicit === true;
     if (remembered.rotate !== undefined) setRotate(remembered.rotate);
+    // Nothing remembered → what the printer itself last REPORTED, which
+    // survives it being off. Still nothing → leave the pick alone; if it does
+    // not fit this printer the clear-effect blanks it, and inventing one here
+    // is exactly the 1½×1½ bug.
+    if (!remembered.paperKey && !remembered.sizeKey) {
+      const rep = reportedMedia(p.settings as Record<string, unknown> | undefined);
+      const m = rep && mediaForReading(rep.widthMm, rep.heightMm);
+      if (m) {
+        setPaperKey(m.paperKey);
+        setPickedSize(m.sizeKey);
+      }
+    }
   }, [defaultPrinter]);
 
   // Write the pick back to the printer. Gated on the restore having run for THIS
@@ -304,11 +468,19 @@ export function QueuePage() {
     if (!p || !sizeKey || restoredFor.current !== p.id) return;
     if (skipWriteOnce.current) { skipWriteOnce.current = false; return; }
     const st = (p.settings ?? {}) as Record<string, unknown>;
-    if (!needsRemember(st, { sizeKey, paperKey, rotate })) return;
+    if (!needsRemember(st, { sizeKey, paperKey, rotate, rotateExplicit: rotateExplicit.current })) return;
     // Best-effort: a remembered size is a convenience and must never block printing.
     void api
       .updatePrinter(p.id, {
-        settings: { ...st, lastSizeKey: sizeKey, lastPaperKey: paperKey, lastRotate: rotate, lastUsedAt: new Date().toISOString() },
+        settings: {
+          ...st,
+          lastSizeKey: sizeKey,
+          lastPaperKey: paperKey,
+          lastRotate: rotate,
+          lastRotateExplicit: rotateExplicit.current,
+          lastSizeByPaper: withSizeForPaper(st, paperKey, sizeKey) ?? sizeByPaper(st),
+          lastUsedAt: new Date().toISOString(),
+        },
       })
       .catch(() => {});
   }, [defaultPrinter, sizeKey, paperKey, rotate, api]);
@@ -435,17 +607,18 @@ export function QueuePage() {
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't forget the printer"),
   });
 
-  // Browser (⌘P) print. Prints from THIS page via a hidden iframe (no separate
-  // tab), using the SAME client-built printables the preview shows, and does NOT
-  // touch the queue yet. Like the Rollo path, raise a "mark printed" toast and
-  // only record + clear the batch once the user confirms the paper looks right;
-  // until then the queue and preview stay exactly as they were. (Was: api.print()
-  // snapshotted + cleared the queue before the dialog even opened, so cancelling
-  // still lost the labels — the author, 2026-07-23.)
+  // Browser (System print) button. Fires the NATIVE window.print(); the mounted
+  // <LabelPrintLayer> carries an @media-print rule that hides the app and leaves
+  // only the sheet, so the OS dialog shows just the labels at real size. The SAME
+  // mechanism catches the user's own ⌘P (a hidden iframe never could — it printed
+  // the whole page). Does NOT touch the queue yet: like the Rollo path, raise a
+  // "mark printed" toast and only record + clear the batch once the user confirms
+  // the paper looks right. (Was: api.print() snapshotted + cleared the queue before
+  // the dialog even opened, so cancelling still lost the labels — the author, 2026-07-23.)
   const doBrowserPrint = () => {
     const printables = previewQr.data ?? [];
     if (!printables.length) return;
-    printHtmlViaIframe(renderPrintSheetHtml(printables, sizeKey, { customSizes: customList, rotate: effectiveRotate }));
+    window.print();
     const itemIds = items.map((it) => it.id);
     const count = itemIds.length;
     toast.action(`Printing ${count} label${count === 1 ? "" : "s"}. Mark printed once the paper looks right?`, {
@@ -699,7 +872,7 @@ export function QueuePage() {
               ) : (
                 <Monitor size={14} className="text-faint" />
               )}
-              <span className="font-medium max-w-[10rem] truncate">{defaultPrinter ? defaultPrinter.name : "System print"}</span>
+              <span className="font-medium max-w-[10rem] truncate">{defaultPrinter ? printerDisplayName(defaultPrinter.name) : "System print"}</span>
               {isBleDefault && (
                 <span
                   className={`w-1.5 h-1.5 rounded-full ${bleLive ? "bg-emerald-500" : "bg-slate-400 dark:bg-slate-600"}`}
@@ -723,8 +896,14 @@ export function QueuePage() {
                   return (
                     <TargetItem
                       key={p.id}
-                      icon={ble ? <Bluetooth size={15} /> : <Wifi size={15} />}
-                      title={p.name}
+                      icon={(() => {
+                        // The icon follows the ROUTE, so the two entries for one
+                        // machine differ at a glance and not only in the text.
+                        const k = printerReach(p).kind;
+                        if (k === "browser") return <Bluetooth size={15} />;
+                        return k === "network" ? <Wifi size={15} /> : <Printer size={15} />;
+                      })()}
+                      title={printerDisplayName(p.name)}
                       sub={printerSub(p, live)}
                       active={defaultPrinter?.id === p.id}
                       onClick={() => { setPickedTarget(p.id); setTargetMenuOpen(false); }}
@@ -749,16 +928,16 @@ export function QueuePage() {
                 {defaultPrinter && (
                   <TargetItem
                     icon={<Settings2 size={15} />}
-                    title={`${defaultPrinter.name} settings…`}
+                    title={`${printerDisplayName(defaultPrinter.name)} settings…`}
                     onClick={() => { setTargetMenuOpen(false); if (isBleDefault) setPrinterConfigOpen(true); else navigate("/configuration/print"); }}
                   />
                 )}
                 {defaultPrinter && (
                   <TargetItem
                     icon={<Trash2 size={15} />}
-                    title={`Forget ${defaultPrinter.name}…`}
+                    title={`Forget ${printerDisplayName(defaultPrinter.name)}…`}
                     danger
-                    onClick={() => { setTargetMenuOpen(false); setConfirmForget({ id: defaultPrinter.id, name: defaultPrinter.name }); }}
+                    onClick={() => { setTargetMenuOpen(false); setConfirmForget({ id: defaultPrinter.id, name: printerDisplayName(defaultPrinter.name) }); }}
                   />
                 )}
               </div>
@@ -846,6 +1025,11 @@ export function QueuePage() {
                 }}
                 className="input !w-auto !py-1 text-xs"
               >
+                {/* Blank = the stored pick does not fit this printer and we will
+                    not invent one. Without an explicit option the browser would
+                    silently DISPLAY the first entry while value stays "" — which
+                    looks exactly like the fabrication this replaces. */}
+                {!paperKey && <option value="">Pick media…</option>}
                 {paperGroups.map((g) => (
                   <optgroup key={g.class} label={g.label}>
                     {g.papers.map((p) => (
@@ -856,6 +1040,29 @@ export function QueuePage() {
                 <option value="__newsize__">＋ Custom size…</option>
               </select>
             </label>
+            {reportedRoll && onReportedMedia && (
+              <span
+                className="inline-flex items-center gap-1 text-[11px] text-muted dark:text-slate-400"
+                title={`${printerDisplayName(defaultPrinter?.name ?? "The printer")} reports ${reportedRoll.widthMm} × ${reportedRoll.heightMm} mm loaded, and this is it.`}
+              >
+                <Check className="h-3 w-3 shrink-0 text-emerald-500" />
+                as loaded
+              </span>
+            )}
+            {reportedRoll && reportedPaperKey && !onReportedMedia && (
+              <button
+                type="button"
+                onClick={() => {
+                  const m = mediaForReading(reportedRoll.widthMm, reportedRoll.heightMm);
+                  if (m) { setPaperKey(m.paperKey); setPickedSize(m.sizeKey); }
+                }}
+                className="inline-flex items-center gap-1 rounded-md border border-amber-400/60 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition"
+                title="Switch to the roll the printer says it has loaded"
+              >
+                <Printer className="h-3 w-3 shrink-0" />
+                printer has {reportedRoll.widthMm} × {reportedRoll.heightMm} mm
+              </button>
+            )}
             <label className="flex items-center gap-1.5">
               <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">label</span>
               <select
@@ -866,6 +1073,7 @@ export function QueuePage() {
                 }}
                 className="input !w-72 !py-1 text-xs"
               >
+                {!sizeKey && <option value="">Pick media first</option>}
                 {recentSizes.length > 0 && (
                   <optgroup label="Recently used">
                     {recentSizes.map((s) => (
@@ -891,14 +1099,14 @@ export function QueuePage() {
             {canRotate && (
               <label
                 className="flex items-center gap-1.5"
-                title="Turn the label content 90°, so a landscape face (like 50 × 30 mm) prints portrait. The media itself is unchanged."
+                title="Turn the label content 90°, so a landscape face (like 50 × 30 mm) prints portrait. On by default where turning gives the text more room than it loses; click to decide for yourself. The media itself is unchanged."
               >
                 <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">turn</span>
                 <button
                   type="button"
                   role="switch"
                   aria-checked={rotate}
-                  onClick={() => setRotate((v) => !v)}
+                  onClick={() => { rotateExplicit.current = true; setRotate((v) => !v); }}
                   className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition ${
                     rotate
                       ? "border-accent bg-accent/10 text-accent"
@@ -909,6 +1117,38 @@ export function QueuePage() {
                   90°
                 </button>
               </label>
+            )}
+            {/* What the printer says about ITSELF, next to the media it applies
+                to. This lived in a toast: the one place a reading cannot be
+                looked up when you actually want it, which is while choosing the
+                media. Absent when the printer never answered, because most
+                cannot and an empty chip would read as a fault. */}
+            {defaultPrinter && isLocalBridgePrinter(defaultPrinter.settings) && (
+              <button
+                type="button"
+                disabled={checking}
+                onClick={() => void readPrinter(defaultPrinter)}
+                title={
+                  reading?.widthMm && reading?.heightMm
+                    ? `${reading.widthMm} × ${reading.heightMm} mm roll reported by ${printerDisplayName(defaultPrinter.name)}. Click to read again.`
+                    : `Ask ${printerDisplayName(defaultPrinter.name)} what it has loaded`
+                }
+                className="inline-flex items-center gap-1.5 rounded-md border border-line px-2 py-1 text-[11px] text-muted transition hover:border-accent hover:text-accent disabled:opacity-60 dark:border-slate-700 dark:text-slate-400"
+              >
+                {checking ? (
+                  <>
+                    <Printer className="h-3.5 w-3.5 shrink-0 animate-pulse" />
+                    asking the printer…
+                  </>
+                ) : reading?.battery ? (
+                  <BatteryGauge battery={reading.battery} />
+                ) : (
+                  <>
+                    <Printer className="h-3.5 w-3.5 shrink-0" />
+                    Check printer
+                  </>
+                )}
+              </button>
             )}
           </div>
         )}
@@ -1001,7 +1241,12 @@ export function QueuePage() {
           </div>
 
           <div className="xl:flex-1 xl:min-w-0 overflow-x-auto">
-            <SheetPreview
+            {!sizeKey && (
+              <div className="rounded-xl border border-dashed border-line dark:border-slate-700 p-8 text-center text-sm text-faint dark:text-slate-500">
+                Pick a media size above to preview and print.
+              </div>
+            )}
+            {sizeKey && <SheetPreview
               sizeKey={sizeKey}
               printables={previewQr.data ?? []}
               paperW={paper?.width_in ?? 8.5}
@@ -1009,8 +1254,18 @@ export function QueuePage() {
               mediaLabel={mediaLabel}
               customSizes={customList}
               rotate={effectiveRotate}
-            />
+            />}
           </div>
+          {/* Print-only layer: makes both the System-print button and the browser's
+              own ⌘P output just the sheet (see LabelPrintLayer). */}
+          {sizeKey && (
+            <LabelPrintLayer
+              printables={previewQr.data ?? []}
+              sizeKey={sizeKey}
+              customSizes={customList}
+              rotate={effectiveRotate}
+            />
+          )}
         </div>
       )}
 
@@ -1049,6 +1304,9 @@ export function QueuePage() {
           const created = await api.createPrinter({
             name: input.name,
             driver: input.driver,
+            // Only a bridge printer carries a manager URL; browser-driven
+            // printers have no network address.
+            ...(input.base_url ? { base_url: input.base_url } : {}),
             settings: input.settings,
             is_default: true,
           });

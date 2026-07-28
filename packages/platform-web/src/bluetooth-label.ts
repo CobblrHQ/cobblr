@@ -254,6 +254,15 @@ export async function connectPrinter(settings: BluetoothPrinterSettings): Promis
  *  from the (hardware-confirmed) profile: width, dialect, orientation, top margin,
  *  and — for die-cut stock — the label height + gap split from pitchMm.
  *  Unit-tested against the bundled profiles. */
+/** True when this model's BLE advertisement accepts writes and does nothing.
+ *
+ *  A decoy is worse than no BLE at all, because everything looks like it worked:
+ *  it pairs, every write is accepted, and no label ever comes out. Recognising
+ *  the model is only safe if we also refuse to pair it this way. */
+export function isBleDecoy(p: PrinterProfile | null): boolean {
+  return p?.connectivity?.ble === "decoy";
+}
+
 export function settingsFromProfile(p: PrinterProfile): BluetoothPrinterSettings {
   const labelHeightMm = p.labelHeightMm ?? (p.pitchMm != null ? Math.round((p.pitchMm - 2) * 10) / 10 : undefined);
   const gapMm =
@@ -485,11 +494,11 @@ function drawCenterCode(ctx: CanvasRenderingContext2D, code: string, cx: number,
  *  below; row = QR left, caption right), and the centre-code badge. Exported so a
  *  preview can show exactly what will be sent. `heightDots` defaults to a portrait
  *  QR-plus-caption box for callers that haven't passed a face height yet. */
-export async function renderLabelBitmap(
+export async function renderLabelCanvas(
   content: LabelContent,
   widthDots: number,
   heightDots?: number,
-): Promise<MonoBitmap> {
+): Promise<{ canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D }> {
   const W = Math.max(1, Math.round(widthDots));
   const H = Math.max(1, Math.round(heightDots ?? widthDots * 1.25));
   const canvas = document.createElement("canvas");
@@ -558,8 +567,36 @@ export async function renderLabelBitmap(
     await drawQr(cx + (cw - qrSize) / 2, cy + chAll - qrSize - floor, qrSize);
   }
 
-  const img = ctx.getImageData(0, 0, W, H);
-  return packMonoBitmap(new Uint8Array(img.data), W, H, 128);
+  return { canvas, ctx };
+}
+
+/** Draw the label and pack it to 1 bpp — the BLE/serial path, where the browser
+ *  encodes the printer dialect itself. */
+export async function renderLabelBitmap(
+  content: LabelContent,
+  widthDots: number,
+  heightDots?: number,
+): Promise<MonoBitmap> {
+  const { canvas, ctx } = await renderLabelCanvas(content, widthDots, heightDots);
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  return packMonoBitmap(new Uint8Array(img.data), canvas.width, canvas.height, 128);
+}
+
+/** Draw the label and encode it as a PNG — the edge-bridge path.
+ *
+ *  The bridge rasterises the PNG at ITS configured width and applies ITS
+ *  calibrated geometry (top margin, gap, direction, dialect). Sending pixels
+ *  rather than pre-encoded printer bytes keeps one source of truth for a
+ *  printer's physical calibration: the bridge instance config. */
+export async function renderLabelPng(
+  content: LabelContent,
+  widthDots: number,
+  heightDots?: number,
+): Promise<Blob> {
+  const { canvas } = await renderLabelCanvas(content, widthDots, heightDots);
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+  if (!blob) throw new Error("could not encode the label as PNG");
+  return blob;
 }
 
 /** Encode a bitmap in whichever dialect this printer speaks. */

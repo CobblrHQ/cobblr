@@ -19,10 +19,10 @@ export function isDriverKind(s: string): s is DriverKind {
 }
 
 /** A `cobblr-edge://…` manager URL routes through the on-site edge bridge rather
- *  than a direct address — the transport, not the nominal driver, changes. */
-export function isEdgeManagerUrl(baseUrl: string): boolean {
-  return /^cobblr-edge:/i.test(baseUrl);
-}
+ *  than a direct address — the transport, not the nominal driver, changes.
+ *  Defined with the protocol so the UI can ask the same question. */
+import { isEdgeManagerUrl } from "@cobblr/platform-contract/edge-bridge-client";
+export { isEdgeManagerUrl };
 
 /** True for printers the SERVER cannot reach AT ALL: the browser holds the radio,
  *  so a wire or automation can never print to them and the UI must say so.

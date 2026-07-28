@@ -33,6 +33,7 @@ import type {
   UploadResult,
 } from "./types.js";
 import { assertSafeMachineUrl } from "./ssrf.js";
+import { edgeInstanceOf } from "@cobblr/platform-contract/edge-bridge-client";
 
 /** A relay transport — when present, the driver routes its edge-adapter calls
  *  through it (the cloud→edge tunnel) instead of dialing the bridge directly.
@@ -104,9 +105,8 @@ export class EdgeAdapterDriver implements MachineDriver {
     // Optional shared-secret: sent as a Bearer if the connection stored an apiKey.
     this.token = cfg.apiKey ?? null;
     this.relay = relay ?? null;
-    const m = /^cobblr-edge:\/\/(.*)$/i.exec(this.base);
-    const id = (m?.[1] ?? "").replace(/^\/+|\/+$/g, "");
-    this.tunnelPrefix = id ? `/${id}` : "";
+    const instance = edgeInstanceOf(this.base);
+    this.tunnelPrefix = instance ? `/${instance}` : "";
   }
 
   private headers(extra: Record<string, string> = {}): Record<string, string> {

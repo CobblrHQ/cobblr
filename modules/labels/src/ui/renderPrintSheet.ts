@@ -266,6 +266,44 @@ ${sheets}
 </html>`;
 }
 
+/** A print-only FRAGMENT to embed in the CURRENT page (not a standalone doc): the
+ *  sheets plus a <style> that, in print, hides everything except this layer and
+ *  sizes the page to the paper. This is what makes ⌘P and window.print() output
+ *  just the labels, at real size, with no iframe. Reuses renderPrintSheetHtml so
+ *  the printed geometry is identical to the on-screen preview. */
+export function renderPrintSheetFragment(
+  items: Printable[],
+  sizeKey: string,
+  opts: { customSizes?: CustomLabelSize[]; rotate?: boolean } = {},
+): string {
+  const doc = renderPrintSheetHtml(items, sizeKey, {
+    customSizes: opts.customSizes,
+    rotate: opts.rotate,
+  });
+  const styleStart = doc.indexOf("<style>");
+  const styleEnd = doc.indexOf("</style>");
+  const bodyStart = doc.indexOf("<body>");
+  const bodyEnd = doc.indexOf("</body>");
+  // The unknown-size fallback is a bare <body> with no <style> — nothing to print.
+  if (styleStart < 0 || styleEnd < 0 || bodyStart < 0 || bodyEnd < 0) return "";
+  const css = doc
+    .slice(styleStart + "<style>".length, styleEnd)
+    // Keep the HOST page's margins — only the label box's own size matters here.
+    .replace("\n  html, body { margin: 0; padding: 0; }", "")
+    // The standalone doc styles <body>; embedded, that rule must target OUR layer,
+    // or it restyles the whole app's body on screen.
+    .replace("\n  body {\n", "\n  .labels-print-layer {\n");
+  const sheets = doc.slice(bodyStart + "<body>".length, bodyEnd);
+  return `<style>
+.labels-print-layer { display: none; }
+@media print {
+  body > *:not(.labels-print-layer) { display: none !important; }
+  body { margin: 0 !important; padding: 0 !important; background: #fff !important; }
+  .labels-print-layer { display: block !important; }
+}
+${css}</style>${sheets}`;
+}
+
 function renderSheet(items: Printable[], size: LabelSize, rotate: boolean): string {
   // Rotating turns the CONTENT 90°, so lay it out for the swapped cell: a
   // landscape face's aspect inverts to portrait and the QR/text arrange for that.

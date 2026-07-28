@@ -11,6 +11,7 @@
 // the view of the others).
 
 import { Router, raw } from "express";
+import { isEdgeManagerUrl } from "@cobblr/platform-contract/edge-bridge-client";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext } from "../db.js";
@@ -600,7 +601,7 @@ fleetRouter.post(
 async function resolveSelfConnection(orgId: string, connectionId: string): Promise<string | null> {
   if (connectionId !== "self") return connectionId;
   const conns = await platform().devices.connections().list(orgId);
-  const edge = conns.filter((c) => c.enabled && c.type === "edge_adapter" && /^cobblr-edge:/i.test(c.base_url || ""));
+  const edge = conns.filter((c) => c.enabled && c.type === "edge_adapter" && isEdgeManagerUrl(c.base_url));
   return edge.length === 1 ? edge[0]!.id : (edge[0]?.id ?? null);
 }
 

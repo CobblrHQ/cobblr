@@ -103,11 +103,28 @@ if (!modulesCoveredByBlanket) {
 // cause. (@cobblr/thermal-print hit exactly this.)
 interface ImageSpec {
   dockerfile: string;
-  entry: string;   // the workspace dir whose deps the image must satisfy
+  /** Workspace dirs whose deps the image must satisfy. */
+  entries: string[];
 }
+/** The api image COPIES modules/ wholesale and MOUNTS every module at boot, so
+ *  a package any module depends on has to be in the image too — walking `api`
+ *  alone missed all of them, because api does not depend on the modules it
+ *  loads.
+ *
+ *  That shipped and took the Labels page down in production: labels imported
+ *  @cobblr/thermal-print for the model table, nothing copied the package, and
+ *  the module failed to mount with ERR_MODULE_NOT_FOUND behind a dangling
+ *  symlink. Every route under /modules/labels 404'd, so the page rendered with
+ *  no queue and no browse panel and read as "Labels is broken" rather than as a
+ *  missing file. */
+const MODULE_DIRS = existsSync("modules")
+  ? readdirSync("modules")
+      .map((d) => join("modules", d))
+      .filter((d) => existsSync(join(d, "package.json")))
+  : [];
 const IMAGES: ImageSpec[] = [
-  { dockerfile: "docker/web.Dockerfile", entry: "web" },
-  { dockerfile: "docker/api.Dockerfile", entry: "api" },
+  { dockerfile: "docker/web.Dockerfile", entries: ["web"] },
+  { dockerfile: "docker/api.Dockerfile", entries: ["api", ...MODULE_DIRS] },
 ];
 
 /** name -> dir for every workspace package that lives under packages/. */
@@ -124,7 +141,7 @@ function packageDirs(): Map<string, string> {
 }
 
 /** Transitive @cobblr/* deps of a workspace dir, restricted to packages/. */
-function neededPackages(entryDir: string, pkgDirs: Map<string, string>): Set<string> {
+function neededPackages(entryDirs: string[], pkgDirs: Map<string, string>): Set<string> {
   const seen = new Set<string>();
   const need = new Set<string>();
   const visit = (dir: string) => {
@@ -146,7 +163,7 @@ function neededPackages(entryDir: string, pkgDirs: Map<string, string>): Set<str
       }
     }
   };
-  visit(entryDir);
+  for (const d of entryDirs) visit(d);
   return need;
 }
 
@@ -160,7 +177,7 @@ for (const img of IMAGES) {
     console.log(`dockerfile-packages lint: ${img.dockerfile} blanket-copies packages/ ✓`);
     continue;
   }
-  const need = neededPackages(img.entry, pkgDirs);
+  const need = neededPackages(img.entries, pkgDirs);
   const missing: string[] = [];
   for (const p of need) {
     const srcCopy = new RegExp(`^COPY\\s+packages/${escapeRegex(p)}\\s+\\./packages/${escapeRegex(p)}\\b`, "m");
@@ -168,7 +185,7 @@ for (const img of IMAGES) {
   }
   if (missing.length > 0) {
     pkgFailures += missing.length;
-    console.error(`\ndockerfile-packages lint: ${img.dockerfile} is missing ${missing.length} workspace package(s) that ${img.entry} needs:\n`);
+    console.error(`\ndockerfile-packages lint: ${img.dockerfile} is missing ${missing.length} workspace package(s) it needs:\n`);
     for (const p of missing) console.error(`  ❌ packages/${p}`);
     console.error(
       `\nThe image build will fail to resolve them, but ONLY after merge (images\n` +
@@ -177,7 +194,7 @@ for (const img of IMAGES) {
         `  COPY packages/<name> ./packages/<name>                 (source block)\n`,
     );
   } else {
-    console.log(`dockerfile-packages lint: ${img.dockerfile} copies all ${need.size} package(s) ${img.entry} needs ✓`);
+    console.log(`dockerfile-packages lint: ${img.dockerfile} copies all ${need.size} package(s) it needs ✓`);
   }
 }
 if (pkgFailures > 0) process.exit(1);

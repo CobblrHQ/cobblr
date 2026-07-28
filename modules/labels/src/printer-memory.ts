@@ -13,6 +13,19 @@ export interface PrinterMemory {
   lastSizeKey?: string;
   lastPaperKey?: string;
   lastRotate?: boolean;
+  /** True only when a PERSON worked the turn toggle. Without this, the
+   *  auto-derived default is written back on the first save and then reads as
+   *  the user's own choice forever, so the default can never adapt when the
+   *  label size changes. */
+  lastRotateExplicit?: boolean;
+  /** The layout last chosen ON each media, keyed by paper.
+   *
+   *  A single lastSizeKey cannot express this: pick 50x30 2-up, switch to
+   *  another media, switch back, and the 2-up is gone because the one
+   *  remembered size is no longer valid for the paper you left and the picker
+   *  falls to that paper's first entry. The choice of how to tile a roll
+   *  belongs to the roll. */
+  lastSizeByPaper?: Record<string, string>;
   lastUsedAt?: string;
 }
 
@@ -23,13 +36,44 @@ export function rememberedSelection(settings: Record<string, unknown> | undefine
   sizeKey?: string;
   paperKey?: string;
   rotate?: boolean;
+  rotateExplicit?: boolean;
 } {
   const s = settings ?? {};
-  const out: { sizeKey?: string; paperKey?: string; rotate?: boolean } = {};
+  const out: { sizeKey?: string; paperKey?: string; rotate?: boolean; rotateExplicit?: boolean } = {};
   if (typeof s.lastSizeKey === "string" && s.lastSizeKey) out.sizeKey = s.lastSizeKey;
   if (typeof s.lastPaperKey === "string" && s.lastPaperKey) out.paperKey = s.lastPaperKey;
-  if (typeof s.lastRotate === "boolean") out.rotate = s.lastRotate;
+  // An auto-derived turn is NOT restored as a choice: the size may have changed
+  // since, and the rule re-derives it. Only a real toggle is honoured.
+  if (typeof s.lastRotate === "boolean" && s.lastRotateExplicit === true) {
+    out.rotate = s.lastRotate;
+    out.rotateExplicit = true;
+  }
   return out;
+}
+
+/** The layout remembered for each media on this printer. */
+export function sizeByPaper(settings: Record<string, unknown> | undefined): Record<string, string> {
+  const v = (settings ?? {}).lastSizeByPaper;
+  if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+  const out: Record<string, string> = {};
+  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    if (typeof k === "string" && typeof val === "string" && k && val) out[k] = val;
+  }
+  return out;
+}
+
+/** Fold one (paper, size) choice into the remembered map, or null when it would
+ *  change nothing — the same loop guard the rest of this file uses, since every
+ *  save triggers a printers refetch. */
+export function withSizeForPaper(
+  settings: Record<string, unknown> | undefined,
+  paperKey: string,
+  sizeKey: string,
+): Record<string, string> | null {
+  if (!paperKey || !sizeKey) return null;
+  const cur = sizeByPaper(settings);
+  if (cur[paperKey] === sizeKey) return null;
+  return { ...cur, [paperKey]: sizeKey };
 }
 
 /** True when the printer's memory differs from what is selected now.
@@ -39,11 +83,17 @@ export function rememberedSelection(settings: Record<string, unknown> | undefine
  *  again, forever. */
 export function needsRemember(
   settings: Record<string, unknown> | undefined,
-  sel: { sizeKey: string; paperKey: string; rotate: boolean },
+  sel: { sizeKey: string; paperKey: string; rotate: boolean; rotateExplicit?: boolean },
 ): boolean {
   if (!sel.sizeKey) return false; // nothing meaningful to remember yet
   const s = settings ?? {};
-  return s.lastSizeKey !== sel.sizeKey || s.lastPaperKey !== sel.paperKey || s.lastRotate !== sel.rotate;
+  return (
+    s.lastSizeKey !== sel.sizeKey ||
+    s.lastPaperKey !== sel.paperKey ||
+    s.lastRotate !== sel.rotate ||
+    s.lastRotateExplicit !== (sel.rotateExplicit ?? false) ||
+    withSizeForPaper(settings, sel.paperKey, sel.sizeKey) !== null
+  );
 }
 
 /** Printers most-recently-used first — device history, so the target picker leads

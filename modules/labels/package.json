@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/labels",
-  "version": "0.7.4",
+  "version": "0.10.3",
   "private": true,
   "type": "module",
   "main": "dist/module.js",

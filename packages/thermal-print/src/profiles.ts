@@ -14,9 +14,30 @@ import type { PhomemoMedia, PhomemoOptions } from "./protocol.js";
  *  prints happily from TSPL over the same ff02 pipe. */
 export type ThermalProtocol = "phomemo" | "tspl";
 
+/** What each transport does on a given model.
+ *
+ *  `decoy` is its own value on purpose: some printers advertise a BLE GATT tree
+ *  that accepts every write and does nothing. That is worse than having none,
+ *  because everything looks like it worked. It must never be treated as "works". */
+export interface PrinterConnectivity {
+  /** BLE from a browser (Web Bluetooth). */
+  ble: "works" | "decoy" | "none";
+  /** Bluetooth Classic — an edge bridge, or Web Serial where the OS allows it. */
+  classic: "works" | "none" | "unknown";
+  /** One sentence naming the route that DOES work, shown when one does not. */
+  advice?: string;
+}
+
 export interface PrinterProfile {
   /** Stable slug, e.g. "phomemo-m220". */
   id: string;
+  /** How this model can ACTUALLY be reached, from hardware measurement.
+   *
+   *  Exists so the UI can say "this model needs a bridge" instead of handing
+   *  back whatever error the browser threw. A printer that cannot be driven the
+   *  way someone is trying is not a broken printer, and saying so is the
+   *  difference between a dead end and a next step. */
+  connectivity?: PrinterConnectivity;
   /** Human label for support/UI. */
   label: string;
   /** Advertised BLE-name prefixes that identify this model. Phomemo advertises by
@@ -131,17 +152,19 @@ const PHOMEMO_DEFAULTS: Required<PhomemoOptions> = {
 // PM220S: bench-confirmed 2026-07-20 (below). It cost ONE new encoder family (TSPL)
 // rather than zero code — the profile-as-data claim holds for everything else about
 // it (pipe, width, orientation, calibrated geometry, quirks).
-// TYPONOS PM240 — BENCHED 2026-07-24, NOT SUPPORTED over BLE. Deliberately absent
-// from KNOWN_PROFILES: matching it would offer the user a printer we cannot drive
-// and then fail silently, which is exactly how this cost a session.
+// TYPONOS PM240 — the BLE findings below stand; the CONCLUSION drawn from them
+// did not, and it is corrected at the end of this block. It IS now in
+// KNOWN_PROFILES, carrying connectivity that says BLE is a decoy, so matching it
+// routes people to the transport that works instead of offering one that cannot.
 //
 // It pairs, accepts every write (zero GATT rejections) and then does nothing, ever.
 // What was ruled out ON HARDWARE, so nobody repeats it:
 //   · dialect — ESC-POS (3 forms), TSPL (2), CPCL, EPL, ZPL, Niimbot (2): 60 combos
 //     over every writable char × 20-byte and 180-byte chunks. All silent.
 //   · pipe — all three writable chars (ff02, ff04 writeNR; ff10 write+read).
-//   · Bluetooth Classic / SPP — ruled out BY THE OS: macOS system_profiler reports
-//     "PM240: Services: 0x400000 < BLE >". BLE-only, so 0xff00 IS the data path.
+//   · Bluetooth Classic / SPP — "ruled out BY THE OS" on the strength of macOS
+//     system_profiler reporting "Services: 0x400000 < BLE >". THAT WAS WRONG,
+//     see the correction below. One field of one tool was read as proof.
 //   · missed replies — both notify chars (ff01, ff03) carry a real CCCD (0x2902),
 //     so the subscriptions worked. The printer never notified once in ~110 writes.
 //   · identity — NO Device Information service (0x180A); the firmware is anonymous,
@@ -150,11 +173,21 @@ const PHOMEMO_DEFAULTS: Required<PhomemoOptions> = {
 //     characteristic showed no byte ever change. The firmware parsed none of it.
 // GATT is one vendor service 0xff00; ff10 reads back "0d 0a 00 00".
 //
-// The framing is proprietary and is NOT recoverable by probing. The only honest
-// next step is capturing what its own app (Labelnize) sends — an Android Bluetooth
-// HCI snoop log taken while printing one label. Until someone does that, it stays
-// unsupported. The USB path would need a serial transport beside ble.ts; unexplored.
-// See docs/modules/bluetooth-printer-self-test.md § "Validating the harvest loop".
+// CORRECTED 2026-07-28, on hardware. The PM240 speaks plain TSPL over Bluetooth
+// CLASSIC RFCOMM. Its SDP record advertises a serial port on channel 1, and an
+// IOBluetoothRFCOMMChannel opened by that channel id read the roll and battery
+// 10 times out of 10. So the BLE tree really is a decoy — writes accepted, never
+// acted on — and "BLE-only" was a conclusion from a single system_profiler field
+// rather than from trying the other radio.
+//
+// The framing was never proprietary; it is TSPL, and it was reachable the whole
+// time down a path that had been declared impossible. The lesson worth keeping:
+// "ruled out by the OS" was one tool's summary, not a measurement.
+//
+// It is driven today by the edge bridge's macrfcomm transport. No browser can
+// reach it: Web Bluetooth is BLE-only and the BLE tree is fake, and Web Serial
+// cannot open a Classic port on macOS at all (crbug 539890521).
+// See docs/design-decisions/bluetooth-classic-printer-hosting.md.
 
 /** Bundled, hardware-confirmed profiles. */
 export const KNOWN_PROFILES: readonly PrinterProfile[] = [
@@ -165,6 +198,13 @@ export const KNOWN_PROFILES: readonly PrinterProfile[] = [
     serviceUuid: "0000ff00-0000-1000-8000-00805f9b34fb",
     writeCharUuid: "0000ff02-0000-1000-8000-00805f9b34fb",
     protocol: "tspl",
+    connectivity: {
+      ble: "works",      // prints fine over BLE; it just never ANSWERS there
+      classic: "works",  // where its status lives (HCI capture 2026-07-26)
+      advice:
+        "Prints over Bluetooth from this browser. It only reports its roll and battery " +
+        "over Bluetooth Classic, so connect it through an edge bridge if you want those.",
+    },
     defaultWidthDots: 320,                    // 40 mm roll @ 203 dpi
     maxWidthMm: 54,                           // 0.91–2.12" media range; a 2"-class printer
     defaults: { speed: 3, density: 8, media: "gaps", init: true },
@@ -196,11 +236,40 @@ export const KNOWN_PROFILES: readonly PrinterProfile[] = [
     serviceUuid: "0000ff00-0000-1000-8000-00805f9b34fb",
     writeCharUuid: "0000ff02-0000-1000-8000-00805f9b34fb",
     protocol: "phomemo",
+    connectivity: { ble: "works", classic: "unknown" },
     defaultWidthDots: 320, // 40 mm at 203 dpi; M220 does 20–80 mm
     maxWidthMm: 80, // 20–80 mm media range; a 3"-class printer
     defaults: PHOMEMO_DEFAULTS,
     verified: true,
     notes: "GATT service 0xff00 / write char 0xff02 confirmed on real hardware 2026-07.",
+  },
+
+  {
+    // Present so it can be RECOGNISED, not so it can be paired over BLE. Its
+    // connectivity says the BLE tree is a decoy, and every BLE path checks that
+    // before offering to pair — which is what the old "keep it out of the list"
+    // rule was protecting against, now enforced by data instead of absence.
+    id: "typonos-pm240",
+    label: "PM240",
+    namePrefixes: ["PM240", "TYPONOS"],
+    serviceUuid: "0000ff00-0000-1000-8000-00805f9b34fb", // the decoy; never write here
+    writeCharUuid: "0000ff02-0000-1000-8000-00805f9b34fb",
+    protocol: "tspl",
+    connectivity: {
+      ble: "decoy", // accepts every write and does nothing, ever (~110 writes)
+      classic: "works", // TSPL over RFCOMM, SPP channel 1, 10/10 on hardware
+      advice:
+        "This model cannot be driven from a browser: its Bluetooth advertisement accepts " +
+        "commands and ignores them, and no browser can open its serial port. Connect it " +
+        "through an edge bridge, which reads its roll and battery too.",
+    },
+    defaultWidthDots: 320, // 40 x 30 mm roll @ 203 dpi, as it reports itself
+    maxWidthMm: 54,
+    defaults: { speed: 3, density: 8, media: "gaps", init: true },
+    verified: true, // over CLASSIC (2026-07-28); never over BLE
+    direction: 0,
+    labelHeightMm: 30,
+    notes: "Driven by the edge bridge's macrfcomm transport. See the block above for why BLE is not a path.",
   },
 ];
 

@@ -17,7 +17,11 @@ import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { ChevronDown, Maximize2, Bot } from "lucide-react";
 import { api } from "../lib/api";
-import { useToast, usePrintProgress } from "@cobblr/platform-web";
+import {
+  useToast, usePrintProgress, useBridgeLive, BridgePrinterCard,
+  isLocalBridgePrinter, readLocalBridgeStatus, setPrinterStatus,
+  type BridgeInstanceLive,
+} from "@cobblr/platform-web";
 import { iconForName } from "../lib/panel-icons";
 import { useDrive } from "./DriveContext";
 import { tabBrowserId, type DriveState } from "../hooks/useBrowserDrive";
@@ -112,6 +116,29 @@ function driveControl(state: DriveState, byScans: boolean): LiveControlPublic | 
   const verb = byScans ? "drive" : "drives";
   const label = here ? `${who} ${verb} this screen` : `${who} ${verb} another window`;
   return { id: DRIVE_ID, module: "core", label, icon: byScans ? "scan-line" : "bot", requires: "", scope: "tab", control: "switch" };
+}
+
+const BRIDGE_ID = "client.bridge-printers";
+
+/** The bridge's printers as a Live control.
+ *
+ *  Client-side, like the drive indicator above: the bridge answers on this
+ *  machine, so the server has nothing to say about it. Self-hiding — no bridge
+ *  running means no row at all, which is the normal case for most people and
+ *  must not read as something being wrong.
+ *
+ *  The ring is ON when a link is held, so the Live box tells you at a glance
+ *  that a printer is ready to fire without opening anything. */
+function bridgeControl(live: { reachable: boolean; instances: BridgeInstanceLive[] }): LiveControlPublic | null {
+  if (!live.reachable || live.instances.length === 0) return null;
+  const held = live.instances.filter((i) => i.link === "connected").length;
+  const printing = live.instances.some((i) => i.link === "printing");
+  const label = printing
+    ? "Printing"
+    : held > 0
+      ? `Printer connected${live.instances.length > 1 ? ` (${held} of ${live.instances.length})` : ""}`
+      : "Printers on this computer";
+  return { id: BRIDGE_ID, module: "core", label, icon: "printer", requires: "", scope: "tab", control: "switch" };
 }
 
 /** The offer prompt — the box asking a question. Surfaces from the indicator spot
@@ -286,12 +313,16 @@ function Row({
   onToggle,
   segment,
   badge = 0,
+  detail,
 }: {
   control: LiveControlPublic;
   on: boolean;
   onToggle: () => void;
   segment?: { value: string; onChange: (v: string) => void };
   badge?: number;
+  /** A control's OWN expanded view, revealed under its ring — the same shape as
+   *  the segment strip below, for a control whose detail is richer than options. */
+  detail?: React.ReactNode;
 }) {
   const navigate = useNavigate();
   const opts = control.segment ?? [];
@@ -322,6 +353,7 @@ function Row({
           ))}
         </div>
       )}
+      {detail && <div className="mt-2 flex flex-col gap-1.5">{detail}</div>}
       {on && control.detail && (
         <button
           type="button"
@@ -343,6 +375,7 @@ function Panel({
   onClose,
   segmentState,
   badgeFor,
+  detailFor,
 }: {
   controls: LiveControlPublic[];
   states: Record<string, ControlState>;
@@ -351,6 +384,8 @@ function Panel({
   onClose: () => void;
   segmentState?: (c: LiveControlPublic) => { value: string; onChange: (v: string) => void } | undefined;
   badgeFor?: (c: LiveControlPublic) => number;
+  /** Rendered under a control that owns its own expanded view. */
+  detailFor?: (c: LiveControlPublic) => React.ReactNode;
 }) {
   const onIcons = controls.filter((c) => isOn(states[c.id] ?? null));
   const header = (
@@ -382,6 +417,7 @@ function Panel({
           onToggle={() => onToggle(c)}
           segment={segmentState ? segmentState(c) : undefined}
           badge={badgeFor ? badgeFor(c) : 0}
+          detail={detailFor ? detailFor(c) : undefined}
         />
       ))}
     </div>
@@ -413,19 +449,42 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
   // on the printer icon. The print path publishes this; it's live only while a
   // browser-driven batch runs. Anchored to the "printer"-icon control (auto-print).
   const printProgress = usePrintProgress();
+  const toast = useToast();
+  // The local bridge, polled only while the panel is OPEN. Its state is worth
+  // knowing while someone is looking at it; a closed box has no reason to be
+  // asking anything, and this is the surface that follows you across every page.
+  const bridge = useBridgeLive(open ? 15_000 : 0);
+  // Which Cobblr printer row each bridge instance belongs to, so the card can
+  // show the roll/battery this workspace has already read from it.
+  const printersQ = useQuery({
+    queryKey: ["live-printers", slug],
+    queryFn: () => api.listPrinters(slug!),
+    enabled: !!slug && open,
+    staleTime: 60_000,
+  });
+  const rowForInstance = (instance: string) =>
+    (printersQ.data?.items ?? []).find(
+      (p) => (p.settings as { bridge?: { instance?: string } } | undefined)?.bridge?.instance === instance,
+    );
   const printing = printProgress ? Math.max(0, printProgress.total - printProgress.done) : 0;
-  const badgeFor = (c: LiveControlPublic) => (c.icon === "printer" ? printing : 0);
+  // The batch count belongs to the control the batch runs through — auto-print,
+  // which is browser-driven. The bridge row shares the printer icon but not the
+  // job, and showing the same badge twice reads as two runs.
+  const badgeFor = (c: LiveControlPublic) => (c.icon === "printer" && c.id !== BRIDGE_ID ? printing : 0);
 
   // Fold the drive indicator in as a DATA control (green ring while this tab is
   // driven, grey while another window is); an offer is a prompt, handled below.
   const dc = driveControl(drive.state, drive.byScans);
-  const controls = dc ? [dc, ...serverControls] : serverControls;
+  const bc = bridgeControl(bridge);
+  const controls = [dc, bc, ...serverControls].filter((c): c is LiveControlPublic => !!c);
   // Tab-scoped controls carry their on/off from a client adapter, not the server:
   // scan.drive from localStorage, drive from the SSE state.
   const states: Record<string, ControlState> = {
     ...serverStates,
     [SCAN_DRIVE_ID]: { enabled: scanDrive.on },
     ...(dc ? { [DRIVE_ID]: { enabled: drive.state === "active" } } : {}),
+    // ON = the bridge is holding a link, so a print fires immediately.
+    ...(bc ? { [BRIDGE_ID]: { enabled: bridge.instances.some((i) => i.link === "connected" || i.link === "printing") } } : {}),
   };
 
   const fire = (c: LiveControlPublic) => {
@@ -437,8 +496,40 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
       scanDrive.toggle();
       return;
     }
+    if (c.id === BRIDGE_ID) {
+      // Not a toggle. One ring cannot mean "connect" across several printers,
+      // and guessing which one would be worse than asking — the card below
+      // carries a button per printer. Clicking the ring opens the panel.
+      setOpen(true);
+      return;
+    }
     toggle.mutate({ control: c, state: states[c.id] ?? null });
   };
+
+  /** Ask a printer what it has loaded, and put the answer where every surface
+   *  reads it — the same store the Labels chip and the settings row use. */
+  const checkPrinter = async (inst: BridgeInstanceLive) => {
+    const row = rowForInstance(inst.instance);
+    if (!row || !isLocalBridgePrinter(row.settings)) return;
+    const r = await readLocalBridgeStatus((row.settings as { bridge: Parameters<typeof readLocalBridgeStatus>[0] }).bridge);
+    if (r.responded) setPrinterStatus(row.id, r);
+    else toast.info(`${inst.name} did not report what it has loaded.`);
+  };
+
+  const detailFor = (c: LiveControlPublic) =>
+    c.id !== BRIDGE_ID ? undefined : (
+      <>
+        {bridge.instances.map((inst) => (
+          <BridgePrinterCard
+            key={inst.instance}
+            printer={inst}
+            printerId={rowForInstance(inst.instance)?.id}
+            onChanged={bridge.refresh}
+            onCheck={() => void checkPrinter(inst)}
+          />
+        ))}
+      </>
+    );
 
   const segmentState = (c: LiveControlPublic) =>
     c.id === SCAN_DRIVE_ID
@@ -486,7 +577,7 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
         </div>
         {open && (
           <div className="absolute left-full bottom-1 ml-1.5 z-[60]">
-            <Panel controls={controls} states={states} onToggle={fire} segmentState={segmentState} badgeFor={badgeFor} onClose={() => setOpen(false)} />
+            <Panel controls={controls} states={states} onToggle={fire} segmentState={segmentState} badgeFor={badgeFor} detailFor={detailFor} onClose={() => setOpen(false)} />
           </div>
         )}
       </div>
@@ -498,7 +589,7 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
   return (
     <div className="fixed bottom-4 right-4 z-[900] flex flex-col items-end">
       {open ? (
-        <Panel controls={controls} states={states} onToggle={fire} segmentState={segmentState} badgeFor={badgeFor} footerAtBottom onClose={() => setOpen(false)} />
+        <Panel controls={controls} states={states} onToggle={fire} segmentState={segmentState} badgeFor={badgeFor} detailFor={detailFor} footerAtBottom onClose={() => setOpen(false)} />
       ) : (
         <button
           type="button"

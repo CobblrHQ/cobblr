@@ -65,6 +65,55 @@ export function describePrinterStatus(r: PrinterStatusReading | null): string | 
   if (!r || !r.responded) return null;
   const parts: string[] = [];
   if (r.widthMm && r.heightMm) parts.push(`${r.widthMm} × ${r.heightMm} mm`);
-  if (r.battery) parts.push(r.battery.charging ? `charging ${r.battery.bars}/5` : `battery ${r.battery.bars}/5`);
+  if (r.battery) {
+    // Percent, not bars: bars matched the printer's own 5-segment display, but a
+    // number reads at a glance and the fraction is a real measurement (raw
+    // against the fullest charge ever observed), not bars re-scaled.
+    const pct = Math.round(r.battery.fraction * 100);
+    parts.push(r.battery.charging ? `charging · ${pct}%` : `battery ${pct}%`);
+  }
   return parts.length ? parts.join(" · ") : null;
+}
+
+// ── the PERSISTED counterpart ───────────────────────────────────────────────
+// The cache above dies with the tab, which is the right lifetime for a battery
+// level. The loaded ROLL is different: it changes only when someone swaps it,
+// so it is written onto the printer row and survives the printer being off, a
+// reload, and a move to another computer.
+//
+// It lives here rather than inside the labels module because the Printers
+// settings page reads it too, and a second copy over there is exactly the kind
+// of drift this file already exists to prevent.
+
+/** What a printer last reported it had loaded, from its stored settings. */
+export interface ReportedMedia {
+  widthMm: number;
+  heightMm: number;
+  at?: string;
+}
+
+export function reportedMedia(settings: Record<string, unknown> | undefined): ReportedMedia | null {
+  const v = (settings ?? {}).lastReportedMediaMm as { widthMm?: unknown; heightMm?: unknown; at?: unknown } | undefined;
+  if (!v || typeof v !== "object") return null;
+  if (typeof v.widthMm !== "number" || typeof v.heightMm !== "number" || v.widthMm <= 0 || v.heightMm <= 0) return null;
+  return { widthMm: v.widthMm, heightMm: v.heightMm, ...(typeof v.at === "string" ? { at: v.at } : {}) };
+}
+
+/** Loop guard: saving triggers a printers refetch, and an unconditional save
+ *  would then save again forever. */
+export function needsReportedRemember(
+  settings: Record<string, unknown> | undefined,
+  r: { widthMm?: number; heightMm?: number },
+): boolean {
+  if (!r.widthMm || !r.heightMm) return false;
+  const prev = reportedMedia(settings);
+  return !prev || prev.widthMm !== r.widthMm || prev.heightMm !== r.heightMm;
+}
+
+/** One line for what the printer reports it has loaded. Shared so the Labels
+ *  toolbar and the Printers settings row cannot describe the same stored
+ *  reading two different ways. */
+export function describeReportedMedia(settings: Record<string, unknown> | undefined): string | null {
+  const r = reportedMedia(settings);
+  return r ? `${r.widthMm} × ${r.heightMm} mm` : null;
 }

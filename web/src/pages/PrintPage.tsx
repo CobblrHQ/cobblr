@@ -4,11 +4,12 @@
 // LAN for self-hosted; the same connection rides the edge-bridge from cloud.
 
 import { useState } from "react";
+import { isEdgeManagerUrl, edgeInstanceOf } from "@cobblr/platform-contract/edge-bridge-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Printer as PrinterIcon, Wifi, Send, Pencil, Star, Bluetooth, Activity } from "lucide-react";
 import { ApiError, api, type Printer, type PrinterInput } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useToast, useConfirm, usePageTitle, printLabelOverBluetooth, connectPrinter, closePrinter, isWebBluetoothAvailable, NO_WEB_BLUETOOTH, readSerialPrinterStatus, ConnectPrinterModal, setPrinterStatus, clearPrinterStatus, type SerialPrinterIdentity, type BluetoothPrinterSettings } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, usePageTitle, printLabelOverBluetooth, connectPrinter, closePrinter, isWebBluetoothAvailable, NO_WEB_BLUETOOTH, readSerialPrinterStatus, ConnectPrinterModal, setPrinterStatus, clearPrinterStatus, type SerialPrinterIdentity, type BluetoothPrinterSettings, isLocalBridgePrinter, testLocalBridge, printerDisplayName, describeReportedMedia, usePrinterStatus, PrinterReadout } from "@cobblr/platform-web";
 import { mmToDots, dotsToMm, mmToInch, thermalFootprint, matchProfile, type FeedType } from "@cobblr/thermal-print";
 
 import { EdgeConnectField, type EdgeConnectValue } from "../components/EdgeConnectField";
@@ -73,8 +74,22 @@ export function PrintPage() {
   const invalidate = () => qc.invalidateQueries({ queryKey: ["printers", activeSlug] });
 
   const test = useMutation({
-    mutationFn: (id: string) => api.testPrinter(activeSlug, id),
-    onSuccess: (r) => toast[r.ok ? "success" : "error"](r.ok ? "Reachable" : `Failed: ${r.error ?? "unknown"}`),
+    // A bridge on THIS machine is unreachable from the server (127.0.0.1 there is
+    // a different computer), so the browser runs the identical check itself —
+    // same shared client, same protocol, different transport.
+    mutationFn: (p: Printer) =>
+      isLocalBridgePrinter(p.settings)
+        ? testLocalBridge((p.settings as { bridge: Parameters<typeof testLocalBridge>[0] }).bridge)
+        : api.testPrinter(activeSlug, p.id),
+    onSuccess: (r) => {
+      if (!r.ok) {
+        toast.error(`Failed: ${r.error ?? "unknown"}`);
+        return;
+      }
+      // Prefer what the PRINTER said over a bare "Reachable" — the loaded roll
+      // and battery are the answer to the question someone is actually asking.
+      toast.success(r.detail ? `Connected: ${r.detail}` : "Connected");
+    },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
@@ -181,7 +196,9 @@ export function PrintPage() {
           const created = await api.createPrinter(activeSlug, {
             name: input.name,
             driver: input.driver,
-            base_url: "",
+            // A bridge printer routes by its manager URL; a browser-driven one
+            // has no network address at all, hence the empty default.
+            base_url: input.base_url ?? "",
             queue: "",
             settings: input.settings,
             is_default: items.length === 0,
@@ -198,7 +215,7 @@ export function PrintPage() {
           <div key={p.id} className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
             <div className="flex items-center gap-2 flex-wrap">
               <PrinterIcon size={16} className="text-accent" />
-              <span className="font-medium text-content dark:text-mortar-100">{p.name}</span>
+              <span className="font-medium text-content dark:text-mortar-100">{printerDisplayName(p.name)}</span>
               {p.is_default && (
                 <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider bg-cobble-100 dark:bg-cobble-900/30 text-accent">
                   <Star size={10} /> default
@@ -258,7 +275,7 @@ export function PrintPage() {
                 </button>
               ) : (
                 <>
-                  <button onClick={() => test.mutate(p.id)} disabled={test.isPending} className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 hover:border-accent px-2.5 py-1 text-xs transition" title="Reachability check">
+                  <button onClick={() => test.mutate(p)} disabled={test.isPending} className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 hover:border-accent px-2.5 py-1 text-xs transition" title="Connect and read the printer status">
                     <Wifi size={13} /> Test
                   </button>
                   <button onClick={() => printTest.mutate(p.id)} disabled={printTest.isPending} className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 hover:border-accent px-2.5 py-1 text-xs transition" title="Send a test page">
@@ -294,11 +311,16 @@ export function PrintPage() {
                 })()
               ) : (
                 <>
-                  {p.base_url} · queue <span className="text-content dark:text-mortar-200">{p.queue}</span>
+                  {p.base_url}
+                  {/* A bridged printer routes by INSTANCE and has no queue; the
+                      unconditional "· queue" left a dangling label with nothing
+                      after it. */}
+                  {p.queue ? <> · queue <span className="text-content dark:text-mortar-200">{p.queue}</span></> : null}
                   {p.has_credentials && " · 🔒 auth set"}
                 </>
               )}
             </div>
+            <PrinterReports printer={p} />
             {(() => {
               const st = serialStatus[p.id];
               if (!st || st === "reading") return null;
@@ -341,6 +363,30 @@ export function PrintPage() {
   );
 }
 
+/** What a printer reports about itself, on its row in settings.
+ *
+ *  Deliberately does NOT probe. This page lists every printer, and asking each
+ *  one costs a real session per device — one per pairing on the Bluetooth
+ *  Classic hardware — plus a consent click on some. The roll comes from what
+ *  was stored the last time something did ask; the battery only from a reading
+ *  taken in this tab, since a stored battery level would come back confidently
+ *  wrong. Test / Check are how you ask on purpose. */
+function PrinterReports({ printer }: { printer: Printer }) {
+  const live = usePrinterStatus(printer.id);
+  const storedRoll = describeReportedMedia(printer.settings as Record<string, unknown> | undefined);
+  const hasLive = !!live?.responded && (!!live.widthMm || !!live.battery);
+  if (!hasLive && !storedRoll) return null;
+  return (
+    <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-muted dark:text-slate-400">
+      {hasLive ? (
+        <>Printer reports: <PrinterReadout reading={live} className="text-content dark:text-mortar-200" /></>
+      ) : (
+        <>Last reported loaded: <span className="text-content dark:text-mortar-200">{storedRoll}</span></>
+      )}
+    </div>
+  );
+}
+
 function PrinterModal({
   slug,
   printer,
@@ -366,8 +412,8 @@ function PrinterModal({
   // How Cobblr reaches the manager: a direct URL, or a cobblr-edge:// bridge route.
   const [conn, setConn] = useState<EdgeConnectValue>(() => {
     const url = printer?.base_url ?? "";
-    if (/^cobblr-edge:/i.test(url)) {
-      const bridge = (/^cobblr-edge:\/\/(.*)$/i.exec(url)?.[1] ?? "").replace(/^\/+|\/+$/g, "") || null;
+    if (isEdgeManagerUrl(url)) {
+      const bridge = edgeInstanceOf(url);
       return { mode: "edge", base_url: url, bridge };
     }
     return { mode: "direct", base_url: url, bridge: null };
@@ -388,6 +434,15 @@ function PrinterModal({
   const [isDefault, setIsDefault] = useState(printer?.is_default ?? false);
   const [notes, setNotes] = useState(printer?.notes ?? "");
   const [busy, setBusy] = useState(false);
+  // Edge-bridge routing (settings.bridge): which INSTANCE on the bridge, and —
+  // for a bridge on this very computer — where the browser reaches it directly.
+  const br0 = ((printer?.settings ?? {}) as { bridge?: Record<string, unknown> }).bridge ?? {};
+  const [brInstance, setBrInstance] = useState(String(br0.instance ?? ""));
+  const [brLocalUrl, setBrLocalUrl] = useState(String(br0.bridgeUrl ?? ""));
+  const [brToken, setBrToken] = useState(String(br0.token ?? ""));
+  const [brName, setBrName] = useState(String(br0.bridgeName ?? ""));
+  const [brWidthMm, setBrWidthMm] = useState(String(br0.widthDots ? Number(dotsToMm(Number(br0.widthDots)).toFixed(1)) : 40));
+  const [brHeightMm, setBrHeightMm] = useState(String(br0.labelHeightMm ?? 30));
   const bt0 = (printer?.settings ?? {}) as Record<string, unknown>;
   // Media is the D3 source. An existing printer stored only widthDots, so
   // reconstruct its width in mm (dotsToMm) to prefill — editing then migrates it
@@ -503,8 +558,10 @@ function PrinterModal({
         toast.error("Media width is required in mm (about 40 mm for a common roll)");
         return;
       }
-    } else if (!baseUrl || !queue.trim()) {
-      toast.error(conn.mode === "edge" ? "Name and queue are required (pick a bridge)" : "Name, manager URL, and queue are required");
+    } else if (!baseUrl || (!queue.trim() && !(conn.mode === "edge" && brInstance.trim()))) {
+      // On a bridge, the INSTANCE routes the job (the bridge serves /<id>/), so a
+      // CUPS queue name is not required — a thermal instance has no queue at all.
+      toast.error(conn.mode === "edge" ? "Name and a bridge instance (or queue) are required" : "Name, manager URL, and queue are required");
       return;
     }
     setBusy(true);
@@ -545,6 +602,18 @@ function PrinterModal({
               ...(printer?.settings ?? {}),
               printerKind: netKind,
               maxWidthMm: Math.round((Number(netMaxIn) || (netKind === "thermal" ? 4 : 8.5)) * 25.4),
+              ...(conn.mode === "edge" && (brInstance.trim() || brLocalUrl.trim())
+                ? {
+                    bridge: {
+                      instance: brInstance.trim() || undefined,
+                      bridgeUrl: brLocalUrl.trim() || undefined,
+                      token: brToken.trim() || undefined,
+                      bridgeName: brName.trim() || undefined,
+                      widthDots: mmToDots(Number(brWidthMm) || 40),
+                      labelHeightMm: Number(brHeightMm) || 30,
+                    },
+                  }
+                : {}),
             },
           }),
     };
@@ -702,6 +771,47 @@ function PrinterModal({
         <div className="block">
           <EdgeConnectField slug={slug} hosted={hosted} value={conn} onChange={setConn} />
         </div>
+        {conn.mode === "edge" && (
+          <div className="space-y-2 rounded border border-line dark:border-slate-600 p-3">
+            <div className="text-[11px] text-faint">
+              The bridge serves each printer under an <b>instance</b> id from its config
+              (e.g. <code>labels</code>). If the bridge runs <b>on this computer</b>, add its
+              address and this browser prints to it directly — no pairing to the cloud needed.
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block">
+                <div className="text-xs text-muted mb-1">Instance on the bridge</div>
+                <input className={field + " font-mono"} value={brInstance} onChange={(e) => setBrInstance(e.target.value)} placeholder="labels" />
+              </label>
+              <label className="block">
+                <div className="text-xs text-muted mb-1">Named bridge (optional)</div>
+                <input className={field + " font-mono"} value={brName} onChange={(e) => setBrName(e.target.value)} placeholder="workspace default" />
+              </label>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block">
+                <div className="text-xs text-muted mb-1">Bridge on this computer (optional)</div>
+                <input className={field + " font-mono"} value={brLocalUrl} onChange={(e) => setBrLocalUrl(e.target.value)} placeholder="http://127.0.0.1:8077" />
+              </label>
+              <label className="block">
+                <div className="text-xs text-muted mb-1">Instance token (optional)</div>
+                <input className={field} type="password" value={brToken} onChange={(e) => setBrToken(e.target.value)} autoComplete="off" />
+              </label>
+            </div>
+            {brLocalUrl.trim() !== "" && (
+              <div className="grid grid-cols-2 gap-2">
+                <label className="block">
+                  <div className="text-xs text-muted mb-1">Label width (mm)</div>
+                  <input className={field} inputMode="decimal" value={brWidthMm} onChange={(e) => setBrWidthMm(e.target.value)} />
+                </label>
+                <label className="block">
+                  <div className="text-xs text-muted mb-1">Label height (mm)</div>
+                  <input className={field} inputMode="decimal" value={brHeightMm} onChange={(e) => setBrHeightMm(e.target.value)} />
+                </label>
+              </div>
+            )}
+          </div>
+        )}
         <label className="block">
           <div className="text-xs text-muted mb-1">Queue / printer name</div>
           <input className={field + " font-mono"} value={queue} onChange={(e) => setQueue(e.target.value)} placeholder="Rollo" />

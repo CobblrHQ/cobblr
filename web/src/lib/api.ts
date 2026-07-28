@@ -1949,7 +1949,7 @@ export const api = {
   deletePrinter: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/modules/core-print/printers/${id}`),
   testPrinter: (slug: string, id: string) =>
-    request<{ ok: boolean; error?: string }>(
+    request<{ ok: boolean; error?: string; detail?: string }>(
       "POST",
       `/orgs/${slug}/modules/core-print/printers/${id}/test`,
       {},

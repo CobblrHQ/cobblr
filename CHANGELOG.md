@@ -2,6 +2,20 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-07-28
+
+### Features
+- Test a bridge-connected printer from Cobblr and see the roll it has loaded and its battery level.
+- Connecting a printer now asks one question, whether you want to install a helper app, and finds printers on a bridge for you instead of asking for an address.
+- Print to a label printer attached to an edge bridge on your own computer, straight from the browser, with no relay token and no pairing to the cloud.
+
+### Improvements
+- A label printer connected through an edge bridge now says "via edge bridge" in the printer menu instead of "Network", is no longer offered US Letter as its media, and drops the transport note the bridge appends to its name.
+- When a printer will not connect through your browser, Cobblr now says why and offers the way that does work, instead of showing the browser's raw error.
+
+### Fixes
+- Adding a printer found on an edge bridge works, the printer list no longer offers lasers and 3D printers, and if no bridge is running you get the command to start one.
+
 ## 2026-07-27
 
 ### Fixes

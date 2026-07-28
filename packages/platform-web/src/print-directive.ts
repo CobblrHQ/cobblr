@@ -24,6 +24,12 @@ import {
   type LabelContent,
 } from "./bluetooth-label";
 import { isWebSerialAvailable, printOneOverSerial } from "./serial-printer.js";
+import { renderLabelPng } from "./bluetooth-label";
+import {
+  EdgeBridgeClient,
+  httpBridgeTransport,
+  type BridgePrinterSettings,
+} from "@cobblr/platform-contract/edge-bridge-client";
 
 /** What a module asks the platform to put on paper. */
 export interface PrintDirective {
@@ -40,7 +46,7 @@ export interface PrintDirectiveResult {
    *  exists either way, so this is a bookkeeping warning, not a print failure. */
   recordError?: string;
   /** Why nothing printed, when nothing printed. Absent on success. */
-  skipped?: "no-browser-printer" | "no-web-bluetooth" | "no-web-serial" | "no-width";
+  skipped?: "no-browser-printer" | "no-web-bluetooth" | "no-web-serial" | "no-width" | "no-bridge-instance";
 }
 
 interface PrinterRow {
@@ -69,6 +75,31 @@ export async function runPrintDirective(
   // Bluetooth alone silently skipped every serial printer, so a module asking the
   // platform to put something on paper got "no-browser-printer" from a workspace
   // that had a perfectly good printer connected.
+  // A printer whose settings carry a LOCAL bridge address is browser-driven
+  // whatever its nominal driver: the bridge is on this user's machine, so only
+  // this browser can reach it. The server-side driver refuses it by design.
+  const bridgeSettings = ((target?.settings ?? {}) as { bridge?: BridgePrinterSettings }).bridge;
+  if (target && bridgeSettings?.bridgeUrl) {
+    if (!bridgeSettings.instance) return { printed: false, skipped: "no-bridge-instance" };
+    // The PROTOCOL comes from the shared client — the same code the server-side
+    // driver runs over the tunnel — with a fetch transport under it. The label
+    // goes as a PNG at the width the bridge is calibrated for; the bridge owns
+    // the dialect and geometry, so nothing printer-physical is mirrored here.
+    const png = await renderLabelPng(
+      directive.content,
+      bridgeSettings.widthDots && bridgeSettings.widthDots >= 8 ? bridgeSettings.widthDots : 384,
+      bridgeSettings.labelHeightMm ? Math.round(bridgeSettings.labelHeightMm * 8) : undefined,
+    );
+    const client = new EdgeBridgeClient(
+      httpBridgeTransport(bridgeSettings.bridgeUrl, { token: bridgeSettings.token }),
+      bridgeSettings.instance,
+    );
+    const bytes = new Uint8Array(await png.arrayBuffer());
+    const { jobId } = await client.printOnce(bytes, "label.png");
+    await client.waitForJob(jobId);
+    return await recordAndReturn(directive, deps, "Edge bridge");
+  }
+
   const isSerial = target?.driver === "browser-serial";
   if (!target || (target.driver !== "browser-bluetooth" && !isSerial)) {
     return { printed: false, skipped: "no-browser-printer" };
@@ -87,9 +118,17 @@ export async function runPrintDirective(
     ({ deviceName } = await printOneOverBluetooth(directive.content, settings));
   }
 
-  // Paper exists now. Telling the module is best-effort: a failure here leaves
-  // stale bookkeeping, not a lost label, so it is reported separately rather
-  // than thrown over a print that physically succeeded.
+  return await recordAndReturn(directive, deps, deviceName);
+}
+
+/** Paper exists now. Telling the module is best-effort: a failure here leaves
+ *  stale bookkeeping, not a lost label, so it is reported separately rather than
+ *  thrown over a print that physically succeeded. Shared by every pipe. */
+async function recordAndReturn(
+  directive: PrintDirective,
+  deps: { post: (path: string, body: unknown) => Promise<unknown> },
+  deviceName: string,
+): Promise<PrintDirectiveResult> {
   let recordError: string | undefined;
   if (directive.record && directive.record.ids.length > 0) {
     try {

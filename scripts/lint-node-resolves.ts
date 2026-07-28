@@ -16,7 +16,7 @@
 // at import time is reported and tolerated.
 // Run: npx tsx scripts/lint-node-resolves.ts
 
-import { readFileSync } from "node:fs";
+import { readFileSync, globSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
 const RESOLUTION_ERRORS = [
@@ -46,15 +46,33 @@ function entryPoints(name: string): string[] {
   } catch {
     return []; // not a workspace package dir (a module) — out of scope
   }
+  // An exports entry is either a bare path or a CONDITIONS OBJECT
+  // ({ types, import, require }). Reading only the bare-path form silently
+  // skipped every package using conditions — which is most of them, and included
+  // the one whose root entry could not load under node at all. A guard that
+  // quietly checks nothing is worse than no guard, because it reports success.
+  const firstPath = (target: unknown): string | null => {
+    if (typeof target === "string") return target;
+    if (target && typeof target === "object") {
+      for (const v of Object.values(target as Record<string, unknown>)) {
+        const found = firstPath(v);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
   const ex = pkg.exports;
-  const targets =
+  const targets: Array<[string, unknown]> =
     ex && typeof ex === "object"
-      ? Object.entries(ex as Record<string, string>)
+      ? Object.entries(ex as Record<string, unknown>)
       : pkg.main
-        ? ([[".", pkg.main]] as Array<[string, string]>)
+        ? [[".", pkg.main]]
         : [];
   return targets
-    .filter(([, target]) => typeof target === "string" && /(^|\/)src\//.test(target))
+    .filter(([, target]) => {
+      const path = firstPath(target);
+      return !!path && /(^|\/)src\//.test(path);
+    })
     .map(([key]) => (key === "." ? name : `${name}/${key.replace(/^\.\//, "")}`));
 }
 
@@ -81,8 +99,65 @@ for (const dep of deps) {
   }
 }
 
+// The same check for every workspace package a module's SERVER-SIDE code
+// imports.
+//
+// The loop above only covered packages the API lists as its own dependencies. A
+// module is mounted in the same process at boot and can pull in a workspace
+// package the API has never heard of, where a SOURCE-FIRST entry hits the
+// identical tsc/tsx-versus-node gap.
+//
+// That shipped: labels added @cobblr/thermal-print for the known-model table,
+// whose root re-exports `./protocol.js`. Typecheck passed, all 138 unit test
+// files passed, and the module failed to mount at boot with
+// ERR_MODULE_NOT_FOUND. Importing the package's pure-data subpath fixed it; the
+// point of checking here is that nothing short of a boot said so.
+//
+// Scoped to what the SERVER loads, by reading the imports rather than the
+// dependency list. A module's package.json mixes both halves, and its ui half
+// legitimately depends on browser-only packages that no server entry ever
+// touches — flagging those would be noise, and a noisy lint gets muted.
+const SERVER_SIDE = /^modules\/[^/]+\/src\/(?!ui\/)/;
+const moduleImports = new Map<string, string>(); // specifier -> first module using it
+for (const f of globSync("modules/*/src/**/*.ts")) {
+  if (!SERVER_SIDE.test(f)) continue;
+  const owner = f.split("/")[1] ?? f;
+  for (const line of readFileSync(f, "utf8").split("\n")) {
+    // `import type` is erased before node ever sees it, so it cannot fail to
+    // load. Counting it flagged a browser-only package that no server entry
+    // actually imports.
+    if (/^\s*(?:import|export)\s+type\b/.test(line)) continue;
+    const m = /from\s+["'](@cobblr\/[^"']+)["']/.exec(line);
+    if (m?.[1] && !moduleImports.has(m[1])) moduleImports.set(m[1], owner);
+  }
+}
+for (const [spec, owner] of moduleImports) {
+  if (deps.includes(spec)) continue; // already covered above
+  // Only source-first entries can diverge; entryPoints() decides that.
+  const pkgName = spec.split("/").slice(0, 2).join("/");
+  if (!entryPoints(pkgName).includes(spec)) continue;
+  checked++;
+  try {
+    // cwd = the MODULE, not api. A module declares its own dependencies and its
+    // built code sits under modules/<name>/, so that is where node resolves the
+    // specifier at boot. Running this from api/ passed locally on pnpm hoisting
+    // and failed in CI's stricter install, which is the wrong way round for a
+    // guard: it reported success on the machine where someone would act on it.
+    execFileSync(process.execPath, ["--input-type=module", "-e", `await import(${JSON.stringify(spec)})`], {
+      cwd: `modules/${owner}`,
+      stdio: ["ignore", "ignore", "pipe"],
+      timeout: 30_000,
+    });
+  } catch (e) {
+    const stderr = String((e as { stderr?: Buffer }).stderr ?? "");
+    const code = RESOLUTION_ERRORS.find((c) => stderr.includes(c));
+    const line = stderr.split("\n").find((l) => l.includes("Error")) ?? stderr.split("\n")[0] ?? "";
+    if (code) failures.push({ spec: `${spec}  (imported by modules/${owner})`, code, msg: line.trim().slice(0, 160) });
+  }
+}
+
 if (failures.length > 0) {
-  console.error(`node-resolves lint: an entry point the API imports does not load under plain Node.\n`);
+  console.error(`node-resolves lint: an entry point loaded at boot does not load under plain Node.\n`);
   for (const f of failures) {
     console.error(`    ❌ ${f.spec}`);
     console.error(`       ${f.code}: ${f.msg}`);
@@ -95,4 +170,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log(`node-resolves lint: ${checked} api entry point(s) load under plain node ✓`);
+console.log(`node-resolves lint: ${checked} boot entry point(s) load under plain node ✓`);

@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/platform-contract",
-  "version": "0.0.3",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
@@ -8,7 +8,8 @@
     ".": "./src/index.ts",
     "./qr-token": "./src/qr-token.ts",
     "./resolvables": "./src/resolvables.ts",
-    "./label-geometry": "./src/label-geometry.ts"
+    "./label-geometry": "./src/label-geometry.ts",
+    "./edge-bridge-client": "./src/edge-bridge-client.ts"
   },
   "types": "src/index.ts",
   "scripts": {

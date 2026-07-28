@@ -20,15 +20,20 @@ export async function configuredDriver(orgId: string, row: PrinterRow) {
   if (row.credentials_enc) {
     creds = await platform().integrations.decryptCredentials(orgId, row.credentials_enc);
   }
+  const settings = (row.settings ?? {}) as Record<string, unknown>;
+  const bridge = (settings.bridge ?? undefined) as PrinterConfig["bridge"];
   const cfg: PrinterConfig = {
     baseUrl: row.base_url,
     queue: row.queue,
     bluetooth: (row.settings ?? undefined) as never,
+    bridge,
     username: typeof creds.username === "string" ? creds.username : undefined,
     password: typeof creds.password === "string" ? creds.password : undefined,
     apiKey: typeof creds.apiKey === "string" ? creds.apiKey : undefined,
   };
-  return buildDriver(row.driver, cfg, buildEdgeRelay(orgId, row.base_url));
+  // Which bridge = the NAMED channel from settings, never the URL id — that
+  // names the instance. See edge.ts for why the two must not share one id.
+  return buildDriver(row.driver, cfg, buildEdgeRelay(orgId, row.base_url, bridge?.bridgeName ?? null));
 }
 
 /** Load a printer row by id, or null. */

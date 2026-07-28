@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/digifab",
-  "version": "0.23.2",
+  "version": "0.23.3",
   "private": true,
   "type": "module",
   "main": "dist/module.js",

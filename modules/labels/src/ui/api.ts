@@ -290,7 +290,12 @@ export class LabelsApi {
   }
   /** driver + settings matter here: a "browser-bluetooth" printer cannot be
    *  reached by the server, so this queue prints it from the browser instead,
-   *  using the dialect + calibration stored on the connection. */
+   *  using the dialect + calibration stored on the connection.
+   *
+   *  The shape mirrors the printer record rather than the fields one screen
+   *  happens to read. Leaving `base_url` out cost a typecheck and a round trip
+   *  the moment the toolbar needed to tell a bridged printer from a network
+   *  one, for no benefit: the server already sends it. */
   listPrinters = () =>
     this.requestAbs<{
       items: Array<{
@@ -298,6 +303,7 @@ export class LabelsApi {
         name: string;
         is_default: boolean;
         driver: string;
+        base_url?: string | null;
         settings?: Record<string, unknown>;
       }>;
     }>(
@@ -310,7 +316,7 @@ export class LabelsApi {
    *  printer registry and is opt-in, so enable it on demand the first time a
    *  workspace connects a printer (idempotent) — printing infra appears exactly
    *  when it is needed, not preemptively on every workspace. */
-  createPrinter = async (b: { name: string; driver: string; settings?: Record<string, unknown>; is_default?: boolean }) => {
+  createPrinter = async (b: { name: string; driver: string; base_url?: string; settings?: Record<string, unknown>; is_default?: boolean }) => {
     await this.requestAbs("POST", `/api/v1/orgs/${this.slug}/modules/core-print/enable`, {});
     return this.requestAbs<{ id: string }>("POST", `/api/v1/orgs/${this.slug}/modules/core-print/printers`, b);
   };

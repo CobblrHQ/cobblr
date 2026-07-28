@@ -182,8 +182,19 @@ router.post(
         });
         return;
       }
-    } else if (!body.base_url.trim() || !body.queue.trim()) {
-      res.status(400).json({ error: { code: "bad_request", message: "base_url and queue are required for this driver" } });
+    } else if (!body.base_url.trim() || (!body.queue.trim() && !isEdgeManagerUrl(body.base_url))) {
+      // A cobblr-edge:// manager routes by the INSTANCE in its URL, and a
+      // thermal instance has no queue at all — demanding one made every
+      // bridge-discovered printer un-addable with a message about a field the
+      // person was never shown and does not have.
+      res.status(400).json({
+        error: {
+          code: "bad_request",
+          message: isEdgeManagerUrl(body.base_url)
+            ? "base_url is required"
+            : "base_url and queue are required for this driver",
+        },
+      });
       return;
     }
     if (body.driver === "cups") {
