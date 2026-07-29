@@ -218,7 +218,7 @@ export function PortalConfigPage() {
         </div>
         <p className="text-[11px] text-faint dark:text-slate-500">
           Brands <strong>this</strong> admin dashboard (the shell you're in now): the whole thing
-          recolors — page, header bar, every card / table / label — plus your workspace logo beside
+          recolors - page, header bar, every card / table / label - plus your workspace logo beside
           the Cobblr mark, which always stays. Buttons and form inputs stay neutral so actions stay
           legible on any palette. Save, then reload the dashboard.
         </p>

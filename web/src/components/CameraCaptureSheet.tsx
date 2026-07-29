@@ -104,7 +104,7 @@ export function CameraCaptureSheet({
     c.toBlob(
       (blob) => {
         if (!blob) {
-          toast.error("Could not capture a frame — try again");
+          toast.error("Could not capture a frame - try again");
           return;
         }
         setPreview({ blob, url: URL.createObjectURL(blob) });
@@ -138,7 +138,7 @@ export function CameraCaptureSheet({
         ) : mode === "nocam" ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-white/80 px-8 text-center">
             <Camera size={32} />
-            <p className="text-sm">No camera available here — choose a photo instead.</p>
+            <p className="text-sm">No camera available here - choose a photo instead.</p>
             <button
               type="button"
               onClick={() => fileRef.current?.click()}

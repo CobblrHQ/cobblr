@@ -136,7 +136,7 @@ export function ThemeEditor({
               </>
             )}
           </div>
-          <span className="block text-[10px] text-faint mt-1">woff2/ttf/otf — overrides the keyword font above.</span>
+          <span className="block text-[10px] text-faint mt-1">woff2/ttf/otf - overrides the keyword font above.</span>
         </div>
       </div>
     </div>

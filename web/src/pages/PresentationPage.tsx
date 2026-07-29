@@ -143,7 +143,7 @@ export function PresentationPage() {
       </div>
 
       <p className="text-sm text-content dark:text-mortar-200">
-        Customise how every top-level thing in your workspace renders —
+        Customise how every top-level thing in your workspace renders - 
         rename it, swap its icon, hide it from the nav, change its order.
         Workspace edits override module / bundle defaults; reinstalling
         a bundle doesn't clobber your edits.
@@ -288,7 +288,7 @@ function PresentationRow({
         <button
           type="button"
           onClick={onFields}
-          title="Fields — relabel / show-hide this thing's fields"
+          title="Fields - relabel / show-hide this thing's fields"
           className="text-faint hover:text-accent transition p-1"
         >
           <SlidersHorizontal size={14} />
@@ -645,7 +645,7 @@ function PresentationFields({
             Nest under <span className="font-medium">{moduleName ?? "its module"}</span>
             <span className="mt-0.5 block text-[11px] text-faint dark:text-slate-500">
               Off (default): shows as its own top-level nav heading. On: becomes a
-              dropdown item under {moduleName ?? "its module"} — the "types of {moduleName ?? "thing"}" shape.
+              dropdown item under {moduleName ?? "its module"}  - the "types of {moduleName ?? "thing"}" shape.
             </span>
           </span>
         </label>
@@ -737,7 +737,7 @@ function FieldsEditorModal({ entityKind, title, onClose }: { entityKind: string;
     },
     onSuccess: () => {
       invalidate();
-      toast.success("Trimmed to the essentials — this thing's own fields stay.");
+      toast.success("Trimmed to the essentials - this thing's own fields stay.");
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -764,7 +764,7 @@ function FieldsEditorModal({ entityKind, title, onClose }: { entityKind: string;
   return (
     <Modal open onClose={onClose} title={`Fields — ${title}`} size="md">
       <p className="text-sm text-muted mb-3">
-        Rename or hide any field on this thing's form — native or bundle-added — to un-clutter the
+        Rename or hide any field on this thing's form - native or bundle-added - to un-clutter the
         modal and speak your own language. Your edits layer on top and survive bundle updates; reset
         returns the bundle's default.
       </p>

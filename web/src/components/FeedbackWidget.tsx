@@ -288,7 +288,7 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
                 >
                   <ImagePlus size={14} />
                   Attach screenshot{picks.length ? "s" : ""}{" "}
-                  <span className="text-faint">— or paste one (up to {MAX_SHOTS})</span>
+                  <span className="text-faint"> - or paste one (up to {MAX_SHOTS})</span>
                 </button>
               )}
               <input
@@ -308,7 +308,7 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
             // there's nowhere to store a screenshot. Say so instead of hiding
             // the affordance and leaving the reporter guessing.
             <div className="text-[10px] text-faint dark:text-slate-500">
-              Screenshots attach once you're in a workspace — text feedback works fine from here.
+              Screenshots attach once you're in a workspace - text feedback works fine from here.
             </div>
           )}
 

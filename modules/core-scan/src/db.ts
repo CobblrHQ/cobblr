@@ -168,7 +168,16 @@ export interface CoreScanQrRulesTable {
   updated_at: Generated<Date>;
 }
 
+/** Always-on AI catalog-photo ranking: the per-workspace opt-in (singleton row).
+ *  ABSENT row == off, so a workspace that never opts in spends nothing. */
+export interface CoreScanPhotoRankConfigTable {
+  id: Generated<boolean>;
+  enabled: Generated<boolean>;
+  updated_at: Generated<Date>;
+}
+
 export interface CoreScanDB {
+  core_scan_photo_rank_config: CoreScanPhotoRankConfigTable;
   core_scan_inbox_items: CoreScanInboxItemsTable;
   core_scan_batches: CoreScanBatchesTable;
   core_scan_organize_plans: CoreScanOrganizePlansTable;

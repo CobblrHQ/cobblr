@@ -403,13 +403,13 @@ function BlockEditor({
   const inputCls = "w-full px-2 py-1 text-xs border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
   const ViewSelect = ({ value, onPick }: { value: string; onPick: (v: string) => void }) => (
     <select value={value} onChange={(e) => onPick(e.target.value)} className={inputCls}>
-      <option value="">— pick a view —</option>
+      <option value=""> - pick a view - </option>
       {views.map((v) => (<option key={v.id} value={v.id}>{v.name} ({v.entity_kind})</option>))}
     </select>
   );
   const KindSelect = ({ value, onPick }: { value: string; onPick: (v: string) => void }) => (
     <select value={value} onChange={(e) => onPick(e.target.value)} className={inputCls}>
-      <option value="">— pick a kind —</option>
+      <option value=""> - pick a kind - </option>
       {kinds.map((k) => (<option key={k} value={k}>{k}</option>))}
     </select>
   );
@@ -443,11 +443,11 @@ function BlockEditor({
       {block.type === "record" && (
         <KindSelect value={block.kind} onPick={(v) => onChange({ ...block, kind: v })} />
       )}
-      {block.type === "scan" && <div className="text-[11px] text-faint italic">scanner link — no config</div>}
+      {block.type === "scan" && <div className="text-[11px] text-faint italic">scanner link - no config</div>}
       {block.type === "custom" && (
         <div className="space-y-1">
           <div className="text-[10px] text-faint">
-            Custom HTML/JS — runs sandboxed. Read data with{" "}
+            Custom HTML/JS - runs sandboxed. Read data with{" "}
             <code className="font-mono">cobblr.get('/modules/…')</code> (org-relative, GET-only,
             capability + H2 scoped).
           </div>

@@ -2629,6 +2629,10 @@ export const AiCapabilities = [
   "embed-text",
   "chat",
   "match-to-catalog",
+  // Multi-image: shown N candidate photos of one item, pick the best catalog
+  // shot (product-only, correct colour, no people). The only capability that
+  // sends more than one image in a call. See rank-images-prompt.ts.
+  "rank-images",
 ] as const;
 
 export type AiCapability = (typeof AiCapabilities)[number];
@@ -3687,6 +3691,13 @@ export interface DeviceConnectionPublic {
   type: string;
   label: string;
   base_url: string;
+  /** WHETHER a credential is stored, never what it is. Callers need this to say
+   *  "this needs a token and has none" without being handed the secret, and it
+   *  cannot be inferred from `config`: credentials live encrypted in their own
+   *  column, so `config` is empty on a connection that authenticates perfectly
+   *  well. Reading `config.api_key` to answer this reports "no token" for every
+   *  connection that has one. */
+  has_credentials: boolean;
   config: Record<string, unknown>;
   enabled: boolean;
   capabilities: Record<string, unknown>;

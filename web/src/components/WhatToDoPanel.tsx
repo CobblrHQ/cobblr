@@ -115,7 +115,7 @@ function NameIt({ slug, itemId }: { slug: string; itemId: string }) {
     mutationFn: () => api.updateScanItem(slug, itemId, { name: name.trim() }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["capture-inbox", slug] });
-      toast.success("Got it — finding the right tracker…");
+      toast.success("Got it - finding the right tracker…");
     },
   });
   return (
@@ -399,7 +399,7 @@ export function WhatToDoPanel({
     onSuccess: () => {
       setAddText("");
       void qc.invalidateQueries({ queryKey: ["capture-inbox", slug] });
-      toast.success("Added — finding the right tracker…");
+      toast.success("Added - finding the right tracker…");
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't add that"),
   });
@@ -616,6 +616,55 @@ export function WhatToDoPanel({
   const showToggle = startCollapsed && !hasPending;
   const showBody = showToggle ? open : true;
 
+  // Established-workspace two-column guided box (approved mockup): the "just add
+  // it" hero fills the left column; the ready-made chips + Describe card stack in
+  // the right, so the full-width box reads "type it, or pick/describe it" instead
+  // of a lone input floating in empty space. Only in the compact, not-expanded
+  // state — once "More ways" opens the building-blocks/trackers columns take over.
+  const twoCol = guidedHalfWidth && !moreOpen;
+
+  // Extracted so the same blocks serve both the two-column layout and the
+  // original single-column one below it.
+  const readyMadeStrip = (
+    <div data-strip="ready-made" className="flex flex-wrap gap-1.5 items-center">
+      <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">ready-made:</span>
+      {skins
+        .filter((b) => (b.manifest.catalog ?? "core") === "core")
+        .slice(0, 8)
+        .map((b) => (
+        <button
+          key={b.manifest.id}
+          type="button"
+          onClick={() => pickRecipe(b)}
+          className={
+            "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs transition " +
+            (selectedRecipe?.manifest.id === b.manifest.id
+              ? "border-accent text-accent bg-accent/5"
+              : "border-line dark:border-slate-700 bg-surface dark:bg-slate-900 text-content dark:text-mortar-100 hover:border-accent hover:text-accent")
+          }
+        >
+          <span aria-hidden>{b.glyph}</span> {b.manifest.name}
+        </button>
+      ))}
+    </div>
+  );
+
+  const describeCard = (
+    <Link
+      to="/build?mode=workspace"
+      className="flex items-center gap-3 rounded-lg border border-cobble-300 dark:border-cobble-700 bg-surface dark:bg-slate-900 px-4 py-2.5 hover:border-cobble-400 transition group"
+    >
+      <span className="w-8 h-8 rounded-lg bg-accent/10 text-accent flex items-center justify-center shrink-0">
+        <Wand2 size={16} />
+      </span>
+      <span className="flex-1 text-sm text-content dark:text-mortar-100">
+        <span className="font-medium">Describe what you have</span>
+        <span className="text-faint dark:text-slate-400">  - the AI builder compiles a custom setup, fields and all.</span>
+      </span>
+      <ArrowRight size={15} className="text-faint group-hover:text-accent transition shrink-0" />
+    </Link>
+  );
+
   // One capture card — shared by col 3 (typed) and the scanned queue below.
   const renderCapture = (it: (typeof items)[number]) => {
     const c = it.suggested_candidates?.[0];
@@ -686,7 +735,7 @@ export function WhatToDoPanel({
           blocks · all trackers) only render once "More ways to start" is
           opened. Selection state still lives IN the columns; a strip pick or a
           column pick primes the same hero. */}
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className={"grid gap-3 items-start " + (twoCol ? "md:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]" : "md:grid-cols-2")}>
         {moreOpen && (<>
         {/* Col 1 — Building blocks (modules) */}
         <div className="order-2 md:order-none rounded-xl border border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/40 p-3 md:flex md:flex-col">
@@ -783,7 +832,7 @@ export function WhatToDoPanel({
               {setups.length > 0 && (
                 <li aria-hidden className="pt-1.5 pb-0.5">
                   <div className="text-[10px] uppercase tracking-wider text-faint dark:text-slate-500">
-                    Full setups — several parts working together
+                    Full setups - several parts working together
                   </div>
                 </li>
               )}
@@ -797,12 +846,11 @@ export function WhatToDoPanel({
             recipe → "set it up & drop me in"; a chosen kind → "add a blank one";
             nothing → the freeform "type what you've got". */}
         <div className={
-          "order-first md:col-span-2 rounded-xl border p-3 transition " +
-          (selectedRecipe || selectedModuleObj ? "border-accent/60 bg-accent/5 dark:bg-cobble-900/15" : "border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/40") +
-          // The growth-affordance panel keeps its dashed box FULL width, but the
-          // "just add it" input itself reads better as a partial column than a
-          // super-wide field with a lot of empty box around it (the author, 2026-07-26).
-          (guidedHalfWidth ? " max-w-2xl" : "")
+          "order-first rounded-xl border p-3 transition " +
+          // In the two-column layout the hero IS the left column; otherwise it
+          // spans the full row (above the building-blocks/trackers columns).
+          (twoCol ? "" : "md:col-span-2 ") +
+          (selectedRecipe || selectedModuleObj ? "border-accent/60 bg-accent/5 dark:bg-cobble-900/15" : "border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/40")
         }>
           <LaneHeader
             kicker="// just add it"
@@ -925,7 +973,7 @@ export function WhatToDoPanel({
             >
               Start a Live Sort
             </Link>{" "}
-            — scan each thing and get told which bin it goes in; number a few containers with a
+             - scan each thing and get told which bin it goes in; number a few containers with a
             marker and the bins name themselves as you sort.
           </p>
 
@@ -959,11 +1007,19 @@ export function WhatToDoPanel({
             </div>
           )}
         </div>
+        {/* Right column (two-column layout): pick a ready-made, or describe it. */}
+        {twoCol && (
+          <div className="space-y-3">
+            {skins.length > 0 && readyMadeStrip}
+            {describeCard}
+          </div>
+        )}
       </div>
 
       {/* Short tracker strip — the ready-made front door without the wall.
-          Disappears once the full columns are open (col 2 lists everything). */}
-      {!moreOpen && skins.length > 0 && (
+          Disappears once the full columns are open (col 2 lists everything).
+          In the two-column layout it moves into the right column above. */}
+      {!twoCol && !moreOpen && skins.length > 0 && (
         <div data-strip="ready-made" className="flex flex-wrap gap-1.5 items-center">
           <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">ready-made:</span>
           {skins
@@ -994,29 +1050,18 @@ export function WhatToDoPanel({
       >
         {moreOpen
           ? (<>Fewer ways to start <ChevronUp size={13} /></>)
-          : (<>More ways to start — building blocks &amp; every tracker <ChevronDown size={13} /></>)}
+          : (<>More ways to start - building blocks &amp; every tracker <ChevronDown size={13} /></>)}
       </button>
 
       {/* One shared AI-honesty pattern (redesign A1): say basic-mode up front. */}
       <AiOffNotice status={aiStatus} compact>
-        <strong>AI isn't connected — matching runs in basic mode.</strong>{" "}
+        <strong>AI isn't connected - matching runs in basic mode.</strong>{" "}
         Common things still find a home by keywords; connect AI to identify anything (and to use the builder below).{" "}
       </AiOffNotice>
 
-      {/* Build-it-yourself CTA — a button, not a column (per feedback). */}
-      <Link
-        to="/build?mode=workspace"
-        className="flex items-center gap-3 rounded-lg border border-cobble-300 dark:border-cobble-700 bg-surface dark:bg-slate-900 px-4 py-2.5 hover:border-cobble-400 transition group"
-      >
-        <span className="w-8 h-8 rounded-lg bg-accent/10 text-accent flex items-center justify-center shrink-0">
-          <Wand2 size={16} />
-        </span>
-        <span className="flex-1 text-sm text-content dark:text-mortar-100">
-          <span className="font-medium">Describe what you have</span>
-          <span className="text-faint dark:text-slate-400"> — the AI builder compiles a custom setup, fields and all.</span>
-        </span>
-        <ArrowRight size={15} className="text-faint group-hover:text-accent transition shrink-0" />
-      </Link>
+      {/* Build-it-yourself CTA — a button, not a column (per feedback). In the
+          two-column layout it moves into the right column above. */}
+      {!twoCol && describeCard}
 
       <Link to="/bundles" className="inline-block text-xs text-faint dark:text-slate-400 hover:text-accent transition">
         browse all setups & trackers →
@@ -1054,7 +1099,7 @@ export function WhatToDoPanel({
     {scanned.length > 0 && (
       <section className="space-y-1.5">
         <div className="flex items-center gap-2">
-          <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">// from your scanner — waiting to file ({scanned.length})</span>
+          <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">// from your scanner - waiting to file ({scanned.length})</span>
           <div className="flex-1" />
           <Link to="/scan" className="text-xs text-accent hover:underline shrink-0">
             review all in the Scan Inbox →
@@ -1112,7 +1157,7 @@ export function WhatToDoPanel({
         </ul>
         {scanGroups.residual > 0 && (
           <Link to="/scan" className="block rounded-lg border border-line dark:border-slate-800 bg-surface dark:bg-slate-900 px-3 py-2 text-xs text-faint dark:text-slate-400 hover:text-accent hover:border-accent transition">
-            {scanGroups.residual} unidentified or still reading — review in the Scan Inbox →
+            {scanGroups.residual} unidentified or still reading - review in the Scan Inbox →
           </Link>
         )}
       </section>

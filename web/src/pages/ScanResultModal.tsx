@@ -244,7 +244,7 @@ export function ScanResultModal({
       toast.success(
         (dest ? (
           <span>
-            Added — open{" "}
+            Added - open{" "}
             <a href={dest} className="underline">
               {r.item.suggested_name ?? "the new entity"}
             </a>
@@ -456,7 +456,7 @@ export function ScanResultModal({
             )}
             {!reading && !photoCheckPending && photoMismatch && (
               <div className="text-[11px] text-amber-600 dark:text-amber-400 mt-0.5 flex items-center gap-1">
-                <Camera size={11} /> May not match your photo — double-check the name.
+                <Camera size={11} /> May not match your photo - double-check the name.
               </div>
             )}
             <div className="text-[11px] font-mono text-faint truncate">
@@ -587,7 +587,7 @@ export function ScanResultModal({
             onClick={() => intoBin.mutate()}
             className="w-full inline-flex items-center justify-center gap-2 rounded-md border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 hover:bg-line dark:hover:bg-slate-700 text-content text-xs font-medium px-3 py-1.5 disabled:opacity-50"
           >
-            <MapPin size={13} /> This is {areaLabel ?? "the bin"} itself — set its identity
+            <MapPin size={13} /> This is {areaLabel ?? "the bin"} itself - set its identity
           </button>
         )}
 
@@ -611,7 +611,7 @@ export function ScanResultModal({
                 onClick={() => setCaptureFor("identify")}
                 className="inline-flex items-center gap-1 text-xs text-red-600 dark:text-red-400 hover:underline disabled:opacity-40"
               >
-                <Camera size={13} className={photoIdentify.isPending ? "animate-pulse" : ""} /> Not it —
+                <Camera size={13} className={photoIdentify.isPending ? "animate-pulse" : ""} /> Not it - 
                 photograph it
               </button>
               {item.suggested_name && (
@@ -619,7 +619,7 @@ export function ScanResultModal({
                   type="button"
                   disabled={busy || nicePhoto.isPending}
                   onClick={() => setCaptureFor("nice")}
-                  title="Take a nice picture — it becomes the catalog/display photo"
+                  title="Take a nice picture - it becomes the catalog/display photo"
                   className="inline-flex items-center gap-1 text-xs text-muted hover:text-content disabled:opacity-40"
                 >
                   <Camera size={13} className={nicePhoto.isPending ? "animate-pulse" : ""} /> Nice photo

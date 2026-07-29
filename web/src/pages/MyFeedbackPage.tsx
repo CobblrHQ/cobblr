@@ -30,7 +30,7 @@ export function MyFeedbackPage() {
         <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
           your feedback
         </h1>
-        <span className="page-subtitle">what you've sent us — and our replies</span>
+        <span className="page-subtitle">what you've sent us - and our replies</span>
       </div>
 
       {q.isLoading && <div className="text-sm text-faint">loading…</div>}
@@ -39,7 +39,7 @@ export function MyFeedbackPage() {
       )}
       {!q.isLoading && !q.isError && items.length === 0 && (
         <div className="text-sm text-faint italic">
-          You haven't sent any feedback yet. Use the <b>Send feedback</b> button (bottom-right) anytime —
+          You haven't sent any feedback yet. Use the <b>Send feedback</b> button (bottom-right) anytime - 
           and you'll be able to follow the conversation here.
         </div>
       )}

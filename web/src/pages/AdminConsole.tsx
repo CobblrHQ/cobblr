@@ -339,7 +339,7 @@ function WorkspacesTab() {
                   onClick={() => void handleDelete(w)}
                   disabled={del.isPending}
                   className="text-faint hover:text-ember-500 transition p-1"
-                  title="Delete workspace (hard delete — drops its tenant DB)"
+                  title="Delete workspace (hard delete - drops its tenant DB)"
                 >
                   <Trash2 size={14} />
                 </button>
@@ -490,7 +490,7 @@ function ViewAsModal({
   };
 
   return (
-    <Modal open onClose={onClose} title="View as — read-only support session" size="md">
+    <Modal open onClose={onClose} title="View as - read-only support session" size="md">
       <div className="space-y-3 text-sm">
         <p className="text-muted">
           You'll see <b>{target.orgName}</b> exactly as <b>{target.userName}</b> does. It starts
@@ -560,7 +560,7 @@ function ImpersonationLogTab() {
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted">
-        Every operator "View as" session — append-only. Read-only by default; <b>write</b> means editing
+        Every operator "View as" session - append-only. Read-only by default; <b>write</b> means editing
         was deliberately enabled. Each session also leaves a trace in the workspace's own activity feed.
       </p>
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden overflow-x-auto">
@@ -1130,7 +1130,7 @@ function MarketplaceTab() {
                 {installed && installed.source === "image" && (
                   <div
                     className="text-[10px] font-mono text-faint"
-                    title="Image-baked modules can't be uninstalled at runtime — they ship with the cobblr-core image."
+                    title="Image-baked modules can't be uninstalled at runtime - they ship with the cobblr-core image."
                   >
                     image-baked
                   </div>
@@ -1220,9 +1220,9 @@ function InvitesTab() {
     <div className="space-y-5">
       <p className="text-sm text-content dark:text-mortar-200">
         Mint a <strong>single-use link</strong> so one new person can sign up and get their own
-        workspace — even while public signup is off. Add an email and we'll{" "}
+        workspace - even while public signup is off. Add an email and we'll{" "}
         <strong>send them the link directly</strong>; otherwise the link is shown once (it's a
-        credential — hand it over yourself and set a short expiry).
+        credential - hand it over yourself and set a short expiry).
       </p>
 
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
@@ -1323,7 +1323,7 @@ function WaitlistTab() {
     <div className="space-y-5">
       <p className="text-sm text-content dark:text-mortar-200">
         Signups from the <strong>marketing site's waitlist</strong> (cobblr.xyz), forwarded as they
-        happen. <strong>Approve</strong> mints a single-use invite locked to that email — and emails
+        happen. <strong>Approve</strong> mints a single-use invite locked to that email - and emails
         them the join link when the managed sender is configured (14-day expiry by default).
         {pending > 0 && <span className="text-accent font-medium"> {pending} waiting.</span>}
       </p>
@@ -1373,7 +1373,7 @@ function WaitlistTab() {
               </tr>
             ))}
             {(list.data?.items.length ?? 0) === 0 && (
-              <tr><td colSpan={5} className="px-3 py-4 text-center text-faint italic">No signups yet — they appear here the moment someone joins the waitlist on cobblr.xyz.</td></tr>
+              <tr><td colSpan={5} className="px-3 py-4 text-center text-faint italic">No signups yet - they appear here the moment someone joins the waitlist on cobblr.xyz.</td></tr>
             )}
           </tbody>
         </table>
@@ -1421,7 +1421,7 @@ function AiActivityTab() {
   return (
     <div className="space-y-4">
       <p className="text-sm text-content dark:text-mortar-200">
-        Every AI call across all workspaces — the chat, Build, scan, summaries. Click a row for the full prompt + response.
+        Every AI call across all workspaces - the chat, Build, scan, summaries. Click a row for the full prompt + response.
       </p>
       <div className="flex flex-wrap items-end gap-2">
         <FilterInput label="Workspace (slug)" value={org} onChange={setOrg} placeholder="workshop-2e2d" />
@@ -1546,7 +1546,7 @@ function BarcodeReviewSection() {
   if (q.error) {
     return (
       <p className="text-sm text-faint">
-        Review queue unavailable — this instance has no <code>COBBLR_BARCODE_RESOLVER_REVIEW_TOKEN</code> set.
+        Review queue unavailable - this instance has no <code>COBBLR_BARCODE_RESOLVER_REVIEW_TOKEN</code> set.
       </p>
     );
   }
@@ -1626,7 +1626,7 @@ function BarcodeCacheTab() {
   return (
     <div className="space-y-4">
       <p className="text-sm text-content dark:text-mortar-200">
-        The per-UPC lookup cache scans build up. <b>Instance-wide</b> is the deduped shared layer —
+        The per-UPC lookup cache scans build up. <b>Instance-wide</b> is the deduped shared layer - 
         each barcode is resolved once for the whole platform (go-upc first, then
         upcitemdb/Open&nbsp;Products&nbsp;Facts) and served from here to every workspace after.
         <b> Per-workspace</b> shows the local mirrors: who scanned what, where. Click a row for every
@@ -1723,7 +1723,7 @@ function BarcodeCacheTab() {
               </tr>
             ))}
             {!q.isLoading && items.length === 0 && (
-              <tr><td colSpan={layer === "workspaces" ? 9 : 8} className="px-3 py-6 text-center text-faint">Nothing cached yet — scan something.</td></tr>
+              <tr><td colSpan={layer === "workspaces" ? 9 : 8} className="px-3 py-6 text-center text-faint">Nothing cached yet - scan something.</td></tr>
             )}
           </tbody>
         </table>
@@ -1796,7 +1796,7 @@ function ScanEvalTab() {
   return (
     <div className="space-y-4">
       <p className="text-sm text-content dark:text-mortar-200">
-        Captured matchmaker eval cases — a corrected scan commit recorded as a golden answer.
+        Captured matchmaker eval cases - a corrected scan commit recorded as a golden answer.
         Pull them into the harness fixtures with{" "}
         <code className="font-mono text-xs">node e2e/scan-eval-import.mjs</code>.
       </p>
@@ -1904,7 +1904,7 @@ function AnnouncementsTab() {
     <div className="space-y-3">
       <p className="text-sm text-content dark:text-mortar-200">
         Post noteworthy platform events to Discord. Each category is independently
-        toggleable — silence one if it doubles up with another feed. A category
+        toggleable - silence one if it doubles up with another feed. A category
         with no channel override uses the default{" "}
         <code className="font-mono text-xs">COBBLR_FEEDBACK_DISCORD_WEBHOOK</code>.
       </p>
@@ -1932,7 +1932,7 @@ function AnnouncementsTab() {
             <input
               value={postTitle}
               onChange={(e) => setPostTitle(e.target.value)}
-              placeholder="Title — e.g. “📦 New: Yarn bundle v0.4”"
+              placeholder="Title - e.g. “📦 New: Yarn bundle v0.4”"
               className="flex-1 text-sm rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2 py-1.5"
             />
           </div>
@@ -2337,7 +2337,7 @@ function FeedbackCard({
       <input
         value={publicSummary}
         onChange={(e) => setPublicSummary(e.target.value)}
-        placeholder="what we fixed (third-person — posts to Discord on resolve)…"
+        placeholder="what we fixed (third-person - posts to Discord on resolve)…"
         className="w-full text-xs rounded border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800/70 px-2 py-1 text-content dark:text-mortar-200"
       />
     </li>
@@ -2364,7 +2364,7 @@ function ProductMetricsTab() {
         The thesis, measured: <b>walls hit</b> (permission denials, artifacts that failed
         validation, wires that errored or cycled) per workspace, and <b>time to first working
         app</b> (signup → first real item). The goal is walls/week trending to zero for
-        genuine non-dev workspaces — your own workspaces don't count as proof.
+        genuine non-dev workspaces - your own workspaces don't count as proof.
         Interpretation notes: docs/operations/product-metrics.md.
       </p>
       {q.isLoading ? (
@@ -2396,7 +2396,7 @@ function ProductMetricsTab() {
                     {w.first_item_at ? (
                       <span title={new Date(w.first_item_at).toLocaleString()}>{fmtTtfw(w.ttfw_minutes)}</span>
                     ) : (
-                      <span className="text-muted" title="Never committed an item — the other half of the thesis">
+                      <span className="text-muted" title="Never committed an item - the other half of the thesis">
                         never
                       </span>
                     )}

@@ -52,7 +52,7 @@ export function ChangelogPage() {
         )}
         {!q.isLoading && !q.isError && sections.length === 0 && (
           <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 text-sm text-muted dark:text-slate-400">
-            Nothing here yet — updates will show up as they ship.
+            Nothing here yet - updates will show up as they ship.
           </div>
         )}
 

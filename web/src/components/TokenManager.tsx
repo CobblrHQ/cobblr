@@ -86,7 +86,7 @@ export function TokenManager({ variant }: { variant: "personal" | "operator" }) 
       <p className="text-xs text-muted dark:text-slate-400">
         {variant === "operator" ? (
           <>
-            Each token is clamped to its checked scopes — every other endpoint
+            Each token is clamped to its checked scopes - every other endpoint
             is 403, even though it carries your identity. This is where the
             platform's service tokens live (the feedback-triage daemon, the
             Discord support bot, the announce poster, the eval harnesses).
@@ -96,7 +96,7 @@ export function TokenManager({ variant }: { variant: "personal" | "operator" }) 
             These tokens authenticate as your user account against every cobblr
             endpoint that accepts a Bearer token. Same scope as a browser
             session, but they don't expire unless you set an expiry. Treat them
-            like passwords — they grant full access to every workspace you
+            like passwords - they grant full access to every workspace you
             belong to.
           </>
         )}
@@ -306,14 +306,14 @@ function MintModal({
               ))}
             </div>
             <p className="mt-1.5 text-xs text-muted dark:text-slate-400">
-              <strong>Restricted token</strong> — can ONLY do the checked scope(s); every other
+              <strong>Restricted token</strong>  - can ONLY do the checked scope(s); every other
               endpoint is 403, even though it carries your identity. Need a full-access personal
               token instead? Mint it from Configuration → API tokens in a workspace.
             </p>
           </div>
         ) : (
           <p className="text-xs text-muted dark:text-slate-400">
-            <strong>Full access</strong> — same as your browser session (every workspace you
+            <strong>Full access</strong>  - same as your browser session (every workspace you
             belong to). Treat it like a password.
           </p>
         )}
@@ -355,7 +355,7 @@ function RevealedModal({
     if (!revealed) return;
     try {
       await navigator.clipboard.writeText(revealed.plaintext);
-      toast.success("Token copied. Save it somewhere safe — it won't be shown again.");
+      toast.success("Token copied. Save it somewhere safe - it won't be shown again.");
     } catch {
       toast.info(revealed.plaintext, { duration: 30_000 });
     }
@@ -364,7 +364,7 @@ function RevealedModal({
     <Modal open={!!revealed} onClose={onClose} title="Token minted" subtitle={revealed?.name ?? ""} size="md">
       <div className="space-y-4">
         <p className="text-sm text-content dark:text-mortar-100">
-          Copy this token now. It'll never be shown again — if you lose it, you'll need to mint a
+          Copy this token now. It'll never be shown again - if you lose it, you'll need to mint a
           new one.
         </p>
         <div className="rounded-md border border-cobble-200 dark:border-cobble-700 bg-cobble-50/40 dark:bg-slate-800 p-3 font-mono text-xs break-all text-content dark:text-mortar-100">

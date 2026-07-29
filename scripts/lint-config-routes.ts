@@ -72,5 +72,63 @@ if (dead.length > 0) {
   process.exit(1);
 }
 
-console.log(`[lint:config-routes] ok — all ${new Set(destinations.map((d) => d.to)).size} settings destinations resolve to a mounted route.`);
+// ─────────────── Check 2: one page, one canonical URL ───────────────
+// A settings destination must not share its page component with a SECOND
+// mounted URL. When it does, the two URLs compete: the workspace nav sends you
+// to one, every link inside the page sends you to the other, and you get
+// yanked between the plain shell and the settings shell mid-task. Locations
+// shipped exactly that bug — a navbar entry at /locations whose every row
+// linked to /configuration/locations, so one click dropped you into
+// Configuration. See docs/design-decisions/configuration-revamp.md.
+//
+// Param variants (/assets + /assets/:id) and redirect elements are fine; only
+// two DISTINCT page URLs for one component count.
+const ALLOWED_MULTI_URL: Record<string, string> = {
+  // Two genuinely different views from one component: the /configuration one
+  // passes `setupOnly` (connections editor), /digifab is the job board.
+  DigifabPage: "setupOnly vs full board; split the component to retire this",
+  // Legacy rename alias, kept for old bookmarks.
+  BrickLinkPage: "pre-rename alias /bricklink",
+  // `/core-*` module-name aliases so a nav entry keyed on the module name
+  // resolves. These are the same duplicate-URL debt Locations just paid off;
+  // P2 of the configuration revamp clears them by making the nav noun
+  // declarative in the manifest. Shrink this list as it lands.
+  FilesPage: "/core-files module-name alias — clears in revamp P2",
+  TagsPage: "/core-tags module-name alias — clears in revamp P2",
+  ViewsPage: "/core-views module-name alias — clears in revamp P2",
+};
+
+const REDIRECT_ELEMENTS = /^(Navigate|.*Redirect|ConsoleEscape)$/;
+const byComponent = new Map<string, Set<string>>();
+for (const m of appSrc.matchAll(/path="([^"]+)"\s+element=\{<(\w+)/g)) {
+  const [, path, component] = m;
+  if (!path || !component) continue;
+  if (REDIRECT_ELEMENTS.test(component)) continue;
+  // Collapse param + splat variants: /assets/:id and /assets are one page.
+  const base = path.replace(/\/(:[^/]+|\*)/g, "");
+  if (!byComponent.has(component)) byComponent.set(component, new Set());
+  byComponent.get(component)!.add(base);
+}
+
+const destRoutes = new Set(destinations.map((d) => d.to));
+const doubled = [...byComponent]
+  .filter(([component, paths]) => paths.size > 1 && !(component in ALLOWED_MULTI_URL))
+  // Only settings pages are in scope: at least one of the URLs is advertised
+  // by the registry.
+  .filter(([, paths]) => [...paths].some((p) => destRoutes.has(p)));
+
+if (doubled.length > 0) {
+  console.error(
+    `[lint:config-routes] ${doubled.length} settings page(s) are mounted at more than one URL.\n` +
+      `Pick ONE canonical URL and make the other a redirect, or the nav and the page's own links\n` +
+      `will fight over which shell you end up in (see docs/design-decisions/configuration-revamp.md):\n` +
+      doubled.map(([c, p]) => `   ✗ ${c} → ${[...p].join(" + ")}`).join("\n"),
+  );
+  process.exit(1);
+}
+
+console.log(
+  `[lint:config-routes] ok — all ${destRoutes.size} settings destinations resolve to a mounted route, ` +
+    `each at one canonical URL (${Object.keys(ALLOWED_MULTI_URL).length} known aliases allowlisted).`,
+);
 process.exit(0);

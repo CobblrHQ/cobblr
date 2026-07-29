@@ -165,7 +165,7 @@ export function SearchPage() {
 
       {!q && !tag && (
         <p className="text-sm text-muted dark:text-slate-400 italic mt-6">
-          Type a query above, or filter by tag, or pick a kind — results
+          Type a query above, or filter by tag, or pick a kind - results
           appear as you type.
         </p>
       )}

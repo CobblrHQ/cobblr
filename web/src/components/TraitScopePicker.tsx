@@ -190,7 +190,7 @@ export function TraitScopePicker({
           </div>
 
           <div className="text-[10px] text-faint dark:text-slate-500">
-            Within a row, ticks are OR'd. Across rows, they're AND'd — so{" "}
+            Within a row, ticks are OR'd. Across rows, they're AND'd - so{" "}
             <span className="font-mono">physical + unique</span> means "physical things
             tracked one by one", which excludes parts (those are physical but fungible).
           </div>

@@ -36,7 +36,7 @@ export function SurfacesPage() {
   const revoke = useMutation({
     mutationFn: (id: string) => api.revokeSurface(activeSlug, id),
     onSuccess: () => {
-      toast.success("Surface revoked — URL is now 404");
+      toast.success("Surface revoked - URL is now 404");
       void qc.invalidateQueries({ queryKey: ["surfaces", activeSlug] });
     },
   });
@@ -62,7 +62,7 @@ export function SurfacesPage() {
       </div>
 
       <p className="text-sm text-muted dark:text-slate-400">
-        Share a saved view's data over a long-random URL — no account
+        Share a saved view's data over a long-random URL - no account
         required to view. Cross-module readers go through{" "}
         <code className="font-mono">exposableFields</code> projection
         so private fields stay private.
@@ -303,13 +303,13 @@ function EditSurfaceModal({
             Enabled
           </span>
           <span className="text-xs text-faint">
-            — uncheck to pause (URL stays valid, 404s while paused)
+             - uncheck to pause (URL stays valid, 404s while paused)
           </span>
         </label>
 
         <label className="block">
           <div className="text-xs text-muted mb-1">
-            Expires (optional — blank = never)
+            Expires (optional - blank = never)
           </div>
           <div className="flex items-center gap-2">
             <input
@@ -389,7 +389,7 @@ function EditSurfaceModal({
               onChange={(e) => setRefresh(Number(e.target.value))}
               className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             >
-              <option value={0}>Off — static (e-paper)</option>
+              <option value={0}>Off - static (e-paper)</option>
               <option value={30}>Every 30 seconds</option>
               <option value={60}>Every minute</option>
               <option value={300}>Every 5 minutes</option>
@@ -407,7 +407,7 @@ function EditSurfaceModal({
             <span>
               <span className="block text-sm text-content dark:text-mortar-100">E-paper mode</span>
               <span className="block text-xs text-faint">
-                Light (black-on-white) palette + auto-refresh off — for a reflective panel
+                Light (black-on-white) palette + auto-refresh off - for a reflective panel
                 in a cabinet that shouldn't ghost on a timer.
               </span>
             </span>
@@ -673,7 +673,7 @@ function CreateSurfaceModal({
                 onChange={(e) => setViewId(e.target.value)}
                 className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
               >
-                <option value="">— pick a saved view —</option>
+                <option value=""> - pick a saved view - </option>
                 {items.map((v) => (
                   <option key={v.id} value={v.id}>
                     {v.name} ({v.entity_kind})
@@ -683,7 +683,7 @@ function CreateSurfaceModal({
             </label>
             {items.length === 0 && (
               <p className="text-xs text-muted italic">
-                No saved views yet — create one from the Views page or
+                No saved views yet - create one from the Views page or
                 switch to "Ad-hoc collection" above.
               </p>
             )}
@@ -733,7 +733,7 @@ function CreateSurfaceModal({
                 onChange={(e) => setAppSlug(e.target.value)}
                 className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
               >
-                <option value="">— pick an app —</option>
+                <option value=""> - pick an app - </option>
                 {appList.map((a) => (
                   <option key={a.slug} value={a.slug}>
                     {a.name}

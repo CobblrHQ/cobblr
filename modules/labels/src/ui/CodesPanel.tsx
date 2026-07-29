@@ -255,7 +255,7 @@ function GroupControls({
       {group.frozen ? (
         <span
           className="text-xs font-mono px-2 py-1 rounded bg-subtle dark:bg-slate-800 text-muted dark:text-slate-400"
-          title="Labels have been printed under this prefix, so it can't change — a sticker out in the world still reads this code."
+          title="Labels have been printed under this prefix, so it can't change - a sticker out in the world still reads this code."
         >
           {group.prefix} 🔒
         </span>

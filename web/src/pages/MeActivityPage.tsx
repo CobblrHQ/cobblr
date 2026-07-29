@@ -139,7 +139,7 @@ export function MeActivityPage() {
       {q.isFetchingNextPage && <div className="text-sm text-muted py-2 text-center">Loading more…</div>}
       {!q.hasNextPage && !q.isLoading && items.length > 0 && (
         <div className="text-xs text-faint dark:text-slate-500 text-center py-3">
-          That's everything — {total} action{total === 1 ? "" : "s"}.
+          That's everything - {total} action{total === 1 ? "" : "s"}.
         </div>
       )}
     </div>

@@ -67,7 +67,7 @@ export function LinksPage() {
       <p className="text-sm text-muted dark:text-slate-400">
         A link grants read access from a <em>source</em> workspace to a{" "}
         <em>target</em> workspace for selected entity kinds. Reads union
-        with the target's own data — items get a{" "}
+        with the target's own data - items get a{" "}
         <code className="font-mono text-xs">_source_workspace_slug</code>{" "}
         marker. Source remains the source of truth; nothing writes
         across. <strong>Same user as both owners → auto-accepted.</strong>
@@ -408,7 +408,7 @@ function CreateLinkModal({
             onChange={(e) => setSourceOrg(e.target.value)}
             className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           >
-            <option value="">— pick a workspace —</option>
+            <option value=""> - pick a workspace - </option>
             {orgList.map((o) => (
               <option key={o.id} value={o.id}>
                 {o.name} ({o.role})
@@ -423,7 +423,7 @@ function CreateLinkModal({
             onChange={(e) => setTargetOrg(e.target.value)}
             className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           >
-            <option value="">— pick a workspace —</option>
+            <option value=""> - pick a workspace - </option>
             {orgList
               .filter((o) => o.id !== sourceOrg)
               .map((o) => (
@@ -460,7 +460,7 @@ function CreateLinkModal({
             onChange={(e) => setMinRole(e.target.value as typeof minRole)}
             className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           >
-            <option value="">no restriction — every target member can read</option>
+            <option value="">no restriction - every target member can read</option>
             <option value="guest">guest or higher</option>
             <option value="member">member or higher</option>
             <option value="admin">admin or higher</option>
@@ -486,7 +486,7 @@ function CreateLinkModal({
           />
           <div className="text-[11px] text-faint mt-1">
             Cross-workspace reads stop honouring the link the moment it
-            expires — no scheduled sweep required.
+            expires - no scheduled sweep required.
           </div>
         </label>
         <div className="text-xs text-muted dark:text-slate-400 bg-subtle dark:bg-slate-800/40 rounded p-2">

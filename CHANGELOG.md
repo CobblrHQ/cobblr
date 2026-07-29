@@ -2,6 +2,27 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-07-29
+
+### Features
+- Edge bridges now lists the bridges Cobblr reaches directly, such as one on your own computer or a Pi on your network, alongside the ones that dial in.
+- The Live box now shows the printers your edge bridge is holding, from any page: whether each is connected, idle or printing, its loaded roll and battery, and buttons to connect, disconnect or check it.
+- A Floor Plan tab on the Locations page. The visual layouts were always there, but buried one click into each location. Now the Locations page opens straight onto a Floor Plan tab: pick a room to see its top-down plan, or a container to see its drawers and shelves as a front elevation at true scale. The old tree is still there under a List tab. Nothing drawn yet? It opens on List so you are not staring at a blank canvas, and the tab is right there when you want to draw.
+- The scan inbox can now pick your catalog photo with AI. Tap "Pick best (AI)" on an item's photo options and a vision model looks at every candidate and chooses the cleanest one: the product by itself, in the right colour, with no people in the shot. The free photo ranking also got better at colour, so an item you know is black stops surfacing a red one.
+- You can now have Cobblr pick catalog photos with AI on every scan instead of pressing the button each time. Turn on "Auto-pick photos" in the scan header and each newly identified item gets the cleanest product shot chosen for it. It stays off until you turn it on, never replaces a photo you chose yourself, and never pays twice for the same item.
+
+### Improvements
+- Labels whose shape leaves the caption almost no room beside the QR now print turned by default, so a name like "Thumper" reads across the label instead of wrapping to three letters a line. Working the turn toggle yourself still overrides it.
+- The printer battery now shows as a gauge that fills with the charge actually left, instead of a three-step icon that showed the same picture for 76% and 40%. It turns amber before a run is at risk, and a charging printer is never flagged as a problem.
+- When adding a printer on an edge bridge you now pick the bridge from a list and ask it which machines it serves, instead of typing its address and instance name from memory.
+- The Labels page now says when the media size came from the printer itself ("as loaded"), and warns with a one-click fix when your pick disagrees with the roll the printer reports. The Printers settings page shows what each printer last reported it had loaded.
+- "Pick best (AI)" now uses what the scan already knows about the item. If it's clothing, the AI is told to pick the garment alone with no person and the right colour; if it's a food or boxed product, it knows the front of the package is the correct photo instead of rejecting it as clutter. The heuristic also hands the AI a tidier shortlist now, dropping obvious junk and duplicates first, so the AI is choosing between good options rather than rescuing a bad strip.
+- Developer tooling: the browser-Bluetooth printing path can now be exercised against virtual printers, including the failure modes that are hard to stage on real hardware (a printer that accepts every command and prints nothing, one that is paired but unreachable, picking the wrong one of two identical units).
+
+### Fixes
+- The Labels page keeps the roll a printer last had loaded, even when the printer reports nothing loaded, and says so instead of asking you to pick the size again.
+- Locations no longer drops you into Configuration. Opening a room or bin from the navbar used to jump to a second copy of the page inside the settings shell; the place tree now owns one URL (`/locations`) and stays where you started. Old `/configuration/locations` links redirect.
+
 ## 2026-07-28
 
 ### Features

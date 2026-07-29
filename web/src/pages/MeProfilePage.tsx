@@ -50,7 +50,7 @@ export function MeProfilePage() {
       )}
 
       <PasswordSection
-        onChanged={() => toast.success("Password updated — you stay signed in.")}
+        onChanged={() => toast.success("Password updated - you stay signed in.")}
       />
 
       <AppearanceSection />
@@ -86,14 +86,14 @@ export function MeProfilePage() {
               className="inline-flex items-center gap-2 text-sm text-accent hover:text-accent"
             >
               <Plug size={14} />
-              Connections — BYO AI keys / edge bridge that follow you to your workspaces →
+              Connections - BYO AI keys / edge bridge that follow you to your workspaces →
             </Link>
             <Link
               to="/me/drive"
               className="inline-flex items-center gap-2 text-sm text-accent hover:text-accent"
             >
               <Monitor size={14} />
-              Browser driving — let Claude drive the app you have open (per workspace, off by default) →
+              Browser driving - let Claude drive the app you have open (per workspace, off by default) →
             </Link>
           </>
         )}
@@ -133,7 +133,7 @@ function DisplayNameSection({
           className="w-full px-2 py-1 text-sm border border-line dark:border-slate-700 rounded bg-subtle dark:bg-slate-800/40 text-muted cursor-not-allowed"
         />
         <div className="text-[11px] text-faint mt-1">
-          Email changes go through a separate flow — not in v0.1.
+          Email changes go through a separate flow - not in v0.1.
         </div>
       </label>
       <label className="block">

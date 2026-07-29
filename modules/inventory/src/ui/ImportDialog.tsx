@@ -86,7 +86,7 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
                   Default category (if row's blank)
                 </span>
                 <select value={defaultCat} onChange={(e) => setDefaultCat(e.target.value)} className="input">
-                  <option value="">— none —</option>
+                  <option value=""> - none - </option>
                   {cats.data?.items.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
@@ -99,7 +99,7 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
                   Default location (if row's blank)
                 </span>
                 <select value={defaultLoc} onChange={(e) => setDefaultLoc(e.target.value)} className="input">
-                  <option value="">— none —</option>
+                  <option value=""> - none - </option>
                   {locs.data?.items.map((l) => (
                     <option key={l.id} value={l.id}>
                       {"  ".repeat(l.depth)}

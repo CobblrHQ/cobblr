@@ -179,7 +179,7 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
                 {/* Changing the list can't strand a saved value: it's stored as
                     free text, and an unlisted value still renders (as "legacy"). */}
                 <span className="text-[10px] text-faint">
-                  Safe to change — values already saved are kept either way.
+                  Safe to change - values already saved are kept either way.
                 </span>
               </div>
             )}
@@ -192,7 +192,7 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
           </div>
           {scopeLabel ? (
             <>
-              Renders on <strong>{scopeLabel.toLowerCase()}</strong> — every kind that
+              Renders on <strong>{scopeLabel.toLowerCase()}</strong>  - every kind that
               qualifies today, and any you add later. Editing or deleting it here
               changes it <em>everywhere</em> it appears. To change it on just one
               kind, add a field with the same name{" "}
@@ -216,7 +216,7 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
               onClick={onClose}
               className="text-[10px] font-mono uppercase tracking-widest text-accent hover:underline"
             >
-              part of {fieldDef.bundle_name ?? "a bundle"} — manage the bundle →
+              part of {fieldDef.bundle_name ?? "a bundle"}  - manage the bundle →
             </Link>
           ) : (
             <button

@@ -48,7 +48,7 @@ export function SimpleModeNotice({ variant = "bar" }: { variant?: "bar" | "sideb
     <div className="bg-cobble-50 dark:bg-cobble-900/20 border-b border-cobble-200 dark:border-cobble-900/40">
       <div className="max-w-6xl mx-auto px-5 py-2 flex items-center gap-3 text-xs text-content dark:text-mortar-200">
         <Sliders size={14} className="shrink-0 text-accent" />
-        <span className="flex-1 min-w-0">Simple mode is on — Configuration is tucked away.</span>
+        <span className="flex-1 min-w-0">Simple mode is on - Configuration is tucked away.</span>
         <button
           type="button"
           onClick={() => void turnOff()}

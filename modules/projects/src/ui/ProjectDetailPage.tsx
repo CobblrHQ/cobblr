@@ -486,7 +486,7 @@ function MaterialsPanel({
       </div>
       {items.length === 0 ? (
         <p className="text-xs text-faint dark:text-slate-500 mb-3">
-          No yarn / materials reserved yet. Reserve some below — it stays reserved while you
+          No yarn / materials reserved yet. Reserve some below - it stays reserved while you
           work, and is used up (stock decrements) when you mark this design{" "}
           <span className="font-medium">done</span>.
         </p>
@@ -644,7 +644,7 @@ function HooksNeededPanel({
       )}
       {hooks.length === 0 ? (
         <p className="text-[11px] text-faint dark:text-slate-500 italic">
-          No hooks in your inventory yet — add some (with a gauge) to track them here.
+          No hooks in your inventory yet - add some (with a gauge) to track them here.
         </p>
       ) : (
         <div className="flex items-center gap-2">

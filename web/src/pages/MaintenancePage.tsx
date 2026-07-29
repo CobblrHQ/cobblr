@@ -64,7 +64,7 @@ export function MaintenancePage() {
           maintenance
         </h1>
         <span className="page-subtitle">
-          workspace-wide service log — scheduled upkeep + history
+          workspace-wide service log - scheduled upkeep + history
         </span>
       </div>
 

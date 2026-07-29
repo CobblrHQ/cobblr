@@ -38,10 +38,10 @@ export function AiOffNotice({ status, compact, children }: { status: AiStatus | 
       <div>
         {children ?? (
           <>
-            <strong>AI isn't connected — scans run in basic mode.</strong> Known
+            <strong>AI isn't connected - scans run in basic mode.</strong> Known
             barcodes still get a catalog name + photo, but unknown ones won't be
             auto-named, brands won't fill in, and photo-only items won't be
-            identified — you'll fill those fields in yourself.{" "}
+            identified - you'll fill those fields in yourself.{" "}
           </>
         )}
         {status.reason === "operator_disabled" ? (

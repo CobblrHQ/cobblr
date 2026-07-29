@@ -173,7 +173,7 @@ export function WireDetailModal({ open, onClose, slug, binding, onEdit }: Props)
             <input
               value={template}
               onChange={(e) => setTemplate(e.target.value)}
-              placeholder="optional — uses entity defaults if blank"
+              placeholder="optional - uses entity defaults if blank"
               className="input font-mono text-xs"
             />
           </label>

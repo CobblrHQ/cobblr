@@ -163,7 +163,7 @@ export function DigifabPage({ setupOnly = false }: { setupOnly?: boolean } = {})
               <Printer size={26} className="mx-auto text-faint mb-3" />
               <p className="text-sm text-content dark:text-mortar-100 font-medium mb-1">No machines connected yet</p>
               <p className="text-sm text-muted dark:text-slate-400 mb-4">
-                Point Cobblr at the software that runs your machines — FDM Monster, OctoPrint, Bambu, a LAN bridge.
+                Point Cobblr at the software that runs your machines - FDM Monster, OctoPrint, Bambu, a LAN bridge.
               </p>
               <button onClick={() => pickTab("setup")} className="inline-flex items-center gap-2 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-4 py-2 text-sm transition">
                 <Plus size={15} /> Open Setup
@@ -183,7 +183,7 @@ export function DigifabPage({ setupOnly = false }: { setupOnly?: boolean } = {})
         <>
       <div className="flex flex-wrap items-center gap-2">
         <p className="text-sm text-muted dark:text-slate-400 flex-1 min-w-[16rem]">
-          Connect to the software that runs your machines — FDM Monster, OctoPrint, and friends — then group them into pools
+          Connect to the software that runs your machines - FDM Monster, OctoPrint, and friends - then group them into pools
           and wire up print updates.
         </p>
         <button
@@ -450,7 +450,7 @@ function ShareMachinesModal({ slug, edgeConns, onClose }: { slug: string; edgeCo
         </label>
         {link ? (
           <div className="rounded border border-moss-300 dark:border-moss-800 bg-moss-50/50 dark:bg-moss-900/20 p-2 space-y-1">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-moss-700 dark:text-moss-400">Share link — copy it now, shown once</div>
+            <div className="text-[10px] font-mono uppercase tracking-widest text-moss-700 dark:text-moss-400">Share link - copy it now, shown once</div>
             <div className="flex items-center gap-2">
               <code className="flex-1 text-[11px] break-all text-content dark:text-mortar-200">{link}</code>
               <button type="button" onClick={() => { void navigator.clipboard?.writeText(link); toast.success("Copied"); }} className="text-[10px] text-accent hover:underline shrink-0">Copy</button>
@@ -543,7 +543,7 @@ function DriversModal({ onClose }: { onClose: () => void }) {
     <Modal open onClose={onClose} title="Drivers" size="lg">
       <p className="text-sm text-muted dark:text-slate-400 mb-3">
         A driver connects digifab to the software that runs a machine. Built-ins ship with Cobblr;
-        install a common one in a click from the catalog below, or paste a custom manifest — no
+        install a common one in a click from the catalog below, or paste a custom manifest - no
         deploy. Installed drivers appear in the <span className="font-medium">Add connection</span> dropdown.
       </p>
 
@@ -558,7 +558,7 @@ function DriversModal({ onClose }: { onClose: () => void }) {
 
       <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Installed</div>
       {installed.length === 0 ? (
-        <div className="text-[13px] text-muted italic mb-4">None yet — paste a manifest below.</div>
+        <div className="text-[13px] text-muted italic mb-4">None yet - paste a manifest below.</div>
       ) : (
         <ul className="divide-y divide-line dark:divide-slate-800 mb-4">
           {installed.map((d) => (
@@ -810,7 +810,7 @@ function FailureDetectionPanel({ slug }: { slug: string }) {
               {c.enabled && (
                 <div className="space-y-3 pl-6">
                   <div>
-                    <div className={lbl + " mb-1"}>Sensitivity — trip at score {c.threshold.toFixed(2)}</div>
+                    <div className={lbl + " mb-1"}>Sensitivity - trip at score {c.threshold.toFixed(2)}</div>
                     <input type="range" min={0.3} max={0.9} step={0.05} value={c.threshold} onChange={(e) => save.mutate({ threshold: Number(e.target.value) })} className="w-full max-w-xs accent-cobble-600" />
                     <div className="flex justify-between max-w-xs text-[9px] text-faint"><span>catches more (0.30)</span><span>fewer false alarms (0.90)</span></div>
                   </div>
@@ -821,7 +821,7 @@ function FailureDetectionPanel({ slug }: { slug: string }) {
                   <div className="flex items-center gap-2">
                     <span className={lbl}>Detector</span>
                     <select value={c.backend} onChange={(e) => save.mutate({ backend: e.target.value as DigifabFailureConfig["backend"] })} className="input !py-0.5 !text-xs !w-auto">
-                      <option value="auto">Auto — local model, else vision AI</option>
+                      <option value="auto">Auto - local model, else vision AI</option>
                       <option value="edge">Local model only (no AI cost)</option>
                       <option value="llm">Vision AI only</option>
                       <option value="detector">External detector (self-hosted)</option>
@@ -830,7 +830,7 @@ function FailureDetectionPanel({ slug }: { slug: string }) {
                   {c.backend === "detector" && (
                     <div className="pl-1">
                       <p className="text-faint mb-1.5 leading-relaxed">
-                        Score prints with a detection service you run anywhere — <b>Obico ML API</b>, <b>PrintGuard</b>, or any HTTP model on your LAN. Cobblr talks to it over the network (or via your edge bridge from the cloud).
+                        Score prints with a detection service you run anywhere - <b>Obico ML API</b>, <b>PrintGuard</b>, or any HTTP model on your LAN. Cobblr talks to it over the network (or via your edge bridge from the cloud).
                       </p>
                       <ExternalDetectorConfig slug={slug} cfg={c} save={(patch) => save.mutate(patch)} />
                     </div>
@@ -865,15 +865,15 @@ function ExternalDetectorConfig({ slug, cfg, save }: { slug: string; cfg: Digifa
       <div className="flex items-center gap-2 flex-wrap">
         <span className={detLbl}>Service</span>
         <select value={cfg.detector_id ?? ""} onChange={(e) => save({ detector_id: e.target.value || null })} className="input !py-0.5 !text-xs !w-auto">
-          <option value="">— pick a detector —</option>
+          <option value=""> - pick a detector - </option>
           {detectors.map((d) => (
             <option key={d.id} value={d.id}>{d.label} · {d.key}{d.enabled ? "" : " (off)"}</option>
           ))}
         </select>
         <button type="button" onClick={() => setManage(true)} className="text-xs text-cobble-600 dark:text-cobble-400 hover:underline">Manage…</button>
       </div>
-      {missing && <p className="text-[10px] text-ember-600 dark:text-ember-500">The selected detector was removed — pick another.</p>}
-      {detectors.length === 0 && !list.isLoading && <p className="text-[10px] text-faint">No detectors yet — click Manage to add one.</p>}
+      {missing && <p className="text-[10px] text-ember-600 dark:text-ember-500">The selected detector was removed - pick another.</p>}
+      {detectors.length === 0 && !list.isLoading && <p className="text-[10px] text-faint">No detectors yet - click Manage to add one.</p>}
       {manage && <DetectorsModal slug={slug} onClose={() => setManage(false)} />}
     </div>
   );
@@ -912,19 +912,19 @@ function DetectorsModal({ slug, onClose }: { slug: string; onClose: () => void }
         <div className="rounded-lg border border-line/70 dark:border-mortar-700 p-3 space-y-2">
           <div className={detLbl}>Add a detector</div>
           <select value={key} onChange={(e) => { setKey(e.target.value); const c = cat.find((x) => x.key === e.target.value); if (c) setLabel((l) => l || c.name); }} className={input}>
-            <option value="">— choose a service —</option>
+            <option value=""> - choose a service - </option>
             {cat.map((c) => <option key={c.key} value={c.key}>{c.name} · {c.shape}</option>)}
           </select>
           {selectedCat?.summary && <p className="text-[10px] text-faint">{selectedCat.summary}</p>}
           {key && (
             <>
-              <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label — e.g. Obico on the NAS" className={input} />
-              <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="Base URL — http://nas.lan:3333 (or cobblr-edge://<instance> from the cloud)" className={input} />
+              <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label - e.g. Obico on the NAS" className={input} />
+              <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="Base URL - http://nas.lan:3333 (or cobblr-edge://<instance> from the cloud)" className={input} />
               <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} type="password" placeholder="API token (only if the service needs one)" className={input} />
               {selectedCat?.shape === "camera-watcher" && (
-                <p className="text-[10px] text-faint">This service watches its own cameras — after adding, map each printer to its camera id on the detector's row below.</p>
+                <p className="text-[10px] text-faint">This service watches its own cameras - after adding, map each printer to its camera id on the detector's row below.</p>
               )}
-              <p className="text-[10px] text-faint">Reached directly on your LAN; from the cloud use <code className="font-mono">cobblr-edge://…</code> via your bridge. Loopback (127.0.0.1) is blocked — use the host/service name or LAN IP.</p>
+              <p className="text-[10px] text-faint">Reached directly on your LAN; from the cloud use <code className="font-mono">cobblr-edge://…</code> via your bridge. Loopback (127.0.0.1) is blocked - use the host/service name or LAN IP.</p>
               <button type="button" disabled={!label || !baseUrl || create.isPending} onClick={() => create.mutate()} className="rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white text-xs px-3 py-1.5">Add detector</button>
             </>
           )}
@@ -1012,13 +1012,13 @@ function DetectorCard({ slug, det, cat, onChanged }: { slug: string; det: Digifa
           {isWatcher && (
             <div className="space-y-1">
               <div className="flex items-center gap-2">
-                <div className={detLbl}>Linked cameras — a machine → its camera in the detector</div>
+                <div className={detLbl}>Linked cameras - a machine → its camera in the detector</div>
                 <button type="button" onClick={() => camsQuery.refetch()} className="text-[10px] text-cobble-600 dark:text-cobble-400 hover:underline" title="Refresh the camera list">
                   {camsQuery.isFetching ? "…" : "↻"}
                 </button>
               </div>
               {camsQuery.isError && (
-                <div className="text-[10px] text-ember-600 dark:text-ember-500">Couldn't list cameras — check the URL/token (Test), or type the id.</div>
+                <div className="text-[10px] text-ember-600 dark:text-ember-500">Couldn't list cameras - check the URL/token (Test), or type the id.</div>
               )}
               {rows.map((r, i) => {
                 const refMissing = !!r.ref && !deviceOpts.some((o) => o.value === r.ref);
@@ -1026,14 +1026,14 @@ function DetectorCard({ slug, det, cat, onChanged }: { slug: string; det: Digifa
                 return (
                   <div key={i} className="flex items-center gap-1.5">
                     <select value={r.ref} onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, ref: e.target.value } : x)))} className="input !py-1 !text-xs flex-1">
-                      <option value="">— pick a machine —</option>
+                      <option value=""> - pick a machine - </option>
                       {refMissing && <option value={r.ref}>{r.ref}</option>}
                       {deviceOpts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                     </select>
                     <span className="text-faint">→</span>
                     {cams.length > 0 || r.cam ? (
                       <select value={r.cam} onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, cam: e.target.value } : x)))} className="input !py-1 !text-xs flex-1">
-                        <option value="">— pick a camera —</option>
+                        <option value=""> - pick a camera - </option>
                         {camMissing && <option value={r.cam}>{r.cam}</option>}
                         {cams.map((c) => <option key={c.id} value={c.id}>{(c.name ? `${c.name} (${c.id})` : c.id) + (c.online === false ? " · offline" : "")}</option>)}
                       </select>
@@ -1050,7 +1050,7 @@ function DetectorCard({ slug, det, cat, onChanged }: { slug: string; det: Digifa
           {isWatcher && (
             <label className="flex items-start gap-1.5 text-[10px]">
               <input type="checkbox" checked={owns} onChange={(e) => setOwns(e.target.checked)} className="mt-0.5" />
-              <span>The detector <b>owns</b> these printers — show their live print state here, and don't also poll them in Cobblr <span className="text-faint">(avoids double-load on the printer)</span>.</span>
+              <span>The detector <b>owns</b> these printers - show their live print state here, and don't also poll them in Cobblr <span className="text-faint">(avoids double-load on the printer)</span>.</span>
             </label>
           )}
           {isWatcher && owns && (printers.data?.printers.length ?? 0) > 0 && (
@@ -1119,7 +1119,7 @@ function PrinterRegister({ slug, detId, fleet, onDone }: { slug: string; detId: 
               <div className="flex items-center gap-1.5">
                 <span className={detLbl}>From a machine</span>
                 <select value={connId} onChange={(e) => { setConnId(e.target.value); setDeviceId(""); }} className="input !py-1 !text-xs flex-1">
-                  <option value="">— a Cobblr machine to mirror —</option>
+                  <option value=""> - a Cobblr machine to mirror - </option>
                   {mappable.map((c) => <option key={c.connection_id} value={c.connection_id}>{c.label} ({c.type})</option>)}
                 </select>
                 {!needsDevice && <button type="button" disabled={!connId || mirror.isPending} onClick={() => mirror.mutate()} className="rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white text-xs px-2 py-1">Add</button>}
@@ -1134,7 +1134,7 @@ function PrinterRegister({ slug, detId, fleet, onDone }: { slug: string; detId: 
                 <div className="flex items-center gap-1.5">
                   <span className={detLbl}>Printer</span>
                   <select value={deviceId} onChange={(e) => setDeviceId(e.target.value)} className="input !py-1 !text-xs flex-1">
-                    <option value="">— which printer (needs stored LAN creds) —</option>
+                    <option value=""> - which printer (needs stored LAN creds) - </option>
                     {(selectedConn?.devices ?? []).map((dv) => <option key={dv.id} value={dv.id}>{dv.name} ({dv.id})</option>)}
                   </select>
                   <button type="button" disabled={!deviceId || mirror.isPending} onClick={() => mirror.mutate()} className="rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white text-xs px-2 py-1">Add</button>
@@ -1143,9 +1143,9 @@ function PrinterRegister({ slug, detId, fleet, onDone }: { slug: string; detId: 
             </div>
           )}
           <div className="text-[10px] text-faint">or register one by hand:</div>
-          {providers.isError && <div className="text-[10px] text-ember-600 dark:text-ember-500">Couldn't load providers — needs a manage-scope token on this detector.</div>}
+          {providers.isError && <div className="text-[10px] text-ember-600 dark:text-ember-500">Couldn't load providers - needs a manage-scope token on this detector.</div>}
           <select value={provider} onChange={(e) => { setProvider(e.target.value); setConfig({}); }} className={input}>
-            <option value="">— provider —</option>
+            <option value=""> - provider - </option>
             {provs.map((p) => <option key={p.id} value={p.id}>{p.label ?? p.id}</option>)}
           </select>
           {provider && (
@@ -1602,7 +1602,7 @@ function PrintQueueSection({ connections }: { connections: DigifabConnection[] }
                 <button
                   onClick={() => retry.mutate(jb.id)}
                   disabled={retry.isPending}
-                  title="Retry — re-queue and send again"
+                  title="Retry - re-queue and send again"
                   className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 hover:border-accent hover:text-accent text-content dark:text-mortar-200 px-2.5 py-1 text-xs transition disabled:opacity-50"
                 >
                   <RefreshCw size={12} className={retry.isPending && retry.variables === jb.id ? "animate-spin" : ""} /> Retry
@@ -1862,7 +1862,7 @@ function QueueTimeline({ slug, jobs, onOpenJob }: { slug: string; jobs: DigifabJ
     etaSec != null && etaSec > 0 ? new Date(Date.now() + etaSec * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : null;
   if (fleet.isLoading && !fleet.data) return <div className="text-sm text-muted">Loading timeline…</div>;
   if (rows.length === 0 && unassignedPoolJobs.length === 0 && awaiting.length === 0) {
-    return <div className="text-[13px] text-muted dark:text-slate-400 italic">Nothing running or queued — the timeline fills in as you queue jobs.</div>;
+    return <div className="text-[13px] text-muted dark:text-slate-400 italic">Nothing running or queued - the timeline fills in as you queue jobs.</div>;
   }
   return (
     <div className="border border-line dark:border-slate-700 rounded divide-y divide-line dark:divide-slate-800">
@@ -2109,9 +2109,9 @@ function NewJobModal({
               value={poolId}
               onChange={setPoolId}
               options={poolList.map((p) => ({ value: p.id, label: p.name, hint: `${p.members.length} machine${p.members.length === 1 ? "" : "s"}` }))}
-              placeholder="— pick a pool —"
+              placeholder=" - pick a pool - "
             />
-            <span className="text-[11px] text-faint">Queues unassigned — Cobblr drips it onto the next free machine in the pool.</span>
+            <span className="text-[11px] text-faint">Queues unassigned - Cobblr drips it onto the next free machine in the pool.</span>
           </label>
         )}
         {routeBy === "machine" && (
@@ -2121,7 +2121,7 @@ function NewJobModal({
               value={machineId}
               onChange={setMachineId}
               options={machineList.map((m) => ({ value: m.id, label: m.instLabel ? `${m.name} · ${m.instLabel}` : m.name }))}
-              placeholder="— pick a machine —"
+              placeholder=" - pick a machine - "
             />
             <span className="text-[11px] text-faint">Routes to the farm printer that machine is linked to.</span>
           </label>
@@ -2133,7 +2133,7 @@ function NewJobModal({
               value={printerId}
               onChange={setPrinterId}
               options={printerList.map((p) => ({ value: p.id, label: p.name, hint: p.state ?? undefined }))}
-              placeholder="— pick a printer —"
+              placeholder=" - pick a printer - "
             />
           </label>
         )}
@@ -2158,7 +2158,7 @@ function NewJobModal({
               if (f && !fileRef.trim()) setFileRef(f.filename);
             }}
             options={fileList.map((f) => ({ value: f.id, label: f.filename }))}
-            placeholder="— routing-only (no upload) —"
+            placeholder=" - routing-only (no upload) - "
             allowClear
           />
           <span className="text-[11px] text-faint">
@@ -2172,7 +2172,7 @@ function NewJobModal({
               value={materialPartId}
               onChange={setMaterialPartId}
               options={partList.map((p) => ({ value: p.id, label: p.name }))}
-              placeholder="— don't track material —"
+              placeholder=" - don't track material - "
               allowClear
               className="flex-1"
             />
@@ -2191,7 +2191,7 @@ function NewJobModal({
             <span className="text-[11px] text-moss-600 dark:text-moss-400">
               ↳ from the file:{" "}
               {[slicerMeta.material, slicerMeta.filament_g != null ? `${slicerMeta.filament_g} g` : null].filter(Boolean).join(" · ")}
-              {" "}— auto-filled from the slicer, edit if needed.
+              {" "} - auto-filled from the slicer, edit if needed.
             </span>
           ) : (
             <span className="text-[11px] text-faint">Pick a file above and Cobblr reads the filament + grams from its slicer metadata. When the print completes, the grams are deducted from that spool's stock.</span>
@@ -2207,7 +2207,7 @@ function NewJobModal({
               value={buildId}
               onChange={setBuildId}
               options={buildList.map((b) => ({ value: b.id, label: b.name }))}
-              placeholder="— don't make a build —"
+              placeholder=" - don't make a build - "
               allowClear
             />
             {buildId && (
@@ -2302,7 +2302,7 @@ function ConnectionPrinters({ connection }: { connection: DigifabConnection }) {
   return (
     <div>
       {printers.isLoading && <div className="text-xs text-muted py-1">Loading printers…</div>}
-      {printers.isError && <div className="text-xs text-ember-500 py-1">Couldn't reach the farm — test the connection.</div>}
+      {printers.isError && <div className="text-xs text-ember-500 py-1">Couldn't reach the farm - test the connection.</div>}
       {!printers.isLoading && !printers.isError && items.length === 0 && (
         <div className="text-xs text-muted italic py-1">No printers reported.</div>
       )}
@@ -2331,7 +2331,7 @@ function ConnectionPrinters({ connection }: { connection: DigifabConnection }) {
                 disabled={link.isPending || unlink.isPending || machines.isLoading}
                 value={linked?.machine_id ?? ""}
                 allowClear
-                placeholder="— link to machine —"
+                placeholder=" - link to machine - "
                 options={machineList.map((m) => ({ value: m.id, label: m.instLabel ? `${m.name} · ${m.instLabel}` : m.name }))}
                 onChange={(machineId) => {
                   if (!machineId) {
@@ -2352,7 +2352,7 @@ function ConnectionPrinters({ connection }: { connection: DigifabConnection }) {
         })}
       </ul>
       <p className="mt-2 text-[11px] text-faint">
-        Link a farm printer to one of your machines — a job linked to that machine then routes to its printer automatically.
+        Link a farm printer to one of your machines - a job linked to that machine then routes to its printer automatically.
       </p>
     </div>
   );
@@ -2387,7 +2387,7 @@ function LibrarySection({ slug }: { slug: string }) {
         </button>
       </div>
       {itemsL.length === 0 ? (
-        <div className="text-xs text-muted dark:text-slate-400 italic">No files yet. Upload a .3mf or .gcode — Cobblr pulls out the slicer's plate preview, and you can send it to any machine.</div>
+        <div className="text-xs text-muted dark:text-slate-400 italic">No files yet. Upload a .3mf or .gcode - Cobblr pulls out the slicer's plate preview, and you can send it to any machine.</div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
           {itemsL.map((it) => <LibraryCard key={it.id} item={it} slug={slug} />)}
@@ -2483,7 +2483,7 @@ function LibrarySendModal({ item, slug, onClose }: { item: DigifabLibraryItem; s
             <label className="block">
               <span className={lbl}>Connection</span>
               <select value={connectionId} onChange={(e) => { setConnectionId(e.target.value); setDeviceId(""); }} className={field}>
-                <option value="">— pick —</option>
+                <option value=""> - pick - </option>
                 {connList.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
               </select>
             </label>
@@ -2499,13 +2499,13 @@ function LibrarySendModal({ item, slug, onClose }: { item: DigifabLibraryItem; s
           <label className="block">
             <span className={lbl}>Pool</span>
             <select value={poolId} onChange={(e) => setPoolId(e.target.value)} className={field}>
-              <option value="">— pick —</option>
+              <option value=""> - pick - </option>
               {poolList.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
             <span className="text-[11px] text-faint">Drips onto the next free printer in the pool.</span>
           </label>
         )}
-        <p className="text-[11px] text-faint">Bambu over the cloud can't accept an arbitrary file — send works on FDM Monster / OctoPrint / Klipper / edge-bridge machines (Bambu LAN later).</p>
+        <p className="text-[11px] text-faint">Bambu over the cloud can't accept an arbitrary file - send works on FDM Monster / OctoPrint / Klipper / edge-bridge machines (Bambu LAN later).</p>
         <div className="flex justify-end gap-2 pt-1">
           <button onClick={onClose} className="px-3 py-1.5 text-sm rounded border border-line dark:border-slate-600">Cancel</button>
           <button onClick={() => send.mutate()} disabled={!ready || send.isPending} className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50">{send.isPending ? "Sending…" : "Send"}</button>
@@ -2665,7 +2665,7 @@ function PoolsSection({ slug }: { slug: string }) {
 
       {poolList.length === 0 ? (
         <div className="text-[13px] text-muted dark:text-slate-400 italic">
-          No pools. A pool is a set of machines you queue jobs onto — Cobblr drips each job onto the next free one. Great for running many printers as one farm.
+          No pools. A pool is a set of machines you queue jobs onto - Cobblr drips each job onto the next free one. Great for running many printers as one farm.
         </div>
       ) : (
         <div className="space-y-2">
@@ -2778,14 +2778,14 @@ function FdmmImportModal({ slug, onClose, onDone }: { slug: string; onClose: () 
           <label className="flex items-start gap-2 text-[13px] cursor-pointer">
             <input type="radio" checked={mode === "direct"} onChange={() => setMode("direct")} className="mt-0.5" />
             <span>
-              <b className="text-content dark:text-mortar-100">Connect to each printer directly</b> — recreate every printer as its own Cobblr
+              <b className="text-content dark:text-mortar-100">Connect to each printer directly</b>  - recreate every printer as its own Cobblr
               connection (OctoPrint, Klipper, … matched per printer) and pool them. Drops FDM Monster from the path.
             </span>
           </label>
           <label className="flex items-start gap-2 text-[13px] cursor-pointer">
             <input type="radio" checked={mode === "mirror"} onChange={() => setMode("mirror")} className="mt-0.5" />
             <span>
-              <b className="text-content dark:text-mortar-100">Keep FDM Monster, mirror its printers</b> — add one FDM Monster connection and a
+              <b className="text-content dark:text-mortar-100">Keep FDM Monster, mirror its printers</b>  - add one FDM Monster connection and a
               Cobblr pool over its printers. FDM Monster still does the comms.
             </span>
           </label>
@@ -2928,7 +2928,7 @@ function BulkAddModal({ slug, onClose, onDone }: { slug: string; onClose: () => 
         className="space-y-3"
       >
         <p className="text-[13px] text-muted dark:text-slate-400">
-          Paste a list of printer URLs — Cobblr makes one direct connection per line and (optionally) groups them into a pool.
+          Paste a list of printer URLs - Cobblr makes one direct connection per line and (optionally) groups them into a pool.
           For migrating an existing FDM Monster farm, use <b>Import farm</b> instead.
         </p>
         <div className="grid grid-cols-2 gap-2">
@@ -2946,7 +2946,7 @@ function BulkAddModal({ slug, onClose, onDone }: { slug: string; onClose: () => 
           </label>
         </div>
         <label className="block">
-          <span className={lbl}>Printers — one per line</span>
+          <span className={lbl}>Printers - one per line</span>
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
@@ -3058,7 +3058,7 @@ function ProductionRunsSection({ slug }: { slug: string }) {
         target_qty: target,
       }),
     onSuccess: () => {
-      toast.success("Run started — plates are queueing onto the pool.");
+      toast.success("Run started - plates are queueing onto the pool.");
       setOpen(false);
       setName("");
       refresh();
@@ -3079,7 +3079,7 @@ function ProductionRunsSection({ slug }: { slug: string }) {
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 flex items-center gap-3">
         <Layers size={16} className="text-accent shrink-0" />
         <div className="flex-1 text-sm text-muted dark:text-slate-400">
-          <span className="font-medium text-content dark:text-mortar-100">Production runs</span> — "make 250 of these,
+          <span className="font-medium text-content dark:text-mortar-100">Production runs</span>  - "make 250 of these,
           stop when done." Pick a pool, a plate file, and a target; the farm does the rest.
         </div>
         <button onClick={() => setOpen(true)} className="shrink-0 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition">
@@ -3124,7 +3124,7 @@ function ProductionRunsSection({ slug }: { slug: string }) {
         <div className="space-y-3 text-sm">
           <label className="block">
             <span className="text-xs text-muted dark:text-slate-400">Name</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Bracket run — July"
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Bracket run - July"
               className="mt-1 w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5" />
           </label>
           <label className="block">
@@ -3180,7 +3180,7 @@ function ProductionRunsSection({ slug }: { slug: string }) {
           </div>
           <p className="text-xs text-faint dark:text-slate-500">
             {Math.ceil(target / Math.max(1, ppp))} plate{Math.ceil(target / Math.max(1, ppp)) === 1 ? "" : "s"} will be
-            printed. A plate only counts when you clear the bed with a <em>good</em> verdict — scrapped plates are
+            printed. A plate only counts when you clear the bed with a <em>good</em> verdict - scrapped plates are
             reprinted automatically.
           </p>
           <div className="flex justify-end gap-2 pt-1">

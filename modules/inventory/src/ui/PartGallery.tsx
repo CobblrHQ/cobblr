@@ -113,7 +113,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
       const blob = await r.blob();
       const out = await cutoutPlainBackground(blob);
       if (!out) {
-        toast.error("No plain background to cut out — works best on a photo over a plain backdrop.");
+        toast.error("No plain background to cut out - works best on a photo over a plain backdrop.");
         return;
       }
       const fd = new FormData();
@@ -128,7 +128,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
       });
       if (!ares.ok) throw new Error(`attach ${ares.status}`);
       onSetCover(fullUrl(f.id));
-      toast.success("Background removed — cut-out set as the cover.");
+      toast.success("Background removed - cut-out set as the cover.");
       void qc.invalidateQueries({ queryKey: ["part-gallery", orgSlug, partId] });
     } catch (e) {
       toast.error(`Cut-out failed: ${(e as Error).message}`);

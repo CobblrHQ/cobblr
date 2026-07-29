@@ -56,7 +56,7 @@ export function HomeboxImportModal({ open, onClose }: { open: boolean; onClose: 
       const j = (await res.json()) as Preview & { error?: { message: string } };
       if (!res.ok) throw new Error(j.error?.message ?? `preview failed (${res.status})`);
       setPreview(j);
-      if (!j.is_homebox) toast.info("These columns don't look like a Homebox export — it'll still try by column name.");
+      if (!j.is_homebox) toast.info("These columns don't look like a Homebox export - it'll still try by column name.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't read that file");
       setCsv(null);

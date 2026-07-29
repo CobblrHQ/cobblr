@@ -28,7 +28,7 @@ export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) 
   const revoke = useMutation({
     mutationFn: (id: string) => api.revokeQrToken(activeSlug, id),
     onSuccess: () => {
-      toast.success("Token revoked — scanning it now 404s");
+      toast.success("Token revoked - scanning it now 404s");
       void qc.invalidateQueries({ queryKey: ["qr-tokens", activeSlug] });
     },
     onError: (e: unknown) =>
@@ -88,7 +88,7 @@ export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) 
 
       <p className="text-sm text-content dark:text-mortar-200">
         Tokens minted by scanning / printing labels. Each resolves at{" "}
-        <code className="font-mono text-xs">/qr/&lt;token&gt;</code> — either
+        <code className="font-mono text-xs">/qr/&lt;token&gt;</code>  - either
         navigating to the item or firing an action. Revoke one and its printed
         label stops working immediately.
       </p>
@@ -191,13 +191,13 @@ export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) 
           ) : (
             <>New codes encode this instance's own address. </>
           )}
-          Point a stable name you own — a domain, a{" "}
+          Point a stable name you own - a domain, a{" "}
           <span className="font-mono">DuckDNS</span>, or a{" "}
-          <span className="font-mono">Tailscale</span> name — here, and set it to{" "}
+          <span className="font-mono">Tailscale</span> name - here, and set it to{" "}
           <strong>forward the <code className="font-mono">/qr/…</code> path</strong>{" "}
           to this instance (an HTTP redirect or reverse proxy, not a bare DNS
-          record). Then if you ever move — self-host, change domains, leave the
-          hosted app — you re-point the forward and every printed code keeps
+          record). Then if you ever move - self-host, change domains, leave the
+          hosted app - you re-point the forward and every printed code keeps
           working. Already-printed codes are unchanged.
         </p>
       </div>

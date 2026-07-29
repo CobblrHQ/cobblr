@@ -4,6 +4,7 @@
 // LAN for self-hosted; the same connection rides the edge-bridge from cloud.
 
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { isEdgeManagerUrl, edgeInstanceOf } from "@cobblr/platform-contract/edge-bridge-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Printer as PrinterIcon, Wifi, Send, Pencil, Star, Bluetooth, Activity } from "lucide-react";
@@ -440,6 +441,55 @@ function PrinterModal({
   const [brInstance, setBrInstance] = useState(String(br0.instance ?? ""));
   const [brLocalUrl, setBrLocalUrl] = useState(String(br0.bridgeUrl ?? ""));
   const [brToken, setBrToken] = useState(String(br0.token ?? ""));
+  /** Instances read FROM the chosen bridge. Empty until asked: discovery is a
+   *  request to someone's hardware, not something to fire while they type. */
+  const [brFound, setBrFound] = useState<{ id: string; driver: string }[] | null>(null);
+  const [brFinding, setBrFinding] = useState(false);
+  // Bridges already registered in this workspace, so an address is PICKED rather
+  // than retyped per printer. That was the whole complaint: the address existed
+  // in three places and matched in none of them.
+  const bridgesQ = useQuery({
+    queryKey: ["edge-bridges", slug],
+    queryFn: () => api.listEdgeBridges(slug),
+    enabled: !!slug,
+    staleTime: 30_000,
+  });
+  const knownBridges = bridgesQ.data?.direct ?? [];
+
+  /** Ask the bridge what it serves.
+   *
+   *  Its root returns JSON when asked for it, so the instance ids come from the
+   *  bridge instead of being typed from memory — a wrong instance id is
+   *  indistinguishable from a dead printer once you are looking at a failed
+   *  print. Unauthenticated on purpose: the root is not token-gated, so
+   *  discovery works before you have pasted the token. */
+  async function findInstances(): Promise<void> {
+    const base = brLocalUrl.trim().replace(/\/+$/, "");
+    if (!base) return;
+    setBrFinding(true);
+    try {
+      const res = await fetch(`${base}/`, { headers: { accept: "application/json" } });
+      if (!res.ok) throw new Error(`the bridge answered ${res.status}`);
+      const j = (await res.json()) as { instances?: { id?: unknown; driver?: unknown }[] };
+      const list = (j.instances ?? [])
+        .map((i) => ({ id: String(i.id ?? ""), driver: String(i.driver ?? "") }))
+        .filter((i) => i.id);
+      setBrFound(list);
+      if (list.length === 0) toast.error("That bridge is running, but has no instances configured.");
+      else if (!brInstance.trim() && list[0]) setBrInstance(list[0].id);
+    } catch (e) {
+      // Say which hop failed. THIS BROWSER reaching the bridge is a different
+      // question from Cobblr's server reaching it, and they disagree often
+      // enough that a bare "failed" sends people to the wrong place.
+      setBrFound(null);
+      toast.error(
+        `This browser could not reach ${base}: ${e instanceof Error ? e.message : "no response"}. ` +
+          `Cobblr's server may still reach it fine.`,
+      );
+    } finally {
+      setBrFinding(false);
+    }
+  }
   const [brName, setBrName] = useState(String(br0.bridgeName ?? ""));
   const [brWidthMm, setBrWidthMm] = useState(String(br0.widthDots ? Number(dotsToMm(Number(br0.widthDots)).toFixed(1)) : 40));
   const [brHeightMm, setBrHeightMm] = useState(String(br0.labelHeightMm ?? 30));
@@ -654,7 +704,7 @@ function PrinterModal({
         {isBrowserThermal ? (
           <div className="space-y-3 rounded border border-line dark:border-slate-600 p-3">
             <div className="text-[11px] text-faint">
-              This printer is driven from <b>this browser</b> over Bluetooth — the server cannot reach it.
+              This printer is driven from <b>this browser</b> over Bluetooth - the server cannot reach it.
               Needs Chrome or Edge on desktop/Android; iOS has no Web Bluetooth. Values below come from the
               printer&rsquo;s calibration; run the self-test if you don&rsquo;t know them.
             </div>
@@ -734,7 +784,7 @@ function PrinterModal({
                     <span className="text-xs text-muted">Don&apos;t feed to the tear bar</span>
                     <span className="block text-[11px] text-faint mt-0.5">
                       Turn this on if a blank label comes out between prints. Printers push the
-                      finished label out to be torn off, then pull it back before the next one — but
+                      finished label out to be torn off, then pull it back before the next one - but
                       a roll with no code in it leaves the printer guessing, so it feeds forward and
                       never comes back.
                     </span>
@@ -775,13 +825,57 @@ function PrinterModal({
           <div className="space-y-2 rounded border border-line dark:border-slate-600 p-3">
             <div className="text-[11px] text-faint">
               The bridge serves each printer under an <b>instance</b> id from its config
-              (e.g. <code>labels</code>). If the bridge runs <b>on this computer</b>, add its
-              address and this browser prints to it directly — no pairing to the cloud needed.
+              (e.g. <code>labels</code>). Give its address and this browser talks to it
+              directly - no pairing to the cloud needed. That can be this computer, or any
+              machine you can reach (a Pi, the workshop box, a bench of virtual devices).
             </div>
+            {knownBridges.length > 0 && (
+              <label className="block">
+                <div className="text-xs text-muted mb-1">Bridge</div>
+                <select
+                  className={field}
+                  value={knownBridges.some((b) => b.origin === brLocalUrl.trim().replace(/\/+$/, "")) ? brLocalUrl.trim().replace(/\/+$/, "") : ""}
+                  onChange={(e) => {
+                    setBrLocalUrl(e.target.value);
+                    setBrFound(null);
+                  }}
+                >
+                  <option value="">Type an address below…</option>
+                  {knownBridges.map((b) => (
+                    <option key={b.origin} value={b.origin}>
+                      {b.label} — {b.origin}
+                      {b.instances > 0 ? ` (${b.instances} machine${b.instances === 1 ? "" : "s"})` : ""}
+                      {b.auth === "none" ? " · no token" : ""}
+                    </option>
+                  ))}
+                </select>
+                <div className="text-[11px] text-faint mt-1">
+                  Registered under <Link to="/configuration/edge" className="text-accent hover:underline">Edge bridges</Link>.
+                  Picking one fills the address; the token stays here because your browser needs it.
+                </div>
+              </label>
+            )}
             <div className="grid grid-cols-2 gap-2">
               <label className="block">
                 <div className="text-xs text-muted mb-1">Instance on the bridge</div>
-                <input className={field + " font-mono"} value={brInstance} onChange={(e) => setBrInstance(e.target.value)} placeholder="labels" />
+                {brFound && brFound.length > 0 ? (
+                  <select className={field} value={brInstance} onChange={(e) => setBrInstance(e.target.value)}>
+                    {brFound.map((i) => (
+                      <option key={i.id} value={i.id}>{i.id} — {i.driver}</option>
+                    ))}
+                    {!brFound.some((i) => i.id === brInstance) && brInstance ? <option value={brInstance}>{brInstance} (not on this bridge)</option> : null}
+                  </select>
+                ) : (
+                  <input className={field + " font-mono"} value={brInstance} onChange={(e) => setBrInstance(e.target.value)} placeholder="labels" />
+                )}
+                <button
+                  type="button"
+                  className="text-[11px] text-accent hover:underline mt-1 disabled:opacity-50"
+                  disabled={brFinding || !brLocalUrl.trim()}
+                  onClick={() => void findInstances()}
+                >
+                  {brFinding ? "asking the bridge…" : "Ask the bridge what it serves"}
+                </button>
               </label>
               <label className="block">
                 <div className="text-xs text-muted mb-1">Named bridge (optional)</div>
@@ -790,11 +884,11 @@ function PrinterModal({
             </div>
             <div className="grid grid-cols-2 gap-2">
               <label className="block">
-                <div className="text-xs text-muted mb-1">Bridge on this computer (optional)</div>
-                <input className={field + " font-mono"} value={brLocalUrl} onChange={(e) => setBrLocalUrl(e.target.value)} placeholder="http://127.0.0.1:8077" />
+                <div className="text-xs text-muted mb-1">Bridge address (optional)</div>
+                <input className={field + " font-mono"} value={brLocalUrl} onChange={(e) => { setBrLocalUrl(e.target.value); setBrFound(null); }} placeholder="http://127.0.0.1:8077 or http://<host>:8077" />
               </label>
               <label className="block">
-                <div className="text-xs text-muted mb-1">Instance token (optional)</div>
+                <div className="text-xs text-muted mb-1">Bridge token (optional)</div>
                 <input className={field} type="password" value={brToken} onChange={(e) => setBrToken(e.target.value)} autoComplete="off" />
               </label>
             </div>

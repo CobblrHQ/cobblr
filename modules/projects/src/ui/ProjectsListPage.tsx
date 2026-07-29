@@ -264,7 +264,7 @@ export function ProjectsListPage() {
 
       {items.length === 0 && !list.isLoading && (
         <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-12 text-center text-faint dark:text-slate-500">
-          No {nounPlural} yet — create one above.
+          No {nounPlural} yet - create one above.
         </div>
       )}
       {items.length > 0 && filtered.length === 0 && (

@@ -104,7 +104,7 @@ export function QrResolvePage() {
           This label triggers an action
         </div>
         <p className="text-xs text-muted dark:text-slate-400">
-          Action-mode scans aren&apos;t confirmable from the web yet — you can open the
+          Action-mode scans aren&apos;t confirmable from the web yet - you can open the
           item it&apos;s attached to instead.
         </p>
         <a

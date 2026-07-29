@@ -172,7 +172,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
                 onClick={() => void api.resendVerification().catch(() => undefined)}
                 className="mt-1 text-[11px] text-amber-600 dark:text-amber-400 hover:underline"
               >
-                email unverified — resend link
+                email unverified - resend link
               </button>
             )}
             {isAdmin && (
@@ -374,7 +374,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
                 onClick={() => void api.resendVerification().catch(() => undefined)}
                 className="mt-1 text-[11px] text-amber-600 dark:text-amber-400 hover:underline"
               >
-                email unverified — resend link
+                email unverified - resend link
               </button>
             )}
             {isAdmin && (

@@ -97,7 +97,7 @@ export function DirectManagerConnect({
     },
     onSuccess: ({ conn, devices, ok }) => {
       if (ok) toast.success(`${kindLabel} connected`);
-      else toast.error("Created, but Cobblr couldn't reach it — check the address is right and on the network.");
+      else toast.error("Created, but Cobblr couldn't reach it - check the address is right and on the network.");
       onConnected(conn, devices);
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
@@ -107,7 +107,7 @@ export function DirectManagerConnect({
     <div className="space-y-3">
       <div className="flex items-center gap-2 text-xs text-muted">
         <Printer size={14} className="text-accent" />
-        <span>Point Cobblr at your <strong>{kindLabel}</strong> on the network — we install the driver and connect.</span>
+        <span>Point Cobblr at your <strong>{kindLabel}</strong> on the network - we install the driver and connect.</span>
       </div>
       <label className="block">
         <span className={lbl}>Address (URL or IP)</span>
@@ -121,7 +121,7 @@ export function DirectManagerConnect({
       )}
       {hosted && looksLikeLan(url) && (
         <p className="text-[11px] text-amber-600 dark:text-amber-400">
-          That's a LAN address, and this is a <strong>hosted</strong> Cobblr — it can't reach a device on your network directly. Run the <strong>Cobblr edge bridge</strong> on your network and connect through that instead.
+          That's a LAN address, and this is a <strong>hosted</strong> Cobblr - it can't reach a device on your network directly. Run the <strong>Cobblr edge bridge</strong> on your network and connect through that instead.
         </p>
       )}
       <p className="text-[11px] text-faint">Stored encrypted. Cobblr sends files + start/status to this address; it never streams motion.</p>

@@ -234,7 +234,7 @@ function PutAwayCard({ slug }: { slug: string }) {
             {parts.join(", and ")}.
           </div>
           <div className="text-xs text-muted dark:text-slate-400">
-            Preview where everything should go — nothing moves until you confirm.
+            Preview where everything should go - nothing moves until you confirm.
           </div>
         </div>
       </div>
@@ -512,7 +512,7 @@ function AttentionRow({ slug, item: it, tone, glyph }: { slug: string; item: Att
             ))}
             {it.count > entries.length && (
               <li className="pl-9 pr-3 py-1.5 text-xs text-faint dark:text-slate-500">
-                <Link to={it.route} className="hover:text-accent">+{it.count - entries.length} more — open the page</Link>
+                <Link to={it.route} className="hover:text-accent">+{it.count - entries.length} more - open the page</Link>
               </li>
             )}
           </ul>
@@ -560,7 +560,7 @@ function SetupCardsPanel({ slug }: { slug: string }) {
             <Compass size={16} className="text-accent shrink-0" />
             <span className="text-base shrink-0">{card.glyph}</span>
             <div className="font-medium text-content dark:text-mortar-100 min-w-0 truncate">
-              Set up {card.name} — where to start
+              Set up {card.name}  - where to start
             </div>
             <div className="flex-1" />
             <button
@@ -803,7 +803,7 @@ function GettingStartedPanel({
       <div className="flex items-center gap-2">
         <Sparkles size={16} className="text-accent" />
         <h2 className="font-semibold text-content dark:text-mortar-100">
-          Welcome — this workspace is empty.
+          Welcome - this workspace is empty.
         </h2>
       </div>
       <p className="text-sm text-content dark:text-mortar-200">
@@ -834,7 +834,7 @@ function GettingStartedPanel({
             Browse the marketplace
           </div>
           <div className="text-xs text-muted dark:text-slate-400 mt-0.5">
-            One-click install of a starter pack — Lego, Garden, Tool
+            One-click install of a starter pack - Lego, Garden, Tool
             Library, Bookshelf, and more. Comes wired up and ready to use.
           </div>
         </Link>
@@ -1512,7 +1512,7 @@ function TileGrid({
         <SectionTitle>at a glance</SectionTitle>
         {visible.length === 0 ? (
           <p className="text-sm text-muted dark:text-slate-400 italic">
-            All tiles are hidden — use Arrange to show some.
+            All tiles are hidden - use Arrange to show some.
           </p>
         ) : (
           <TileCollapseContext.Provider value={collapseCtx}>
@@ -1546,7 +1546,7 @@ function TileGrid({
                   </Link>
                 </span>
               ))}
-              <span> — nothing in them yet.</span>
+              <span>  - nothing in them yet.</span>
             </p>
           )}
           </TileCollapseContext.Provider>
@@ -1628,7 +1628,7 @@ function PinnedViewsGhost({ slug }: { slug: string }) {
         <Pin size={15} className="shrink-0 text-faint dark:text-slate-500" />
         <div className="flex-1 min-w-0 text-sm text-muted dark:text-slate-400">
           <Link to="/views" className="text-accent hover:underline font-medium">Pin a saved view</Link>
-          {" "}here — your table, your filters, live on the dashboard.
+          {" "}here - your table, your filters, live on the dashboard.
         </div>
         <button
           type="button"
@@ -1943,7 +1943,7 @@ function PinnedView({
                 the hint-only dead card this used to be. */}
             {isGrouped && groupCounts.length > 0 && groupCounts.every(([k]) => k === "") && (
               <div className="mt-2 text-[11px] text-faint italic">
-                No {groupLabel} set yet — set it on these to group them here.
+                No {groupLabel} set yet - set it on these to group them here.
               </div>
             )}
           </>

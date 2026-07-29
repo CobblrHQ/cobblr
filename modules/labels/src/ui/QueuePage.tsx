@@ -46,7 +46,7 @@ import { bleSettingsForSize } from "../ble-media";
 // Bluetooth. Same renderer + encoder as the Bluetooth path; only the pipe differs.
 import { isWebSerialAvailable, NO_WEB_SERIAL, printBatchOverSerial, ConnectPrinterModal, usePrinterStatus, describePrinterStatus, getPrinterStatus,
   isLocalBridgePrinter, readLocalBridgeStatus, setPrinterStatus, bridgeInstanceInfo, printerDisplayName, reportedMedia, needsReportedRemember, BatteryGauge, printerConnectionLabel, printerReach } from "@cobblr/platform-web";
-import { rememberedSelection, needsRemember, byRecentlyUsed, recentSizeKeys, sizeByPaper, withSizeForPaper } from "../printer-memory";
+import { rememberedSelection, needsRemember, byRecentlyUsed, recentSizeKeys, sizeByPaper, withSizeForPaper, withRememberedPaper } from "../printer-memory";
 import { assessScannability } from "../print/qr-overlay";
 import type { CustomLabelSize, Printable } from "./api";
 import { NewSizeModal } from "./NewSizeModal";
@@ -200,7 +200,19 @@ export function QueuePage() {
   // say, a 50×30 roll. With a printer connected, its capability already filtered, so
   // this passes everything through. The picker then groups into the same sections.
   const [mediaType, setMediaType] = useState<MediaTypeFilter>("all");
-  const visiblePapers = papersOfType(funnelPapers, toolbar.connectCtas ? mediaType : "all");
+  /** The media this printer's row says was last used on it. Evidence from use:
+   *  it stays pickable even when the capability GUESS would hide it, and it
+   *  feeds the "no roll reported" note below. */
+  const rememberedPaperKey = ((): string | null => {
+    const v = ((defaultPrinter?.settings ?? {}) as Record<string, unknown>).lastPaperKey;
+    return typeof v === "string" && v ? v : null;
+  })();
+  const visiblePapers = withRememberedPaper(
+    papersOfType(funnelPapers, toolbar.connectCtas ? mediaType : "all"),
+    PAPER_SIZES,
+    rememberedPaperKey,
+    !!reading?.widthMm,
+  );
   const paperGroups = groupPapersByClass(visiblePapers);
 
   // Live "is the Bluetooth printer connected in this tab" flag — a held BLE
@@ -316,6 +328,22 @@ export function QueuePage() {
    *  read like a second media selector. Disagreement is news worth the words. */
   const reportedPaperKey = reportedRoll ? mediaForReading(reportedRoll.widthMm, reportedRoll.heightMm)?.paperKey : undefined;
   const onReportedMedia = !!reportedPaperKey && reportedPaperKey === paperKey;
+  /** When a BRIDGE printer reports NOTHING loaded, name the roll its row
+   *  remembers instead of going silent. An uncoded roll reports no size, so a
+   *  PM220S always answers "nothing loaded" — and silence made a recorded
+   *  setting look like a forgotten one.
+   *
+   *  Gated to printers that can actually be ASKED: a browser-paired printer can
+   *  never report and a sheet printer has no roll, so the note there would imply
+   *  an answer nobody could have given. Sourced from the ROW's memory, not the
+   *  live selection — a note that tracks the dropdown is a caption on it, not
+   *  information about the printer. */
+  const lastKnownRollNote = ((): string | null => {
+    if (reportedRoll) return null;
+    if (!isLocalBridgePrinter(defaultPrinter?.settings)) return null;
+    const paper = rememberedPaperKey ? PAPER_SIZES.find((v) => v.key === rememberedPaperKey) : undefined;
+    return paper ? `no roll reported — last loaded ${paper.label.replace(/^Label roll — /, "")}` : null;
+  })();
 
   const [codesOpen, setCodesOpen] = useState(false);
   const [newSizeOpen, setNewSizeOpen] = useState(false);
@@ -393,6 +421,10 @@ export function QueuePage() {
   // yourself" and writes nothing. System print (no printer capability) keeps
   // its old snap: there is no machine to be wrong about.
   const printerFunnel = !!cap;
+  // The remembered media never lands here: it is APPENDED to visiblePapers
+  // (withRememberedPaper), so this effect finds it present rather than needing a
+  // guard that would hold an excluded key in state — a value the dropdown cannot
+  // display, which read as "Pick media…" while the preview used the memory.
   useEffect(() => {
     if (!paperKey || !visiblePapers.length || visiblePapers.some((p) => p.key === paperKey)) return;
     setPaperKey(printerFunnel ? "" : visiblePapers[0]!.key);
@@ -837,7 +869,7 @@ export function QueuePage() {
             <button
               onClick={() => setConnectOpen(true)}
               className="rounded-md border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
-              title="Find your label printer and set it up automatically — no forms, no leaving this page"
+              title="Find your label printer and set it up automatically - no forms, no leaving this page"
             >
               <Bluetooth size={14} /> Connect a printer
             </button>
@@ -861,7 +893,7 @@ export function QueuePage() {
             <button
               onClick={() => setTargetMenuOpen((v) => !v)}
               className="relative z-20 rounded-md border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 text-sm px-2.5 py-2 transition flex items-center gap-1.5"
-              title="Where to print — a saved printer, or the system print dialog (⌘P)"
+              title="Where to print - a saved printer, or the system print dialog (⌘P)"
             >
               {defaultPrinter ? (
                 isBleDefault ? (
@@ -968,7 +1000,7 @@ export function QueuePage() {
             onClick={doBrowserPrint}
             disabled={items.length === 0 || !size}
             className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
-            title="Print here with the browser dialog (⌘P) — no new tab"
+            title="Print here with the browser dialog (⌘P) - no new tab"
           >
             <Printer size={14} />
             {`Print ${total}`}
@@ -1040,6 +1072,15 @@ export function QueuePage() {
                 <option value="__newsize__">＋ Custom size…</option>
               </select>
             </label>
+            {lastKnownRollNote && (
+              <span
+                className="inline-flex items-center gap-1 text-[11px] text-muted dark:text-slate-400"
+                title="The printer did not report a roll. This is the last one it had, kept so you are not asked to pick it again."
+              >
+                <Printer className="h-3 w-3 shrink-0 text-amber-500" />
+                {lastKnownRollNote}
+              </span>
+            )}
             {reportedRoll && onReportedMedia && (
               <span
                 className="inline-flex items-center gap-1 text-[11px] text-muted dark:text-slate-400"
@@ -1157,7 +1198,7 @@ export function QueuePage() {
       {list.isLoading && <div className="text-sm text-faint dark:text-slate-500">loading…</div>}
       {items.length === 0 && !list.isLoading && (
         <div className="text-sm text-faint dark:text-slate-500">
-          Queue is empty — pick items below, or add labels from any module that supports them.
+          Queue is empty - pick items below, or add labels from any module that supports them.
         </div>
       )}
 
@@ -1326,7 +1367,7 @@ export function QueuePage() {
           <p className="text-sm text-muted dark:text-slate-400">
             Removes <b className="text-content dark:text-mortar-100">{confirmForget?.name}</b> from this workspace.
             You can pair or add it again later. To just print somewhere else for now, pick{" "}
-            <b className="text-content dark:text-mortar-100">System print</b> instead — no need to forget.
+            <b className="text-content dark:text-mortar-100">System print</b> instead - no need to forget.
           </p>
           <div className="flex justify-end gap-2">
             <button

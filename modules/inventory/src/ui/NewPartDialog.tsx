@@ -382,7 +382,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
           {!fp.hidden("category") && (
             <Field label={fp.label("category", "Category")}>
               <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="input">
-                <option value="">— none —</option>
+                <option value=""> - none - </option>
                 {cats.data?.items.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
@@ -394,7 +394,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
           {!fp.hidden("location") && (
             <Field label={fp.label("location", "Location")}>
               <select value={locationId} onChange={(e) => setLocationId(e.target.value)} className="input">
-                <option value="">— none —</option>
+                <option value=""> - none - </option>
                 {locs.data?.items.map((l) => (
                   <option key={l.id} value={l.id}>
                     {"  ".repeat(l.depth)}
@@ -671,7 +671,7 @@ function ChoiceInput({
         }}
         className="input"
       >
-        <option value="">— none —</option>
+        <option value=""> - none - </option>
         {(def.choices ?? []).map((c) => (
           <option key={c} value={c}>
             {c}

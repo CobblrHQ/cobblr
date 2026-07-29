@@ -336,11 +336,11 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName }
           already-connected check so you can add a 2nd bridge even when the main
           one's online — typing an id flips the view to that bridge's install. */}
       <label className="block">
-        <span className={lbl}>Bridge <span className="normal-case text-faint/70">— pick a connected one, or type an id you're about to install</span></span>
+        <span className={lbl}>Bridge <span className="normal-case text-faint/70"> - pick a connected one, or type an id you're about to install</span></span>
         <BridgePicker slug={activeSlug} value={bridgeId.trim() ? bridgeId : null} onChange={(v) => setBridgeId(v ?? "")} />
         <span className="text-[11px] text-faint mt-1 block">
           {bid
-            ? <>Talking to <code>{bid}</code> — this must match that bridge's <code>BRIDGE_ID</code>. A 2nd+ bridge (another site, or LightBurn's PC) <strong>must</strong> be named so it gets its own channel.</>
+            ? <>Talking to <code>{bid}</code>  - this must match that bridge's <code>BRIDGE_ID</code>. A 2nd+ bridge (another site, or LightBurn's PC) <strong>must</strong> be named so it gets its own channel.</>
             : <>Blank = your <strong>main</strong> bridge (installed without a <code>BRIDGE_ID</code>). If you gave even your first bridge an id, type it here. Extra bridges always need a name.</>}
         </span>
       </label>
@@ -349,12 +349,12 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName }
       {connected ? (
         <div className="flex items-center gap-2 text-sm rounded border border-moss-500/40 bg-moss-50 dark:bg-moss-950/30 p-2">
           <span className="w-2 h-2 rounded-full bg-moss-500 shrink-0" />
-          <span className="text-moss-700 dark:text-moss-300">{bid ? <><code>{bid}</code></> : "Your main bridge"} is online ✓ — add a machine to it below. No reinstall needed.</span>
+          <span className="text-moss-700 dark:text-moss-300">{bid ? <><code>{bid}</code></> : "Your main bridge"} is online ✓ - add a machine to it below. No reinstall needed.</span>
         </div>
       ) : (<>
       <p className="text-[13px] text-muted dark:text-slate-400">
         A hosted Cobblr can't reach a machine on your network directly. Run one tiny <strong>bridge</strong> on
-        any always-on box at your site (Pi, NAS, mini-PC) — it dials out and holds a tunnel open (no inbound
+        any always-on box at your site (Pi, NAS, mini-PC) - it dials out and holds a tunnel open (no inbound
         firewall hole). Install it once; <strong>add every machine at your site</strong> to it, anytime.
       </p>
       {/* STEP 1 — install the bridge (name + token; no machines needed yet). */}
@@ -386,8 +386,8 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName }
         ) : (
           <>
             <pre className="text-[11px] leading-relaxed bg-subtle dark:bg-slate-950 border border-line dark:border-slate-700 rounded p-2 overflow-x-auto whitespace-pre text-content dark:text-mortar-200">{snippet}</pre>
-            <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">Run this on a box at your site. Token shown once — it can <strong>only</strong> run this bridge (scope <code>devices:edge</code>).</p>
-            <p className="text-[11px] text-faint mt-0.5">Stock public image — the bridge fetches its code from this Cobblr (sha-verified) and keeps itself updated automatically. Nothing to pull from a registry, ever.</p>
+            <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">Run this on a box at your site. Token shown once - it can <strong>only</strong> run this bridge (scope <code>devices:edge</code>).</p>
+            <p className="text-[11px] text-faint mt-0.5">Stock public image - the bridge fetches its code from this Cobblr (sha-verified) and keeps itself updated automatically. Nothing to pull from a registry, ever.</p>
           </>
         )}
       </div>
@@ -395,7 +395,7 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName }
         <span className={lbl}>3 · Cobblr is watching for it</span>
         <div className={"flex items-center gap-2 text-sm rounded border p-2 " + (connected ? "border-moss-500/40 bg-moss-50 dark:bg-moss-950/30" : "border-line dark:border-slate-700")}>
           <span className={"w-2 h-2 rounded-full " + (connected ? "bg-moss-500" : "bg-amber-500 animate-pulse")} />
-          {connected ? <span className="text-moss-700 dark:text-moss-300">{bid ? <><code>{bid}</code> online</> : "Main bridge online"} — dialed in ✓</span> : <span className="text-muted dark:text-slate-400">Waiting for {bridgeLabel} to dial in…</span>}
+          {connected ? <span className="text-moss-700 dark:text-moss-300">{bid ? <><code>{bid}</code> online</> : "Main bridge online"}  - dialed in ✓</span> : <span className="text-muted dark:text-slate-400">Waiting for {bridgeLabel} to dial in…</span>}
         </div>
       </div>
       </>)}
@@ -507,7 +507,7 @@ function FleetBatchBar({
     <div className="sticky bottom-3 z-10 flex items-center gap-2 rounded-lg border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 shadow-lg px-3 py-2">
       <span className="text-xs font-medium text-content dark:text-mortar-100">{devices.length} selected</span>
       {pausable.length + resumable.length + stoppable.length + clearable.length === 0 && (
-        <span className="text-[11px] text-faint italic">no batch actions for this selection — select running or finished machines</span>
+        <span className="text-[11px] text-faint italic">no batch actions for this selection - select running or finished machines</span>
       )}
       <div className="flex-1" />
       {pausable.length > 0 && (
@@ -1044,7 +1044,7 @@ export function FleetView({ slug, machineIds, scopeNoun }: {
             })}
             {errored.map((c) => (
               <div key={c.connection_id} className="flex items-center gap-1.5 text-xs text-ember-600 dark:text-ember-500">
-                <AlertTriangle size={13} className="shrink-0" /> {c.label} unreachable — {c.error}
+                <AlertTriangle size={13} className="shrink-0" /> {c.label} unreachable - {c.error}
               </div>
             ))}
             {sections.length === 0 && errored.length === 0 && (
@@ -1060,7 +1060,7 @@ export function FleetView({ slug, machineIds, scopeNoun }: {
                 farm devices (machines-digifab-unification.md §4). */}
             {machineIds && scopedOutCount > 0 && (
               <div className="text-[11px] text-faint">
-                {scopedOutCount} device{scopedOutCount === 1 ? " on the farm isn't" : "s on the farm aren't"} linked to a {scopeNoun ?? "machine"} in this collection —{" "}
+                {scopedOutCount} device{scopedOutCount === 1 ? " on the farm isn't" : "s on the farm aren't"} linked to a {scopeNoun ?? "machine"} in this collection - {" "}
                 <Link to="/digifab" className="text-accent hover:underline">see Digital Fabrication</Link>
               </div>
             )}
@@ -1492,7 +1492,7 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
       </div>
       {/* An external detector (e.g. PrintGuard) owns this printer's detection + camera. */}
       {d.managed_by_detector && (
-        <div className="mt-1 inline-flex items-center gap-1 text-[10px] text-faint" title="An external detector owns this printer's detection and camera — Cobblr isn't watching it or pulling its camera">
+        <div className="mt-1 inline-flex items-center gap-1 text-[10px] text-faint" title="An external detector owns this printer's detection and camera - Cobblr isn't watching it or pulling its camera">
           👁 watched by detector
         </div>
       )}
@@ -1500,8 +1500,8 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
           visible whenever the watch is live (the old ≥0.2 floor hid the AI on
           every healthy print, so nobody knew it was working). */}
       {!d.managed_by_detector && d.failure?.paused ? (
-        <div className="mt-1 inline-flex items-center gap-1 text-[10px] text-ember-600 dark:text-ember-500 font-medium" title="AI flagged a likely print failure and paused it — check the print">
-          ⚠ AI: likely failure — paused
+        <div className="mt-1 inline-flex items-center gap-1 text-[10px] text-ember-600 dark:text-ember-500 font-medium" title="AI flagged a likely print failure and paused it - check the print">
+          ⚠ AI: likely failure - paused
         </div>
       ) : !d.managed_by_detector && d.failure?.watching ? (
         <div
@@ -1767,7 +1767,7 @@ function ControlsPanel({ slug, connId, deviceId, name, telemetry, lanActive }: {
   const ctrls = useQuery({ queryKey: ["digifab-controls", slug, connId, deviceId], queryFn: () => api.getDigifabControls(slug, connId, deviceId) });
   const run = useMutation({
     mutationFn: ({ id, params }: { id: string; params?: Record<string, unknown> }) => api.runDigifabControl(slug, connId, deviceId, id, params),
-    onSuccess: () => toast.success("Sent — watch the printer"),
+    onSuccess: () => toast.success("Sent - watch the printer"),
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't send"),
   });
   const controls = ctrls.data?.controls ?? [];
@@ -2167,7 +2167,7 @@ function FilesPanel({ slug, connId, deviceId, onZoom, history, onOpenPrint, onRe
       {unmatched.length > 0 && (
         <>
           <div className="text-[10px] font-mono uppercase tracking-widest text-faint pt-1">
-            Printed before — file no longer on the printer
+            Printed before - file no longer on the printer
           </div>
           <ul className="divide-y divide-line dark:divide-slate-800 border border-line dark:border-slate-700 rounded max-h-48 overflow-y-auto">
             {unmatched.map((r) => (
@@ -2331,7 +2331,7 @@ function LanAccessPanel({ slug, connId, deviceId, lan }: { slug: string; connId:
         ) : (
           <div className="space-y-2">
             <div className="flex gap-1.5">
-              <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="Printer IP — 192.168.1.x" className={field + " flex-1"} />
+              <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="Printer IP - 192.168.1.x" className={field + " flex-1"} />
               <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Access code" className={field + " w-32"} />
               <button type="button" onClick={() => save.mutate()} disabled={save.isPending || !host.trim() || !code.trim()} className="px-2.5 py-1 text-xs rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50">{save.isPending ? "…" : "Enable"}</button>
             </div>
@@ -2483,7 +2483,7 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
             <Combobox
               value={linkedId ?? ""}
               allowClear
-              placeholder="— link to a machine —"
+              placeholder=" - link to a machine - "
               options={machineList.map((m) => ({ value: m.id, label: m.instLabel ? `${m.name} · ${m.instLabel}` : m.name }))}
               onChange={(id) => { link.mutate(id ? (machineList.find((m) => m.id === id) ?? null) : null); setLinkEdit(false); }}
             />
@@ -2518,7 +2518,7 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
                   )}
                   {fail?.paused && (
                     <div className="absolute inset-x-0 bottom-0 z-10 bg-ember-600/90 text-white text-xs font-medium px-3 py-1.5 rounded-b-lg">
-                      ⚠ AI flagged a likely failure and paused this print — inspect the bed, then resume from the controls.
+                      ⚠ AI flagged a likely failure and paused this print - inspect the bed, then resume from the controls.
                     </div>
                   )}
                 </div>
@@ -2602,7 +2602,7 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
               button), plus a tail of prints whose file is no longer on the card
               (view detail; Print-again when a Cobblr job backs it). */}
           <div className="pt-3 border-t border-line dark:border-slate-800">
-            <div className={lbl + " mb-1.5"}>On {device.name} — files &amp; prints</div>
+            <div className={lbl + " mb-1.5"}>On {device.name}  - files &amp; prints</div>
             <FilesPanel
               slug={slug}
               connId={connId}
@@ -2819,7 +2819,7 @@ export function MachineDigifabPanel({
         </div>
       ) : connections.length === 0 ? (
         <p className="text-xs text-muted dark:text-slate-400">
-          No print managers connected yet — add FDM Monster, OctoPrint, Klipper, Duet, Prusa, or Bambu.{" "}
+          No print managers connected yet - add FDM Monster, OctoPrint, Klipper, Duet, Prusa, or Bambu.{" "}
           <button type="button" onClick={() => setCreateConnOpen(true)} className="text-accent hover:underline">
             Connect one →
           </button>
@@ -2856,7 +2856,7 @@ export function MachineDigifabPanel({
             // Monster / OctoPrint fronting several printers) needs a "which printer"
             // step. So show the dropdown only for 2+; otherwise state the target.
             if (devices.isLoading) return <span className="text-[11px] text-muted dark:text-slate-400 self-center">checking…</span>;
-            if (devices.isError) return <span className="text-[11px] text-rose-500 self-center">couldn't reach it — is the bridge + printer on?</span>;
+            if (devices.isError) return <span className="text-[11px] text-rose-500 self-center">couldn't reach it - is the bridge + printer on?</span>;
             if (devs.length === 0) return <span className="text-[11px] text-muted dark:text-slate-400 self-center">no printer found at this connection</span>;
             if (devs.length === 1) return <span className="text-[11px] text-muted dark:text-slate-400 self-center">→ {devs[0]!.name} <span className="text-faint dark:text-slate-500">(direct)</span></span>;
             return (

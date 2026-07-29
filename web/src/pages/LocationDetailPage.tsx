@@ -1,4 +1,4 @@
-// /configuration/locations/:id — full-entity detail view.
+// /locations/:id — full-entity detail view.
 //
 // Locations are now first-class entities (Punch-list #1 from
 // docs/product/homebox-parity-report.md): notes, description, photos,
@@ -112,12 +112,12 @@ export function LocationDetailPage() {
     onSuccess: () => {
       toast.success("Location deleted.");
       void qc.invalidateQueries({ queryKey: ["locations", activeSlug] });
-      navigate("/configuration/locations");
+      navigate("/locations");
     },
     onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
-  if (!id) return <Navigate to="/configuration/locations" replace />;
+  if (!id) return <Navigate to="/locations" replace />;
   if (location.isLoading) return <div className="text-sm text-faint">loading…</div>;
   if (location.error)
     return <div className="text-sm text-ember-500">{(location.error as Error).message}</div>;
@@ -140,7 +140,7 @@ export function LocationDetailPage() {
   return (
     <div className="space-y-5 max-w-4xl mx-auto">
       <Link
-        to="/configuration/locations"
+        to="/locations"
         className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400 hover:text-accent"
       >
         <ArrowLeft size={12} /> back to all locations
@@ -150,7 +150,7 @@ export function LocationDetailPage() {
         <nav className="flex items-center gap-1 text-[11px] font-mono text-faint dark:text-slate-500">
           {breadcrumbs.map((b) => (
             <span key={b.id} className="inline-flex items-center gap-1">
-              <Link to={`/configuration/locations/${b.id}`} className="hover:text-accent">
+              <Link to={`/locations/${b.id}`} className="hover:text-accent">
                 {b.name}
               </Link>
               <ChevronRight size={11} />
@@ -233,7 +233,7 @@ export function LocationDetailPage() {
             {children.map((c) => (
               <li key={c.id}>
                 <Link
-                  to={`/configuration/locations/${c.id}`}
+                  to={`/locations/${c.id}`}
                   className="block rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 hover:border-cobble-300 dark:hover:border-cobble-700 transition"
                 >
                   <div className="flex items-center gap-2">
@@ -441,7 +441,7 @@ function EditLocationModal({
           />
         </Field>
         {kind === "container" && (
-          <Field label="Interior size (mm) — optional">
+          <Field label="Interior size (mm) - optional">
             <div className="flex items-center gap-2">
               <input
                 type="number"

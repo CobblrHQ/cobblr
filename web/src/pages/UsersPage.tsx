@@ -194,7 +194,7 @@ export function UsersPage() {
               onChange={(e) => setRoleInput(e.target.value as Role)}
               className="input"
             >
-              <option value="member">Member (default — read-only, grant edit verbs separately)</option>
+              <option value="member">Member (default - read-only, grant edit verbs separately)</option>
               <option value="admin">Admin (configures the workspace)</option>
               <option value="guest">Guest (read-only, never grantable)</option>
               <option value="owner">Owner (full power)</option>
@@ -222,14 +222,14 @@ export function UsersPage() {
       <Modal
         open={!!tempPassword}
         onClose={() => setTempPassword(null)}
-        title="Temp password — copy this NOW"
+        title="Temp password - copy this NOW"
         size="md"
       >
         {tempPassword && (
           <div className="space-y-3">
             <div className="text-xs text-muted dark:text-mortar-200">
               The user will be forced to reset this on first login. We don't
-              store the plaintext — close this dialog and it's gone.
+              store the plaintext - close this dialog and it's gone.
             </div>
             {(tempPassword.display_name || tempPassword.email) && (
               <div className="text-[11px] font-mono text-faint">
@@ -256,7 +256,7 @@ export function UsersPage() {
               onClick={() => setTempPassword(null)}
               className="w-full rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium py-2 transition"
             >
-              I've copied it — done
+              I've copied it - done
             </button>
           </div>
         )}

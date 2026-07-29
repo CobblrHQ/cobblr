@@ -301,7 +301,7 @@ function LandingRedirect() {
     // can still operate — the console is instance-wide, not workspace-bound.
     return (
       <div className="min-h-full flex flex-col items-center justify-center gap-3 text-faint font-mono text-xs">
-        <span>no workspace yet — ask an admin to add you to one.</span>
+        <span>no workspace yet - ask an admin to add you to one.</span>
         {user.is_platform_admin && (
           <a href="/admin" className="text-accent underline">
             open the operator console
@@ -340,6 +340,16 @@ function WorkspaceRoutes({ urlHandle }: { urlHandle: string }) {
       <ActiveOrgScopedRoutes />
     </ActiveOrgProvider>
   );
+}
+
+/** /configuration/locations[/:id] → /locations[/:id]. The place tree is a thing
+ *  you browse, not a setting, so it owns the bare URL; it was reachable at both,
+ *  which meant a click from the navbar entry landed you in the settings shell.
+ *  Kept as a redirect for old bookmarks + any entity_kinds.detail_route row that
+ *  still carries the pre-move value. */
+function LocationsConfigRedirect() {
+  const { id } = useParams<{ id: string }>();
+  return <Navigate to={id ? `/locations/${id}` : "/locations"} replace />;
 }
 
 /** /w/:slug/app/:appSlug → the portal app player for the active workspace,
@@ -576,8 +586,13 @@ function ActiveOrgScopedRoutes() {
             {/* Consolidated into the QR codes page (External rules tab). */}
             <Route path="/configuration/scan-rules" element={<Navigate to="/configuration/qr-tokens?tab=rules" replace />} />
             <Route path="/configuration/health" element={<HealthPage />} />
-            <Route path="/configuration/locations" element={<LocationsPage />} />
-            <Route path="/configuration/locations/:id" element={<LocationDetailPage />} />
+            {/* Locations moved OUT of the settings namespace to the bare
+                /locations it already had a nav entry for (see
+                LocationsPage.tsx). Redirects, not pages, so old bookmarks and
+                any entity_kinds.detail_route row synced before this shipped
+                keep resolving. */}
+            <Route path="/configuration/locations" element={<LocationsConfigRedirect />} />
+            <Route path="/configuration/locations/:id" element={<LocationsConfigRedirect />} />
             <Route path="/configuration/templates" element={<TemplatesPage />} />
             <Route path="/configuration/presentation" element={<PresentationPage />} />
             <Route path="/configuration/integrations" element={<IntegrationsPage />} />

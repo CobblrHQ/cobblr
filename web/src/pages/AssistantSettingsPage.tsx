@@ -74,7 +74,7 @@ export function AssistantSettingsPage() {
       </div>
 
       <p className="text-sm text-muted dark:text-slate-400">
-        These are the answers <strong>Ask Cobb</strong> gives when your workspace has <strong>no AI connected</strong> —
+        These are the answers <strong>Ask Cobb</strong> gives when your workspace has <strong>no AI connected</strong>  - 
         greetings, "what can you do", how-do-I pointers. Matching is by keyword, no AI involved. Edit a built-in answer,
         turn one off, or add your own for the questions people ask you. When AI <em>is</em> connected, the full assistant
         takes over and these step aside.
@@ -201,7 +201,7 @@ function Tester({ slug }: { slug: string }) {
           type="text"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder='Ask something — "how do I add a part"'
+          placeholder='Ask something - "how do I add a part"'
           className="flex-1 px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
         />
         <button
@@ -221,7 +221,7 @@ function Tester({ slug }: { slug: string }) {
             {result.matched ? (
               <>matched <span className="font-mono text-accent">{result.intent}</span> (score {result.score})</>
             ) : (
-              <>no rule matched — this is the fallback nudge</>
+              <>no rule matched - this is the fallback nudge</>
             )}
             {result.candidates.length > 1 && (
               <span className="ml-2">

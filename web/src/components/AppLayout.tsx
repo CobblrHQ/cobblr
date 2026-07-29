@@ -162,10 +162,10 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
   const demoIdx = useRef(0);
   const demoToast = () => {
     const demos: Array<() => void> = [
-      () => toast.success("Success toast — saved, enabled, done."),
-      () => toast.info("Info toast — importing 12 parts…"),
-      () => toast.error("Error toast — couldn't reach the printer."),
-      () => toast.action("Action toast — sticky until dismissed.", { actionLabel: "Do it", onAction: () => { toast.success("Did it."); } }),
+      () => toast.success("Success toast - saved, enabled, done."),
+      () => toast.info("Info toast - importing 12 parts…"),
+      () => toast.error("Error toast - couldn't reach the printer."),
+      () => toast.action("Action toast - sticky until dismissed.", { actionLabel: "Do it", onAction: () => { toast.success("Did it."); } }),
     ];
     demos[demoIdx.current % demos.length]!();
     demoIdx.current++;
@@ -227,30 +227,40 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
   const sidebarHead = fullSide ? (
     <div className="shrink-0 border-b border-line dark:border-slate-800 px-3 py-2.5 space-y-2 overflow-hidden">
       <div className="flex items-center gap-2 min-w-0">
-        <Link to="/" className="flex items-center gap-1.5 min-w-0 shrink hover:opacity-80 transition">
+        {/* The brand row is the wordmark + controls ONLY. The env chip lives on
+            the workspace row below, so no badge (Staging/Dev/Test, any label
+            length) can crowd "cobblr" down to "co..." — the author, 2026-07-29. */}
+        <Link to="/" className="flex items-center gap-1.5 min-w-0 shrink-0 hover:opacity-80 transition">
           <CobblestoneMark size={20} />
-          <span className="font-display font-extrabold text-content dark:text-mortar-100 lowercase text-[15px] truncate">cobblr</span>
+          <span className="font-display font-extrabold text-content dark:text-mortar-100 lowercase text-[15px]">cobblr</span>
         </Link>
+        <span className="flex-1" />
+        <span className="shrink-0">{sidebarControls}</span>
+      </div>
+      <div className="relative flex items-center gap-1.5 min-w-0">
+        {wsLogo && <img src={wsLogo} alt="" className="w-5 h-5 rounded object-contain shrink-0 border border-line dark:border-slate-700" />}
+        {/* z-10 so the inline workspace dropdown (which ACCORDIONS full-width
+            under this row) renders OVER the env chip below. */}
+        <div className="relative z-10 min-w-0 flex-1">
+          {/* inline → the workspace list ACCORDIONS under this row (no
+              floating popover in the sidebar — the author's rule). */}
+          <WorkspaceSwitcher inline />
+        </div>
+        {/* Env chip: absolute + anchored to the TOP of this row (not a flex
+            sibling), so it neither steals width from the switcher nor floats to
+            the vertical middle when the list expands. It sits to the right of the
+            collapsed trigger; the full-width dropdown covers it when open. the author,
+            2026-07-29 (a flex-sibling chip narrowed the dropdown + floated it). */}
         {envBadge && (
           <button
             type="button"
             onClick={demoToast}
             title="Fire a sample toast (dev chip tradition)"
-            className={`shrink-0 rounded px-1 py-0.5 text-[9px] font-mono font-bold uppercase tracking-widest ${envBadge.chip}`}
+            className={`absolute right-0 top-2 z-0 rounded px-1 py-0.5 text-[9px] font-mono font-bold uppercase tracking-widest ${envBadge.chip}`}
           >
             {envBadge.label}
           </button>
         )}
-        <span className="flex-1" />
-        <span className="shrink-0">{sidebarControls}</span>
-      </div>
-      <div className="flex items-center gap-1.5 min-w-0">
-        {wsLogo && <img src={wsLogo} alt="" className="w-5 h-5 rounded object-contain shrink-0 border border-line dark:border-slate-700" />}
-        <div className="min-w-0 flex-1">
-          {/* inline → the workspace list ACCORDIONS under this row (no
-              floating popover in the sidebar — the author's rule). */}
-          <WorkspaceSwitcher inline />
-        </div>
       </div>
     </div>
   ) : undefined;

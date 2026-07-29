@@ -382,7 +382,7 @@ export function PurchasesPage() {
                 .map((g) => `${g.vendor ?? "Receipt"} (${g.count})`)
                 .slice(0, 4)
                 .join(" · ")}
-              {pendingReceipts.length > 4 ? " · …" : ""} — not yet purchase orders
+              {pendingReceipts.length > 4 ? " · …" : ""}  - not yet purchase orders
             </span>
           </span>
           <span className="text-xs font-medium text-accent whitespace-nowrap shrink-0">Review in scan inbox →</span>

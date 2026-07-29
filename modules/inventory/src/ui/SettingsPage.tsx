@@ -1,6 +1,6 @@
 // Settings — categories management. Locations used to live here too
 // but have graduated to the foundational core-locations module — the
-// canonical UI for them is /configuration/locations in the host app.
+// canonical UI for them is /locations in the host app.
 
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -53,7 +53,7 @@ function NounCard() {
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
       <h3 className="font-display text-sm font-bold text-content dark:text-mortar-100">What do you call these?</h3>
       <p className="mt-1 text-xs text-muted dark:text-slate-400">
-        The word for one item and many. Drives the whole list — the add button, search, empty state.
+        The word for one item and many. Drives the whole list - the add button, search, empty state.
       </p>
       <div className="mt-3 grid grid-cols-2 gap-2">
         <label className="block">
@@ -106,7 +106,7 @@ function StockTrackingCard() {
       <p className="mt-1 text-xs text-muted dark:text-slate-400">
         Whether this list shows quantities, reorder points, and allocations, or stays a lean
         catalog. <span className="text-content dark:text-mortar-200">Auto</span> lets the platform
-        decide from your data — the right choice almost always.
+        decide from your data - the right choice almost always.
       </p>
       <select
         className="input mt-3 !w-auto"
@@ -220,7 +220,7 @@ function FieldRow({ def }: { def: InvFieldDef }) {
         </div>
       ) : !hasChoices ? (
         <div className="text-[11px] text-faint dark:text-slate-500 italic">
-          {def.renderer === "color-hex" ? "colour" : def.type} field — no dropdown options
+          {def.renderer === "color-hex" ? "colour" : def.type} field - no dropdown options
         </div>
       ) : (
         <>

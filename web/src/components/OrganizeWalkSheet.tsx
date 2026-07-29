@@ -147,7 +147,7 @@ export function OrganizeWalkSheet({
         toggle(hit);
         toast.success(`✓ ${nameOf(hit)} placed`);
       } else {
-        toast.error("That scan isn't in this group — check the list.");
+        toast.error("That scan isn't in this group - check the list.");
       }
     },
   });
@@ -221,7 +221,7 @@ export function OrganizeWalkSheet({
               <>
                 <p className="text-sm text-muted">
                   This bin is now your <span className="font-medium text-content">active filing bin</span>.
-                  Scan each item as you drop it in — or tap it off the list.
+                  Scan each item as you drop it in - or tap it off the list.
                 </p>
                 <ul className="space-y-2">
                   {current.item_ids.map((id) => {

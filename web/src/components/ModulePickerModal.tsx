@@ -251,7 +251,7 @@ export function ModulePickerModal({ open, onClose, scopeToParent, inline }: Prop
                 busy={enable.isPending || disable.isPending}
               />
               <div className="text-[10px] font-mono text-ember-500 mt-1 pl-3">
-                orphan — its first dependency ({m.dependencies[0]}) isn't a known base module
+                orphan - its first dependency ({m.dependencies[0]}) isn't a known base module
               </div>
             </li>
           ))}
@@ -342,7 +342,7 @@ export function ModulePickerModal({ open, onClose, scopeToParent, inline }: Prop
             <div className="text-[10px] font-mono text-faint dark:text-slate-500 mt-2 mb-2 italic">
               Foundational modules. Modules built on top of cobblr assume
               these are on. Disabling something here will likely break
-              every user-facing module in the workspace — flip with care.
+              every user-facing module in the workspace - flip with care.
             </div>
             <ul className="space-y-1">
               {corePlatform.map((m) => (
@@ -553,7 +553,7 @@ function Row({
         )}
         {blocked && (
           <div className="text-[10px] font-mono text-ember-500 mt-1">
-            blocked — enable {missingDeps.join(", ")} first
+            blocked - enable {missingDeps.join(", ")} first
           </div>
         )}
       </div>

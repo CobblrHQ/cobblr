@@ -99,8 +99,8 @@ export function AuthPage() {
             <p className="mt-1 text-xs text-faint dark:text-slate-500">Cobble together what works.</p>
           </div>
           <p className="text-sm text-muted dark:text-slate-300 max-w-xs">
-            Build your own app to track whatever you want — your workshop,
-            inventory, collection, projects, plants — by turning on just the
+            Build your own app to track whatever you want - your workshop,
+            inventory, collection, projects, plants - by turning on just the
             pieces you need.
           </p>
         </div>
@@ -126,7 +126,7 @@ export function AuthPage() {
               <strong className="text-content dark:text-mortar-200">
                 {orgName.trim() || "your workspace"}
               </strong>{" "}
-              and signing you in. This takes a few seconds — hang tight.
+              and signing you in. This takes a few seconds - hang tight.
             </p>
           </div>
         ) : (
@@ -153,7 +153,7 @@ export function AuthPage() {
                 <input
                   value={orgName}
                   onChange={(e) => setOrgName(e.target.value)}
-                  placeholder="Leave blank — we'll name it after you"
+                  placeholder="Leave blank - we'll name it after you"
                   className="input"
                 />
               </Field>
@@ -280,7 +280,7 @@ function ForgotPasswordRow({ email }: { email: string }) {
         <div>If that email is registered, a password-reset link is on its way.</div>
         {devLink && (
           <a href={devLink} className="inline-block text-accent hover:underline font-medium">
-            Dev mode — set a new password →
+            Dev mode - set a new password →
           </a>
         )}
       </div>
@@ -387,7 +387,7 @@ function MagicLinkPanel({ email }: { email: string }) {
       {devLink && (
         <div className="text-xs text-content dark:text-mortar-200 bg-cobble-50 dark:bg-cobble-900/20 rounded-md px-3 py-2 space-y-2">
           <div>
-            <strong>Dev mode</strong> — no SMTP configured. The link
+            <strong>Dev mode</strong>  - no SMTP configured. The link
             below is what would be emailed in production. Click to
             sign in:
           </div>

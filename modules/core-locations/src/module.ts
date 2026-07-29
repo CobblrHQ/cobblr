@@ -66,7 +66,7 @@ export default defineModule({
         getEndpoint: "/locations/{id}",
         // Direct detail route — promoted from "list-with-tree-nav"
         // to "open a location to see its contents + photo + notes".
-        detailRoute: "/configuration/locations/{id}",
+        detailRoute: "/locations/{id}",
         // Locations themselves are physical (a shelf, a bin, a room)
         // and they CONTAIN physical things. Lets labels:print apply
         // to locations too — "label the bin."

@@ -380,7 +380,7 @@ export function CapabilityMatrix({
       {roles.length > 0 && (
         <div className="px-4 py-2 border-t border-line dark:border-slate-800 text-[11px] text-faint dark:text-slate-500">
           Editing a role column changes it for everyone who holds that role. A person&apos;s own
-          column only shows direct grants — the exceptions on top of their roles.
+          column only shows direct grants - the exceptions on top of their roles.
         </div>
       )}
     </section>

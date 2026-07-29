@@ -16,6 +16,9 @@ import {
 import type { CoreDevicesDB } from "./db.js";
 
 const PUBLIC_COLS = [
+  // Selected so `has_credentials` can be computed, and STRIPPED again by
+  // toPublic() before the row leaves. It is never part of the public shape.
+  "credentials_enc",
   "id",
   "type",
   "label",
@@ -28,6 +31,24 @@ const PUBLIC_COLS = [
   "created_at",
   "updated_at",
 ] as const;
+
+/** The one way a row becomes a public connection.
+ *
+ *  `has_credentials` cannot be read off `config`: credentials live encrypted in
+ *  their own column, so `config` is empty on a connection that authenticates
+ *  perfectly well. Code that checks `config.api_key` therefore reports "no
+ *  token" for every connection that has one — which is exactly the bug this
+ *  exists to make unrepeatable. Every projection goes through here, so the flag
+ *  cannot be present on three paths and missing on the fourth, and the
+ *  ciphertext cannot ride along into a response.
+ */
+function toPublic(row: Record<string, unknown>): DeviceConnectionPublic {
+  const { credentials_enc, ...rest } = row;
+  return {
+    ...rest,
+    has_credentials: typeof credentials_enc === "string" && credentials_enc.length > 0,
+  } as unknown as DeviceConnectionPublic;
+}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -42,7 +63,7 @@ export const connectionStore: DeviceConnectionStore = {
       .select(PUBLIC_COLS)
       .orderBy("created_at", "desc")
       .execute();
-    return rows as unknown as DeviceConnectionPublic[];
+    return rows.map((r) => toPublic(r as unknown as Record<string, unknown>));
   },
 
   async get(orgId, id) {
@@ -51,7 +72,7 @@ export const connectionStore: DeviceConnectionStore = {
       .select(PUBLIC_COLS)
       .where("id", "=", id)
       .executeTakeFirst();
-    return (row as unknown as DeviceConnectionPublic) ?? null;
+    return row ? toPublic(row as unknown as Record<string, unknown>) : null;
   },
 
   async getInternal(orgId, ref) {
@@ -90,7 +111,7 @@ export const connectionStore: DeviceConnectionStore = {
       })
       .returning(PUBLIC_COLS)
       .executeTakeFirstOrThrow();
-    return row as unknown as DeviceConnectionPublic;
+    return toPublic(row as unknown as Record<string, unknown>);
   },
 
   async update(orgId, id, patch: DeviceConnectionPatch) {
@@ -125,7 +146,7 @@ export const connectionStore: DeviceConnectionStore = {
       .where("id", "=", id)
       .returning(PUBLIC_COLS)
       .executeTakeFirst();
-    return (row as unknown as DeviceConnectionPublic) ?? null;
+    return row ? toPublic(row as unknown as Record<string, unknown>) : null;
   },
 
   async remove(orgId, id) {

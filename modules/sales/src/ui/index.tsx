@@ -56,7 +56,7 @@ export function SalesUI({ orgSlug, getToken }: Props) {
 
       {orders.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {orders.data?.items.length === 0 && (
-        <div className="text-sm text-muted italic">No sales orders yet. Create one — add what you sold, then Fulfill to draw it down from stock.</div>
+        <div className="text-sm text-muted italic">No sales orders yet. Create one - add what you sold, then Fulfill to draw it down from stock.</div>
       )}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

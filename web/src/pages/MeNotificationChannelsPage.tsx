@@ -169,7 +169,7 @@ export function MeNotificationChannelsPage() {
         Send Cobblr events to Discord, Slack, your email, SMS, or any
         webhook. Each binding picks a channel, an event type (or{" "}
         <code className="font-mono text-xs">*</code> for all events),
-        and a minimum priority — so you can wire{" "}
+        and a minimum priority - so you can wire{" "}
         <code className="font-mono text-xs">urgent</code> events to
         SMS while routine{" "}
         <code className="font-mono text-xs">normal</code>{" "}

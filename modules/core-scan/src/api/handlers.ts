@@ -12,6 +12,7 @@ import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { CoreScanDB } from "../db.js";
 import { enrichPhotoItem } from "../services/enrich-photo.js";
+import { autoRankCatalogPhoto, readPhotoRankEnabled } from "../services/auto-rank.js";
 
 let registered = false;
 
@@ -37,6 +38,27 @@ export function registerScanHandlers(): void {
     await enrichPhotoItem({ db, orgId: ctx.orgId, itemId, imageFileId: row.image_file_id, userId: ctx.userId });
     void platform().events.emit("core-scan.scan.enriched", { orgId: ctx.orgId, itemId });
     return { ok: true, identified: true };
+  });
+
+  // The ALWAYS-ON catalog-photo pick (Phase F). Fired by a seeded wire on every
+  // core-scan.scan.enriched — the event both intake paths reach once a NAME
+  // exists (the barcode fast path and the photo identify above), which is what
+  // the image search needs. It is a wire for the same Pillar-C reason the photo
+  // sort is: editable + inspectable on /bindings, not a cron in a module.
+  //
+  // TWO gates, because this one SPENDS on its own: the workspace must have opted
+  // in (readPhotoRankEnabled — no config row means off, so silence is free), and
+  // then the per-row cost guard decides (shouldAutoRank: never over a user's own
+  // pick, never twice for the same resolved name, never on a filed row). The
+  // manual ✨ Pick best button needs neither — a press IS the consent.
+  platform().actions.registerHandler("core-scan.rank-catalog-photo", async (ctx) => {
+    const itemId = ctx.event?.payload?.itemId;
+    if (typeof itemId !== "string" || !itemId) return { ok: true, skipped: "no item id" };
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreScanDB>;
+    if (!(await readPhotoRankEnabled(db))) return { ok: true, skipped: "not enabled for this workspace" };
+    const outcome = await autoRankCatalogPhoto({ db, orgId: ctx.orgId, itemId, userId: ctx.userId });
+    if (!outcome.ranked) return { ok: true, skipped: outcome.skipped };
+    return { ok: true, ranked: true, url: outcome.url, reason: outcome.reason, ranked_over: outcome.rankedOver };
   });
 
   // Generic, PURE identify — "what is this?" from any combination of a photo

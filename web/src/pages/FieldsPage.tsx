@@ -307,7 +307,7 @@ export function FieldsPage() {
               onChange={(e) => setEntityKind(e.target.value)}
               className="input"
             >
-              <option value="">— pick one —</option>
+              <option value=""> - pick one - </option>
               {kinds.data?.items.map((k) => (
                 <option key={k.id} value={k.id}>
                   {k.display_name} ({k.id})
@@ -365,7 +365,7 @@ export function FieldsPage() {
             <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Key
               <span className="ml-2 normal-case tracking-normal text-faint dark:text-slate-600">
-                auto — how templates + the API refer to it
+                auto - how templates + the API refer to it
               </span>
             </span>
             <input
@@ -390,7 +390,7 @@ export function FieldsPage() {
                   <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                     Choices
                     <span className="ml-2 normal-case tracking-normal text-faint dark:text-slate-600">
-                      optional — makes it a dropdown
+                      optional - makes it a dropdown
                     </span>
                   </span>
                   <ChoicesInput
@@ -438,7 +438,7 @@ export function FieldsPage() {
               <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                 Template
                 <span className="ml-2 normal-case tracking-normal text-faint dark:text-slate-600">
-                  read-only — rendered from the entity's fields
+                  read-only - rendered from the entity's fields
                 </span>
               </span>
               <textarea
@@ -460,7 +460,7 @@ export function FieldsPage() {
               <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                 Unit
                 <span className="ml-2 normal-case tracking-normal text-faint dark:text-slate-600">
-                  optional — what the number measures ("mm", "g")
+                  optional - what the number measures ("mm", "g")
                 </span>
               </span>
               <UnitInput value={unit} onCommit={setUnit} placeholder="none" />

@@ -38,7 +38,7 @@ export function GrowModal({ open, onClose }: { open: boolean; onClose: () => voi
         const r = await api.importApp(newSlug, activeSlug);
         toast.success(`Brought ${r.imported} item${r.imported === 1 ? "" : "s"} into your new workspace.`);
       } catch {
-        toast.error("Couldn't bring your data over — your new workspace is ready; you can import later.");
+        toast.error("Couldn't bring your data over - your new workspace is ready; you can import later.");
       }
     }
     window.location.assign(`/w/${newSlug}/dashboard`);
@@ -50,7 +50,7 @@ export function GrowModal({ open, onClose }: { open: boolean; onClose: () => voi
         <div className="space-y-4">
           <p className="text-sm text-muted dark:text-slate-400">
             This app is one corner of Cobblr. When you're ready to run a whole
-            business — customers, orders, purchasing, and more — start a full
+            business - customers, orders, purchasing, and more - start a full
             workspace. Your app stays exactly as it is.
           </p>
 
@@ -82,7 +82,7 @@ export function GrowModal({ open, onClose }: { open: boolean; onClose: () => voi
 
           <label className="flex items-center gap-2 text-sm text-content dark:text-mortar-100 select-none">
             <input type="checkbox" checked={bringData} onChange={(e) => setBringData(e.target.checked)} className="h-4 w-4 accent-cobble-600" />
-            Bring my {appName} over (a copy — this app keeps its data)
+            Bring my {appName} over (a copy - this app keeps its data)
           </label>
           <button
             type="button"

@@ -380,7 +380,7 @@ export function MembersModal({ open, onClose, slug, inline }: Props) {
               <p className="text-[11px] text-faint dark:text-slate-500 leading-relaxed">
                 They join <span className="font-semibold text-muted dark:text-slate-400">{displaySlug(slug)}</span> as a{" "}
                 <span className="font-semibold text-muted dark:text-slate-400">{inviteRole}</span>. New to Cobblr?
-                Accepting creates their account — they become a member <span className="font-semibold">here</span>,
+                Accepting creates their account - they become a member <span className="font-semibold">here</span>,
                 they don't get a workspace of their own. We email the link if you add an address (and notify them
                 in-app if they already have an account); it's copied to your clipboard either way.
               </p>
@@ -394,14 +394,14 @@ export function MembersModal({ open, onClose, slug, inline }: Props) {
                     className="mt-0.5"
                   />
                   <span>
-                    <span className="font-medium">Send them a premade workspace</span> — seed their new workspace with a
+                    <span className="font-medium">Send them a premade workspace</span>  - seed their new workspace with a
                     copy of <span className="font-semibold">{displaySlug(slug)}</span>'s setup (modules, trackers, fields,
-                    views — <span className="font-semibold">no data</span>). Configure this workspace for them first,
+                    views - <span className="font-semibold">no data</span>). Configure this workspace for them first,
                     then mint.
                   </span>
                 </label>
                 <p className="text-[11px] text-faint dark:text-slate-500 leading-relaxed">
-                  They get their <span className="font-semibold">own</span> brand-new Cobblr workspace — they are{" "}
+                  They get their <span className="font-semibold">own</span> brand-new Cobblr workspace - they are{" "}
                   <span className="font-semibold">not</span> added to {displaySlug(slug)}. Best for inviting a friend to
                   try Cobblr. We email the join link if you add an address; it's copied to your clipboard too.
                 </p>

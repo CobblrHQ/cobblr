@@ -132,7 +132,7 @@ export function ScanRulesPage({ embedded = false }: { embedded?: boolean } = {})
         <p className="text-sm text-muted dark:text-mortar-300">
           Teach the scanner to read QR labels printed by another app and open the matching item here.
           A rule recognises a label format and resolves it to a Cobblr entity. Inert until you add one
-          — unmatched scans behave exactly as before.
+ - unmatched scans behave exactly as before.
         </p>
       </header>
 
@@ -258,7 +258,7 @@ function PasteRuleModal({
     <Modal open onClose={onClose} title="Paste a rule" subtitle="External QR resolver" size="lg">
       <div className="space-y-3">
         <p className="text-sm text-muted dark:text-mortar-300">
-          Paste a rule as JSON — <code>name</code>, <code>match</code>, <code>resolve</code> (optional{" "}
+          Paste a rule as JSON - <code>name</code>, <code>match</code>, <code>resolve</code> (optional{" "}
           <code>extract</code>, <code>enabled</code>, <code>position</code>). Quicker than filling the form when
           you've been handed a ready rule.
         </p>
@@ -403,7 +403,7 @@ function TestBox({ slug, hasRules }: { slug: string; hasRules: boolean }) {
         </button>
       </div>
       {!hasRules && (
-        <p className="text-xs text-muted">No enabled rules — a scan like this would fall through to the normal routine.</p>
+        <p className="text-xs text-muted">No enabled rules - a scan like this would fall through to the normal routine.</p>
       )}
       {result && (
         <div className="text-xs">
@@ -435,7 +435,7 @@ function TestBox({ slug, hasRules }: { slug: string; hasRules: boolean }) {
               but no {result.target_kind ?? "item"} here matches it yet.
             </p>
           ) : (
-            <p className="text-muted">No rule matched — this scan would go through the normal barcode/identify routine.</p>
+            <p className="text-muted">No rule matched - this scan would go through the normal barcode/identify routine.</p>
           )}
         </div>
       )}
@@ -509,7 +509,7 @@ function RuleModal({
             {jsonErr ? (
               <p className="text-xs text-ember-600">{jsonErr}</p>
             ) : (
-              <p className="text-xs text-muted dark:text-mortar-300">Edit the rule directly — name, match, extract, resolve (+ optional enabled, position).</p>
+              <p className="text-xs text-muted dark:text-mortar-300">Edit the rule directly - name, match, extract, resolve (+ optional enabled, position).</p>
             )}
           </div>
         ) : (
@@ -519,7 +519,7 @@ function RuleModal({
         </Field>
 
         {/* MATCH */}
-        <Section title="Match — recognise the label format">
+        <Section title="Match - recognise the label format">
           <Field label="Type">
             <select value={d.match.type} onChange={(e) => set({ match: { type: e.target.value as ScanQrRule["match"]["type"], value: d.match.value } })} className="input">
               <option value="url_base">Base URL + path children (one host, several kinds)</option>
@@ -567,7 +567,7 @@ function RuleModal({
 
         {/* EXTRACT — regex only (url_base/url_prefix derive the key by position) */}
         {isRegex && (
-          <Section title="Extract — pull the key from the payload">
+          <Section title="Extract - pull the key from the payload">
             <div className="grid grid-cols-2 gap-3">
               <Field label="Key group (name or index)">
                 <input value={String(d.extract.group ?? "")} onChange={(e) => set({ extract: { ...d.extract, group: e.target.value || undefined } })} placeholder="key" className="input" />
@@ -581,19 +581,19 @@ function RuleModal({
 
         {/* RESOLVE */}
         {isBase ? (
-          <Section title="Children — one /segment/ → kind row per entity type">
+          <Section title="Children - one /segment/ → kind row per entity type">
             <ChildrenEditor base={base} value={d.resolve.type_map ?? {}} onChange={(m) => set({ resolve: { ...d.resolve, type_map: m } })} />
-            <Field label="Key field — the entity field holding the foreign id (a native column or metadata key)">
+            <Field label="Key field - the entity field holding the foreign id (a native column or metadata key)">
               <input value={d.resolve.key_field} onChange={(e) => set({ resolve: { ...d.resolve, key_field: e.target.value } })} placeholder="ext_id" className="input font-mono text-sm" />
             </Field>
           </Section>
         ) : (
-          <Section title="Resolve — find the Cobblr entity">
+          <Section title="Resolve - find the Cobblr entity">
             <Field label="Target kind">
               <input value={d.resolve.target_kind ?? ""} onChange={(e) => set({ resolve: { ...d.resolve, target_kind: e.target.value } })} placeholder="inventory:part" className="input font-mono text-sm" />
             </Field>
             <TypeMapEditor value={d.resolve.type_map ?? {}} onChange={(m) => set({ resolve: { ...d.resolve, type_map: Object.keys(m).length ? m : undefined } })} />
-            <Field label="Key field — the entity field holding the foreign key (native column or metadata key)">
+            <Field label="Key field - the entity field holding the foreign key (native column or metadata key)">
               <input value={d.resolve.key_field} onChange={(e) => set({ resolve: { ...d.resolve, key_field: e.target.value } })} placeholder="ext_id" className="input font-mono text-sm" />
             </Field>
           </Section>
@@ -617,7 +617,7 @@ function RuleModal({
 function TypeMapEditor({ value, onChange }: { value: Record<string, string>; onChange: (m: Record<string, string>) => void }) {
   const rows = Object.entries(value);
   return (
-    <Field label="Type map (optional — extracted type → kind, for /<type>/<slug> URLs)">
+    <Field label="Type map (optional - extracted type → kind, for /<type>/<slug> URLs)">
       <div className="space-y-1.5">
         {rows.map(([t, k], i) => (
           <div key={i} className="flex items-center gap-2">

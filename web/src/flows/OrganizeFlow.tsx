@@ -53,7 +53,7 @@ export function OrganizeFlow({
     try {
       const r = await api.getLatestOrganizePlan(activeSlug);
       if (r.plan && r.plan.applied_group_ids.length > 0) setWalkPlan(r.plan);
-      else toast.error("Nothing applied to walk yet — accept a group first.");
+      else toast.error("Nothing applied to walk yet - accept a group first.");
     } catch {
       toast.error("Couldn't load the plan for the walk.");
     }

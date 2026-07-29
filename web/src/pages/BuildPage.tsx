@@ -136,7 +136,7 @@ export function BuildPage() {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else if (next.size < 3) next.add(id);
-      else toast.error("Pick at most 3 kinds — fewer is more reliable.");
+      else toast.error("Pick at most 3 kinds - fewer is more reliable.");
       return next;
     });
 
@@ -170,7 +170,7 @@ export function BuildPage() {
         if (d.status === "failed") {
           const err = d.validation?.errors?.[0];
           if (err?.code === "no_ai_provider") {
-            toast.success("AI isn't enabled for this workspace — switching to the copy-paste prompt.");
+            toast.success("AI isn't enabled for this workspace - switching to the copy-paste prompt.");
             await buildPrompt();
             return;
           }
@@ -182,13 +182,13 @@ export function BuildPage() {
         setSeedCount((d.seed_plan ?? []).reduce((n, g) => n + (g.records?.length ?? 0), 0));
         if (d.validation) setValidation(d.validation);
         if (d.status === "validated") toast.success("Built it. Review and apply.");
-        else toast.error("The AI's result didn't pass validation — see the errors below, or write a prompt to run yourself.");
+        else toast.error("The AI's result didn't pass validation - see the errors below, or write a prompt to run yourself.");
         return;
       }
-      toast.error("That took longer than expected — try again in a moment.");
+      toast.error("That took longer than expected - try again in a moment.");
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
-        toast.success("AI isn't enabled for this workspace — switching to the copy-paste prompt.");
+        toast.success("AI isn't enabled for this workspace - switching to the copy-paste prompt.");
         await buildPrompt();
         return;
       }
@@ -246,7 +246,7 @@ export function BuildPage() {
             setDraftId(p.draft_id);
             setPrompt(p.prompt ?? null);
             setWarnings(p.warnings ?? []);
-            toast.success("AI isn't enabled here — copy the refine prompt into your agent and paste the result back.");
+            toast.success("AI isn't enabled here - copy the refine prompt into your agent and paste the result back.");
             return;
           }
           toast.error(err?.message ?? "Refine failed.");
@@ -255,11 +255,11 @@ export function BuildPage() {
         setCandidate(d.candidate ?? null);
         setInterpretation(d.interpretation ?? null);
         if (d.validation) setValidation(d.validation);
-        if (d.status === "validated") toast.success("Refined — review and apply.");
-        else toast.error("The refined result didn't pass validation — see the errors below.");
+        if (d.status === "validated") toast.success("Refined - review and apply.");
+        else toast.error("The refined result didn't pass validation - see the errors below.");
         return;
       }
-      toast.error("That took longer than expected — try again in a moment.");
+      toast.error("That took longer than expected - try again in a moment.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Refine failed.");
     } finally {
@@ -291,7 +291,7 @@ export function BuildPage() {
     try {
       const { prompt: rp } = await api.authoringRepairPrompt(slug, draftId);
       await navigator.clipboard.writeText(rp).catch(() => {});
-      toast.success("Repair prompt copied — run it, then paste the fix back.");
+      toast.success("Repair prompt copied - run it, then paste the fix back.");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't build a repair prompt.");
     } finally {
@@ -358,26 +358,26 @@ export function BuildPage() {
         <p className="text-sm text-muted dark:text-slate-400 mt-1">
           {mode === "app-custom" ? (
             <>
-              Describe a <strong>custom app</strong> — the AI writes a small self-contained HTML/JS page that runs in a
+              Describe a <strong>custom app</strong>  - the AI writes a small self-contained HTML/JS page that runs in a
               sandbox and reads/writes your workspace only through Cobblr's mediated bridge (so it can never exceed what
               you can do). For when the structured blocks aren't enough. We validate it before it goes live.
             </>
           ) : mode === "app" ? (
             <>
-              Describe a <strong>page for your members</strong> — forms, action buttons and a scanner over
+              Describe a <strong>page for your members</strong>  - forms, action buttons and a scanner over
               your existing data. The AI assembles it from safe building blocks (no code), and we check it before it goes
               live. Or skip the prompt: <strong>Generate from my workspace</strong> builds one instantly from your
-              trackers — no AI needed — and you can regenerate it any time they change.
+              trackers - no AI needed - and you can regenerate it any time they change.
             </>
           ) : mode === "workspace" ? (
             <>
-              Describe your <strong>whole workspace</strong> in one go — the AI turns on the modules you need and builds
+              Describe your <strong>whole workspace</strong> in one go - the AI turns on the modules you need and builds
               the fields and automations for your entire workflow. <strong>Build it for me</strong> runs it and checks
               the result before anything changes.
             </>
           ) : (
             <>
-              Describe what you want to add and <strong>Build it for me</strong> — we run the AI, fix it up, and check it
+              Describe what you want to add and <strong>Build it for me</strong>  - we run the AI, fix it up, and check it
               works before anything changes. No AI on your workspace? <strong>Write a prompt instead</strong> hands you
               one to run yourself.
             </>
@@ -401,9 +401,9 @@ export function BuildPage() {
       {/* One shared AI-honesty pattern (redesign A1): the primary button needs
           AI — say so up front instead of failing silently. */}
       <AiOffNotice status={aiStatus}>
-        <strong>AI isn't connected — "Build it for me" can't run here.</strong>{" "}
+        <strong>AI isn't connected - "Build it for me" can't run here.</strong>{" "}
         Use <strong>Write a prompt instead</strong>: it hands you a complete prompt to run in any AI chat, and you paste
-        the result back in — same outcome, your AI.{" "}
+        the result back in - same outcome, your AI.{" "}
       </AiOffNotice>
 
       {mode === "app" && (
@@ -419,7 +419,7 @@ export function BuildPage() {
           }
           className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-1.5 transition"
         >
-          <Sparkles size={14} /> Generate from my workspace — no AI needed
+          <Sparkles size={14} /> Generate from my workspace - no AI needed
         </button>
       )}
 
@@ -475,7 +475,7 @@ export function BuildPage() {
                 </button>
               ))}
               {kindItems.length === 0 && (
-                <span className="text-xs text-faint italic">No entity kinds yet — enable a domain module first.</span>
+                <span className="text-xs text-faint italic">No entity kinds yet - enable a domain module first.</span>
               )}
             </div>
           </div>
@@ -507,7 +507,7 @@ export function BuildPage() {
             <div className="mt-2 flex items-center gap-3 rounded-lg border border-moss-500/40 bg-moss-50 dark:bg-moss-950/30 px-3 py-2 text-sm">
               <span className="text-lg leading-none shrink-0">{readyMade.bundle.glyph}</span>
               <span className="flex-1 text-moss-800 dark:text-moss-200">
-                There's a ready-made <strong>{readyMade.bundle.manifest.name}</strong> set-up for this ("{readyMade.matched}") —
+                There's a ready-made <strong>{readyMade.bundle.manifest.name}</strong> set-up for this ("{readyMade.matched}") - 
                 a refined bundle beats a generated one.
               </span>
               <Link
@@ -630,7 +630,7 @@ export function BuildPage() {
                     Built it. Verified it.
                   </div>
                   <div className="text-xs text-muted dark:text-slate-400">
-                    Take a look before it lands — here's what it'll do:
+                    Take a look before it lands - here's what it'll do:
                   </div>
                 </div>
               </div>
@@ -802,7 +802,7 @@ export function BuildPage() {
           ) : (
             <>
               <div className="flex items-center gap-2 text-sm font-medium text-ember-700 dark:text-ember-300">
-                <AlertTriangle size={16} /> Not quite — a few things to fix:
+                <AlertTriangle size={16} /> Not quite - a few things to fix:
               </div>
               <ul className="text-sm text-content dark:text-mortar-100 space-y-1">
                 {validation.errors.map((e, i) => (

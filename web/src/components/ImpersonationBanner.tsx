@@ -99,7 +99,7 @@ export function ImpersonationBanner() {
         <ShieldAlert size={15} className="shrink-0" />
         <span className="truncate">
           Viewing as <b>{imp.target.name}</b> · <b>{imp.workspace.name}</b> ·{" "}
-          {write ? <b>EDITING — changes are real</b> : "read-only"} · expires in {left}
+          {write ? <b>EDITING - changes are real</b> : "read-only"} · expires in {left}
         </span>
         <div className="flex-1" />
         {error && <span className="text-white/90 text-[11px] truncate max-w-[200px]">{error}</span>}

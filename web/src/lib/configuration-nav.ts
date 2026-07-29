@@ -29,7 +29,6 @@ import {
   Library,
   Link2,
   ListTodo,
-  MapPin,
   MousePointerClick,
   Package,
   Plug,
@@ -162,16 +161,13 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     to: "/tags",
     primary: true,
   },
-  {
-    group: "data",
-    icon: MapPin,
-    label: "Locations",
-    description:
-      "Hierarchical tree of physical places — rooms, shelves, bins. Everything tangible (machines, assets, parts) can point at a row here.",
-    to: "/configuration/locations",
-    keywords: ["rooms", "shelves", "bins", "places"],
-    primary: true,
-  },
+  // NO Locations entry, deliberately. The place tree is something you BROWSE,
+  // so it lives in the workspace nav (a synthetic top from useNavModules) and
+  // owns the bare /locations URL. It was ALSO listed here pointing at a second
+  // URL for the same page, so clicking any row after arriving from the navbar
+  // bounced you into the settings shell. See
+  // docs/design-decisions/configuration-revamp.md for the browse-vs-configure
+  // rule this applies.
   {
     group: "data",
     icon: Ruler,

@@ -177,7 +177,10 @@ export function WorkspaceSwitcher({ inline = false }: { inline?: boolean } = {})
         // work identically — only the container changed. menuRef keeps the
         // click-outside handler from eating clicks INSIDE the accordion
         // (mousedown-close would fire before a row's onClick and swallow it).
-        <div ref={menuRef} className="border-b border-line dark:border-slate-800 max-h-[50vh] overflow-y-auto">
+        // -mr-3 cancels the sidebar header's right px-3 so the list's scrollbar
+        // reaches the sidebar edge instead of floating a padding-width in (the author,
+        // 2026-07-29). Left stays padded so rows keep aligning with the trigger.
+        <div ref={menuRef} className="-mr-3 border-b border-line dark:border-slate-800 max-h-[50vh] overflow-y-auto">
           <ul className="max-h-80 overflow-y-auto">
             {owned.length > 0 && header("your workspaces", false)}
             {owned.length > 0 && (
@@ -356,7 +359,7 @@ function WorkspaceRow({
         <button
           onClick={(e) => { e.stopPropagation(); onSetDefault(); }}
           className="px-2 shrink-0 text-accent dark:text-cobble-300 group-hover:opacity-0 transition-opacity"
-          title="Default workspace — opens on a fresh device. Click to unset."
+          title="Default workspace - opens on a fresh device. Click to unset."
           aria-label="Unset default workspace"
         >
           <Star size={13} className="fill-current" />
@@ -523,7 +526,7 @@ export function RenameWorkspaceModal({
             maxLength={120}
           />
           <span className="mt-1 block text-[11px] text-muted dark:text-slate-400">
-            Safe to change anytime — only the display name updates. Links keep working.
+            Safe to change anytime - only the display name updates. Links keep working.
           </span>
         </label>
 
@@ -533,7 +536,7 @@ export function RenameWorkspaceModal({
             onClick={() => setAdvanced(true)}
             className="text-[11px] text-faint dark:text-slate-500 hover:text-accent transition"
           >
-            Advanced — change the URL too →
+            Advanced - change the URL too →
           </button>
         ) : (
           <label className="block">
@@ -566,7 +569,7 @@ export function RenameWorkspaceModal({
               </button>
             )}
             <span className="mt-1 block text-[11px] text-ember-600 dark:text-ember-400">
-              ⚠ Risky — every existing bookmark, shared link, and API token that
+              ⚠ Risky - every existing bookmark, shared link, and API token that
               uses the old URL will break. Only change this if you know what you're doing.
             </span>
           </label>
@@ -687,7 +690,7 @@ export function CreateWorkspaceModal({
           />
           {blueprint && (
             <span className="mt-1 block text-[11px] text-moss-700 dark:text-moss-300">
-              Will be set up from “{blueprint.label}” — a friend's exported setup works here (config only, no data).
+              Will be set up from “{blueprint.label}” - a friend's exported setup works here (config only, no data).
             </span>
           )}
           {bpError && <span className="mt-1 block text-[11px] text-ember-600 dark:text-ember-300">{bpError}</span>}

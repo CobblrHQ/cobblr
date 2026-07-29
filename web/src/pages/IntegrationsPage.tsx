@@ -244,7 +244,7 @@ function EmailInSection() {
           {address ? (
             <>
               <p className="text-sm text-muted mb-2">
-                Forward a receipt — PDF, photo, or CSV — to your personal address and its
+                Forward a receipt - PDF, photo, or CSV - to your personal address and its
                 line items land in your{" "}
                 <Link to="/scan" className="text-accent hover:underline">
                   Scan inbox
@@ -281,7 +281,7 @@ function EmailInSection() {
         <div className="border-t dark:border-slate-800 pt-3">
           <div className="text-sm font-medium mb-1">Reply by email</div>
           <p className="text-sm text-muted">
-            When Cobblr emails you (a feedback update, a notification), just hit reply —
+            When Cobblr emails you (a feedback update, a notification), just hit reply - 
             your message threads back onto the item automatically. Nothing to set up.
           </p>
         </div>

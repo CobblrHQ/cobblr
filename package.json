@@ -55,6 +55,7 @@
     "lint:deprecated-fks": "tsx scripts/lint-deprecated-table-fks.ts",
     "lint:self-heal": "tsx scripts/lint-self-heal.ts",
     "lint:hook-timeouts": "tsx scripts/lint-hook-timeouts.ts",
+    "lint:no-emdash": "tsx scripts/lint-no-emdash.ts",
     "lint:write-guards": "tsx scripts/lint-module-write-guards.ts",
     "lint:config-routes": "tsx scripts/lint-config-routes.ts",
     "lint:debug-globals": "tsx scripts/lint-debug-globals.ts",
@@ -91,7 +92,9 @@
     "embed:bridge": "node scripts/embed-bridge-bundle.mjs",
     "test:unit": "node scripts/run-unit-tests.mjs",
     "lint:native-field-labels": "node scripts/lint-native-field-labels.mjs",
-    "lint:view-config-keys": "tsx scripts/lint-view-config-keys.ts"
+    "lint:view-config-keys": "tsx scripts/lint-view-config-keys.ts",
+    "lint:bench-not-shipped": "tsx scripts/lint-bench-not-shipped.ts",
+    "lint:generated-artifact-paths": "tsx scripts/lint-generated-artifact-paths.ts"
   },
   "devDependencies": {
     "playwright": "^1.60.0",

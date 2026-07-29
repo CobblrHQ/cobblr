@@ -57,7 +57,7 @@ export function JoinMachinesPage() {
           <Share2 className="mx-auto text-accent" size={26} />
           <h1 className="text-lg font-semibold text-content dark:text-mortar-100">Add shared machines</h1>
           <p className="text-sm text-muted dark:text-slate-400">
-            Someone shared edge-bridge machines with you. Pick which of your workspaces to add them to — you can add to more than one.
+            Someone shared edge-bridge machines with you. Pick which of your workspaces to add them to - you can add to more than one.
           </p>
         </div>
 

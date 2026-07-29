@@ -248,7 +248,7 @@ function EditTagModal({
         parent_id: parentId || null,
       }),
     onSuccess: () => {
-      toast.success("Tag updated — change applies everywhere it's attached");
+      toast.success("Tag updated - change applies everywhere it's attached");
       onSaved();
     },
     onError: (e: unknown) =>
@@ -315,20 +315,20 @@ function EditTagModal({
           <span className="text-[11px] text-faint">an emoji</span>
         </label>
         <label className="block">
-          <div className="text-xs text-muted mb-1">Parent tag (optional — for grouping)</div>
+          <div className="text-xs text-muted mb-1">Parent tag (optional - for grouping)</div>
           <select
             value={parentId}
             onChange={(e) => setParentId(e.target.value)}
             className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           >
-            <option value="">— none (top-level) —</option>
+            <option value=""> - none (top-level) - </option>
             {parentOptions.map((t) => (
               <option key={t.id} value={t.id}>{t.icon ? `${t.icon} ` : ""}{t.name}</option>
             ))}
           </select>
         </label>
         <p className="text-[11px] text-faint">
-          Renaming updates the tag everywhere it's attached — it's the same tag,
+          Renaming updates the tag everywhere it's attached - it's the same tag,
           not a copy.
         </p>
         {otherTags.length > 0 && (
@@ -340,7 +340,7 @@ function EditTagModal({
                 onChange={(e) => setMergeInto(e.target.value)}
                 className="flex-1 px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
               >
-                <option value="">— choose a tag —</option>
+                <option value=""> - choose a tag - </option>
                 {otherTags.map((t) => (
                   <option key={t.id} value={t.id}>{t.name}</option>
                 ))}
@@ -544,13 +544,13 @@ function CreateTagModal({
         </label>
         {parentOptions.length > 0 && (
           <label className="block">
-            <div className="text-xs text-muted mb-1">Parent tag (optional — for grouping)</div>
+            <div className="text-xs text-muted mb-1">Parent tag (optional - for grouping)</div>
             <select
               value={parentId}
               onChange={(e) => setParentId(e.target.value)}
               className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             >
-              <option value="">— none (top-level) —</option>
+              <option value=""> - none (top-level) - </option>
               {parentOptions.map((t) => (
                 <option key={t.id} value={t.id}>{t.icon ? `${t.icon} ` : ""}{t.name}</option>
               ))}

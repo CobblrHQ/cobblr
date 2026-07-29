@@ -66,7 +66,7 @@ export function BuildsUI({ orgSlug, getToken }: Props) {
       {builds.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {builds.data?.items.length === 0 && (
         <div className="text-sm text-muted italic">
-          No builds yet. A build is a recipe — a thing you assemble from tracked parts. Create one to see
+          No builds yet. A build is a recipe - a thing you assemble from tracked parts. Create one to see
           how many you can build right now.
         </div>
       )}
@@ -729,11 +729,11 @@ function TraceBox({ api }: { api: BuildsApi }) {
         <div className="mt-2 text-xs space-y-1.5">
           <div>
             <span className="text-muted">Produced by:</span>{" "}
-            {r.produced.length === 0 ? <span className="text-muted italic">— none</span> : r.produced.map((p) => <span key={p.run_id} className="mr-2">{p.build_name} ({Number(p.quantity)})</span>)}
+            {r.produced.length === 0 ? <span className="text-muted italic"> - none</span> : r.produced.map((p) => <span key={p.run_id} className="mr-2">{p.build_name} ({Number(p.quantity)})</span>)}
           </div>
           <div>
             <span className="text-muted">Consumed by:</span>{" "}
-            {r.consumed.length === 0 ? <span className="text-muted italic">— none</span> : r.consumed.map((c) => <span key={c.run_id} className="mr-2">{c.build_name} ({Number(c.quantity)})</span>)}
+            {r.consumed.length === 0 ? <span className="text-muted italic"> - none</span> : r.consumed.map((c) => <span key={c.run_id} className="mr-2">{c.build_name} ({Number(c.quantity)})</span>)}
           </div>
           {r.produced.length === 0 && r.consumed.length === 0 && <div className="text-muted italic">No runs reference “{query}”.</div>}
         </div>

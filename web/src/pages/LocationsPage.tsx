@@ -1,11 +1,17 @@
-// /configuration/locations — the workspace-wide tree of physical
-// places. core-locations is foundational, so this page always exists
-// when an org is loaded. The tree below is rendered as boxed nested
-// list cards: each location's own card, with indented child cards
-// inside.
+// /locations — the workspace-wide tree of physical places.
+// core-locations is foundational, so this page always exists when an
+// org is loaded. The tree below is rendered as boxed nested list
+// cards: each location's own card, with indented child cards inside.
+//
+// This is a place you BROWSE, not a setting, so it lives in the
+// workspace nav and owns the bare /locations URL. It used to be
+// /configuration/locations, which meant clicking any row from the
+// navbar entry bounced you into the settings shell.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { readBound } from "../lib/floorplanGeometry";
+import { LocationFloorPlanTab } from "../components/LocationFloorPlanTab";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Plus,
@@ -166,6 +172,24 @@ export function LocationsPage() {
   const items = useMemo(() => list.data?.items ?? [], [list.data]);
   // Shared model → the areas tree + loose-container roots, sorted.
   const forest = useMemo(() => buildLocationForest(items, LOCATION_ACCESSORS), [items]);
+
+  // "Floor Plan" is the default surface (that's the whole discoverability fix),
+  // but fall back to "List" when nothing has a layout drawn yet, so a fresh
+  // workspace lands on the tree rather than an empty canvas. The user's manual
+  // tab choice sticks once made.
+  const anyPlanDrawn = useMemo(() => items.some((l) => readBound(l.metadata)), [items]);
+  const decidedRef = useRef(false);
+  const [tab, setTab] = useState<"plan" | "list">("plan");
+  useEffect(() => {
+    if (!decidedRef.current && !list.isLoading) {
+      decidedRef.current = true;
+      if (!anyPlanDrawn) setTab("list");
+    }
+  }, [list.isLoading, anyPlanDrawn]);
+  const chooseTab = (t: "plan" | "list") => {
+    decidedRef.current = true;
+    setTab(t);
+  };
 
   // For the delete confirm — count the subtree's total external refs.
   function subtreeUsage(node: LocationNode): UsageCounts {
@@ -354,15 +378,41 @@ export function LocationsPage() {
       </div>
       {importOpen && <ImportLocationsDialog slug={activeSlug} onClose={() => setImportOpen(false)} />}
 
-      <p className="text-sm text-content dark:text-mortar-200">
-        Hierarchical tree of physical places — rooms, shelves, bins. Anything
-        tangible in the workspace (machines, assets, parts) can point at a row
-        here via its <code>location_id</code> field.
-      </p>
+      {/* Tabs — Floor Plan is the default surface (the discoverability fix); List
+          is the tree that used to be the whole page. */}
+      <div className="flex gap-4 border-b border-line dark:border-slate-700">
+        {(["plan", "list"] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => chooseTab(t)}
+            className={
+              "px-1 pb-2 -mb-px text-sm font-medium border-b-2 transition " +
+              (tab === t
+                ? "border-accent text-accent"
+                : "border-transparent text-muted hover:text-content dark:hover:text-mortar-100")
+            }
+          >
+            {t === "plan" ? "Floor Plan" : "List"}
+          </button>
+        ))}
+      </div>
 
       {list.isLoading && (
         <div className="text-sm text-muted">Loading…</div>
       )}
+
+      {tab === "plan" && !list.isLoading && (
+        <LocationFloorPlanTab items={items} slug={activeSlug} />
+      )}
+
+      {tab === "list" && (
+        <>
+      <p className="text-sm text-content dark:text-mortar-200">
+        Hierarchical tree of physical places - rooms, shelves, bins. Anything
+        tangible in the workspace (machines, assets, parts) can point at a row
+        here via its <code>location_id</code> field.
+      </p>
       {items.length === 0 && !list.isLoading && (
         <div className="text-sm italic text-muted dark:text-slate-400">
           No locations yet. Add a top-level area (a room, a workshop, a garage)
@@ -380,7 +430,7 @@ export function LocationsPage() {
               {rootAreas.length}
             </span>
             <span className="text-xs text-muted dark:text-slate-400">
-              — rooms &amp; regions; containers nest inside. Drag to set your order.
+               - rooms &amp; regions; containers nest inside. Drag to set your order.
             </span>
           </div>
         )}
@@ -412,6 +462,8 @@ export function LocationsPage() {
           </div>
         )}
       </DndContext>
+        </>
+      )}
 
       {createOpen && (
         <LocationFormModal
@@ -521,7 +573,7 @@ function LocationCard({
         <KindIcon size={16} className="text-accent shrink-0" />
         <div className="flex-1 min-w-0">
           <Link
-            to={`/configuration/locations/${node.id}`}
+            to={`/locations/${node.id}`}
             className="font-medium text-content dark:text-mortar-100 hover:text-accent truncate block"
           >
             {node.name}
@@ -673,7 +725,7 @@ function ZoneCard({
           />
           <AreaIcon size={12} className="text-accent shrink-0" />
           <Link
-            to={`/configuration/locations/${node.id}`}
+            to={`/locations/${node.id}`}
             className="font-mono text-[11px] uppercase tracking-wider font-medium text-content dark:text-mortar-100 hover:text-accent"
           >
             {node.name}
@@ -715,7 +767,7 @@ function ZoneCard({
         </div>
         {node.children.length === 0 && (
           <div className="text-xs text-faint dark:text-slate-500 italic px-1 py-1">
-            empty — scan or file into it
+            empty - scan or file into it
           </div>
         )}
         {node.children.length > 0 && (
@@ -869,7 +921,7 @@ function LocationFormModal({
                 if (guess) setKind(guess);
               }
             }}
-            placeholder="e.g. Garage / Shelf 3 / Bin 17 — or Drawer 1-3 to bulk-create"
+            placeholder="e.g. Garage / Shelf 3 / Bin 17 - or Drawer 1-3 to bulk-create"
             className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             autoFocus
           />
@@ -938,13 +990,13 @@ function LocationFormModal({
           </div>
           {kindGuess && (
             <div className="text-[10px] text-faint dark:text-slate-500 mt-1.5">
-              Auto-selected <span className="font-mono">{kindGuess}</span> from the name — tap the other if that's wrong.
+              Auto-selected <span className="font-mono">{kindGuess}</span> from the name - tap the other if that's wrong.
             </div>
           )}
         </div>
         <label className="block">
           <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-            Parent (optional — leave blank for top-level)
+            Parent (optional - leave blank for top-level)
           </span>
           <select
             value={parentId}

@@ -163,7 +163,7 @@ const ENDS_WITH_NUMBER = /\d\s*$/;
 
 // Inline accordion — name + parent + kind, expanded right inside the parent
 // form (no nested modal; the author). Containers auto-append a globally-unique number
-// so "Bin" becomes "Bin 17". Mirrors the full form on /configuration/locations
+// so "Bin" becomes "Bin 17". Mirrors the full form on /locations
 // but trimmed for in-flight use.
 export function QuickCreateLocation({
   slug,
@@ -250,7 +250,7 @@ export function QuickCreateLocation({
           {autoNumber && (
             <span className="mt-1 block text-[10px] text-muted dark:text-slate-400">
               → <span className="font-medium text-content dark:text-mortar-200">{finalName}</span>{" "}
-              (auto-numbered — containers get a unique number)
+              (auto-numbered - containers get a unique number)
             </span>
           )}
         </label>

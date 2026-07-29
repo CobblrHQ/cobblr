@@ -215,7 +215,7 @@ export function PartsListPage() {
       const statusRes = await fetch(`/api/v1/me/ravelry`, { headers });
       const status = (await statusRes.json().catch(() => null)) as { connected?: boolean } | null;
       if (!status?.connected) {
-        toast.info("Connect your Ravelry account first — opening Connections.");
+        toast.info("Connect your Ravelry account first - opening Connections.");
         navigate("/me/connections");
         return;
       }
@@ -432,7 +432,7 @@ export function PartsListPage() {
           value={lifecycle}
           onChange={(e) => setLifecycle(e.target.value as typeof lifecycle)}
           className="input !w-auto"
-          title="Lifecycle — kits vs bulk vs parted-out (Lego-style)"
+          title="Lifecycle - kits vs bulk vs parted-out (Lego-style)"
         >
           <option value="">All lifecycle</option>
           <option value="bulk">Bulk only</option>
@@ -1251,7 +1251,7 @@ function SpoolmanModal({
     <Modal open onClose={onClose} title="Spoolman" size="sm">
       <div className="space-y-3">
         <p className="text-[13px] text-muted dark:text-slate-400">
-          Link Cobblr to your Spoolman. Spoolman stays the tracker — Cobblr pulls each spool's remaining weight in (as an item here) and won't deduct it itself.
+          Link Cobblr to your Spoolman. Spoolman stays the tracker - Cobblr pulls each spool's remaining weight in (as an item here) and won't deduct it itself.
         </p>
         {items.map((c) => (
           <div key={c.id} className="flex items-center gap-2 rounded border border-line dark:border-slate-700 p-2">

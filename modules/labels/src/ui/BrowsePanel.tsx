@@ -146,7 +146,7 @@ export function BrowsePanel() {
             onClick={() => queueItemId && remove.mutate(queueItemId)}
             disabled={busy}
             aria-label={`Remove ${it.title} from the label queue`}
-            title="In the queue — click to remove"
+            title="In the queue - click to remove"
             className="group/qbtn shrink-0 rounded-md text-xs font-medium px-2.5 py-1.5 transition flex items-center gap-1 disabled:opacity-50 text-emerald-600 dark:text-emerald-400 hover:text-ember-600 dark:hover:text-ember-400 border border-transparent hover:border-ember-400/60"
           >
             <Check size={13} className="group-hover/qbtn:hidden" />

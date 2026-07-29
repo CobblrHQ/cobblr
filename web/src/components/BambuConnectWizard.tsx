@@ -59,7 +59,7 @@ export function BambuConnectWizard({
     <div className="space-y-3">
       <div className="flex items-center gap-2 text-xs text-muted">
         <Printer size={14} className="text-accent" />
-        <span>Sign in with your <strong>Bambu account</strong> — we'll find every printer on it automatically.</span>
+        <span>Sign in with your <strong>Bambu account</strong>  - we'll find every printer on it automatically.</span>
       </div>
 
       {step === "login" && (
@@ -116,7 +116,7 @@ export function BambuConnectWizard({
               <BambuPrinterPicker devices={devices} />
             )}
           </div>
-          <p className="text-[11px] text-faint">Cloud mode gives live status & temps. Remote start/pause isn't possible over the cloud (Bambu blocks third-party control) — that needs LAN + Developer Mode, coming soon.</p>
+          <p className="text-[11px] text-faint">Cloud mode gives live status & temps. Remote start/pause isn't possible over the cloud (Bambu blocks third-party control) - that needs LAN + Developer Mode, coming soon.</p>
           <label className="block">
             <span className={lbl}>Label (optional)</span>
             <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={`Bambu (${email || "account"})`} className={field} />

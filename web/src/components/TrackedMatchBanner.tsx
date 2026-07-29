@@ -135,7 +135,7 @@ export function TrackedMatchBanner({
         <div className="min-w-0 flex-1 text-sm">
           <span className="font-medium text-content dark:text-mortar-100">
             {canMerge ? (
-              <>Is this the same one? — {best.title}</>
+              <>Is this the same one? - {best.title}</>
             ) : (
               <>Already tracked{exact ? "" : " (name match)"} — {best.title}</>
             )}
@@ -148,7 +148,7 @@ export function TrackedMatchBanner({
         </div>
         <button
           type="button"
-          title="Not the same — keep this as a new item"
+          title="Not the same - keep this as a new item"
           onClick={() => setDismissed(true)}
           className="shrink-0 text-faint hover:text-muted p-1"
         >
@@ -168,7 +168,7 @@ export function TrackedMatchBanner({
               </div>
             ))}
           </dl>
-          <p className="text-[11px] text-muted mt-1.5">Only fields it's missing are filled — nothing gets overwritten.</p>
+          <p className="text-[11px] text-muted mt-1.5">Only fields it's missing are filled - nothing gets overwritten.</p>
         </div>
       )}
       <div className="mt-2 flex flex-wrap gap-1.5">
@@ -179,7 +179,7 @@ export function TrackedMatchBanner({
             onClick={() => attach.mutate({ m: best, mode: "merge-fields" })}
             className="inline-flex items-center gap-1 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 text-xs font-medium disabled:opacity-50"
           >
-            <CheckCircle2 size={12} /> Yes — merge these in
+            <CheckCircle2 size={12} /> Yes - merge these in
           </button>
         )}
         {best.qty != null && !canMerge && (
@@ -211,7 +211,7 @@ export function TrackedMatchBanner({
           <button
             type="button"
             disabled={busy}
-            title="Teach this entity its barcode — the next scan matches instantly"
+            title="Teach this entity its barcode - the next scan matches instantly"
             onClick={() => attach.mutate({ m: best, mode: "link-barcode" })}
             className="inline-flex items-center gap-1 rounded-full border border-emerald-400 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100/60 dark:hover:bg-emerald-900/30 px-2.5 py-1 text-xs font-medium disabled:opacity-50"
           >

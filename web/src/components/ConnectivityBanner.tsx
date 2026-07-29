@@ -27,7 +27,7 @@ export function ConnectivityBanner() {
       className="fixed inset-x-0 top-0 z-[200] flex items-center justify-center gap-2 bg-ember-600 px-4 py-2 text-center text-sm font-medium text-white shadow-md"
     >
       <WifiOff size={15} aria-hidden />
-      <span>Can't reach Cobblr — reconnecting…</span>
+      <span>Can't reach Cobblr - reconnecting…</span>
     </div>
   );
 }

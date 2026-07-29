@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/thermal-print",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Home-agnostic Bluetooth thermal-label core: pure ESC/POS raster protocol (Phomemo M-series), a Web Bluetooth transport, an escalating printer self-test sequence, and a harvestable printer-profile registry. Consumed by the standalone printer self-test site today and by in-app label printing later \u2014 so both drive identical hardware behaviour.",
@@ -14,6 +14,10 @@
     "./profiles": {
       "types": "./src/profiles.ts",
       "import": "./src/profiles.ts"
+    },
+    "./ble-bench": {
+      "types": "./src/ble-bench.ts",
+      "import": "./src/ble-bench.ts"
     }
   },
   "scripts": {

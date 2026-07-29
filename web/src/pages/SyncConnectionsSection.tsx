@@ -122,7 +122,7 @@ function SectionIssues({ errors, warnings }: { errors: string[]; warnings: strin
 // A key/value view of a record's fields (name omitted — it's the row title).
 function FieldList({ fields, dim }: { fields: Record<string, unknown>; dim?: boolean }) {
   const entries = Object.entries(fields).filter(([k]) => k !== "name");
-  if (entries.length === 0) return <p className="text-[10px] text-faint italic">— just the name</p>;
+  if (entries.length === 0) return <p className="text-[10px] text-faint italic"> - just the name</p>;
   return (
     <dl className="space-y-0.5">
       {entries.map(([k, v]) => (
@@ -174,7 +174,7 @@ function PlanRow({ it }: { it: ImportPlanItem }) {
               <FieldList fields={it.match.fields} dim />
             </div>
           ) : it.action === "create" ? (
-            <div className="text-[10px] text-faint italic self-center">no existing match — created fresh</div>
+            <div className="text-[10px] text-faint italic self-center">no existing match - created fresh</div>
           ) : null}
         </div>
       )}
@@ -240,7 +240,7 @@ export function SyncConnectionsSection() {
         <div>
           <h2 className="text-sm font-mono uppercase tracking-widest text-accent">// Live sync</h2>
           <p className="text-[11px] text-muted dark:text-slate-400 mt-0.5">
-            Mirror records from another system into this workspace — they arrive instantly via webhook, with a reconcile that backstops anything missed.
+            Mirror records from another system into this workspace - they arrive instantly via webhook, with a reconcile that backstops anything missed.
           </p>
         </div>
         {connectors.length > 0 && (
@@ -315,7 +315,7 @@ export function SyncConnectionsSection() {
           onCreated={() => {
             setAdding(false);
             invalidate();
-            toast.success("Connection added — enable a sync to start mirroring.");
+            toast.success("Connection added - enable a sync to start mirroring.");
           }}
         />
       )}
@@ -403,7 +403,7 @@ function SourceRow({
 
   const removeSection = async (s: Section) => {
     if (sections.length <= 1) {
-      toast.error("A source needs at least one section — remove the whole source instead.");
+      toast.error("A source needs at least one section - remove the whole source instead.");
       return;
     }
     if (await confirm({ title: `Remove the "${s.label ?? s.key}" section?`, message: "Connections stop offering it; already-mirrored data stays." }))
@@ -612,7 +612,7 @@ function AddSectionModal({
     <Modal open onClose={onClose} title="Add a section" size="md">
       <div className="space-y-3">
         <p className="text-[11px] text-muted dark:text-slate-400">
-          Paste one entity-type definition (JSON) — e.g. 3D printers — to sync another kind of thing from this
+          Paste one entity-type definition (JSON) - e.g. 3D printers - to sync another kind of thing from this
           source. It's appended to the source; connections then offer it to preview + import.
         </p>
         <JsonField
@@ -691,7 +691,7 @@ function EditSectionModal({
     <Modal open onClose={onClose} title={`Edit section — ${label}`} size="md">
       <div className="space-y-3">
         <p className="text-[11px] text-muted dark:text-slate-400">
-          Edit just this section's JSON — map, references, images, targetInstance. Saving re-installs the source;
+          Edit just this section's JSON - map, references, images, targetInstance. Saving re-installs the source;
           open connections pick up the change on the next preview / sync.
         </p>
         <JsonField
@@ -819,7 +819,7 @@ function SyncConnectionCard({ conn, onChange, nested }: { conn: SyncConnection; 
   const archive = useMutation({
     mutationFn: () => api.archiveSyncConnection(activeSlug, conn.id),
     onSuccess: () => {
-      toast.success("Archived — moved to history. Un-archive anytime to resume.");
+      toast.success("Archived - moved to history. Un-archive anytime to resume.");
       onChange();
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
@@ -871,7 +871,7 @@ function SyncConnectionCard({ conn, onChange, nested }: { conn: SyncConnection; 
         <button
           onClick={() => archive.mutate()}
           disabled={archive.isPending}
-          title="Move to history — stops syncing but keeps everything; un-archive to resume"
+          title="Move to history - stops syncing but keeps everything; un-archive to resume"
           className="text-[11px] text-faint hover:text-content dark:hover:text-mortar-200 transition"
         >
           {archive.isPending ? "Archiving…" : "Archive"}
@@ -975,7 +975,7 @@ function SyncConnectionCard({ conn, onChange, nested }: { conn: SyncConnection; 
                     </span>
                   ))}
                 {previewQ.data.plan.counts.total === 0 && (
-                  <span className="text-[11px] text-muted dark:text-slate-400">Nothing to {previewApproved ? "sync" : "import"} — the source is empty.</span>
+                  <span className="text-[11px] text-muted dark:text-slate-400">Nothing to {previewApproved ? "sync" : "import"}  - the source is empty.</span>
                 )}
               </div>
               <div className="max-h-72 overflow-auto rounded-lg border border-line dark:border-slate-700">

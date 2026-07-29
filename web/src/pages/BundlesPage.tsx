@@ -313,7 +313,7 @@ export function BundlesPage() {
             <span className="text-content dark:text-mortar-100">official</span>
             <span className="text-faint font-mono text-xs truncate">CobblrHQ/cobblr-extensions</span>
             {officialOk === false && (
-              <span className="text-[10px] font-mono uppercase tracking-widest text-ember-500 shrink-0" title="The official index couldn't be reached — showing the built-in list.">offline</span>
+              <span className="text-[10px] font-mono uppercase tracking-widest text-ember-500 shrink-0" title="The official index couldn't be reached - showing the built-in list.">offline</span>
             )}
           </li>
           {sources.map((s) => {
@@ -332,7 +332,7 @@ export function BundlesPage() {
           })}
           {sources.length === 0 && (
             <li className="text-xs text-faint dark:text-slate-500 italic pl-5">
-              No third-party repos added — just the official index.
+              No third-party repos added - just the official index.
             </li>
           )}
         </ul>
@@ -370,8 +370,8 @@ export function BundlesPage() {
           </div>
           {registry.isFetching && <span className="text-[10px] text-faint">loading…</span>}
           {officialOk === false && (
-            <span className="text-[10px] font-mono text-faint" title="The official index couldn't be reached — showing the built-in list.">
-              (offline — built-in list)
+            <span className="text-[10px] font-mono text-faint" title="The official index couldn't be reached - showing the built-in list.">
+              (offline - built-in list)
             </span>
           )}
           <div className="flex-1" />
@@ -403,7 +403,7 @@ export function BundlesPage() {
             type="button"
             onClick={() => setSourcesOpen(true)}
             className="shrink-0 flex items-center gap-1 text-[10px] font-mono uppercase tracking-widest text-muted hover:text-accent transition border border-line dark:border-slate-700 rounded px-2 py-1"
-            title="Manage bundle sources — add a third-party repository"
+            title="Manage bundle sources - add a third-party repository"
           >
             <Library size={12} /> sources{sources.length ? ` · ${sources.length}` : ""}
           </button>
@@ -476,7 +476,7 @@ export function BundlesPage() {
           // drivers
         </div>
         <p className="text-[11px] text-faint dark:text-slate-500 mb-2">
-          Machine drivers for the Digital Fabrication module — installed hot, no restart.
+          Machine drivers for the Digital Fabrication module - installed hot, no restart.
         </p>
         {(registry.data?.drivers.length ?? 0) === 0 ? (
           <div className="text-xs text-faint dark:text-slate-500 italic">No drivers in the registry yet.</div>
@@ -516,7 +516,7 @@ export function BundlesPage() {
           // modules
         </div>
         <p className="text-[11px] text-faint dark:text-slate-500 mb-2">
-          Sandboxed WASM modules — signature-verified, hot-installed.{" "}
+          Sandboxed WASM modules - signature-verified, hot-installed.{" "}
           {isPlatformAdmin ? "Super-admin install." : "Installed by a platform super-admin."}
         </p>
         {(registry.data?.modules.length ?? 0) === 0 ? (
@@ -562,7 +562,7 @@ export function BundlesPage() {
           // renderers
         </div>
         <p className="text-[11px] text-faint dark:text-slate-500 mb-2">
-          File-preview renderers for extra formats — they run fully sandboxed (no network, no data
+          File-preview renderers for extra formats - they run fully sandboxed (no network, no data
           access), so a new file type previews without touching anything else.
         </p>
         {(registry.data?.renderers.length ?? 0) === 0 ? (
@@ -838,7 +838,7 @@ function ExportBundleModal({
         <div className="space-y-3">
           <p className="text-xs text-muted dark:text-slate-400">
             Bundles the field defs + wires you've created in this
-            workspace — module-contributed ones are excluded since
+            workspace - module-contributed ones are excluded since
             they'd re-install with the module anyway. Edit the
             metadata below before exporting; the JSON updates live.
           </p>

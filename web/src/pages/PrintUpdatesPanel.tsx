@@ -27,7 +27,7 @@ export function PrintUpdatesPanel({ slug }: { slug: string }) {
       events: r.events, cadence: r.cadence, cap_minutes: r.cap_minutes, message: r.message,
       pre_actions: r.pre_actions, post_actions: r.post_actions, enabled: r.enabled,
     }),
-    onSuccess: () => { toast.success("Rule duplicated — tweak the copy"); void qc.invalidateQueries({ queryKey: ["digifab-rules", slug] }); },
+    onSuccess: () => { toast.success("Rule duplicated - tweak the copy"); void qc.invalidateQueries({ queryKey: ["digifab-rules", slug] }); },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't duplicate"),
   });
 
@@ -36,7 +36,7 @@ export function PrintUpdatesPanel({ slug }: { slug: string }) {
       <div className="flex items-center gap-2">
         <Bell size={14} className="text-accent" />
         <h2 className="text-sm font-display font-semibold text-content dark:text-mortar-100">Print updates</h2>
-        <span className="text-xs text-faint">— post a photo + status to Discord as prints run</span>
+        <span className="text-xs text-faint"> - post a photo + status to Discord as prints run</span>
       </div>
 
       {/* Destinations */}
@@ -45,7 +45,7 @@ export function PrintUpdatesPanel({ slug }: { slug: string }) {
       {/* Rules */}
       <div>
         <div className="flex items-center justify-between mb-1.5">
-          <div className={lbl}>Rules <span className="normal-case text-faint/70">— which printer posts what, where, how often</span></div>
+          <div className={lbl}>Rules <span className="normal-case text-faint/70"> - which printer posts what, where, how often</span></div>
           <button
             type="button"
             onClick={() => setEditRule("new")}
@@ -58,7 +58,7 @@ export function PrintUpdatesPanel({ slug }: { slug: string }) {
         </div>
         {rules.data && rules.data.items.length === 0 ? (
           <div className="text-xs text-muted dark:text-slate-400 italic border border-line dark:border-slate-700 rounded p-3">
-            No rules yet. {chans.length === 0 ? "Add a Discord channel above, then" : "Click"} “Add rule” to post updates — e.g. every 10% or every 30 min, whichever comes first.
+            No rules yet. {chans.length === 0 ? "Add a Discord channel above, then" : "Click"} “Add rule” to post updates - e.g. every 10% or every 30 min, whichever comes first.
           </div>
         ) : (
           <ul className="divide-y divide-line dark:divide-slate-800 border border-line dark:border-slate-700 rounded">
@@ -119,14 +119,14 @@ function ChannelsSection({ slug, channels }: { slug: string; channels: DigifabCh
   });
   const test = useMutation({
     mutationFn: (id: string) => api.testDigifabChannel(slug, id),
-    onSuccess: () => toast.success("Test sent — check the channel"),
+    onSuccess: () => toast.success("Test sent - check the channel"),
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Test failed"),
   });
 
   return (
     <div>
       <div className="flex items-center justify-between mb-1.5">
-        <div className={lbl}>Discord channels <span className="normal-case text-faint/70">— defined once, used by any rule</span></div>
+        <div className={lbl}>Discord channels <span className="normal-case text-faint/70"> - defined once, used by any rule</span></div>
         {!adding && <button type="button" onClick={() => setAdding(true)} className="flex items-center gap-1 text-xs text-accent hover:underline"><Plus size={12} /> Add channel</button>}
       </div>
       {channels.length > 0 && (
@@ -142,8 +142,8 @@ function ChannelsSection({ slug, channels }: { slug: string; channels: DigifabCh
       )}
       {adding && (
         <div className="border border-line dark:border-slate-700 rounded p-2 space-y-1.5">
-          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Name — e.g. #prints" className={field} />
-          <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Discord webhook URL — https://discord.com/api/webhooks/…" className={field} />
+          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Name - e.g. #prints" className={field} />
+          <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Discord webhook URL - https://discord.com/api/webhooks/…" className={field} />
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => create.mutate()} disabled={create.isPending || !label.trim() || !url.trim()} className="px-2.5 py-1 text-xs rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50">{create.isPending ? "…" : "Save"}</button>
             <button type="button" onClick={() => setAdding(false)} className="text-xs text-faint hover:text-content">Cancel</button>
@@ -271,7 +271,7 @@ function RuleEditor({
           </div>
 
           <div>
-            <span className={lbl + " block mb-1"}>While printing, every <span className="normal-case text-faint/70">— whichever comes first</span></span>
+            <span className={lbl + " block mb-1"}>While printing, every <span className="normal-case text-faint/70"> - whichever comes first</span></span>
             <div className="space-y-1.5">
               {cadence.map((c, i) => (
                 <div key={i} className="flex items-center gap-1.5">
@@ -307,18 +307,18 @@ function RuleEditor({
             <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={5} placeholder={"**{{model}}**\nProgress · {{percent}}\nRemaining · {{remaining}}\nElapsed · {{elapsed}}"} className={field + " font-mono text-xs"} />
           </label>
           <div className="text-[11px] text-faint leading-relaxed">
-            Params: {"{{printer}} {{model}} {{percent}} {{remaining}} {{elapsed}} {{eta}} {{layer}} {{total_layers}} {{nozzle}} {{bed}} {{event}}"}. A line is shown only if at least one of its {"{{fields}}"} has a value — so a line that would come out all-empty (e.g. “Remaining · ” when the printer doesn’t report it) is hidden instead of left blank. Leave the whole box blank for the default message.
+            Params: {"{{printer}} {{model}} {{percent}} {{remaining}} {{elapsed}} {{eta}} {{layer}} {{total_layers}} {{nozzle}} {{bed}} {{event}}"}. A line is shown only if at least one of its {"{{fields}}"} has a value - so a line that would come out all-empty (e.g. “Remaining · ” when the printer doesn’t report it) is hidden instead of left blank. Leave the whole box blank for the default message.
           </div>
           <label className="flex items-center gap-1.5 text-xs">
             <input type="checkbox" checked={photo} onChange={(e) => setPhoto(e.target.checked)} /> Attach the live camera photo
           </label>
 
           <div>
-            <span className={lbl + " block mb-1"}>Before posting <span className="normal-case text-faint/70">— e.g. light on, then settle</span></span>
+            <span className={lbl + " block mb-1"}>Before posting <span className="normal-case text-faint/70"> - e.g. light on, then settle</span></span>
             <StepEditor steps={pre} onChange={setPre} />
           </div>
           <div>
-            <span className={lbl + " block mb-1"}>After posting <span className="normal-case text-faint/70">— e.g. wait, light off</span></span>
+            <span className={lbl + " block mb-1"}>After posting <span className="normal-case text-faint/70"> - e.g. wait, light off</span></span>
             <StepEditor steps={post} onChange={setPost} />
           </div>
 

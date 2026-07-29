@@ -79,7 +79,7 @@ export function ScanImportModal({ slug, open, onClose, onImported }: {
         {!file && (
           <>
             <p className="text-muted dark:text-slate-400">
-              Bring a batch of scans from another system — an <strong>inbox export</strong> (JSON or CSV)
+              Bring a batch of scans from another system - an <strong>inbox export</strong> (JSON or CSV)
               works as-is; any other CSV works with a quick column mapping. Items land in this inbox as ordinary
               pending scans and go through Cobblr's own matching.
             </p>
@@ -112,7 +112,7 @@ export function ScanImportModal({ slug, open, onClose, onImported }: {
             {unmapped.length > 0 && (
               <div className="rounded border border-amber-500/40 bg-amber-50 dark:bg-amber-950/20 p-2 space-y-1.5">
                 <p className="text-xs text-amber-700 dark:text-amber-400 font-medium">
-                  {unmapped.length} column{unmapped.length === 1 ? "" : "s"} didn't match a known field — map or ignore:
+                  {unmapped.length} column{unmapped.length === 1 ? "" : "s"} didn't match a known field - map or ignore:
                 </p>
                 {unmapped.map((c) => (
                   <label key={c.header} className="flex items-center gap-2 text-xs">

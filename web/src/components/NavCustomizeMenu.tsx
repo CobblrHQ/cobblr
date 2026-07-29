@@ -94,7 +94,7 @@ export function NavCustomizeMenu() {
         ref={btnRef}
         type="button"
         onClick={() => setOpen((o) => !o)}
-        title="Customize navigation — show/hide + reorder"
+        title="Customize navigation - show/hide + reorder"
         aria-label="Customize navigation"
         className={
           "transition p-1.5 " +

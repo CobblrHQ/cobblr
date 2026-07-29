@@ -213,7 +213,7 @@ export function BinAdjustModal({
               {onAddSomethingElse && (
                 <button
                   type="button"
-                  title="This bin is getting a second SKU — switch to filing scans into it"
+                  title="This bin is getting a second SKU - switch to filing scans into it"
                   onClick={onAddSomethingElse}
                   className="text-accent hover:underline"
                 >

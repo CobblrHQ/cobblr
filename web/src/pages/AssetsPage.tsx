@@ -1070,7 +1070,7 @@ function VinDecodeField({
         <div className="mt-2 rounded-md border border-cobble-300/60 dark:border-cobble-800 bg-cobble-50/60 dark:bg-cobble-950/40 px-2.5 py-2 text-xs">
           <div className="flex items-center justify-between gap-2">
             <span className="text-content dark:text-slate-300">
-              Filled from VIN — double-check{status.outcome === "partial" ? " (partial match)" : ""}.
+              Filled from VIN - double-check{status.outcome === "partial" ? " (partial match)" : ""}.
             </span>
             <button type="button" onClick={undo} className="inline-flex items-center gap-1 text-faint hover:text-ember-500 transition">
               <Undo2 size={11} /> undo
@@ -1095,11 +1095,11 @@ function VinDecodeField({
         </div>
       )}
       {status.kind === "miss" && (
-        <div className="mt-2 text-[11px] text-faint">Couldn&apos;t decode that VIN — check for typos.</div>
+        <div className="mt-2 text-[11px] text-faint">Couldn&apos;t decode that VIN - check for typos.</div>
       )}
       {status.kind === "unavailable" && (
         <div className="mt-2 text-[11px] text-amber-600 dark:text-amber-400">
-          VIN service unavailable — try again in a moment.
+          VIN service unavailable - try again in a moment.
         </div>
       )}
     </label>

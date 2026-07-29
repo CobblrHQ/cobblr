@@ -138,7 +138,7 @@ export function DesignFiles({ designId }: { designId: string }) {
       </div>
       {items.length === 0 && !list.isLoading && (
         <p className="text-xs text-faint dark:text-slate-500 italic">
-          No pattern or photos yet — upload the pattern PDF or a photo of the make.
+          No pattern or photos yet - upload the pattern PDF or a photo of the make.
         </p>
       )}
       {files.length > 0 && (

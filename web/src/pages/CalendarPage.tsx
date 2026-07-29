@@ -162,7 +162,7 @@ function SubscribeBar({ slug }: { slug: string }) {
   });
   const rotate = useMutation({
     mutationFn: () => api.rotateCalendarFeed(slug),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ["calendar-feed", slug] }); toast.success("New feed URL — the old one stopped working."); },
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ["calendar-feed", slug] }); toast.success("New feed URL - the old one stopped working."); },
     onError: (e) => toast.error((e as Error).message),
   });
 
@@ -176,7 +176,7 @@ function SubscribeBar({ slug }: { slug: string }) {
         <span className="text-sm font-medium text-content dark:text-mortar-100">Subscribe from your phone or Google Calendar</span>
       </div>
       <p className="text-xs text-content dark:text-mortar-200">
-        Turn on a private feed URL, then add it to Apple Calendar, Outlook, or Google Calendar (<span className="font-mono">Other calendars → From URL</span>). It stays in sync — no app, no account on the other end. The URL is a secret; rotate it to cut off old subscribers.
+        Turn on a private feed URL, then add it to Apple Calendar, Outlook, or Google Calendar (<span className="font-mono">Other calendars → From URL</span>). It stays in sync - no app, no account on the other end. The URL is a secret; rotate it to cut off old subscribers.
       </p>
       <div className="flex items-center gap-2">
         <button

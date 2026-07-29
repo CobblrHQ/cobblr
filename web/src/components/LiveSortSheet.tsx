@@ -149,7 +149,7 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
           const resolved = await api.resolveQrToken(qrToken).catch(() => null);
           if (isLocationQrTarget(resolved)) {
             if (phaseRef.current === "directive") confirmCurrent(resolved.entity_id);
-            else toast.info("Scan an item first — a bin label confirms the current item into it.");
+            else toast.info("Scan an item first - a bin label confirms the current item into it.");
           } else {
             toast.error("That QR isn't a bin label.");
           }
@@ -222,7 +222,7 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
       .then((r) => {
         setTape((t) => t.filter((e) => e.id !== r.entry.id));
         setLastConfirmed(null);
-        toast.success("Undone — it's back to unsorted.");
+        toast.success("Undone - it's back to unsorted.");
       })
       .catch((e) => toast.error(e instanceof ApiError ? e.message : "Couldn't undo."));
   };
@@ -348,7 +348,7 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
         <div className="min-w-0 flex-1">
           <div className="text-sm text-muted">Live Sort · {sortedCount} sorted this session</div>
           <div className="text-lg font-semibold text-content">
-            Scan a thing — we'll tell you where it goes.
+            Scan a thing - we'll tell you where it goes.
           </div>
         </div>
         {lastConfirmed && (
@@ -364,7 +364,7 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
         <button
           type="button"
           onClick={() => setBinsOpen((v) => !v)}
-          title="No bins yet? Create numbered bins — mark your containers 1, 2, 3… with a marker; QR labels can come later"
+          title="No bins yet? Create numbered bins - mark your containers 1, 2, 3… with a marker; QR labels can come later"
           className="rounded border border-line dark:border-slate-700 px-3 py-1.5 text-sm text-muted hover:text-content transition"
         >
           Set up bins
@@ -451,7 +451,7 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
             )}
             {summary.stragglers > 0 && (
               <p className="text-sm text-muted">
-                {summary.stragglers} item{summary.stragglers === 1 ? "" : "s"} for review — they're
+                {summary.stragglers} item{summary.stragglers === 1 ? "" : "s"} for review - they're
                 waiting in the scan inbox.
               </p>
             )}
@@ -475,7 +475,7 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
             ) : (
               <>
                 <div className="text-5xl">📦</div>
-                <div className="text-2xl font-semibold text-content">Ready — scan the next item.</div>
+                <div className="text-2xl font-semibold text-content">Ready - scan the next item.</div>
                 <p className="text-sm text-muted max-w-md">
                   Hardware scanner, or type a code below. When the directive shows, put the item
                   there and hit <kbd className="rounded border border-line dark:border-slate-700 px-1.5 py-0.5 text-xs">space</kbd> (or the button) to confirm.
@@ -552,7 +552,7 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
                 <div className="text-base text-content">
                   This starts your{" "}
                   <span className="font-semibold text-accent">{current.directive.proposed_name}</span>{" "}
-                  bin — confirming names it{" "}
+                  bin - confirming names it{" "}
                   <span className="font-medium">
                     "{current.directive.location_name} · {current.directive.proposed_name}"
                   </span>
@@ -568,7 +568,7 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
                   </span>
                 </div>
                 <div className="text-sm text-muted max-w-md">
-                  No confident match yet — park it in the catch-all and it stays findable; it'll be
+                  No confident match yet - park it in the catch-all and it stays findable; it'll be
                   in the inbox for review.
                 </div>
               </>

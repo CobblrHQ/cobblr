@@ -354,7 +354,7 @@ export function SortingPlanView({
           setRenaming(null);
           setExpandedItem(null);
           setCobbTouched(false);
-          toast.info("Plan updated — re-routed against your latest changes.");
+          toast.info("Plan updated - re-routed against your latest changes.");
         })
         .catch(() => {});
     }, 8_000);
@@ -530,7 +530,7 @@ export function SortingPlanView({
                 )}
               </span>
             ) : (
-              <span title="Grouped by where similar items already live — no AI plan.">
+              <span title="Grouped by where similar items already live - no AI plan.">
                 Similarity plan{aiStatus && !aiStatus.available ? " (no AI connected)" : " (AI unavailable this run)"}
               </span>
             )}
@@ -539,7 +539,7 @@ export function SortingPlanView({
             )}
             {plan.needs_review_item_ids.length > 0 && (
               <span className="text-amber-600 dark:text-amber-400">
-                {plan.needs_review_item_ids.length} need identifying first — excluded
+                {plan.needs_review_item_ids.length} need identifying first - excluded
               </span>
             )}
             {plan.census_truncated && <span>Large workspace: planned against the busiest bins.</span>}
@@ -552,7 +552,7 @@ export function SortingPlanView({
               connected but it failed this run (Re-plan). */}
           {!replanning && plan.source !== "ai" && aiStatus && !aiStatus.available && (
             <AiOffNotice status={aiStatus}>
-              <strong>No AI connected — the planner is grouping by where similar
+              <strong>No AI connected - the planner is grouping by where similar
               things already live.</strong> Without AI it won't propose new homes,
               so brand-new items with nothing like them yet stay unassigned.
               Connect AI to get smart put-away suggestions.{" "}
@@ -561,7 +561,7 @@ export function SortingPlanView({
           {!replanning && plan.source !== "ai" && aiStatus?.available && (
             <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/20 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
               <Sparkles size={14} className="shrink-0" />
-              AI couldn't build a plan this time — showing similarity grouping. Re-plan to try again.
+              AI couldn't build a plan this time - showing similarity grouping. Re-plan to try again.
               <button
                 type="button"
                 onClick={() => runPlan(hint, { fresh: true })}
@@ -574,7 +574,7 @@ export function SortingPlanView({
 
           {cobbTouched && !replanning && (
             <div className="flex flex-wrap items-center gap-2 rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-3 py-2 text-xs text-content dark:text-mortar-100">
-              Cobb changed your workspace — re-plan to route against it.
+              Cobb changed your workspace - re-plan to route against it.
               <button
                 type="button"
                 onClick={() => runPlan(hint, { fresh: true })}
@@ -586,7 +586,7 @@ export function SortingPlanView({
           )}
           {stale && (
             <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/20 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-              You changed items since this plan was made — the groups below may not fit anymore.
+              You changed items since this plan was made - the groups below may not fit anymore.
               <button
                 type="button"
                 onClick={() => runPlan(hint, { fresh: true })}
@@ -664,14 +664,14 @@ export function SortingPlanView({
                   {g.ready ? (
                     done ? (
                       <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 text-xs font-medium">
-                        <CheckCircle2 className="h-4 w-4" /> Done — filed
+                        <CheckCircle2 className="h-4 w-4" /> Done - filed
                       </span>
                     ) : (
                       <button
                         type="button"
                         disabled={readyBusy === g.id}
                         onClick={() => void commitReady(g)}
-                        title="These already have a home — mark them done and file them as records"
+                        title="These already have a home - mark them done and file them as records"
                         className="inline-flex items-center gap-1.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium px-2.5 py-1 transition disabled:opacity-50"
                       >
                         <CheckCircle2 className="h-4 w-4" />
@@ -733,7 +733,7 @@ export function SortingPlanView({
                 )}
                 {g.ai_guess && !override && !isApplied && (
                   <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-                    Nothing similar lives there yet — this is the AI's suggestion, not a match.
+                    Nothing similar lives there yet - this is the AI's suggestion, not a match.
                     Accept if it fits, or click the chip to send it elsewhere.
                   </p>
                 )}
@@ -834,7 +834,7 @@ export function SortingPlanView({
                                   return next;
                                 })
                               }
-                              title="Not related — leave it out of this group (it stays in the inbox)"
+                              title="Not related - leave it out of this group (it stays in the inbox)"
                               className="text-faint hover:text-content transition shrink-0"
                               aria-label="Split this item out of the group"
                             >
@@ -850,7 +850,7 @@ export function SortingPlanView({
                                 onClick={() => setExpandedItem(null)}
                                 className="text-xs text-accent hover:underline"
                               >
-                                Done fixing — collapse
+                                Done fixing - collapse
                               </button>
                             </div>
                           </div>
@@ -861,7 +861,7 @@ export function SortingPlanView({
                 </ul>
                 {(splitOut.get(g.id)?.size ?? 0) > 0 && !isApplied && (
                   <p className="mt-1 text-xs text-muted">
-                    {splitOut.get(g.id)!.size} split out — they stay in the inbox for their own
+                    {splitOut.get(g.id)!.size} split out - they stay in the inbox for their own
                     triage. Disagree with the whole grouping? Say why below and Re-plan.
                   </p>
                 )}
@@ -926,7 +926,7 @@ export function SortingPlanView({
                 type="button"
                 disabled={busy}
                 onClick={onStartWalk}
-                title="Walk the accepted groups bin by bin — scan or tap each item as you put it away"
+                title="Walk the accepted groups bin by bin - scan or tap each item as you put it away"
                 className="rounded border border-accent/60 text-accent text-sm font-medium px-3 py-1.5 hover:bg-cobble-50 dark:hover:bg-cobble-900/30 transition disabled:opacity-50"
               >
                 Start put-away walk →

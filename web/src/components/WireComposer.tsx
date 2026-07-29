@@ -193,7 +193,7 @@ export function WireComposer({
             <input
               value={triggerEvent}
               onChange={(e) => setTriggerEvent(e.target.value)}
-              placeholder="pick or type an event — e.g. inventory.stock.changed"
+              placeholder="pick or type an event - e.g. inventory.stock.changed"
               list="wire-events-list"
               className="input font-mono text-xs"
             />
@@ -216,7 +216,7 @@ export function WireComposer({
           onChange={(e) => { setSourceKind(e.target.value); setActionId(""); }}
           className="input"
         >
-          <option value="">— pick a kind —</option>
+          <option value=""> - pick a kind - </option>
           {kinds.data?.items.map((k) => (
             <option key={k.id} value={k.id}>{k.display_name} ({k.id})</option>
           ))}
@@ -227,7 +227,7 @@ export function WireComposer({
       <div>
         <span className={L}>Do…</span>
         <select value={actionId} onChange={(e) => { setActionId(e.target.value); setArgs({}); }} className="input" disabled={!sourceKind}>
-          <option value="">— pick an action —</option>
+          <option value=""> - pick an action - </option>
           {actionsForKind.data?.items.map((a) => (
             <option key={a.id} value={a.id}>{a.label} ({a.id})</option>
           ))}
@@ -268,7 +268,7 @@ export function WireComposer({
             value={template}
             onChange={(e) => setTemplate(e.target.value)}
             onFocus={(e) => { activeRef.current = e.currentTarget; activeField.current = "__template__"; }}
-            placeholder={'e.g. {{name}} is low — only {{qty}} {{unit}} left'}
+            placeholder={'e.g. {{name}} is low - only {{qty}} {{unit}} left'}
             rows={2}
             className="input font-mono text-xs"
           />
@@ -304,7 +304,7 @@ export function WireComposer({
         {showConds && (
           <div className="mt-2 space-y-2 rounded-lg border border-line dark:border-slate-700 p-3">
             <p className="text-xs text-muted dark:text-slate-400">
-              Fire only when ALL of these hold. Paths read the same data as the template —
+              Fire only when ALL of these hold. Paths read the same data as the template - 
               a field name (<span className="font-mono">qty</span>, <span className="font-mono">material</span>)
               or <span className="font-mono">event.*</span> (<span className="font-mono">event.newQty</span>,{" "}
               <span className="font-mono">event.delta</span>). Numbers compare numerically.

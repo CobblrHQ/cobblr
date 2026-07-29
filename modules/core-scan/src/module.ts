@@ -16,7 +16,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-scan",
-  version: "0.24.0",
+  version: "0.27.0",
   displayName: "Scan",
   description:
     "Scan a barcode or take a photo of a thing; end up with a draft inventory row, pre-filled with the resolved name + brand + catalog photo. One tap to commit.",
@@ -98,6 +98,19 @@ export default defineModule({
         userInvokable: false,
       },
       {
+        id: "core-scan:rank-catalog-photo",
+        label: "Pick the best catalog photo",
+        description:
+          "Vision-rank an enriched row's candidate photos and set the cleanest catalog shot (product alone, correct colour, no people). Wire-fired on scan.enriched; no-ops unless the workspace turned always-on ranking on, and never over a photo the user picked.",
+        // DELIBERATELY universal: fires on scan events, not entity sources —
+        // the inbox row in the payload is the subject (same as identify-photo).
+        appliesTo: { any: true },
+        invokeHandler: "core-scan.rank-catalog-photo",
+        // Wire-only. The per-item equivalent is the ✨ Pick best button, which
+        // goes through POST /inbox/:id/rank-photo-ai (a press IS the consent).
+        userInvokable: false,
+      },
+      {
         id: "core-scan:identify",
         label: "Identify a thing",
         description:
@@ -111,8 +124,8 @@ export default defineModule({
     ],
   },
 
-  // Informational — the reaction runs through the seeded wire below.
-  subscribes: ["core-scan.scan.received"],
+  // Informational — the reactions run through the seeded wires below.
+  subscribes: ["core-scan.scan.received", "core-scan.scan.enriched"],
 
   // The autonomous photo-sort ships as a default WIRE, not a cron baked
   // into the module: every scan.received fires identify-photo, which
@@ -127,6 +140,22 @@ export default defineModule({
         action_id: "core-scan:identify-photo",
         trigger_type: "event",
         trigger_event: "core-scan.scan.received",
+      },
+      // The always-on catalog-photo pick (Phase F). Fires on scan.ENRICHED —
+      // the point both intake paths reach once a name exists, which is what the
+      // image search needs (scan.received is too early for a photo item: no name
+      // yet, so nothing to search for). Seeded ENABLED because a manifest wire
+      // cannot express "disabled" — the SPEND gate is the workspace's opt-in
+      // setting (core_scan_photo_rank_config, off unless turned on), so an
+      // enabled wire costs nothing until someone asks for it. A workspace can
+      // still disable the wire itself on /bindings; that survives boot
+      // (backfillDefaultBindings only INSERTS what is missing, and its probe
+      // ignores `enabled`, so it never re-enables what you turned off).
+      {
+        source_kind: "core-scan:item",
+        action_id: "core-scan:rank-catalog-photo",
+        trigger_type: "event",
+        trigger_event: "core-scan.scan.enriched",
       },
     ],
   },

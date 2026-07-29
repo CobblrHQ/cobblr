@@ -903,7 +903,7 @@ function PlanFor({
                   } else if (readBound(loc.metadata)) {
                     // Owns its own layout (a toolbox face) → zoom in place.
                     setPeekId(loc.id);
-                  } else navigate(`/configuration/locations/${loc.id}`);
+                  } else navigate(`/locations/${loc.id}`);
                 }}
                 title={loc.name}
                 className={`absolute rounded border overflow-hidden text-[11px] leading-tight px-1 py-0.5
@@ -1115,7 +1115,7 @@ function PlanFor({
                 <ScanLine size={14} /> Scan into {peekLoc.name}
               </Link>
               <Link
-                to={`/configuration/locations/${peekLoc.id}`}
+                to={`/locations/${peekLoc.id}`}
                 onClick={() => setPeekId(null)}
                 className="text-sm text-accent hover:underline"
               >
@@ -1327,7 +1327,7 @@ function EditPanel({
     if (!loc || !rect) return null;
     return (
       <div className="flex items-center gap-3 flex-wrap rounded-md border border-line dark:border-slate-700 bg-subtle/60 dark:bg-slate-800/40 px-3 py-2">
-        <Link to={`/configuration/locations/${loc.id}`} className="text-xs font-medium text-content dark:text-slate-200 hover:text-accent">
+        <Link to={`/locations/${loc.id}`} className="text-xs font-medium text-content dark:text-slate-200 hover:text-accent">
           {loc.name}
         </Link>
         <span className="font-mono text-[10px] uppercase tracking-widest text-faint">{loc.kind}</span>
@@ -1398,7 +1398,7 @@ function EditPanel({
         onCommit={(v) => onBound({ ...bound, grid_mm: Math.max(5, Math.min(1000, v)) })}
       />
       <span className="text-[11px] text-faint italic">
-        numbers live here in edit mode only — the plan itself stays clean
+        numbers live here in edit mode only - the plan itself stays clean
       </span>
     </div>
   );
@@ -1485,10 +1485,10 @@ function SeedModal({
     <Modal open onClose={onClose} title={`Describe ${room.name}`} size="md">
       <div className="space-y-3">
         <p className="text-xs text-muted dark:text-slate-400">
-          Say it like you'd say it to a person — dimensions in whatever unit you think in,
+          Say it like you'd say it to a person - dimensions in whatever unit you think in,
           walls, doorways, named zones, and the furniture standing in it (named things are
           matched to your existing sub-locations, never invented). The AI drafts the plan;
-          you drag it true afterward. A full draft can take a minute or two — leave it be.
+          you drag it true afterward. A full draft can take a minute or two - leave it be.
         </p>
         <textarea
           value={text}
@@ -1636,7 +1636,7 @@ function NewFloorModal({
           className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm text-content dark:text-slate-200"
         />
         <p className="text-xs text-muted dark:text-slate-400">
-          Size sets the floor's outline — rooms and walls draw onto it next.
+          Size sets the floor's outline - rooms and walls draw onto it next.
         </p>
         <BoundSetup
           unitDefault="ft"
@@ -1762,10 +1762,10 @@ function GridFillModal({
         {rects ? (
           <p className="text-xs text-muted dark:text-slate-400">
             {rects.length} bins: {preview.slice(0, 3).join(", ")} … {preview[preview.length - 1]}
-            — placed at true scale, added to what's already on the layout.
+             - placed at true scale, added to what's already on the layout.
           </p>
         ) : (
-          <p className="text-xs text-ember-500">That grid doesn't fit this face — fewer rows or columns.</p>
+          <p className="text-xs text-ember-500">That grid doesn't fit this face - fewer rows or columns.</p>
         )}
         <div className="flex justify-end">
           <button

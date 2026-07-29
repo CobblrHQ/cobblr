@@ -781,7 +781,7 @@ function AiActivitySection({ slug }: { slug: string }) {
         </div>
       </div>
       <p className="text-xs text-faint dark:text-slate-500">
-        Every AI call you made — the chat, Build, scan, summaries — with the full prompt + response. {scope === "workspace" ? "Showing everyone's (owner/admin)." : "Showing yours."}
+        Every AI call you made - the chat, Build, scan, summaries - with the full prompt + response. {scope === "workspace" ? "Showing everyone's (owner/admin)." : "Showing yours."}
       </p>
       <div className="rounded-xl border border-line dark:border-slate-700 overflow-hidden overflow-x-auto">
         <table className="w-full text-xs">

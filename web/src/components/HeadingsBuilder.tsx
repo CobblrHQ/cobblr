@@ -123,7 +123,7 @@ export function HeadingsBuilder() {
           // navigation headings
         </div>
         <p className="text-xs text-muted dark:text-slate-400 mt-1">
-          Group nav entries under your own headings — e.g. a{" "}
+          Group nav entries under your own headings - e.g. a{" "}
           <span className="font-mono">Motorcycle</span> heading holding both
           Motorcycle Parts (inventory) and Motorcycles (assets). Each shows as
           a dropdown in the navbar. Org-wide.

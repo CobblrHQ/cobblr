@@ -92,7 +92,7 @@ export function JoinPage() {
             {preview.data.blueprint_name && (
               <div className="text-xs text-moss-700 dark:text-moss-300 flex items-center gap-1.5 rounded border border-moss-500/40 bg-moss-50 dark:bg-moss-950/30 p-2">
                 <CheckCircle2 size={13} className="shrink-0" /> Your workspace comes pre-configured:{" "}
-                <strong>{preview.data.blueprint_name}</strong> — everything will be set up the moment you sign up.
+                <strong>{preview.data.blueprint_name}</strong>  - everything will be set up the moment you sign up.
               </div>
             )}
             <Field label="Your email">

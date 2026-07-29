@@ -376,7 +376,7 @@ export function NewThingFunnelModal({
                   <span className="flex-1 text-sm text-content dark:text-mortar-200">
                     Inside a menu
                     <span className="block text-xs text-muted dark:text-slate-400">
-                      Grouped under a navbar dropdown — tidy when you have several of
+                      Grouped under a navbar dropdown - tidy when you have several of
                       the same kind.
                     </span>
                   </span>
@@ -400,7 +400,7 @@ export function NewThingFunnelModal({
                         type="text"
                         value={newMenuName}
                         onChange={(e) => setNewMenuName(e.target.value)}
-                        placeholder="Menu name — e.g. Inventory"
+                        placeholder="Menu name - e.g. Inventory"
                         className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
                       />
                     )}

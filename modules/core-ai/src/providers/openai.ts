@@ -4,6 +4,7 @@
 
 import { platform, type AiCapability } from "@cobblr/platform-contract";
 import { identifyPromptFor } from "./identify-prompt.js";
+import { rankImagesPromptFor, rankImageInputs } from "./rank-images-prompt.js";
 import { toolsOf, turnsOf, openAiToolsOf, openAiMessagesOf, parseOpenAiToolCalls } from "./tool-wire.js";
 import { promptFingerprint } from "./prompt-fingerprint.js";
 
@@ -12,6 +13,7 @@ const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?:
   summarise: { models: ["gpt-4o", "gpt-4o-mini"], defaultModel: "gpt-4o-mini" },
   "classify-image": { models: ["gpt-4o", "gpt-4o-mini"], defaultModel: "gpt-4o-mini" },
   "identify-image": { models: ["gpt-4o", "gpt-4o-mini"], defaultModel: "gpt-4o-mini" },
+  "rank-images": { models: ["gpt-4o", "gpt-4o-mini"], defaultModel: "gpt-4o-mini" },
   "extract-text": { models: ["gpt-4o", "gpt-4o-mini"], defaultModel: "gpt-4o-mini" },
   "embed-text": {
     models: ["text-embedding-3-small", "text-embedding-3-large"],
@@ -81,6 +83,7 @@ export function register(): void {
         case "summarise":
         case "classify-image":
         case "identify-image":
+        case "rank-images":
         case "extract-text":
         case "match-to-catalog": {
           const messages = buildMessages(ctx.capability, ctx.input);
@@ -97,6 +100,7 @@ export function register(): void {
           if (
             ctx.capability === "classify-image" ||
             ctx.capability === "identify-image" ||
+            ctx.capability === "rank-images" ||
             ctx.capability === "match-to-catalog"
           ) {
             body.response_format = { type: "json_object" };
@@ -201,6 +205,17 @@ export function buildMessages(
       if (imageUrl) content.push({ type: "image_url", image_url: { url: imageUrl } });
       else if (imageB64) {
         content.push({ type: "image_url", image_url: { url: `data:${mediaType};base64,${imageB64}` } });
+      }
+      return [{ role: "user", content }];
+    }
+    case "rank-images": {
+      // The one multi-image capability: text first, then the candidate images in
+      // order, so "image 0, image 1, …" in the prompt line up with what the model
+      // sees. rankImagesPromptFor is the SAME resolver the fingerprint keys on.
+      const images = rankImageInputs(input);
+      const content: Array<Record<string, unknown>> = [{ type: "text", text: rankImagesPromptFor(input) }];
+      for (const im of images) {
+        content.push({ type: "image_url", image_url: { url: `data:${im.mediaType};base64,${im.b64}` } });
       }
       return [{ role: "user", content }];
     }

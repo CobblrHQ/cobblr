@@ -37,7 +37,15 @@ import {
 } from "../services/enrich-photo.js";
 import { mergeMeta } from "../services/metadata.js";
 import { pickPrimaryId, unionCandidateFields, traitsHaveUnique, combinedQuantity, type CombineItem, type CombineCandidate } from "../services/combine-merge.js";
-import { searchImages, rankImageOptions, deriveImageQuery } from "../services/ddg-images.js";
+import { searchImages, rankImageOptions, selectTopCandidates, deriveImageQuery } from "../services/ddg-images.js";
+import { rankPhotoWithAi } from "../services/rank-photo.js";
+import {
+  candidateFieldValue,
+  deriveRankContext,
+  IMAGE_BUDGET,
+  readPhotoRankEnabled,
+  writePhotoRankEnabled,
+} from "../services/auto-rank.js";
 import {
   assembleScanMenu,
   assembleMergedMenu,
@@ -2529,17 +2537,6 @@ inboxRouter.post(
   }),
 );
 
-/** First non-empty value a candidate filled for `field` (e.g. the resolved
- *  `color`), across the item's candidates. Generic — no vehicle knowledge. */
-function candidateFieldValue(candidates: unknown, field: string): string | null {
-  if (!Array.isArray(candidates)) return null;
-  for (const c of candidates) {
-    const v = (c as { fields?: Record<string, unknown> })?.fields?.[field];
-    if (typeof v === "string" && v.trim()) return v.trim();
-  }
-  return null;
-}
-
 // ─────────────────── GET /inbox/:id/photo-options ───────────────────
 // Alternative catalog photos: a DDG image search on the item's resolved
 // name (the "OTHER PHOTO OPTIONS" strip). Read-only; picking one
@@ -2584,8 +2581,156 @@ inboxRouter.get(
     // then return the best — so the clean studio shot is at the front instead of
     // the recipe-blog / social photo DDG happened to put first.
     const pool = await searchImages(q, 24).catch(() => []);
-    const items = rankImageOptions(pool, row?.suggested_manufacturer, q).slice(0, 12);
+    const items = rankImageOptions(pool, row?.suggested_manufacturer, q, color).slice(0, 12);
     res.json({ items });
+  }),
+);
+
+// ────────────── GET/PUT /photo-rank-config (the always-on opt-in) ──────────────
+// The workspace switch for ranking catalog photos automatically on every
+// enriched scan, instead of only when someone presses ✨ Pick best (AI). OFF
+// unless turned on: no row means off, so a workspace that never opts in never
+// spends a vision call (and needs no backfill). Reading is member-level (the
+// scan UI shows the state); flipping it commits the workspace to per-scan AI
+// spend, so it is owner/admin.
+
+// AI-REACH: exempt — a workspace SPEND setting. Letting the assistant flip a
+// switch that starts paying per scan is the wrong hand on that lever; a human
+// owner/admin turns it on in the scan UI.
+inboxRouter.get(
+  "/photo-rank-config",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    res.json({ enabled: await readPhotoRankEnabled(tenantDb(req)) });
+  }),
+);
+
+const PhotoRankConfigBody = z.object({ enabled: z.boolean() });
+
+// AI-REACH: exempt — see the GET above (a workspace spend setting, human-only).
+inboxRouter.put(
+  "/photo-rank-config",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const parsed = PhotoRankConfigBody.safeParse(req.body ?? {});
+    if (!parsed.success) return badBody(res, parsed.error);
+    await writePhotoRankEnabled(tenantDb(req), parsed.data.enabled);
+    res.json({ enabled: parsed.data.enabled });
+  }),
+);
+
+// ─────────────────── POST /inbox/:id/rank-photo-ai ───────────────────
+// The "✨ Pick best (AI)" upgrade over the heuristic strip: a vision model looks
+// at the SAME candidate pool and picks the cleanest CATALOG shot — product
+// alone, correct colour, no people — the two things a title can't reveal. The
+// heuristic ranking is still the floor and the order; this only re-picks among
+// the top few by the pixels. Read-only: it returns the chosen URL + reason; the
+// client applies it through POST /inbox/:id/catalog-image (one apply surface).
+// The strip SENDS the candidates it is displaying (plus any applied search
+// term), and the model ranks exactly those — so the pick is always one of the
+// tiles the user is looking at, the ✨ badge always lands on a visible tile, and
+// no second DDG search (nondeterministic, rate-limited) can hand the AI a
+// different pool than the one on screen. Server-search remains the fallback for
+// a caller that sends none. Each URL is SSRF-guarded at fetch time
+// (fetchImageBase64), the same trust level as POST /catalog-image's url.
+const RankPhotoBody = z.object({
+  q: z.string().max(200).optional(),
+  candidates: z
+    .array(
+      z.object({
+        url: z.string().url().max(2000),
+        thumb: z.string().max(2000).optional(),
+        title: z.string().max(300).optional(),
+        source: z.string().max(200).optional(),
+        width: z.number().int().positive().optional(),
+        height: z.number().int().positive().optional(),
+      }),
+    )
+    .max(24)
+    .optional(),
+});
+
+// AI-REACH: exempt — UI-only triage helper (the ✨ Pick best button). It itself
+// calls core-ai to rank photos, so exposing it to Cobb would be circular; and
+// choosing a DISPLAY photo is a human aesthetic call, not an assistant task
+// (Cobb already identifies items via identify-image).
+inboxRouter.post(
+  "/inbox/:id/rank-photo-ai",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const id = req.params.id ?? "";
+    const parsedBody = RankPhotoBody.safeParse(req.body ?? {});
+    if (!parsedBody.success) return badBody(res, parsedBody.error);
+    const db = tenantDb(req);
+    const orgId = tenantContext(req).org.id;
+    const userId = sessionUser(req)?.id ?? null;
+    const row = await db
+      .selectFrom("core_scan_inbox_items")
+      .select(["suggested_name", "suggested_manufacturer", "suggested_candidates", "suggested_metadata", "image_file_id"])
+      .where("id", "=", id)
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
+      return;
+    }
+
+    // ONE derivation for every rank surface (the button here + the always-on
+    // wire): the image query, the declared colour, the identify's category, and
+    // the user's photo as a colour reference. See services/auto-rank.ts.
+    const rank = await deriveRankContext(orgId, row, { queryOverride: parsedBody.data.q ?? null });
+    if (!rank.query) {
+      res.json({ chosen_url: null, reason: "This item needs a name before photos can be ranked." });
+      return;
+    }
+    const q = rank.query;
+    const color = rank.color;
+
+    // Rank the pool the user is LOOKING at when the client sent it; fall back to
+    // a fresh search only when it didn't (an API caller, an empty strip).
+    const sent = (parsedBody.data.candidates ?? []).map((c) => ({
+      url: c.url,
+      thumb: c.thumb ?? "",
+      title: c.title ?? "",
+      source: c.source ?? "",
+      width: c.width,
+      height: c.height,
+    }));
+    const pool = sent.length > 0 ? sent : await searchImages(q, 24).catch(() => []);
+    // Hand the AI the best-of-the-good: dedupe + hard-drop net-negatives (when
+    // enough good ones remain), so it selects the best of N good candidates
+    // rather than rescuing junk. The heuristic filters as far as titles/domains
+    // allow; the AI does the pixel calls.
+    const candidates = selectTopCandidates(pool, row.suggested_manufacturer, q, IMAGE_BUDGET, color);
+    if (candidates.length === 0) {
+      res.json({ chosen_url: null, reason: "No photo options were found to rank." });
+      return;
+    }
+
+    const result = await rankPhotoWithAi({
+      orgId,
+      userId,
+      itemId: id,
+      itemName: rank.name ?? q,
+      brand: rank.brand,
+      knownColor: color,
+      category: rank.category,
+      referenceB64: rank.referenceB64,
+      referenceMediaType: rank.referenceMediaType,
+      candidates,
+    });
+    if (!result) {
+      res.json({
+        chosen_url: null,
+        reason: "AI couldn't pick a photo (no vision provider is configured, or the candidates couldn't be read).",
+      });
+      return;
+    }
+    res.json({
+      chosen_url: result.chosenUrl,
+      reason: result.reason,
+      color_seen: result.colorSeen,
+      ranked_over: result.rankedOver,
+    });
   }),
 );
 

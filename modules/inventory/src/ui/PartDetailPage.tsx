@@ -412,7 +412,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
               onChange={(e) => update.mutate({ category_id: e.target.value || null })}
               className="input"
             >
-              <option value="">— none —</option>
+              <option value=""> - none - </option>
               {cats.data?.items.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
@@ -428,7 +428,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
               onChange={(e) => update.mutate({ location_id: e.target.value || null })}
               className="input"
             >
-              <option value="">— none —</option>
+              <option value=""> - none - </option>
               {locs.data?.items.map((l) => (
                 <option key={l.id} value={l.id}>
                   {"  ".repeat(l.depth)}
@@ -804,7 +804,7 @@ function PrintQrButton({
         },
       );
       if (!q.ok && q.status !== 409) throw new Error(`queue: ${q.status}`);
-      toast.success("QR label queued — open Labels → Queue to print.");
+      toast.success("QR label queued - open Labels → Queue to print.");
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -1167,7 +1167,7 @@ function FlatConsumptionPanel({
               <div className={`h-full ${pct <= 15 ? "bg-ember-500" : "bg-moss-500"}`} style={{ width: `${pct}%` }} />
             </div>
           )}
-          <div className="text-[11px] text-faint mt-1">{label} owns this spool's count — Cobblr mirrors it on sync and doesn't deduct.</div>
+          <div className="text-[11px] text-faint mt-1">{label} owns this spool's count - Cobblr mirrors it on sync and doesn't deduct.</div>
         </div>
       </section>
     );
@@ -1546,7 +1546,7 @@ function PerUnitConsumptionPanel({
       ))}
 
       {pool.open.length === 0 && pool.newCount > 0 && unitCapacity != null && !loading && (
-        <p className="text-[11px] text-faint">Nothing open yet — open a {countUnit || "unit"} to start tracking what's left.</p>
+        <p className="text-[11px] text-faint">Nothing open yet - open a {countUnit || "unit"} to start tracking what's left.</p>
       )}
 
       <div className="flex items-center gap-3 pt-1">
@@ -1559,7 +1559,7 @@ function PerUnitConsumptionPanel({
           <Plus size={12} /> Open a {countUnit || "unit"}
         </button>
         {modelQty <= 0 && pool.open.length > 0 && (
-          <span className="text-[11px] text-faint">No new {nounPlural} left — you're on your open {pool.open.length > 1 ? nounPlural : (countUnit || "unit")}.</span>
+          <span className="text-[11px] text-faint">No new {nounPlural} left - you're on your open {pool.open.length > 1 ? nounPlural : (countUnit || "unit")}.</span>
         )}
       </div>
     </section>
@@ -1749,7 +1749,7 @@ function OpenUnitCard({
       {closeOut != null ? (
         <div className="rounded border border-line dark:border-slate-700 p-2 space-y-2 bg-surface/60 dark:bg-slate-900/40">
           <div className="text-[12px] text-content dark:text-mortar-100">
-            ~{round3(unit.qty)}{u ? " " + u : ""} left — keep it, or done with it?
+            ~{round3(unit.qty)}{u ? " " + u : ""} left - keep it, or done with it?
           </div>
           <div className="flex items-center gap-2">
             <input

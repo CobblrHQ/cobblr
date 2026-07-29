@@ -31,7 +31,7 @@ export function PendingAiShareCallout({ slug, role }: { slug: string; role: stri
     mutationFn: (cid: string) => api.approveAiShare(slug, cid),
     onSuccess: (r) => {
       onItems(r);
-      toast.success("Approved — this AI now powers the workspace.");
+      toast.success("Approved - this AI now powers the workspace.");
     },
     onError: (e) => toast.error((e as Error).message),
   });

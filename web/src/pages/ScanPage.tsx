@@ -357,7 +357,7 @@ function ScanDrivePanel({ drive }: { drive: ScanDrive }) {
       <button
         type="button"
         onClick={drive.toggle}
-        title="Turn this tab into a second screen that follows scans from another device — scan a bin's QR on your phone and this screen opens that bin. Not needed for normal scanning: a USB/Bluetooth scanner or a photo already lands items in the inbox below."
+        title="Turn this tab into a second screen that follows scans from another device - scan a bin's QR on your phone and this screen opens that bin. Not needed for normal scanning: a USB/Bluetooth scanner or a photo already lands items in the inbox below."
         className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400 hover:text-accent dark:hover:text-cobble-300 transition"
       >
         <MonitorSmartphone size={14} className="shrink-0" />
@@ -478,7 +478,7 @@ export function AiOffMissHint({ status }: { status: AiStatus | null }) {
   if (!status || status.available) return null;
   return (
     <p className="text-xs text-amber-600 dark:text-amber-400">
-      No catalog match — and no AI is set up to identify it, so name it
+      No catalog match - and no AI is set up to identify it, so name it
       yourself.{" "}
       {status.reason !== "operator_disabled" && (
         <Link to="/configuration/ai" className="underline">
@@ -502,7 +502,7 @@ function NameItInline({ slug, itemId }: { slug: string; itemId: string }) {
     mutationFn: () => api.updateScanItem(slug, itemId, { name: name.trim() }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
-      toast.success("Got it — finding the right table…");
+      toast.success("Got it - finding the right table…");
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -552,7 +552,7 @@ function CorrectNameInline({
     mutationFn: () => api.updateScanItem(slug, itemId, { name: name.trim() }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
-      toast.success("Fixed — thanks, that sharpens future scans of this barcode.");
+      toast.success("Fixed - thanks, that sharpens future scans of this barcode.");
       onDone();
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
@@ -591,7 +591,7 @@ export type ScanTarget = { instance: string; module: string; kind: string; label
 
 export function ScanPage() {
   usePageTitle("Scan");
-  const { activeSlug } = useActiveOrg();
+  const { activeSlug, activeOrg } = useActiveOrg();
   const [params, setParams] = useSearchParams();
   // Active filing "bin" — a core-locations node every scan files into until
   // cleared (the active-bin pattern). Stamped as target_location_id on each
@@ -603,6 +603,29 @@ export function ScanPage() {
     if (v) localStorage.setItem(fileBinKey, v);
     else localStorage.removeItem(fileBinKey);
   };
+  // Always-on catalog-photo ranking: the workspace opt-in behind the per-item
+  // ✨ Pick best button. Owner/admin only, because turning it on commits the
+  // workspace to a vision call per enriched scan. Off unless stored on.
+  const canSetPhotoRank = activeOrg?.role === "owner" || activeOrg?.role === "admin";
+  const photoRank = useQuery({
+    queryKey: ["scan-photo-rank-config", activeSlug],
+    queryFn: () => api.getScanPhotoRankConfig(activeSlug),
+    enabled: !!activeSlug && canSetPhotoRank,
+    staleTime: 5 * 60_000,
+  });
+  const setPhotoRank = useMutation({
+    mutationFn: (enabled: boolean) => api.setScanPhotoRankConfig(activeSlug, enabled),
+    onSuccess: (r) => {
+      toast.success(
+        r.enabled
+          ? "Catalog photos will be AI-picked on every scan"
+          : "Back to picking photos only when you press Pick best",
+      );
+      void qc.invalidateQueries({ queryKey: ["scan-photo-rank-config", activeSlug] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+
   const into = params.get("into");
   const target: ScanTarget | null = into
     ? {
@@ -664,7 +687,7 @@ export function ScanPage() {
         }
         if (multi) setUploadProgress({ done: ok, total: files.length });
       }
-      if (ok === 1) toast.success("Photo added — AI is identifying it");
+      if (ok === 1) toast.success("Photo added - AI is identifying it");
       else if (ok > 1) toast.success(`${ok} photos added as one batch — AI is identifying them`);
     } finally {
       setUploading(false);
@@ -953,7 +976,7 @@ export function ScanPage() {
             <div className="min-w-0 flex-1 text-sm">
               <span className="font-medium text-content dark:text-mortar-100">
                 Same barcode (<span className="font-mono">{aiItem.barcode_text}</span>){" "}
-                {exact ? "as" : "≈ one"} you scanned — looks like the same item.
+                {exact ? "as" : "≈ one"} you scanned - looks like the same item.
               </span>
               <span className="text-muted">
                 {" "}Which listing to keep?{" "}
@@ -964,7 +987,7 @@ export function ScanPage() {
             </div>
             <button
               type="button"
-              title="Not the same — keep separate"
+              title="Not the same - keep separate"
               onClick={() => setDismissedCombine((s) => new Set(s).add(sig))}
               className="shrink-0 text-faint hover:text-muted p-1"
             >
@@ -1010,7 +1033,7 @@ export function ScanPage() {
         </button>
         <button
           type="button"
-          title="Not the same — keep separate"
+          title="Not the same - keep separate"
           onClick={() => setDismissedCombine((s) => new Set(s).add(sig))}
           className="shrink-0 text-faint hover:text-muted p-1"
         >
@@ -1665,7 +1688,7 @@ export function ScanPage() {
     try {
       const r = await api.getLatestOrganizePlan(activeSlug);
       if (r.plan && r.plan.applied_group_ids.length > 0) setWalkPlan(r.plan);
-      else toast.error("Nothing applied to walk yet — accept a group first.");
+      else toast.error("Nothing applied to walk yet - accept a group first.");
     } catch {
       toast.error("Couldn't load the plan for the walk.");
     }
@@ -1738,7 +1761,7 @@ export function ScanPage() {
           try {
             await api.reassignScanBatch(activeSlug, v.itemIds, v.from);
             await qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-            toast.success("Merge undone — the session is back on its own");
+            toast.success("Merge undone - the session is back on its own");
           } catch (e) {
             toast.error(e instanceof ApiError ? e.message : String(e));
           }
@@ -1904,6 +1927,34 @@ export function ScanPage() {
             ))}
           </div>
         )}
+        {/* The always-on catalog-photo pick. A workspace switch, so it lives on
+            the page (not per card): the per-item press is the ✨ button in a
+            card's photo strip. Owner/admin only — flipping it on starts paying a
+            vision call per enriched scan. */}
+        {canSetPhotoRank && photoRank.data && (
+          <button
+            type="button"
+            disabled={setPhotoRank.isPending}
+            onClick={() => setPhotoRank.mutate(!photoRank.data.enabled)}
+            aria-pressed={photoRank.data.enabled}
+            title={
+              photoRank.data.enabled
+                ? "AI picks the catalog photo on every scan. Tap to go back to picking only when you press Pick best."
+                : "Let AI pick the catalog photo on every scan (uses more AI). Today it only runs when you press Pick best on an item."
+            }
+            className={
+              "shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition disabled:opacity-50 " +
+              (photoRank.data.enabled
+                ? "border-accent bg-cobble-50 dark:bg-cobble-900/30 text-accent"
+                : "border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:text-content hover:border-faint")
+            }
+          >
+            <Sparkles size={11} className={setPhotoRank.isPending ? "animate-pulse" : ""} />
+            <span className="hidden sm:inline">Auto-pick photos</span>
+            <span className="sm:hidden">Auto-pick</span>
+            <span className="font-medium">{photoRank.data.enabled ? "on" : "off"}</span>
+          </button>
+        )}
         {reviewCount > 0 && (
           <button
             type="button"
@@ -1990,7 +2041,7 @@ export function ScanPage() {
         {batchId && (
           <Link
             to="/scan"
-            title="Filtered to this scan session — tap to show everything pending"
+            title="Filtered to this scan session - tap to show everything pending"
             className="inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-2.5 py-0.5 text-xs text-content dark:text-mortar-100 shrink-0 hover:border-cobble-400"
           >
             {(() => {
@@ -2026,7 +2077,7 @@ export function ScanPage() {
           type="button"
           onClick={() => fileRef.current?.click()}
           disabled={uploading}
-          title="Add photos — take one now or pick several from this device; multiple photos come in as one batch"
+          title="Add photos - take one now or pick several from this device; multiple photos come in as one batch"
           className={headerBtn + (uploading ? " opacity-50" : "")}
         >
           <ImageIcon size={15} />{" "}
@@ -2050,7 +2101,7 @@ export function ScanPage() {
         <button
           type="button"
           onClick={() => setUrlsOpen(true)}
-          title="Paste product URLs — one per line — to catalog them in bulk"
+          title="Paste product URLs - one per line - to catalog them in bulk"
           className={headerBtn}
         >
           <ExternalLink size={15} /> URLs
@@ -2058,7 +2109,7 @@ export function ScanPage() {
         <button
           type="button"
           onClick={() => setImportOpen(true)}
-          title="Import a batch from a file — JSON/CSV inbox exports or any CSV"
+          title="Import a batch from a file - JSON/CSV inbox exports or any CSV"
           className={headerBtn}
         >
           <Upload size={15} /> Import
@@ -2066,7 +2117,7 @@ export function ScanPage() {
         <button
           type="button"
           onClick={() => setExportOpen(true)}
-          title="Export inbox items to a file — pick which items and how photos travel (link vs baked-in)"
+          title="Export inbox items to a file - pick which items and how photos travel (link vs baked-in)"
           className={headerBtn}
         >
           <Download size={15} /> Export
@@ -2074,7 +2125,7 @@ export function ScanPage() {
         <button
           type="button"
           onClick={() => setOrganizeUnplacedOpen(true)}
-          title="Plan homes for tracked things that have no location yet — grouped, with destination bins proposed"
+          title="Plan homes for tracked things that have no location yet - grouped, with destination bins proposed"
           className={headerBtn}
         >
           <Wand2 size={15} /> Organize
@@ -2082,7 +2133,7 @@ export function ScanPage() {
         <button
           type="button"
           onClick={() => setLiveSortOpen(true)}
-          title="Live Sort: scan a thing, get told which bin it goes in, confirm, next — sort a pile in one pass"
+          title="Live Sort: scan a thing, get told which bin it goes in, confirm, next - sort a pile in one pass"
           className={headerBtn}
         >
           <Zap size={15} /> Live Sort
@@ -2091,7 +2142,7 @@ export function ScanPage() {
           type="button"
           onClick={() => receiptRef.current?.click()}
           disabled={uploading}
-          title="Upload a receipt — CSV, PDF, or a photo — we'll pull out the line items"
+          title="Upload a receipt - CSV, PDF, or a photo - we'll pull out the line items"
           className={headerBtn + (uploading ? " opacity-50" : "")}
         >
           <FileText size={15} /> Receipt
@@ -2189,7 +2240,7 @@ export function ScanPage() {
       {target && (
         <div className="rounded-md border border-cobble-400 dark:border-cobble-600 bg-cobble-50 dark:bg-cobble-900/30 px-3 py-2 text-sm text-content dark:text-mortar-100 flex items-center gap-2">
           <ScanLine size={15} className="text-accent shrink-0" />
-          Scanning into <strong>{target.label}</strong> — each confirm adds it to that table.
+          Scanning into <strong>{target.label}</strong>  - each confirm adds it to that table.
         </div>
       )}
 
@@ -2201,7 +2252,7 @@ export function ScanPage() {
             Nothing pending. Open the camera or add a UPC / photo above.
           </div>
           <div className="text-xs text-faint dark:text-slate-500 mt-1">
-            Got a USB or Bluetooth barcode scanner? Just point and scan — it lands
+            Got a USB or Bluetooth barcode scanner? Just point and scan - it lands
             here automatically, no need to open anything first.
           </div>
         </div>
@@ -2319,7 +2370,7 @@ export function ScanPage() {
           onClick={() => setWalkPlan(resumablePlan.plan)}
           className="flex items-center gap-2 rounded-lg border border-accent/40 bg-cobble-50 dark:bg-cobble-900/30 px-3 py-2 text-sm text-accent hover:bg-cobble-100 dark:hover:bg-cobble-900/50 transition"
         >
-          ▶ Resume put-away walk — {resumablePlan.remaining} item
+          ▶ Resume put-away walk - {resumablePlan.remaining} item
           {resumablePlan.remaining === 1 ? "" : "s"} left to place
         </button>
       )}
@@ -2516,7 +2567,7 @@ export function ScanPage() {
               type="button"
               onClick={() => {
                 clearScanSession(activeSlug);
-                toast.success("Session ended — the next scan starts a new one");
+                toast.success("Session ended - the next scan starts a new one");
               }}
               className="rounded px-1.5 py-0.5 font-medium text-accent hover:bg-accent/10"
             >
@@ -2685,7 +2736,7 @@ export function ScanPage() {
                     {isActiveSession && (
                       <span
                         className="inline-flex items-center gap-1 shrink-0 text-emerald-600/80 dark:text-emerald-400/80"
-                        title="The live scanning session — new scans keep grouping here until 30 min idle"
+                        title="The live scanning session - new scans keep grouping here until 30 min idle"
                       >
                         <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
                         active
@@ -2694,7 +2745,7 @@ export function ScanPage() {
                     {g.lastTouched - g.latest > 6 * 3600_000 && (
                       <span
                         className="text-faint truncate"
-                        title="A later change (a fix, or an item sent back from a commit) — the session's own time is unchanged"
+                        title="A later change (a fix, or an item sent back from a commit) - the session's own time is unchanged"
                       >
                         · edited {timeAgo(new Date(g.lastTouched).toISOString())}
                       </span>
@@ -2712,7 +2763,7 @@ export function ScanPage() {
                   {busy > 0 ? (
                     <span
                       className="shrink-0 inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-1.5 py-0.5 text-[10px] font-medium text-accent"
-                      title="The AI is still finalizing some items — names, covers and routing may still change"
+                      title="The AI is still finalizing some items - names, covers and routing may still change"
                     >
                       <Loader2 size={9} className="animate-spin" /> {busy} finishing…
                     </span>
@@ -2732,7 +2783,7 @@ export function ScanPage() {
                   ) : pendingInSession > 0 ? (
                     <span
                       className="shrink-0 inline-flex items-center gap-1 text-amber-600/80 dark:text-amber-400/80 text-[10px] font-medium"
-                      title="Every item still here needs a manual look — open the cards to give each a name or destination"
+                      title="Every item still here needs a manual look - open the cards to give each a name or destination"
                     >
                       needs review
                     </span>
@@ -2826,10 +2877,10 @@ export function ScanPage() {
                   {isActiveSession && (
                     <button
                       type="button"
-                      title="End this scan session — the next scan starts a new one"
+                      title="End this scan session - the next scan starts a new one"
                       onClick={() => {
                         clearScanSession(activeSlug);
-                        toast.success("Session ended — the next scan starts a new one");
+                        toast.success("Session ended - the next scan starts a new one");
                       }}
                       className="shrink-0 text-faint hover:text-accent"
                     >
@@ -3135,7 +3186,7 @@ function UpcModal({ onClose }: { onClose: () => void }) {
           </button>
         </form>
         <p className="text-xs text-faint dark:text-slate-500">
-          Stays open — keep scanning. A scan gun's Enter submits each code.
+          Stays open - keep scanning. A scan gun's Enter submits each code.
         </p>
       </div>
     </Modal>
@@ -3560,7 +3611,7 @@ function InboxCard({
       // so `fresh` still carries the OLD name — never claim "updated: <old name>".
       // The 1.5s inbox poll surfaces the corrected name a moment later.
       if (vars?.hint || vars?.wrong || vars?.enrich) {
-        toast.success("Re-checking — the name updates in a moment…");
+        toast.success("Re-checking - the name updates in a moment…");
         return;
       }
       toast.success(
@@ -3580,7 +3631,7 @@ function InboxCard({
     mutationFn: () => api.confirmScanBarcode(activeSlug, item.id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-      toast.success("Locked into the barcode database — future scans of this code get this listing.");
+      toast.success("Locked into the barcode database - future scans of this code get this listing.");
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -3896,10 +3947,10 @@ function InboxCard({
             ) : rlActive ? (
               <span className="inline-flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
                 <Loader2 size={13} className="animate-spin shrink-0" />
-                Rate-limited — retrying…
+                Rate-limited - retrying…
               </span>
             ) : cantIdentify ? (
-              <span className="text-muted">Couldn’t identify this {idNoun} — name it:</span>
+              <span className="text-muted">Couldn’t identify this {idNoun}  - name it:</span>
             ) : awaitingFresh ? (
               <span className="text-faint italic">Awaiting lookup…</span>
             ) : (
@@ -4036,7 +4087,7 @@ function InboxCard({
               }}
               disabled={applyPhotoName.isPending}
               className="mt-1 inline-flex items-center gap-1.5 rounded-md border border-amber-400/60 bg-amber-50 dark:bg-amber-900/20 px-2 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition disabled:opacity-50"
-              title="Rename to what the photo shows — and report the barcode fix"
+              title="Rename to what the photo shows - and report the barcode fix"
             >
               <Sparkles size={12} className="shrink-0" />
               Use photo’s name: “{photoSuggestedName}”
@@ -4137,7 +4188,7 @@ function InboxCard({
                 <span className="min-w-0">
                   You already have{" "}
                   <span className="font-semibold break-words">{trackedMatch!.title}</span>
-                  <span className="text-muted dark:text-slate-400"> — is this the same one?</span>
+                  <span className="text-muted dark:text-slate-400">  - is this the same one?</span>
                 </span>
               </span>
               <button
@@ -4475,7 +4526,7 @@ function InboxCard({
               type="button"
               disabled={retakeCatalog.isPending}
               onClick={() => setCaptureSheet("retake")}
-              title="Take a nice picture — it becomes the catalog/display photo"
+              title="Take a nice picture - it becomes the catalog/display photo"
               className="text-[11px] rounded border border-line dark:border-slate-700 px-2 py-0.5 text-muted hover:text-content hover:border-accent transition disabled:opacity-50"
             >
               {retakeCatalog.isPending ? "Uploading…" : "📷 Retake for catalog"}
@@ -4509,7 +4560,7 @@ function InboxCard({
                 type="button"
                 disabled={markReviewed.isPending}
                 onClick={() => markReviewed.mutate()}
-                title="A human looked — this one's fine; stop flagging it"
+                title="A human looked - this one's fine; stop flagging it"
                 className="text-[11px] rounded border border-emerald-400/60 px-2 py-0.5 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition disabled:opacity-50"
               >
                 ✓ Looks fine
@@ -4914,6 +4965,34 @@ function PhotoOptions({
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
+  // "✨ Pick best (AI)": a vision model ranks the options for the product-only,
+  // correct-colour, no-people shot; on a pick we highlight its tile, show the
+  // reason, and APPLY it as the catalog image in one press (the user can still
+  // tap another). A null pick (no name / no provider) just surfaces the reason.
+  // The DISPLAYED candidates + the applied term ride along, so the model ranks
+  // exactly the tiles on screen (the ✨ badge always lands on a visible one) and
+  // a second, nondeterministic search can't hand it a different pool.
+  const [bestUrl, setBestUrl] = useState<string | null>(null);
+  const [bestReason, setBestReason] = useState<string | null>(null);
+  const pickBest = useMutation({
+    mutationFn: () =>
+      api.rankScanPhotoAi(activeSlug, item.id, {
+        q: applied || undefined,
+        candidates: options.data?.items ?? [],
+      }),
+    onSuccess: (r) => {
+      if (r.chosen_url) {
+        setBestUrl(r.chosen_url);
+        setBestReason(r.reason || null);
+        pick.mutate(r.chosen_url);
+      } else {
+        setBestUrl(null);
+        setBestReason(r.reason || null);
+        toast.info(r.reason || "AI couldn't pick a photo.");
+      }
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
   // Report the fetched candidates up so the card's ONE lightbox can fold them
   // into its filmstrip (open from the catalog image → see the web options too).
   useEffect(() => {
@@ -4929,10 +5008,20 @@ function PhotoOptions({
       items={options.data?.items ?? []}
       loading={options.isLoading}
       busy={pick.isPending}
-      onSearch={(t) => setApplied(t)}
+      onSearch={(t) => {
+        // A new search replaces the pool — a badge/reason about the OLD pool
+        // would point at a tile that may no longer exist.
+        setBestUrl(null);
+        setBestReason(null);
+        setApplied(t);
+      }}
       onPick={(url) => pick.mutate(url)}
       onPreview={onView}
       label={applied ? `results for "${applied}"` : "other photo options"}
+      onPickBest={() => pickBest.mutate()}
+      pickingBest={pickBest.isPending}
+      bestUrl={bestUrl}
+      bestReason={bestReason}
     />
   );
 }
@@ -4995,7 +5084,7 @@ function HintBox({
           }
         }}
         rows={2}
-        placeholder="Anything that helps — a model number, a better name, a correction… (Enter to submit, Shift+Enter for a newline)"
+        placeholder="Anything that helps - a model number, a better name, a correction… (Enter to submit, Shift+Enter for a newline)"
         className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800 resize-none"
       />
       <div className="mt-1.5 flex items-center justify-end gap-2">
@@ -5012,7 +5101,7 @@ function HintBox({
             type="button"
             disabled={busy}
             onClick={() => fire({ noAi: true })}
-            title="Replay the cached AI reply through the current code — no model call, no tokens. Tests our parsers/heuristics/routing, NOT a prompt change."
+            title="Replay the cached AI reply through the current code - no model call, no tokens. Tests our parsers/heuristics/routing, NOT a prompt change."
             className="rounded border border-line dark:border-slate-600 px-2.5 py-1.5 text-sm text-muted dark:text-slate-300 hover:bg-mortar-50 dark:hover:bg-slate-800 disabled:opacity-50 shrink-0 inline-flex items-center gap-1.5"
           >
             <RefreshCw size={13} className={busyKind === "replay" ? "animate-spin" : ""} /> Replay (no AI)
@@ -5040,7 +5129,7 @@ function HintBox({
               type="button"
               disabled={busy}
               onClick={() => fire({ wrong: true })}
-              title="Wrong product — re-check every source + the web, fix the name & photo, and correct the shared barcode database"
+              title="Wrong product - re-check every source + the web, fix the name & photo, and correct the shared barcode database"
               className="flex-1 min-w-0 rounded border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 px-2 py-1.5 text-sm font-medium disabled:opacity-50 inline-flex items-center justify-center gap-1.5"
             >
               <Flag size={13} className={busy ? "animate-pulse" : ""} /> This is wrong
@@ -5049,10 +5138,10 @@ function HintBox({
               type="button"
               disabled={busy}
               onClick={() => fire({ enrich: true })}
-              title="The product is right but the listing is sparse — re-check every source + the web to fill in the proper name, size and photo"
+              title="The product is right but the listing is sparse - re-check every source + the web to fill in the proper name, size and photo"
               className="flex-1 min-w-0 rounded border border-amber-300 dark:border-amber-700/70 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 px-2 py-1.5 text-sm font-medium disabled:opacity-50 inline-flex items-center justify-center gap-1.5"
             >
-              <Sparkles size={13} className={busy ? "animate-pulse" : ""} /> Right — needs detail
+              <Sparkles size={13} className={busy ? "animate-pulse" : ""} /> Right - needs detail
             </button>
           </div>
           {hasBarcode && (
@@ -5063,7 +5152,7 @@ function HintBox({
               title="Lock the current name, brand & photo into the shared barcode database as verified"
               className="mt-2 w-full rounded border border-emerald-300 dark:border-emerald-700/70 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 px-3 py-1.5 text-sm font-medium disabled:opacity-50 inline-flex items-center justify-center gap-1.5"
             >
-              <CheckCircle size={13} className={confirming ? "animate-pulse" : ""} /> This is good — lock it in
+              <CheckCircle size={13} className={confirming ? "animate-pulse" : ""} /> This is good - lock it in
             </button>
           )}
         </>
@@ -5740,7 +5829,7 @@ function ConfirmForm({
         <div className="flex items-start gap-2 rounded-lg border border-accent/50 bg-accent/[0.06] dark:bg-accent/10 p-3 text-xs text-muted dark:text-slate-400">
           <Sparkles size={14} className="text-accent shrink-0 mt-0.5" />
           <span>
-            You don't have <span className="font-semibold text-content dark:text-mortar-100">{entry.label}</span> yet —{" "}
+            You don't have <span className="font-semibold text-content dark:text-mortar-100">{entry.label}</span> yet - {" "}
             <strong>Confirm</strong> installs it (its own table + nav entry) and files this in, with the fields below. Want to
             track it another way? Pick a different table in <em>Add to</em>.
           </span>
@@ -6075,7 +6164,7 @@ function ScanFieldInput({
           onChange={(e) => onChange(e.target.value || null)}
           className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800"
         >
-          <option value="">— none —</option>
+          <option value=""> - none - </option>
           {def.choices.map((c) => (
             <option key={c} value={c}>
               {c}

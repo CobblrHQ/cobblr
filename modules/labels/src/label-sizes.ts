@@ -280,12 +280,26 @@ export function printerCapability(
   return { kind: "inkjet-laser", maxWidthMm: Number(s.maxWidthMm) || 216 };
 }
 
+/** How much wider than the PRINTABLE head a roll's nominal width may be.
+ *
+ *  A roll is sold by its liner width; the head prints less than that. The PM220S
+ *  reports a 48 mm head (384 dots at 203 dpi) and the stock everyone runs on it
+ *  is labelled 50 mm. With only a rounding tolerance (1.27 mm) that roll counted
+ *  as too wide for the printer it ships with, so the size was never offered — and
+ *  a remembered choice of it was blanked on every load, which is how a printer
+ *  with 50x30 2-up stored on its row opened on "Pick media...".
+ *
+ *  3 mm covers the liner without becoming a licence: a 54 mm paper is still
+ *  refused by a 48 mm head, and 4x6 still is, which is the case the narrow
+ *  tolerance existed for. */
+const LINER_OVERHANG_MM = 3;
+
 /** The max width is the real constraint — nothing wider than the printer can feed.
  *  Beyond that, an inkjet/laser feeds SHEETS only (it can't take a thermal roll),
  *  while a thermal printer runs either a roll or a die-cut sheet, so it is bounded
- *  only by width. The tolerance absorbs mm↔in rounding. */
+ *  only by width. The extra tolerance absorbs mm↔in rounding. */
 export function paperForCapability(paper: PaperSize, cap: PrinterCapability): boolean {
-  if (paper.width_in > cap.maxWidthMm / MM_PER_IN + 0.05) return false;
+  if (paper.width_in > (cap.maxWidthMm + LINER_OVERHANG_MM) / MM_PER_IN + 0.05) return false;
   // Inkjet/laser feeds sheets only; thermal feeds either. Keyed on the explicit
   // media class, never the key string.
   return cap.kind === "thermal" || paper.class === "sheet";
@@ -326,7 +340,7 @@ export function mediaForReading(widthMm: number, heightMm: number): { paperKey: 
 /** Whether a custom size (media width, inches) fits the printer. */
 export function customWidthFits(mediaWIn: number, cap: PrinterCapability): boolean {
   if (cap.kind === "inkjet-laser") return true;
-  return mediaWIn <= cap.maxWidthMm / MM_PER_IN + 0.05;
+  return mediaWIn <= (cap.maxWidthMm + LINER_OVERHANG_MM) / MM_PER_IN + 0.05;
 }
 
 

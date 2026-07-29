@@ -67,6 +67,41 @@ const COLLECTION_WORDS = [
   "series set",
 ];
 
+// Colours the item is KNOWN to be — from the DECLARED colour field, passed
+// explicitly by the caller. "Correct colour" is the single most important thing
+// a catalog photo must get right (the author, 2026-07-29), and it's legible in most
+// retail titles ("… T-Shirt, Black"). Reward a result naming the SAME colour,
+// penalise one naming ONLY a DIFFERENT one — a conflicting colour is a
+// different SKU, the exact miss the token overlap scores as a near-match.
+// Colourless titles are untouched. Synonyms fold (grey→gray).
+//
+// Deliberately NOT scraped from the query string (the first cut did that): a
+// brand or product name carrying a colour word ("Red Heart" yarn, a
+// "...Switch White" model name) would then assert a colour the item may not
+// be, penalising — and with selectTopCandidates, HARD-DROPPING — the
+// correctly-coloured listings. The declared field is the only trustworthy
+// source (the derive-from-fields rule); no field → no colour scoring.
+const COLOR_WORDS = new Set([
+  "black", "white", "red", "blue", "green", "yellow", "orange", "purple",
+  "pink", "brown", "gray", "grey", "silver", "gold", "beige", "tan", "navy",
+  "teal", "maroon", "olive", "cyan", "magenta", "ivory", "cream", "charcoal",
+  "turquoise", "burgundy", "khaki",
+]);
+const COLOR_SYNONYM: Record<string, string> = { grey: "gray" };
+const colorsIn = (tokens: string[]): Set<string> =>
+  new Set(tokens.filter((t) => COLOR_WORDS.has(t)).map((t) => COLOR_SYNONYM[t] ?? t));
+
+// A person WEARING or USING the thing, not the product alone. the author wants the
+// product itself with no human in frame; a lifestyle / on-model title is a weak
+// but real signal of exactly that. Deliberately a SMALL nudge — the AI vision
+// pass is the real "no people" filter — and pointedly NOT the category words
+// "men's" / "women's" (a men's tee is still a clean product shot). Only phrases
+// that imply a person is in the frame.
+const LIFESTYLE_WORDS = [
+  "on model", "on-model", "model wearing", "worn by", "styled with",
+  "lookbook", "how to style", "street style", "ootd",
+];
+
 /** Catalog-quality score for one image. Higher = cleaner product shot.
  *
  *  `query` is what we searched for. It's needed because the two strongest
@@ -77,6 +112,7 @@ export function catalogScore(
   r: DdgImageResult,
   brand?: string | null,
   query?: string | null,
+  knownColor?: string | null,
 ): number {
   let s = 0;
   const host = (r.source || "").toLowerCase();
@@ -113,6 +149,26 @@ export function catalogScore(
     const ident = qTokens.filter((t) => /\d/.test(t));
     if (ident.length) s += ident.some((t) => tl.includes(t)) ? 4 : -6;
   }
+
+  // Correct COLOUR — the author's top visual priority. Only when the caller passes the
+  // item's DECLARED colour (never scraped from the query — see COLOR_WORDS):
+  // a result naming the SAME colour is very likely the right variant; one
+  // naming ONLY a DIFFERENT colour is the wrong variant the token overlap
+  // above would otherwise score as a near-match ("… T-Shirt, Red" for a black
+  // shirt shares every token but the colour). A colourless title is untouched.
+  const wantColors = colorsIn(
+    (knownColor ?? "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean),
+  );
+  if (wantColors.size) {
+    const tTokens = tl.split(/[^a-z0-9]+/).filter(Boolean);
+    const haveColors = colorsIn(tTokens);
+    if ([...haveColors].some((c) => wantColors.has(c))) s += 4;
+    else if (haveColors.size) s -= 5;
+  }
+
+  // A person WEARING/USING the thing when we want the product alone (weak
+  // signal; the AI vision re-rank is the real "no people" filter).
+  if (LIFESTYLE_WORDS.some((w) => tl.includes(w))) s -= 3;
 
   if (r.width && r.height) {
     const ar = r.width / r.height;
@@ -209,16 +265,64 @@ export function deriveImageQuery(opts: {
   return imageQuery(name, opts.brand ?? null, extra);
 }
 
-/** Reorder image options best-catalog-first (stable on ties). */
+/** Reorder image options best-catalog-first (stable on ties). `knownColor` is
+ *  the item's DECLARED colour field when the caller has one — never a scraped
+ *  guess (see the COLOR_WORDS note). */
 export function rankImageOptions(
   results: DdgImageResult[],
   brand?: string | null,
   query?: string | null,
+  knownColor?: string | null,
 ): DdgImageResult[] {
   return results
-    .map((r, i) => ({ r, i, s: catalogScore(r, brand, query) }))
+    .map((r, i) => ({ r, i, s: catalogScore(r, brand, query, knownColor) }))
     .sort((a, b) => b.s - a.s || a.i - b.i)
     .map((x) => x.r);
+}
+
+/** A dedupe key for two results that are effectively the same picture: same
+ *  host + same final path segment (filename), ignoring the query string. Two
+ *  retailers serving different files stay distinct; the same product image
+ *  linked twice collapses to one. */
+function imageDedupeKey(url: string): string {
+  try {
+    const u = new URL(url);
+    const seg = u.pathname.split("/").filter(Boolean).pop() ?? u.pathname;
+    return `${u.hostname.toLowerCase()}/${seg.toLowerCase()}`;
+  } catch {
+    return url.toLowerCase();
+  }
+}
+
+/** The candidate set to hand the AI rank pass: rank by catalog quality, dedupe
+ *  near-identical shots, then HARD-DROP the clearly-bad (net-negative score:
+ *  social/cluttered domain, wrong-colour title, banner, placeholder) — but only
+ *  while enough clearly-good remain. A thin pool keeps everything rather than
+ *  starving the ranker of choices. The point (the author's, 2026-07-29): the AI should
+ *  be selecting the best of N GOOD candidates, not rescuing a strip of junk —
+ *  the heuristic does as much filtering as titles/domains/dimensions allow, and
+ *  the AI does the pixel calls (a person in frame, the true colour) the
+ *  heuristic can't. Pure; exported for the guardrail test. */
+export function selectTopCandidates(
+  results: DdgImageResult[],
+  brand: string | null | undefined,
+  query: string | null | undefined,
+  budget: number,
+  knownColor?: string | null,
+): DdgImageResult[] {
+  const ranked = rankImageOptions(results, brand, query, knownColor);
+  const seen = new Set<string>();
+  const deduped = ranked.filter((r) => {
+    const k = imageDedupeKey(r.url);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  const positives = deduped.filter((r) => catalogScore(r, brand, query, knownColor) >= 0);
+  // Keep the good-only set only when it's substantial enough to choose from;
+  // otherwise a sparse query would send the AI one or two images.
+  const pool = positives.length >= 3 ? positives : deduped;
+  return pool.slice(0, Math.max(0, budget));
 }
 
 /** A CLEARLY clean catalog shot — safe to auto-set as the item's image without a

@@ -733,7 +733,7 @@ export function BundleDetailModal(props: Props) {
           >
             <Compass size={15} className="text-accent shrink-0" />
             <span className="text-sm font-medium text-content dark:text-mortar-100">Where to start</span>
-            <span className="text-xs text-faint dark:text-slate-400">— jump into what this set up</span>
+            <span className="text-xs text-faint dark:text-slate-400"> - jump into what this set up</span>
             <div className="flex-1" />
             <ArrowRight size={15} className="text-faint group-hover:text-accent transition shrink-0" />
           </button>

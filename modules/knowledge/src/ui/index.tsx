@@ -264,7 +264,7 @@ function EntryEditor({
         />
         <div className="flex flex-wrap items-center gap-2">
           <select value={kind} onChange={(e) => setKind(e.target.value)} className="input">
-            <option value="">— category —</option>
+            <option value=""> - category - </option>
             {KINDS.map((k) => (
               <option key={k} value={k}>
                 {k}

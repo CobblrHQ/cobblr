@@ -85,7 +85,7 @@ export function EdgeBridgeInstall({ slug, bridgeId }: { slug: string; bridgeId?:
     <div className="space-y-3">
       <p className="text-[13px] text-muted dark:text-slate-400">
         A hosted Cobblr can't reach devices on your network directly. Run one tiny <strong>bridge</strong> on any
-        always-on box at your site (Pi, NAS, mini-PC) — it dials out and holds a tunnel open, so there's no
+        always-on box at your site (Pi, NAS, mini-PC) - it dials out and holds a tunnel open, so there's no
         port-forwarding and no inbound firewall hole. Install it once; everything that needs your site attaches to it.
       </p>
       <label className="block">
@@ -132,10 +132,10 @@ export function EdgeBridgeInstall({ slug, bridgeId }: { slug: string; bridgeId?:
           <>
             <pre className="text-[11px] leading-relaxed bg-subtle dark:bg-slate-950 border border-line dark:border-slate-700 rounded p-2 overflow-x-auto whitespace-pre text-content dark:text-mortar-200">{snippet}</pre>
             <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
-              Run this on a box at your site. Token shown once — it can <strong>only</strong> run this bridge (scope <code>devices:edge</code>).
+              Run this on a box at your site. Token shown once - it can <strong>only</strong> run this bridge (scope <code>devices:edge</code>).
             </p>
             <p className="text-[11px] text-faint mt-0.5">
-              Stock public image — the bridge fetches its code from this Cobblr (sha-verified) and keeps itself
+              Stock public image - the bridge fetches its code from this Cobblr (sha-verified) and keeps itself
               updated automatically. Nothing to pull from a registry, ever.
             </p>
           </>
@@ -147,7 +147,7 @@ export function EdgeBridgeInstall({ slug, bridgeId }: { slug: string; bridgeId?:
           <div className={"flex items-center gap-2 text-sm rounded border p-2 " + (connected ? "border-moss-500/40 bg-moss-50 dark:bg-moss-950/30" : "border-line dark:border-slate-700")}>
             <span className={"w-2 h-2 rounded-full " + (connected ? "bg-moss-500" : "bg-amber-500 animate-pulse")} />
             {connected ? (
-              <span className="text-moss-700 dark:text-moss-300">Bridge online — dialed in ✓</span>
+              <span className="text-moss-700 dark:text-moss-300">Bridge online - dialed in ✓</span>
             ) : (
               <span className="text-muted dark:text-slate-400">Waiting for the bridge to dial in…</span>
             )}

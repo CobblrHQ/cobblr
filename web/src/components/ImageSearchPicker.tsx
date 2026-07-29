@@ -19,7 +19,7 @@
 // inbox's own pipeline) → `entity` (server-derived) → `query` (literal).
 
 import { useEffect, useState, type FormEvent } from "react";
-import { Maximize2 } from "lucide-react";
+import { Maximize2, Sparkles } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type ImageOption } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -39,6 +39,10 @@ export function ImageSearchPicker({
   label,
   enabled = true,
   searchable = true,
+  onPickBest,
+  pickingBest,
+  bestUrl,
+  bestReason,
 }: {
   /** Derived mode (preferred): the server builds the phrase from this entity. */
   entity?: { kind: string; id: string } | null;
@@ -63,6 +67,16 @@ export function ImageSearchPicker({
   enabled?: boolean;
   /** Show the editable search box (default true). */
   searchable?: boolean;
+  /** When set, show a "✨ Pick best (AI)" button that asks a vision model to pick
+   *  the cleanest catalog shot. The CALLER owns the call (it has the item context
+   *  the ranker needs) and reports the result back via bestUrl/bestReason. */
+  onPickBest?: () => void;
+  /** The AI pick is in flight — the button spins. */
+  pickingBest?: boolean;
+  /** The URL the AI chose — its tile gets a ring + an "AI pick" badge. */
+  bestUrl?: string | null;
+  /** One short sentence on WHY, shown under the grid. */
+  bestReason?: string | null;
 }) {
   const { activeSlug } = useActiveOrg();
   const usesProp = itemsProp !== undefined;
@@ -144,11 +158,25 @@ export function ImageSearchPicker({
         </div>
       ) : (
         <div>
-          <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
-            {label ?? "photo options"}{" "}
-            <span className="text-faint normal-case">
-              · DuckDuckGo · tap to use, ⤢ to view full size
-            </span>
+          <div className="flex items-center gap-2 mb-1">
+            <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 min-w-0">
+              {label ?? "photo options"}{" "}
+              <span className="text-faint normal-case">
+                · DuckDuckGo · tap to use, ⤢ to view full size
+              </span>
+            </div>
+            {onPickBest && (
+              <button
+                type="button"
+                onClick={onPickBest}
+                disabled={pickingBest || busy}
+                title="Let AI pick the cleanest catalog photo: the product alone, correct colour, no people"
+                className="ml-auto shrink-0 inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-2 py-0.5 text-[11px] font-medium text-accent hover:border-accent transition disabled:opacity-50"
+              >
+                <Sparkles size={11} className={pickingBest ? "animate-pulse" : ""} />
+                {pickingBest ? "picking…" : "Pick best (AI)"}
+              </button>
+            )}
           </div>
           <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
             {/* Two gestures for two intentions. The BIG target does the common
@@ -156,15 +184,21 @@ export function ImageSearchPicker({
                 Zooming is the rarer "let me check this one first", so it gets
                 the small corner button (the author, 2026-07-20: "you should click image
                 to select, and press small button to zoom it"). */}
-            {opts.map((o) => (
+            {opts.map((o) => {
+              const isBest = !!bestUrl && o.url === bestUrl;
+              return (
               <div key={o.url} className="relative w-20 h-20 shrink-0 group">
                 <button
                   type="button"
                   disabled={busy}
                   onClick={() => onPick(o.url)}
-                  title={`Use this image — ${o.title} (${o.source})`}
+                  title={isBest ? `AI's pick — ${o.title} (${o.source})` : `Use this image — ${o.title} (${o.source})`}
                   aria-label={`Use this image: ${o.title}`}
-                  className="w-full h-full rounded border border-line dark:border-slate-700 overflow-hidden bg-white hover:border-cobble-400 transition disabled:opacity-50"
+                  className={`w-full h-full rounded overflow-hidden bg-white transition disabled:opacity-50 ${
+                    isBest
+                      ? "border-2 border-accent ring-2 ring-accent/40"
+                      : "border border-line dark:border-slate-700 hover:border-cobble-400"
+                  }`}
                 >
                   <img
                     src={o.thumb}
@@ -174,6 +208,11 @@ export function ImageSearchPicker({
                     onError={() => setBroken((s) => new Set(s).add(o.url))}
                   />
                 </button>
+                {isBest && (
+                  <div className="absolute top-1 left-1 inline-flex items-center gap-0.5 rounded bg-accent text-white text-[9px] font-semibold px-1 py-0.5 shadow">
+                    <Sparkles size={9} /> AI
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={() => tileClick(o)}
@@ -187,8 +226,15 @@ export function ImageSearchPicker({
                   <Maximize2 className="w-3 h-3" strokeWidth={2.5} />
                 </button>
               </div>
-            ))}
+              );
+            })}
           </div>
+          {bestReason && (
+            <div className="mt-1 flex items-start gap-1 text-[11px] text-accent">
+              <Sparkles size={11} className="mt-0.5 shrink-0" />
+              <span className="min-w-0">{bestReason}</span>
+            </div>
+          )}
         </div>
       )}
 

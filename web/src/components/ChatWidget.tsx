@@ -556,7 +556,7 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
           {aiOff && (
             <div className="px-4 pt-3 shrink-0">
               <AiOffNotice status={aiStatus} compact>
-                <strong>AI chat isn't connected — Cobb's in basic mode.</strong> I can
+                <strong>AI chat isn't connected - Cobb's in basic mode.</strong> I can
                 help you find your way around, but I can't search your workspace or make
                 changes yet.{" "}
               </AiOffNotice>
@@ -569,13 +569,13 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
                 <Cobb pose="idle" size={150} title="Cobb" className="cobb-lift" />
                 <p className="text-xs text-faint dark:text-slate-500 leading-relaxed mt-2">
                   {aiOff ? (
-                    <>Ask me the basics — "what can you do", "how do I add a part", "where do I scan". For
+                    <>Ask me the basics - "what can you do", "how do I add a part", "where do I scan". For
                     questions about your actual data or to have me make changes, connect AI up top.</>
                   ) : (
                     // The last line must match the write-mode chip: "I'll check
                     // with you" is only true in ASK mode — in AUTO, changes apply
                     // as we go; in OFF, nothing changes (the author, 2026-07-11).
-                    <>Ask about your workspace, or tell me to do something — "add a part called Widget", "what's low on
+                    <>Ask about your workspace, or tell me to do something - "add a part called Widget", "what's low on
                     stock?".{" "}{{
                       ask: "I'll check with you before I change anything.",
                       auto: "Changes apply as we go, and every one is tracked so you can undo it.",
@@ -601,7 +601,7 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
                   {m.building && (
                     <div className="mt-1 flex items-center gap-2 text-xs text-faint dark:text-slate-500">
                       <span className="inline-block h-2 w-2 rounded-full bg-accent animate-pulse" />
-                      Turning on modules and building your fields — this takes a minute or two…
+                      Turning on modules and building your fields - this takes a minute or two…
                     </div>
                   )}
                   {m.buildPreview && !m.resolved && (

@@ -26,7 +26,7 @@ export function AppSettingsPage() {
         Settings
       </h1>
       <p className="mt-1 text-sm text-muted dark:text-slate-400">
-        Tailor {appLabel}. Hide what you don't use — nothing is deleted, and you can turn it back on anytime.
+        Tailor {appLabel}. Hide what you don't use - nothing is deleted, and you can turn it back on anytime.
       </p>
 
       <div className="mt-6">
@@ -65,7 +65,7 @@ export function AppSettingsPage() {
           })}
         </ul>
         <p className="mt-2 text-[11px] text-faint dark:text-slate-500">
-          Hiding the Scan Inbox turns off scanning; hiding a table (Hooks, Designs…) just tidies your menu — your items stay and reappear when you show it again.
+          Hiding the Scan Inbox turns off scanning; hiding a table (Hooks, Designs…) just tidies your menu - your items stay and reappear when you show it again.
         </p>
       </div>
     </div>

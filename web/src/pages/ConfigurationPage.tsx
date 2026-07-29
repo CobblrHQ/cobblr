@@ -246,12 +246,12 @@ export function ConfigurationPage() {
         // (The toggle normally lands you on Home; this covers a direct visit.)
         <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 text-sm text-content dark:text-mortar-200 space-y-2">
           <p className="font-medium text-content dark:text-mortar-100">
-            Simple mode is on — builder tools are tucked away.
+            Simple mode is on - builder tools are tucked away.
           </p>
           <p>
             Modules, bundles, custom fields, integrations and the rest of the
             control room are hidden for a calm, everyday workspace. Turn simple
-            mode off above whenever you want to configure or extend things —
+            mode off above whenever you want to configure or extend things - 
             nothing was removed.
           </p>
         </div>
@@ -287,7 +287,7 @@ export function ConfigurationPage() {
       {!q && (
         <>
           <p className="text-sm text-content dark:text-mortar-200">
-            Start with <span className="font-medium">Set up your workspace</span> — turn on the
+            Start with <span className="font-medium">Set up your workspace</span>  - turn on the
             modules you want or install a starter pack. The rest is optional and opens when you
             need it.
           </p>
@@ -304,7 +304,7 @@ export function ConfigurationPage() {
           <div className="flex items-center gap-3 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-4 py-3">
             <NavCustomizeMenu />
             <span className="text-sm text-content dark:text-mortar-200">
-              Customize navigation — show, hide &amp; reorder your navbar items
+              Customize navigation - show, hide &amp; reorder your navbar items
               (saved on this device).
             </span>
           </div>
@@ -317,7 +317,7 @@ export function ConfigurationPage() {
           >
             <UserCircle size={18} className="text-accent shrink-0" />
             <span className="text-sm text-content dark:text-mortar-200">
-              Looking for <span className="font-medium">your personal settings</span> — profile,
+              Looking for <span className="font-medium">your personal settings</span>  - profile,
               notifications, personal AI connections? They live under your account menu.
             </span>
             <ChevronRight size={14} className="ml-auto shrink-0 text-faint dark:text-slate-500" />
@@ -486,7 +486,7 @@ function WorkspaceAiSharing({ slug }: { slug: string }) {
     mutationFn: (cid: string) => api.approveAiShare(slug, cid),
     onSuccess: (r) => {
       onItems(r);
-      toast.success("Approved — this AI is now available in the workspace.");
+      toast.success("Approved - this AI is now available in the workspace.");
     },
     onError: (e) => toast.error((e as Error).message),
   });

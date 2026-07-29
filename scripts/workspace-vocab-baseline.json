@@ -1,6 +1,4 @@
 [
-  "modules/inventory/src/ui/AllocationsPanel.tsx::search a task, project, anything to reserve for…",
-  "modules/labels/src/ui/CodesPanel.tsx::Find an item by its code — e.g. m1",
   "modules/lists/src/ui/index.tsx::Add an item…",
   "modules/projects/src/ui/ProjectDetailPage.tsx::No tasks yet",
   "modules/projects/src/ui/ProjectDetailPage.tsx::What is this project about?",
@@ -9,13 +7,12 @@
   "web/src/components/EntityAttachments.tsx::part name, asset, project…",
   "web/src/components/WhatToDoPanel.tsx::Add your first thing",
   "web/src/components/WhatToDoPanel.tsx::e.g. machines, projects…",
-  "web/src/features/digifab/fleet.tsx::— link to a machine —",
+  "web/src/features/digifab/fleet.tsx:: - link to a machine - ",
   "web/src/pages/ActivityPage.tsx::part / wire / bundle / …",
-  "web/src/pages/AssetsPage.tsx::No assets yet",
-  "web/src/pages/AssistantSettingsPage.tsx::Ask something — \"how do I add a part\"",
+  "web/src/pages/AssistantSettingsPage.tsx::Ask something - \"how do I add a part\"",
   "web/src/pages/CatalogsPage.tsx::e.g. Rebrickable parts",
+  "web/src/pages/DigifabPage.tsx:: - link to machine - ",
+  "web/src/pages/DigifabPage.tsx:: - pick a machine - ",
   "web/src/pages/DigifabPage.tsx::No machines connected yet",
-  "web/src/pages/DigifabPage.tsx::Search machines…",
-  "web/src/pages/DigifabPage.tsx::— link to machine —",
-  "web/src/pages/DigifabPage.tsx::— pick a machine —"
+  "web/src/pages/DigifabPage.tsx::Search machines…"
 ]

@@ -873,8 +873,8 @@ export const api = {
     request<void>("DELETE", `/orgs/${slug}/modules/purchases/vendors/${id}`),
 
   // inventory module — just enough to count parts by location (the
-  // configuration/locations page needs it). Module-specific UI lives
-  // inside the inventory module itself.
+  // /locations page needs it). Module-specific UI lives inside the
+  // inventory module itself.
   listInventoryParts: (slug: string) =>
     request<{ items: Array<{ id: string; name: string; location_id: string | null }> }>(
       "GET",
@@ -2448,7 +2448,7 @@ export const api = {
   // This workspace's connected edge bridges (default + named) — for the shared
   // bridge picker. Served by digifab's relay, which all edge transport rides.
   listEdgeBridges: (slug: string) =>
-    request<{ bridges: EdgeBridge[] }>(
+    request<{ bridges: EdgeBridge[]; direct?: DirectEdgeBridge[] }>(
       "GET",
       `/orgs/${slug}/modules/digifab/edge/bridges`,
     ),
@@ -3120,6 +3120,34 @@ export const api = {
       `/orgs/${slug}/modules/core-scan/inbox/${id}/catalog-image`,
       { url },
     ),
+  /** "✨ Pick best (AI)" — a vision model ranks the photo options and picks the
+   *  cleanest catalog shot (product-only, correct colour, no people). Read-only:
+   *  returns the chosen URL + reason; the caller applies it via setScanCatalogImage.
+   *  Pass the DISPLAYED candidates + any applied search term so the model ranks
+   *  exactly what the user is looking at (the pick is always a visible tile);
+   *  with none, the server searches fresh. `chosen_url` is null when nothing was
+   *  rankable (no name, no options, no vision provider) — `reason` says why. */
+  rankScanPhotoAi: (
+    slug: string,
+    id: string,
+    opts?: { q?: string; candidates?: ImageOption[] },
+  ) =>
+    request<{ chosen_url: string | null; reason: string; color_seen?: string | null; ranked_over?: number }>(
+      "POST",
+      `/orgs/${slug}/modules/core-scan/inbox/${id}/rank-photo-ai`,
+      {
+        ...(opts?.q?.trim() ? { q: opts.q.trim() } : {}),
+        ...(opts?.candidates?.length ? { candidates: opts.candidates } : {}),
+      },
+    ),
+  /** The workspace opt-in for ranking catalog photos automatically on every
+   *  enriched scan (instead of only when someone presses ✨ Pick best). Reading
+   *  is member-level; flipping it commits the workspace to per-scan AI spend, so
+   *  the PUT is owner/admin. No stored row means off. */
+  getScanPhotoRankConfig: (slug: string) =>
+    request<{ enabled: boolean }>("GET", `/orgs/${slug}/modules/core-scan/photo-rank-config`),
+  setScanPhotoRankConfig: (slug: string, enabled: boolean) =>
+    request<{ enabled: boolean }>("PUT", `/orgs/${slug}/modules/core-scan/photo-rank-config`, { enabled }),
   /** Revert the catalog image to the original, or use the user's own scan photo. */
   scanCatalogAction: (slug: string, id: string, action: "revert" | "use_own_photo") =>
     request<ScanInboxItem>(
@@ -4125,6 +4153,23 @@ export interface EdgeBridge {
   bridge: string | null;
   connected: boolean;
   last_seen: number | null;
+}
+
+/** A bridge Cobblr reaches DIRECTLY (LAN, tailnet, same machine), derived from
+ *  the connections pointing at it — there is no bridge table, because a
+ *  connection's base_url already carries the address. */
+export interface DirectEdgeBridge {
+  origin: string;
+  label: string;
+  instances: number;
+  auth: "token" | "none" | "mixed";
+  /** Last success FROM COBBLR'S SERVER. Whether YOUR BROWSER can reach it is a
+   *  different question with a different answer, and the UI must not conflate
+   *  them: a bench on a tailnet host is reachable by a self-hosted Cobblr and
+   *  not by a laptop elsewhere. */
+  last_ok_at: string | null;
+  last_status: string | null;
+  connection_ids: string[];
 }
 
 export interface SyncConnectorDef {

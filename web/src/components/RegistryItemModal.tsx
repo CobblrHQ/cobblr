@@ -79,11 +79,11 @@ export function RegistryItemModal({
           <div>
             {trust === "official" ? (
               <span className="text-[10px] font-mono uppercase tracking-widest text-moss-600 bg-moss-50 dark:bg-moss-950/30 border border-moss-200 dark:border-moss-800 rounded px-1.5 py-0.5">
-                verified — signed by a Cobblr-vouched key
+                verified - signed by a Cobblr-vouched key
               </span>
             ) : (
               <span className="text-[10px] font-mono uppercase tracking-widest text-faint border border-line dark:border-slate-700 rounded px-1.5 py-0.5">
-                unverified — Cobblr hasn't reviewed this
+                unverified - Cobblr hasn't reviewed this
               </span>
             )}
           </div>

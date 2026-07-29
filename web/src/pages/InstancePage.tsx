@@ -49,7 +49,7 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
   if (!inst) {
     return (
       <div className="text-sm text-muted dark:text-slate-400 italic p-4">
-        No instance "{name}" in this workspace. It may have been deleted —
+        No instance "{name}" in this workspace. It may have been deleted - 
         check Configuration → "+ New thing".
       </div>
     );
@@ -150,7 +150,7 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
       </div>
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 text-sm text-content dark:text-mortar-200">
         The dashboard view for <span className="font-mono">{inst.module_name}</span>{" "}
-        instances isn't wired up yet — but this instance is fully usable
+        instances isn't wired up yet - but this instance is fully usable
         through the API + CLI at{" "}
         <code className="font-mono text-xs">
           /orgs/{activeSlug}/instances/{inst.instance_name}/items

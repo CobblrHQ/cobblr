@@ -51,7 +51,7 @@ export function ScanResolversTab() {
           </h2>
           <p className="text-sm text-muted mt-0.5 max-w-2xl">
             The vendor list the scanner consults: a scanned maker URL (e.g. a Polar Filament spool
-            QR) is matched, fetched, and mapped to a product — no code per vendor. Built-ins ship
+            QR) is matched, fetched, and mapped to a product - no code per vendor. Built-ins ship
             with Cobblr; add your own as data.
           </p>
         </div>

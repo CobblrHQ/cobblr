@@ -68,7 +68,7 @@ export function ConnectionsPage() {
       </div>
 
       <p className="text-sm text-muted dark:text-slate-400">
-        Set up a personal AI provider — your own key, or the local-AI edge bridge — once,
+        Set up a personal AI provider - your own key, or the local-AI edge bridge - once,
         and route it to the workspaces you choose. It follows you instead of being
         re-added per workspace. Secrets are stored encrypted and never shown again.
       </p>
@@ -343,7 +343,7 @@ function ConnectionForm({
       ))}
       {credFields.length === 0 && (
         <div className="text-[11px] text-faint italic">
-          This provider needs no credentials — it routes to a device you connect (e.g. the edge bridge).
+          This provider needs no credentials - it routes to a device you connect (e.g. the edge bridge).
         </div>
       )}
 
@@ -367,7 +367,7 @@ function ConnectionForm({
                   <div className="text-sm text-content dark:text-mortar-200 truncate">{o.name}</div>
                   {cur === "workspace-default" && !owns && (
                     <div className="text-[10px] text-amber-600 dark:text-amber-500">
-                      Shared — the owner approves before others can use it. Your own calls work right away.
+                      Shared - the owner approves before others can use it. Your own calls work right away.
                     </div>
                   )}
                 </div>
@@ -449,7 +449,7 @@ function EdgeBridgeStatusRow() {
       <span className={on ? "text-emerald-600 dark:text-emerald-500" : "text-muted"}>
         Edge bridge {on ? "online" : "offline"}
       </span>
-      {!on && <span className="text-faint">— start your bridge agent to use it</span>}
+      {!on && <span className="text-faint"> - start your bridge agent to use it</span>}
     </div>
   );
 }

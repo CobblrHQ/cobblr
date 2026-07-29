@@ -224,7 +224,7 @@ export function PermissionsPage() {
         <div className="divide-y divide-line dark:divide-slate-800">
           {scopes.length === 0 && (
             <div className="px-4 py-3 text-xs text-faint italic">
-              No fields gated yet — every exposable field is visible to all
+              No fields gated yet - every exposable field is visible to all
               members. Module-declared scopes (e.g. cost) still apply.
             </div>
           )}
@@ -249,7 +249,7 @@ export function PermissionsPage() {
                 type="button"
                 onClick={() => delScope.mutate({ kind: s.kind, field: s.field })}
                 className="text-faint hover:text-rose-500 dark:text-slate-600 dark:hover:text-rose-400 transition"
-                title="Remove — field becomes visible to all members again"
+                title="Remove - field becomes visible to all members again"
                 aria-label={`Remove ${s.field} gate`}
               >
                 <X size={14} />

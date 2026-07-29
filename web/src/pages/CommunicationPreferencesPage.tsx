@@ -68,8 +68,8 @@ export function CommunicationPreferencesPage() {
     mutationFn: () => api.meDiscordRetryTest(),
     onSuccess: ({ deliverable }) =>
       deliverable
-        ? toast.success("Test DM sent — check Discord.")
-        : toast.error("Still can't DM you — adjust Discord privacy settings or join our server."),
+        ? toast.success("Test DM sent - check Discord.")
+        : toast.error("Still can't DM you - adjust Discord privacy settings or join our server."),
   });
   const disconnect = useMutation({
     mutationFn: () => api.meDiscordDisconnect(),
@@ -123,7 +123,7 @@ export function CommunicationPreferencesPage() {
 
       <p className="text-sm text-content dark:text-mortar-200">
         Choose how we reach you for each kind of notification. Critical account &
-        security messages always go to email. Everything else is yours to route —
+        security messages always go to email. Everything else is yours to route - 
         in-app, Discord DM, email, or any combination.
       </p>
 
@@ -310,7 +310,7 @@ function DiscordCard(props: {
       {/* Verification states after OAuth. */}
       {!verified && connected && (discordParam === "pending" || discordParam === null) && (
         <div className="text-sm text-content dark:text-mortar-200 space-y-2">
-          <p>We sent a test DM to your Discord. Tap <strong>“Yes, I got this 👋”</strong> in that message — or confirm here:</p>
+          <p>We sent a test DM to your Discord. Tap <strong>“Yes, I got this 👋”</strong> in that message - or confirm here:</p>
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={props.onConfirm}
               className="inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white text-xs font-medium px-3 py-1.5">
@@ -326,7 +326,7 @@ function DiscordCard(props: {
 
       {!verified && (discordParam === "blocked") && (
         <div className="text-sm text-content dark:text-mortar-200 space-y-2">
-          <p>We couldn't DM you — Discord blocks DMs from servers you don't share with our bot.</p>
+          <p>We couldn't DM you - Discord blocks DMs from servers you don't share with our bot.</p>
           <div className="flex flex-wrap gap-2">
             {inviteUrl && (
               <a href={inviteUrl} target="_blank" rel="noreferrer"
@@ -336,7 +336,7 @@ function DiscordCard(props: {
             )}
             <button type="button" onClick={props.onRetry}
               className="rounded border border-line dark:border-slate-600 text-xs font-medium px-3 py-1.5 hover:bg-mortar-50 dark:hover:bg-slate-800">
-              I changed my settings — retry
+              I changed my settings - retry
             </button>
           </div>
         </div>

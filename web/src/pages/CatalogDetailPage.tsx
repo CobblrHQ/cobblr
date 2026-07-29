@@ -41,7 +41,7 @@ export function CatalogDetailPage() {
       void qc.invalidateQueries({ queryKey: ["core-catalog-entries", activeSlug, id] });
     },
     onError: () =>
-      toast.error("Couldn't pull from the source — check the catalog's source URL (large datasets like the BOM use the bulk seeder)."),
+      toast.error("Couldn't pull from the source - check the catalog's source URL (large datasets like the BOM use the bulk seeder)."),
   });
   const PAGE_SIZE = 60;
   const entriesQ = useInfiniteQuery({
@@ -113,7 +113,7 @@ export function CatalogDetailPage() {
           <span className="text-sm text-muted dark:text-slate-400">
             {catalog.source === "hosted" ? (
               <span
-                title="Served from Cobblr's shared reference catalog — ready to match against, nothing to import."
+                title="Served from Cobblr's shared reference catalog - ready to match against, nothing to import."
                 className="text-[11px] font-mono uppercase tracking-widest text-accent dark:text-cobble-400 rounded bg-accent/10 dark:bg-cobble-400/10 px-1.5 py-0.5"
               >
                 Hosted
@@ -180,7 +180,7 @@ export function CatalogDetailPage() {
             // Hosted but not browsable here (the ~5M-row set bill-of-materials).
             <>
               Served from Cobblr's shared reference catalog. This one powers
-              Disassemble behind the scenes and isn't browsed directly — match
+              Disassemble behind the scenes and isn't browsed directly - match
               against it from your items and the details come along.
             </>
           ) : (
@@ -204,7 +204,7 @@ export function CatalogDetailPage() {
           <span>scroll for more</span>
         )}
         {!entriesQ.hasNextPage && entries.length > 0 && (
-          <span>— end of catalog ({entries.length} loaded) —</span>
+          <span> - end of catalog ({entries.length} loaded) - </span>
         )}
       </div>
 

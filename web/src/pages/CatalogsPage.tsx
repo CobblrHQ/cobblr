@@ -60,7 +60,7 @@ export function CatalogsPage() {
 
       <p className="text-sm text-content dark:text-mortar-200">
         Reference datasets your entities match against. Rebrickable's Lego
-        catalog comes with the Lego setup; bring your own as a CSV — any table
+        catalog comes with the Lego setup; bring your own as a CSV - any table
         with a stable id and a name (a parts list, a product export, a
         collection inventory). Your own entities (parts, machines, assets) can
         <em>match</em> a row in a catalog; once matched, the catalog's photo +
@@ -70,7 +70,7 @@ export function CatalogsPage() {
       {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {items.length === 0 && !list.isLoading && (
         <div className="text-sm italic text-muted dark:text-slate-400">
-          No catalogs yet. Click "New catalog" to start one — give it a name,
+          No catalogs yet. Click "New catalog" to start one - give it a name,
           then upload a CSV.
         </div>
       )}
@@ -140,7 +140,7 @@ function CatalogCard({
           // entries" reads as broken. Say "Hosted" instead: it's ready to match
           // against, nothing to import.
           <span
-            title="Served from Cobblr's shared reference catalog — ready to match against, nothing to import."
+            title="Served from Cobblr's shared reference catalog - ready to match against, nothing to import."
             className="text-[10px] font-mono uppercase tracking-widest text-accent dark:text-cobble-400 rounded bg-accent/10 dark:bg-cobble-400/10 px-1.5 py-0.5"
           >
             Hosted

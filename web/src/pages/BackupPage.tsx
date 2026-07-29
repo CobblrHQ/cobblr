@@ -226,7 +226,7 @@ export function BackupPage() {
           <h2 className="font-display text-lg font-bold text-content dark:text-mortar-100">Blueprint</h2>
         </div>
         <p className="text-sm text-muted">
-          Your workspace <strong>setup</strong> — enabled modules, installed bundles, custom fields, wires, shared
+          Your workspace <strong>setup</strong>  - enabled modules, installed bundles, custom fields, wires, shared
           views and public surfaces. <strong>No data.</strong> Install one to reproduce the setup on a fresh workspace.
         </p>
         <div className="flex flex-wrap gap-2">
@@ -277,7 +277,7 @@ export function BackupPage() {
           <h2 className="font-display text-lg font-bold text-content dark:text-mortar-100">Backup &amp; restore</h2>
         </div>
         <p className="text-sm text-muted">
-          A full copy of this workspace — the blueprint <strong>plus every row and every file</strong>, as a <code>.zip</code>.
+          A full copy of this workspace - the blueprint <strong>plus every row and every file</strong>, as a <code>.zip</code>.
           Download one and keep it in your Google Drive or NAS. Restore one into a <strong>fresh</strong> workspace to
           reproduce it exactly.
         </p>
@@ -303,7 +303,7 @@ export function BackupPage() {
             {bkPlan.plan.target_not_empty && (
               <div className="flex items-start gap-2 text-amber-700 dark:text-amber-300 font-semibold">
                 <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-                This workspace already has data — restoring REPLACES it.
+                This workspace already has data - restoring REPLACES it.
               </div>
             )}
             <div className="text-muted">
@@ -363,7 +363,7 @@ function DestinationsSection({ base, auth }: { base: string; auth: () => Record<
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     if (q.get("google") === "connected") {
-      toast.success("Google Drive connected — now pick how often it backs up below.");
+      toast.success("Google Drive connected - now pick how often it backs up below.");
       q.delete("google");
       const qs = q.toString();
       window.history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : ""));
@@ -523,7 +523,7 @@ function DestinationsSection({ base, auth }: { base: string; auth: () => Record<
                 <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300/60 dark:border-amber-700/40 bg-amber-50/70 dark:bg-amber-900/15 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
                   <Clock className="h-3.5 w-3.5 shrink-0" />
                   <span>
-                    Automatic backups are <strong>off</strong> — this only runs when you press <em>Back up now</em>. Turn on a schedule so
+                    Automatic backups are <strong>off</strong>  - this only runs when you press <em>Back up now</em>. Turn on a schedule so
                     it happens on its own:
                   </span>
                   <button className={nudgeBtn} onClick={() => patch(d, { schedule: "daily" })} disabled={busy !== null}>

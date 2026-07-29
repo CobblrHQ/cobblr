@@ -583,7 +583,7 @@ export function ScanCameraPage() {
       const entry = sortEntryRef.current;
       if (!sid || !entry || entry.status !== "proposed") return;
       if (!overrideLocationId && !entry.directive.location_id) {
-        toast.info("No bin suggested — scan the bin's QR label to file it there.");
+        toast.info("No bin suggested - scan the bin's QR label to file it there.");
         return;
       }
       void api
@@ -729,7 +729,7 @@ export function ScanCameraPage() {
       .then(() => {
         setSortLast(null);
         setSortCount((n) => Math.max(0, n - 1));
-        toast.success("Undone — back to unsorted.");
+        toast.success("Undone - back to unsorted.");
       })
       .catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)));
   }, [activeSlug, sortLast, toast]);
@@ -1278,7 +1278,7 @@ export function ScanCameraPage() {
           style={{ top: UNDER_TOP_CHROME }}
         >
           <div className="inline-flex items-center gap-2 rounded-full bg-emerald-600/90 text-white text-xs font-medium px-3 py-1.5 shadow-lg backdrop-blur-sm">
-            <Check size={13} className="shrink-0" /> Photo saved — identifying in the inbox
+            <Check size={13} className="shrink-0" /> Photo saved - identifying in the inbox
           </div>
         </div>
       )}
@@ -1343,7 +1343,7 @@ export function ScanCameraPage() {
               setContainerBin(null);
               containerBinRef.current = null;
             }}
-            title="Scanning into this container — tap to clear"
+            title="Scanning into this container - tap to clear"
             className="inline-flex items-center gap-1.5 bg-cobble-600/85 hover:bg-cobble-600 rounded-full px-3 py-1.5 text-white text-xs min-w-0 flex-1"
           >
             <Package size={13} className="shrink-0" />
@@ -1385,7 +1385,7 @@ export function ScanCameraPage() {
           type="button"
           onClick={toggleSortMode}
           aria-pressed={sortMode}
-          title="Sort mode: every scan gets a destination bin directive — put it there, tap Done, next"
+          title="Sort mode: every scan gets a destination bin directive - put it there, tap Done, next"
           className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs shrink-0 ${
             sortMode ? "bg-cobble-600 text-white" : "bg-black/50 text-white/70 hover:bg-black/70"
           }`}
@@ -1453,7 +1453,7 @@ export function ScanCameraPage() {
           <div className="text-sm font-medium">Camera unavailable</div>
           {error && (
             <div className="text-xs text-white/70 max-w-xs">
-              {error} — check the browser&apos;s camera permission for this site.
+              {error}  - check the browser&apos;s camera permission for this site.
             </div>
           )}
           <button
@@ -1511,7 +1511,7 @@ export function ScanCameraPage() {
                     </div>
                     <div className="text-xs text-white/70">
                       Starts your <span className="text-white font-medium">{sortEntry.directive.proposed_name}</span>{" "}
-                      bin — Done names it "{sortEntry.directive.location_name} · {sortEntry.directive.proposed_name}".
+                      bin - Done names it "{sortEntry.directive.location_name} · {sortEntry.directive.proposed_name}".
                     </div>
                   </>
                 ) : (
@@ -1523,7 +1523,7 @@ export function ScanCameraPage() {
                       </span>
                     </div>
                     <div className="text-xs text-white/70">
-                      No confident match — park it, it stays findable in the inbox.
+                      No confident match - park it, it stays findable in the inbox.
                     </div>
                   </>
                 )}
@@ -1539,7 +1539,7 @@ export function ScanCameraPage() {
                   <button
                     type="button"
                     onClick={() => setSortEntry(null)}
-                    title="Skip — leave it unsorted for now"
+                    title="Skip - leave it unsorted for now"
                     className="rounded-xl bg-white/10 hover:bg-white/20 px-3 py-3"
                   >
                     <SkipForward size={18} />
@@ -1557,11 +1557,11 @@ export function ScanCameraPage() {
               <div className="flex items-center gap-2 text-xs">
                 <Zap size={14} className="text-cobble-300 shrink-0" />
                 <span className="min-w-0 flex-1 truncate">
-                  Sorted {sortCount} — scan the next item
+                  Sorted {sortCount}  - scan the next item
                 </span>
                 <label
                   className="inline-flex items-center gap-1 text-white/70 shrink-0"
-                  title="The next scan confirms the current directive — zero taps in steady state; Undo covers mistakes"
+                  title="The next scan confirms the current directive - zero taps in steady state; Undo covers mistakes"
                 >
                   <input type="checkbox" checked={sortImplicit} onChange={toggleSortImplicit} />
                   auto-Done
@@ -1617,7 +1617,7 @@ export function ScanCameraPage() {
                   .then(() => {
                     setRecent((prev) => prev.filter((p) => p.id !== it.id));
                     void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-                    toast.success("Undone — removed from the inbox");
+                    toast.success("Undone - removed from the inbox");
                   })
                   .catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)));
               }}
@@ -1634,7 +1634,7 @@ export function ScanCameraPage() {
           >
             <Camera size={14} className="shrink-0" />
             <span className="min-w-0 flex-1 truncate font-medium">
-              Photo didn&apos;t save — it&apos;s still here
+              Photo didn&apos;t save - it&apos;s still here
             </span>
             <button
               type="button"

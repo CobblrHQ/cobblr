@@ -66,7 +66,7 @@ export function ListsUI({ orgSlug, getToken }: Props) {
 
       {lists.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {lists.data?.items.length === 0 && (
-        <div className="text-sm text-muted italic">No lists yet. Create one — a shopping list, a to-do, a packing list.</div>
+        <div className="text-sm text-muted italic">No lists yet. Create one - a shopping list, a to-do, a packing list.</div>
       )}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -189,7 +189,7 @@ function ListDetailModal({ listId, api, onClose }: { listId: string; api: ListsA
                 {it.metadata?.source_ref?.kind && (
                   <span
                     className="ml-2 inline-flex items-center gap-0.5 rounded bg-emerald-50 dark:bg-emerald-900/30 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300 align-middle"
-                    title="Auto-added from another record — checking off updates the source"
+                    title="Auto-added from another record - checking off updates the source"
                   >
                     <RotateCcw size={10} /> {it.metadata.source_ref.kind.split(":")[0]}
                   </span>

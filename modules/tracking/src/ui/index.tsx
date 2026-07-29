@@ -45,7 +45,7 @@ export function TrackingUI({ orgSlug, getToken }: Props) {
 
       {metrics.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {metrics.data?.items.length === 0 && (
-        <div className="text-sm text-muted italic">Track anything over time toward a goal — weight, runs, a habit, a budget.</div>
+        <div className="text-sm text-muted italic">Track anything over time toward a goal - weight, runs, a habit, a budget.</div>
       )}
 
       <div className="grid gap-3 sm:grid-cols-2">

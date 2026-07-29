@@ -69,7 +69,7 @@ export function ActionsPage() {
 
       <p className="text-sm text-content dark:text-mortar-200">
         Each cross-module action declares which entities it applies to. For
-        trait-based actions you can adjust that per-axis here — e.g. broaden
+        trait-based actions you can adjust that per-axis here - e.g. broaden
         "Print label" to also cover digital entities like tasks. Within an axis
         the checkboxes are OR'd; across axes they're AND'd. The match preview
         updates live as you toggle.
@@ -109,7 +109,7 @@ export function ActionsPage() {
           <>
             <div className="space-y-3">
               <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-                // tunable — trait-based, adjust per axis
+                // tunable - trait-based, adjust per axis
               </div>
               {tunable.length === 0 ? (
                 <p className="text-sm text-faint dark:text-slate-500">
@@ -121,14 +121,14 @@ export function ActionsPage() {
             </div>
             <div className="space-y-3 pt-4">
               <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
-                // fixed scope — declared by each module, shown for reference
+                // fixed scope - declared by each module, shown for reference
               </div>
               <p className="text-xs text-faint dark:text-slate-500">
                 These actions' scope is part of their module's code: either a
                 precise kind list (module-internal verbs) or deliberately
                 universal (wire-driven shapes that locate their subject from
                 the event or args, plus "add to list" which genuinely applies
-                to anything). Nothing to tune — listed so the full action
+                to anything). Nothing to tune - listed so the full action
                 vocabulary is visible in one place.
               </p>
               {fixed.map(card)}

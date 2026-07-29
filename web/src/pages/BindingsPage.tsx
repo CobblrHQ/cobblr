@@ -50,7 +50,7 @@ export function BindingsPage() {
           wires
         </h1>
         <span className="page-subtitle">
-          when X happens, do Y. Modules don't know about each other — you wire them here.
+          when X happens, do Y. Modules don't know about each other - you wire them here.
         </span>
       </div>
 

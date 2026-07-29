@@ -16,6 +16,7 @@
 import { createHash } from "node:crypto";
 import type { AiCapability } from "@cobblr/platform-contract";
 import { identifyPromptFor } from "./identify-prompt.js";
+import { rankImagesPromptFor } from "./rank-images-prompt.js";
 
 /** The literal prompts the adapters inject for the non-`input` capabilities.
  *  Kept HERE, next to the fingerprint that hashes them, so a prompt and its
@@ -50,6 +51,12 @@ export function serverPromptFor(
       // two would drift, and a split call would be cached under the hash of a
       // prompt it never sent: precisely the bug the fingerprint exists to prevent.
       return identifyPromptFor(input);
+    case "rank-images":
+      // Same resolver the adapters inject. Its text varies with the item name /
+      // colour / reference flag AND the candidate count, so a re-rank of a
+      // different pool keys differently — which is correct, the pick depends on
+      // both the prompt and how many candidates it ranged over.
+      return rankImagesPromptFor(input);
     case "extract-text":
       return EXTRACT_TEXT_PROMPT;
     case "match-to-catalog":

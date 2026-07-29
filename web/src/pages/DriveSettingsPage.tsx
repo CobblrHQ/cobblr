@@ -47,7 +47,7 @@ export function DriveSettingsPage() {
 
       <p className="text-sm text-content dark:text-mortar-200">
         Let Claude (from Claude Code / Desktop on your machine, via MCP) drive the Cobblr tab you have open in{" "}
-        <strong>this workspace</strong> — opening pages and views as a shared, collaborative session. It's{" "}
+        <strong>this workspace</strong>  - opening pages and views as a shared, collaborative session. It's{" "}
         <strong>off by default</strong>, and even when on, Claude only drives a window after you explicitly pick it.
       </p>
 
@@ -144,7 +144,7 @@ function ConnectFromClaude({ slug }: { slug: string }) {
           </div>
           <pre className="text-[11px] leading-relaxed bg-subtle dark:bg-slate-950 border border-line dark:border-slate-700 rounded p-2 overflow-x-auto whitespace-pre text-content dark:text-mortar-200">{snippet}</pre>
           <p className="text-[11px] text-amber-600 dark:text-amber-400">
-            Token shown once — it can <strong>only</strong> drive your own open tab (scope <code>drive:control</code>),
+            Token shown once - it can <strong>only</strong> drive your own open tab (scope <code>drive:control</code>),
             and only at the level you picked above.
           </p>
         </>

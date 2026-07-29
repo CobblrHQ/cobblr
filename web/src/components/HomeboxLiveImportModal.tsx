@@ -110,7 +110,7 @@ export function HomeboxLiveImportModal({ open, onClose }: { open: boolean; onClo
       await api.configureSync(slug, connId, "locations", { enabled: true });
       await api.configureSync(slug, connId, "items", { enabled: true });
       void qc.invalidateQueries({ queryKey: ["sync-connections", slug] });
-      toast.success("Live sync is on — Homebox changes now mirror over automatically.");
+      toast.success("Live sync is on - Homebox changes now mirror over automatically.");
       close();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Couldn't turn on live sync");
@@ -163,7 +163,7 @@ export function HomeboxLiveImportModal({ open, onClose }: { open: boolean; onClo
               <span>
                 My Homebox is on my local network
                 <span className="block text-[11px] text-faint">
-                  Tick this if the address above isn't reachable from the internet — Cobblr will fetch it through an
+                  Tick this if the address above isn't reachable from the internet - Cobblr will fetch it through an
                   edge bridge on your network.
                 </span>
               </span>
@@ -219,7 +219,7 @@ export function HomeboxLiveImportModal({ open, onClose }: { open: boolean; onClo
             <div className="rounded-xl border border-line dark:border-slate-700 p-3.5 space-y-3">
               <p className="text-sm text-content dark:text-mortar-100 font-medium">Keep it synced?</p>
               <p className="text-xs text-muted dark:text-slate-400">
-                Turn on live sync and future Homebox changes mirror over automatically. Or import just this once — the
+                Turn on live sync and future Homebox changes mirror over automatically. Or import just this once - the
                 connection stays under <strong>Live sync</strong>, where you can re-run it, enable syncing later, or
                 archive it anytime.
               </p>

@@ -2,6 +2,7 @@
 
 import { platform, type AiCapability } from "@cobblr/platform-contract";
 import { identifyPromptFor } from "./identify-prompt.js";
+import { rankImagesPromptFor, rankImageInputs } from "./rank-images-prompt.js";
 import { toolsOf, turnsOf, anthropicToolsOf, anthropicMessagesOf, parseAnthropicContent } from "./tool-wire.js";
 import { promptFingerprint } from "./prompt-fingerprint.js";
 
@@ -19,6 +20,10 @@ const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?:
     defaultModel: "claude-haiku-4-5",
   },
   "identify-image": {
+    models: ["claude-sonnet-4-5", "claude-haiku-4-5"],
+    defaultModel: "claude-haiku-4-5",
+  },
+  "rank-images": {
     models: ["claude-sonnet-4-5", "claude-haiku-4-5"],
     defaultModel: "claude-haiku-4-5",
   },
@@ -174,6 +179,16 @@ function buildMessages(
       // that call asked the identify question, got no `items` back, and was wasted
       // on every single split. The edge-bridge adapter always honoured it.
       content.push({ type: "text", text: identifyPromptFor(input) });
+      return { messages: [{ role: "user", content }] };
+    }
+    case "rank-images": {
+      // The one multi-image capability: text first, then the candidate images in
+      // order, so "image 0, image 1, …" in the prompt line up with what the model
+      // sees. rankImagesPromptFor is the SAME resolver the fingerprint keys on.
+      const content: ClaudeContentBlock[] = [{ type: "text", text: rankImagesPromptFor(input) }];
+      for (const im of rankImageInputs(input)) {
+        content.push({ type: "image", source: { type: "base64", media_type: im.mediaType, data: im.b64 } });
+      }
       return { messages: [{ role: "user", content }] };
     }
     case "extract-text": {

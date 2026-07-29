@@ -96,6 +96,29 @@ export function needsRemember(
   );
 }
 
+/** The paper options with the printer's remembered media kept PICKABLE.
+ *
+ *  The first cut protected the remembered key with a guard in the clear-effect
+ *  instead: state kept the excluded key, but the <select> had no matching
+ *  option, so the dropdown showed "Pick media…" while the preview used the
+ *  memory — a ghost selection. Appending it as a real option keeps the dropdown
+ *  truthful and leaves the clear-effect nothing to blank.
+ *
+ *  A LIVE reading wins over the memory: a printer that reports the roll
+ *  actually in it has settled the question, and a stored setting does not get
+ *  to argue with it (the same rule the capability funnel already follows). */
+export function withRememberedPaper<P extends { key: string }>(
+  funneled: P[],
+  catalog: readonly P[],
+  rememberedKey: string | null | undefined,
+  liveReported: boolean,
+): P[] {
+  if (!rememberedKey || liveReported) return funneled;
+  if (funneled.some((p) => p.key === rememberedKey)) return funneled;
+  const extra = catalog.find((p) => p.key === rememberedKey);
+  return extra ? [...funneled, extra] : funneled;
+}
+
 /** Printers most-recently-used first — device history, so the target picker leads
  *  with the machine you actually print on. Never used sorts last, and ties fall
  *  back to name so the order is stable rather than arbitrary. */

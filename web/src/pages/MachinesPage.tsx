@@ -1374,7 +1374,7 @@ function MachineDetailModal({
                       onChange={(e) => update.mutate({ metadata: { ...m.metadata, specialisation: e.target.value || null } })}
                       className="input !w-auto !py-1 text-xs"
                     >
-                      <option value="">— unspecialised —</option>
+                      <option value=""> - unspecialised - </option>
                       {specialisations.map((s) => (<option key={s.name} value={s.name}>{s.label}</option>))}
                     </select>
                   </label>
@@ -1866,14 +1866,14 @@ function NewMachineModal({
                     <p className="text-[11px] text-muted dark:text-slate-400">Loading your Bambu printers…</p>
                   ) : bambuDevices.length === 0 ? (
                     <p className="text-[11px] text-muted dark:text-slate-400">
-                      ✓ Using <span className="text-content dark:text-mortar-100">{bambuConn.label}</span> — every printer on this account is already added.
+                      ✓ Using <span className="text-content dark:text-mortar-100">{bambuConn.label}</span>  - every printer on this account is already added.
                     </p>
                   ) : (
                     <div>
                       <span className={lblCls}>Which printer is this?</span>
                       {/* A single printer is pre-selected; pick one to select + pre-fill. */}
                       <BambuPrinterPicker devices={bambuDevices} selectedDevId={bambuDevId} onSelect={(id) => { setBambuDevId(id); prefillFromBambu(id); }} />
-                      <span className="mt-1 block text-[10px] text-emerald-600 dark:text-emerald-400">✓ Using {bambuConn.label} — name pre-filled.</span>
+                      <span className="mt-1 block text-[10px] text-emerald-600 dark:text-emerald-400">✓ Using {bambuConn.label}  - name pre-filled.</span>
                     </div>
                   )}
                   <button type="button" onClick={() => setView("bambu")} className="text-[10px] text-accent hover:underline">
@@ -1890,7 +1890,7 @@ function NewMachineModal({
                 </button>
               ) : directDevices.length === 0 ? (
                 <p className="text-[11px] text-amber-600 dark:text-amber-400">
-                  Saved {directConn.label}, but Cobblr couldn't reach a printer there — it'll still create, and you can fix the address in the Print Manager.{" "}
+                  Saved {directConn.label}, but Cobblr couldn't reach a printer there - it'll still create, and you can fix the address in the Print Manager.{" "}
                   <button type="button" onClick={() => { setDirectConn(null); setView("direct"); }} className="text-accent hover:underline">Try again →</button>
                 </p>
               ) : (
@@ -1911,7 +1911,7 @@ function NewMachineModal({
             {connect === "edge" && (
               <div className="space-y-1">
                 <p className="text-[11px] text-muted dark:text-slate-400">
-                  Cobblr is hosted, so it can't reach this {kindLabel} on your network directly. Run a tiny bridge at your site — it dials out, no firewall changes.
+                  Cobblr is hosted, so it can't reach this {kindLabel} on your network directly. Run a tiny bridge at your site - it dials out, no firewall changes.
                 </p>
                 <button type="button" onClick={() => setView("edge")} className="rounded bg-cobble-600 hover:bg-cobble-700 text-white text-xs px-2.5 py-1.5">
                   Install the edge connector →
@@ -1951,7 +1951,7 @@ function NewMachineModal({
 
         {!instance && (
           <p className="text-[10px] text-faint">
-            Want make/model fields — hotend, firmware, bed size, etc.? Add a specialization for your machine type from the{" "}
+            Want make/model fields - hotend, firmware, bed size, etc.? Add a specialization for your machine type from the{" "}
             <Link to="/bundles" className="text-accent hover:underline">marketplace</Link>{" "}
             (e.g. “3D Printers”) and they’ll show up here.
           </p>
