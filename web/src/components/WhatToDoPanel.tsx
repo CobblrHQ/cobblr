@@ -231,15 +231,9 @@ const STARTER_CHIPS = ["a spool of black PLA", "my passport", "blue worsted yarn
 export function WhatToDoPanel({
   slug,
   startCollapsed = false,
-  guidedHalfWidth = false,
 }: {
   slug: string;
   startCollapsed?: boolean;
-  /** Cap ONLY the guided "What do you want to do?" box to a half column (the
-   *  growth affordance on an established workspace). The scanner "waiting to file"
-   *  strips below it stay FULL width — capping the whole panel dragged them narrow
-   *  too, which read as a regression (the author, 2026-07-26). */
-  guidedHalfWidth?: boolean;
 }) {
   const toast = useToast();
   const navigate = useNavigate();
@@ -616,12 +610,13 @@ export function WhatToDoPanel({
   const showToggle = startCollapsed && !hasPending;
   const showBody = showToggle ? open : true;
 
-  // Established-workspace two-column guided box (approved mockup): the "just add
-  // it" hero fills the left column; the ready-made chips + Describe card stack in
-  // the right, so the full-width box reads "type it, or pick/describe it" instead
-  // of a lone input floating in empty space. Only in the compact, not-expanded
-  // state — once "More ways" opens the building-blocks/trackers columns take over.
-  const twoCol = guidedHalfWidth && !moreOpen;
+  // Two-column guided box (approved mockup): the "just add it" hero fills the
+  // left column; the ready-made chips + Describe card stack in the right, so the
+  // box reads "type it, or pick/describe it" instead of a lone input floating in
+  // empty space. Applies to both the full-width empty-state hero and the collapsed
+  // established-workspace card. Only in the compact, not-expanded state — once
+  // "More ways" opens, the building-blocks/trackers columns take the full row.
+  const twoCol = !moreOpen;
 
   // Extracted so the same blocks serve both the two-column layout and the
   // original single-column one below it.

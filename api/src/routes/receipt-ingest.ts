@@ -278,10 +278,12 @@ export async function ingestReceiptEmail(
   }
 
   // 3. Reply to the sender about THEIR email — BRIEF, and honest about what
-  //    actually happened. It comes FROM the `receipts+<token>@` address they
-  //    emailed and threads under their original (Reply-To = that address, so a
-  //    reply-with-attachment loops back in). Three cases, so a whole receipt saved
-  //    as ONE note is never miscounted as "1 item":
+  //    actually happened. The reply is a one-way, threaded notification built by
+  //    receiptReplyHeaders: FROM a no-reply address, NO Reply-To (ingest is by
+  //    FORWARDING a receipt to the receipts address, never by replying here — a
+  //    Reply-To once meant a "what is this?" reply got ingested as junk; see that
+  //    helper). Three cases, so a whole receipt saved as ONE note is never
+  //    miscounted as "1 item":
   //      parsedCount > 0 → the accurate line-item count
   //      duplicate       → already imported (same vendor + order #); offer
   //                        "import anyway" rather than silently duplicating

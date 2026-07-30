@@ -53,7 +53,7 @@ export default defineModule({
         id: "core-placement:place",
         label: "Place in container",
         description:
-          "Put the targeted record inside a container (a location, a bin, a box — any container-trait record). Moves it if it's already somewhere else. Args: { container_kind, container_id, slot? }.",
+          "Put the targeted record inside a container (a location, a bin, a box: any container-trait record). Moves it if it's already somewhere else. Args: { container_kind, container_id, slot? }.",
         appliesTo: { traits: ["containable"] },
         invokeHandler: "core-placement.place",
         userInvokable: false,

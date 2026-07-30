@@ -9,12 +9,13 @@
 // identity service merges duplicates by email (try + cobblr.me under one email → one id).
 
 import { meta } from "../db/meta.js";
-import { identityEnabled, backfillToIdentity, type BackfillUser } from "../auth/identity-client.js";
+import { identityEnabled, backfillToIdentity, logIdentityConfig, type BackfillUser } from "../auth/identity-client.js";
 
 const BATCH = 500;
 
 export async function backfillIdentityLinks(): Promise<{ linked: number }> {
   if (!identityEnabled()) return { linked: 0 };
+  logIdentityConfig(); // one line at boot so an issuer/audience misconfig is diagnosable
 
   const rows = await meta
     .selectFrom("users")
@@ -55,5 +56,13 @@ export async function backfillIdentityLinks(): Promise<{ linked: number }> {
     }
   }
   if (linked > 0) console.log(`[reconcile] identity: linked ${linked} local user(s) to a global identity`);
+  // A persistent shortfall means the service is dropping users (bad email, a malformed
+  // response) and they'll silently re-send every boot with no SSO — surface it.
+  if (linked < rows.length) {
+    console.warn(
+      `[reconcile] identity: ${rows.length - linked} of ${rows.length} unlinked user(s) did NOT link this pass ` +
+        "(service dropped them or the batch failed) — they stay unable to use central login until resolved.",
+    );
+  }
   return { linked };
 }

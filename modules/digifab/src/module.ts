@@ -12,7 +12,7 @@ export default defineModule({
   version: "0.35.0",
   displayName: "Digital Fabrication",
   description:
-    "Send a design file to the software that runs your machine — FDM Monster, OctoPrint, and friends — and track the job to completion. Map a manager's printers to your machines and route files to them. Talks to each manager's REST API; it sends files, it never drives the hardware.",
+    "Send a design file to the software that runs your machine (FDM Monster, OctoPrint, and friends) and track the job to completion. Map a manager's printers to your machines and route files to them. Talks to each manager's REST API; it sends files, it never drives the hardware.",
   icon: "printer",
   band: "stock",
   // Experimental: the machine-manager drivers are still narrow + moving, so it

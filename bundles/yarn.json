@@ -1,12 +1,12 @@
 {
   "manifest": {
     "id": "cobblr.flagship.yarn",
-    "version": "0.6.1",
+    "version": "0.6.2",
     "name": "Yarn",
-    "description": "Yarn as its own inventory instance — skein-tracked, yarn-only fields, grouped by weight. Optional Hooks + Designs tables.",
+    "description": "Yarn as its own inventory instance: skein-tracked, yarn-only fields, grouped by weight. Optional Hooks + Designs tables.",
     "author": "Cobblr",
     "released_at": "2026-07-15",
-    "changelog": "Fixed: the Yarn update now installs — a bad field in the previous release made the update fail validation. New: track your yarn skein-by-skein. On a yarn's page, under Consumption, tap “Track each skein separately” and you get a plain count by state — “3 skeins · 2 new · 1 open” — with the metres left in the skein you're actually knitting from shown quietly (never a confusing total across skeins). Open a skein when you crack a new one, and log metres as you go; each open skein keeps its own running balance. It reads the “Length / skein” you already entered to know a full skein, so there's no capacity to type. It's opt-in per yarn and fully reversible — existing yarn is untouched until you turn it on. Earlier changes below. — Your Yarn table now reads “yarn” everywhere — the “New”, search box, and empty-state labels say “yarn” instead of “part”. (Earlier installs picked up the generic “part” wording; upgrading applies the fix.) Real yarn-user polish: the Color field is a swatch picker (type a hex or pick one), Brand + Price now show right on the “New yarn” modal, and a “Suggested needle size” field was added. Dropdowns (vendor, fibre…) let you add a new option on the fly that sticks for next time. Dropped the confusing “Summary” computed field. — Yarn is its OWN table (a Yarn instance), not a skin over generic inventory: only yarn fields show, the button reads “New yarn”, quantities are in skeins. Hooks and Designs become their own tables too. The generic inventory cruft (warranty, insured, lifecycle…) is hidden, and the pinned view is named for its lens (“By weight”). Opening a yarn now hides the Maintenance log (that section is for machines) and turns on skein-by-skein consumption tracking by default, so you can see at a glance how much of a skein is left. Existing yarn tables pick this up on upgrade.",
+    "changelog": "Fixed: the Yarn update now installs: a bad field in the previous release made the update fail validation. New: track your yarn skein-by-skein. On a yarn's page, under Consumption, tap “Track each skein separately” and you get a plain count by state. “3 skeins · 2 new · 1 open”, with the metres left in the skein you're actually knitting from shown quietly (never a confusing total across skeins). Open a skein when you crack a new one, and log metres as you go; each open skein keeps its own running balance. It reads the “Length / skein” you already entered to know a full skein, so there's no capacity to type. It's opt-in per yarn and fully reversible, existing yarn is untouched until you turn it on. Earlier changes below.: Your Yarn table now reads “yarn” everywhere: the “New”, search box, and empty-state labels say “yarn” instead of “part”. (Earlier installs picked up the generic “part” wording; upgrading applies the fix.) Real yarn-user polish: the Color field is a swatch picker (type a hex or pick one), Brand + Price now show right on the “New yarn” modal, and a “Suggested needle size” field was added. Dropdowns (vendor, fibre…) let you add a new option on the fly that sticks for next time. Dropped the confusing “Summary” computed field.. Yarn is its OWN table (a Yarn instance), not a skin over generic inventory: only yarn fields show, the button reads “New yarn”, quantities are in skeins. Hooks and Designs become their own tables too. The generic inventory cruft (warranty, insured, lifecycle…) is hidden, and the pinned view is named for its lens (“By weight”). Opening a yarn now hides the Maintenance log (that section is for machines) and turns on skein-by-skein consumption tracking by default, so you can see at a glance how much of a skein is left. Existing yarn tables pick this up on upgrade.",
     "requires": [
       {
         "module": "inventory"
@@ -28,7 +28,7 @@
             "type": "text",
             "position": 1,
             "renderer": "color-hex",
-            "help": "The basic shade — pick a hex/colour for the swatch."
+            "help": "The basic shade. Pick a hex/colour for the swatch."
           },
           {
             "entity_kind": "inventory:part",
@@ -36,7 +36,7 @@
             "display_label": "Colorway",
             "type": "text",
             "position": 2,
-            "help": "The maker's named shade — e.g. “Peacock Heather” (printed on the yarn label)."
+            "help": "The maker's named shade, e.g. “Peacock Heather” (printed on the yarn label)."
           },
           {
             "entity_kind": "inventory:part",
@@ -76,7 +76,7 @@
               "5 – Bulky",
               "6 – Super Bulky"
             ],
-            "help": "Craft Yarn Council standard weight — 0 (Lace, thinnest) to 6 (Super Bulky, thickest)."
+            "help": "Craft Yarn Council standard weight. 0 (Lace, thinnest) to 6 (Super Bulky, thickest)."
           },
           {
             "entity_kind": "inventory:part",
@@ -102,7 +102,7 @@
             "type": "number",
             "unit": "m",
             "position": 6,
-            "help": "Metres per skein, from the label — used to estimate if you have enough for a project."
+            "help": "Metres per skein, from the label, used to estimate if you have enough for a project."
           },
           {
             "entity_kind": "inventory:part",
@@ -111,7 +111,7 @@
             "type": "computed",
             "template": "{{ length_per_skein }}",
             "position": 7,
-            "help": "Metres in one full skein, from the length above. When you track skein-by-skein, each opened skein's gauge is measured against this — you never type it."
+            "help": "Metres in one full skein, from the length above. When you track skein-by-skein, each opened skein's gauge is measured against this: you never type it."
           },
           {
             "entity_kind": "inventory:part",
@@ -119,7 +119,7 @@
             "display_label": "Dye lot",
             "type": "text",
             "position": 8,
-            "help": "The batch code on the label — buy the same lot so colours match across skeins."
+            "help": "The batch code on the label, buy the same lot so colours match across skeins."
           },
           {
             "entity_kind": "inventory:part",
@@ -231,7 +231,7 @@
         "key": "designs",
         "name": "Designs",
         "question": "Want to track your designs & patterns too?",
-        "description": "A 'Designs' table (a projects instance) — each design with its pattern (file/link) + category, and the yarn it needs allocated to it.",
+        "description": "A 'Designs' table (a projects instance): each design with its pattern (file/link) + category, and the yarn it needs allocated to it.",
         "default": false,
         "requires": [
           {
@@ -302,7 +302,7 @@
         "key": "hooks",
         "name": "Hooks & needles",
         "question": "Keep track of your hooks & needles?",
-        "description": "A separate 'Hooks' table (an inventory instance) — your crochet hooks / knitting needles by gauge + material.",
+        "description": "A separate 'Hooks' table (an inventory instance): your crochet hooks / knitting needles by gauge + material.",
         "default": false,
         "next_steps": [
           {
@@ -360,7 +360,7 @@
                   "Bamboo",
                   "Plastic"
                 ],
-                "help": "What the hook is made of — affects grip + glide."
+                "help": "What the hook is made of, affects grip + glide."
               }
             ],
             "field_overrides": [

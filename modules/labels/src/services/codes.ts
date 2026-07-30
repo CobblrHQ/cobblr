@@ -401,7 +401,7 @@ export async function renameCodeGroup(
         ok: false,
         code: "frozen",
         message:
-          "labels have already been printed under this prefix, so this list's code can't be removed — a sticker out in the world still reads it.",
+          "labels have already been printed under this prefix, so this list's code can't be removed, a sticker out in the world still reads it.",
       };
     }
     const removed = await db.transaction().execute(async (trx) => {

@@ -7,7 +7,6 @@
 // admin can leave open until they've shared it.
 
 import { useState, type FormEvent } from "react";
-import { AreaTabs, ACCESS_TABS } from "../components/AreaTabs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ClipboardCopy, Plus, RefreshCw } from "lucide-react";
 import { useToast, usePageTitle, Modal } from "@cobblr/platform-web";
@@ -23,7 +22,7 @@ interface TempPasswordResult {
   temp_password: string;
 }
 
-export function UsersPage() {
+export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
   usePageTitle("Users");
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
@@ -86,12 +85,11 @@ export function UsersPage() {
   }
 
   return (
-    <div className="space-y-5 max-w-4xl mx-auto">
-      <AreaTabs tabs={ACCESS_TABS} area="access" />
+    <div className={embedded ? "space-y-5" : "space-y-5 max-w-4xl mx-auto"}>
       <div className="flex items-baseline justify-between border-b border-line dark:border-slate-700 pb-3">
         <div>
           <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
-            users
+            {embedded ? "accounts" : "users"}
           </h1>
           <span className="page-subtitle">
             mint workspace accounts with a temp password. user resets on first login. no email required.

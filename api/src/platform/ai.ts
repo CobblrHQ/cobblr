@@ -28,6 +28,7 @@ import { resolvePersonalProvider } from "./user-credentials.js";
 import { signMcpReadGrant } from "../auth/jwt.js";
 import { publicBaseUrl } from "./public-url.js";
 import { env } from "../env.js";
+import { fullText, thumbnailImages } from "./ai-log.js";
 
 /** True when the chat input carries workspace tool defs (the AI wants to read
  *  the workspace) — the only case where the bridge MCP relay is relevant. */
@@ -287,19 +288,6 @@ function truncate(s: string, n = 200): string {
   return s.length <= n ? s : s.slice(0, n - 1) + "…";
 }
 
-// Full text for the activity log: JSON, but redact images + clamp any long
-// string (base64), then cap the whole thing — so a vision payload can't balloon
-// the log. Readable for chat/text; safe for everything else.
-function fullText(obj: unknown, cap = 20_000): string {
-  const json = JSON.stringify(obj, (k, v) => {
-    if (k === "image_b64" || k === "images" || k === "image") return "[image]";
-    if (typeof v === "string" && v.length > 4000) return v.slice(0, 200) + "…[clamped]";
-    return v;
-  });
-  if (!json) return "";
-  return json.length <= cap ? json : json.slice(0, cap) + "…[truncated]";
-}
-
 /** Would an AI call work for this workspace/user right now? The cheap,
  *  read-only twin of invoke()'s gauntlet — kill-switch → personal
  *  connection → workspace/managed provider → entitlement guard — so the
@@ -491,7 +479,7 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
         user_id: req.userId ?? null,
         input_summary: truncate(JSON.stringify(req.input)),
         output_summary: truncate(JSON.stringify(hit.result)),
-        input_full: fullText(req.input),
+        input_full: fullText(await thumbnailImages(req.input)),
         output_full: fullText(hit.result),
         source_kind: req.source?.kind ?? null,
         source_id: req.source?.id ?? null,
@@ -543,7 +531,7 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
           user_id: req.userId ?? null,
           input_summary: truncate(JSON.stringify(req.input)),
           output_summary: truncate(JSON.stringify(shared.result)),
-          input_full: fullText(req.input),
+          input_full: fullText(await thumbnailImages(req.input)),
           output_full: fullText(shared.result),
           source_kind: req.source?.kind ?? null,
           source_id: req.source?.id ?? null,
@@ -602,7 +590,7 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
     user_id: req.userId ?? null,
     input_summary: truncate(JSON.stringify(req.input)),
     output_summary: ok ? truncate(JSON.stringify(payload.result)) : null,
-    input_full: fullText(req.input),
+    input_full: fullText(await thumbnailImages(req.input)),
     output_full: ok ? fullText(payload.result) : null,
     source_kind: req.source?.kind ?? null,
     source_id: req.source?.id ?? null,

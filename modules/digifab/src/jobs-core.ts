@@ -472,7 +472,7 @@ async function commitBuildIfLinked(
   if (!build) {
     await db
       .updateTable("digifab_jobs")
-      .set({ error: "linked build not found — no inventory was consumed", updated_at: new Date() })
+      .set({ error: "linked build not found: no inventory was consumed", updated_at: new Date() })
       .where("id", "=", jobId)
       .execute();
     return;
@@ -615,7 +615,7 @@ export async function sendJob(
       // than silently upload a ZERO-BYTE gcode to a real farm.
       await db
         .updateTable("digifab_jobs")
-        .set({ error: "the job's stored file no longer exists — re-create the job with a file", updated_at: new Date() })
+        .set({ error: "the job's stored file no longer exists, re-create the job with a file", updated_at: new Date() })
         .where("id", "=", jobId)
         .execute();
       return { ok: false, code: "file_missing" };
@@ -650,7 +650,7 @@ export async function sendJob(
       remote_job_id: remoteJobId,
       target_device: sub.deviceId ?? deviceId,
       status,
-      ...(untrackable ? { error: "the manager accepted the job but returned no job id — Cobblr can't track it to completion" } : {}),
+      ...(untrackable ? { error: "the manager accepted the job but returned no job id. Cobblr can't track it to completion" } : {}),
       updated_at: new Date(),
     })
     .where("id", "=", jobId)
@@ -717,7 +717,7 @@ export async function assignJob(
       target_device: sub.deviceId ?? deviceId,
       target_tag: null, // a specific printer was chosen — drop the ambiguous tag
       status,
-      ...(sub.queued && !remoteJobId ? { error: "the manager accepted the job but returned no job id — Cobblr can't track it to completion" } : {}),
+      ...(sub.queued && !remoteJobId ? { error: "the manager accepted the job but returned no job id. Cobblr can't track it to completion" } : {}),
       updated_at: new Date(),
     })
     .where("id", "=", jobId)

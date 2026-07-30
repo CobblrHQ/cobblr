@@ -20,6 +20,7 @@ import { reportBarcodeCorrection } from "./barcode-corrections.js";
 import { classifyScanCode, resolveIsbn, resolveAsin } from "./scan-router.js";
 import { crossCheckScanPhoto, identifyImage, parsePackSize, refreshCatalogImageByName } from "./enrich-photo.js";
 import { identityMeta, mergeMeta } from "./metadata.js";
+import { tidyTruncatedName } from "./item-name.js";
 import { BARCODE_NS } from "./barcode-cache.js";
 import { findDecoder } from "./identifier-registry.js";
 import { registerBuiltinDecoders } from "./vin-decode.js";
@@ -136,8 +137,14 @@ function provenanceLabel(hit: BarcodeHit): string {
  *  much better as "Jack Daniel's Black Label No.7". Skips when the brand is
  *  already present (full string, or all its significant words appear) so it never
  *  doubles up ("Jack Daniel's Jack Daniel's …"). Brand-less / nameless → unchanged. */
+/** The stored name for a barcode/web result, brand-prefixed when the title omits
+ *  it. Also the CHOKE POINT where a truncated title is trimmed: every barcode and
+ *  web-search name write goes through here, so sanitising once covers them all
+ *  rather than hoping each write site remembers (the identify boundary is
+ *  handled at its own parser). A reply cut off mid-name otherwise lands on the
+ *  card with an unclosed bracket. */
 function withBrandPrefix(name: string | null, brand: string | null): string | null {
-  const n = (name ?? "").trim();
+  const n = tidyTruncatedName(name);
   const b = (brand ?? "").trim();
   if (!n || !b) return name;
   const nl = n.toLowerCase();
@@ -162,11 +169,20 @@ async function nameFromPhoto(ctx: EnrichContext): Promise<boolean> {
     (await platform().files.read(ctx.orgId, row.image_file_id, "medium")) ??
     (await platform().files.read(ctx.orgId, row.image_file_id, "original"));
   if (!file) return false;
+  // The user's corrections ride into THIS identify too. This is the path that
+  // renamed the item when the web result was uncorroborated, so running it blind
+  // to a hint is how a corrected item got re-named to something the user had
+  // already ruled out.
   const identity = await identifyImage(
     ctx.orgId,
     Buffer.from(file.bytes).toString("base64"),
     file.mimeType,
     ctx.itemId,
+    ctx.userId,
+    !!ctx.hint || !!ctx.force,
+    ctx.hint,
+    false,
+    ctx.hints,
   ).catch(() => null);
   if (!identity?.name) return false;
   // The vision call can outlive the request's tenant pool — re-acquire.
@@ -180,6 +196,9 @@ async function nameFromPhoto(ctx: EnrichContext): Promise<boolean> {
         source: "photo",
         category: identity.category,
         entity_type: identity.entityType,
+        // The read that named it also SAW the colour — keep it, or this path
+        // (the barcode fallback) silently drops what the vision just learned.
+        ...(identity.color ? { color: identity.color } : {}),
         // The identify read already counted what's in frame — carry it, so a
         // barcode-miss photo gets the same split offer a photo-only scan gets.
         ...(identity.observations
@@ -268,6 +287,8 @@ interface EnrichContext {
   /** The user's "what's wrong / what is it" note — folded into the web identify
    *  so a correction like "it's Maker's Mark" steers the re-resolution. */
   hint?: string;
+  /** Every correction the user has given, oldest first; `hint` is the newest. */
+  hints?: string[];
 }
 
 export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {

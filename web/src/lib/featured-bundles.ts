@@ -136,7 +136,7 @@ function connectMachinesFeature(noun: string): BundleFeature {
     name: `Connect to your ${noun}s`,
     question: `Want to send files to your ${noun}s and track the job?`,
     description:
-      "Adds the Print Manager — map each machine to the software that runs it (FDM Monster, OctoPrint, …), send a file to be made, and track the job to completion. Talks to the manager's API; it never drives the hardware. You can link a machine to its manager right from the machine's page.",
+      "Adds the Print Manager: map each machine to the software that runs it (FDM Monster, OctoPrint, …), send a file to be made, and track the job to completion. Talks to the manager's API; it never drives the hardware. You can link a machine to its manager right from the machine's page.",
     default: true,
     requires: [{ module: "digifab" }],
   };
@@ -156,10 +156,10 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Track the fridge/pantry with expiry + storage, and auto-build a shopping list when something runs low or is about to expire. Check an item off → it restocks.",
     manifest: {
       id: "cobblr.flagship.food-cluster",
-      version: "0.2.0",
+      version: "0.2.1",
       released_at: "2026-07-17",
       changelog:
-        "Back in the catalog as a core (suggested) bundle. The groceries story — pantry stock with expiry + storage, an auto-built shopping list on low-stock/expiry, restock on check-off — had no live offer after the catalog curation pass, and it is a flagship use case (one app for inventory AND groceries). Its axis has no competing suggestion, so returning it adds no scan ambiguity.",
+        "Back in the catalog as a core (suggested) bundle. The groceries story (pantry stock with expiry + storage, an auto-built shopping list on low-stock/expiry, restock on check-off) had no live offer after the catalog curation pass, and it is a flagship use case (one app for inventory AND groceries). Its axis has no competing suggestion, so returning it adds no scan ambiguity.",
       name: "Kitchen & Groceries",
       description:
         "Turn inventory + lists into a kitchen system: expiry + storage fields, auto shopping list on low-stock/expiry, restock on check-off.",
@@ -168,7 +168,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       wires: [
         { source_kind: "inventory:part", action_id: "lists:add-item", trigger_type: "event", trigger_event: "inventory.stock.low", args: { listTitle: "Shopping list" } },
         { source_kind: "inventory:part", action_id: "lists:add-item", trigger_type: "event", trigger_event: "lists.item.expiring", args: { listTitle: "Shopping list" } },
-        { source_kind: "inventory:part", action_id: "inventory:adjust-stock", trigger_type: "event", trigger_event: "lists.item.checked", args: { delta: 1, reason: "Restocked — checked off the shopping list" } },
+        { source_kind: "inventory:part", action_id: "inventory:adjust-stock", trigger_type: "event", trigger_event: "lists.item.checked", args: { delta: 1, reason: "Restocked, checked off the shopping list" } },
       ],
       field_defs: [
         { entity_kind: "inventory:part", name: "expires_on", display_label: "Expires", type: "date", position: 1 },
@@ -181,11 +181,11 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "🔧",
     blurb:
-      "Run a workshop: keep parts in inventory, define Builds (bills of materials) of those parts, see how many you can build right now — and auto-add anything that runs low to a parts shopping list you check off to restock.",
+      "Run a workshop: keep parts in inventory, define Builds (bills of materials) of those parts, see how many you can build right now, and auto-add anything that runs low to a parts shopping list you check off to restock.",
     manifest: {
       id: "cobblr.flagship.maker-workshop",
       catalog: "disabled",
-      version: "0.1.0",
+      version: "0.1.1",
       name: "Maker Workshop",
       description:
         "Inventory + Builds + a parts shopping list, pre-wired into the maker loop: define builds as recipes of tracked parts, build them (which consumes stock), and auto-restock low parts through a shopping list you check off. Showcases the Builds (light BOM) module.",
@@ -196,7 +196,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         // parts shopping list. Same proven plumbing as the kitchen bundle.
         { source_kind: "inventory:part", action_id: "lists:add-item", trigger_type: "event", trigger_event: "inventory.stock.low", args: { listTitle: "Parts to buy" } },
         // Check the part off the shopping list → restock it by one.
-        { source_kind: "inventory:part", action_id: "inventory:adjust-stock", trigger_type: "event", trigger_event: "lists.item.checked", args: { delta: 1, reason: "Restocked — checked off the parts list" } },
+        { source_kind: "inventory:part", action_id: "inventory:adjust-stock", trigger_type: "event", trigger_event: "lists.item.checked", args: { delta: 1, reason: "Restocked, checked off the parts list" } },
       ],
       field_defs: [
         { entity_kind: "inventory:part", name: "part_type", display_label: "Part type", type: "text", position: 1, choices: ["Mechanical", "Electronic", "Fastener", "Printed", "Raw material", "Consumable"] },
@@ -209,7 +209,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "🥬➜📈",
     blurb:
-      "Bridge: every grocery order you receive logs its cost as a 'Grocery spend' measurement — your spending trends like any metric. Set a monthly budget as the goal.",
+      "Bridge: every grocery order you receive logs its cost as a 'Grocery spend' measurement: your spending trends like any metric. Set a monthly budget as the goal.",
     manifest: {
       id: "cobblr.flagship.kitchen-fitness",
       catalog: "disabled",
@@ -233,20 +233,20 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "🧱",
     blurb:
-      "Lego as its own tables — Sets you own (sealed / built / disassembled), optional Bricks bins, a Rebrickable catalog link, and one-tap Disassemble that spawns the parts and opens the sorting planner.",
+      "Lego as its own tables. Sets you own (sealed / built / disassembled), optional Bricks bins, a Rebrickable catalog link, and one-tap Disassemble that spawns the parts and opens the sorting planner.",
     next_steps: [
       { label: "Add your first set", module: "inventory", path: "/instances/sets", hint: "Sealed, built, or already taken apart." },
     ],
     manifest: {
       id: "cobblr.community.lego",
-      version: "0.5.0",
+      version: "0.5.1",
       name: "Lego",
       description:
-        "Lego as its own tables — Sets you own (sealed / built / disassembled) with optional Bricks bins, a Rebrickable catalog link, and a one-tap Disassemble that spawns the parts and opens the sorting planner.",
+        "Lego as its own tables. Sets you own (sealed / built / disassembled) with optional Bricks bins, a Rebrickable catalog link, and a one-tap Disassemble that spawns the parts and opens the sorting planner.",
       author: "Cobblr community",
       released_at: "2026-07-11",
       changelog:
-        "Lego is now its OWN tables, not a skin over generic inventory. Installing it gives you a Sets table (each set sealed, built, or disassembled) with set number, theme, year, piece count and minifig count — the generic warranty/serial/supplier clutter is hidden. Turn on the checkboxes you want: track individual Bricks in bins, link to the Rebrickable catalog so sets and parts match real data, disassemble a built set into its parts and sort them into bins, print QR labels, or add by scanning.",
+        "Lego is now its OWN tables, not a skin over generic inventory. Installing it gives you a Sets table (each set sealed, built, or disassembled) with set number, theme, year, piece count and minifig count: the generic warranty/serial/supplier clutter is hidden. Turn on the checkboxes you want: track individual Bricks in bins, link to the Rebrickable catalog so sets and parts match real data, disassemble a built set into its parts and sort them into bins, print QR labels, or add by scanning.",
       requires: [{ module: "inventory" }],
       // The always-on BASE: a Sets table (the noun everyone with Lego has). The
       // Bricks/bins world, the Rebrickable link, and Disassemble are opt-in
@@ -260,7 +260,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           item_noun: "set",
           qty_unit: "each",
           field_defs: [
-            { entity_kind: "inventory:part", name: "lifecycle", display_label: "State", type: "text", position: 1, choices: ["sealed", "built", "disassembled"], help: "Where this set is — still sealed in the box, built, or taken apart into bricks." },
+            { entity_kind: "inventory:part", name: "lifecycle", display_label: "State", type: "text", position: 1, choices: ["sealed", "built", "disassembled"], help: "Where this set is: still sealed in the box, built, or taken apart into bricks." },
             { entity_kind: "inventory:part", name: "set_number", display_label: "Set number", type: "text", position: 2, help: "The number printed on the box (e.g. 75192)." },
             { entity_kind: "inventory:part", name: "theme", display_label: "Theme", type: "text", position: 3, help: "Star Wars, City, Technic, Botanicals…" },
             { entity_kind: "inventory:part", name: "year", display_label: "Release year", type: "number", position: 4, help: "The year the set was released." },
@@ -286,7 +286,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           key: "bricks",
           name: "Bricks & bins",
           question: "Track individual bricks in bins too?",
-          description: "A separate 'Bricks' table for loose parts — each brick by shape (part category) and colour, filed into a bin. This is where a disassembled set's parts land.",
+          description: "A separate 'Bricks' table for loose parts: each brick by shape (part category) and colour, filed into a bin. This is where a disassembled set's parts land.",
           default: true,
           next_steps: [
             { label: "Open your Bricks table", module: "inventory", path: "/instances/bricks", hint: "Loose parts by shape + colour, filed into bins." },
@@ -301,7 +301,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
               qty_unit: "each",
               field_defs: [
                 { entity_kind: "inventory:part", name: "part_num", display_label: "Part number", type: "text", position: 2, help: "The Rebrickable/Lego element id (e.g. 3005 for a 1x1 brick)." },
-                { entity_kind: "inventory:part", name: "color", display_label: "Colour", type: "text", position: 3, renderer: "color-hex", help: "The brick's colour — pick a hex/colour for the swatch." },
+                { entity_kind: "inventory:part", name: "color", display_label: "Colour", type: "text", position: 3, renderer: "color-hex", help: "The brick's colour. Pick a hex/colour for the swatch." },
                 { entity_kind: "inventory:part", name: "color_id", display_label: "Colour id", type: "text", position: 4, help: "The Rebrickable colour id (set automatically when parts come from a disassemble)." },
                 { entity_kind: "inventory:part", name: "condition", display_label: "Condition", type: "text", position: 5, choices: ["new", "used", "damaged"], help: "The state of the brick." },
               ],
@@ -323,20 +323,20 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           key: "rebrickable",
           name: "Rebrickable catalog",
           question: "Link to the Rebrickable catalog?",
-          description: "Installs the Rebrickable reference catalogs (themes, part categories, colours, parts, sets, minifigs) so your sets and bricks match real data — and a set's bill of materials powers Disassemble. Import the rows in one tap from the catalog page.",
+          description: "Installs the Rebrickable reference catalogs (themes, part categories, colours, parts, sets, minifigs) so your sets and bricks match real data, and a set's bill of materials powers Disassemble. Import the rows in one tap from the catalog page.",
           default: true,
           requires: [{ module: "core-catalogs" }],
           next_steps: [
             { label: "Import Rebrickable data", module: "core-catalogs", path: "/configuration/catalogs", hint: "One tap pulls the catalog rows from Rebrickable." },
           ],
           catalogs: [
-            { external_id: "rebrickable-themes", name: "Rebrickable themes", description: "Lego themes — Star Wars, City, Technic, etc.", source_url: "https://cdn.rebrickable.com/media/downloads/themes.csv.gz", puller_id: "rebrickable", schema: { id_column: "id", title_column: "name", bindable_to_kinds: [], semantic_type: "lego.theme" } },
-            { external_id: "rebrickable-part-categories", name: "Rebrickable part categories", description: "Part categories — bricks, plates, slopes, tiles, wedges, etc. The bin taxonomy.", source_url: "https://cdn.rebrickable.com/media/downloads/part_categories.csv.gz", puller_id: "rebrickable", schema: { id_column: "id", title_column: "name", bindable_to_kinds: [], semantic_type: "lego.part-category" } },
+            { external_id: "rebrickable-themes", name: "Rebrickable themes", description: "Lego themes. Star Wars, City, Technic, etc.", source_url: "https://cdn.rebrickable.com/media/downloads/themes.csv.gz", puller_id: "rebrickable", schema: { id_column: "id", title_column: "name", bindable_to_kinds: [], semantic_type: "lego.theme" } },
+            { external_id: "rebrickable-part-categories", name: "Rebrickable part categories", description: "Part categories: bricks, plates, slopes, tiles, wedges, etc. The bin taxonomy.", source_url: "https://cdn.rebrickable.com/media/downloads/part_categories.csv.gz", puller_id: "rebrickable", schema: { id_column: "id", title_column: "name", bindable_to_kinds: [], semantic_type: "lego.part-category" } },
             { external_id: "rebrickable-colors", name: "Rebrickable colors", description: "Every Lego colour, with a swatch.", source_url: "https://cdn.rebrickable.com/media/downloads/colors.csv.gz", puller_id: "rebrickable", schema: { id_column: "id", title_column: "name", hero_field: "rgb", hero_renderer: "color-hex", field_renderers: { is_trans: "boolean" }, field_labels: { is_trans: "Transparent" }, bindable_to_kinds: [], semantic_type: "lego.color" } },
             { external_id: "rebrickable-parts", name: "Rebrickable parts", description: "Individual Lego parts. Match a brick to identify it.", source_url: "https://cdn.rebrickable.com/media/downloads/parts.csv.gz", puller_id: "rebrickable", schema: { id_column: "part_num", title_column: "name", image_column: "img_url", field_labels: { part_num: "Part number", part_cat_id: "Category" }, field_map: { external_id: "part_num" }, bindable_to_kinds: ["inventory:part"], semantic_type: "lego.part" } },
             { external_id: "rebrickable-sets", name: "Rebrickable sets", description: "Lego sets. Match a set to pull its number, theme, year and pieces.", source_url: "https://cdn.rebrickable.com/media/downloads/sets.csv.gz", puller_id: "rebrickable", schema: { id_column: "set_num", title_column: "name", image_column: "img_url", field_renderers: { year: "year" }, field_labels: { set_num: "Set number", theme_id: "Theme", num_parts: "Pieces", year: "Year" }, field_map: { external_id: "set_number", category: "theme", year: "year", num_parts: "piece_count" }, bindable_to_kinds: ["inventory:part"], semantic_type: "lego.set" } },
             { external_id: "rebrickable-minifigs", name: "Rebrickable minifigs", description: "Minifigure catalog.", source_url: "https://cdn.rebrickable.com/media/downloads/minifigs.csv.gz", puller_id: "rebrickable", schema: { id_column: "fig_num", title_column: "name", image_column: "img_url", field_labels: { fig_num: "Figure number", num_parts: "Pieces" }, bindable_to_kinds: ["inventory:part"], semantic_type: "lego.minifig" } },
-            { external_id: "rebrickable-inventory-parts", name: "Rebrickable set inventories", description: "The set bill of materials — which parts each set contains. Powers Disassemble. Large (~5M rows); import when you need it.", source_url: "https://cdn.rebrickable.com/media/downloads/inventory_parts.csv.gz", puller_id: "rebrickable", schema: { id_column: "row_id", title_column: "part_num", image_column: "img_url", field_renderers: { is_spare: "boolean" }, field_labels: { set_num: "Set number", part_num: "Part number", color_id: "Colour" }, exclude_from_global_search: true, bindable_to_kinds: [], semantic_type: "lego.bom" } },
+            { external_id: "rebrickable-inventory-parts", name: "Rebrickable set inventories", description: "The set bill of materials, which parts each set contains. Powers Disassemble. Large (~5M rows); import when you need it.", source_url: "https://cdn.rebrickable.com/media/downloads/inventory_parts.csv.gz", puller_id: "rebrickable", schema: { id_column: "row_id", title_column: "part_num", image_column: "img_url", field_renderers: { is_spare: "boolean" }, field_labels: { set_num: "Set number", part_num: "Part number", color_id: "Colour" }, exclude_from_global_search: true, bindable_to_kinds: [], semantic_type: "lego.bom" } },
           ],
         },
         {
@@ -347,7 +347,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           default: true,
           requires: [{ module: "bricklink-connector" }],
           next_steps: [
-            { label: "Open a built set to disassemble it", module: "inventory", path: "/instances/sets", hint: "Open a set, then use Disassemble — its parts land in Bricks and the planner opens." },
+            { label: "Open a built set to disassemble it", module: "inventory", path: "/instances/sets", hint: "Open a set, then use Disassemble: its parts land in Bricks and the planner opens." },
           ],
         },
         {
@@ -381,7 +381,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "🛠️",
     blurb:
-      "Vintage hand tool collection — model, era, finish, condition. Prints labels with model + era so you can find them across a workshop.",
+      "Vintage hand tool collection: model, era, finish, condition. Prints labels with model + era so you can find them across a workshop.",
     manifest: {
       id: "cobblr.community.vintage-tools",
       catalog: "disabled",
@@ -419,7 +419,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "🎛️",
     blurb:
-      "3D printer parts — track voltage, datasheet URL, footprint, and a print-label template tuned for narrow bin labels. Uses the native `manufacturer` field.",
+      "3D printer parts: track voltage, datasheet URL, footprint, and a print-label template tuned for narrow bin labels. Uses the native `manufacturer` field.",
     manifest: {
       id: "cobblr.community.printer-parts",
       version: "0.2.0",
@@ -455,14 +455,14 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "🌱",
     blurb:
-      "Garden tracker — plants as assets with species, sun exposure, planted date, and a repeating watering schedule that the recurrence scanner picks up automatically.",
+      "Garden tracker: plants as assets with species, sun exposure, planted date, and a repeating watering schedule that the recurrence scanner picks up automatically.",
     manifest: {
       id: "cobblr.community.garden",
       catalog: "extended",
-      version: "0.1.0",
+      version: "0.1.1",
       name: "Garden",
       description:
-        "Custom assets:asset fields for tracking plants — species, planted date, watering schedule, sun exposure.",
+        "Custom assets:asset fields for tracking plants: species, planted date, watering schedule, sun exposure.",
       author: "Cobblr community",
       requires: [{ module: "assets" }],
       wires: [],
@@ -477,7 +477,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "📚",
     blurb:
-      "Personal library — author, ISBN, year, read-status, on its own shelf that opens as a cover wall. Print spine labels with one wire.",
+      "Personal library: author, ISBN, year, read-status, on its own shelf that opens as a cover wall. Print spine labels with one wire.",
     manifest: {
       id: "cobblr.community.bookshelf",
       version: "0.2.0",
@@ -546,7 +546,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "📖",
     blurb:
-      "Lending library — the shelf you lend FROM: count copies, see who has one and when it's due back.",
+      "Lending library: the shelf you lend FROM: count copies, see who has one and when it's due back.",
     manifest: {
       id: "cobblr.community.lending-library",
       version: "0.1.0",
@@ -611,7 +611,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "🔧",
     blurb:
-      "Tool library — checkout/checkin tracking. Marks machines with borrower, due_date, condition. Pair with the labels module to print barcoded check-out tags.",
+      "Tool library: checkout/checkin tracking. Marks machines with borrower, due_date, condition. Pair with the labels module to print barcoded check-out tags.",
     manifest: {
       id: "cobblr.community.tool-library",
       catalog: "disabled",
@@ -648,13 +648,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "🖨️",
     blurb:
-      "Track your 3D printers — hotend, extruder, board, firmware, bed size, local IP. Its own tab; still part of your machines (prints, fleet, maintenance).",
+      "Track your 3D printers: hotend, extruder, board, firmware, bed size, local IP. Its own tab; still part of your machines (prints, fleet, maintenance).",
     manifest: {
       id: "cobblr.community.3d-printers",
-      version: "0.3.0",
+      version: "0.3.1",
       name: "3D Printers",
       description:
-        "A 3D Printers tracker — your printers with hotend, extruder, board, firmware, bed size, and local IP. It's a named view of your machines, so each printer still drives prints, fleet status, and maintenance.",
+        "A 3D Printers tracker: your printers with hotend, extruder, board, firmware, bed size, and local IP. It's a named view of your machines, so each printer still drives prints, fleet status, and maintenance.",
       author: "Cobblr community",
       released_at: "2026-06-19",
       changelog: machineBundleChangelog("3D printer", "3D Printers", "hotend, extruder, mainboard, firmware, bed size, local IP"),
@@ -758,14 +758,14 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "🔥",
     blurb:
-      "Track your laser cutters — tube type, wattage, bed size, cooling, focal length. Its own tab; still part of your machines (jobs, fleet, maintenance).",
+      "Track your laser cutters: tube type, wattage, bed size, cooling, focal length. Its own tab; still part of your machines (jobs, fleet, maintenance).",
     manifest: {
       id: "cobblr.community.laser-cutters",
       catalog: "extended",
-      version: "0.3.0",
+      version: "0.3.1",
       name: "Laser Cutters",
       description:
-        "A Laser Cutters tracker — tube type, wattage, bed size, cooling, focal length. A named view of your machines, so each cutter still drives jobs, fleet status, and maintenance.",
+        "A Laser Cutters tracker: tube type, wattage, bed size, cooling, focal length. A named view of your machines, so each cutter still drives jobs, fleet status, and maintenance.",
       author: "Cobblr community",
       released_at: "2026-06-19",
       changelog: machineBundleChangelog("laser cutter", "Laser Cutters", "tube type, wattage, bed size, cooling, focal length"),
@@ -834,14 +834,14 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "⚙️",
     blurb:
-      "Track your CNC machines — spindle, axes, work area, controller, coolant. Its own tab; still part of your machines (jobs, fleet, maintenance).",
+      "Track your CNC machines: spindle, axes, work area, controller, coolant. Its own tab; still part of your machines (jobs, fleet, maintenance).",
     manifest: {
       id: "cobblr.community.cnc-machines",
       catalog: "extended",
-      version: "0.3.0",
+      version: "0.3.1",
       name: "CNC Machines",
       description:
-        "A CNC Machines tracker — spindle, axes, work area, controller, coolant. A named view of your machines, so each mill still drives jobs, fleet status, and maintenance.",
+        "A CNC Machines tracker: spindle, axes, work area, controller, coolant. A named view of your machines, so each mill still drives jobs, fleet status, and maintenance.",
       author: "Cobblr community",
       released_at: "2026-06-19",
       changelog: machineBundleChangelog("CNC machine", "CNC Machines", "spindle, axes, work area, controller, coolant"),
@@ -924,22 +924,22 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     // (projects instance). The studio capabilities are the opt-in features.
     glyph: "🧶",
     blurb:
-      "Your yarn as its own thing — brand, colorway, fibre, weight, tracked by the skein, with only yarn fields and a grouped 'My yarn stash' view. Turn on extras: a Hooks table, a Designs table with patterns, an auto shopping list, and scan-to-add.",
+      "Your yarn as its own thing: brand, colorway, fibre, weight, tracked by the skein, with only yarn fields and a grouped 'My yarn stash' view. Turn on extras: a Hooks table, a Designs table with patterns, an auto shopping list, and scan-to-add.",
     // Land in the Yarn TABLE (the inventory instance), not bare /inventory —
     // so "where to start" points at the thing the bundle just made.
     next_steps: [
-      { label: "Add your yarn", module: "inventory", path: "/instances/yarn", hint: "Brand, colorway, fibre, weight — tracked by the skein." },
+      { label: "Add your yarn", module: "inventory", path: "/instances/yarn", hint: "Brand, colorway, fibre, weight, tracked by the skein." },
     ],
     manifest: {
       id: "cobblr.flagship.yarn",
-      version: "0.6.1",
+      version: "0.6.2",
       name: "Yarn",
       description:
-        "Yarn as its own inventory instance — skein-tracked, yarn-only fields, grouped by weight. Optional Hooks + Designs tables.",
+        "Yarn as its own inventory instance: skein-tracked, yarn-only fields, grouped by weight. Optional Hooks + Designs tables.",
       author: "Cobblr",
       released_at: "2026-07-15",
       changelog:
-        "Fixed: the Yarn update now installs — a bad field in the previous release made the update fail validation. New: track your yarn skein-by-skein. On a yarn's page, under Consumption, tap “Track each skein separately” and you get a plain count by state — “3 skeins · 2 new · 1 open” — with the metres left in the skein you're actually knitting from shown quietly (never a confusing total across skeins). Open a skein when you crack a new one, and log metres as you go; each open skein keeps its own running balance. It reads the “Length / skein” you already entered to know a full skein, so there's no capacity to type. It's opt-in per yarn and fully reversible — existing yarn is untouched until you turn it on. Earlier changes below. — Your Yarn table now reads “yarn” everywhere — the “New”, search box, and empty-state labels say “yarn” instead of “part”. (Earlier installs picked up the generic “part” wording; upgrading applies the fix.) Real yarn-user polish: the Color field is a swatch picker (type a hex or pick one), Brand + Price now show right on the “New yarn” modal, and a “Suggested needle size” field was added. Dropdowns (vendor, fibre…) let you add a new option on the fly that sticks for next time. Dropped the confusing “Summary” computed field. — Yarn is its OWN table (a Yarn instance), not a skin over generic inventory: only yarn fields show, the button reads “New yarn”, quantities are in skeins. Hooks and Designs become their own tables too. The generic inventory cruft (warranty, insured, lifecycle…) is hidden, and the pinned view is named for its lens (“By weight”). Opening a yarn now hides the Maintenance log (that section is for machines) and turns on skein-by-skein consumption tracking by default, so you can see at a glance how much of a skein is left. Existing yarn tables pick this up on upgrade.",
+        "Fixed: the Yarn update now installs: a bad field in the previous release made the update fail validation. New: track your yarn skein-by-skein. On a yarn's page, under Consumption, tap “Track each skein separately” and you get a plain count by state. “3 skeins · 2 new · 1 open”, with the metres left in the skein you're actually knitting from shown quietly (never a confusing total across skeins). Open a skein when you crack a new one, and log metres as you go; each open skein keeps its own running balance. It reads the “Length / skein” you already entered to know a full skein, so there's no capacity to type. It's opt-in per yarn and fully reversible, existing yarn is untouched until you turn it on. Earlier changes below.: Your Yarn table now reads “yarn” everywhere: the “New”, search box, and empty-state labels say “yarn” instead of “part”. (Earlier installs picked up the generic “part” wording; upgrading applies the fix.) Real yarn-user polish: the Color field is a swatch picker (type a hex or pick one), Brand + Price now show right on the “New yarn” modal, and a “Suggested needle size” field was added. Dropdowns (vendor, fibre…) let you add a new option on the fly that sticks for next time. Dropped the confusing “Summary” computed field.. Yarn is its OWN table (a Yarn instance), not a skin over generic inventory: only yarn fields show, the button reads “New yarn”, quantities are in skeins. Hooks and Designs become their own tables too. The generic inventory cruft (warranty, insured, lifecycle…) is hidden, and the pinned view is named for its lens (“By weight”). Opening a yarn now hides the Maintenance log (that section is for machines) and turns on skein-by-skein consumption tracking by default, so you can see at a glance how much of a skein is left. Existing yarn tables pick this up on upgrade.",
       requires: [{ module: "inventory" }],
       // The always-on base: a "Yarn" instance of inventory.
       provides_instances: [
@@ -951,14 +951,14 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           item_noun: "yarn",
           qty_unit: "skein",
           field_defs: [
-            { entity_kind: "inventory:part", name: "color", display_label: "Color", type: "text", position: 1, renderer: "color-hex", help: "The basic shade — pick a hex/colour for the swatch." },
-            { entity_kind: "inventory:part", name: "colorway", display_label: "Colorway", type: "text", position: 2, help: "The maker's named shade — e.g. “Peacock Heather” (printed on the yarn label)." },
+            { entity_kind: "inventory:part", name: "color", display_label: "Color", type: "text", position: 1, renderer: "color-hex", help: "The basic shade. Pick a hex/colour for the swatch." },
+            { entity_kind: "inventory:part", name: "colorway", display_label: "Colorway", type: "text", position: 2, help: "The maker's named shade, e.g. “Peacock Heather” (printed on the yarn label)." },
             { entity_kind: "inventory:part", name: "fiber", display_label: "Fibre", type: "text", position: 3, choices: ["Wool", "Merino", "Cotton", "Acrylic", "Nylon", "Chenille", "Alpaca", "Silk", "Linen", "Bamboo", "Cashmere", "Blend"], help: "What the yarn is made of." },
-            { entity_kind: "inventory:part", name: "weight_class", display_label: "Weight", type: "text", position: 4, choices: ["0 – Lace", "1 – Fingering", "2 – Sport", "3 – DK", "4 – Worsted", "4 – Aran", "5 – Bulky", "6 – Super Bulky"], help: "Craft Yarn Council standard weight — 0 (Lace, thinnest) to 6 (Super Bulky, thickest)." },
+            { entity_kind: "inventory:part", name: "weight_class", display_label: "Weight", type: "text", position: 4, choices: ["0 – Lace", "1 – Fingering", "2 – Sport", "3 – DK", "4 – Worsted", "4 – Aran", "5 – Bulky", "6 – Super Bulky"], help: "Craft Yarn Council standard weight. 0 (Lace, thinnest) to 6 (Super Bulky, thickest)." },
             { entity_kind: "inventory:part", name: "vendor", display_label: "Vendor", type: "text", position: 5, choices: ["Michaels", "Hobby Lobby", "Walmart", "Joann", "Amazon", "Etsy", "Local yarn shop"], help: "Where you bought it." },
-            { entity_kind: "inventory:part", name: "length_per_skein", display_label: "Length / skein (m)", type: "number", unit: "m", position: 6, help: "Metres per skein, from the label — used to estimate if you have enough for a project." },
-            { entity_kind: "inventory:part", name: "capacity", display_label: "Full skein", type: "computed", template: "{{ length_per_skein }}", position: 7, help: "Metres in one full skein, from the length above. When you track skein-by-skein, each opened skein's gauge is measured against this — you never type it." },
-            { entity_kind: "inventory:part", name: "dye_lot", display_label: "Dye lot", type: "text", position: 8, help: "The batch code on the label — buy the same lot so colours match across skeins." },
+            { entity_kind: "inventory:part", name: "length_per_skein", display_label: "Length / skein (m)", type: "number", unit: "m", position: 6, help: "Metres per skein, from the label, used to estimate if you have enough for a project." },
+            { entity_kind: "inventory:part", name: "capacity", display_label: "Full skein", type: "computed", template: "{{ length_per_skein }}", position: 7, help: "Metres in one full skein, from the length above. When you track skein-by-skein, each opened skein's gauge is measured against this: you never type it." },
+            { entity_kind: "inventory:part", name: "dye_lot", display_label: "Dye lot", type: "text", position: 8, help: "The batch code on the label, buy the same lot so colours match across skeins." },
             { entity_kind: "inventory:part", name: "needle_size", display_label: "Suggested needle size", type: "text", position: 9, choices: ["2.0 mm", "2.5 mm", "3.0 mm", "3.5 mm", "4.0 mm", "4.5 mm", "5.0 mm", "5.5 mm", "6.0 mm", "6.5 mm", "7.0 mm", "8.0 mm", "9.0 mm", "10.0 mm", "12.0 mm"], help: "The needle/hook size the label recommends for this yarn (in mm)." },
           ],
           field_overrides: [
@@ -993,7 +993,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         name: "Designs",
         question: "Want to track your designs & patterns too?",
         description:
-          "A 'Designs' table (a projects instance) — each design with its pattern (file/link) + category, and the yarn it needs allocated to it.",
+          "A 'Designs' table (a projects instance): each design with its pattern (file/link) + category, and the yarn it needs allocated to it.",
         default: false,
         requires: [{ module: "projects" }],
         next_steps: [
@@ -1020,7 +1020,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         key: "hooks",
         name: "Hooks & needles",
         question: "Keep track of your hooks & needles?",
-        description: "A separate 'Hooks' table (an inventory instance) — your crochet hooks / knitting needles by gauge + material.",
+        description: "A separate 'Hooks' table (an inventory instance): your crochet hooks / knitting needles by gauge + material.",
         default: false,
         next_steps: [
           { label: "Open your Hooks table", module: "inventory", path: "/instances/hooks", hint: "Crochet hooks / knitting needles by gauge + material." },
@@ -1035,7 +1035,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             qty_unit: "each",
             field_defs: [
               { entity_kind: "inventory:part", name: "hook_gauge", display_label: "Hook gauge", type: "text", position: 1, choices: ["1.0 mm", "1.5 mm", "2.0 mm", "2.5 mm", "3.0 mm", "3.5 mm", "4.0 mm", "4.5 mm", "5.0 mm", "5.5 mm", "6.0 mm", "6.5 mm", "7.0 mm", "8.0 mm", "9.0 mm", "10.0 mm"], help: "Hook/needle size in mm (the number stamped on it)." },
-              { entity_kind: "inventory:part", name: "hook_material", display_label: "Hook material", type: "text", position: 2, choices: ["All-metal", "Metal + silicone grip", "Wood", "Bamboo", "Plastic"], help: "What the hook is made of — affects grip + glide." },
+              { entity_kind: "inventory:part", name: "hook_material", display_label: "Hook material", type: "text", position: 2, choices: ["All-metal", "Metal + silicone grip", "Wood", "Bamboo", "Plastic"], help: "What the hook is made of, affects grip + glide." },
             ],
             field_overrides: [
               { entity_kind: "inventory:part", name: "category", hidden: true },
@@ -1086,22 +1086,22 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "🖨️🧵",
     blurb:
-      "Two tables that work together. A filament TYPE (Royal Blue PLA) defines everything about the filament once — material, colour, diameter, the nozzle/bed temps, whether it needs drying. Then your SPOOLS just pick a type and add what's unique to the physical spool: its size, the maker's batch code, and how much is left. Each type rolls up how many spools + total kg you have.",
+      "Two tables that work together. A filament TYPE (Royal Blue PLA) defines everything about the filament once: material, colour, diameter, the nozzle/bed temps, whether it needs drying. Then your SPOOLS just pick a type and add what's unique to the physical spool: its size, the maker's batch code, and how much is left. Each type rolls up how many spools + total kg you have.",
     item_example: "a spool of Royal Blue PLA", // first instance noun is "type"; a spool reads better
     // A type first (defines the filament), then spools of it.
     next_steps: [
-      { label: "Add a filament type", module: "inventory", path: "/instances/filament-types", hint: "Define the filament once — brand, material, colour, diameter, temps." },
+      { label: "Add a filament type", module: "inventory", path: "/instances/filament-types", hint: "Define the filament once: brand, material, colour, diameter, temps." },
       { label: "Add a spool", module: "inventory", path: "/instances/filament", hint: "Pick its type, then just the spool size, batch code, and how much is left." },
     ],
     manifest: {
       id: "cobblr.flagship.filament-stash",
-      version: "0.5.3",
+      version: "0.5.4",
       name: "Filament",
-      description: "A filament TYPE (Royal Blue PLA) defines the filament once — material, colour, diameter, nozzle/bed temps, needs-drying. SPOOLS pick a type + add only what's per-spool: size, batch code, remaining, state. Each type rolls up its spool count + total kg.",
+      description: "A filament TYPE (Royal Blue PLA) defines the filament once: material, colour, diameter, nozzle/bed temps, needs-drying. SPOOLS pick a type + add only what's per-spool: size, batch code, remaining, state. Each type rolls up its spool count + total kg.",
       author: "Cobblr",
       released_at: "2026-06-17",
       changelog:
-        "Types and Spools now sit together in the navbar as one element — a quiet \"Filament\" stem with \"Types │ Spools\" links — so the two related tables read as one thing. (0.5.1: scanning a spool's QR find-or-creates its filament TYPE and links the spool automatically — a scan lands in the type→spool model instead of a flat row. 0.5.0: the TYPE defines the whole filament — colour, diameter, nozzle/bed temps and needs-drying live on the type, not re-entered per spool; a SPOOL just picks its type and carries the per-spool facts — size, batch code, remaining, state. Upgrading carries your existing temps + colour up onto the type automatically.)",
+        "Types and Spools now sit together in the navbar as one element, a quiet \"Filament\" stem with \"Types │ Spools\" links, so the two related tables read as one thing. (0.5.1: scanning a spool's QR find-or-creates its filament TYPE and links the spool automatically, a scan lands in the type→spool model instead of a flat row. 0.5.0: the TYPE defines the whole filament: colour, diameter, nozzle/bed temps and needs-drying live on the type, not re-entered per spool; a SPOOL just picks its type and carries the per-spool facts: size, batch code, remaining, state. Upgrading carries your existing temps + colour up onto the type automatically.)",
       requires: [{ module: "inventory" }],
       // The bundle OWNS its data migration: on upgrade from any earlier install,
       // lift the flat `filament` spools into `filament-types` (deduped by the type
@@ -1135,10 +1135,10 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           // "Filament" stem (renders "Filament  Types │ Spools").
           nav_group: { key: "filament", label: "Filament" },
           field_defs: [
-            { entity_kind: "inventory:part", name: "material", display_label: "Material", type: "text", position: 1, choices: ["PLA", "PLA+", "PETG", "ABS", "ASA", "TPU", "Nylon", "PC", "PVA", "Other"], help: "The plastic type — PLA is the easy default; PETG/ABS for tougher parts." },
+            { entity_kind: "inventory:part", name: "material", display_label: "Material", type: "text", position: 1, choices: ["PLA", "PLA+", "PETG", "ABS", "ASA", "TPU", "Nylon", "PC", "PVA", "Other"], help: "The plastic type. PLA is the easy default; PETG/ABS for tougher parts." },
             { entity_kind: "inventory:part", name: "color", display_label: "Colour", type: "text", position: 2, renderer: "color-hex", help: "Pick a swatch so the table shows the colour at a glance." },
-            { entity_kind: "inventory:part", name: "diameter", display_label: "Diameter", type: "text", position: 3, choices: ["1.75 mm", "2.85 mm"], help: "Filament thickness — 1.75 mm is by far the most common; 2.85 mm for some older/large printers." },
-            { entity_kind: "inventory:part", name: "nozzle_temp", display_label: "Nozzle °C", type: "number", position: 4, help: "The hot-end temperature that prints this filament cleanly — same for every spool of it." },
+            { entity_kind: "inventory:part", name: "diameter", display_label: "Diameter", type: "text", position: 3, choices: ["1.75 mm", "2.85 mm"], help: "Filament thickness. 1.75 mm is by far the most common; 2.85 mm for some older/large printers." },
+            { entity_kind: "inventory:part", name: "nozzle_temp", display_label: "Nozzle °C", type: "number", position: 4, help: "The hot-end temperature that prints this filament cleanly, same for every spool of it." },
             { entity_kind: "inventory:part", name: "bed_temp", display_label: "Bed °C", type: "number", position: 5, help: "The bed temperature that makes the first layer stick." },
             { entity_kind: "inventory:part", name: "needs_drying", display_label: "Needs drying", type: "boolean", position: 6, choices: ["Stable", "Hygroscopic"], help: "Whether this filament tends to absorb moisture and should be kept dry / dried before use." },
             // Live rollups over the spools linked to this type (instance-of).
@@ -1186,8 +1186,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             copy_fields: ["nozzle_temp", "bed_temp", "needs_drying"],
           },
           field_defs: [
-            { entity_kind: "inventory:part", name: "size", display_label: "Spool size", type: "text", position: 1, choices: ["0.5 kg", "1 kg", "2 kg", "3 kg", "4 kg", "5 kg", "25 kg"], help: "The full-spool size you bought (the label weight) — the remaining amount is tracked separately." },
-            { entity_kind: "inventory:part", name: "batch_code", display_label: "Batch / lot code", type: "text", position: 2, help: "The batch or lot code from the maker's label (e.g. Polar's spool code) — for traceability of this exact spool." },
+            { entity_kind: "inventory:part", name: "size", display_label: "Spool size", type: "text", position: 1, choices: ["0.5 kg", "1 kg", "2 kg", "3 kg", "4 kg", "5 kg", "25 kg"], help: "The full-spool size you bought (the label weight), the remaining amount is tracked separately." },
+            { entity_kind: "inventory:part", name: "batch_code", display_label: "Batch / lot code", type: "text", position: 2, help: "The batch or lot code from the maker's label (e.g. Polar's spool code), for traceability of this exact spool." },
             { entity_kind: "inventory:part", name: "state", display_label: "State", type: "text", position: 3, choices: ["sealed", "open", "empty"], help: "Sealed = unopened; open = in use; empty = used up (keep it for the record or delete it)." },
           ],
           field_overrides: [
@@ -1214,20 +1214,20 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     // feature, not the headline. Base = catalog what you own, room by room.
     glyph: "🏠",
     blurb:
-      "Catalog what you own, room by room — make/model, condition, photos — in a grouped 'By room' view. Turn on insurance valuation to add replacement value + purchase details for a claim.",
+      "Catalog what you own, room by room (make/model, condition, photos) in a grouped 'By room' view. Turn on insurance valuation to add replacement value + purchase details for a claim.",
     // Land in the Home Inventory TABLE (its own instance), not bare /inventory.
     next_steps: [
       { label: "Add your first item", module: "inventory", path: "/instances/home-inventory", hint: "What it is, which room, make/model, condition." },
     ],
     manifest: {
       id: "cobblr.flagship.home-inventory",
-      version: "0.4.0",
+      version: "0.4.1",
       name: "Home Inventory",
-      description: "Your belongings as their own room-by-room catalog — make/model + condition, filed by room. Optional insurance valuation.",
+      description: "Your belongings as their own room-by-room catalog: make/model + condition, filed by room. Optional insurance valuation.",
       author: "Cobblr",
       released_at: "2026-07-15",
       changelog:
-        "Rooms are now real Locations. The separate “Room” field is gone — items file into the workspace’s Location tree (rooms, and bins inside them) like everything else, so a thing has one place, not two. Your existing room values move over automatically on this update: each becomes a Location and its items are filed into it, nothing lost. The pinned “By room” view still groups your catalog by room (now off the real Location), and the claim-ready Insurance view too. Earlier: Home Inventory became its OWN table (an inventory instance) with only the fields a home catalog needs, plain-language hints, and optional Insurance valuation.",
+        "Rooms are now real Locations. The separate “Room” field is gone: items file into the workspace’s Location tree (rooms, and bins inside them) like everything else, so a thing has one place, not two. Your existing room values move over automatically on this update: each becomes a Location and its items are filed into it, nothing lost. The pinned “By room” view still groups your catalog by room (now off the real Location), and the claim-ready Insurance view too. Earlier: Home Inventory became its OWN table (an inventory instance) with only the fields a home catalog needs, plain-language hints, and optional Insurance valuation.",
       requires: [{ module: "inventory" }],
       // Always-on base: a "Home Inventory" instance of inventory.
       provides_instances: [
@@ -1244,7 +1244,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             // Location (an area in the workspace tree), the platform's canonical
             // "where". The migration below moves any pre-0.4 room values into real
             // Locations, and the "By room" view groups on Location.
-            { entity_kind: "inventory:part", name: "condition", display_label: "Condition", type: "text", position: 2, choices: ["New", "Excellent", "Good", "Fair", "Poor"], help: "Rough state, for resale or an insurance claim — New down to Poor." },
+            { entity_kind: "inventory:part", name: "condition", display_label: "Condition", type: "text", position: 2, choices: ["New", "Excellent", "Good", "Fair", "Poor"], help: "Rough state, for resale or an insurance claim. New down to Poor." },
           ],
           field_overrides: [
             { entity_kind: "inventory:part", name: "cost", display_label: "Paid" },
@@ -1282,8 +1282,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             instance_name: "home-inventory",
             display_name: "Home Inventory",
             field_defs: [
-              { entity_kind: "inventory:part", name: "replacement_value", display_label: "Replacement value", type: "number", position: 3, help: "What it'd cost to buy new today — what an insurer pays out (not what you paid)." },
-              { entity_kind: "inventory:part", name: "purchased_from", display_label: "Bought from", type: "text", position: 4, help: "Store or site — proof-of-purchase for a claim." },
+              { entity_kind: "inventory:part", name: "replacement_value", display_label: "Replacement value", type: "number", position: 3, help: "What it'd cost to buy new today, what an insurer pays out (not what you paid)." },
+              { entity_kind: "inventory:part", name: "purchased_from", display_label: "Bought from", type: "text", position: 4, help: "Store or site, proof-of-purchase for a claim." },
               { entity_kind: "inventory:part", name: "purchase_date", display_label: "Purchased", type: "date", position: 5 },
             ],
             saved_views: [
@@ -1311,13 +1311,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.warranties-receipts",
       catalog: "extended",
-      version: "0.2.0",
+      version: "0.2.1",
       name: "Warranties & Receipts",
-      description: "Your appliances/electronics as their own table — where/when you bought it + warranty and return-by dates, grouped by category.",
+      description: "Your appliances/electronics as their own table: where/when you bought it + warranty and return-by dates, grouped by category.",
       author: "Cobblr",
       released_at: "2026-06-08",
       changelog:
-        "Now its OWN table (an inventory instance), not generic Inventory with extra columns — its own nav entry, a “New item” button, only the fields a receipt/warranty tracker needs (the parts/stock cruft is hidden). Plain-language hints + a pinned “By category” view.",
+        "Now its OWN table (an inventory instance), not generic Inventory with extra columns: its own nav entry, a “New item” button, only the fields a receipt/warranty tracker needs (the parts/stock cruft is hidden). Plain-language hints + a pinned “By category” view.",
       requires: [{ module: "inventory" }],
       provides_instances: [
         {
@@ -1328,7 +1328,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           item_noun: "item",
           qty_unit: "each",
           field_defs: [
-            { entity_kind: "inventory:part", name: "purchased_from", display_label: "Bought from", type: "text", position: 1, help: "Store or site — proof-of-purchase for a warranty/return." },
+            { entity_kind: "inventory:part", name: "purchased_from", display_label: "Bought from", type: "text", position: 1, help: "Store or site, proof-of-purchase for a warranty/return." },
             { entity_kind: "inventory:part", name: "purchase_date", display_label: "Purchased", type: "date", position: 2 },
             { entity_kind: "inventory:part", name: "return_by", display_label: "Return by", type: "date", position: 3, help: "The last day you can return it for a refund." },
             { entity_kind: "inventory:part", name: "category", display_label: "Category", type: "text", position: 4, choices: ["Appliance", "Electronics", "Tools", "Furniture", "Vehicle", "Other"] },
@@ -1360,13 +1360,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.medications",
       catalog: "extended",
-      version: "0.3.0",
+      version: "0.3.1",
       name: "Medications & Refills",
-      description: "Your medications as their own table — dose, schedule, instructions, prescriber/pharmacy, refills left + a refill-by date. Caregiver-friendly.",
+      description: "Your medications as their own table: dose, schedule, instructions, prescriber/pharmacy, refills left + a refill-by date. Caregiver-friendly.",
       author: "Cobblr",
       released_at: "2026-06-08",
       changelog:
-        "Richer prescription fields: Instructions + Important information (how to take it, warnings), a Time of day field (Morning/Midday/Evening/Bedtime), interval schedules (Every 4/6/8/12 hours) with a First-dose-at time, and a unit picker on the quantity. — Its OWN table (an inventory instance), not generic Inventory with extra columns: its own nav entry, a “New medication” button, only med fields (parts/warranty/supplier cruft hidden), plain-language hints + a pinned “Current meds” view.",
+        "Richer prescription fields: Instructions + Important information (how to take it, warnings), a Time of day field (Morning/Midday/Evening/Bedtime), interval schedules (Every 4/6/8/12 hours) with a First-dose-at time, and a unit picker on the quantity.: Its OWN table (an inventory instance), not generic Inventory with extra columns: its own nav entry, a “New medication” button, only med fields (parts/warranty/supplier cruft hidden), plain-language hints + a pinned “Current meds” view.",
       requires: [{ module: "inventory" }],
       provides_instances: [
         {
@@ -1378,16 +1378,16 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           scan_keywords: ["vitamin", "supplement", "ibuprofen", "acetaminophen", "aspirin", "bandage", "first aid", "ointment", "antacid", "allergy relief"],
           qty_unit: "each",
           field_defs: [
-            { entity_kind: "inventory:part", name: "dose", display_label: "Dose", type: "text", position: 1, help: "How much per take — e.g. “10 mg”, “1 tablet”, “5 mL”." },
+            { entity_kind: "inventory:part", name: "dose", display_label: "Dose", type: "text", position: 1, help: "How much per take, e.g. “10 mg”, “1 tablet”, “5 mL”." },
             { entity_kind: "inventory:part", name: "schedule", display_label: "Schedule", type: "text", position: 2, choices: ["Once daily", "Twice daily", "Three times daily", "Every morning", "Every night", "As needed", "Weekly", "Every 4 hours", "Every 6 hours", "Every 8 hours", "Every 12 hours"] },
-            { entity_kind: "inventory:part", name: "time_of_day", display_label: "Time of day", type: "text", position: 3, choices: ["Morning", "Midday", "Evening", "Bedtime", "Other / see directions"], help: "When in the day to take it — pick the closest, or type your own (e.g. “Morning, Evening”)." },
-            { entity_kind: "inventory:part", name: "first_dose_at", display_label: "First dose at", type: "text", position: 4, help: "For interval schedules (e.g. every 8 hours), the time of the first dose — e.g. “8:00 AM”." },
-            { entity_kind: "inventory:part", name: "instructions", display_label: "Instructions", type: "text", position: 5, help: "How to take it — e.g. “Take 1 capsule by mouth every 8 hours.”" },
-            { entity_kind: "inventory:part", name: "important_information", display_label: "Important information", type: "text", position: 6, help: "Warnings or must-knows — e.g. “Take with food”, “Finish all of this medication.”" },
+            { entity_kind: "inventory:part", name: "time_of_day", display_label: "Time of day", type: "text", position: 3, choices: ["Morning", "Midday", "Evening", "Bedtime", "Other / see directions"], help: "When in the day to take it. Pick the closest, or type your own (e.g. “Morning, Evening”)." },
+            { entity_kind: "inventory:part", name: "first_dose_at", display_label: "First dose at", type: "text", position: 4, help: "For interval schedules (e.g. every 8 hours), the time of the first dose, e.g. “8:00 AM”." },
+            { entity_kind: "inventory:part", name: "instructions", display_label: "Instructions", type: "text", position: 5, help: "How to take it, e.g. “Take 1 capsule by mouth every 8 hours.”" },
+            { entity_kind: "inventory:part", name: "important_information", display_label: "Important information", type: "text", position: 6, help: "Warnings or must-knows, e.g. “Take with food”, “Finish all of this medication.”" },
             { entity_kind: "inventory:part", name: "form", display_label: "Form", type: "text", position: 7, choices: ["Tablet", "Capsule", "Liquid", "Injection", "Inhaler", "Topical", "Drops"] },
             { entity_kind: "inventory:part", name: "prescriber", display_label: "Prescriber", type: "text", position: 8 },
             { entity_kind: "inventory:part", name: "pharmacy", display_label: "Pharmacy", type: "text", position: 9 },
-            { entity_kind: "inventory:part", name: "rx_number", display_label: "Rx number", type: "text", position: 10, help: "The prescription number on the label — quote it to the pharmacy for a refill." },
+            { entity_kind: "inventory:part", name: "rx_number", display_label: "Rx number", type: "text", position: 10, help: "The prescription number on the label, quote it to the pharmacy for a refill." },
             { entity_kind: "inventory:part", name: "refills_left", display_label: "Refills left", type: "number", position: 11, help: "Refills remaining before you need a new prescription." },
             { entity_kind: "inventory:part", name: "refill_by", display_label: "Refill by", type: "date", position: 12, help: "Order a refill by this date so you don't run out." },
           ],
@@ -1411,19 +1411,19 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "🪴",
     blurb:
-      "Stop killing your houseplants — light and watering needs per plant, grouped by light so the windowsill crowd sits apart from the shady corner.",
+      "Stop killing your houseplants: light and watering needs per plant, grouped by light so the windowsill crowd sits apart from the shady corner.",
     next_steps: [
       { label: "Add your first plant", module: "assets", path: "/instances/plants", hint: "Species, light, how often to water." },
     ],
     manifest: {
       id: "cobblr.flagship.plant-care",
-      version: "0.3.0",
+      version: "0.3.1",
       name: "Plant Care",
-      description: "Your houseplants as their own table — species, light, watering interval + pot size, grouped by light.",
+      description: "Your houseplants as their own table: species, light, watering interval + pot size, grouped by light.",
       author: "Cobblr",
       released_at: "2026-06-10",
       changelog:
-        "Turn on Smart irrigation to let each plant water itself — its watering interval fires a Home Assistant service (or any controller) for that plant's zone + seconds, hands-free. — Now its OWN table (an assets instance), not generic Assets with extra columns — its own nav entry, a “New plant” button, only plant fields (the make/model/serial cruft is hidden). Plain-language hints + a pinned “By light” view.",
+        "Turn on Smart irrigation to let each plant water itself: its watering interval fires a Home Assistant service (or any controller) for that plant's zone + seconds, hands-free.. Now its OWN table (an assets instance), not generic Assets with extra columns: its own nav entry, a “New plant” button, only plant fields (the make/model/serial cruft is hidden). Plain-language hints + a pinned “By light” view.",
       requires: [{ module: "assets" }],
       provides_instances: [
         {
@@ -1434,11 +1434,11 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           item_noun: "plant",
           scan_keywords: ["fertilizer", "potting soil", "planter", "seeds", "watering can"],
           field_defs: [
-            { entity_kind: "assets:asset", name: "species", display_label: "Species", type: "text", position: 1, help: "The plant's name/type — e.g. “Monstera”, “Snake plant”." },
-            { entity_kind: "assets:asset", name: "light", display_label: "Light", type: "text", position: 2, choices: ["Low", "Medium", "Bright indirect", "Direct sun"], help: "How much light its spot gets — the table groups by this so similar plants sit together." },
-            { entity_kind: "assets:asset", name: "water_every_days", display_label: "Water every (days)", type: "number", unit: "d", position: 3, help: "Days between waterings — e.g. 7 for weekly." },
+            { entity_kind: "assets:asset", name: "species", display_label: "Species", type: "text", position: 1, help: "The plant's name/type, e.g. “Monstera”, “Snake plant”." },
+            { entity_kind: "assets:asset", name: "light", display_label: "Light", type: "text", position: 2, choices: ["Low", "Medium", "Bright indirect", "Direct sun"], help: "How much light its spot gets, the table groups by this so similar plants sit together." },
+            { entity_kind: "assets:asset", name: "water_every_days", display_label: "Water every (days)", type: "number", unit: "d", position: 3, help: "Days between waterings, e.g. 7 for weekly." },
             { entity_kind: "assets:asset", name: "last_watered", display_label: "Last watered", type: "date", position: 4 },
-            { entity_kind: "assets:asset", name: "pot_size", display_label: "Pot size", type: "text", position: 5, help: "Pot diameter — e.g. “6 in”, “15 cm”." },
+            { entity_kind: "assets:asset", name: "pot_size", display_label: "Pot size", type: "text", position: 5, help: "Pot diameter, e.g. “6 in”, “15 cm”." },
           ],
           field_overrides: [
             { entity_kind: "assets:asset", name: "manufacturer", hidden: true },
@@ -1463,7 +1463,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           name: "Smart irrigation",
           question: "Let plants water themselves?",
           description:
-            "Each plant's watering interval fires a command at your irrigation controller for THAT plant's zone + duration — hands-free. Ships pointed at a Home Assistant `script.water_zone` service; connect Home Assistant (label it “Irrigation”) and it just works. Works with any HTTP controller via a driver manifest.",
+            "Each plant's watering interval fires a command at your irrigation controller for THAT plant's zone + duration, hands-free. Ships pointed at a Home Assistant `script.water_zone` service; connect Home Assistant (label it “Irrigation”) and it just works. Works with any HTTP controller via a driver manifest.",
           default: false,
           requires: [{ module: "digifab" }],
           next_steps: [
@@ -1477,8 +1477,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
               instance_name: "plants",
               display_name: "Plant Care",
               field_defs: [
-                { entity_kind: "assets:asset", name: "zone", display_label: "Irrigation zone", type: "text", position: 7, help: "Which valve/zone waters this plant — passed to the controller (e.g. “3”)." },
-                { entity_kind: "assets:asset", name: "water_seconds", display_label: "Water (seconds)", type: "number", position: 8, help: "How long to run the zone each watering — in seconds." },
+                { entity_kind: "assets:asset", name: "zone", display_label: "Irrigation zone", type: "text", position: 7, help: "Which valve/zone waters this plant, passed to the controller (e.g. “3”)." },
+                { entity_kind: "assets:asset", name: "water_seconds", display_label: "Water (seconds)", type: "number", position: 8, help: "How long to run the zone each watering, in seconds." },
               ],
             },
           ],
@@ -1507,20 +1507,20 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "🔁",
     blurb:
-      "Every streaming service, membership, and recurring bill in one place — a computed per-cycle line + renewal dates, grouped by category.",
+      "Every streaming service, membership, and recurring bill in one place: a computed per-cycle line + renewal dates, grouped by category.",
     next_steps: [
       { label: "Add your first subscription", module: "inventory", path: "/instances/subscriptions", hint: "Cost per cycle, billing cycle, renewal date." },
     ],
     manifest: {
       id: "cobblr.flagship.subscriptions",
       catalog: "extended",
-      version: "0.2.1",
+      version: "0.2.2",
       name: "Subscriptions & Recurring Bills",
-      description: "Every recurring charge as its own table — cost/cycle, renewal date, payment method, grouped by category.",
+      description: "Every recurring charge as its own table: cost/cycle, renewal date, payment method, grouped by category.",
       author: "Cobblr",
       released_at: "2026-06-08",
       changelog:
-        "Dropped the computed “Plan” summary line (clutter on the form). — Now its OWN table (an inventory instance), not generic Inventory with extra columns — its own nav entry, a “New subscription” button, only the fields a bills tracker needs (stock/parts cruft hidden). Plain-language hints + a pinned “Renews next” view.",
+        "Dropped the computed “Plan” summary line (clutter on the form). (Now its OWN table (an inventory instance), not generic Inventory with extra columns) its own nav entry, a “New subscription” button, only the fields a bills tracker needs (stock/parts cruft hidden). Plain-language hints + a pinned “Renews next” view.",
       requires: [{ module: "inventory" }],
       provides_instances: [
         {
@@ -1532,7 +1532,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           field_defs: [
             { entity_kind: "inventory:part", name: "cost_per_cycle", display_label: "Cost / cycle", type: "number", position: 1, help: "What you're charged each billing cycle." },
             { entity_kind: "inventory:part", name: "billing_cycle", display_label: "Billing cycle", type: "text", position: 2, choices: ["Weekly", "Monthly", "Quarterly", "Yearly"] },
-            { entity_kind: "inventory:part", name: "renewal_date", display_label: "Renews", type: "date", position: 3, help: "Next charge / renewal date — when to cancel by if you don't want it." },
+            { entity_kind: "inventory:part", name: "renewal_date", display_label: "Renews", type: "date", position: 3, help: "Next charge / renewal date, when to cancel by if you don't want it." },
             { entity_kind: "inventory:part", name: "category", display_label: "Category", type: "text", position: 4, choices: ["Streaming", "Software", "Membership", "Utility", "Insurance", "Phone / internet", "Other"] },
             { entity_kind: "inventory:part", name: "payment_method", display_label: "Paid with", type: "text", position: 5, help: "Which card/account it bills to." },
           ],
@@ -1557,20 +1557,20 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "📚",
     blurb:
-      "Catalog what you collect — books, wine, records, cards, coins — grouped by condition, with paid-vs-value, so you stop buying the dupe.",
+      "Catalog what you collect (books, wine, records, cards, coins) grouped by condition, with paid-vs-value, so you stop buying the dupe.",
     next_steps: [
       { label: "Add your first piece", module: "inventory", path: "/instances/collections", hint: "Condition, edition/year, what you paid + value today." },
     ],
     manifest: {
       id: "cobblr.flagship.collections",
       catalog: "disabled",
-      version: "0.3.0",
+      version: "0.3.1",
       name: "Collections",
-      description: "Your collection as its own cover wall — condition, edition, paid vs value today, so you stop buying the dupe.",
+      description: "Your collection as its own cover wall: condition, edition, paid vs value today, so you stop buying the dupe.",
       author: "Cobblr",
       released_at: "2026-06-08",
       changelog:
-        "Now its OWN table (an inventory instance), not generic Inventory with extra columns — its own nav entry, a “New piece” button, only collector fields (parts/warranty/supplier cruft hidden). Plain-language hints + a pinned “By condition” view.",
+        "Now its OWN table (an inventory instance), not generic Inventory with extra columns: its own nav entry, a “New piece” button, only collector fields (parts/warranty/supplier cruft hidden). Plain-language hints + a pinned “By condition” view.",
       requires: [{ module: "inventory" }],
       provides_instances: [
         {
@@ -1581,12 +1581,12 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           item_noun: "piece",
           qty_unit: "each",
           field_defs: [
-            { entity_kind: "inventory:part", name: "condition", display_label: "Condition", type: "text", position: 1, choices: ["Mint / Sealed", "Near Mint", "Excellent", "Good", "Fair", "Poor"], help: "Collector grade — the table groups by this; condition drives resale value." },
-            { entity_kind: "inventory:part", name: "edition", display_label: "Edition / year", type: "text", position: 2, help: "Printing/pressing/edition or year — first editions, reissues, etc." },
+            { entity_kind: "inventory:part", name: "condition", display_label: "Condition", type: "text", position: 1, choices: ["Mint / Sealed", "Near Mint", "Excellent", "Good", "Fair", "Poor"], help: "Collector grade, the table groups by this; condition drives resale value." },
+            { entity_kind: "inventory:part", name: "edition", display_label: "Edition / year", type: "text", position: 2, help: "Printing/pressing/edition or year: first editions, reissues, etc." },
             { entity_kind: "inventory:part", name: "acquired_date", display_label: "Acquired", type: "date", position: 3 },
             { entity_kind: "inventory:part", name: "acquired_price", display_label: "Paid", type: "number", position: 4 },
-            { entity_kind: "inventory:part", name: "current_value", display_label: "Value today", type: "number", position: 5, help: "Roughly what it'd sell for now — for insurance or knowing your collection's worth." },
-            { entity_kind: "inventory:part", name: "signed", display_label: "Signed / sealed", type: "boolean", position: 6, help: "Tick if signed, sealed, or otherwise special — usually a value bump." },
+            { entity_kind: "inventory:part", name: "current_value", display_label: "Value today", type: "number", position: 5, help: "Roughly what it'd sell for now, for insurance or knowing your collection's worth." },
+            { entity_kind: "inventory:part", name: "signed", display_label: "Signed / sealed", type: "boolean", position: 6, help: "Tick if signed, sealed, or otherwise special, usually a value bump." },
           ],
           field_overrides: [
             { entity_kind: "inventory:part", name: "manufacturer", display_label: "Maker / label" },
@@ -1611,17 +1611,17 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "🔩",
     blurb:
-      "Screws, bolts, nuts, washers — thread, length, head and drive as real columns, grouped by thread, so you find an M3×8 in seconds.",
+      "Screws, bolts, nuts, washers: thread, length, head and drive as real columns, grouped by thread, so you find an M3×8 in seconds.",
     next_steps: [
-      { label: "Add your first fastener", module: "inventory", path: "/instances/fasteners", hint: "Type, thread (M3, 1/4-20…), length, head + drive — and how many you've got." },
+      { label: "Add your first fastener", module: "inventory", path: "/instances/fasteners", hint: "Type, thread (M3, 1/4-20…), length, head + drive, and how many you've got." },
     ],
     item_example: "a bag of M3×8 socket head screws",
     manifest: {
       id: "cobblr.flagship.fasteners",
-      version: "0.1.0",
+      version: "0.1.1",
       name: "Fasteners",
       description:
-        "Your fastener drawers as their own table — an inventory instance with thread, length, head, drive and material pre-shaped, quantities + reorder thresholds kept, grouped by thread.",
+        "Your fastener drawers as their own table: an inventory instance with thread, length, head, drive and material pre-shaped, quantities + reorder thresholds kept, grouped by thread.",
       author: "Cobblr",
       released_at: "2026-07-02",
       requires: [{ module: "inventory" }],
@@ -1657,7 +1657,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           scan_keywords: ["heat set insert", "wood screw", "machine screw", "sheet metal screw", "hardware assortment"],
           field_defs: [
             { entity_kind: "inventory:part", name: "fastener_type", display_label: "Type", type: "text", position: 1, choices: ["Screw", "Bolt", "Nut", "Washer", "Standoff", "Threaded insert", "Rivet", "Anchor"] },
-            { entity_kind: "inventory:part", name: "thread", display_label: "Thread", type: "text", position: 2, help: "M3, M5, 1/4-20, #6-32… — the table groups by this." },
+            { entity_kind: "inventory:part", name: "thread", display_label: "Thread", type: "text", position: 2, help: "M3, M5, 1/4-20, #6-32…, the table groups by this." },
             { entity_kind: "inventory:part", name: "length_mm", display_label: "Length (mm)", type: "number", unit: "mm", position: 3, help: "Shaft length, not counting the head. Leave blank for nuts/washers." },
             { entity_kind: "inventory:part", name: "head", display_label: "Head", type: "text", position: 4, choices: ["Socket cap", "Button", "Countersunk (flat)", "Pan", "Hex", "Flanged", "None"] },
             { entity_kind: "inventory:part", name: "drive", display_label: "Drive", type: "text", position: 5, choices: ["Hex (Allen)", "Phillips", "Torx", "Slotted", "External hex", "None"] },
@@ -1685,20 +1685,20 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "🪪",
     blurb:
-      "Passport, license, registration, insurance — every document that expires, with its number + issuer. Expiry dates land on your calendar automatically.",
+      "Passport, license, registration, insurance: every document that expires, with its number + issuer. Expiry dates land on your calendar automatically.",
     next_steps: [
       { label: "Add your first document", module: "assets", path: "/instances/documents", hint: "Type, number, issuer, and the expiry date." },
     ],
     manifest: {
       id: "cobblr.flagship.documents-renewals",
       catalog: "extended",
-      version: "0.2.1",
+      version: "0.2.2",
       name: "Important Documents & Renewals",
-      description: "Every document that expires as its own table — number/issuer/expiry, grouped by type, with expiry dates on your calendar.",
+      description: "Every document that expires as its own table: number/issuer/expiry, grouped by type, with expiry dates on your calendar.",
       author: "Cobblr",
       released_at: "2026-06-08",
       changelog:
-        "Dropped the computed “Summary” line (clutter on the form). — Now its OWN table (an assets instance), not generic Assets with extra columns — its own nav entry, a “New document” button, only the fields a document tracker needs (make/model/serial cruft hidden). Plain-language hints + a pinned “Renewals” view.",
+        "Dropped the computed “Summary” line (clutter on the form). (Now its OWN table (an assets instance), not generic Assets with extra columns) its own nav entry, a “New document” button, only the fields a document tracker needs (make/model/serial cruft hidden). Plain-language hints + a pinned “Renewals” view.",
       requires: [{ module: "assets" }],
       provides_instances: [
         {
@@ -1708,11 +1708,11 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           glyph: "🪪",
           item_noun: "document",
           field_defs: [
-            { entity_kind: "assets:asset", name: "doc_type", display_label: "Type", type: "text", position: 1, choices: ["Passport", "Driver's license", "Vehicle registration", "Insurance policy", "Membership", "Certification", "Visa / permit", "Warranty", "Other"], help: "What kind of document — the table groups by this." },
+            { entity_kind: "assets:asset", name: "doc_type", display_label: "Type", type: "text", position: 1, choices: ["Passport", "Driver's license", "Vehicle registration", "Insurance policy", "Membership", "Certification", "Visa / permit", "Warranty", "Other"], help: "What kind of document, the table groups by this." },
             { entity_kind: "assets:asset", name: "document_number", display_label: "Number", type: "text", position: 2, help: "The document/policy/licence number printed on it." },
-            { entity_kind: "assets:asset", name: "issuer", display_label: "Issued by", type: "text", position: 3, help: "Who issued it — passport office, DMV, insurer, etc." },
+            { entity_kind: "assets:asset", name: "issuer", display_label: "Issued by", type: "text", position: 3, help: "Who issued it: passport office, DMV, insurer, etc." },
             { entity_kind: "assets:asset", name: "issued_date", display_label: "Issued", type: "date", position: 4 },
-            { entity_kind: "assets:asset", name: "expires_date", display_label: "Expires", type: "date", position: 5, help: "Expiry date — renew before this; it lands on your calendar." },
+            { entity_kind: "assets:asset", name: "expires_date", display_label: "Expires", type: "date", position: 5, help: "Expiry date, renew before this; it lands on your calendar." },
           ],
           field_overrides: [
             { entity_kind: "assets:asset", name: "manufacturer", hidden: true },
@@ -1731,20 +1731,20 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "🐾",
     blurb:
-      "Each pet's vitals + schedule — species, breed, birthday, vet, microchip, weight, and next-vet / rabies-due dates that land on your calendar.",
+      "Each pet's vitals + schedule: species, breed, birthday, vet, microchip, weight, and next-vet / rabies-due dates that land on your calendar.",
     next_steps: [
       { label: "Add your first pet", module: "assets", path: "/instances/pets", hint: "Species, breed, birthday, vet + vaccination dates." },
     ],
     manifest: {
       id: "cobblr.flagship.pet-care",
       catalog: "extended",
-      version: "0.2.0",
+      version: "0.2.1",
       name: "Pet Care",
-      description: "Your pets as their own table — vitals + vet/vaccination dates (calendar-reminded), grouped by species.",
+      description: "Your pets as their own table: vitals + vet/vaccination dates (calendar-reminded), grouped by species.",
       author: "Cobblr",
       released_at: "2026-06-08",
       changelog:
-        "Now its OWN table (an assets instance), not generic Assets with extra columns — its own nav entry, a “New pet” button, only pet fields (make/model/serial cruft hidden). Plain-language hints + a pinned “By species” view.",
+        "Now its OWN table (an assets instance), not generic Assets with extra columns: its own nav entry, a “New pet” button, only pet fields (make/model/serial cruft hidden). Plain-language hints + a pinned “By species” view.",
       requires: [{ module: "assets" }],
       provides_instances: [
         {
@@ -1758,10 +1758,10 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             { entity_kind: "assets:asset", name: "species", display_label: "Species", type: "text", position: 1, choices: ["Dog", "Cat", "Rabbit", "Bird", "Reptile", "Fish", "Horse", "Other"], help: "The table groups pets by this." },
             { entity_kind: "assets:asset", name: "breed", display_label: "Breed", type: "text", position: 2 },
             { entity_kind: "assets:asset", name: "birthdate", display_label: "Birthday", type: "date", position: 3 },
-            { entity_kind: "assets:asset", name: "weight_kg", display_label: "Weight (kg)", type: "number", unit: "kg", position: 4, help: "Current weight — handy for dosing meds + spotting changes." },
+            { entity_kind: "assets:asset", name: "weight_kg", display_label: "Weight (kg)", type: "number", unit: "kg", position: 4, help: "Current weight, handy for dosing meds + spotting changes." },
             { entity_kind: "assets:asset", name: "vet", display_label: "Vet", type: "text", position: 5 },
-            { entity_kind: "assets:asset", name: "microchip", display_label: "Microchip", type: "text", position: 6, help: "The chip ID registered to you — vets/shelters scan it to find the owner." },
-            { entity_kind: "assets:asset", name: "next_vet_visit", display_label: "Next vet visit", type: "date", position: 7, help: "Next check-up — lands on your calendar." },
+            { entity_kind: "assets:asset", name: "microchip", display_label: "Microchip", type: "text", position: 6, help: "The chip ID registered to you, vets/shelters scan it to find the owner." },
+            { entity_kind: "assets:asset", name: "next_vet_visit", display_label: "Next vet visit", type: "date", position: 7, help: "Next check-up, lands on your calendar." },
             { entity_kind: "assets:asset", name: "rabies_due", display_label: "Rabies due", type: "date", position: 8, help: "When the rabies vaccination is next due." },
           ],
           field_overrides: [
@@ -1781,20 +1781,20 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "🎁",
     blurb:
-      "Stash gift ideas year-round — who, what occasion + its date, a link, a budget, and the idea→bought→wrapped→given pipeline. Dates hit your calendar.",
+      "Stash gift ideas year-round: who, what occasion + its date, a link, a budget, and the idea→bought→wrapped→given pipeline. Dates hit your calendar.",
     next_steps: [
       { label: "Add your first gift idea", module: "inventory", path: "/instances/gifts", hint: "Who it's for, the occasion + its date, a budget." },
     ],
     manifest: {
       id: "cobblr.flagship.gifts-occasions",
       catalog: "disabled",
-      version: "0.2.0",
+      version: "0.2.1",
       name: "Gifts & Occasions",
-      description: "Gift ideas as their own table — who, occasion + date (calendar-reminded), budget, and an idea→bought→wrapped→given pipeline.",
+      description: "Gift ideas as their own table: who, occasion + date (calendar-reminded), budget, and an idea→bought→wrapped→given pipeline.",
       author: "Cobblr",
       released_at: "2026-06-08",
       changelog:
-        "Now its OWN table (an inventory instance), not generic Inventory with extra columns — its own nav entry, a “New gift” button, only gift-list fields (stock/parts cruft hidden). Plain-language hints + a pinned “By recipient” view.",
+        "Now its OWN table (an inventory instance), not generic Inventory with extra columns: its own nav entry, a “New gift” button, only gift-list fields (stock/parts cruft hidden). Plain-language hints + a pinned “By recipient” view.",
       requires: [{ module: "inventory" }],
       provides_instances: [
         {
@@ -1804,11 +1804,11 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           glyph: "🎁",
           item_noun: "gift",
           field_defs: [
-            { entity_kind: "inventory:part", name: "recipient", display_label: "For", type: "text", position: 1, help: "Who the gift is for — the table groups by this." },
+            { entity_kind: "inventory:part", name: "recipient", display_label: "For", type: "text", position: 1, help: "Who the gift is for, the table groups by this." },
             { entity_kind: "inventory:part", name: "occasion", display_label: "Occasion", type: "text", position: 2, choices: ["Birthday", "Christmas", "Anniversary", "Wedding", "Graduation", "Holiday", "Just because", "Other"] },
-            { entity_kind: "inventory:part", name: "occasion_date", display_label: "Occasion date", type: "date", position: 3, help: "When you need it by — lands on your calendar." },
+            { entity_kind: "inventory:part", name: "occasion_date", display_label: "Occasion date", type: "date", position: 3, help: "When you need it by, lands on your calendar." },
             { entity_kind: "inventory:part", name: "budget", display_label: "Budget", type: "number", position: 4 },
-            { entity_kind: "inventory:part", name: "status", display_label: "Status", type: "text", position: 5, choices: ["Idea", "Bought", "Wrapped", "Given"], help: "Where it is in the pipeline — Idea → Bought → Wrapped → Given." },
+            { entity_kind: "inventory:part", name: "status", display_label: "Status", type: "text", position: 5, choices: ["Idea", "Bought", "Wrapped", "Given"], help: "Where it is in the pipeline. Idea → Bought → Wrapped → Given." },
           ],
           field_overrides: [
             { entity_kind: "inventory:part", name: "supplier_url", display_label: "Idea link" },
@@ -1839,13 +1839,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.household-supplies",
       catalog: "disabled",
-      version: "0.3.0",
+      version: "0.3.1",
       name: "Household Supplies auto-reorder",
-      description: "Your household supplies as their own table — reorder level per supply auto-adds to a shopping list on low stock; check off → it restocks. Grouped by where they live.",
+      description: "Your household supplies as their own table, reorder level per supply auto-adds to a shopping list on low stock; check off → it restocks. Grouped by where they live.",
       author: "Cobblr",
       released_at: "2026-07-15",
       changelog:
-        "“Area” is now a real Location. The separate “Area” field is gone — supplies file into your Location tree (rooms/zones, and bins inside them) like everything else, so a thing has one place, not two. Your existing area values move over automatically on this update: each becomes a Location and its supplies are filed into it, nothing lost, and the pinned “By area” view groups off the real Location. Earlier: “Usual pack” became “Pack size” (the package you actually scanned, filled from the observed pack).",
+        "“Area” is now a real Location. The separate “Area” field is gone: supplies file into your Location tree (rooms/zones, and bins inside them) like everything else, so a thing has one place, not two. Your existing area values move over automatically on this update: each becomes a Location and its supplies are filed into it, nothing lost, and the pinned “By area” view groups off the real Location. Earlier: “Usual pack” became “Pack size” (the package you actually scanned, filled from the observed pack).",
       requires: [{ module: "inventory" }, { module: "lists" }],
       provides_instances: [
         {
@@ -1860,13 +1860,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           // instance (the installer rewrites source_kind to supplies:item).
           wires: [
             { source_kind: "inventory:part", action_id: "lists:add-item", trigger_type: "event", trigger_event: "inventory.stock.low", args: { listTitle: "Shopping list" } },
-            { source_kind: "inventory:part", action_id: "inventory:adjust-stock", trigger_type: "event", trigger_event: "lists.item.checked", args: { delta: 1, reason: "Restocked — checked off the shopping list" } },
+            { source_kind: "inventory:part", action_id: "inventory:adjust-stock", trigger_type: "event", trigger_event: "lists.item.checked", args: { delta: 1, reason: "Restocked, checked off the shopping list" } },
           ],
           field_defs: [
             // "Area" is deliberately NOT a field — where a supply lives is its
             // Location (the platform's canonical "where"). The migration below
             // moves any pre-0.3 area values into real Locations.
-            { entity_kind: "inventory:part", name: "typical_pack", display_label: "Pack size", type: "text", position: 2, field_role: "pack", help: "How many units are in the package you scanned — e.g. a single, or a 10-pack. The pack in front of you, not a reorder estimate." },
+            { entity_kind: "inventory:part", name: "typical_pack", display_label: "Pack size", type: "text", position: 2, field_role: "pack", help: "How many units are in the package you scanned, e.g. a single, or a 10-pack. The pack in front of you, not a reorder estimate." },
           ],
           field_overrides: [
             { entity_kind: "inventory:part", name: "min_qty", display_label: "Reorder at" },
@@ -1894,20 +1894,20 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "🏡🔧",
     blurb:
-      "The home version of Vehicle Maintenance — furnace, water heater, HVAC filters, detectors — with service logs + next-due dates on your calendar.",
+      "The home version of Vehicle Maintenance (furnace, water heater, HVAC filters, detectors) with service logs + next-due dates on your calendar.",
     next_steps: [
-      { label: "Add your first system", module: "assets", path: "/instances/maintenance", hint: "Furnace, water heater, HVAC filter — with its next-service date." },
+      { label: "Add your first system", module: "assets", path: "/instances/maintenance", hint: "Furnace, water heater, HVAC filter, with its next-service date." },
     ],
     manifest: {
       id: "cobblr.flagship.home-maintenance",
       catalog: "disabled",
-      version: "0.3.0",
+      version: "0.3.1",
       name: "Home Maintenance Schedule",
-      description: "Your home's systems as their own table — furnace, water heater, HVAC filters, detectors — with service logs + next-due dates on your calendar.",
+      description: "Your home's systems as their own table (furnace, water heater, HVAC filters, detectors) with service logs + next-due dates on your calendar.",
       author: "Cobblr",
       released_at: "2026-07-15",
       changelog:
-        "The “Location” of each system is now a real Location, not a separate text field — systems file into your Location tree (rooms/zones) like everything else, so a thing has one place, not two. Your existing location values move over automatically on this update: each becomes a Location and its systems are filed into it, nothing lost. Earlier: Home Maintenance became its OWN table (an assets instance) with only the fields a maintenance schedule needs, plain-language hints, and a pinned “By system” view.",
+        "The “Location” of each system is now a real Location, not a separate text field: systems file into your Location tree (rooms/zones) like everything else, so a thing has one place, not two. Your existing location values move over automatically on this update: each becomes a Location and its systems are filed into it, nothing lost. Earlier: Home Maintenance became its OWN table (an assets instance) with only the fields a maintenance schedule needs, plain-language hints, and a pinned “By system” view.",
       requires: [{ module: "assets" }, { module: "core-maintenance" }],
       provides_instances: [
         {
@@ -1921,9 +1921,9 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             // its Location (the platform's canonical "where", native on assets).
             // The migration below moves any pre-0.3 location values into real
             // Locations.
-            { entity_kind: "assets:asset", name: "system_type", display_label: "System", type: "text", position: 1, choices: ["Furnace", "Air conditioner", "Water heater", "HVAC filter", "Smoke / CO detector", "Gutters", "Sump pump", "Dishwasher", "Washer", "Dryer", "Refrigerator", "Garage door", "Other"], help: "Which home system — the table groups by this." },
+            { entity_kind: "assets:asset", name: "system_type", display_label: "System", type: "text", position: 1, choices: ["Furnace", "Air conditioner", "Water heater", "HVAC filter", "Smoke / CO detector", "Gutters", "Sump pump", "Dishwasher", "Washer", "Dryer", "Refrigerator", "Garage door", "Other"], help: "Which home system, the table groups by this." },
             { entity_kind: "assets:asset", name: "installed_date", display_label: "Installed", type: "date", position: 3 },
-            { entity_kind: "assets:asset", name: "filter_size", display_label: "Filter / part size", type: "text", position: 4, help: "The filter or replacement-part size to buy — e.g. “16×25×1” for a furnace filter." },
+            { entity_kind: "assets:asset", name: "filter_size", display_label: "Filter / part size", type: "text", position: 4, help: "The filter or replacement-part size to buy, e.g. “16×25×1” for a furnace filter." },
           ],
           field_overrides: [
             { entity_kind: "assets:asset", name: "manufacturer", display_label: "Brand" },
@@ -1952,20 +1952,20 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     // instance). Title is the noun ("Wardrobe"); planning is an opt-in feature.
     glyph: "👗",
     blurb:
-      "Your closet as its own table — every garment by type, colour, season + a photo, grouped by type. Turn on Outfits to plan looks by occasion + date (and drag garments onto a figure in the Outfit Planner app).",
+      "Your closet as its own table: every garment by type, colour, season + a photo, grouped by type. Turn on Outfits to plan looks by occasion + date (and drag garments onto a figure in the Outfit Planner app).",
     next_steps: [
-      { label: "Add your first garment", module: "inventory", path: "/instances/wardrobe", hint: "Type, colour, season — snap a photo so it shows in the closet." },
+      { label: "Add your first garment", module: "inventory", path: "/instances/wardrobe", hint: "Type, colour, season, snap a photo so it shows in the closet." },
     ],
     manifest: {
       id: "cobblr.flagship.wardrobe",
       catalog: "extended",
-      version: "0.1.1",
+      version: "0.1.2",
       name: "Wardrobe",
-      description: "Catalog your clothing as its own table — type, colour, season, formality, a photo each — grouped by type. Optional Outfits table for planning looks.",
+      description: "Catalog your clothing as its own table (type, colour, season, formality, a photo each) grouped by type. Optional Outfits table for planning looks.",
       author: "Cobblr",
       released_at: "2026-06-08",
       changelog:
-        "First release — your wardrobe as its own inventory table (a “New garment” button, only clothing fields, the parts/stock cruft hidden), with a pinned “By type” view + plain-language hints. Turn on Outfits to plan looks by occasion + the date you'll wear them (they land on your calendar); the Outfit Planner app drags garments onto a figure.",
+        "First release: your wardrobe as its own inventory table (a “New garment” button, only clothing fields, the parts/stock cruft hidden), with a pinned “By type” view + plain-language hints. Turn on Outfits to plan looks by occasion + the date you'll wear them (they land on your calendar); the Outfit Planner app drags garments onto a figure.",
       requires: [{ module: "inventory" }],
       provides_instances: [
         {
@@ -1977,13 +1977,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           scan_keywords: ["shirt", "pants", "jeans", "jacket", "coat", "sweater", "socks", "shoes", "sneakers", "boots", "dress", "skirt", "hat", "gloves", "belt", "hoodie", "scarf"],
           qty_unit: "each",
           field_defs: [
-            { entity_kind: "inventory:part", name: "garment_type", display_label: "Type", type: "text", position: 1, choices: ["Top", "Bottom", "Dress", "Outerwear", "Shoes", "Bag", "Accessory", "Jewelry", "Activewear", "Underwear", "Other"], help: "What kind of piece — the closet groups by this." },
+            { entity_kind: "inventory:part", name: "garment_type", display_label: "Type", type: "text", position: 1, choices: ["Top", "Bottom", "Dress", "Outerwear", "Shoes", "Bag", "Accessory", "Jewelry", "Activewear", "Underwear", "Other"], help: "What kind of piece, the closet groups by this." },
             { entity_kind: "inventory:part", name: "color", display_label: "Colour", type: "text", position: 2, renderer: "color-hex", help: "Pick a swatch so the closet shows the colour at a glance." },
-            { entity_kind: "inventory:part", name: "season", display_label: "Season", type: "text", position: 3, choices: ["Spring", "Summer", "Fall", "Winter", "All-season"], help: "When you wear it — filter to the right season fast." },
-            { entity_kind: "inventory:part", name: "formality", display_label: "Formality", type: "text", position: 4, choices: ["Loungewear", "Casual", "Smart casual", "Work", "Formal", "Athletic"], help: "How dressed-up it is — for building work vs weekend looks." },
-            { entity_kind: "inventory:part", name: "fabric", display_label: "Fabric", type: "text", position: 5, choices: ["Cotton", "Wool", "Linen", "Denim", "Leather", "Silk", "Knit", "Synthetic", "Blend", "Other"], help: "Main material — handy for care + seasonality." },
+            { entity_kind: "inventory:part", name: "season", display_label: "Season", type: "text", position: 3, choices: ["Spring", "Summer", "Fall", "Winter", "All-season"], help: "When you wear it, filter to the right season fast." },
+            { entity_kind: "inventory:part", name: "formality", display_label: "Formality", type: "text", position: 4, choices: ["Loungewear", "Casual", "Smart casual", "Work", "Formal", "Athletic"], help: "How dressed-up it is, for building work vs weekend looks." },
+            { entity_kind: "inventory:part", name: "fabric", display_label: "Fabric", type: "text", position: 5, choices: ["Cotton", "Wool", "Linen", "Denim", "Leather", "Silk", "Knit", "Synthetic", "Blend", "Other"], help: "Main material, handy for care + seasonality." },
             { entity_kind: "inventory:part", name: "size", display_label: "Size", type: "text", position: 6 },
-            { entity_kind: "inventory:part", name: "last_worn", display_label: "Last worn", type: "date", position: 7, help: "Update when you wear it — surfaces the pieces you never reach for." },
+            { entity_kind: "inventory:part", name: "last_worn", display_label: "Last worn", type: "date", position: 7, help: "Update when you wear it, surfaces the pieces you never reach for." },
           ],
           field_overrides: [
             { entity_kind: "inventory:part", name: "manufacturer", display_label: "Brand" },
@@ -2008,7 +2008,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           name: "Outfit planning",
           question: "Plan outfits from your wardrobe?",
           description:
-            "Adds an 'Outfits' table — each look by occasion + the date you'll wear it (so it lands on your calendar) — plus the Outfit Planner app, where you drag garments onto a figure to compose a look visually.",
+            "Adds an 'Outfits' table (each look by occasion + the date you'll wear it (so it lands on your calendar)) plus the Outfit Planner app, where you drag garments onto a figure to compose a look visually.",
           default: true,
           // The Outfit Planner app needs core-apps (the App Player) enabled.
           requires: [{ module: "projects" }, { module: "core-apps" }],
@@ -2036,9 +2036,9 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
               glyph: "👚",
               item_noun: "outfit",
               field_defs: [
-                { entity_kind: "projects:project", name: "occasion", display_label: "Occasion", type: "text", position: 1, choices: ["Everyday", "Work", "Date", "Event", "Travel", "Workout", "Special"], help: "What the look is for — the table groups by this." },
-                { entity_kind: "projects:project", name: "wear_date", display_label: "Wear on", type: "date", position: 2, help: "When you'll wear it — lands on your calendar as “what to wear”." },
-                { entity_kind: "projects:project", name: "pieces", display_label: "Pieces", type: "text", position: 3, help: "The garments in this look — jot them here, or build it visually in the Outfit Planner app." },
+                { entity_kind: "projects:project", name: "occasion", display_label: "Occasion", type: "text", position: 1, choices: ["Everyday", "Work", "Date", "Event", "Travel", "Workout", "Special"], help: "What the look is for, the table groups by this." },
+                { entity_kind: "projects:project", name: "wear_date", display_label: "Wear on", type: "date", position: 2, help: "When you'll wear it, lands on your calendar as “what to wear”." },
+                { entity_kind: "projects:project", name: "pieces", display_label: "Pieces", type: "text", position: 3, help: "The garments in this look: jot them here, or build it visually in the Outfit Planner app." },
               ],
               saved_views: [
                 { entity_kind: "projects:project", name: "By occasion", view_type: "table", pinned: true, config: { group_by: "occasion", visible_fields: ["title", "occasion", "wear_date"] } },
@@ -2057,22 +2057,22 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     // Player); the commit goes through inventory's `bench-commit` action.
     glyph: "🔧",
     blurb:
-      "Organize your CNC tooling — end mills, drills, taps — without typing. The guided Bench app walks each unknown tool through measure → weigh → observe → photograph → bin, composes its spec, and files it. AI enriches the name when a provider is connected.",
+      "Organize your CNC tooling (end mills, drills, taps) without typing. The guided Bench app walks each unknown tool through measure → weigh → observe → photograph → bin, composes its spec, and files it. AI enriches the name when a provider is connected.",
     next_steps: [
-      { label: "Open the Bench", module: "core-apps", path: "/app/cataloging-bench", hint: "Run an unknown tool through measure → weigh → observe → bin — no typing." },
+      { label: "Open the Bench", module: "core-apps", path: "/app/cataloging-bench", hint: "Run an unknown tool through measure → weigh → observe → bin: no typing." },
       { label: "See your Tooling table", module: "inventory", path: "/instances/tooling", hint: "Every tool by type, with its spec + which bin it's in." },
     ],
     manifest: {
       id: "cobblr.flagship.cnc-tooling",
       catalog: "extended",
-      version: "0.2.0",
+      version: "0.2.1",
       name: "CNC Tooling",
       description:
-        "Your CNC tooling as its own table — end mills, drills, taps, reamers, inserts — by type/diameter/flutes/material, with the bin each lives in. Ships the guided Cataloging Bench app: capture an unknown tool's measurements + observations and it composes the spec for you (AI-enriched when a provider is connected).",
+        "Your CNC tooling as its own table (end mills, drills, taps, reamers, inserts) by type/diameter/flutes/material, with the bin each lives in. Ships the guided Cataloging Bench app: capture an unknown tool's measurements + observations and it composes the spec for you (AI-enriched when a provider is connected).",
       author: "Cobblr",
       released_at: "2026-06-12",
       changelog:
-        "The guided Cataloging Bench: measure (caliper) → weigh (scale) → observe → photograph → bin, hands-busy, no typing — with a live edge mode that streams real readings from an on-site agent. The structured spec is composed deterministically; a best-effort multimodal AI identify enriches the name/brand from the measurements when a provider is connected. Built on two GENERIC capabilities the bench app wires together — inventory:create-item + core-scan:identify — not a bench-specific module action. See docs/product/cataloging-bench.md.",
+        "The guided Cataloging Bench: measure (caliper) → weigh (scale) → observe → photograph → bin, hands-busy, no typing, with a live edge mode that streams real readings from an on-site agent. The structured spec is composed deterministically; a best-effort multimodal AI identify enriches the name/brand from the measurements when a provider is connected. Built on two GENERIC capabilities the bench app wires together, inventory:create-item + core-scan:identify, not a bench-specific module action. See docs/product/cataloging-bench.md.",
       requires: [{ module: "inventory" }, { module: "core-apps" }, { module: "core-scan" }],
       provides_instances: [
         {
@@ -2083,17 +2083,17 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           item_noun: "tool",
           qty_unit: "each",
           field_defs: [
-            { entity_kind: "inventory:part", name: "tool_type", display_label: "Type", type: "text", position: 1, choices: ["End mill", "Drill", "Tap", "Reamer", "Insert", "Collet", "Other"], help: "What kind of tool — the table groups by this." },
+            { entity_kind: "inventory:part", name: "tool_type", display_label: "Type", type: "text", position: 1, choices: ["End mill", "Drill", "Tap", "Reamer", "Insert", "Collet", "Other"], help: "What kind of tool, the table groups by this." },
             { entity_kind: "inventory:part", name: "diameter_mm", display_label: "Diameter (mm)", type: "number", unit: "mm", position: 2, help: "Cutting diameter, from the calipers." },
-            { entity_kind: "inventory:part", name: "shank_dia_mm", display_label: "Shank (mm)", type: "number", unit: "mm", position: 3, help: "Shank diameter — the size your collet/holder needs." },
-            { entity_kind: "inventory:part", name: "overall_length_mm", display_label: "Overall length (mm)", type: "number", unit: "mm", position: 4, help: "Tip to end — for reach + holder clearance." },
+            { entity_kind: "inventory:part", name: "shank_dia_mm", display_label: "Shank (mm)", type: "number", unit: "mm", position: 3, help: "Shank diameter, the size your collet/holder needs." },
+            { entity_kind: "inventory:part", name: "overall_length_mm", display_label: "Overall length (mm)", type: "number", unit: "mm", position: 4, help: "Tip to end, for reach + holder clearance." },
             { entity_kind: "inventory:part", name: "flute_length_mm", display_label: "Flute length (mm)", type: "number", unit: "mm", position: 5, help: "Length of cut." },
             { entity_kind: "inventory:part", name: "flute_count", display_label: "Flutes", type: "number", position: 6, help: "Number of flutes / lands." },
             { entity_kind: "inventory:part", name: "end_type", display_label: "End", type: "text", position: 7, choices: ["Square", "Ball", "Corner-radius", "Chamfer", "Drill point"], help: "Geometry of the cutting end." },
             { entity_kind: "inventory:part", name: "material", display_label: "Material", type: "text", position: 8, choices: ["Carbide", "HSS", "Cobalt", "Other"], help: "What the tool is made of." },
             { entity_kind: "inventory:part", name: "coating", display_label: "Coating", type: "text", position: 9, choices: ["Uncoated", "TiN", "TiCN", "TiAlN", "AlTiN", "DLC", "Other"], help: "Surface coating, if any." },
-            { entity_kind: "inventory:part", name: "weight_g", display_label: "Weight (g)", type: "number", unit: "g", position: 10, help: "From the scale — helps the AI tell carbide from HSS." },
-            { entity_kind: "inventory:part", name: "bin", display_label: "Bin", type: "text", position: 11, help: "Where it physically lives — “Bin 1 / Comp 6”. Set at the bench." },
+            { entity_kind: "inventory:part", name: "weight_g", display_label: "Weight (g)", type: "number", unit: "g", position: 10, help: "From the scale, helps the AI tell carbide from HSS." },
+            { entity_kind: "inventory:part", name: "bin", display_label: "Bin", type: "text", position: 11, help: "Where it physically lives. “Bin 1 / Comp 6”. Set at the bench." },
           ],
           field_overrides: [
             { entity_kind: "inventory:part", name: "manufacturer", display_label: "Brand" },

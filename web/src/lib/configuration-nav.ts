@@ -1,379 +1,249 @@
 // The ONE registry of workspace-configuration destinations — consumed by the
-// /configuration hub (tiles) AND the ConfigurationLayout sidebar, so the two
-// can never drift. Mirrors the adminSections.ts pattern.
+// /configuration hub (section cards), the section pages, the settings sidebar
+// and the ⌘K feature index, so none of them can drift.
 //
-// 2026-07 settings rework (the author: "a disorganized trash heap even I can't
-// navigate"): six audience-first groups replace the old five concept-muddled
-// ones (Backup/QR/Edge lived under "customize your data"); every entry carries
-// search `keywords` (synonyms the label doesn't say — "roles" must find
-// Permissions); modal launchers are addressed by `modal` and deep-linked as
-// /configuration?open=<modal> so the sidebar (and anyone's bookmarks) can
-// reach them.
+// 2026-07 revamp (docs/design-decisions/configuration-revamp.md). The previous
+// pass grouped by AUDIENCE and split tiles into primary/advanced; the result
+// was 34 flat destinations with 11 visible and two whole groups invisible on
+// arrival. This registry replaces that with SECTIONS you navigate into, and
+// every entry declares what it needs to be reachable:
+//
+//   section  — which of the five sections it lives under
+//   module   — the owning module; the entry is hidden when it is disabled, so
+//              a tile can never lead to a page whose API routes aren't mounted
+//   minRole  — hidden below this role
+//
+// Four rules this file is held to (see the design doc for the mistake each one
+// came from):
+//   1. Group by the ACT, not the audience.
+//   2. Leaves keep the product's existing nouns; only section names are new.
+//   3. A destination is a place you GO. A button is a thing you DO — actions
+//      like "+ New thing" belong on a section, never in this list.
+//   4. Never merge two pages just to make a count look smaller.
 
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
+  Blocks,
   Bot,
   Boxes,
   Cable,
+  Cloud,
   CopyPlus,
   FileArchive,
   FileText,
-  Files,
-  FolderPlus,
   Globe,
   HeartPulse,
+  Home,
   KeyRound,
   LayoutGrid,
-  LayoutList,
-  Library,
   Link2,
   ListTodo,
   MousePointerClick,
   Package,
   Plug,
-  Printer,
-  QrCode,
   Ruler,
+  ScanLine,
   Shield,
   Sliders,
   Sparkles,
-  Tag,
   Users,
-  Wrench,
 } from "lucide-react";
 
-export type ConfigGroup = "setup" | "data" | "access" | "automation" | "devices" | "system";
+/** The five sections of workspace configuration. `cloud` is NOT here: it is a
+ *  render-time section fed by the hosted overlay's panels, so open core never
+ *  shows it (see HOSTED_SECTION). */
+export type ConfigSection =
+  | "workspace"
+  | "build"
+  | "people"
+  | "connections"
+  | "system";
 
-export interface ConfigDestination {
+/** The minimum org role that can use a destination. The API has exactly two
+ *  tiers (verified by sweeping `requireRole` across api/src + modules): the
+ *  admin tier `("owner","admin")` and the member tier
+ *  `("owner","admin","member")`. Nothing in settings is owner-exclusive, so
+ *  "admin" is the only meaningful value here — `owner` would hide pages the
+ *  server happily serves to admins. */
+export type ConfigRole = "admin" | "member";
+
+/** Width is a pair, not a flag: choosing the wide column obliges you to say what
+ *  needs the room. Modelled as a union so TypeScript refuses `width: "wide"`
+ *  without a reason, rather than a lint noticing later.
+ *
+ *  Why bother: "wide" started as a judgement call and decayed into a default.
+ *  Five pages carried it. Two could not say why at all (a card list, a list of
+ *  log lines) and two had reasons that sounded fine in isolation and still lost
+ *  to the simpler rule — a settings page looks like the settings pages around
+ *  it, and a matrix or a three-column editor is not enough to break that.
+ *
+ *  ONE page is wide: the bundle catalog, which is a browse surface people scan
+ *  rather than a page they read. If you are adding a second, the bar is that
+ *  high. A reason you have to type is a reason you have to have. */
+type ConfigWidth =
+  | { width?: undefined; wideBecause?: never }
+  | {
+      width: "wide";
+      /** What specifically needs more than the reading column: a matrix, a
+       *  multi-column layout, a browse grid. "It felt cramped" is not one. */
+      wideBecause: string;
+    };
+
+export type ConfigDestination = ConfigDestinationBase & ConfigWidth;
+
+interface ConfigDestinationBase {
+  /** The product's existing noun for this page. Never a new coinage. */
   label: string;
   description: string;
   icon: LucideIcon;
-  /** Route target. Entries OUTSIDE /configuration/* (e.g. /views) still list
-   *  here — the sidebar links out to them. */
-  to?: string;
-  /** LEGACY modal launcher id — no registry entry sets this since the
-   *  2026-07-03 settings-cohesion pass (every entry is a page now); kept so
-   *  old ?open= deep links can be redirected by the hub. */
-  modal?: "new-thing" | "modules" | "members";
-  group: ConfigGroup;
+  /** Route target. Entries OUTSIDE /configuration/* (e.g. /bundles, /wires)
+   *  still list here — URLs did not move in this revamp; sections are a
+   *  navigation layer, not a URL segment. */
+  to: string;
+  section: ConfigSection;
+  /** Owning module. Hidden when that module is disabled for the workspace.
+   *  Omit for kernel-level pages that always exist. */
+  module?: string;
+  /** Hidden below this role. Defaults to "admin" — every settings page in the
+   *  registry is admin-gated server-side. */
+  minRole?: ConfigRole;
   /** Search synonyms the label/description don't already contain. */
   keywords?: string[];
-  /** Everyday tile — shown on the hub before "Show advanced settings". */
-  primary?: boolean;
+  // Width lives in ConfigWidth above: declared HERE, not in the page, because a
+  // column set per-page is how the settings area ended up with six of them and
+  // both alignments. The layout reads this and owns the column; pages render
+  // their content and nothing else.
 }
 
-export const CONFIG_GROUPS: Record<ConfigGroup, { label: string; blurb: string }> = {
-  setup: { label: "set up", blurb: "What this workspace is made of" },
-  data: { label: "your data", blurb: "Shape the records — fields, views, vocabulary" },
-  access: { label: "people & sharing", blurb: "Who gets in and what they see" },
-  automation: { label: "automation & AI", blurb: "Things that happen on their own" },
-  devices: { label: "machines & devices", blurb: "Bridges to the physical world" },
-  system: { label: "safety & system", blurb: "Backups, audit, diagnostics" },
+export interface ConfigSectionMeta {
+  label: string;
+  /** One line on the section card: what act this section serves. */
+  blurb: string;
+  icon: LucideIcon;
+  /** Primary action rendered as a BUTTON on the section (rule 3). */
+  action?: { label: string; to: string };
+}
+
+export const CONFIG_SECTIONS: Record<ConfigSection, ConfigSectionMeta> = {
+  workspace: {
+    label: "Workspace",
+    blurb: "What this workspace is called, how it reads, and how you get a copy out.",
+    icon: Home,
+  },
+  build: {
+    label: "Build",
+    blurb: "What this workspace is made of, and how the pieces connect.",
+    icon: Blocks,
+    action: { label: "+ New thing", to: "/configuration/new-thing" },
+  },
+  people: {
+    label: "People",
+    blurb: "Who gets in, what they can do, and what they land on.",
+    icon: Users,
+  },
+  connections: {
+    label: "Connections",
+    blurb: "Everything that talks to something outside this workspace.",
+    icon: Plug,
+  },
+  system: {
+    label: "System",
+    blurb: "Is it healthy, what has it been doing, what did it change.",
+    icon: Activity,
+  },
 };
-export const CONFIG_GROUP_ORDER: ConfigGroup[] = [
-  "setup",
-  "data",
-  "access",
-  "automation",
-  "devices",
+
+/** The ONE content column for every settings page.
+ *
+ *  CENTRED, because that is what the rest of the app does: AppLayout wraps every
+ *  page in `max-w-6xl mx-auto`. An earlier pass made this left-aligned to keep a
+ *  constant distance from the sidebar, which sounded reasonable and was wrong —
+ *  it pinned settings to the left of an already-centred region and left a void
+ *  down the right on a wide screen, so settings became the one part of the app
+ *  that did not sit where everything else sits. */
+export const CONFIG_COLUMN = "w-full max-w-4xl mx-auto";
+/** For a table or permission matrix that a reading column would squeeze. */
+export const CONFIG_COLUMN_WIDE = "w-full max-w-6xl mx-auto";
+
+export function columnFor(width: ConfigDestination["width"]): string {
+  return width === "wide" ? CONFIG_COLUMN_WIDE : CONFIG_COLUMN;
+}
+
+export const CONFIG_SECTION_ORDER: ConfigSection[] = [
+  "workspace",
+  "build",
+  "people",
+  "connections",
   "system",
 ];
 
-/** Hosted-overlay panels still declare the pre-2026-07 group ids — map them
- *  onto the six new groups so the overlay needs no lockstep release. */
-export const LEGACY_GROUP_MAP: Record<string, ConfigGroup> = {
-  modules: "setup",
-  data: "data",
-  access: "access",
-  extend: "automation",
-  admin: "system",
+/** The hosted overlay's panels get their OWN section, rendered only when
+ *  /hosted-panels returns any. Open core registers none, so a self-hosted
+ *  instance shows exactly the five sections above.
+ *
+ *  Why a section rather than folding them into Connections: the overlay
+ *  registers a dozen panels (billing + eleven managed connectors), which would
+ *  take Connections from 8 leaves to ~20 on the hosted deployment. Hosted-only
+ *  surface should also READ as hosted-only. */
+export const HOSTED_SECTION = {
+  id: "cloud" as const,
+  label: "Cloud",
+  blurb: "What we run for you: your plan, and connectors we manage.",
+  icon: Cloud,
 };
+export type HostedSectionId = typeof HOSTED_SECTION.id;
+
+/** Panels declare a pre-2026-07 `group` id ("extend", "access", …). Every one
+ *  of them belongs in the Cloud section now regardless of which legacy group it
+ *  names, so the overlay needs no lockstep release. A function rather than a
+ *  map so an unknown future group id can't fall through to a wrong section. */
+export function sectionForHostedPanel(): HostedSectionId {
+  return HOSTED_SECTION.id;
+}
 
 export const CONFIG_DESTINATIONS: ConfigDestination[] = [
-  // ── set up ────────────────────────────────────────────────────────
+  // ── Workspace ─────────────────────────────────────────────────────
   {
-    group: "setup",
-    icon: FolderPlus,
-    label: "+ New thing in workspace",
-    description:
-      "Add a new top-level entity to your workspace. Pick whether it's a sub-category of something existing or its own separate thing.",
-    to: "/configuration/new-thing",
-    keywords: ["add", "create", "instance", "category", "tracker"],
-    primary: true,
-  },
-  {
-    group: "setup",
-    icon: Boxes,
-    label: "Modules",
-    description: "Enable / disable modules and their specialisations for this workspace.",
-    to: "/configuration/modules",
-    keywords: ["enable", "disable", "install", "features"],
-    primary: true,
-  },
-  {
-    group: "setup",
-    icon: Package,
-    label: "Bundles",
-    description:
-      "One-click presets that ship a set of custom fields and wires. Browse the featured catalog, paste a manifest, or export your own.",
-    to: "/bundles",
-    keywords: ["presets", "recipes", "trackers", "skins", "marketplace"],
-    primary: true,
-  },
-  // ── your data ─────────────────────────────────────────────────────
-  {
-    group: "data",
+    section: "workspace",
     icon: Sliders,
-    label: "Custom fields",
+    label: "General",
     description:
-      "Per-entity-kind custom field defs — text, number, date, url, dropdown choices, or computed (a read-only {{ }} template over the entity's fields + related data).",
-    to: "/fields",
-    keywords: ["columns", "attributes", "schema", "computed"],
-    primary: true,
+      "How this workspace behaves day to day, including simple mode, which tucks the builder tools away for a calmer everyday view.",
+    to: "/configuration/general",
+    keywords: ["simple mode", "focused", "basics", "name"],
   },
   {
-    group: "data",
-    icon: LayoutList,
-    label: "Form builder",
-    description:
-      "Visually drag your custom fields into order and group them under section headings (Specs, Purchase info…). The layout shows on every create/edit form.",
-    to: "/configuration/form-builder",
-    keywords: ["layout", "sections", "edit form"],
-    primary: true,
-  },
-  {
-    group: "data",
-    icon: LayoutList,
-    label: "Saved views",
-    description:
-      "List / table / kanban views over your entities. Saved here, renderable from the dashboard, publishable as public surfaces.",
-    to: "/views",
-    keywords: ["kanban", "table", "list", "filters"],
-    primary: true,
-  },
-  {
-    group: "data",
-    icon: Tag,
-    label: "Tags",
-    description:
-      "Cross-cutting labels you can attach to anything. Filter by tag in saved views or searches.",
-    to: "/tags",
-    primary: true,
-  },
-  // NO Locations entry, deliberately. The place tree is something you BROWSE,
-  // so it lives in the workspace nav (a synthetic top from useNavModules) and
-  // owns the bare /locations URL. It was ALSO listed here pointing at a second
-  // URL for the same page, so clicking any row after arriving from the navbar
-  // bounced you into the settings shell. See
-  // docs/design-decisions/configuration-revamp.md for the browse-vs-configure
-  // rule this applies.
-  {
-    group: "data",
-    icon: Ruler,
-    label: "Units",
-    description:
-      "The workspace unit vocabulary — built-in units (gram/g, meter/m, each/ea) plus your own. Pick whether quantities show the shorthand symbol, the full word, or both.",
-    to: "/configuration/units",
-    keywords: ["measurements", "grams", "meters", "quantity"],
-  },
-  {
-    group: "data",
-    icon: CopyPlus,
-    label: "Templates",
-    description:
-      "Per-workspace entity templates — stamp out new parts / assets / machines pre-filled with defaults + tags. \"Household appliance template\" / \"new Voron printer\" / \"Lego set acquired\".",
-    to: "/configuration/templates",
-    keywords: ["defaults", "prefill", "stamp"],
-  },
-  {
-    group: "data",
-    icon: Library,
-    label: "Catalogs",
-    description:
-      "Reference datasets you match your entities against (Rebrickable's Lego catalog ships with the Lego setup; bring your own as a CSV). A matched entity shows the catalog's photo + metadata alongside.",
-    to: "/configuration/catalogs",
-    keywords: ["reference", "datasets", "match", "rebrickable", "isbn", "catalog"],
-  },
-  {
-    group: "data",
-    icon: Files,
-    label: "Files",
-    description:
-      "Uploaded photos / docs. Files attach to entities via the Tags + Files panel on each detail page.",
-    to: "/files",
-    keywords: ["photos", "uploads", "attachments", "documents"],
-  },
-  {
-    group: "data",
+    section: "workspace",
     icon: LayoutGrid,
     label: "Presentation",
     description:
-      "Rename / re-icon / hide / reorder any nav entry in your workspace. Workspace edits override module + bundle defaults.",
+      "Rename, re-icon, hide and reorder any nav entry in your workspace. Workspace edits override module + bundle defaults.",
     to: "/configuration/presentation",
-    keywords: ["nav", "sidebar", "rename", "icons", "reorder"],
-  },
-  // ── people & sharing ──────────────────────────────────────────────
-  {
-    group: "access",
-    icon: Users,
-    label: "Members + invites",
-    description: "Invite collaborators to this workspace, change roles, revoke access.",
-    to: "/configuration/members",
-    keywords: ["team", "collaborators", "invite"],
-    primary: true,
+    keywords: ["nav", "sidebar", "rename", "icons", "reorder", "customize", "navigation"],
   },
   {
-    group: "access",
-    icon: Shield,
-    label: "Access & permissions",
+    section: "workspace",
+    icon: Ruler,
+    label: "Units",
     description:
-      "One area, three tabs: the who-can-do-what overview + per-member grants, custom roles (bundle capabilities under a name), and minted accounts. Stock roles are set in Members + invites.",
-    to: "/configuration/permissions",
-    keywords: ["roles", "grants", "capabilities", "access control", "users", "accounts", "custom roles", "password reset"],
-    primary: true,
+      "The workspace unit vocabulary: built-in units (gram/g, meter/m, each/ea) plus your own. Pick whether quantities show the shorthand symbol, the full word, or both.",
+    to: "/configuration/units",
+    module: "core-units",
+    keywords: ["measurements", "grams", "meters", "quantity"],
   },
   {
-    group: "access",
-    icon: LayoutGrid,
-    label: "Member portal",
+    section: "workspace",
+    icon: CopyPlus,
+    label: "Templates",
     description:
-      "Branding + pinned views for the slimmed-down member portal at /portal/:slug. Members + guests land here by default; admins can preview.",
-    to: "/configuration/portal",
-    keywords: ["branding", "guests", "landing"],
+      "Per-workspace entity templates. Stamp out new records pre-filled with defaults + tags.",
+    to: "/configuration/templates",
+    module: "core-templates",
+    keywords: ["defaults", "prefill", "stamp"],
   },
   {
-    group: "access",
-    icon: LayoutGrid,
-    label: "Apps",
-    description:
-      "Build structured worker apps (pages of views, stats, forms, actions) that members open in the portal. Capability-gated; members see only what they're allowed.",
-    to: "/configuration/apps",
-    keywords: ["custom app", "app player", "blocks", "portal"],
-  },
-  {
-    group: "access",
-    icon: Link2,
-    label: "Workspace links",
-    description:
-      "Cross-workspace data sharing — read selected entity kinds from another workspace you own (or invite-share). Accept / revoke per link.",
-    to: "/configuration/links",
-    keywords: ["sharing", "cross-workspace"],
-  },
-  {
-    group: "access",
-    icon: Globe,
-    label: "Public surfaces",
-    description:
-      "Token-gated URLs that share a saved view with anyone — no account needed.",
-    to: "/configuration/surfaces",
-    keywords: ["public", "share", "tv", "display", "no login"],
-  },
-  {
-    group: "access",
-    icon: KeyRound,
-    label: "API tokens",
-    description: "Long-lived `cbt_*` tokens for CLI / AI / automation. Mint, list, revoke.",
-    to: "/configuration/tokens",
-    keywords: ["cli", "bearer", "automation", "keys"],
-  },
-  // ── automation & AI ───────────────────────────────────────────────
-  {
-    group: "automation",
-    icon: Plug,
-    label: "Wires",
-    description:
-      "Event-triggered or click-triggered actions that connect modules. The user-editable connector layer.",
-    to: "/bindings",
-    keywords: ["automation", "triggers", "events", "bindings"],
-  },
-  {
-    group: "automation",
-    icon: MousePointerClick,
-    label: "Actions",
-    description:
-      "Tune which entities each cross-module action appears on — broaden or narrow a trait predicate per-axis.",
-    to: "/actions",
-    keywords: ["buttons", "verbs"],
-  },
-  {
-    group: "automation",
-    icon: Sparkles,
-    label: "AI",
-    description:
-      "Configure AI providers (OpenAI, Anthropic, Ollama). Set per-capability defaults. Track spend. Match user entities to catalogs with an LLM. (Your PERSONAL AI connections live under your account menu → Connections.)",
-    to: "/configuration/ai",
-    keywords: ["llm", "provider", "ollama", "anthropic", "openai", "claude"],
-    primary: true,
-  },
-  {
-    group: "automation",
-    icon: Bot,
-    label: "Assistant",
-    description:
-      "Teach Ask Cobb what to say when there's no AI connected — edit the built-in answers, turn them off, or add your own keyword-triggered replies. Includes a live \"try it\" tester.",
-    to: "/configuration/assistant",
-    keywords: ["cobb", "chat", "basic mode", "canned", "no ai", "answers", "faq"],
-  },
-  {
-    group: "automation",
-    icon: Plug,
-    label: "Integrations",
-    description:
-      "Connect to Slack, Discord, email, or any webhook — outbound and inbound. Sync in from Ravelry, or migrate in from another app like Homebox.",
-    to: "/configuration/integrations",
-    keywords: ["slack", "discord", "webhook", "email", "notifications", "ravelry", "homebox", "migrate", "import", "csv", "move in", "switch"],
-    primary: true,
-  },
-  {
-    group: "automation",
-    icon: Wrench,
-    label: "Maintenance",
-    description:
-      "Workspace-wide service log — everything scheduled, what's overdue, and the full history across every machine / asset / part. Complete, edit, or delete entries in one place.",
-    to: "/configuration/maintenance",
-    keywords: ["service", "schedule", "overdue", "recurring"],
-  },
-  // ── machines & devices ────────────────────────────────────────────
-  {
-    group: "devices",
-    icon: Cable,
-    label: "Edge bridges",
-    description:
-      "Your on-site bridges — the small programs that connect Cobblr to printers, lasers, and local AI on your own network. Live status, health tests, and setup.",
-    to: "/configuration/edge",
-    keywords: ["lan", "local", "bridge", "agent", "tunnel"],
-  },
-  {
-    group: "devices",
-    icon: Printer,
-    label: "Digital fabrication",
-    description:
-      "Machine-manager connections (FDM Monster, OctoPrint, Bambu, …) — where design files get sent and print jobs are tracked.",
-    to: "/configuration/digifab",
-    keywords: ["3d printer", "laser", "cnc", "print job", "fdm", "octoprint", "bambu"],
-  },
-  {
-    group: "devices",
-    icon: Printer,
-    label: "Printers",
-    description:
-      "Send documents to a real printer through a print manager (CUPS) — a Rollo label printer, shipping labels, an office laser. Direct on your LAN, or via the edge-bridge from cloud.",
-    to: "/configuration/print",
-    keywords: ["cups", "label printer", "rollo", "paper"],
-  },
-  {
-    group: "devices",
-    icon: QrCode,
-    label: "QR codes",
-    description:
-      "The QR tokens the workspace has minted (copy a scan URL, revoke a token whose label walked off), plus external-QR rules that teach the scanner to read labels printed by another app — two tabs in one window.",
-    to: "/configuration/qr-tokens",
-    keywords: ["scan", "labels", "tokens", "rules"],
-  },
-  // ── safety & system ───────────────────────────────────────────────
-  {
-    group: "system",
+    section: "workspace",
     icon: FileArchive,
     label: "Backup & blueprints",
     description:
@@ -381,46 +251,266 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     to: "/configuration/backup",
     keywords: ["restore", "export", "snapshot", "google drive", "s3"],
   },
+
+  // ── Build ─────────────────────────────────────────────────────────
   {
-    group: "system",
+    section: "build",
+    icon: Boxes,
+    label: "Modules",
+    description: "Enable / disable modules and their specialisations for this workspace.",
+    to: "/configuration/modules",
+    keywords: ["enable", "disable", "install", "features"],
+  },
+  {
+    section: "build",
+    icon: Package,
+    label: "Bundles",
+    description:
+      "One-click presets that ship a set of custom fields and wires. Browse the featured catalog, paste a manifest, or export your own.",
+    to: "/bundles",
+    keywords: ["presets", "recipes", "trackers", "skins", "marketplace", "setups"],
+    width: "wide",
+    wideBecause:
+      "the bundle catalog is a three-across browse grid, and it is the one settings surface people scan rather than read",
+  },
+  {
+    section: "build",
+    icon: Plug,
+    label: "Wires",
+    description:
+      "Event-triggered or click-triggered actions that connect modules. The user-editable connector layer.",
+    to: "/wires",
+    keywords: ["automation", "triggers", "events", "bindings", "when this then that"],
+  },
+  {
+    section: "build",
+    icon: MousePointerClick,
+    label: "Actions",
+    description:
+      "Tune which entities each cross-module action appears on. Broaden or narrow a trait predicate per-axis.",
+    to: "/actions",
+    keywords: ["buttons", "verbs", "automation"],
+  },
+  {
+    section: "build",
+    icon: Sliders,
+    label: "Fields & forms",
+    description:
+      "Define your custom fields (text, number, date, url, dropdown, or computed), then drag them into order and group them under section headings. The layout shows on every create/edit form.",
+    to: "/fields",
+    keywords: [
+      "columns",
+      "attributes",
+      "schema",
+      "computed",
+      "form builder",
+      "layout",
+      "sections",
+    ],
+  },
+  {
+    section: "build",
+    icon: LayoutGrid,
+    label: "Apps",
+    description:
+      "Build structured worker apps (pages of views, stats, forms, actions) that members open in the portal. Capability-gated; members see only what they're allowed.",
+    to: "/configuration/apps",
+    module: "core-apps",
+    keywords: ["custom app", "app player", "blocks", "portal"],
+  },
+
+  // ── People ────────────────────────────────────────────────────────
+  {
+    section: "people",
+    icon: Users,
+    label: "Members & invites",
+    description: "Invite collaborators to this workspace, change roles, revoke access.",
+    to: "/configuration/members",
+    keywords: ["team", "collaborators", "invite"],
+  },
+  {
+    section: "people",
+    icon: Shield,
+    label: "Permissions",
+    description:
+      "Who can do what: the capability overview + per-member grants, custom roles, and minted accounts.",
+    to: "/configuration/permissions",
+    keywords: [
+      "roles",
+      "grants",
+      "capabilities",
+      "access control",
+      "users",
+      "accounts",
+      "custom roles",
+      "password reset",
+    ],
+  },
+  {
+    section: "people",
+    icon: LayoutGrid,
+    label: "Member portal",
+    description:
+      "Branding + pinned views for the slimmed-down member portal at /portal/:slug. Members + guests land here by default; admins can preview.",
+    to: "/configuration/portal",
+    keywords: ["branding", "guests", "landing"],
+  },
+
+  // ── Connections ───────────────────────────────────────────────────
+  {
+    section: "connections",
+    icon: Sparkles,
+    label: "AI",
+    description:
+      "Configure AI providers (OpenAI, Anthropic, Ollama). Set per-capability defaults. Track spend. (Your PERSONAL AI connections live under your account menu → Connections.)",
+    to: "/configuration/ai",
+    module: "core-ai",
+    keywords: ["llm", "provider", "ollama", "anthropic", "openai", "claude"],
+  },
+  {
+    section: "connections",
+    icon: Bot,
+    label: "Assistant",
+    description:
+      "Teach Ask Cobb what to say when there's no AI connected: edit the built-in answers, turn them off, or add your own keyword-triggered replies. Includes a live \"try it\" tester.",
+    to: "/configuration/assistant",
+    module: "core-ai",
+    keywords: ["cobb", "chat", "basic mode", "canned", "no ai", "answers", "faq"],
+  },
+  {
+    section: "connections",
+    icon: Plug,
+    label: "Integrations",
+    description:
+      "Connect to Slack, Discord, email, or any webhook, outbound and inbound. Sync in from another service, or migrate in from another app.",
+    to: "/configuration/integrations",
+    module: "core-integrations",
+    keywords: [
+      "slack",
+      "discord",
+      "webhook",
+      "email",
+      "notifications",
+      "migrate",
+      "import",
+      "csv",
+      "move in",
+      "switch",
+    ],
+  },
+  {
+    section: "connections",
+    icon: ScanLine,
+    label: "Scan rules",
+    description:
+      "Teach the scanner to read labels printed by another app, so an existing barcode resolves to the right record here.",
+    to: "/configuration/scan-rules",
+    module: "core-scan",
+    keywords: ["external qr", "barcode", "resolver", "labels", "interop"],
+  },
+  {
+    section: "connections",
+    icon: Cable,
+    label: "Devices",
+    description:
+      "Everything physical this workspace reaches: your on-site bridges, machine managers that run print jobs, and document printers.",
+    to: "/configuration/devices",
+    module: "core-devices",
+    keywords: [
+      "edge",
+      "bridge",
+      "lan",
+      "local",
+      "tunnel",
+      "3d printer",
+      "laser",
+      "cnc",
+      "print job",
+      "fdm",
+      "octoprint",
+      "bambu",
+      "cups",
+      "label printer",
+      "digifab",
+      "digital fabrication",
+    ],
+  },
+  {
+    section: "connections",
+    icon: Link2,
+    label: "Workspace links",
+    description:
+      "Cross-workspace data sharing. Read selected entity kinds from another workspace you own (or invite-share). Accept / revoke per link.",
+    to: "/configuration/links",
+    keywords: ["sharing", "cross-workspace"],
+  },
+  {
+    section: "connections",
+    icon: Globe,
+    label: "Public surfaces",
+    description:
+      "Token-gated URLs that share a saved view with anyone, no account needed.",
+    to: "/configuration/surfaces",
+    module: "core-public-surfaces",
+    keywords: ["public", "share", "tv", "display", "no login"],
+  },
+  {
+    section: "connections",
+    icon: KeyRound,
+    label: "API tokens",
+    description: "Long-lived `cbt_*` tokens for CLI / AI / automation. Mint, list, revoke.",
+    to: "/configuration/tokens",
+    keywords: ["cli", "bearer", "automation", "keys"],
+  },
+
+  // ── System ────────────────────────────────────────────────────────
+  {
+    section: "system",
     icon: Activity,
     label: "Activity log",
     description:
       "Every mutation, attributed to who (UI / api token / system) and when. Filterable.",
     to: "/activity",
+    module: "core-activity-log",
     keywords: ["audit", "history", "who changed"],
   },
   {
-    group: "system",
+    section: "system",
     icon: ListTodo,
     label: "Background queue",
     description:
-      "Persistent background work — view queued / running / done / failed jobs for this workspace. Worker polls every 5s; failed jobs retry with exponential backoff.",
+      "Persistent background work. View queued / running / done / failed jobs for this workspace.",
     to: "/configuration/queue",
+    module: "core-queue",
     keywords: ["jobs", "workers", "retries"],
   },
   {
-    group: "system",
+    section: "system",
     icon: HeartPulse,
     label: "Healthcheck",
     description:
       "Live status rollup of every module's probes. Polled every 30s; 503 on red.",
     to: "/configuration/health",
+    module: "core-healthcheck",
     keywords: ["status", "probes", "diagnostics"],
   },
   {
-    group: "system",
+    section: "system",
     icon: FileText,
     label: "OpenAPI",
     description:
-      "Auto-generated OpenAPI 3.1 spec — entity-kind schemas + platform paths. Drop into Swagger UI or Insomnia.",
+      "Auto-generated OpenAPI 3.1 spec: entity-kind schemas + platform paths. Drop into Swagger UI or Insomnia.",
     to: "/configuration/openapi",
+    module: "core-openapi",
     keywords: ["api docs", "swagger", "spec", "rest"],
   },
 ];
 
 /** Case-insensitive match over label + description + keywords. */
-export function destinationMatches(d: ConfigDestination, q: string): boolean {
+export function destinationMatches(
+  d: Pick<ConfigDestination, "label" | "description" | "keywords">,
+  q: string,
+): boolean {
   const hay = `${d.label} ${d.description} ${(d.keywords ?? []).join(" ")}`.toLowerCase();
   return q
     .toLowerCase()
@@ -429,14 +519,53 @@ export function destinationMatches(d: ConfigDestination, q: string): boolean {
     .every((t) => hay.includes(t));
 }
 
+export interface VisibilityContext {
+  /** Names of the modules enabled for the active workspace. Pass `null` while
+   *  the list is still loading — nothing is hidden on a module basis then, so
+   *  the settings area never flickers items in. */
+  enabledModules: Set<string> | null;
+  /** The viewer's role in the active workspace. */
+  role?: string | null;
+}
+
+/** Is this destination usable by this viewer, in this workspace? A tile that
+ *  fails this leads to a page whose API routes aren't mounted (409s) or that
+ *  the server refuses — so it must not be shown at all. */
+export function isDestinationVisible(
+  d: ConfigDestination,
+  ctx: VisibilityContext,
+): boolean {
+  if (d.module && ctx.enabledModules && !ctx.enabledModules.has(d.module)) return false;
+  const min = d.minRole ?? "admin";
+  const role = ctx.role ?? undefined;
+  // Unknown role (still loading) → don't hide; the server is the real gate.
+  if (!role) return true;
+  if (min === "admin") return role === "owner" || role === "admin";
+  return role === "owner" || role === "admin" || role === "member";
+}
+
+export function visibleDestinations(ctx: VisibilityContext): ConfigDestination[] {
+  return CONFIG_DESTINATIONS.filter((d) => isDestinationVisible(d, ctx));
+}
+
 /** Is this route part of the configuration family? True for /configuration/*
- *  and every registry destination's own page (the 8 family routes like
- *  /views, /fields, /bundles…). Drives the sidebar fold: in side-nav mode the
- *  MAIN sidebar becomes the configuration panel on these routes, so two
- *  sidebars never stack. */
+ *  and every registry destination's own page (the family routes like /bundles,
+ *  /fields, /wires that live outside the namespace). Drives the sidebar
+ *  fold: in side-nav mode the MAIN sidebar becomes the configuration panel on
+ *  these routes, so two sidebars never stack. */
 export function isConfigurationPath(pathname: string): boolean {
   if (pathname === "/configuration" || pathname.startsWith("/configuration/")) return true;
   return CONFIG_DESTINATIONS.some(
-    (d) => d.to && !d.to.startsWith("/configuration") && (pathname === d.to || pathname.startsWith(`${d.to}/`)),
+    (d) =>
+      !d.to.startsWith("/configuration") &&
+      (pathname === d.to || pathname.startsWith(`${d.to}/`)),
   );
+}
+
+/** The section a route belongs to, for breadcrumbs + sidebar highlighting. */
+export function sectionForPath(pathname: string): ConfigSection | null {
+  const hit = CONFIG_DESTINATIONS.find(
+    (d) => pathname === d.to || pathname.startsWith(`${d.to}/`),
+  );
+  return hit?.section ?? null;
 }

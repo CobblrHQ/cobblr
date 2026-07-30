@@ -24,7 +24,7 @@ export default defineModule({
   version: "0.1.0",
   displayName: "Templates",
   description:
-    "Per-workspace entity templates — pre-fill defaults + tags when stamping out a new part / machine / asset / project.",
+    "Per-workspace entity templates, pre-fill defaults + tags when stamping out a new part / machine / asset / project.",
   icon: "copy-plus",
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace

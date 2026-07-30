@@ -2,7 +2,7 @@
   "manifest": {
     "id": "cobblr.flagship.maker-workshop",
     "catalog": "disabled",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "name": "Maker Workshop",
     "description": "Inventory + Builds + a parts shopping list, pre-wired into the maker loop: define builds as recipes of tracked parts, build them (which consumes stock), and auto-restock low parts through a shopping list you check off. Showcases the Builds (light BOM) module.",
     "author": "Cobblr",
@@ -34,7 +34,7 @@
         "trigger_event": "lists.item.checked",
         "args": {
           "delta": 1,
-          "reason": "Restocked — checked off the parts list"
+          "reason": "Restocked, checked off the parts list"
         }
       }
     ],

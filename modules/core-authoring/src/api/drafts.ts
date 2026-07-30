@@ -479,7 +479,7 @@ draftsRouter.post(
     }
     const artifact = parent.candidate as Record<string, unknown> | null;
     if (!artifact || typeof artifact !== "object") {
-      res.status(409).json({ error: { code: "no_artifact", message: "This draft has no candidate to refine — build or paste one first." } });
+      res.status(409).json({ error: { code: "no_artifact", message: "This draft has no candidate to refine, build or paste one first." } });
       return;
     }
 

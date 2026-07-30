@@ -164,7 +164,7 @@ interface AuthResponse {
 export async function provisionOrgForUser(
   userId: string,
   orgName: string,
-): Promise<{ orgId: string; slug: string; dbName: string }> {
+): Promise<{ orgId: string; slug: string; dbName: string; provisioned: boolean }> {
   const dbName = tenantDbName();
   const client = await metaPool.connect();
   let orgId: string;
@@ -273,7 +273,7 @@ export async function provisionOrgForUser(
     // before a given default wire was added to the manifest.
   }
 
-  return { orgId, slug, dbName };
+  return { orgId, slug, dbName, provisioned };
 }
 
 export async function buildAuthResponse(userId: string): Promise<AuthResponse> {
@@ -332,6 +332,7 @@ authRouter.get("/config", (_req, res) => {
 
 authRouter.post("/signup", async (req, res, next) => {
   try {
+    if (overLimit(signupLimiter, req)) return res.status(429).json(RATE_LIMITED);
     const body = SignupBody.parse(req.body);
     const email = body.email.toLowerCase().trim();
 
@@ -561,6 +562,7 @@ authRouter.get("/signup-invite/:token", async (req, res, next) => {
 
 authRouter.post("/login", async (req, res, next) => {
   try {
+    if (overLimit(loginLimiter, req)) return res.status(429).json(RATE_LIMITED);
     const body = LoginBody.parse(req.body);
     const email = body.email.toLowerCase().trim();
 
@@ -619,6 +621,11 @@ authRouter.post("/identity/exchange", async (req, res, next) => {
   try {
     if (!identityEnabled()) {
       return res.status(404).json({ error: { code: "identity_disabled", message: "Central identity is not enabled on this surface." } });
+    }
+    // Unauthenticated + does a jwtVerify and a users lookup — cap bursts (token probing /
+    // identity enumeration / CPU) like every other auth endpoint here.
+    if (!identityExchangeLimiter(req.ip ?? "unknown")) {
+      return res.status(429).json({ error: { code: "rate_limited", message: "Too many attempts — wait a moment." } });
     }
     const { token } = IdentityExchangeBody.parse(req.body);
     let identityId: string;
@@ -693,6 +700,7 @@ const MagicRequest = z.object({
 
 authRouter.post("/magic/request", async (req, res, next) => {
   try {
+    if (overLimit(magicRequestLimiter, req)) return res.status(429).json(RATE_LIMITED);
     const parsed = MagicRequest.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
@@ -769,6 +777,7 @@ const MagicConsume = z.object({
 
 authRouter.post("/magic/consume", async (req, res, next) => {
   try {
+    if (overLimit(magicConsumeLimiter, req)) return res.status(429).json(RATE_LIMITED);
     const parsed = MagicConsume.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
@@ -913,6 +922,10 @@ const PasswordForgot = z.object({ email: z.string().email().max(255) });
 
 authRouter.post("/password/forgot", async (req, res, next) => {
   try {
+    if (overLimit(passwordForgotLimiter, req)) {
+      res.status(429).json(RATE_LIMITED);
+      return;
+    }
     const parsed = PasswordForgot.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "Bad request", details: parsed.error.issues } });
@@ -968,6 +981,7 @@ const PasswordReset = z.object({
 
 authRouter.post("/password/reset", async (req, res, next) => {
   try {
+    if (overLimit(passwordResetLimiter, req)) return res.status(429).json(RATE_LIMITED);
     const parsed = PasswordReset.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "Bad request", details: parsed.error.issues } });
@@ -1075,6 +1089,10 @@ const VerifyEmail = z.object({ token: z.string().min(8).max(200) });
 
 authRouter.post("/verify-email", async (req, res, next) => {
   try {
+    if (overLimit(verifyEmailLimiter, req)) {
+      res.status(429).json(RATE_LIMITED);
+      return;
+    }
     const parsed = VerifyEmail.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "Bad request", details: parsed.error.issues } });
@@ -1209,6 +1227,30 @@ function makePairLimiter(windowMs: number, max: number): (key: string) => boolea
 }
 const pairStartLimiter = makePairLimiter(60_000, 20); // 20 mints / min / IP
 const pairClaimLimiter = makePairLimiter(60_000, 30); // 30 claims / min / IP
+// Used by POST /identity/exchange (declared here with the other auth limiters; the handler
+// above closes over it and only reads it at request time, so the forward reference is fine).
+const identityExchangeLimiter = makePairLimiter(60_000, 30); // 30 exchanges / min / IP
+
+// Per-IP limiters for the unauthenticated credential surface. Caps brute-force (login),
+// email floods (magic-request, password-forgot), and token probing. Generous enough that a
+// real human (even behind NAT) never trips them.
+const loginLimiter = makePairLimiter(60_000, 30);
+const signupLimiter = makePairLimiter(60_000, 15);
+const magicRequestLimiter = makePairLimiter(60_000, 10);
+const magicConsumeLimiter = makePairLimiter(60_000, 30);
+const passwordForgotLimiter = makePairLimiter(60_000, 10);
+const passwordResetLimiter = makePairLimiter(60_000, 30);
+const verifyEmailLimiter = makePairLimiter(60_000, 30);
+
+// The CI test harness logs in thousands of times from ONE ip (localhost) — the limits
+// protect PROD, not the harness, so bypass them under the test rig. COBBLR_TEST_ORG_POOL is
+// set only in ci.yml / the test rig (env.ts), never in prod.
+const AUTH_LIMITS_OFF = process.env.NODE_ENV === "test" || !!process.env.COBBLR_TEST_ORG_POOL;
+/** True when this request should be rejected as over-limit. No-op under the test rig. */
+function overLimit(limiter: (k: string) => boolean, req: Request): boolean {
+  return !AUTH_LIMITS_OFF && !limiter(req.ip ?? "unknown");
+}
+const RATE_LIMITED = { error: { code: "rate_limited", message: "Too many attempts — wait a moment." } };
 
 const PairStartBody = z.object({ org_slug: z.string().min(1).max(120) });
 

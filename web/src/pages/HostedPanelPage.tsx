@@ -5,9 +5,8 @@
 // self-hosted instance has no panels, so this page is simply never linked.
 
 import { useEffect, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft } from "lucide-react";
 import { usePageTitle, useToast, useConfirm } from "@cobblr/platform-web";
 import { ApiError, api } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -114,12 +113,6 @@ export function HostedPanelPage() {
   const Icon = iconForName(summary?.icon);
   const Header = (
     <header className="flex items-center gap-3">
-      <Link
-        to="/configuration"
-        className="text-sm text-muted hover:text-content dark:hover:text-slate-300 inline-flex items-center gap-1"
-      >
-        <ArrowLeft className="h-4 w-4" /> Configuration
-      </Link>
       <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
         <Icon className="h-5 w-5" /> {summary?.label ?? "Settings"}
       </h1>

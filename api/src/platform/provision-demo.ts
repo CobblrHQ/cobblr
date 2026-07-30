@@ -50,6 +50,18 @@ export interface ProvisionDemoResult {
   unlocks: string[];
 }
 
+/** The demo's tenant DB failed to provision — thrown so the operator route returns a real
+ *  failure instead of a green 201 on a broken (empty/500-on-open) workspace. */
+export class DemoProvisionError extends Error {
+  constructor(
+    public readonly orgId: string,
+    public readonly slug: string,
+  ) {
+    super(`demo tenant DB failed to provision for ${slug} (${orgId})`);
+    this.name = "DemoProvisionError";
+  }
+}
+
 /** Provision a time-boxed, blueprint-seeded demo workspace for an existing user, with
  *  per-demo unlocks. Reuses provisionOrgForUser (org + owner membership + tenant DB),
  *  then stamps the demo's OWN expiry + unlocks (overriding the default trial stamp),
@@ -57,7 +69,13 @@ export interface ProvisionDemoResult {
 export async function provisionDemoForUser(input: ProvisionDemoInput): Promise<ProvisionDemoResult> {
   const days = clampDemoDays(input.expiresInDays);
   const unlocks = normalizeUnlocks(input.unlock);
-  const { orgId, slug } = await provisionOrgForUser(input.userId, input.orgName);
+  const { orgId, slug, provisioned } = await provisionOrgForUser(input.userId, input.orgName);
+
+  // provisionOrgForUser SWALLOWS a tenant-DB failure (by design: a self-signup keeps a
+  // visible, re-provisionable org). For an operator-pushed demo that's wrong — every step
+  // below runs against a missing tenant DB and the caller would still get a 201 + a slug
+  // that 500s on open. Fail loudly instead so the operator knows it didn't take.
+  if (!provisioned) throw new DemoProvisionError(orgId, slug);
 
   const expiresAt = new Date(Date.now() + days * 86_400_000);
   await meta

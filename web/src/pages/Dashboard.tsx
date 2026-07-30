@@ -37,10 +37,12 @@ import { expandInstanceWidgets } from "../dashboard/expandInstanceWidgets";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
 import { WhatToDoPanel } from "../components/WhatToDoPanel";
+import { BundleDetailModal } from "../components/BundleDetailModal";
 import { PendingAiShareCallout } from "../components/PendingAiShareCallout";
 import { useNavModules, INSTANCE_PREFIX } from "../components/useNavModules";
 import { HeatmapRenderer } from "./ViewsPage";
 import { liveNextStepLabel } from "../lib/featured-bundles";
+import { FEED_SCROLL } from "../lib/feed";
 import {
   api,
   getToken,
@@ -738,17 +740,13 @@ function GettingStartedPanel({
     // sections on an established workspace — prime rows belong to the
     // workspace's own state, not a growth affordance. The empty-state hero
     // keeps the top slot.
-    // Established workspace: the panel is a growth affordance, not the hero —
-    // cap it to a half-column card so expanding it never swallows a full
-    // dashboard row (the author, 2026-07-18: "works a lot better as a 1/2 or 1/3
-    // width col"). The empty-state hero below keeps full width: on a blank
-    // workspace it IS the dashboard.
-    // Half-width applies to the GUIDED box only (guidedHalfWidth), not the whole
-    // panel: the "waiting to file" scanner strips inside it stay full width. The
-    // old max-w-2xl wrapper capped both and dragged the scan section narrow (the author,
-    // 2026-07-26).
+    // Established workspace: the panel is a growth affordance, not the hero, so it
+    // renders collapsed BELOW the data (the author, 2026-07-18). The empty-state hero
+    // below keeps the top slot: on a blank workspace it IS the dashboard. Both use
+    // the same two-column guided box (hero left, ready-made/describe right); the
+    // panel handles that internally, so neither needs a width prop anymore.
     if (collapsedOnly)
-      return hasContent ? <WhatToDoPanel slug={slug} startCollapsed guidedHalfWidth /> : null;
+      return hasContent ? <WhatToDoPanel slug={slug} startCollapsed /> : null;
     if (hasContent) return null;
     return <WhatToDoPanel slug={slug} startCollapsed={false} />;
   }
@@ -762,7 +760,7 @@ function GettingStartedPanel({
       to: "/inventory",
       label: "Add a part",
       description:
-        "Countable stock you keep on hand — components, materials, consumables — with quantities and low-stock alerts. Bulk-import via CSV.",
+        "Countable stock you keep on hand (components, materials, consumables) with quantities and low-stock alerts. Bulk-import via CSV.",
     });
   if (enabled.has("machines"))
     firstActions.push({
@@ -775,7 +773,7 @@ function GettingStartedPanel({
       to: "/assets",
       label: "Add an asset",
       description:
-        "Something you own and look after over time — a tool, plant, or collectible — with photos, notes, and recurring care reminders.",
+        "Something you own and look after over time (a tool, plant, or collectible) with photos, notes, and recurring care reminders.",
     });
   if (enabled.has("projects"))
     firstActions.push({
@@ -907,15 +905,19 @@ function WorkspaceHeader({
   role: string;
   userName: string;
 }) {
-  const navigate = useNavigate();
   const updates = useBundleUpdates(slug);
   // Bundles the user just updated inline — kept on screen as "Update complete"
   // even after the refetched updates list drops them (the author: "the same thin bar
   // then says Update Complete"). We hold the version so the row can say what it
   // updated TO and keep a "See details" link into the bundle modal — which shows
   // that version's changelog ("what's new"), so the inline one-click update still
-  // lets you review what just changed (the author).
-  const [completed, setCompleted] = useState<Record<string, { name: string; glyph: string; version: string }>>({});
+  // lets you review what just changed (the author). The manifest rides along so
+  // "See details" can open the modal here, in place.
+  const [completed, setCompleted] = useState<Record<string, { name: string; glyph: string; version: string; manifest: BundleUpdate["manifest"] }>>({});
+  // "See details" opens the bundle modal INLINE over the dashboard, no navigation:
+  // closing it keeps you here, and the other update rows stay put (they used to
+  // vanish because navigating to /bundles unmounted this header's local state).
+  const [detail, setDetail] = useState<{ manifest: BundleUpdate["manifest"]; glyph: string; installedVersion: string } | null>(null);
   const pending = updates.filter((u) => !completed[u.externalId]);
   const completedList = Object.entries(completed);
   const guest = role !== "owner";
@@ -938,8 +940,9 @@ function WorkspaceHeader({
               slug={slug}
               update={u}
               canApply={role === "owner" || role === "admin"}
+              onSeeDetails={() => setDetail({ manifest: u.manifest, glyph: u.glyph, installedVersion: u.installedV })}
               onDone={() =>
-                setCompleted((c) => ({ ...c, [u.externalId]: { name: u.name, glyph: u.glyph, version: u.latestV } }))
+                setCompleted((c) => ({ ...c, [u.externalId]: { name: u.name, glyph: u.glyph, version: u.latestV, manifest: u.manifest } }))
               }
             />
           ))}
@@ -952,11 +955,7 @@ function WorkspaceHeader({
               </span>
               <button
                 type="button"
-                onClick={() =>
-                  navigate(
-                    `/bundles?open=${encodeURIComponent(id)}&returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`,
-                  )
-                }
+                onClick={() => setDetail({ manifest: c.manifest, glyph: c.glyph, installedVersion: c.version })}
                 className="shrink-0 text-accent hover:underline font-medium"
               >
                 See details
@@ -964,6 +963,18 @@ function WorkspaceHeader({
             </div>
           ))}
         </div>
+      )}
+      {detail && (
+        <BundleDetailModal
+          open
+          onClose={() => setDetail(null)}
+          slug={slug}
+          mode="featured"
+          manifest={detail.manifest}
+          glyph={detail.glyph}
+          alreadyInstalled
+          installedVersion={detail.installedVersion}
+        />
       )}
     </header>
   );
@@ -998,6 +1009,7 @@ function BundleUpdateRow({
   update,
   canApply,
   onDone,
+  onSeeDetails,
 }: {
   slug: string;
   update: BundleUpdate;
@@ -1005,8 +1017,9 @@ function BundleUpdateRow({
    *  fires for a guest — the install endpoint would 403 and loop. */
   canApply: boolean;
   onDone: () => void;
+  /** Open the bundle modal in place (over the dashboard) — no navigation. */
+  onSeeDetails: () => void;
 }) {
-  const navigate = useNavigate();
   const toast = useToast();
   const qc = useQueryClient();
 
@@ -1031,11 +1044,9 @@ function BundleUpdateRow({
   // apply is safe to take without routing through the modal.
   const previewClean = !!preview.data && !hasConflict;
 
-  function openModal() {
-    navigate(
-      `/bundles?open=${encodeURIComponent(update.externalId)}&returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`,
-    );
-  }
+  // Open the detail modal in place over the dashboard rather than routing to
+  // /bundles — closing it keeps the user here and leaves sibling update rows intact.
+  const openModal = onSeeDetails;
 
   const install = useMutation({
     mutationFn: (_vars: { silent: boolean }) =>
@@ -1983,7 +1994,7 @@ function RecentActivity({ slug, editing = false }: { slug: string; editing?: boo
         // the page (it renders every group), so it's bounded to a fixed height and
         // scrolls internally — glanceable without dominating the page (the author,
         // 2026-07-26).
-        <ul className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 divide-y divide-line dark:divide-slate-800 max-h-[28rem] overflow-y-auto">
+        <ul className={"rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 divide-y divide-line dark:divide-slate-800 " + FEED_SCROLL}>
           {groups.map((g) => {
             const first = g.items[0];
             if (!first) return null;

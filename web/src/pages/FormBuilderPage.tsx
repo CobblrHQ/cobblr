@@ -44,7 +44,7 @@ function SortableRow({ item, children }: { item: Item; children: React.ReactNode
   );
 }
 
-export function FormBuilderPage() {
+export function FormBuilderPage({ embedded = false }: { embedded?: boolean } = {}) {
   usePageTitle("Form builder");
   const { activeSlug: slug } = useActiveOrg();
   const qc = useQueryClient();
@@ -158,11 +158,13 @@ export function FormBuilderPage() {
   const ghost = "inline-flex items-center gap-2 rounded-lg border border-line dark:border-slate-600 px-3 py-1.5 text-sm font-semibold text-content dark:text-mortar-100 hover:bg-subtle disabled:opacity-50";
 
   return (
-    <div className="space-y-5 max-w-2xl">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">form builder</h1>
-        <span className="page-subtitle">drag your fields into order and under sections</span>
-      </div>
+    <div className={embedded ? "space-y-5" : "space-y-5 max-w-2xl"}>
+      {!embedded && (
+        <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+          <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">form builder</h1>
+          <span className="page-subtitle">drag your fields into order and under sections</span>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-2 text-sm text-muted">

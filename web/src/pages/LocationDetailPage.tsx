@@ -170,12 +170,12 @@ export function LocationDetailPage() {
       )}
 
       <header className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5">
-        <div className="flex items-start gap-4">
+        <div className="flex flex-wrap items-start gap-4">
           <EntityThumb
             src={l.image_path}
             alt={l.name}
             size={96}
-            className="ring-1 ring-line dark:ring-slate-700"
+            className="ring-1 ring-line dark:ring-slate-700 shrink-0"
           />
           <div className="flex-1 min-w-0">
             <h1 className="text-2xl font-display font-bold text-content dark:text-mortar-100">
@@ -195,7 +195,13 @@ export function LocationDetailPage() {
               </p>
             )}
           </div>
-          <div className="flex items-center gap-1">
+          {/* Phone: its own full-width row, so the title gets the whole width
+              and the buttons sit under it. Desktop: back beside the title.
+              This was a plain `flex` with no shrink-0 and no wrap, so on a
+              narrow screen the buttons held their intrinsic width, the title
+              was squeezed to three lines, and the two drew on top of each
+              other. */}
+          <div className="order-last w-full shrink-0 flex flex-wrap items-center gap-1 sm:order-none sm:w-auto sm:justify-end">
             <EntityActionsBar entityKind="core-locations:location" entityId={l.id} />
             <button
               type="button"

@@ -540,12 +540,12 @@ chatRouter.post(
         task: "design-workspace",
       });
       if (br.status === 409) {
-        res.json({ type: "reply", text: "Setting up a whole workspace needs AI enabled here — it isn't yet." });
+        res.json({ type: "reply", text: "Setting up a whole workspace needs AI enabled here: it isn't yet." });
         return;
       }
       const b = br.body as { draft_id?: string };
       if (!b.draft_id) {
-        res.json({ type: "reply", text: "I couldn't start the build just now — give it another try in a moment." });
+        res.json({ type: "reply", text: "I couldn't start the build just now. Give it another try in a moment." });
         return;
       }
       // building: true → the widget polls the draft, then renders preview + confirm.
@@ -561,7 +561,7 @@ chatRouter.post(
     // action — resolve the entity by name via search before proposing.
     if (move.type === "action") {
       if (!move.action_id || !move.entity_kind || !move.entity_query) {
-        res.json({ type: "reply", text: "I need a bit more to do that — which record exactly?" });
+        res.json({ type: "reply", text: "I need a bit more to do that, which record exactly?" });
         return;
       }
       const sr = await callApi(

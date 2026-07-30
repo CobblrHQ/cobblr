@@ -91,7 +91,7 @@ export default defineModule({
         id: "builds:build-one",
         label: "Build one",
         description:
-          "Record building N of a build: decrement each component from inventory stock (via inventory:adjust-stock), log a build run, and — if the build has an output part — increment that. Generic capability; a bundle/app composes it. Args: { build_id, qty? }.",
+          "Record building N of a build: decrement each component from inventory stock (via inventory:adjust-stock), log a build run, and (if the build has an output part) increment that. Generic capability; a bundle/app composes it. Args: { build_id, qty? }.",
         appliesTo: { kinds: ["builds:build"] },
         invokeHandler: "builds.build-one",
         userInvokable: true,
@@ -104,7 +104,7 @@ export default defineModule({
         id: "builds:reverse-one",
         label: "Reverse a build",
         description:
-          "Undo a recorded build of N: put each component back into inventory stock and — if the build has an output part — decrement that. The failure leg of builds:build-one (a scrapped/failed fabrication run). Args: { build_id, qty? }.",
+          "Undo a recorded build of N: put each component back into inventory stock and (if the build has an output part) decrement that. The failure leg of builds:build-one (a scrapped/failed fabrication run). Args: { build_id, qty? }.",
         appliesTo: { kinds: ["builds:build"] },
         invokeHandler: "builds.reverse-one",
         userInvokable: false,

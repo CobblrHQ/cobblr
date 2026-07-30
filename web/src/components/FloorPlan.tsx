@@ -1425,24 +1425,24 @@ function BoundSetup({
     onSet({ w_mm: wmm, d_mm: dmm, unit, view });
   };
   return (
-    <span className="inline-flex items-center gap-1.5">
+    <span className="flex flex-wrap items-center gap-1.5">
       <input
         value={w}
         onChange={(e) => setW(e.target.value)}
         placeholder={view === "front" ? "width (e.g. 44in)" : "width (e.g. 33ft)"}
-        className="w-32 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm text-content dark:text-slate-200"
+        className="min-w-0 flex-1 basis-24 sm:flex-none sm:w-32 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm text-content dark:text-slate-200"
       />
       <span className="text-faint text-sm">×</span>
       <input
         value={d}
         onChange={(e) => setD(e.target.value)}
         placeholder={view === "front" ? "height (e.g. 40in)" : "depth (e.g. 24ft)"}
-        className="w-32 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm text-content dark:text-slate-200"
+        className="min-w-0 flex-1 basis-24 sm:flex-none sm:w-32 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm text-content dark:text-slate-200"
       />
       <button
         type="button"
         onClick={commit}
-        className="rounded-md bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition"
+        className="shrink-0 whitespace-nowrap rounded-md bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition"
       >
         Create plan
       </button>

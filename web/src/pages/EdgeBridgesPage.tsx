@@ -23,7 +23,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { usePageTitle, useToast } from "@cobblr/platform-web";
 import { EdgeBridgeInstall } from "../components/EdgeBridgeInstall";
 
-export function EdgeBridgesPage() {
+export function EdgeBridgesPage({ embedded = false }: { embedded?: boolean } = {}) {
   usePageTitle("Edge bridges");
   const { activeSlug } = useActiveOrg();
   const slug = activeSlug ?? "";
@@ -66,11 +66,13 @@ export function EdgeBridgesPage() {
   const staleMs = status.data?.stale_after_ms ?? 60_000;
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className={embedded ? "space-y-6" : "max-w-3xl mx-auto space-y-6"}>
       <div>
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title flex items-center gap-2">
-          <Cable size={22} className="text-accent" /> Edge bridges
-        </h1>
+        {!embedded && (
+          <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title flex items-center gap-2">
+            <Cable size={22} className="text-accent" /> Edge bridges
+          </h1>
+        )}
         <p className="text-sm text-muted dark:text-slate-400 mt-1">
           A bridge is a small program on your own network that connects Cobblr to things the cloud can't reach.
           Set one up once - everything that needs your site attaches to it.

@@ -147,7 +147,7 @@ export default defineModule({
         id: "inventory:use-one",
         label: "Use one",
         description:
-          "Knock a single unit off a part's on-hand qty — the zero-friction 'I took one out' tap. Binary, no number entry (that's Adjust stock). Decrements through the same path as adjust-stock, so it writes the usage ledger and trips 'running low → shopping list' when it crosses the reorder threshold. partId falls back to the targeted entity.",
+          "Knock a single unit off a part's on-hand qty: the zero-friction 'I took one out' tap. Binary, no number entry (that's Adjust stock). Decrements through the same path as adjust-stock, so it writes the usage ledger and trips 'running low → shopping list' when it crosses the reorder threshold. partId falls back to the targeted entity.",
         appliesTo: { kinds: ["inventory:part"] },
         invokeHandler: "inventory.use-one",
         userInvokable: true,
@@ -156,7 +156,7 @@ export default defineModule({
         id: "inventory:use-up",
         label: "Used up",
         description:
-          "Mark a part gone — drives on-hand to 0 in one tap (tossing the empty), no 'how many left?' guess. Same ledger + low-stock path as adjust-stock, so it reorders if a threshold is set. No-op if already empty. partId falls back to the targeted entity.",
+          "Mark a part gone: drives on-hand to 0 in one tap (tossing the empty), no 'how many left?' guess. Same ledger + low-stock path as adjust-stock, so it reorders if a threshold is set. No-op if already empty. partId falls back to the targeted entity.",
         appliesTo: { kinds: ["inventory:part"] },
         invokeHandler: "inventory.use-up",
         userInvokable: true,
@@ -165,7 +165,7 @@ export default defineModule({
         id: "inventory:replaced",
         label: "Replaced",
         description:
-          "One tap at a scheduled swap (furnace filter, water filter, printer nozzle): resets the replace-clock (stamps metadata.last_replaced_at = now, so it won't nag again until the next interval) AND consumes one spare from on-hand — which reorders if that leaves you short. Set metadata.replace_every_days on the part to arm the clock. partId falls back to the targeted entity.",
+          "One tap at a scheduled swap (furnace filter, water filter, printer nozzle): resets the replace-clock (stamps metadata.last_replaced_at = now, so it won't nag again until the next interval) AND consumes one spare from on-hand, which reorders if that leaves you short. Set metadata.replace_every_days on the part to arm the clock. partId falls back to the targeted entity.",
         appliesTo: { kinds: ["inventory:part"] },
         invokeHandler: "inventory.replaced",
         userInvokable: true,
@@ -211,7 +211,7 @@ export default defineModule({
         id: "inventory:set-status",
         label: "Set status",
         description:
-          "Set a part's `metadata.status` (e.g. a Lego set's Built / Unbuilt / Missing pieces). A member-appropriate, user-invokable action: grant it and a worker can update status from their app — the canonical write a custom (Tier B) app block performs. Args: { partId?, status }; partId falls back to the targeted entity.",
+          "Set a part's `metadata.status` (e.g. a Lego set's Built / Unbuilt / Missing pieces). A member-appropriate, user-invokable action: grant it and a worker can update status from their app: the canonical write a custom (Tier B) app block performs. Args: { partId?, status }; partId falls back to the targeted entity.",
         appliesTo: { kinds: ["inventory:part"] },
         invokeHandler: "inventory.set-status",
         userInvokable: true,
@@ -220,7 +220,7 @@ export default defineModule({
         id: "inventory:create-item",
         label: "Add an item",
         description:
-          "Create an inventory item in an instance — name + custom fields (metadata) + an optional location / brand / qty. The canonical CREATE a custom (Tier B) app block performs (there was no invokable create before — only set-status / adjust-stock). Generic: the caller composes the name + fields and decides what to make. User-invokable so a granted worker can run it. Args: { instance, name, fields?, location_id?, manufacturer?, qty?, unit? }.",
+          "Create an inventory item in an instance (name + custom fields (metadata) + an optional location / brand / qty. The canonical CREATE a custom (Tier B) app block performs (there was no invokable create before) only set-status / adjust-stock). Generic: the caller composes the name + fields and decides what to make. User-invokable so a granted worker can run it. Args: { instance, name, fields?, location_id?, manufacturer?, qty?, unit? }.",
         appliesTo: { kinds: ["inventory:part"] },
         invokeHandler: "inventory.create-item",
         userInvokable: true,
@@ -242,7 +242,7 @@ export default defineModule({
         id: "inventory:update-item",
         label: "Update an item",
         description:
-          "Set a part's name / brand / location and/or MERGE metadata fields (e.g. mark a kit's metadata.lifecycle='parted-out'). The companion to create-item — lets a Tier-B app or another module edit an item through inventory's public interface. Generic. Args: { id, name?, manufacturer?, location_id?, fields? }.",
+          "Set a part's name / brand / location and/or MERGE metadata fields (e.g. mark a kit's metadata.lifecycle='parted-out'). The companion to create-item: lets a Tier-B app or another module edit an item through inventory's public interface. Generic. Args: { id, name?, manufacturer?, location_id?, fields? }.",
         appliesTo: { kinds: ["inventory:part"] },
         invokeHandler: "inventory.update-item",
         userInvokable: true,
@@ -251,7 +251,7 @@ export default defineModule({
         id: "inventory:lift-to-type",
         label: "Lift items into types",
         description:
-          "Bundle-migration engine: lift each item in a SOURCE instance into a TYPE in another instance — deduped by key fields, copying the type-defining fields up, linked via a pairing, optionally converting the qty unit. How a flat single-instance bundle upgrades into a type→instances model on a version bump. Idempotent (skips already-linked items). Generic — the bundle's migration declares the params. Args: { source_instance, type_instance, key_fields[], copy_fields?[], relationship_kind?, convert_qty?: { from_unit, to_unit, factor } }.",
+          "Bundle-migration engine: lift each item in a SOURCE instance into a TYPE in another instance (deduped by key fields, copying the type-defining fields up, linked via a pairing, optionally converting the qty unit. How a flat single-instance bundle upgrades into a type→instances model on a version bump. Idempotent (skips already-linked items). Generic) the bundle's migration declares the params. Args: { source_instance, type_instance, key_fields[], copy_fields?[], relationship_kind?, convert_qty?: { from_unit, to_unit, factor } }.",
         appliesTo: { kinds: ["inventory:part"] },
         invokeHandler: "inventory.lift-to-type",
         // Migration-only: run by the bundle-upgrade flow, never a detail button.
@@ -261,7 +261,7 @@ export default defineModule({
         id: "inventory:field-to-location",
         label: "Move a place field into Location",
         description:
-          "Bundle-migration engine: retire a bundle's bespoke place field (e.g. a 'Room' text field) into the platform's canonical Location — for each item with a value, find-or-create a matching Location AREA, file the item into it (location_id), then clear the field. How a bundle drops a location-shaped custom field for the real Location on a version bump. Idempotent + safe: never invents a place, never overwrites an already-filed item, re-uses an existing same-named area. Args: { field, instance }.",
+          "Bundle-migration engine: retire a bundle's bespoke place field (e.g. a 'Room' text field) into the platform's canonical Location: for each item with a value, find-or-create a matching Location AREA, file the item into it (location_id), then clear the field. How a bundle drops a location-shaped custom field for the real Location on a version bump. Idempotent + safe: never invents a place, never overwrites an already-filed item, re-uses an existing same-named area. Args: { field, instance }.",
         appliesTo: { kinds: ["inventory:part"] },
         invokeHandler: "inventory.field-to-location",
         // Migration-only: run by the bundle-upgrade flow, never a detail button.
@@ -271,7 +271,7 @@ export default defineModule({
         id: "inventory:split-lot",
         label: "Split one off",
         description:
-          "Split units off a lot's quantity into a NEW separate item (default 1 — the 'I entered 5 spools as one lot and just opened one' move). The new item inherits the lot's instance, fields, manufacturer, location, image, and parent pairing(s) so type rollups still count it; the lot's qty drops by the split amount. Generic — works on any inventory item with a numeric qty, in any instance. The lot must keep ≥1. Args: { quantity?: number (default 1) }.",
+          "Split units off a lot's quantity into a NEW separate item (default 1 (the 'I entered 5 spools as one lot and just opened one' move). The new item inherits the lot's instance, fields, manufacturer, location, image, and parent pairing(s) so type rollups still count it; the lot's qty drops by the split amount. Generic) works on any inventory item with a numeric qty, in any instance. The lot must keep ≥1. Args: { quantity?: number (default 1) }.",
         appliesTo: { kinds: ["inventory:part"] },
         invokeHandler: "inventory.split-lot",
         userInvokable: true,

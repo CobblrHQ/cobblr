@@ -57,7 +57,7 @@ export const EDGE_ADAPTER_CATALOG: Array<Pick<CatalogEntry, "id" | "name" | "sum
   {
     id: "bambu",
     name: "Bambu Lab (bridge)",
-    summary: "MQTT/FTPS — not REST. Run the Bambu edge-adapter bridge; point a connection at it. LAN or cloud mode is the bridge's config.",
+    summary: "MQTT/FTPS, not REST. Run the Bambu edge-adapter bridge; point a connection at it. LAN or cloud mode is the bridge's config.",
     credentialHint: "configured in the bridge (LAN access code, or Bambu Cloud account)",
     kind: "edge-adapter",
   },

@@ -16,7 +16,7 @@ export default defineModule({
   version: "0.1.0",
   displayName: "Maintenance",
   description:
-    "Service history + scheduled maintenance for any entity. Oil changes, firmware flashes, warranty renewals — log what's done, get pinged when something's due.",
+    "Service history + scheduled maintenance for any entity. Oil changes, firmware flashes, warranty renewals: log what's done, get pinged when something's due.",
   icon: "wrench-screwdriver",
   // Capability, not foundational: the platform runs fine without it (nothing
   // depends on it — it just surfaces an opt-in Maintenance panel on entities).
@@ -24,6 +24,14 @@ export default defineModule({
   // workspace that doesn't want it can now turn it off (foundational can't be).
   band: "stock",
   autoEnable: true,
+
+  // Browse-not-configure: this is a page you VISIT, so it owns a nav entry
+  // and one canonical URL rather than living under /configuration.
+  nav: {
+    label: "Maintenance",
+    route: "/maintenance",
+    icon: "wrench",
+  },
 
   schema: {
     tablePrefix: "core_maintenance_",

@@ -44,7 +44,7 @@ function registerBuiltins(): void {
     module: "core-ai",
     label: "Local AI",
     description:
-      "Route AI capabilities to a model running on your own machine (Ollama, LM Studio, …) — set up a personal AI bridge under Your connections, then pick the edge provider in AI settings.",
+      "Route AI capabilities to a model running on your own machine (Ollama, LM Studio, …). Set up a personal AI bridge under Your connections, then pick the edge provider in AI settings.",
     href: "/me/connections",
   });
 }

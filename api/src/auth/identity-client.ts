@@ -23,6 +23,41 @@ function base(): string {
   return (env.IDENTITY_URL ?? "").replace(/\/+$/, "");
 }
 
+// Private / loopback / CGNAT-tailnet hosts — plain http to these is a trusted LAN hop, not
+// a cleartext-over-the-internet leak. (RFC1918 + loopback + Tailscale 100.64/10.)
+const PRIVATE_HOST = /^(localhost|127\.|::1|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/;
+
+/** True when IDENTITY_URL is plain http to a NON-private host — backfill would push user
+ *  email + bcrypt hashes over cleartext to the public internet. https or a private/LAN
+ *  address is fine. Pure. */
+export function isInsecureIdentityUrl(url = env.IDENTITY_URL ?? ""): boolean {
+  if (!url.startsWith("http://")) return false; // https, or unset
+  let host = "";
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return false;
+  }
+  return !PRIVATE_HOST.test(host);
+}
+
+/** Log the federation config once at boot. A wrong IDENTITY_ISSUER/AUDIENCE makes EVERY
+ *  exchange 401 indistinguishably from a bad token ("SSO just doesn't work"), so surface
+ *  exactly what this surface is configured to verify + where. No-op unless enabled. */
+export function logIdentityConfig(): void {
+  if (!identityEnabled()) return;
+  console.log(
+    `[identity] federation ON — url=${base()} deployment=${deploymentId()} ` +
+      `issuer=${env.IDENTITY_ISSUER} audience=${env.IDENTITY_AUDIENCE} jwks=${base()}/.well-known/jwks.json`,
+  );
+  if (isInsecureIdentityUrl()) {
+    console.warn(
+      "[identity] WARNING: IDENTITY_URL is plain http to a public host — user email + bcrypt " +
+        "hashes cross the wire in cleartext during backfill. Use https or a private/LAN address.",
+    );
+  }
+}
+
 let _jwks: JWTVerifyGetKey | null = null;
 function remoteJwks(): JWTVerifyGetKey {
   if (!_jwks) _jwks = createRemoteJWKSet(new URL(base() + "/.well-known/jwks.json"));

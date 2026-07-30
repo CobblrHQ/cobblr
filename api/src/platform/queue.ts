@@ -42,7 +42,17 @@ const STALE_LOCK_MS = 15 * 60 * 1000;
 // within a few seconds; loose enough that an idle queue doesn't burn
 // CPU. Per-tick scan is two indexed queries + one UPDATE so this is
 // fine.
-const POLL_INTERVAL_MS = 5_000;
+//
+// Overridable via COBBLR_QUEUE_POLL_MS so the CI test suite can run it
+// fast. Every queue-driven integration test hops the same runAt-delayed
+// chain (assign -> poll -> poll -> complete); at the 5s prod cadence
+// those hops stretch under the 8-fork runner's starved event loop until
+// a CORRECT test overruns its budget — the whole class the digifab-pools
+// bed-clear flake belonged to. A fast cadence in test drains the chain in
+// ~1 tick and removes the class; prod keeps 5s. `|| 5_000` (not ??) so the
+// compose empty-string case still falls back; Math.max floors it so a
+// misconfig can't spin a busy loop.
+const POLL_INTERVAL_MS = Math.max(50, Number(process.env.COBBLR_QUEUE_POLL_MS) || 5_000);
 
 // Per-handler concurrency: how many jobs from one queue we'll claim
 // in a single tick. Keep low so a slow handler can't starve other
@@ -88,10 +98,6 @@ export function registerWorker(queue: string, handler: QueueHandler): void {
     console.warn(`[queue] replacing handler for ${queue}`);
   }
   handlers.set(queue, handler);
-}
-
-export function listQueues(): string[] {
-  return Array.from(handlers.keys());
 }
 
 /** "Which of these orgs already have a non-finished job on `queue`?"

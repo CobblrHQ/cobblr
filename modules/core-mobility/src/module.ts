@@ -56,7 +56,7 @@ export default defineModule({
   version: "0.1.0",
   displayName: "Mobility",
   description:
-    "Home vs current location with drift detection. Give a tool or bin a home, mark it mobile, and it shows 'away · 3d' when it wanders — with one-tap Return home. Fixtures opt out.",
+    "Home vs current location with drift detection. Give a tool or bin a home, mark it mobile, and it shows 'away · 3d' when it wanders, with one-tap Return home. Fixtures opt out.",
   icon: "map-pin",
   band: "stock",
   autoEnable: false, // opt-in — enabling it adds home/mobility/away to your items

@@ -130,7 +130,7 @@ export function parseHomebox(text: string): HomeboxParse {
   const idx = (field: string): number => headers.indexOf(field);
   const nameIdx = idx("name");
   if (nameIdx < 0) {
-    errors.push({ row: 0, message: "no HB.name (or name) column — is this a Homebox export?" });
+    errors.push({ row: 0, message: "no HB.name (or name) column, is this a Homebox export?" });
   }
   // Custom-field columns: header `HB.field.<Name>` → normalized `field.<name>`.
   const customCols: { col: number; name: string }[] = [];
@@ -152,7 +152,7 @@ export function parseHomebox(text: string): HomeboxParse {
     };
     const name = asStr(get("name"));
     if (!name) {
-      warnings.push({ row: r, message: "row skipped — no name" });
+      warnings.push({ row: r, message: "row skipped: no name" });
       continue;
     }
     const locPath = splitLocationPath(asStr(get("location")));

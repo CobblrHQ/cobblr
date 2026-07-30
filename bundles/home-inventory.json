@@ -1,12 +1,12 @@
 {
   "manifest": {
     "id": "cobblr.flagship.home-inventory",
-    "version": "0.4.0",
+    "version": "0.4.1",
     "name": "Home Inventory",
-    "description": "Your belongings as their own room-by-room catalog — make/model + condition, filed by room. Optional insurance valuation.",
+    "description": "Your belongings as their own room-by-room catalog: make/model + condition, filed by room. Optional insurance valuation.",
     "author": "Cobblr",
     "released_at": "2026-07-15",
-    "changelog": "Rooms are now real Locations. The separate “Room” field is gone — items file into the workspace’s Location tree (rooms, and bins inside them) like everything else, so a thing has one place, not two. Your existing room values move over automatically on this update: each becomes a Location and its items are filed into it, nothing lost. The pinned “By room” view still groups your catalog by room (now off the real Location), and the claim-ready Insurance view too. Earlier: Home Inventory became its OWN table (an inventory instance) with only the fields a home catalog needs, plain-language hints, and optional Insurance valuation.",
+    "changelog": "Rooms are now real Locations. The separate “Room” field is gone: items file into the workspace’s Location tree (rooms, and bins inside them) like everything else, so a thing has one place, not two. Your existing room values move over automatically on this update: each becomes a Location and its items are filed into it, nothing lost. The pinned “By room” view still groups your catalog by room (now off the real Location), and the claim-ready Insurance view too. Earlier: Home Inventory became its OWN table (an inventory instance) with only the fields a home catalog needs, plain-language hints, and optional Insurance valuation.",
     "requires": [
       {
         "module": "inventory"
@@ -68,7 +68,7 @@
               "Fair",
               "Poor"
             ],
-            "help": "Rough state, for resale or an insurance claim — New down to Poor."
+            "help": "Rough state, for resale or an insurance claim. New down to Poor."
           }
         ],
         "field_overrides": [
@@ -160,7 +160,7 @@
                 "display_label": "Replacement value",
                 "type": "number",
                 "position": 3,
-                "help": "What it'd cost to buy new today — what an insurer pays out (not what you paid)."
+                "help": "What it'd cost to buy new today, what an insurer pays out (not what you paid)."
               },
               {
                 "entity_kind": "inventory:part",
@@ -168,7 +168,7 @@
                 "display_label": "Bought from",
                 "type": "text",
                 "position": 4,
-                "help": "Store or site — proof-of-purchase for a claim."
+                "help": "Store or site, proof-of-purchase for a claim."
               },
               {
                 "entity_kind": "inventory:part",

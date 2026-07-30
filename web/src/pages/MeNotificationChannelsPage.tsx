@@ -59,7 +59,7 @@ const CHANNEL_OPTIONS: Array<{
   {
     channel: "browser_push",
     label: "Browser push",
-    hint: "Service-worker push notifications (stubbed for now — see backlog). Add a row to opt-in once VAPID keys are wired up.",
+    hint: "Service-worker push notifications (stubbed for now. See backlog). Add a row to opt-in once VAPID keys are wired up.",
     fields: [],
   },
   {
@@ -104,7 +104,7 @@ const CHANNEL_OPTIONS: Array<{
   {
     channel: "email",
     label: "Email",
-    hint: "Bring your own delivery — pick a provider and paste its creds. Cobblr doesn't host an outbound mail server.",
+    hint: "Bring your own delivery. Pick a provider and paste its creds. Cobblr doesn't host an outbound mail server.",
     fields: [
       {
         key: "provider",

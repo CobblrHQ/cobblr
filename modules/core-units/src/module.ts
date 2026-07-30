@@ -21,7 +21,7 @@ export default defineModule({
   version: "0.1.0",
   displayName: "Units",
   description:
-    "Canonical unit vocabulary — built-in units (gram/g, meter/m, each/ea) plus your own, with a shorthand-vs-full-word display toggle. Powers the unit picker on quantity fields.",
+    "Canonical unit vocabulary: built-in units (gram/g, meter/m, each/ea) plus your own, with a shorthand-vs-full-word display toggle. Powers the unit picker on quantity fields.",
   icon: "ruler",
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace, but disableable

@@ -63,8 +63,11 @@ const RecordsPage = lazy(() => import("./pages/RecordsPage").then((m) => ({ defa
 const ActionsPage = lazy(() => import("./pages/ActionsPage").then((m) => ({ default: m.ActionsPage })));
 const BundlesPage = lazy(() => import("./pages/BundlesPage").then((m) => ({ default: m.BundlesPage })));
 const BuildPage = lazy(() => import("./pages/BuildPage").then((m) => ({ default: m.BuildPage })));
-const FieldsPage = lazy(() => import("./pages/FieldsPage").then((m) => ({ default: m.FieldsPage })));
-const FormBuilderPage = lazy(() => import("./pages/FormBuilderPage").then((m) => ({ default: m.FormBuilderPage })));
+const FieldsAndFormsPage = lazy(() => import("./pages/FieldsAndFormsPage").then((m) => ({ default: m.FieldsAndFormsPage })));
+const ConfigSectionPage = lazy(() => import("./pages/ConfigSectionPage").then((m) => ({ default: m.ConfigSectionPage })));
+const GeneralSettingsPage = lazy(() => import("./pages/GeneralSettingsPage").then((m) => ({ default: m.GeneralSettingsPage })));
+const DevicesPage = lazy(() => import("./pages/DevicesPage").then((m) => ({ default: m.DevicesPage })));
+const ScanRulesPage = lazy(() => import("./pages/ScanRulesPage").then((m) => ({ default: m.ScanRulesPage })));
 const MeActivityPage = lazy(() => import("./pages/MeActivityPage").then((m) => ({ default: m.MeActivityPage })));
 const MeNotificationsPage = lazy(() => import("./pages/MeNotificationsPage").then((m) => ({ default: m.MeNotificationsPage })));
 const MeNotificationChannelsPage = lazy(() => import("./pages/MeNotificationChannelsPage").then((m) => ({ default: m.MeNotificationChannelsPage })));
@@ -78,8 +81,6 @@ const ApiTokensPage = lazy(() => import("./pages/ApiTokensPage").then((m) => ({ 
 const ActivityPage = lazy(() => import("./pages/ActivityPage").then((m) => ({ default: m.ActivityPage })));
 const SurfacesPage = lazy(() => import("./pages/SurfacesPage").then((m) => ({ default: m.SurfacesPage })));
 const DigifabPage = lazy(() => import("./pages/DigifabPage").then((m) => ({ default: m.DigifabPage })));
-const EdgeBridgesPage = lazy(() => import("./pages/EdgeBridgesPage").then((m) => ({ default: m.EdgeBridgesPage })));
-const PrintPage = lazy(() => import("./pages/PrintPage").then((m) => ({ default: m.PrintPage })));
 const MaintenancePage = lazy(() => import("./pages/MaintenancePage").then((m) => ({ default: m.MaintenancePage })));
 const UnitsPage = lazy(() => import("./pages/UnitsPage").then((m) => ({ default: m.UnitsPage })));
 const BackupPage = lazy(() => import("./pages/BackupPage").then((m) => ({ default: m.BackupPage })));
@@ -117,9 +118,7 @@ const AppPlayerPage = lazy(() => import("./pages/AppPlayerPage").then((m) => ({ 
 const AppRecordPage = lazy(() => import("./pages/AppPlayerPage").then((m) => ({ default: m.AppRecordPage })));
 const BrickLinkPage = lazy(() => import("./pages/BrickLinkPage").then((m) => ({ default: m.BrickLinkPage })));
 import { ForcePasswordResetPage } from "./pages/ForcePasswordResetPage";
-const UsersPage = lazy(() => import("./pages/UsersPage").then((m) => ({ default: m.UsersPage })));
 const AdminConsole = lazy(() => import("./pages/AdminConsole").then((m) => ({ default: m.AdminConsole })));
-const RolesPage = lazy(() => import("./pages/RolesPage").then((m) => ({ default: m.RolesPage })));
 import { AppLayout } from "./components/AppLayout";
 import { ImpersonationBanner } from "./components/ImpersonationBanner";
 import { AdminLayout } from "./components/AdminLayout";
@@ -563,28 +562,58 @@ function ActiveOrgScopedRoutes() {
           <Route path="/records/:id" element={<RecordsPage />} />
           <Route path="/purchases" element={<PurchasesPage />} />
           <Route path="/purchases/:id" element={<PurchasesPage />} />
-          {/* Every /configuration/* page renders inside ConfigurationLayout —
-              a persistent grouped sidebar (2026-07 settings rework) so moving
-              between settings never bounces back through the hub. Routes are
-              unchanged; only the shell around them is new. */}
+          {/* Every /configuration/* page renders inside ConfigurationLayout.
+              2026-07 revamp: /configuration is five section CARDS and
+              /configuration/s/:section lists that section's settings, so the
+              hub is a short menu instead of a 34-tile wall. Leaf URLs did NOT
+              move — sections are a navigation layer, not a URL segment — so
+              only the pages that MERGED carry redirects.
+              See docs/design-decisions/configuration-revamp.md. */}
           <Route element={<ConfigurationLayout />}>
             <Route path="/configuration" element={<ConfigurationPage />} />
+            <Route path="/configuration/s/:section" element={<ConfigSectionPage />} />
+            <Route path="/configuration/general" element={<GeneralSettingsPage />} />
             {/* Launcher PAGES (settings-cohesion): the dialogs, in-flow. */}
             <Route path="/configuration/modules" element={<ConfigModulesPage />} />
             <Route path="/configuration/members" element={<ConfigMembersPage />} />
             <Route path="/configuration/new-thing" element={<ConfigNewThingPage />} />
-            <Route path="/configuration/form-builder" element={<FormBuilderPage />} />
+            {/* Merged into Fields & forms — same act, one page, two tabs. */}
+            <Route
+              path="/configuration/form-builder"
+              element={<Navigate to="/fields?tab=layout" replace />}
+            />
             <Route path="/configuration/tokens" element={<ApiTokensPage />} />
             <Route path="/configuration/surfaces" element={<SurfacesPage />} />
-            <Route path="/configuration/digifab" element={<DigifabPage setupOnly />} />
-            <Route path="/configuration/edge" element={<EdgeBridgesPage />} />
-            <Route path="/configuration/print" element={<PrintPage />} />
-            <Route path="/configuration/maintenance" element={<MaintenancePage />} />
+            {/* Bridges + machine managers + printers were three entries in a
+                group with no primary tile, so all three were invisible on
+                arrival. One Devices page, three tabs; the old URLs redirect. */}
+            <Route path="/configuration/devices" element={<DevicesPage />} />
+            <Route
+              path="/configuration/digifab"
+              element={<Navigate to="/configuration/devices?tab=machines" replace />}
+            />
+            <Route
+              path="/configuration/edge"
+              element={<Navigate to="/configuration/devices" replace />}
+            />
+            <Route
+              path="/configuration/print"
+              element={<Navigate to="/configuration/devices?tab=printers" replace />}
+            />
+            {/* Maintenance moved to the nav — "what's overdue" is a work list
+                you visit, not a setting you change. */}
+            <Route
+              path="/configuration/maintenance"
+              element={<Navigate to="/maintenance" replace />}
+            />
             <Route path="/configuration/units" element={<UnitsPage />} />
             <Route path="/configuration/backup" element={<BackupPage />} />
             <Route path="/configuration/qr-tokens" element={<QrPage />} />
-            {/* Consolidated into the QR codes page (External rules tab). */}
-            <Route path="/configuration/scan-rules" element={<Navigate to="/configuration/qr-tokens?tab=rules" replace />} />
+            {/* Scan rules is its own destination again: it is owned by
+                core-scan (interop with ANOTHER app's labels), not by labels,
+                so burying it in the QR page hid it from workspaces that print
+                no labels of their own. */}
+            <Route path="/configuration/scan-rules" element={<ScanRulesPage />} />
             <Route path="/configuration/health" element={<HealthPage />} />
             {/* Locations moved OUT of the settings namespace to the bare
                 /locations it already had a nav entry for (see
@@ -604,27 +633,47 @@ function ActiveOrgScopedRoutes() {
             <Route path="/configuration/catalogs/:id" element={<CatalogDetailPage />} />
             <Route path="/configuration/portal" element={<PortalConfigPage />} />
             <Route path="/configuration/apps" element={<AppsConfigPage />} />
+            {/* Permissions absorbs the two routes that were reachable ONLY
+                through a tab strip and appeared in no sidebar, so standing on
+                either highlighted nothing. */}
             <Route path="/configuration/permissions" element={<PermissionsPage />} />
-            <Route path="/configuration/users" element={<UsersPage />} />
-            <Route path="/configuration/roles" element={<RolesPage />} />
+            <Route
+              path="/configuration/users"
+              element={<Navigate to="/configuration/permissions?tab=accounts" replace />}
+            />
+            <Route
+              path="/configuration/roles"
+              element={<Navigate to="/configuration/permissions?tab=roles" replace />}
+            />
             <Route path="/configuration/openapi" element={<OpenApiPage />} />
             <Route path="/configuration/queue" element={<QueuePage />} />
             <Route path="/configuration/links" element={<LinksPage />} />
-            {/* The settings FAMILY pages that live outside /configuration/*
-                (views, tags, fields, files, wires, actions, activity, bundles)
-                render inside the same sidebar — feedback 2026-07-03: sidebar
-                links must never drop the sidebar. Routes unchanged; only the
-                shell around them. */}
-            <Route path="/bindings" element={<BindingsPage />} />
+            {/* Settings FAMILY pages that live outside /configuration/* render
+                inside the same sidebar — a sidebar link must never drop the
+                sidebar. Files / Tags / Views used to be here too; they are
+                BROWSE surfaces, so they moved to the nav (below). */}
+            {/* The page is called Wires everywhere a user can read it; the route
+                said /bindings because it was named after the API's noun (and
+                the DB table) before the product settled on "wire". The URL
+                matches the word now. The API path stays /orgs/:slug/bindings —
+                that is a server contract, and renaming it is a separate,
+                breaking change. */}
+            <Route path="/wires" element={<BindingsPage />} />
+            <Route path="/bindings" element={<Navigate to="/wires" replace />} />
             <Route path="/actions" element={<ActionsPage />} />
             <Route path="/bundles" element={<BundlesPage />} />
             <Route path="/bundles/compose" element={<BundleComposerPage />} />
-            <Route path="/fields" element={<FieldsPage />} />
+            <Route path="/fields" element={<FieldsAndFormsPage />} />
             <Route path="/activity" element={<ActivityPage />} />
-            <Route path="/files" element={<FilesPage />} />
-            <Route path="/views" element={<ViewsPage />} />
-            <Route path="/tags" element={<TagsPage />} />
           </Route>
+          {/* Browse surfaces — data you look at, so they wear normal workspace
+              chrome and own one canonical URL each. They reach the nav through
+              their module manifest's `nav` block rather than a hardcoded entry.
+              See docs/design-decisions/configuration-revamp.md. */}
+          <Route path="/files" element={<FilesPage />} />
+          <Route path="/views" element={<ViewsPage />} />
+          <Route path="/tags" element={<TagsPage />} />
+          <Route path="/maintenance" element={<MaintenancePage />} />
           {/* A saved view as a full PAGE — outside the configuration shell.
               The dashboard's pinned-view cards land here so a view opens
               with the whole screen, not as a modal floating over the
@@ -667,9 +716,14 @@ function ActiveOrgScopedRoutes() {
           <Route path="/me/profile" element={<Navigate to="/me" replace />} />
           <Route path="/me" element={<MeProfilePage />} />
           <Route path="/me/connections" element={<ConnectionsPage />} />
-          <Route path="/core-files" element={<FilesPage />} />
-          <Route path="/core-views" element={<ViewsPage />} />
-          <Route path="/core-tags" element={<TagsPage />} />
+          {/* Module-name aliases, now REDIRECTS not second mounts. Two live
+              URLs for one page is the defect that made Locations bounce users
+              into the settings shell; these were the same shape. The nav reads
+              each module's manifest `nav.route`, so nothing needs the alias to
+              resolve any more. */}
+          <Route path="/core-files" element={<Navigate to="/files" replace />} />
+          <Route path="/core-views" element={<Navigate to="/views" replace />} />
+          <Route path="/core-tags" element={<Navigate to="/tags" replace />} />
           {/* Short aliases for human-friendly URLs. */}
           {/* Catch-all. The clean per-instance routes above (`/3d-printers`) are
               registered from instancesQ, which is async — so on a FULL page load

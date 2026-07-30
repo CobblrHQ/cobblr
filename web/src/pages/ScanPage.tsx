@@ -52,6 +52,7 @@ import { ExportInboxModal } from "../components/ExportInboxModal";
 import { CameraCaptureSheet } from "../components/CameraCaptureSheet";
 import { LocationTreePicker } from "../components/LocationTreePicker";
 import { LocationChipPicker } from "../components/LocationChipPicker";
+import { SessionLocationModal } from "../components/SessionLocationModal";
 import { OrganizePlanSheet, SortingPlanView } from "../components/OrganizePlanSheet";
 import { OrganizeWalkSheet } from "../components/OrganizeWalkSheet";
 import { LiveSortSheet } from "../components/LiveSortSheet";
@@ -82,6 +83,13 @@ import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
 import { matchParentType, readField } from "../lib/parent-type-match";
 import { isRerunInFlight, itemEnriching } from "./scan-status";
 import { baseKind, confirmBodyFor, isReadyToFile } from "./scanFileAll";
+import {
+  sessionCategory,
+  sessionFilingReadiness,
+  sessionLocation,
+  declaredCategoryAxis,
+  categoryDisplay,
+} from "./sessionCategory";
 import { usePublishChatContext } from "../lib/chat-context";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
 import { resolveSessionBatch, clearScanSession, readScanSession, isSessionFresh, SESSION_GAP_MS } from "../lib/scanSession";
@@ -1840,14 +1848,18 @@ export function ScanPage() {
   // the per-session "File all" button. A pending item without a confident
   // candidate or a name stays pending for a manual look and is reported;
   // already-resolved items in the set are skipped silently.
-  const confirmItemsToTheirCandidate = async (ids: Iterable<string>) => {
+  const confirmItemsToTheirCandidate = async (
+    ids: Iterable<string>,
+    agreedCategory?: string | null,
+    agreedLocationId?: string | null,
+  ) => {
     const byId = new Map(items.map((i) => [i.id, i]));
     let ok = 0;
     let skipped = 0;
     let failed = 0;
     for (const id of ids) {
       const it = byId.get(id);
-      const body = it ? confirmBodyFor(it) : null;
+      const body = it ? confirmBodyFor(it, agreedCategory, agreedLocationId) : null;
       if (!body) {
         if (it && it.status === "pending") skipped++;
         continue;
@@ -1875,10 +1887,38 @@ export function ScanPage() {
   // "File all" on a session header: confirm every ready item in that session to
   // its own candidate. The button only shows once the AI is done (busy===0), so
   // routing is settled.
-  const fileSession = async (ids: string[]) => {
+  const fileSession = async (ids: string[], agreedCategory?: string | null, agreedLocationId?: string | null) => {
     setBulkBusy(true);
-    await confirmItemsToTheirCandidate(ids);
+    await confirmItemsToTheirCandidate(ids, agreedCategory, agreedLocationId);
     setBulkBusy(false);
+  };
+  // Which session is mid-"where does this go?" - filing needs a place as well as
+  // a category, so the button asks instead of quietly filing homeless items.
+  const [placingSession, setPlacingSession] = useState<string | null>(null);
+  /** Whether the open location strip will just SET the session's place (opened
+   *  from the header chip) or set it AND file (opened from the File button). */
+  const [placingMode, setPlacingMode] = useState<"set" | "file">("file");
+
+  /** Give every item in a session one location, without filing anything. The
+   *  header's location chip uses this: a person who wants to say "these all live
+   *  in the closet" should not have to commit them in the same breath. */
+  const applySessionLocation = async (ids: string[], locId: string) => {
+    setBulkBusy(true);
+    let ok = 0;
+    for (const id of ids) {
+      try {
+        await api.updateScanItem(activeSlug, id, { target_location_id: locId });
+        ok++;
+      } catch {
+        /* skip failures - the toast reports the count that landed */
+      }
+    }
+    setBulkBusy(false);
+    void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+    const loc = (locsQ.data?.items ?? []).find((l) => l.id === locId);
+    toast.success(
+      `${ok} item${ok === 1 ? "" : "s"} set to ${loc ? filingLabel(loc) : "the location"}. File when you are ready.`,
+    );
   };
 
   return (
@@ -2693,6 +2733,13 @@ export function ScanPage() {
             // "File all" will commit to their own candidate. Pending items that
             // still need a manual look aren't counted here.
             const readyIds = g.items.filter(isReadyToFile).map((it) => it.id);
+                const readyItems = g.items.filter(isReadyToFile);
+                const filing = sessionFilingReadiness(readyItems, { activeBin: fileBin || null });
+                const sessionLoc = sessionLocation(readyItems);
+                const sessionLocName = sessionLoc.id
+                  ? (locsQ.data?.items ?? []).find((l) => l.id === sessionLoc.id)
+                  : null;
+                const sessionCat = { suggestion: filing.category, unanimous: sessionCategory(g.items).unanimous, seen: sessionCategory(g.items).seen };
             const pendingInSession = g.items.filter((it) => it.status === "pending").length;
             // This group IS the live scanning session (localStorage) — so it
             // carries the "active" pulse + End control that used to live in the
@@ -2700,7 +2747,10 @@ export function ScanPage() {
             const isActiveSession = sessionActive && g.isBatch && g.batchId === activeSession?.batchId;
             return (
               <div key={g.key} id={g.batchId ? `s-${g.batchId}` : undefined} className="space-y-2 scroll-mt-24">
-                <div className="flex w-full items-center gap-2 rounded-md bg-mortar-50 dark:bg-slate-800/40 px-2.5 py-1.5 text-left text-xs">
+                {/* ONE row, always. No `flex-wrap`, and `overflow-hidden` so a
+                    session with every control present clips inside its own bar
+                    instead of pushing the page sideways. */}
+                <div className="flex w-full items-center gap-2 overflow-hidden rounded-md bg-mortar-50 dark:bg-slate-800/40 px-2.5 py-1.5 text-left text-xs">
                   {/* Burst select-all: grab the whole session for the
                       bulk toolbar (location / confirm / discard). */}
                   <input
@@ -2724,11 +2774,21 @@ export function ScanPage() {
                     className="flex flex-1 min-w-0 items-center gap-2 text-left"
                   >
                     <ChevronDown size={13} className={`shrink-0 transition ${collapsed ? "-rotate-90" : ""}`} />
-                    <span className="font-medium text-content dark:text-mortar-100 truncate">
+                    {/* The NAME wins the row. Every span after it either fits
+                        whole or is not rendered - none of them truncate. A
+                        `truncate` on the trimmings spends the same width to say
+                        "edited ..." as to say "edited 3h ago", while squeezing
+                        the one string that identifies the session down to
+                        "Receipt · KC To..." (the author, 2026-07-30). The full label is
+                        always on the tooltip. */}
+                    <span
+                      className="font-medium text-content dark:text-mortar-100 truncate"
+                      title={g.label ?? `Session · ${formatSessionTime(g.latest)}`}
+                    >
                       {g.label ?? `Session · ${formatSessionTime(g.latest)}`}
                     </span>
                     {g.label && (
-                      <span className="shrink-0 text-faint">
+                      <span className="hidden md:inline shrink-0 whitespace-nowrap text-faint">
                         {g.origin === "email" ? "emailed " : ""}
                         {formatSessionTime(g.latest)}
                       </span>
@@ -2744,14 +2804,17 @@ export function ScanPage() {
                     )}
                     {g.lastTouched - g.latest > 6 * 3600_000 && (
                       <span
-                        className="text-faint truncate"
-                        title="A later change (a fix, or an item sent back from a commit) - the session's own time is unchanged"
+                        className="hidden xl:inline-flex items-center gap-1 shrink-0 whitespace-nowrap text-faint"
+                        title={`Edited ${timeAgo(new Date(g.lastTouched).toISOString())} - a later change (a fix, or an item sent back from a commit). The session's own time is unchanged.`}
                       >
-                        · edited {timeAgo(new Date(g.lastTouched).toISOString())}
+                        <Pencil size={10} />
+                        {timeAgo(new Date(g.lastTouched).toISOString())}
                       </span>
                     )}
-                    {g.area && <span className="text-muted truncate">· {g.area}</span>}
-                    <span className="ml-auto shrink-0 text-faint">
+                    {g.area && (
+                      <span className="hidden lg:inline shrink-0 whitespace-nowrap text-muted">· {g.area}</span>
+                    )}
+                    <span className="ml-auto shrink-0 whitespace-nowrap text-faint">
                       {g.items.length} item{g.items.length === 1 ? "" : "s"}
                     </span>
                   </button>
@@ -2760,41 +2823,26 @@ export function ScanPage() {
                       the row on click (a user filed nothing and thought they had,
                       2026-07-16). Now: a real "File all" BUTTON once the AI is done,
                       committing every ready item to its own destination. */}
-                  {busy > 0 ? (
-                    <span
-                      className="shrink-0 inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-1.5 py-0.5 text-[10px] font-medium text-accent"
-                      title="The AI is still finalizing some items - names, covers and routing may still change"
-                    >
-                      <Loader2 size={9} className="animate-spin" /> {busy} finishing…
-                    </span>
-                  ) : readyIds.length > 0 ? (
+                  {isActiveSession && (
                     <button
                       type="button"
-                      disabled={bulkBusy}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void fileSession(readyIds);
+                      title="End this scan session - the next scan starts a new one"
+                      onClick={() => {
+                        clearScanSession(activeSlug);
+                        toast.success("Session ended - the next scan starts a new one");
                       }}
-                      title={`Add all ${readyIds.length} to their destinations — each goes where the AI matched it`}
-                      className="shrink-0 inline-flex items-center gap-1 rounded-md bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 px-2 py-1 text-[11px] font-medium text-white"
+                      className="shrink-0 text-faint hover:text-accent"
                     >
-                      <CheckCircle size={11} /> File all {readyIds.length}
+                      End
                     </button>
-                  ) : pendingInSession > 0 ? (
-                    <span
-                      className="shrink-0 inline-flex items-center gap-1 text-amber-600/80 dark:text-amber-400/80 text-[10px] font-medium"
-                      title="Every item still here needs a manual look - open the cards to give each a name or destination"
-                    >
-                      needs review
-                    </span>
-                  ) : (
-                    <span
-                      className="shrink-0 inline-flex items-center gap-1 text-emerald-600/70 dark:text-emerald-400/70 text-[10px]"
-                      title="Every item in this session has been filed"
-                    >
-                      <CheckCircle size={11} /> filed
-                    </span>
                   )}
+                  {/* PER-SESSION UTILITIES sit LEFT of the filing trio.
+                      The rightmost three controls are always location · file ·
+                      open, whatever kind of session this is, so the eye lands on
+                      the same place every row (the author, 2026-07-30). These extras are
+                      receipt-only, so leaving them on the right made the trio
+                      shift column depending on whether a session came from a
+                      receipt or a scan. */}
                   {g.sourceFileId && (
                     <button
                       type="button"
@@ -2865,6 +2913,113 @@ export function ScanPage() {
                       <RotateCcw size={11} className={reparse.isPending && reparseBatch === g.batchId ? "animate-spin" : ""} /> Re-parse
                     </button>
                   )}
+                  {/* The session's PLACE, stated in the header rather than
+                      discovered by pressing File. Filing needs a category and a
+                      location; the category was already visible here while the
+                      location only surfaced as a surprise question after the tap
+                      (the author, 2026-07-30). Now the missing half says so, and is one
+                      tap from being set - set the location, then file. */}
+                  {busy === 0 && readyIds.length > 0 && !fileBin && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPlacingMode("set");
+                        setPlacingSession(placingSession === g.key ? null : g.key);
+                      }}
+                      title={
+                        sessionLocName
+                          ? `These ${readyIds.length} are set to ${filingLabel(sessionLocName)} - tap to move them somewhere else`
+                          : sessionLoc.mixed
+                          ? "These are set to different places - tap to give the whole session one location"
+                          : `None of these ${readyIds.length} have a location yet - tap to set where they go`
+                      }
+                      className={`shrink-0 inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${
+                        sessionLocName
+                          ? "border-line/70 dark:border-slate-700/70 text-muted hover:text-content dark:hover:text-mortar-100"
+                          : "border-amber-300 dark:border-amber-800/70 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400"
+                      }`}
+                    >
+                      <MapPin size={9} />
+                      {sessionLocName
+                        ? filingLabel(sessionLocName)
+                        : sessionLoc.mixed
+                        ? "mixed locations"
+                        : "no location set"}
+                    </button>
+                  )}
+                  {busy > 0 ? (
+                    <span
+                      className="shrink-0 inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-1.5 py-0.5 text-[10px] font-medium text-accent"
+                      title="The AI is still finalizing some items - names, covers and routing may still change"
+                    >
+                      <Loader2 size={9} className="animate-spin" /> {busy} finishing…
+                    </span>
+                  ) : readyIds.length > 0 ? (
+                    <button
+                      type="button"
+                      disabled={bulkBusy}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (filing.reason === "location") {
+                          setPlacingMode("file");
+                          setPlacingSession(g.key);
+                        } else void fileSession(readyIds, sessionCat.suggestion);
+                      }}
+                      title={
+                        filing.reason === "location"
+                          ? `${filing.missingLocation.length} of these have no location yet - this asks where they go, then files all ${readyIds.length}${
+                              sessionCat.suggestion ? ` as “${sessionCat.suggestion}”` : ""
+                            }`
+                          : sessionCat.suggestion
+                          ? `Add all ${readyIds.length} to their destinations, filed under “${sessionCat.suggestion}”${
+                              sessionCat.unanimous
+                                ? ""
+                                : ` (the items suggested ${sessionCat.seen.join(", ")} - this files them as one)`
+                            }`
+                          : `Add all ${readyIds.length} to their destinations — each goes where the AI matched it`
+                      }
+                      className="shrink-0 inline-flex items-center gap-1 rounded-md bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 px-2 py-1 text-[11px] font-medium text-white"
+                    >
+                      {/* Say what the tap will DO. It used to read "File all 3
+                          into Clothing" even when nothing had a location yet, so
+                          it promised to file and then asked instead - the label
+                          has to admit the question is coming (the author, 2026-07-30). */}
+                      {filing.reason === "location" ? (
+                        <>
+                          <MapPin size={11} /> Place &amp; file all {readyIds.length}
+                          {sessionCat.suggestion ? (
+                            <span className="hidden sm:inline max-w-[9rem] truncate opacity-80">
+                              as {sessionCat.suggestion}
+                            </span>
+                          ) : null}
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle size={11} /> File all {readyIds.length}
+                          {sessionCat.suggestion ? (
+                            <span className="hidden sm:inline max-w-[9rem] truncate opacity-80">
+                              into {sessionCat.suggestion}
+                            </span>
+                          ) : null}
+                        </>
+                      )}
+                    </button>
+                  ) : pendingInSession > 0 ? (
+                    <span
+                      className="shrink-0 inline-flex items-center gap-1 text-amber-600/80 dark:text-amber-400/80 text-[10px] font-medium"
+                      title="Every item still here needs a manual look - open the cards to give each a name or destination"
+                    >
+                      needs review
+                    </span>
+                  ) : (
+                    <span
+                      className="shrink-0 inline-flex items-center gap-1 text-emerald-600/70 dark:text-emerald-400/70 text-[10px]"
+                      title="Every item in this session has been filed"
+                    >
+                      <CheckCircle size={11} /> filed
+                    </span>
+                  )}
                   {g.isBatch && g.batchId && (
                     <Link
                       to={`/scan?batch=${g.batchId}`}
@@ -2873,19 +3028,6 @@ export function ScanPage() {
                     >
                       open →
                     </Link>
-                  )}
-                  {isActiveSession && (
-                    <button
-                      type="button"
-                      title="End this scan session - the next scan starts a new one"
-                      onClick={() => {
-                        clearScanSession(activeSlug);
-                        toast.success("Session ended - the next scan starts a new one");
-                      }}
-                      className="shrink-0 text-faint hover:text-accent"
-                    >
-                      End
-                    </button>
                   )}
                 </div>
                 {!collapsed && (
@@ -2912,6 +3054,28 @@ export function ScanPage() {
                     )}
                   </div>
                 )}
+
+              {/* Filing needs a place as well as a category. Opened from the
+                  header chip it only SETS the location (set, then file - two
+                  deliberate steps); opened from the File button it sets and
+                  files in one go, because that button already promised to. */}
+              <SessionLocationModal
+                open={placingSession === g.key}
+                mode={placingMode}
+                count={readyIds.length}
+                category={filing.category}
+                currentLocationId={sessionLoc.id}
+                onPick={(v) => {
+                  setPlacingSession(null);
+                  if (placingMode === "set") void applySessionLocation(readyIds, v);
+                  else void fileSession(readyIds, filing.category, v);
+                }}
+                onFileWithoutLocation={() => {
+                  setPlacingSession(null);
+                  void fileSession(readyIds, filing.category, null);
+                }}
+                onClose={() => setPlacingSession(null)}
+              />
               </div>
             );
           });
@@ -4320,6 +4484,12 @@ function InboxCard({
                   const MAX = 6;
                   const shown = entries.length <= MAX + 1 ? entries : entries.slice(0, MAX);
                   const extra = entries.length - shown.length;
+                  // The category chip shows the SAME label the session header
+                  // does. Which field is the category comes from the table's
+                  // declared axis, not from spotting a field whose value equals
+                  // the candidate's category - that guess missed whenever the two
+                  // had drifted, which is exactly when it mattered.
+                  const axisKey = declaredCategoryAxis(menu, topCand);
                   return (
                     <>
                       {shown.map(([k, v]) => (
@@ -4329,7 +4499,11 @@ function InboxCard({
                           title={`${menuFieldLabel(menu, topCand, k)}: ${String(v)}`}
                         >
                           <span className="text-faint shrink-0">{menuFieldLabel(menu, topCand, k)}</span>
-                          <span className="truncate">{String(v)}</span>
+                          <span className="truncate">
+                            {k === axisKey || (topCand.category && v === topCand.category)
+                              ? categoryDisplay(String(v))
+                              : String(v)}
+                          </span>
                         </span>
                       ))}
                       {extra > 0 && (
@@ -4950,7 +5124,12 @@ function PhotoOptions({
   // with it (the server treats a user term as an outright override).
   const [applied, setApplied] = useState("");
   const options = useQuery({
-    queryKey: ["scan-photo-options", activeSlug, item.id, applied],
+    // ai_suggested_at is in the key on purpose: a re-run can change the NAME and
+    // the resolved COLOUR, which changes the search phrase — but the old key was
+    // just (item, term) with a 5 minute staleTime, so the strip kept serving the
+    // photos from BEFORE the re-run. Hinting "color: blue" then looked like it
+    // did nothing (the author, 2026-07-30).
+    queryKey: ["scan-photo-options", activeSlug, item.id, applied, item.ai_suggested_at ?? ""],
     queryFn: () => api.scanPhotoOptions(activeSlug, item.id, applied || undefined),
     // Only when there's a REAL name to search by — an unidentified item ("Unknown
     // Item") or a bare barcode returns junk photos, so don't even ask.
@@ -5008,6 +5187,7 @@ function PhotoOptions({
       items={options.data?.items ?? []}
       loading={options.isLoading}
       busy={pick.isPending}
+      searchedTerm={options.data?.query ?? null}
       onSearch={(t) => {
         // A new search replaces the pool — a badge/reason about the OLD pool
         // would point at a tile that may no longer exist.

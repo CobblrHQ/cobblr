@@ -32,13 +32,6 @@ export function clearRelationDefsCache(): void {
   cache.clear();
 }
 
-/** The names of a kind's relation fields — added to the exposable-fields
- *  whitelist so the injected `<name>_label` survives projection. */
-export async function relationLabelNamesFor(orgId: string, kind: string): Promise<string[]> {
-  const defs = await relationDefsFor(orgId, kind);
-  return defs.map((d) => `${d.name}_label`);
-}
-
 async function relationDefsFor(orgId: string, kind: string): Promise<RelDef[]> {
   const key = `${orgId}:${kind}`;
   const hit = cache.get(key);

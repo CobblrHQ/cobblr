@@ -9,6 +9,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ChevronRight } from "lucide-react";
 import { Modal, useToast, usePageTitle } from "@cobblr/platform-web";
 import { WireDetailModal } from "../components/WireDetailModal";
+import { FEED_SCROLL } from "../lib/feed";
 import { WireComposer } from "../components/WireComposer";
 import { WireGraph } from "../components/WireGraph";
 import { ErrorBoundary } from "../components/ErrorBoundary";
@@ -44,16 +45,7 @@ export function BindingsPage() {
   });
 
   return (
-    <div className="space-y-5 max-w-4xl mx-auto">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
-          wires
-        </h1>
-        <span className="page-subtitle">
-          when X happens, do Y. Modules don't know about each other - you wire them here.
-        </span>
-      </div>
-
+    <div className="space-y-5">
       <WireComposer slug={slug} onCreated={() => {}} />
 
       <div>
@@ -201,7 +193,7 @@ function WireFiringsPanel({ slug }: { slug: string }) {
           {filter === "failed" ? "No failures recorded." : "No wire firings yet."}
         </div>
       )}
-      <ul className="space-y-1.5">
+      <ul className={"space-y-1.5 " + FEED_SCROLL}>
         {items.map((it) => {
           const failed = it.action === "wire_failed";
           const d = (it.diff ?? {}) as {

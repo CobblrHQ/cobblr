@@ -24,11 +24,11 @@ export function register(): void {
       label: "OpenRouter (one key, any model)",
       describeCredentials: () => ({
         api_key: {
-          label: "OpenRouter API key (openrouter.ai/keys — requests transit OpenRouter)",
+          label: "OpenRouter API key (openrouter.ai/keys, requests transit OpenRouter)",
           secret: true,
         },
         model: {
-          label: "Model (e.g. anthropic/claude-sonnet-5, openai/gpt-5.5 — openrouter.ai/models)",
+          label: "Model (e.g. anthropic/claude-sonnet-5, openai/gpt-5.5, openrouter.ai/models)",
           secret: false,
         },
       }),

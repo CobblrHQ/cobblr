@@ -30,7 +30,7 @@ export const TEMPLATE_CATALOG: TemplateEntry[] = [
     id: "home-inventory",
     name: "Home Inventory",
     description:
-      "Track household belongings the way HomeBox does — room, purchase info, replacement cost, asset labels. The HomeBox alternative you can extend.",
+      "Track household belongings the way HomeBox does: room, purchase info, replacement cost, asset labels. The HomeBox alternative you can extend.",
     use_case: [
       "track my stuff at home",
       "household inventory",
@@ -69,7 +69,7 @@ export const TEMPLATE_CATALOG: TemplateEntry[] = [
     id: "collection-and-maintenance",
     name: "Collection + Maintenance",
     description:
-      "A collection of items you maintain or service — cars, bikes, tools, equipment. Tracks each item plus its service notes.",
+      "A collection of items you maintain or service: cars, bikes, tools, equipment. Tracks each item plus its service notes.",
     use_case: [
       "track my car collection and maintenance",
       "vehicle service log",
@@ -105,7 +105,7 @@ export const TEMPLATE_CATALOG: TemplateEntry[] = [
   {
     id: "garden-tracker",
     name: "Garden Tracker",
-    description: "Track plants — species, planted date, watering schedule, sun exposure.",
+    description: "Track plants: species, planted date, watering schedule, sun exposure.",
     use_case: ["track my plants", "garden", "what i planted and when", "watering schedule"],
     requires: ["assets"],
     kinds: ["assets:asset"],
@@ -127,7 +127,7 @@ export const TEMPLATE_CATALOG: TemplateEntry[] = [
   {
     id: "lego-collection",
     name: "Lego Collection",
-    description: "Track a Lego collection — set ID, theme, year, condition, minifig count, with a shelf-label wire.",
+    description: "Track a Lego collection. Set ID, theme, year, condition, minifig count, with a shelf-label wire.",
     use_case: ["track my lego", "lego sets", "brick collection", "minifigs"],
     requires: ["inventory", "labels"],
     kinds: ["inventory:part"],

@@ -59,20 +59,31 @@ export async function isTrialDeniedForOrg(moduleName: string, orgId: string): Pr
   return !(await orgDemoUnlocks(orgId)).has(moduleName);
 }
 
+// The feature keys the trial tier caps. SINGLE SOURCE OF TRUTH: the guard consults it,
+// trialFeatureDecision switches on it, and the demo API validates unlock entries against it
+// (a typo'd unlock like "files" instead of "files.upload" is then rejected, not silently
+// no-op'd). `plan.upgrade` is here so convert-to-keep can't be a free self-serve escape
+// from the trial cap — it's denied unless the cloud billing overlay's guard allows it
+// (post-payment) or a specific demo is unlocked for it.
+export const TRIAL_CAPPED_FEATURES: ReadonlySet<string> = new Set([
+  "workspaces.create",
+  "members.add",
+  "files.upload",
+  "plan.upgrade",
+]);
+const TRIAL_CAP_REASONS: Record<string, string> = {
+  "workspaces.create": "The free trial is limited to one workspace — upgrade to add more.",
+  "members.add": "The free trial is single-user — upgrade to invite members.",
+  "files.upload": "The free trial doesn't support file uploads — items you scan still get their image automatically.",
+  "plan.upgrade": "Keeping this workspace requires checkout — a free trial can't self-upgrade to a paid plan.",
+};
+
 /** The pure decision: does the trial tier withhold this feature, given the workspace's
  *  unlock list? Extracted so the (async, DB-touching) guard stays a thin wrapper. */
 export function trialFeatureDecision(feature: string, unlocks: ReadonlySet<string>): { allow: boolean; reason?: string } {
   if (unlocks.has(feature)) return { allow: true }; // this demo is unlocked for it
-  switch (feature) {
-    case "workspaces.create":
-      return { allow: false, reason: "The free trial is limited to one workspace — upgrade to add more." };
-    case "members.add":
-      return { allow: false, reason: "The free trial is single-user — upgrade to invite members." };
-    case "files.upload":
-      return { allow: false, reason: "The free trial doesn't support file uploads — items you scan still get their image automatically." };
-    default:
-      return { allow: true };
-  }
+  if (TRIAL_CAPPED_FEATURES.has(feature)) return { allow: false, reason: TRIAL_CAP_REASONS[feature] };
+  return { allow: true };
 }
 
 // Trial entitlement caps. This guard denies the plan-limited actions the trial
@@ -84,8 +95,7 @@ export function trialFeatureDecision(feature: string, unlocks: ReadonlySet<strin
 // (COBBLR_HOSTED=true).
 export const trialEntitlementGuard: EntitlementGuard = async (ctx) => {
   // Only pay the unlock lookup for a feature the trial actually caps.
-  const capped = ctx.feature === "workspaces.create" || ctx.feature === "members.add" || ctx.feature === "files.upload";
-  const unlocks = capped ? await orgDemoUnlocks(ctx.orgId) : EMPTY;
+  const unlocks = TRIAL_CAPPED_FEATURES.has(ctx.feature) ? await orgDemoUnlocks(ctx.orgId) : EMPTY;
   return trialFeatureDecision(ctx.feature, unlocks);
 };
 

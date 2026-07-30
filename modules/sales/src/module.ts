@@ -13,7 +13,7 @@ export default defineModule({
   version: "0.2.0",
   displayName: "Sales",
   description:
-    "Outbound order management: customers, sales orders, and line items. Fulfilling an order decrements the sold inventory parts from stock — closing the sale → fulfil → decrement → reorder loop. For makers and small shops selling finished goods.",
+    "Outbound order management: customers, sales orders, and line items. Fulfilling an order decrements the sold inventory parts from stock, closing the sale → fulfil → decrement → reorder loop. For makers and small shops selling finished goods.",
   icon: "shopping-cart",
   band: "stock",
   instanceability: "multi",

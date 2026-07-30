@@ -66,8 +66,6 @@ const POLL_WAIT_MS = 25_000; // long-poll hold before a keep-alive null
 const STALE_MS = 60_000; // drop a channel whose bridge stopped polling
 const DEFAULT_REQ_TIMEOUT_MS = 20_000;
 
-export const RELAY_STALE_MS = STALE_MS;
-
 type Pending = { resolve: (r: EdgeResponse) => void; reject: (e: Error) => void; timer: NodeJS.Timeout };
 
 interface RelayState {

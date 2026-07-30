@@ -91,12 +91,14 @@ const NEW_MENU = "__new__";
 export function NewThingFunnelModal({
   open,
   onClose,
-  inline,
+  inline, chromeless,
 }: {
   open: boolean;
   onClose: () => void;
   /** Render in-flow (settings page mode) instead of as an overlay. */
   inline?: boolean;
+  /** With `inline`, render as a plain PAGE body (no dialog chrome). */
+  chromeless?: boolean;
 }) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
@@ -249,6 +251,7 @@ export function NewThingFunnelModal({
       title="New thing in workspace"
       size="md"
       inline={inline}
+      chromeless={chromeless}
     >
       <form onSubmit={submit} className="space-y-4">
         {/* 1. The name. It's the only thing the user actually knows when they

@@ -252,7 +252,7 @@ function normalize(raw: Record<string, unknown>, row: number, sourceInstance: st
   // url; a hint-only row (name/notes, no capture artifact) imports as a note.
   const source_kind = barcode ? ("barcode" as const) : identify ? ("photo" as const) : sourceUrl ? ("url" as const) : ("note" as const);
   if (!barcode && !identify && !sourceUrl && !name && !notes) {
-    errors.push({ row, field: "", message: "empty row — no barcode, photo, url, name or notes; skipped" });
+    errors.push({ row, field: "", message: "empty row: no barcode, photo, url, name or notes; skipped" });
     return null;
   }
 

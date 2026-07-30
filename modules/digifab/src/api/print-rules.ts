@@ -120,11 +120,11 @@ printRulesRouter.post(
         // Delivered by the overlay's managed bot (paid). Throws in the free image.
         await platform().integrations.invokeConnector(
           "discord-bot",
-          { orgId, rowId: "", credentials: {}, args: { guild_id: String(creds.guild_id ?? ""), channel_id: String(creds.channel_id ?? ""), brand_name: creds.brand_name ?? null, brand_avatar: creds.brand_avatar ?? null, title: "✅ Cobblr — test", body: "Print updates will post here.", event: "completed", photo_b64: null } },
+          { orgId, rowId: "", credentials: {}, args: { guild_id: String(creds.guild_id ?? ""), channel_id: String(creds.channel_id ?? ""), brand_name: creds.brand_name ?? null, brand_avatar: creds.brand_avatar ?? null, title: "✅ Cobblr, test", body: "Print updates will post here.", event: "completed", photo_b64: null } },
           "deliver",
         );
       } else {
-        await postDiscord(String(creds.webhook_url ?? ""), { title: "✅ Cobblr — test", body: "Print updates will post here.", event: "completed", photo: null });
+        await postDiscord(String(creds.webhook_url ?? ""), { title: "✅ Cobblr, test", body: "Print updates will post here.", event: "completed", photo: null });
       }
       res.json({ ok: true });
     } catch (e) {
@@ -267,7 +267,7 @@ printRulesRouter.post(
       .$if(!!(connId && serial), (q) => q.where("connection_id", "=", connId!).where("serial", "=", serial!))
       .orderBy("updated_at", "desc")
       .executeTakeFirst();
-    if (!row) return void res.status(409).json({ error: { code: "no_telemetry", message: "no live printer telemetry to test with — start a print or open the printer first" } });
+    if (!row) return void res.status(409).json({ error: { code: "no_telemetry", message: "no live printer telemetry to test with. Start a print or open the printer first" } });
     connId = row.connection_id;
     serial = row.serial;
 

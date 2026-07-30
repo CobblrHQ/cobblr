@@ -17,6 +17,20 @@ import type { LabelableItem } from "./api";
 // as the paper/size pickers on the queue side.
 const TAB_LS = "cobblr:labels-browse-tab";
 
+// Split a depth-first row list (each row carries its tree depth) into per-ROOT
+// blocks: a new block starts at every depth-0 row and gathers its descendants.
+// Rendered as break-inside-avoid units inside a 2-column masonry, this keeps a
+// whole area + its containers together in one column — so a container can never
+// flow into the slot under a different area (the row-major-grid mis-nesting bug).
+function groupByRoot<R extends { depth: number }>(rows: R[]): R[][] {
+  const blocks: R[][] = [];
+  for (const r of rows) {
+    if (r.depth === 0 || blocks.length === 0) blocks.push([r]);
+    else blocks[blocks.length - 1]!.push(r);
+  }
+  return blocks;
+}
+
 export function BrowsePanel() {
   const { api, orgSlug } = useLabels();
   const qc = useQueryClient();
@@ -226,23 +240,35 @@ export function BrowsePanel() {
         )}
 
         {/* Hierarchical tab (locations): Areas tree + a separate Containers
-            section — the same shape as the real Locations page. */}
+            section — the same shape as the real Locations page. Two-column masonry
+            BY WHOLE AREA: each area + its containers is one break-inside-avoid
+            block, so a container can never flow into the column slot under a
+            DIFFERENT area. A plain row-major 2-col grid mis-nested them (Front Door
+            Closet read as "inside Basement" when it's in Bedroom Hallway). */}
         {items.length > 0 && sections && (
           <div className="space-y-3">
             {sections.areas.length > 0 && (
               <div>
                 <SectionHeader label="Areas" count={sections.areas.length} />
-                <ul className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                  {sections.areas.map((r) => renderRow(r.node, r.depth))}
-                </ul>
+                <div className="columns-1 sm:columns-2 [column-gap:0.5rem]">
+                  {groupByRoot(sections.areas).map((block) => (
+                    <ul key={block[0]!.node.id} className="break-inside-avoid space-y-1.5 mb-2.5">
+                      {block.map((r) => renderRow(r.node, r.depth))}
+                    </ul>
+                  ))}
+                </div>
               </div>
             )}
             {sections.containers.length > 0 && (
               <div>
                 <SectionHeader label="Containers" count={sections.containers.length} />
-                <ul className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                  {sections.containers.map((r) => renderRow(r.node, r.depth))}
-                </ul>
+                <div className="columns-1 sm:columns-2 [column-gap:0.5rem]">
+                  {groupByRoot(sections.containers).map((block) => (
+                    <ul key={block[0]!.node.id} className="break-inside-avoid space-y-1.5 mb-2.5">
+                      {block.map((r) => renderRow(r.node, r.depth))}
+                    </ul>
+                  ))}
+                </div>
               </div>
             )}
           </div>

@@ -15,7 +15,7 @@ export default defineModule({
   version: "0.2.1",
   displayName: "Devices",
   description:
-    "The device substrate — link a physical device (a scale, an RFID reader, a relay) to the Cobblr thing it feeds, in one place. Plumbing under digifab, core-print, and edge firmware connectors.",
+    "The device substrate. Link a physical device (a scale, an RFID reader, a relay) to the Cobblr thing it feeds, in one place. Plumbing under digifab, core-print, and edge firmware connectors.",
   icon: "cpu",
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace, no nav noun
@@ -62,7 +62,7 @@ export default defineModule({
         id: "core-devices:run-command",
         label: "Run a device command",
         description:
-          "Fire a parameterized command-and-forget at a connected actuator/controller — open a valve for N seconds, call a Home Assistant service, flip a relay. Wire-invokable: an entity's schedule (e.g. each plant's water_rrule) commands a device with THAT entity's own params. `connection` + `command` are fixed wire args; the rest pass through as the command's params. Reaches the device via platform().devices.getDriver — works for any connection kind (digifab fabrication drivers, edge-adapter, etc.).",
+          "Fire a parameterized command-and-forget at a connected actuator/controller (open a valve for N seconds, call a Home Assistant service, flip a relay. Wire-invokable: an entity's schedule (e.g. each plant's water_rrule) commands a device with THAT entity's own params. `connection` + `command` are fixed wire args; the rest pass through as the command's params. Reaches the device via platform().devices.getDriver) works for any connection kind (digifab fabrication drivers, edge-adapter, etc.).",
         // Physical things command devices (a plant waters, a part reorders
         // ink). Trait-scoped so "Run a device command" stops offering itself
         // on subscriptions and tasks; a workspace can broaden it per-axis on

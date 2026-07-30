@@ -1,13 +1,18 @@
-// Shared prompt for the `rank-images` capability: shown N candidate photos of
-// ONE item, pick the single best CATALOG image. Both provider adapters (OpenAI,
-// Anthropic) inject it so the output shape is identical regardless of the model
-// a workspace configures — the same discipline identify-prompt.ts follows.
+// Shared prompt for the `rank-images` capability: shown ONE image — a numbered
+// contact sheet of candidate photos for a single item — pick the best tile. Every
+// provider adapter injects it through this one resolver, so the output shape is
+// identical regardless of the model a workspace configures (the same discipline
+// identify-prompt.ts follows).
 //
-// This is the ONLY capability that sends more than one image in a call. The
-// heuristic ranker (core-scan's catalogScore) is the instant, free floor; this
-// is the "uses more tokens" upgrade that actually LOOKS at the pixels, so it can
-// enforce the two things a title never reveals: no person in frame, and the
-// real colour of the thing.
+// It used to send the candidates as N SEPARATE attachments. One composed sheet is
+// better on every axis: a fraction of the image tokens, and it needs only the
+// single-image path every adapter already has for identify-image. The
+// multi-attachment version silently worked on two adapters (OpenAI, Anthropic)
+// and failed on the three a real workspace was actually using — the button
+// returned "no provider configured for capability rank-images" on the edge
+// bridge. It also puts the user's own photo in the SAME frame for colour
+// comparison, and a tile is a position in one picture, so there is no
+// attachment-offset to get wrong. Composed in core-scan's contact-sheet.ts.
 //
 // Priorities, in order (the author, 2026-07-29): (1) the product ALONE — no people, no
 // tag/packaging-only shots; (2) correct COLOUR, the top visual match; (3) a
@@ -21,17 +26,18 @@
 // correctness fix, not a preference.
 
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
+const num = (v: unknown, dflt: number): number =>
+  typeof v === "number" && Number.isFinite(v) ? v : dflt;
 
 /** A short, category-derived line appended to the base prompt. Keeps the base
  *  lean AND fixes the packaging rule, which inverts by category: for a garment
  *  or a tool a photo of just the packaging/tag is not the product, but for a
  *  packaged good (food, cosmetics, a boxed toy) the FRONT of the retail package
- *  IS the catalog shot. Derived from the identify's coarse category — matched
- *  on WHOLE tokens, never substrings: the first cut used `includes()` and
- *  "pantry" matched "pant" (apparel!), "socket" matched "sock", "dresser"
- *  matched "dress" — each steering the model to the WRONG kind of photo.
- *  Returns "" when the base priorities already cover it (tools, electronics,
- *  parts, general goods). */
+ *  IS the catalog shot. Matched on WHOLE tokens, never substrings: the first cut
+ *  used `includes()` and "pantry" matched "pant" (apparel!), "socket" matched
+ *  "sock", "dresser" matched "dress" — each steering the model to the WRONG kind
+ *  of photo. Returns "" when the base priorities already cover it (tools,
+ *  electronics, parts, general goods). */
 const APPAREL_TOKENS = new Set([
   "clothing", "clothes", "apparel", "garment", "garments", "shirt", "shirts",
   "tee", "tees", "shoe", "shoes", "footwear", "sneaker", "sneakers", "boot",
@@ -72,86 +78,65 @@ export function categoryGuidance(input: Record<string, unknown>): string {
   return "";
 }
 
-/** One candidate image the adapter will push as a content block. */
-export interface RankImage {
-  b64: string;
-  mediaType: string;
-}
-
-/** Normalise `input.images` (the ordered list the caller sent) into the shape
- *  both adapters push. Each entry is `{ image_b64, image_media_type? }`; a
- *  missing media type defaults to JPEG. Shared so OpenAI and Anthropic can
- *  never disagree about which/how many images the prompt's indices refer to. */
-export function rankImageInputs(input: Record<string, unknown>): RankImage[] {
-  const raw = Array.isArray(input.images) ? input.images : [];
-  const out: RankImage[] = [];
-  for (const it of raw) {
-    if (!it || typeof it !== "object") continue;
-    const rec = it as Record<string, unknown>;
-    const b64 = typeof rec.image_b64 === "string" ? rec.image_b64 : "";
-    if (!b64) continue;
-    out.push({ b64, mediaType: typeof rec.image_media_type === "string" ? rec.image_media_type : "image/jpeg" });
-  }
-  return out;
-}
-
 /**
  * The prompt a `rank-images` call ACTUALLY sends. Derived from the text context
- * the caller passes (item name/brand/colour and whether image 0 is a reference
- * photo of the real item) — never from the image bytes, which are already in
- * the cache key. EVERY consumer routes through here: the adapters that send it
- * AND the fingerprint that keys the cache on it, so the two can never drift.
+ * the caller passes (the item's name/brand/colour/category and the sheet's
+ * shape) — never from the image bytes, which are already in the cache key. EVERY
+ * consumer routes through here: the adapters that send it AND the fingerprint
+ * that keys the cache on it, so the two can never drift.
+ *
+ * The sheet's geometry is described EXACTLY as contact-sheet.ts composes it
+ * (numbers printed per tile, `cols` across, reading left-to-right then
+ * top-to-bottom, the user's photo as an unnumbered strip on top). Those two
+ * files are one contract; the composer's test pins the layout.
  */
 export function rankImagesPromptFor(input: Record<string, unknown>): string {
   const name = str(input.item_name);
   const brand = str(input.brand);
   const color = str(input.known_color);
   const hasRef = input.has_reference === true;
-  // Count what the adapters will actually PUSH (the normalised list), not the
-  // raw array — an entry without bytes is skipped by rankImageInputs, and a
-  // count mismatch would shift every index the model is told about.
-  const n = rankImageInputs(input).length;
-  const firstCandidate = hasRef ? 1 : 0;
-  const lastCandidate = Math.max(firstCandidate, n - 1);
+  const tiles = Math.max(1, num(input.tiles, 1));
+  const cols = Math.max(1, num(input.cols, 3));
 
   const what = [name, brand ? `by ${brand}` : ""].filter(Boolean).join(" ") || "an item";
 
   const lines: string[] = [];
   lines.push(
     `You are choosing the single best CATALOG photo for ${what}. ` +
-      `You are shown ${n} image${n === 1 ? "" : "s"}, numbered 0 to ${n - 1} in the order given.`,
+      `The image you have been given is a CONTACT SHEET: ${tiles} candidate ` +
+      `photo${tiles === 1 ? "" : "s"}, laid out ${cols} across, each in its own ` +
+      `tile with its number printed in the tile's top-left corner. The tiles are ` +
+      `numbered 1 to ${tiles}, left to right, then top to bottom.`,
   );
   if (hasRef) {
     lines.push(
-      `Image 0 is a REFERENCE photo of the ACTUAL item the user owns. It may be ` +
-        `dark, blurry, or cluttered — use it ONLY to judge the item's true COLOUR ` +
-        `and identity. NEVER choose image 0.`,
+      `The full-width strip ACROSS THE TOP, above the numbered tiles, is the ` +
+        `user's own photo of the ACTUAL item they own. It may be dark, blurry or ` +
+        `cluttered. Use it ONLY to judge the item's true COLOUR and identity: it ` +
+        `is not a candidate, it has no number, and you must never choose it.`,
     );
   }
+  lines.push(`Choose the ONE best numbered tile, by these priorities in order:`);
   lines.push(
-    `Choose the ONE best candidate from images ${firstCandidate} to ${lastCandidate}, ` +
-      `by these priorities in order:`,
-  );
-  lines.push(
-    `1. It shows ONLY the product itself. Reject any image with a person, a hand, ` +
+    `1. It shows ONLY the product itself. Reject any tile with a person, a hand, ` +
       `a face, or a mannequin in it; reject a photo of just a tag, label, receipt, ` +
       `or the packaging/box. Prefer a plain, uncluttered background (ideally white).`,
   );
   lines.push(
     `2. Correct COLOUR is the most important visual match. ` +
       (color ? `The item's colour is "${color}". ` : "") +
-      (hasRef ? `Match the colour you see in the reference image 0. ` : "") +
-      `An image showing the wrong colour is the wrong variant — do not pick it.`,
+      (hasRef ? `Match the colour you see in the strip at the top. ` : "") +
+      `A tile showing the wrong colour is the wrong variant — do not pick it.`,
   );
   lines.push(`3. Prefer a clean studio / catalog look over a lifestyle or in-use shot.`);
   const guidance = categoryGuidance(input);
   if (guidance) lines.push(guidance);
   lines.push(
     `Reply with ONLY a JSON object: ` +
-      `{"chosen_index": <integer from ${firstCandidate} to ${lastCandidate}>, ` +
+      `{"chosen_tile": <the tile's printed number, an integer from 1 to ${tiles}>, ` +
       `"reason": "<one short sentence on why>", ` +
-      `"color_seen": "<the colour of the item in the image you chose>"}. ` +
-      `If none are good, pick the least-bad candidate and say so in "reason".`,
+      `"color_seen": "<the colour of the item in the tile you chose>"}. ` +
+      `If none are good, pick the least-bad tile and say so in "reason".`,
   );
   return lines.join("\n\n");
 }

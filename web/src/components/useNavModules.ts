@@ -276,44 +276,40 @@ export function useNavModules(activeSlug: string): NavModules {
     }
   }
 
-  // core-scan is a capability (no nav noun by the core-* rule above), but the
-  // scan INBOX page needs a discoverable home — the header camera icon now
-  // jumps straight to the live scanner, so without this entry there'd be no
-  // labelled path to /scan at all. Synthetic top named "scan" → both navs
-  // route it to /scan; per-device hide/reorder works because those key on the
-  // entry name like any other.
-  if (enabledNames.has("core-scan")) {
+  // DECLARED nav entries (manifest `nav`). A module can be foundational — or
+  // `core-`-prefixed — AND still be something you browse daily: locations,
+  // files, tags, saved views, the scan inbox, the maintenance log. The core-*
+  // rule above hides all of them, so such a module had nowhere to go except
+  // /configuration. That is how the settings area became the dumping ground for
+  // data browsers, and how Locations ended up reachable at two URLs with the
+  // settings shell wrapped around one of them.
+  //
+  // This used to be two hardcoded blocks right here (core-scan, core-locations),
+  // so the NEXT such module needed a change in the host to be reachable at all.
+  // It is a manifest field now: a module declares its own nav noun and route.
+  // See docs/design-decisions/configuration-revamp.md.
+  //
+  // displayName honours the ORG-WIDE Presentation rename when the manifest names
+  // an `overrideKey`, so a workspace calling locations "Rooms" gets that on every
+  // device rather than as a per-browser tweak.
+  for (const m of enabled) {
+    const nav = m.nav;
+    if (!nav) continue;
+    // Entry name is the route's first segment, so per-device hide/reorder and
+    // the routers key on the same token they always have ("locations", "scan").
+    const key = nav.route.replace(/^\//, "").split("/")[0] || m.name;
+    if (rawTops.some((t) => t.name === key)) continue;
+    const o = overridesByKey.get(`instance:${key}:${key}`);
+    if (o?.hidden) continue;
+    const renamed = nav.overrideKey
+      ? overridesByKey.get(nav.overrideKey)?.display_label
+      : undefined;
     rawTops.push({
-      name: "scan",
+      name: key,
       version: "0.1.0",
-      displayName: "Scan Inbox",
-      description: "Scan Inbox — review + file barcode/photo intake",
-      icon: "scan-line",
-      headerAction: null,
-      dependencies: [],
-      contributes: { fieldDefs: 0, wires: 0 },
-      enabled: true,
-      enabled_version: "0.1.0",
-      enabled_at: "",
-    });
-  }
-
-  // core-locations is foundational (the place tree other modules reference), so
-  // the core-*/foundational rule hides it — but it's genuinely user-facing (you
-  // manage the rooms your things live in), and there was no labelled path to it
-  // outside /configuration. Synthetic top named "locations" → /locations (route
-  // alias). Like every top it's per-device hide/reorder-able (keyed on the name).
-  // displayName honors the ORG-WIDE Presentation rename of the location entity
-  // kind (Configuration → Presentation), so a workspace can call it "Rooms",
-  // "Areas", etc. consistently across every device — not a per-browser tweak.
-  if (enabledNames.has("core-locations")) {
-    const locLabel = overridesByKey.get("entity_kind:core-locations:location")?.display_label;
-    rawTops.push({
-      name: "locations",
-      version: "0.1.0",
-      displayName: locLabel ?? "Locations",
-      description: "Locations — the rooms + places your things live in",
-      icon: "map-pin",
+      displayName: renamed ?? o?.display_label ?? nav.label,
+      description: `${nav.label} — from ${m.displayName}`,
+      icon: o?.icon ?? nav.icon ?? null,
       headerAction: null,
       dependencies: [],
       contributes: { fieldDefs: 0, wires: 0 },

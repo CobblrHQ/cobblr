@@ -11,7 +11,7 @@ export default defineModule({
   version: "0.1.0",
   displayName: "Records",
   description:
-    "A blank-slate collection of records. No built-in domain columns — each collection declares its own fields, so a bookshelf, a movie list, or a recipe box starts clean.",
+    "A blank-slate collection of records. No built-in domain columns: each collection declares its own fields, so a bookshelf, a movie list, or a recipe box starts clean.",
   icon: "album",
   band: "stock",
   instanceability: "multi",

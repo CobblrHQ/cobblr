@@ -1,12 +1,12 @@
 {
   "manifest": {
     "id": "cobblr.flagship.plant-care",
-    "version": "0.3.1",
+    "version": "0.3.2",
     "name": "Plant Care",
-    "description": "Your houseplants as their own table — species, light, watering interval + pot size, grouped by light.",
+    "description": "Your houseplants as their own table: species, light, watering interval + pot size, grouped by light.",
     "author": "Cobblr",
     "released_at": "2026-06-10",
-    "changelog": "Turn on Smart irrigation to let each plant water itself — its watering interval fires a Home Assistant service (or any controller) for that plant's zone + seconds, hands-free. — Now its OWN table (an assets instance), not generic Assets with extra columns — its own nav entry, a “New plant” button, only plant fields (the make/model/serial cruft is hidden). Plain-language hints + a pinned “By light” view.",
+    "changelog": "Turn on Smart irrigation to let each plant water itself: its watering interval fires a Home Assistant service (or any controller) for that plant's zone + seconds, hands-free.. Now its OWN table (an assets instance), not generic Assets with extra columns: its own nav entry, a “New plant” button, only plant fields (the make/model/serial cruft is hidden). Plain-language hints + a pinned “By light” view.",
     "requires": [
       {
         "module": "assets"
@@ -33,7 +33,7 @@
             "display_label": "Species",
             "type": "text",
             "position": 1,
-            "help": "The plant's name/type — e.g. “Monstera”, “Snake plant”."
+            "help": "The plant's name/type, e.g. “Monstera”, “Snake plant”."
           },
           {
             "entity_kind": "assets:asset",
@@ -47,15 +47,16 @@
               "Bright indirect",
               "Direct sun"
             ],
-            "help": "How much light its spot gets — the table groups by this so similar plants sit together."
+            "help": "How much light its spot gets, the table groups by this so similar plants sit together."
           },
           {
             "entity_kind": "assets:asset",
             "name": "water_every_days",
             "display_label": "Water every (days)",
-            "type": "number", "unit": "d",
+            "type": "number",
+            "unit": "d",
             "position": 3,
-            "help": "Days between waterings — e.g. 7 for weekly."
+            "help": "Days between waterings, e.g. 7 for weekly."
           },
           {
             "entity_kind": "assets:asset",
@@ -70,7 +71,7 @@
             "display_label": "Pot size",
             "type": "text",
             "position": 5,
-            "help": "Pot diameter — e.g. “6 in”, “15 cm”."
+            "help": "Pot diameter, e.g. “6 in”, “15 cm”."
           }
         ],
         "field_overrides": [
@@ -125,7 +126,7 @@
         "key": "irrigation",
         "name": "Smart irrigation",
         "question": "Let plants water themselves?",
-        "description": "Each plant's watering interval fires a command at your irrigation controller for THAT plant's zone + duration — hands-free. Ships pointed at a Home Assistant `script.water_zone` service; connect Home Assistant (label it “Irrigation”) and it just works. Works with any HTTP controller via a driver manifest.",
+        "description": "Each plant's watering interval fires a command at your irrigation controller for THAT plant's zone + duration, hands-free. Ships pointed at a Home Assistant `script.water_zone` service; connect Home Assistant (label it “Irrigation”) and it just works. Works with any HTTP controller via a driver manifest.",
         "default": false,
         "requires": [
           {
@@ -158,7 +159,7 @@
                 "display_label": "Irrigation zone",
                 "type": "text",
                 "position": 7,
-                "help": "Which valve/zone waters this plant — passed to the controller (e.g. “3”)."
+                "help": "Which valve/zone waters this plant, passed to the controller (e.g. “3”)."
               },
               {
                 "entity_kind": "assets:asset",
@@ -166,7 +167,7 @@
                 "display_label": "Water (seconds)",
                 "type": "number",
                 "position": 8,
-                "help": "How long to run the zone each watering — in seconds."
+                "help": "How long to run the zone each watering, in seconds."
               }
             ]
           }

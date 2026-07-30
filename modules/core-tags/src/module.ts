@@ -12,9 +12,17 @@ export default defineModule({
   version: "0.2.0",
   displayName: "Tags",
   description:
-    "Cross-module polymorphic labels. Attach the same tag to a part, a task, a printer — they all show up under that tag.",
+    "Cross-module polymorphic labels. Attach the same tag to a part, a task, a printer: they all show up under that tag.",
   icon: "tag",
   band: "foundational",
+
+  // Browse-not-configure: this is a page you VISIT, so it owns a nav entry
+  // and one canonical URL rather than living under /configuration.
+  nav: {
+    label: "Tags",
+    route: "/tags",
+    icon: "tag",
+  },
 
   schema: {
     tablePrefix: "core_tags_",
@@ -72,7 +80,7 @@ export default defineModule({
         id: "core-tags:tag-record",
         label: "Tag record",
         description:
-          "Attach a tag (by name) to the targeted record — the tag is created on the fly if it doesn't exist yet. Idempotent: tagging an already-tagged record is a no-op. Args: { tag_name }.",
+          "Attach a tag (by name) to the targeted record, the tag is created on the fly if it doesn't exist yet. Idempotent: tagging an already-tagged record is a no-op. Args: { tag_name }.",
         // DELIBERATELY universal: labels are the point of this module —
         // ANY record of ANY kind can be tagged (the assignments table is
         // polymorphic by design). No trait narrows that honestly.

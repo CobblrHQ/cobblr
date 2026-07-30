@@ -19,6 +19,20 @@
 // rendering MachinesPage, or legacy debt to unwind). The lint is GREEN today
 // and FAILS on any NEW page→page import. Shrink the baseline, never grow it.
 //
+// COMPOSITES (below) are a NARROWER, declared exception — not baseline debt.
+// A composite is a settings page that exists only to host whole sibling pages
+// as TABS: /configuration/devices is bridges + machine managers + printers,
+// /fields is fields + form layout, /configuration/permissions is grants +
+// roles + accounts. That is composition of complete pages, which is the
+// opposite of the defect this lint was written for (MachinesPage reaching into
+// DigifabPage's internals for FleetView and two modals).
+//
+// The distinction is enforced, not merely asserted: a composite may import ONLY
+// the sibling pages listed for it, and only whole page components. Anything
+// else still fails. Keeping these out of the baseline means the baseline stays
+// a shrink-only list of real debt.
+// See docs/design-decisions/configuration-revamp.md.
+//
 //   cd <repo> && npx tsx scripts/lint-page-imports.ts
 
 import { readdirSync, readFileSync, existsSync } from "node:fs";
@@ -26,6 +40,14 @@ import { join, basename } from "node:path";
 
 const PAGES_DIR = "web/src/pages";
 const BASELINE_PATH = "scripts/page-imports-baseline.json";
+
+/** Composite tab pages → the sibling pages each may host. */
+const COMPOSITES: Record<string, string[]> = {
+  "DevicesPage.tsx": ["./EdgeBridgesPage", "./DigifabPage", "./PrintPage"],
+  "FieldsAndFormsPage.tsx": ["./FieldsPage", "./FormBuilderPage"],
+  "PermissionsPage.tsx": ["./UsersPage", "./RolesPage"],
+  "QrPage.tsx": ["./QrTokensPage", "./ScanRulesPage"],
+};
 
 interface Finding {
   file: string;
@@ -48,6 +70,8 @@ for (const f of readdirSync(PAGES_DIR)) {
       if (!inPages) continue;
       const target = basename(spec);
       if (target !== basename(f, f.endsWith(".tsx") ? ".tsx" : ".ts") && /Page$/.test(target)) {
+        // A declared composite may host exactly the siblings listed for it.
+        if (COMPOSITES[f]?.includes(spec)) continue;
         findings.push({ file: path, line: i + 1, spec });
       }
     }

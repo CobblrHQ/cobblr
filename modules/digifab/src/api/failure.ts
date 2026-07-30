@@ -415,7 +415,7 @@ failureRouter.post(
     if (mapping.perDevice) {
       if (!parsed.data.device_id) return void res.status(400).json({ error: { code: "device_required", message: "pick which printer on this connection" } });
       const device = perDeviceCreds(c.type, creds, parsed.data.device_id);
-      if (!device) return void res.status(400).json({ error: { code: "no_lan_creds", message: `no LAN access stored for that printer — add its host + access code in Cobblr first` } });
+      if (!device) return void res.status(400).json({ error: { code: "no_lan_creds", message: `no LAN access stored for that printer. Add its host + access code in Cobblr first` } });
       ctx.device = device;
     }
     try {

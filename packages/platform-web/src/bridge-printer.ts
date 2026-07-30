@@ -208,12 +208,12 @@ export async function readLocalBridgeStatus(
 export async function testLocalBridge(
   s: BridgePrinterSettings,
 ): Promise<{ ok: boolean; error?: string; detail?: string; deviceName?: string }> {
-  if (!s.instance) return { ok: false, error: "no bridge instance set — that is the id under /<id>/ in the bridge config" };
+  if (!s.instance) return { ok: false, error: "no bridge instance set: that is the id under /<id>/ in the bridge config" };
   const client = clientFor(s);
   try {
     const devices = await client.devices();
     if (devices.length === 0) {
-      return { ok: false, error: "the bridge answered but has no device on this instance — check the instance id" };
+      return { ok: false, error: "the bridge answered but has no device on this instance. Check the instance id" };
     }
     const deviceName = devices[0]?.name || devices[0]?.id || undefined;
     // Reachable is not ready. 501 (driver has no commands) is a normal answer,

@@ -26,6 +26,14 @@ export default defineModule({
   icon: "image",
   band: "foundational",
 
+  // Browse-not-configure: this is a page you VISIT, so it owns a nav entry
+  // and one canonical URL rather than living under /configuration.
+  nav: {
+    label: "Files",
+    route: "/files",
+    icon: "files",
+  },
+
   schema: {
     // Convention from sibling modules: prefix is module-name +
     // underscore. Hyphens aren't legal in identifiers so 'core-files'

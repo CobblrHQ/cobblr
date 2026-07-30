@@ -30,11 +30,6 @@ const mountedNames = new Set<string>();
 const primaryRouters = new Map<string, Router>();
 let appRef: Application | null = null;
 
-/** The primary-entity CRUD router a module exposed for instance-scoped
- *  dispatch, or undefined if the module hasn't opted in yet. */
-export function getPrimaryRouter(moduleName: string): Router | undefined {
-  return primaryRouters.get(moduleName);
-}
 
 /** Middleware for /orgs/:slug/instances/:name/items — dispatches to the
  *  resolved module's primary router (req.instanceModule is set by

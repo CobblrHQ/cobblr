@@ -14,7 +14,7 @@ import type { DriveMode } from "../hooks/useBrowserDrive";
 
 const OPTIONS: Array<{ value: DriveMode; label: string; help: string }> = [
   { value: "off", label: "Off", help: "Claude can't touch this window. (Default.)" },
-  { value: "navigate", label: "Navigate", help: "Claude can open pages and views for you — but never sees what you do." },
+  { value: "navigate", label: "Navigate", help: "Claude can open pages and views for you, but never sees what you do." },
   { value: "navigate_observe", label: "Navigate + observe", help: "Claude drives AND sees your clicks and page changes in real time, so it can follow along." },
 ];
 

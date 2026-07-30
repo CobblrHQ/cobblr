@@ -162,7 +162,7 @@ runsRouter.patch(
     if (b.status) {
       const effectiveCompleted = typeof set.completed_qty === "number" ? set.completed_qty : run.completed_qty;
       if (run.status === "completed" && b.status === "active" && effectiveCompleted >= run.target_qty) {
-        res.status(409).json({ error: { code: "already_complete", message: "Run already hit its target — lower completed_qty to reopen." } });
+        res.status(409).json({ error: { code: "already_complete", message: "Run already hit its target, lower completed_qty to reopen." } });
         return;
       }
       set.status = b.status;

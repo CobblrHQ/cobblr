@@ -28,7 +28,7 @@ export async function generateYourApp(slug: string): Promise<GenerateResult> {
     blocks: [
       {
         type: "markdown",
-        body: "## Add to the workspace\nScan a barcode or snap a photo — it files itself. Or use a tracker page to add by hand.",
+        body: "## Add to the workspace\nScan a barcode or snap a photo: it files itself. Or use a tracker page to add by hand.",
       } as AppBlock,
       { type: "scan" } as AppBlock,
     ],

@@ -1,9 +1,9 @@
 {
   "manifest": {
     "id": "cobblr.flagship.fasteners",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "name": "Fasteners",
-    "description": "Your fastener drawers as their own table — an inventory instance with thread, length, head, drive and material pre-shaped, quantities + reorder thresholds kept, grouped by thread.",
+    "description": "Your fastener drawers as their own table: an inventory instance with thread, length, head, drive and material pre-shaped, quantities + reorder thresholds kept, grouped by thread.",
     "author": "Cobblr",
     "released_at": "2026-07-02",
     "requires": [
@@ -71,13 +71,14 @@
             "display_label": "Thread",
             "type": "text",
             "position": 2,
-            "help": "M3, M5, 1/4-20, #6-32… — the table groups by this."
+            "help": "M3, M5, 1/4-20, #6-32…, the table groups by this."
           },
           {
             "entity_kind": "inventory:part",
             "name": "length_mm",
             "display_label": "Length (mm)",
-            "type": "number", "unit": "mm",
+            "type": "number",
+            "unit": "mm",
             "position": 3,
             "help": "Shaft length, not counting the head. Leave blank for nuts/washers."
           },

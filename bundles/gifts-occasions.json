@@ -2,12 +2,12 @@
   "manifest": {
     "id": "cobblr.flagship.gifts-occasions",
     "catalog": "disabled",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "name": "Gifts & Occasions",
-    "description": "Gift ideas as their own table — who, occasion + date (calendar-reminded), budget, and an idea→bought→wrapped→given pipeline.",
+    "description": "Gift ideas as their own table: who, occasion + date (calendar-reminded), budget, and an idea→bought→wrapped→given pipeline.",
     "author": "Cobblr",
     "released_at": "2026-06-08",
-    "changelog": "Now its OWN table (an inventory instance), not generic Inventory with extra columns — its own nav entry, a “New gift” button, only gift-list fields (stock/parts cruft hidden). Plain-language hints + a pinned “By recipient” view.",
+    "changelog": "Now its OWN table (an inventory instance), not generic Inventory with extra columns: its own nav entry, a “New gift” button, only gift-list fields (stock/parts cruft hidden). Plain-language hints + a pinned “By recipient” view.",
     "requires": [
       {
         "module": "inventory"
@@ -27,7 +27,7 @@
             "display_label": "For",
             "type": "text",
             "position": 1,
-            "help": "Who the gift is for — the table groups by this."
+            "help": "Who the gift is for, the table groups by this."
           },
           {
             "entity_kind": "inventory:part",
@@ -52,7 +52,7 @@
             "display_label": "Occasion date",
             "type": "date",
             "position": 3,
-            "help": "When you need it by — lands on your calendar."
+            "help": "When you need it by, lands on your calendar."
           },
           {
             "entity_kind": "inventory:part",
@@ -73,7 +73,7 @@
               "Wrapped",
               "Given"
             ],
-            "help": "Where it is in the pipeline — Idea → Bought → Wrapped → Given."
+            "help": "Where it is in the pipeline. Idea → Bought → Wrapped → Given."
           }
         ],
         "field_overrides": [

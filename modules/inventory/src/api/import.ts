@@ -210,7 +210,7 @@ function parseCsv(text: string): ParseResult {
 
     const name = (get("name") ?? "").trim();
     if (!name) {
-      errors.push({ row_number: i + 1, message: "Missing name — skipped" });
+      errors.push({ row_number: i + 1, message: "Missing name, skipped" });
       continue;
     }
 

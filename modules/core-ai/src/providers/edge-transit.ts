@@ -23,8 +23,8 @@ export const TRANSIT_FIELD: Record<string, AiCredentialField> = {
     label: "How Cobblr reaches it",
     secret: false,
     choices: [
-      { value: "", label: "Direct — the URL is reachable from this Cobblr (public URL, or self-hosted on the same network)" },
-      { value: "bridge", label: "Via my edge bridge — it runs on my own machine / LAN" },
+      { value: "", label: "Direct: the URL is reachable from this Cobblr (public URL, or self-hosted on the same network)" },
+      { value: "bridge", label: "Via my edge bridge: it runs on my own machine / LAN" },
     ],
   },
 };

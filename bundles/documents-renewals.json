@@ -2,12 +2,12 @@
   "manifest": {
     "id": "cobblr.flagship.documents-renewals",
     "catalog": "extended",
-    "version": "0.2.1",
+    "version": "0.2.2",
     "name": "Important Documents & Renewals",
-    "description": "Every document that expires as its own table — number/issuer/expiry, grouped by type, with expiry dates on your calendar.",
+    "description": "Every document that expires as its own table: number/issuer/expiry, grouped by type, with expiry dates on your calendar.",
     "author": "Cobblr",
     "released_at": "2026-06-08",
-    "changelog": "Dropped the computed “Summary” line (clutter on the form). — Now its OWN table (an assets instance), not generic Assets with extra columns — its own nav entry, a “New document” button, only the fields a document tracker needs (make/model/serial cruft hidden). Plain-language hints + a pinned “Renewals” view.",
+    "changelog": "Dropped the computed “Summary” line (clutter on the form). (Now its OWN table (an assets instance), not generic Assets with extra columns) its own nav entry, a “New document” button, only the fields a document tracker needs (make/model/serial cruft hidden). Plain-language hints + a pinned “Renewals” view.",
     "requires": [
       {
         "module": "assets"
@@ -38,7 +38,7 @@
               "Warranty",
               "Other"
             ],
-            "help": "What kind of document — the table groups by this."
+            "help": "What kind of document, the table groups by this."
           },
           {
             "entity_kind": "assets:asset",
@@ -54,7 +54,7 @@
             "display_label": "Issued by",
             "type": "text",
             "position": 3,
-            "help": "Who issued it — passport office, DMV, insurer, etc."
+            "help": "Who issued it: passport office, DMV, insurer, etc."
           },
           {
             "entity_kind": "assets:asset",
@@ -69,7 +69,7 @@
             "display_label": "Expires",
             "type": "date",
             "position": 5,
-            "help": "Expiry date — renew before this; it lands on your calendar."
+            "help": "Expiry date, renew before this; it lands on your calendar."
           }
         ],
         "field_overrides": [

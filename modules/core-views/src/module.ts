@@ -26,6 +26,14 @@ export default defineModule({
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace
 
+  // Browse-not-configure: this is a page you VISIT, so it owns a nav entry
+  // and one canonical URL rather than living under /configuration.
+  nav: {
+    label: "Views",
+    route: "/views",
+    icon: "layout-list",
+  },
+
   schema: {
     tablePrefix: "core_views_",
     migrationsDir: "./migrations",

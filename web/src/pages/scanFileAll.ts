@@ -21,6 +21,8 @@ export interface ScanCandidateLike {
   instance?: string | null;
   fields?: Record<string, unknown>;
   quantity?: number | null;
+  /** The grouping-axis value the matchmaker resolved (folded into `fields`). */
+  category?: string;
 }
 export interface ScanItemLike {
   id: string;
@@ -62,18 +64,33 @@ export interface ConfirmBody {
 /** The confirm body that routes an item to ITS top candidate — module + BASE
  *  kind + the instance the matchmaker chose. Returns null when the item isn't
  *  ready (no name / no candidate / already resolved). */
-export function confirmBodyFor(it: ScanItemLike): ConfirmBody | null {
+export function confirmBodyFor(
+  it: ScanItemLike,
+  /** The category the whole session agreed on. Overrides ONLY the axis field, so
+   *  a batch scanned together lands in one section instead of two spellings of
+   *  the same word. Omitted -> the item files under its own. */
+  agreedCategory?: string | null,
+  /** A place chosen for the whole batch. Filing needs a category AND somewhere
+   *  to put the thing; without this an item commits with no home and is findable
+   *  only by search. The item's own location still wins when it has one. */
+  agreedLocationId?: string | null,
+): ConfirmBody | null {
   const cand = it.suggested_candidates?.[0];
   if (!isReadyToFile(it) || !cand) return null;
+  const fields = { ...(cand.fields ?? {}) };
+  if (agreedCategory && cand.category) {
+    const axis = Object.keys(fields).find((k) => fields[k] === cand.category);
+    if (axis) fields[axis] = agreedCategory;
+  }
   return {
     target_module: cand.module,
     target_kind: baseKind(cand.module),
     instance: cand.instance ?? undefined,
     name: it.suggested_name!,
     quantity: it.quantity ?? cand.quantity ?? undefined,
-    extras: cand.fields,
+    extras: fields,
     // The confirm endpoint never defaults to target_location_id — carry a
     // pre-set home (active-bin filing, an organize apply) or it's dropped.
-    location_id: it.target_location_id ?? undefined,
+    location_id: it.target_location_id ?? agreedLocationId ?? undefined,
   };
 }

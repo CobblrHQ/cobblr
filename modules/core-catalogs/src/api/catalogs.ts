@@ -634,7 +634,7 @@ catalogsRouter.post(
       res.status(400).json({
         error: {
           code: "no_source_url",
-          message: "This catalog has no source_url to pull from — import a CSV instead.",
+          message: "This catalog has no source_url to pull from, import a CSV instead.",
         },
       });
       return;
@@ -656,7 +656,7 @@ catalogsRouter.post(
           error: {
             code: "too_large",
             message:
-              "This dataset is too large to pull in one request — use the bulk CSV importer / seeder.",
+              "This dataset is too large to pull in one request. Use the bulk CSV importer / seeder.",
           },
         });
         return;

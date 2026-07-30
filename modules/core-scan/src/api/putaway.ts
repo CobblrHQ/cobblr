@@ -629,7 +629,7 @@ putawayRouter.post(
       : [...entries, entry];
     if (nextEntries.length > LIVE_MAX_ENTRIES) {
       res.status(422).json({
-        error: { code: "session_full", message: "This session hit its cap — end it and start fresh." },
+        error: { code: "session_full", message: "This session hit its cap, end it and start fresh." },
       });
       return;
     }
@@ -679,7 +679,7 @@ putawayRouter.post(
       res.status(422).json({
         error: {
           code: "no_destination",
-          message: "No bin to confirm into — pick one, or set a catch-all bin.",
+          message: "No bin to confirm into. Pick one, or set a catch-all bin.",
         },
       });
       return;
@@ -689,7 +689,7 @@ putawayRouter.post(
       .catch(() => null);
     if (!loc) {
       res.status(422).json({
-        error: { code: "bad_destination", message: "That bin no longer exists — pick another." },
+        error: { code: "bad_destination", message: "That bin no longer exists. Pick another." },
       });
       return;
     }

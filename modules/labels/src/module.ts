@@ -9,10 +9,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "labels",
-  version: "0.25.4",
+  version: "0.25.6",
   displayName: "Labels",
   description:
-    "QR codes, label templates, per-user print queue, scan-to-navigate/scan-to-action tokens. Polymorphic — any module's entity can have a label.",
+    "QR codes, label templates, per-user print queue, scan-to-navigate/scan-to-action tokens. Polymorphic, any module's entity can have a label.",
   icon: "tag",
   band: "stock",
   // An operator, not a trackable kind: labels are printed FOR things

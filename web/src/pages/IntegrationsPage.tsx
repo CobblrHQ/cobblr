@@ -15,7 +15,6 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowLeft,
   Copy,
   Mail,
   Pencil,
@@ -38,6 +37,8 @@ import {
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { SyncConnectionsSection } from "./SyncConnectionsSection";
 import { MigrateInSection } from "../components/MigrateInSection";
+import { FEED_SCROLL } from "../lib/feed";
+import { SettingsSection } from "../components/SettingsSection";
 
 export function IntegrationsPage() {
   usePageTitle("Integrations");
@@ -81,44 +82,36 @@ export function IntegrationsPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Link
-            to="/configuration"
-            className="text-sm text-muted hover:text-content dark:hover:text-slate-300 inline-flex items-center gap-1"
-          >
-            <ArrowLeft className="h-4 w-4" /> Configuration
-          </Link>
-          <h1 className="text-2xl font-bold tracking-tight">Integrations</h1>
-        </div>
-      </header>
-
       <EmailInSection />
 
       <SyncConnectionsSection />
 
       <MigrateInSection />
 
-      <section>
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-lg font-semibold flex items-center gap-2">
-            <Plug className="h-4 w-4" /> Outbound connectors
-          </h2>
+      <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold text-content dark:text-mortar-100 flex items-center gap-2">
+              <Plug className="h-4 w-4" /> Sending out
+            </h2>
+            <p className="text-xs text-faint mt-0.5">
+              Push what happens here to Slack, Discord, email, or any webhook.
+            </p>
+          </div>
           <button
             type="button"
             onClick={() => setAdding(true)}
-            className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white"
+            className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white shrink-0"
           >
             <Plus className="h-4 w-4" /> Add connector
           </button>
         </div>
         <div className="space-y-2">
           {connectorsQ.data?.items.length === 0 && (
-            <div className="text-sm text-muted border border-dashed rounded p-4">
-              No outbound connectors yet. Pick one from Slack, Discord, or
-              the generic webhook to start firing entity events at
-              external services.
-            </div>
+            <p className="text-sm text-faint">
+              Nothing set up yet. Pick Slack, Discord, or a plain webhook to
+              start sending what happens here to another service.
+            </p>
           )}
           {connectorsQ.data?.items.map((c) => (
             <ConnectorRow
@@ -132,25 +125,30 @@ export function IntegrationsPage() {
         </div>
       </section>
 
-      <section>
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-lg font-semibold flex items-center gap-2">
-            <ShieldCheck className="h-4 w-4" /> Inbound webhook tokens
-          </h2>
+      <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold text-content dark:text-mortar-100 flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4" /> Letting things in
+            </h2>
+            <p className="text-xs text-faint mt-0.5">
+              A stable URL you hand to another service so it can post here.
+            </p>
+          </div>
           <button
             type="button"
             onClick={() => setAddingInbound(true)}
-            className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white"
+            className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white shrink-0"
           >
             <Plus className="h-4 w-4" /> Add inbound token
           </button>
         </div>
         <div className="space-y-2">
           {inboundTokensQ.data?.items.length === 0 && (
-            <div className="text-sm text-muted border border-dashed rounded p-4">
-              No inbound webhook tokens yet. Add one to give an
-              external service a stable URL to POST to.
-            </div>
+            <p className="text-sm text-faint">
+              None yet. Add one to give another service a stable address to
+              post to.
+            </p>
           )}
           {inboundTokensQ.data?.items.map((t) => (
             <InboundTokenRow key={t.id} token={t} />
@@ -158,9 +156,11 @@ export function IntegrationsPage() {
         </div>
       </section>
 
-      <section>
-        <h2 className="text-lg font-semibold mb-2">Recent calls</h2>
-        <div className="text-xs font-mono space-y-1">
+      <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
+        <h2 className="text-sm font-semibold text-content dark:text-mortar-100 mb-2">
+          Recent calls
+        </h2>
+        <div className={"text-xs font-mono space-y-1 overflow-x-auto " + FEED_SCROLL}>
           {callsQ.data?.items.length === 0 && (
             <div className="text-sm text-muted">No calls yet.</div>
           )}
@@ -234,11 +234,13 @@ function EmailInSection() {
   const address = addrQ.data?.configured && addrQ.data.address ? addrQ.data.address : null;
 
   return (
-    <section id="email-in" className="scroll-mt-20">
-      <h2 className="text-lg font-semibold flex items-center gap-2 mb-2">
-        <Mail className="h-4 w-4" /> Email in
-      </h2>
-      <div className="border rounded p-4 dark:border-slate-700 space-y-4">
+    <SettingsSection
+      id="email-in"
+      title="Email in"
+      icon={Mail}
+      blurb="Send things into this workspace by email, with nothing to install."
+    >
+      <div className="space-y-4">
         <div>
           <div className="text-sm font-medium mb-1">Forward a receipt by email</div>
           {address ? (
@@ -286,7 +288,7 @@ function EmailInSection() {
           </p>
         </div>
       </div>
-    </section>
+    </SettingsSection>
   );
 }
 
@@ -331,7 +333,7 @@ function ConnectorRow({
   });
 
   return (
-    <div className="border rounded p-3 dark:border-slate-700">
+    <div className="rounded-lg border border-line dark:border-slate-700 p-3">
       <div className="flex items-center justify-between">
         <div className="min-w-0">
           <div className="font-medium truncate">{connector.label}</div>
@@ -424,7 +426,7 @@ function InboundTokenRow({ token }: { token: InboundToken }) {
   });
 
   return (
-    <div className="border rounded p-3 dark:border-slate-700">
+    <div className="rounded-lg border border-line dark:border-slate-700 p-3">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="font-medium truncate">{token.label}</div>
@@ -440,7 +442,7 @@ function InboundTokenRow({ token }: { token: InboundToken }) {
           </div>
           <div className="text-xs font-mono mt-1 text-muted break-all">{fullUrl}</div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 shrink-0">
           <button
             type="button"
             onClick={async () => {

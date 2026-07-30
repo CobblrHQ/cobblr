@@ -26,7 +26,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, Plus, Pencil, Trash2, ScanLine, ArrowRight, ClipboardPaste } from "lucide-react";
+import { GripVertical, Plus, Pencil, Trash2, ArrowRight, ClipboardPaste } from "lucide-react";
 import { Modal, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
 import { ApiError, api, type ScanQrRule, type ScanResolveOutcome } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -55,7 +55,7 @@ function emptyDraft(): RuleDraft {
   };
 }
 
-export function ScanRulesPage({ embedded = false }: { embedded?: boolean } = {}) {
+export function ScanRulesPage() {
   usePageTitle("External QR rules");
   const { activeSlug, activeOrg } = useActiveOrg();
   const qc = useQueryClient();
@@ -122,19 +122,7 @@ export function ScanRulesPage({ embedded = false }: { embedded?: boolean } = {})
   }
 
   return (
-    <div className={embedded ? "space-y-6" : "mx-auto max-w-3xl px-4 py-6 space-y-6"}>
-      <header className="space-y-1">
-        {!embedded && (
-          <h1 className="text-xl font-semibold text-content dark:text-mortar-100 flex items-center gap-2">
-            <ScanLine size={20} /> External QR rules
-          </h1>
-        )}
-        <p className="text-sm text-muted dark:text-mortar-300">
-          Teach the scanner to read QR labels printed by another app and open the matching item here.
-          A rule recognises a label format and resolves it to a Cobblr entity. Inert until you add one
- - unmatched scans behave exactly as before.
-        </p>
-      </header>
+    <div className="space-y-6">
 
       <TestBox slug={activeSlug} hasRules={rules.some((r) => r.enabled)} />
 

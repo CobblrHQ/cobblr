@@ -207,7 +207,7 @@ export function CreateConnectionModal({
 // What the bridge can drive + the fields each needs. Mirrors the bridge's
 // built-in drivers (mock/moonraker/prusalink/duet/bambu/lightburn).
 const BRIDGE_DRIVERS: { key: string; label: string; fields: { key: string; label: string; placeholder?: string; optional?: boolean }[] }[] = [
-  { key: "mock", label: "Mock (test — no hardware)", fields: [] },
+  { key: "mock", label: "Mock (test: no hardware)", fields: [] },
   { key: "moonraker", label: "Klipper (Moonraker)", fields: [{ key: "host", label: "Printer IP / host", placeholder: "192.168.1.50" }, { key: "apiKey", label: "API key (only if locked down)", optional: true }] },
   { key: "prusalink", label: "Prusa (PrusaLink)", fields: [{ key: "host", label: "Printer IP / host", placeholder: "192.168.1.213" }, { key: "apiKey", label: "PrusaLink API key" }] },
   { key: "duet", label: "Duet (RepRapFirmware)", fields: [{ key: "host", label: "Printer IP / host", placeholder: "192.168.1.50" }] },
@@ -2281,7 +2281,7 @@ function LanAccessPanel({ slug, connId, deviceId, lan }: { slug: string; connId:
   const MODES: { key: "cloud" | "prefer_lan" | "lan_only"; label: string; desc: string }[] = [
     { key: "cloud", label: "All cloud", desc: "Status, control & history via Bambu's cloud. Works anywhere; no bridge." },
     { key: "prefer_lan", label: "Prefer LAN", desc: "Status, control & file-push over your LAN/bridge; cloud fills in print-history names. Cloud is the fallback." },
-    { key: "lan_only", label: "LAN only", desc: "Everything local, cloud off — no internet needed, max privacy. You lose cloud-only print-history names/covers." },
+    { key: "lan_only", label: "LAN only", desc: "Everything local, cloud off: no internet needed, max privacy. You lose cloud-only print-history names/covers." },
   ];
   if (!lan?.applicable) return null;
   const field = "px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
@@ -2426,7 +2426,7 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
   const askReprint = async (r: DigifabHistory["recent"][number]) => {
     const ok = await confirm({
       title: `Print "${r.file_ref}" again?`,
-      message: "Clones the original job — same file, routing, material and build — and sends it to the printer. On a live farm this physically starts the print.",
+      message: "Clones the original job (same file, routing, material and build) and sends it to the printer. On a live farm this physically starts the print.",
       confirmLabel: "Print again",
       destructive: true,
     });

@@ -115,8 +115,8 @@ function TagsSection({
   return (
     <section>
       {!compact && (
-        <h3 className="text-xs font-medium text-muted uppercase tracking-wide mb-2">
-          Tags
+        <h3 className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
+          // tags
         </h3>
       )}
       <div className="flex flex-wrap gap-2 items-center">
@@ -504,8 +504,8 @@ function FilesSection({
       }
     >
       {!compact && (
-        <h3 className="text-xs font-medium text-muted uppercase tracking-wide mb-2 flex items-center gap-2">
-          Files
+        <h3 className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2 flex items-center gap-2">
+          // files
           {dragOver && (
             <span className="text-accent font-normal normal-case tracking-normal">
               drop to upload

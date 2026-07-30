@@ -14,7 +14,7 @@ export default defineModule({
   version: "0.1.0",
   displayName: "Import",
   description:
-    "Migrate an inventory in from another system (Homebox today) — items, the location hierarchy, and labels, mapped onto Cobblr's own modules.",
+    "Migrate an inventory in from another system (Homebox today): items, the location hierarchy, and labels, mapped onto Cobblr's own modules.",
   icon: "download",
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace

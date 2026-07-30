@@ -16,6 +16,7 @@ import {
 import { ApiError, api, type SavedView, type SurfaceRecord } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { ConfigHeaderActions } from "../components/ConfigPageHeader";
 
 export function SurfacesPage() {
   usePageTitle("Public surfaces");
@@ -45,21 +46,17 @@ export function SurfacesPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
-          Public surfaces
-        </h1>
+      <ConfigHeaderActions>
         <span className="text-sm text-muted dark:text-slate-400">
           {items.length} active
         </span>
-        <div className="flex-1" />
         <button
           onClick={() => setCreateOpen(true)}
           className="inline-flex items-center gap-2 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition"
         >
           <Plus size={14} /> Publish
         </button>
-      </div>
+      </ConfigHeaderActions>
 
       <p className="text-sm text-muted dark:text-slate-400">
         Share a saved view's data over a long-random URL - no account

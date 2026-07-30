@@ -8,15 +8,14 @@
 // See docs/modules/member-portal-and-permissions.md §7
 // + 2026-05-25-audit.md S2.
 
-import { useState, type FormEvent } from "react";
-import { AreaTabs, ACCESS_TABS } from "../components/AreaTabs";
+import { useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Pencil, Plus, Trash2 } from "lucide-react";
 import { Modal, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type CustomRole } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
-export function RolesPage() {
+export function RolesPage({ embedded = false }: { embedded?: boolean } = {}) {
   usePageTitle("Custom roles");
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
@@ -62,8 +61,7 @@ export function RolesPage() {
   const members = membersQ.data?.members ?? [];
 
   return (
-    <div className="space-y-5 max-w-5xl mx-auto">
-      <AreaTabs tabs={ACCESS_TABS} area="access" />
+    <div className={embedded ? "space-y-5" : "space-y-5 max-w-5xl mx-auto"}>
       <div className="flex items-baseline justify-between border-b border-line dark:border-slate-700 pb-3">
         <div>
           <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
@@ -308,6 +306,20 @@ function RoleEditorModal({
     setPicked(new Set(role?.capabilities ?? []));
   });
 
+  // Grouped by owning module. A flat list of 30 checkboxes reads as noise;
+  // grouped, you scan for the module you care about. The id prefix IS the
+  // module (bricklink:disassemble-kit), so no extra lookup is needed.
+  const byModule = useMemo(() => {
+    const groups = new Map<string, typeof actions>();
+    for (const a of actions) {
+      const mod = a.action_id.split(":")[0] || "platform";
+      const list = groups.get(mod) ?? [];
+      list.push(a);
+      groups.set(mod, list);
+    }
+    return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [actions]);
+
   function toggle(actionId: string) {
     setPicked((prev) => {
       const next = new Set(prev);
@@ -342,7 +354,7 @@ function RoleEditorModal({
   }
 
   return (
-    <Modal open={open} onClose={onClose} title={role ? "Edit role" : "New role"} size="md">
+    <Modal open={open} onClose={onClose} title={role ? "Edit role" : "New role"} size="lg">
       <form onSubmit={submit} className="space-y-3">
         <label className="block">
           <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
@@ -371,28 +383,59 @@ function RoleEditorModal({
           />
         </label>
         <div>
-          <div className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
-            Capabilities
+          <div className="flex items-baseline justify-between mb-1">
+            <div className="text-[10px] font-mono uppercase tracking-widest text-faint">
+              Capabilities
+            </div>
+            {/* Echoes the count the finished role shows on the roles page, so
+                the modal reads like the thing it is about to create. */}
+            <div className="text-[10px] font-mono uppercase tracking-widest text-faint">
+              {picked.size} selected
+            </div>
           </div>
           {actions.length === 0 && (
             <div className="text-xs text-faint italic">No grantable actions in this workspace yet.</div>
           )}
-          <div className="space-y-1 max-h-64 overflow-y-auto rounded-md border border-line dark:border-slate-700 p-2">
-            {actions.map((a) => (
-              <label key={a.action_id} className="flex items-start gap-2 px-1 py-1 cursor-pointer hover:bg-subtle/50 dark:hover:bg-slate-800/40 rounded">
-                <input
-                  type="checkbox"
-                  checked={picked.has(a.action_id)}
-                  onChange={() => toggle(a.action_id)}
-                  className="accent-cobble-500 mt-0.5"
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm text-content dark:text-mortar-100">{a.label}</div>
-                  <div className="text-[10px] font-mono text-faint">{a.action_id}</div>
+          <div className="max-h-[26rem] overflow-y-auto rounded-md border border-line dark:border-slate-700 p-2 space-y-3">
+            {byModule.map(([mod, list]) => (
+              <div key={mod}>
+                <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-1 px-1">
+                  {mod}
                 </div>
-              </label>
+                <div className="grid sm:grid-cols-2 gap-x-3">
+                  {list.map((a) => (
+                    <label
+                      key={a.action_id}
+                      className="flex items-start gap-2 px-1 py-1 cursor-pointer hover:bg-subtle/50 dark:hover:bg-slate-800/40 rounded min-w-0"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={picked.has(a.action_id)}
+                        onChange={() => toggle(a.action_id)}
+                        className="accent-cobble-500 mt-0.5 shrink-0"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm text-content dark:text-mortar-100 truncate">{a.label}</div>
+                        <div className="text-[10px] font-mono text-faint truncate">{a.action_id}</div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
+          {picked.size > 0 && (
+            <div className="flex flex-wrap gap-1 mt-2">
+              {Array.from(picked).map((c) => (
+                <span
+                  key={c}
+                  className="text-[10px] font-mono rounded border border-cobble-200 dark:border-cobble-700 bg-cobble-50/50 dark:bg-cobble-900/30 px-1.5 py-0.5 text-accent dark:text-cobble-300"
+                >
+                  {c}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
         <div className="flex gap-2 pt-2">
           <button

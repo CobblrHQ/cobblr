@@ -25,7 +25,7 @@ export function register(): void {
     id: "http",
     label: "HTTP request",
     describeCredentials: () => ({
-      base_url: { label: "Base URL (optional — prepended to a relative URL)", secret: false },
+      base_url: { label: "Base URL (optional, prepended to a relative URL)", secret: false },
       bearer_token: { label: "Bearer token (optional)", secret: true },
     }),
     actions: [

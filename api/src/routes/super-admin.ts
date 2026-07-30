@@ -21,7 +21,9 @@ import { log as activityLog } from "../platform/activity.js";
 import { meta } from "../db/meta.js";
 import { getTenantDb } from "../db/tenant.js";
 import { hardDeleteOrg } from "../platform/delete-org.js";
-import { provisionDemoForUser } from "../platform/provision-demo.js";
+import { provisionDemoForUser, DemoProvisionError } from "../platform/provision-demo.js";
+import { TRIAL_CAPPED_FEATURES } from "../platform/trial.js";
+import { getEntry as getModuleEntry } from "../modules/registry.js";
 import { BlueprintManifest } from "./blueprint.js";
 import { getCpuStats, getInvocationStats } from "../sandbox/pool.js";
 import { hasAuthEmailSender, sendAuthEmail } from "../platform/hosted-seams.js";
@@ -206,6 +208,21 @@ superAdminRouter.post("/demos", async (req, res, next) => {
       res.status(404).json({ error: { code: "no_such_user", message: "No account with that email — they must have signed up first." } });
       return;
     }
+    // Validate every unlock so a typo ("files" for "files.upload", "core-a1" for "core-ai")
+    // is rejected here rather than silently doing nothing (a feature key never matches; a bad
+    // module name just fails the enable and is swallowed) while the demo still reports it.
+    const unknownUnlocks = (parsed.data.unlock ?? []).filter((u) =>
+      u.includes(".") ? !TRIAL_CAPPED_FEATURES.has(u) : !getModuleEntry(u),
+    );
+    if (unknownUnlocks.length > 0) {
+      res.status(400).json({
+        error: {
+          code: "unknown_unlock",
+          message: `Unknown unlock(s): ${unknownUnlocks.join(", ")}. Feature keys must be one of [${[...TRIAL_CAPPED_FEATURES].join(", ")}]; anything else must be a registered module name.`,
+        },
+      });
+      return;
+    }
     const result = await provisionDemoForUser({
       userId: target.id,
       orgName: parsed.data.name ?? "Demo workspace",
@@ -222,6 +239,10 @@ superAdminRouter.post("/demos", async (req, res, next) => {
     });
     res.status(201).json(result);
   } catch (err) {
+    if (err instanceof DemoProvisionError) {
+      res.status(502).json({ error: { code: "provision_failed", message: "The demo's workspace database failed to provision — nothing usable was created. Check the [org-provision] logs." } });
+      return;
+    }
     next(err);
   }
 });

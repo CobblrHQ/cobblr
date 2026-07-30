@@ -93,7 +93,7 @@ export function registerTools(server: McpServer, client: CobblrClient): void {
     {
       title: "Match an intent to the nearest template (server-side)",
       description:
-        "Ask Cobblr's own cheap AI which template best fits a plain-English idea, returning {template_id, confidence, reason, ai}. Optional — you can also just read cobblr_list_templates and pick yourself (free, no server inference). Useful as a quick suggestion; `ai:false` means no AI provider is configured server-side, so fall back to listing templates.",
+        "Ask Cobblr's own cheap AI which template best fits a plain-English idea, returning {template_id, confidence, reason, ai}. Optional: you can also just read cobblr_list_templates and pick yourself (free, no server inference). Useful as a quick suggestion; `ai:false` means no AI provider is configured server-side, so fall back to listing templates.",
       inputSchema: {
         ...workspaceArg,
         intent: z.string().min(1).max(4000).describe("Plain-English description of the app the user wants."),
@@ -135,7 +135,7 @@ export function registerTools(server: McpServer, client: CobblrClient): void {
     {
       title: "Inspect buildable context",
       description:
-        "Show the entity kinds (with their fields) and the actions those kinds can be wired to, in this workspace. This is the 'minimal sufficient context' for building a bundle — read it before composing a manifest so you only reference ids that exist. Optionally narrow to specific kinds.",
+        "Show the entity kinds (with their fields) and the actions those kinds can be wired to, in this workspace. This is the 'minimal sufficient context' for building a bundle, read it before composing a manifest so you only reference ids that exist. Optionally narrow to specific kinds.",
       inputSchema: {
         ...workspaceArg,
         selected_kinds: z
@@ -375,7 +375,7 @@ export function registerTools(server: McpServer, client: CobblrClient): void {
     {
       title: "Navigate the user's driven window",
       description:
-        "Open an app-relative path in the window the user chose (e.g. '/inventory?filter=red', '/build', '/app/intake'). Returns { ok, delivered }; delivered:false means no window is currently bound — call cobblr_drive_request_window first. Path must start with '/'. This is a shared session: the user can still act; just open the page and let them continue.",
+        "Open an app-relative path in the window the user chose (e.g. '/inventory?filter=red', '/build', '/app/intake'). Returns { ok, delivered }; delivered:false means no window is currently bound, call cobblr_drive_request_window first. Path must start with '/'. This is a shared session: the user can still act; just open the page and let them continue.",
       inputSchema: {
         ...workspaceArg,
         path: z
@@ -400,7 +400,7 @@ export function registerTools(server: McpServer, client: CobblrClient): void {
     {
       title: "Point at something in the driven window",
       description:
-        "Show the user WHERE you're pointing — a cursor (+ optional click ripple + label) on the bound window. Give a CSS selector (preferred — it's scrolled into view) OR x/y viewport coordinates. Returns { ok, delivered }; delivered:false means no window is bound. Use this to say 'I'm clicking here' / 'look at this' as you narrate.",
+        "Show the user WHERE you're pointing (a cursor (+ optional click ripple + label) on the bound window. Give a CSS selector (preferred) it's scrolled into view) OR x/y viewport coordinates. Returns { ok, delivered }; delivered:false means no window is bound. Use this to say 'I'm clicking here' / 'look at this' as you narrate.",
       inputSchema: {
         ...workspaceArg,
         selector: z.string().max(400).optional().describe("A CSS selector to point at (scrolled into view). Prefer this over x/y."),
@@ -425,7 +425,7 @@ export function registerTools(server: McpServer, client: CobblrClient): void {
     {
       title: "See what the user just did",
       description:
-        "Drain the buffered user actions (clicks + page changes) the user took in the driven window since your last call — so you can follow along in a shared session. Returns { events:[…] } (oldest first) and clears the buffer. Requires the user's grant to be 'navigate + observe'; returns an observe_off error otherwise. Poll this between your own moves.",
+        "Drain the buffered user actions (clicks + page changes) the user took in the driven window since your last call, so you can follow along in a shared session. Returns { events:[…] } (oldest first) and clears the buffer. Requires the user's grant to be 'navigate + observe'; returns an observe_off error otherwise. Poll this between your own moves.",
       inputSchema: { ...workspaceArg },
     },
     async ({ workspace }) => {

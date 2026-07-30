@@ -2,12 +2,12 @@
   "manifest": {
     "id": "cobblr.flagship.household-supplies",
     "catalog": "disabled",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "name": "Household Supplies auto-reorder",
-    "description": "Your household supplies as their own table — reorder level per supply auto-adds to a shopping list on low stock; check off → it restocks. Grouped by where they live.",
+    "description": "Your household supplies as their own table, reorder level per supply auto-adds to a shopping list on low stock; check off → it restocks. Grouped by where they live.",
     "author": "Cobblr",
     "released_at": "2026-07-15",
-    "changelog": "“Area” is now a real Location. The separate “Area” field is gone — supplies file into your Location tree (rooms/zones, and bins inside them) like everything else, so a thing has one place, not two. Your existing area values move over automatically on this update: each becomes a Location and its supplies are filed into it, nothing lost, and the pinned “By area” view groups off the real Location. Earlier: “Usual pack” became “Pack size” (the package you actually scanned, filled from the observed pack).",
+    "changelog": "“Area” is now a real Location. The separate “Area” field is gone: supplies file into your Location tree (rooms/zones, and bins inside them) like everything else, so a thing has one place, not two. Your existing area values move over automatically on this update: each becomes a Location and its supplies are filed into it, nothing lost, and the pinned “By area” view groups off the real Location. Earlier: “Usual pack” became “Pack size” (the package you actually scanned, filled from the observed pack).",
     "requires": [
       {
         "module": "inventory"
@@ -63,7 +63,7 @@
             "trigger_event": "lists.item.checked",
             "args": {
               "delta": 1,
-              "reason": "Restocked — checked off the shopping list"
+              "reason": "Restocked, checked off the shopping list"
             }
           }
         ],
@@ -75,7 +75,7 @@
             "type": "text",
             "position": 2,
             "field_role": "pack",
-            "help": "How many units are in the package you scanned — e.g. a single, or a 10-pack. The pack in front of you, not a reorder estimate."
+            "help": "How many units are in the package you scanned, e.g. a single, or a 10-pack. The pack in front of you, not a reorder estimate."
           }
         ],
         "field_overrides": [

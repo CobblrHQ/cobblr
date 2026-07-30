@@ -149,6 +149,15 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
+# FONTS. node:22-alpine ships with none, and sharp renders SVG <text> through
+# librsvg/fontconfig — so any burned-in label came out BLANK, with a
+# "Fontconfig error: Cannot load default config file" on stderr. Verified in the
+# deployed container before this line existed (a test glyph rendered 0.1% dark
+# pixels, i.e. nothing). The scan inbox's AI photo picker composes a numbered
+# contact sheet, and unnumbered tiles would leave the model guessing at which
+# photo it picked. ttf-dejavu is ~2 MB and fontconfig is what actually finds it.
+RUN apk add --no-cache fontconfig ttf-dejavu && fc-cache -f
+
 # Bring over what we need at runtime: built artifacts + the root node_modules.
 # pnpm (nodeLinker: hoisted) hoists EXTERNAL deps here — but NOT the workspace
 # packages (@cobblr/*), which it links per-consumer, not at the root. Those are

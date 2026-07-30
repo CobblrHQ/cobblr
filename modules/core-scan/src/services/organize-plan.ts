@@ -193,7 +193,7 @@ function heuristicPlan(
     groups.push({
       id: randomUUID(),
       label: it.name,
-      rationale: "Nothing similar is placed yet — pick a spot for this one, or organize it by hand.",
+      rationale: "Nothing similar is placed yet. Pick a spot for this one, or organize it by hand.",
       item_ids: [it.id],
       destination: { kind: "unassigned" },
     });

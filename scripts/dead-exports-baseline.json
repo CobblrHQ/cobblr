@@ -1,0 +1,107 @@
+[
+  {
+    "file": "api/src/platform/hosted-seams.ts",
+    "name": "fireAccountDelete",
+    "reason": "baselined 2026-07-30 — pre-existing dead/half-wired export; remove or wire up, never grow."
+  },
+  {
+    "file": "api/src/platform/reap-trials.ts",
+    "name": "stopTrialReaper",
+    "reason": "baselined 2026-07-30 — pre-existing dead/half-wired export; remove or wire up, never grow."
+  },
+  {
+    "file": "api/src/platform/scan-resolvers.ts",
+    "name": "registeredScanUrlResolverCount",
+    "reason": "baselined 2026-07-30 — pre-existing dead/half-wired export; remove or wire up, never grow."
+  },
+  {
+    "file": "api/src/platform/scan-url-resolvers/register.ts",
+    "name": "getScanUrlManifests",
+    "reason": "baselined 2026-07-30 — pre-existing dead/half-wired export; remove or wire up, never grow."
+  },
+  {
+    "file": "api/src/sandbox/abi.ts",
+    "name": "OpCode",
+    "reason": "baselined 2026-07-30 — pre-existing dead/half-wired export; remove or wire up, never grow."
+  },
+  {
+    "file": "api/src/sandbox/abi.ts",
+    "name": "SandboxHostImports",
+    "reason": "baselined 2026-07-30 — pre-existing dead/half-wired export; remove or wire up, never grow."
+  },
+  {
+    "file": "api/src/sandbox/abi.ts",
+    "name": "SandboxModuleExports",
+    "reason": "baselined 2026-07-30 — pre-existing dead/half-wired export; remove or wire up, never grow."
+  },
+  {
+    "file": "modules/core-catalogs/src/services/hosted-resolver.ts",
+    "name": "hostedBom",
+    "reason": "baselined 2026-07-30 — pre-existing dead/half-wired export; remove or wire up, never grow."
+  },
+  {
+    "file": "modules/core-catalogs/src/services/hosted-resolver.ts",
+    "name": "isHostedEligible",
+    "reason": "baselined 2026-07-30 — pre-existing dead/half-wired export; remove or wire up, never grow."
+  },
+  {
+    "file": "modules/core-file-preview/src/ui/index.tsx",
+    "name": "filePreviewReady",
+    "reason": "baselined 2026-07-30 — pre-existing dead/half-wired export; remove or wire up, never grow."
+  },
+  {
+    "file": "modules/core-locations/src/api/floorplan.ts",
+    "name": "ChildPlacement",
+    "reason": "baselined 2026-07-30 — pre-existing dead/half-wired export; remove or wire up, never grow."
+  },
+  {
+    "file": "modules/core-print/src/dispatch-worker.ts",
+    "name": "enqueueDispatch",
+    "reason": "baselined 2026-07-30 — pre-existing dead/half-wired export; remove or wire up, never grow."
+  },
+  {
+    "file": "modules/core-print/src/drivers/browser-bluetooth.ts",
+    "name": "BROWSER_BLUETOOTH_KIND",
+    "reason": "baselined 2026-07-30 — pre-existing dead/half-wired export; remove or wire up, never grow."
+  },
+  {
+    "file": "modules/core-print/src/drivers/types.ts",
+    "name": "PrintDriverFactory",
+    "reason": "baselined 2026-07-30 — pre-existing dead/half-wired export; remove or wire up, never grow."
+  },
+  {
+    "file": "modules/core-scan/src/services/metadata.ts",
+    "name": "dropMeta",
+    "reason": "baselined 2026-07-30 — pre-existing dead/half-wired export; remove or wire up, never grow."
+  },
+  {
+    "file": "modules/digifab/src/bambu-pump.ts",
+    "name": "stopBambuPump",
+    "reason": "baselined 2026-07-30 — pre-existing dead/half-wired export; remove or wire up, never grow."
+  },
+  {
+    "file": "modules/digifab/src/drivers/mock.ts",
+    "name": "mockFactory",
+    "reason": "baselined 2026-07-30 — pre-existing dead/half-wired export; remove or wire up, never grow."
+  },
+  {
+    "file": "modules/digifab/src/drivers/types.ts",
+    "name": "MachineDriverFactory",
+    "reason": "baselined 2026-07-30 — pre-existing dead/half-wired export; remove or wire up, never grow."
+  },
+  {
+    "file": "modules/inventory/src/burn-rate.ts",
+    "name": "_burnTick",
+    "reason": "baselined 2026-07-30 — pre-existing dead/half-wired export; remove or wire up, never grow."
+  },
+  {
+    "file": "modules/labels/src/printer-memory.ts",
+    "name": "PrinterMemory",
+    "reason": "baselined 2026-07-30 — pre-existing dead/half-wired export; remove or wire up, never grow."
+  },
+  {
+    "file": "modules/projects/src/api/subscribers.ts",
+    "name": "registerProjectsSubscribers",
+    "reason": "baselined 2026-07-30 — pre-existing dead/half-wired export; remove or wire up, never grow."
+  }
+]

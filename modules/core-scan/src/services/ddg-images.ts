@@ -88,6 +88,18 @@ const COLOR_WORDS = new Set([
   "turquoise", "burgundy", "khaki",
 ]);
 const COLOR_SYNONYM: Record<string, string> = { grey: "gray" };
+
+/** The first colour word in free text, or null — the ONE colour vocabulary the
+ *  platform has, reused so a hint, a field and a title all mean the same thing
+ *  by "blue". Returns the word as WRITTEN ("navy"), because that is what goes
+ *  into a search phrase and onto the card; folding (grey→gray) is for comparison
+ *  only. Used to read a colour out of the user's authoritative research hint
+ *  ("color: blue"), which otherwise steers the identify text and nothing else. */
+export function colorFromText(text: string | null | undefined): string | null {
+  const words = (text ?? "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  for (const w of words) if (COLOR_WORDS.has(w)) return w;
+  return null;
+}
 const colorsIn = (tokens: string[]): Set<string> =>
   new Set(tokens.filter((t) => COLOR_WORDS.has(t)).map((t) => COLOR_SYNONYM[t] ?? t));
 

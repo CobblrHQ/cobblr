@@ -45,16 +45,7 @@ export function UnitsPage() {
   const mode = units.data?.display_mode ?? "symbol";
 
   return (
-    <div className="space-y-5 max-w-3xl mx-auto">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
-          units
-        </h1>
-        <span className="page-subtitle">
-          the workspace unit vocabulary + how quantities render
-        </span>
-      </div>
-
+    <div className="space-y-5">
       {/* Display mode */}
       <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
         <div className="text-[10px] font-mono uppercase tracking-widest text-accent">// display</div>

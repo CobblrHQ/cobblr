@@ -4,10 +4,12 @@
 // it into Swagger UI / Insomnia.
 
 import { useQuery } from "@tanstack/react-query";
-import { Copy, Download, FileText } from "lucide-react";
+import { Copy, Download } from "lucide-react";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
 import { QueryError } from "../components/QueryError";
+import { ConfigHeaderActions } from "../components/ConfigPageHeader";
+import { FEED_SCROLL_PAGE_INNER } from "../lib/feed";
 
 interface OpenApiSpec {
   openapi: string;
@@ -49,20 +51,11 @@ export function OpenApiPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <FileText size={20} className="text-accent" />
-        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
-          OpenAPI
-        </h1>
-        {spec && (
-          <span className="text-sm text-muted dark:text-slate-400">
-            v{spec.info.version} · {schemas.length} schemas · {paths.length} paths
+      <ConfigHeaderActions>
+        <span className="text-sm text-muted dark:text-slate-400">
+            v{spec?.info.version ?? "?"} · {schemas.length} schemas · {paths.length} paths
           </span>
-        )}
-        <div className="flex-1" />
-        {spec && (
-          <>
-            <button
+        <button
               onClick={() => {
                 void navigator.clipboard.writeText(JSON.stringify(spec, null, 2));
                 toast.success("Spec copied to clipboard");
@@ -72,7 +65,7 @@ export function OpenApiPage() {
               <Copy size={14} />
               Copy
             </button>
-            <button
+        <button
               onClick={() => {
                 // The spec endpoint needs a Bearer header, which a
                 // plain <a download> navigation can't send (→ 401).
@@ -93,9 +86,7 @@ export function OpenApiPage() {
               <Download size={14} />
               Download
             </button>
-          </>
-        )}
-      </div>
+      </ConfigHeaderActions>
 
       <p className="text-sm text-muted dark:text-slate-400">
         Auto-generated from the live module registry. Point Swagger UI /
@@ -113,7 +104,7 @@ export function OpenApiPage() {
             <h2 className="text-sm font-medium text-content dark:text-slate-300 mb-2">
               Component schemas
             </h2>
-            <ul className="border border-line dark:border-slate-700 rounded divide-y divide-line dark:divide-slate-800 max-h-96 overflow-y-auto overflow-x-auto">
+            <ul className={"border border-line dark:border-slate-700 rounded divide-y divide-line dark:divide-slate-800 " + FEED_SCROLL_PAGE_INNER}>
               {schemas.map(([name, s]) => (
                 <li key={name} className="px-3 py-2 text-sm">
                   <div className="font-mono text-xs">{name}</div>
@@ -137,7 +128,7 @@ export function OpenApiPage() {
             <h2 className="text-sm font-medium text-content dark:text-slate-300 mb-2">
               Paths
             </h2>
-            <ul className="border border-line dark:border-slate-700 rounded divide-y divide-line dark:divide-slate-800 max-h-96 overflow-y-auto overflow-x-auto font-mono text-xs">
+            <ul className={"border border-line dark:border-slate-700 rounded divide-y divide-line dark:divide-slate-800 font-mono text-xs " + FEED_SCROLL_PAGE_INNER}>
               {paths.map((p) => (
                 <li key={p} className="px-3 py-1.5 whitespace-nowrap">
                   {p}

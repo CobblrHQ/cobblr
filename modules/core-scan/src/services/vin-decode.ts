@@ -246,7 +246,7 @@ export function classifyVpic(result: VpicResult | undefined): DecodeResult {
       fields,
       provenance: PROVENANCE,
       title,
-      note: "Check digit did not verify — double-check the VIN.",
+      note: "Check digit did not verify, double-check the VIN.",
       raw: result,
     };
   }
@@ -255,7 +255,7 @@ export function classifyVpic(result: VpicResult | undefined): DecodeResult {
     fields,
     provenance: PROVENANCE,
     title,
-    note: "Partial VIN match — please verify the filled fields.",
+    note: "Partial VIN match, please verify the filled fields.",
     raw: result,
   };
 }

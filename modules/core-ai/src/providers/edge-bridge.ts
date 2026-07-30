@@ -22,7 +22,8 @@
 
 import { platform, type AiCapability, type EdgeRequest, type EdgeResponse } from "@cobblr/platform-contract";
 import { IDENTIFY_PROMPT, measurementContext } from "./identify-prompt.js";
-import { toolsOf, turnsOf, openAiToolsOf, ollamaMessagesOf, parseOllamaToolCalls } from "./tool-wire.js";
+import { rankImagesPromptFor } from "./rank-images-prompt.js";
+import { toolsOf, turnsOf, openAiToolsOf, ollamaMessagesOf, parseOllamaToolCalls, bridgeUsage } from "./tool-wire.js";
 import { promptFingerprint } from "./prompt-fingerprint.js";
 
 /** The personal-connections resolver injects the channel owner's user id here. */
@@ -30,15 +31,40 @@ const CONNECTION_USER_KEY = "__connection_user_id";
 
 export const EDGE_BRIDGE_ID = "edge-bridge";
 
-const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
+export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
   chat: { models: ["sonnet", "llama3.2", "qwen2.5"], defaultModel: "sonnet" },
   summarise: { models: ["sonnet", "llama3.2", "qwen2.5"], defaultModel: "sonnet" },
   "classify-image": { models: ["sonnet", "llava", "llama3.2-vision"], defaultModel: "sonnet" },
   "extract-text": { models: ["sonnet", "llava", "llama3.2-vision"], defaultModel: "sonnet" },
   "identify-image": { models: ["sonnet", "llava", "llama3.2-vision"], defaultModel: "sonnet" },
+  "rank-images": { models: ["sonnet", "llava", "llama3.2-vision"], defaultModel: "sonnet" },
   "match-to-catalog": { models: ["sonnet", "llama3.2", "qwen2.5"], defaultModel: "sonnet" },
   "embed-text": { models: ["nomic-embed-text", "mxbai-embed-large"], defaultModel: "nomic-embed-text" },
 };
+
+/** How long we wait for a bridge to answer.
+ *
+ *  Three timeouts sit in a line and they have to NEST, innermost shortest:
+ *
+ *      bridge 300s  <  us 315s  <  edge relay 330s
+ *
+ *  Get the order wrong and you throw away work. We asked for 120s while the
+ *  reference bridge runs to 300s, so a tool-using chat (~180s) finished and we
+ *  had already recorded "edge request timed out" — 11 of 36 chat calls measured
+ *  on prod, every one of them successful bridge-side.
+ *
+ *  Make them EQUAL and you throw away the explanation instead: at t=300 the
+ *  bridge starts returning its classified reason ("resting until…", "needs
+ *  login") while the relay aborts the socket, and the bare timeout usually wins
+ *  the race. Sitting above the bridge and below the relay means the innermost
+ *  timeout always fires first, so the message that reaches the user is the one
+ *  that says why. */
+const BRIDGE_SELF_TIMEOUT_MS = 300_000;
+/** The relay clamps with Math.min(timeoutMs, RELAY_MAX_TIMEOUT_MS); asking for
+ *  more than it allows is silently reduced, so this bound is real. */
+const RELAY_CLAMP_MS = 330_000;
+export const EDGE_TIMEOUT_MS = 315_000;
+export { BRIDGE_SELF_TIMEOUT_MS, RELAY_CLAMP_MS };
 
 // The bridge fronts a single-process `claude -p` agent. A bulk scan fans 15+ AI
 // calls (one identify + one matchmaker per item) at it at once and it answers
@@ -87,7 +113,7 @@ const RECONNECTING = /no edge device|edge disconnected|edge channel gone/i;
  *  per channel + retries transient gateway codes AND a momentarily-disconnected
  *  edge channel, with backoff. */
 async function edgePost(channelKey: string, path: string, body: unknown): Promise<Record<string, unknown>> {
-  const req: EdgeRequest = { path, method: "POST", body, timeoutMs: 120_000 };
+  const req: EdgeRequest = { path, method: "POST", body, timeoutMs: EDGE_TIMEOUT_MS };
   await acquire(channelKey);
   try {
     let lastStatus = 0;
@@ -142,7 +168,7 @@ export function register(): void {
         secret: false,
         choices: [
           { value: "", label: "Returns tool calls for Cobblr to run (standard)" },
-          { value: "bridge", label: "Runs tools itself — give it read-only workspace access via MCP" },
+          { value: "bridge", label: "Runs tools itself. Give it read-only workspace access via MCP" },
         ],
       },
     }),
@@ -215,8 +241,7 @@ export function register(): void {
               content: m.content ?? "",
               ...(calls ? { tool_calls: calls } : {}),
             },
-            input_tokens: (body as { prompt_eval_count?: number }).prompt_eval_count,
-            output_tokens: (body as { eval_count?: number }).eval_count,
+            ...bridgeUsage(body),
             cost_cents: 0,
           };
         }
@@ -240,6 +265,7 @@ export function register(): void {
         case "classify-image":
         case "extract-text":
         case "identify-image":
+        case "rank-images":
         case "match-to-catalog": {
           // Apply the SAME canonical prompt the OpenAI/Anthropic adapters use for
           // each image capability — the caller (e.g. identifyImage) passes only
@@ -251,6 +277,8 @@ export function register(): void {
               ? ctx.input.prompt
               : ctx.capability === "identify-image"
                 ? IDENTIFY_PROMPT + measurementContext(ctx.input)
+                : ctx.capability === "rank-images"
+                  ? rankImagesPromptFor(ctx.input)
                 : ctx.capability === "extract-text"
                   ? "Read all text from the image. Return the text only."
                   : ctx.capability === "classify-image"

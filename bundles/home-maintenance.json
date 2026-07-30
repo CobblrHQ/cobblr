@@ -2,12 +2,12 @@
   "manifest": {
     "id": "cobblr.flagship.home-maintenance",
     "catalog": "disabled",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "name": "Home Maintenance Schedule",
-    "description": "Your home's systems as their own table — furnace, water heater, HVAC filters, detectors — with service logs + next-due dates on your calendar.",
+    "description": "Your home's systems as their own table (furnace, water heater, HVAC filters, detectors) with service logs + next-due dates on your calendar.",
     "author": "Cobblr",
     "released_at": "2026-07-15",
-    "changelog": "The “Location” of each system is now a real Location, not a separate text field — systems file into your Location tree (rooms/zones) like everything else, so a thing has one place, not two. Your existing location values move over automatically on this update: each becomes a Location and its systems are filed into it, nothing lost. Earlier: Home Maintenance became its OWN table (an assets instance) with only the fields a maintenance schedule needs, plain-language hints, and a pinned “By system” view.",
+    "changelog": "The “Location” of each system is now a real Location, not a separate text field: systems file into your Location tree (rooms/zones) like everything else, so a thing has one place, not two. Your existing location values move over automatically on this update: each becomes a Location and its systems are filed into it, nothing lost. Earlier: Home Maintenance became its OWN table (an assets instance) with only the fields a maintenance schedule needs, plain-language hints, and a pinned “By system” view.",
     "requires": [
       {
         "module": "assets"
@@ -45,7 +45,7 @@
               "Garage door",
               "Other"
             ],
-            "help": "Which home system — the table groups by this."
+            "help": "Which home system, the table groups by this."
           },
           {
             "entity_kind": "assets:asset",
@@ -60,7 +60,7 @@
             "display_label": "Filter / part size",
             "type": "text",
             "position": 4,
-            "help": "The filter or replacement-part size to buy — e.g. “16×25×1” for a furnace filter."
+            "help": "The filter or replacement-part size to buy, e.g. “16×25×1” for a furnace filter."
           }
         ],
         "field_overrides": [

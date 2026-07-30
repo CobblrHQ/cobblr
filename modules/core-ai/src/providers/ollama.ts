@@ -13,6 +13,7 @@ import { TRANSIT_FIELD, viaBridge, edgeKeyFor, edgeFetch } from "./edge-transit.
 import { toolsOf, turnsOf, openAiToolsOf, ollamaMessagesOf, parseOllamaToolCalls, looksLikeNoToolSupport } from "./tool-wire.js";
 import { promptFingerprint } from "./prompt-fingerprint.js";
 import { identifyPromptFor } from "./identify-prompt.js";
+import { rankImagesPromptFor } from "./rank-images-prompt.js";
 
 /** Optional bearer auth for the endpoint. Returns {} when no token is
  *  configured (a bare local Ollama). A remote endpoint behind a
@@ -23,7 +24,7 @@ export function authHeadersFor(credentials: Record<string, unknown>): Record<str
   return t ? { authorization: `Bearer ${t}` } : {};
 }
 
-const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
+export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
   chat: { models: ["llama3.2", "qwen2.5", "phi3"], defaultModel: "llama3.2" },
   summarise: { models: ["llama3.2", "qwen2.5"], defaultModel: "llama3.2" },
   "classify-image": { models: ["llava", "llama3.2-vision"], defaultModel: "llava" },
@@ -33,6 +34,7 @@ const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?:
   // models. Ollama-over-the-edge-bridge worked only because that adapter declares
   // it. Same vision models as classify-image; same /api/chat + images call below.
   "identify-image": { models: ["llava", "llama3.2-vision"], defaultModel: "llava" },
+  "rank-images": { models: ["llava", "llama3.2-vision"], defaultModel: "llava" },
   "extract-text": { models: ["llava", "llama3.2-vision"], defaultModel: "llava" },
   "embed-text": { models: ["nomic-embed-text", "mxbai-embed-large"], defaultModel: "nomic-embed-text" },
   "match-to-catalog": {
@@ -51,7 +53,7 @@ export function register(): void {
         secret: false,
       },
       bearer_token: {
-        label: "Bearer token (optional — for a remote/proxied endpoint; sent as Authorization: Bearer …)",
+        label: "Bearer token (optional, for a remote/proxied endpoint; sent as Authorization: Bearer …)",
         secret: true,
       },
       mcp_relay: {
@@ -59,7 +61,7 @@ export function register(): void {
         secret: false,
         choices: [
           { value: "", label: "Returns tool calls for Cobblr to run (standard)" },
-          { value: "bridge", label: "Runs tools itself — give it read-only workspace access via MCP" },
+          { value: "bridge", label: "Runs tools itself. Give it read-only workspace access via MCP" },
         ],
       },
       ...TRANSIT_FIELD,
@@ -186,6 +188,7 @@ export function register(): void {
           return { result: { text: body.message.content }, cost_cents: 0 };
         }
         case "identify-image":
+        case "rank-images":
         case "classify-image":
         case "extract-text":
         case "match-to-catalog": {
@@ -200,7 +203,9 @@ export function register(): void {
           const prompt =
             ctx.capability === "identify-image"
               ? identifyPromptFor(ctx.input)
-              : String(ctx.input.prompt ?? "");
+              : ctx.capability === "rank-images"
+                ? rankImagesPromptFor(ctx.input)
+                : String(ctx.input.prompt ?? "");
           const imageB64 = typeof ctx.input.image_b64 === "string" ? ctx.input.image_b64 : null;
           const msg: Record<string, unknown> = { role: "user", content: prompt };
           if (imageB64) msg.images = [imageB64];

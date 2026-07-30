@@ -56,8 +56,16 @@
     "lint:self-heal": "tsx scripts/lint-self-heal.ts",
     "lint:hook-timeouts": "tsx scripts/lint-hook-timeouts.ts",
     "lint:no-emdash": "tsx scripts/lint-no-emdash.ts",
+    "lint:scan-row-title": "tsx scripts/lint-scan-row-title.ts",
+    "lint:scan-session-header": "tsx scripts/lint-scan-session-header.ts",
+    "lint:lints-are-wired": "tsx scripts/lint-lints-are-wired.ts",
+    "lint:image-text-fonts": "tsx scripts/lint-image-text-fonts.ts",
     "lint:write-guards": "tsx scripts/lint-module-write-guards.ts",
     "lint:config-routes": "tsx scripts/lint-config-routes.ts",
+    "lint:feed-caps": "tsx scripts/lint-feed-caps.ts",
+    "lint:header-rows": "tsx scripts/lint-header-rows.ts",
+    "lint:section-headings": "tsx scripts/lint-section-headings.ts",
+    "lint:page-headers": "tsx scripts/lint-page-headers.ts",
     "lint:debug-globals": "tsx scripts/lint-debug-globals.ts",
     "lint:heal-shims": "tsx scripts/lint-heal-shims.ts",
     "lint:registry-headers-sync": "tsx scripts/lint-registry-headers-sync.ts",
@@ -94,7 +102,9 @@
     "lint:native-field-labels": "node scripts/lint-native-field-labels.mjs",
     "lint:view-config-keys": "tsx scripts/lint-view-config-keys.ts",
     "lint:bench-not-shipped": "tsx scripts/lint-bench-not-shipped.ts",
-    "lint:generated-artifact-paths": "tsx scripts/lint-generated-artifact-paths.ts"
+    "lint:generated-artifact-paths": "tsx scripts/lint-generated-artifact-paths.ts",
+    "lint:dead-exports": "tsx scripts/lint-dead-exports.ts",
+    "lint:auth-rate-limits": "tsx scripts/lint-auth-rate-limits.ts"
   },
   "devDependencies": {
     "playwright": "^1.60.0",

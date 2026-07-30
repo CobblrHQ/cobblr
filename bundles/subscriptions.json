@@ -2,12 +2,12 @@
   "manifest": {
     "id": "cobblr.flagship.subscriptions",
     "catalog": "extended",
-    "version": "0.2.1",
+    "version": "0.2.2",
     "name": "Subscriptions & Recurring Bills",
-    "description": "Every recurring charge as its own table — cost/cycle, renewal date, payment method, grouped by category.",
+    "description": "Every recurring charge as its own table: cost/cycle, renewal date, payment method, grouped by category.",
     "author": "Cobblr",
     "released_at": "2026-06-08",
-    "changelog": "Dropped the computed “Plan” summary line (clutter on the form). — Now its OWN table (an inventory instance), not generic Inventory with extra columns — its own nav entry, a “New subscription” button, only the fields a bills tracker needs (stock/parts cruft hidden). Plain-language hints + a pinned “Renews next” view.",
+    "changelog": "Dropped the computed “Plan” summary line (clutter on the form). (Now its OWN table (an inventory instance), not generic Inventory with extra columns) its own nav entry, a “New subscription” button, only the fields a bills tracker needs (stock/parts cruft hidden). Plain-language hints + a pinned “Renews next” view.",
     "requires": [
       {
         "module": "inventory"
@@ -48,7 +48,7 @@
             "display_label": "Renews",
             "type": "date",
             "position": 3,
-            "help": "Next charge / renewal date — when to cancel by if you don't want it."
+            "help": "Next charge / renewal date, when to cancel by if you don't want it."
           },
           {
             "entity_kind": "inventory:part",

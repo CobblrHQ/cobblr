@@ -45,6 +45,15 @@ export function reapIntervalMs(env: NodeJS.ProcessEnv = process.env): number {
   return Number.isFinite(i) && i >= 60_000 ? i : 6 * 3_600_000;
 }
 
+/** Max workspaces one LIVE sweep may reap. A blast-radius cap: if a bug/clock-skew/bad
+ *  migration back-dates many stamps at once, refuse the whole sweep and force a human `dry`
+ *  review rather than irreversibly dropping N tenant DBs. Fail-safe to 25; 0 disables the
+ *  cap (unbounded — opt-in). Pure. */
+export function reapMaxPerSweep(env: NodeJS.ProcessEnv = process.env): number {
+  const m = Number(env.COBBLR_TRIAL_REAP_MAX_PER_SWEEP);
+  return Number.isFinite(m) && m >= 0 ? m : 25;
+}
+
 export interface TrialOrg {
   id: string;
   slug: string;
@@ -76,6 +85,7 @@ export interface ReapDeps {
   deleteOrg?: (orgId: string) => Promise<void>;
   now?: number;
   graceDays?: number;
+  maxPerSweep?: number;
 }
 
 /** One sweep. Returns what it saw + did. Never throws for a single org — a failed
@@ -98,6 +108,19 @@ export async function reapExpiredTrials(deps: ReapDeps = {}): Promise<{
   if (mode === "dry") {
     for (const o of reapable) console.log(`[reap-trials] DRY-RUN would reap ${o.slug} (${o.id}) — trial_expires_at ${new Date(o.trial_expires_at as Date | string).toISOString()}`);
     console.log(`[reap-trials] DRY-RUN: ${reapable.length} workspace(s) past grace — set COBBLR_TRIAL_REAP=live to enact`);
+    return { mode, found: reapable.length, reaped: 0 };
+  }
+
+  // Blast-radius cap: an abnormally large reapable set (a stamp-writing bug, clock skew, a
+  // bad backfill) is far more likely a mistake than a real mass expiry. Refuse the whole
+  // destructive sweep and force a human `dry` review rather than dropping them all.
+  const maxPerSweep = deps.maxPerSweep ?? reapMaxPerSweep();
+  if (maxPerSweep > 0 && reapable.length > maxPerSweep) {
+    console.error(
+      `[reap-trials] REFUSING live sweep: ${reapable.length} workspaces are reapable, over the ` +
+        `${maxPerSweep} cap. This is almost certainly a mistake. Review with COBBLR_TRIAL_REAP=dry, ` +
+        `then raise COBBLR_TRIAL_REAP_MAX_PER_SWEEP if it's genuinely intended.`,
+    );
     return { mode, found: reapable.length, reaped: 0 };
   }
 

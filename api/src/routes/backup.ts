@@ -35,6 +35,7 @@ import {
   listBackupDrivers,
   getBackupDriver,
   runDestination,
+  listDestinationBackups,
   nextRunFrom,
   encryptDestCredentials,
   googleDriveConfigured,
@@ -157,7 +158,9 @@ export async function buildBackupZip(orgId: string, slug: string): Promise<{ buf
   await archive.finalize();
   await done;
 
-  const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
+  // Seconds-granular so two runs in the same minute don't collide on one name
+  // (a filesystem would overwrite; Google Drive allows dup names → duplicates).
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "");
   return { buffer: Buffer.concat(chunks), filename: `backup-${slug}-${stamp}.zip` };
 }
 
@@ -617,6 +620,35 @@ backupRouter.post("/destinations/:id/run", requireAuth, withTenant, async (req, 
     }
     const result = await runDestination(req.params.id!, new Date());
     res.status(result.ok ? 200 : 502).json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The backups that actually exist in the destination right now — a live listing
+// (Drive files.list / NAS readdir / S3 list), so a user can SEE their backups
+// with real timestamps + sizes instead of just "last: ok".
+backupRouter.get("/destinations/:id/backups", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const dest = await meta
+      .selectFrom("backup_destinations")
+      .select("id")
+      .where("id", "=", req.params.id!)
+      .where("org_id", "=", req.tenant!.org.id)
+      .executeTakeFirst();
+    if (!dest) {
+      res.status(404).json({ error: { code: "not_found", message: "destination not found" } });
+      return;
+    }
+    try {
+      const backups = await listDestinationBackups(req.params.id!, req.tenant!.org.id);
+      res.json({ backups });
+    } catch (err) {
+      // A live-list failure (expired Drive token, unreachable NAS) is not a 500 —
+      // surface it so the UI can say "couldn't list" instead of blanking the page.
+      res.status(502).json({ error: { code: "list_failed", message: (err as Error).message.slice(0, 200) } });
+    }
   } catch (err) {
     next(err);
   }

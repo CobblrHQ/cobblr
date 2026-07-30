@@ -2,12 +2,12 @@
   "manifest": {
     "id": "cobblr.flagship.pet-care",
     "catalog": "extended",
-    "version": "0.2.1",
+    "version": "0.2.2",
     "name": "Pet Care",
-    "description": "Your pets as their own table — vitals + vet/vaccination dates (calendar-reminded), grouped by species.",
+    "description": "Your pets as their own table: vitals + vet/vaccination dates (calendar-reminded), grouped by species.",
     "author": "Cobblr",
     "released_at": "2026-06-08",
-    "changelog": "Now its OWN table (an assets instance), not generic Assets with extra columns — its own nav entry, a “New pet” button, only pet fields (make/model/serial cruft hidden). Plain-language hints + a pinned “By species” view.",
+    "changelog": "Now its OWN table (an assets instance), not generic Assets with extra columns: its own nav entry, a “New pet” button, only pet fields (make/model/serial cruft hidden). Plain-language hints + a pinned “By species” view.",
     "requires": [
       {
         "module": "assets"
@@ -71,7 +71,7 @@
             "type": "number",
             "unit": "kg",
             "position": 4,
-            "help": "Current weight — handy for dosing meds + spotting changes."
+            "help": "Current weight, handy for dosing meds + spotting changes."
           },
           {
             "entity_kind": "assets:asset",
@@ -86,7 +86,7 @@
             "display_label": "Microchip",
             "type": "text",
             "position": 6,
-            "help": "The chip ID registered to you — vets/shelters scan it to find the owner."
+            "help": "The chip ID registered to you, vets/shelters scan it to find the owner."
           },
           {
             "entity_kind": "assets:asset",
@@ -94,7 +94,7 @@
             "display_label": "Next vet visit",
             "type": "date",
             "position": 7,
-            "help": "Next check-up — lands on your calendar."
+            "help": "Next check-up, lands on your calendar."
           },
           {
             "entity_kind": "assets:asset",

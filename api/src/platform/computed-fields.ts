@@ -61,18 +61,6 @@ export function clearComputedDefsCache(): void {
   cache.clear();
 }
 
-/** The names of a kind's computed fields. The resolve path adds these to
- *  the exposableFields whitelist so the rendered values survive projection
- *  (computed values are derived from already-resolved data; they're not a
- *  new read of gated storage). */
-export async function computedFieldNamesFor(
-  orgId: string,
-  kind: string,
-): Promise<string[]> {
-  const defs = await computedDefsFor(orgId, kind);
-  return defs.map((d) => d.name);
-}
-
 /** A resolver's `metadata` field can come back as a parsed object or, on
  *  some driver paths, as the raw jsonb string. Normalise to an object so
  *  custom field values are always reachable as {{custom_field}}. */

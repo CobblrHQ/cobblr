@@ -50,7 +50,14 @@ export const IDENTIFY_OWNED_KEYS = [
   "decoded",
   "enriched_from",
   "rate_limited",
-  "user_hint",
+  // NOT "user_hint": it is the USER's correction, not a pipeline output. Listing
+  // it here meant any identify pass that didn't re-write it DELETED it — and the
+  // barcode path's last resort (nameFromPhoto) doesn't, so a re-run WITH a hint
+  // resolved correctly, then wiped the hint at the final step. The colour derived
+  // from it vanished with it, and the image search silently reverted to the
+  // colourless phrase mid-run (the author, 2026-07-30: "it changed the title/search term
+  // to have nothing to do with black"). The undo-rerun path already documents the
+  // rule this list contradicted: an undo reverts the RUN, not the person.
   "photo_observations",
   "photo_distinct",
   "photo_individuals",
@@ -111,4 +118,57 @@ export function identityMeta(
     (k) => !keep.has(k),
   );
   return mergeMeta(set, drop);
+}
+
+/** Every research hint the user has given this item, OLDEST FIRST.
+ *
+ *  Hints ACCUMULATE. Two later hints can contradict ("color: black", then
+ *  "color: navy") or be about completely different things ("color: black", then
+ *  "it's the loose fit"). Returning only the newest — which is what the first
+ *  cut did — silently threw away the older ones, so correcting the size would
+ *  have dropped the colour the user had already given (the author, 2026-07-30: "they
+ *  could contradict, or be completely unrelated").
+ *
+ *  So the SEQUENCE is the fact, and the consumer decides: the identify prompt
+ *  shows them all and says later ones override earlier ones where they conflict;
+ *  the colour resolver scans newest-first and takes the first colour it finds.
+ *
+ *  Sources: the item's history (a hinted run keeps its text) plus the stored
+ *  `user_hint`, which is the newest. Reading history is also what recovers hints
+ *  wiped before `user_hint` became durable. Deduped (re-typing the same
+ *  correction is one fact, not two) and capped, newest kept. */
+const MAX_HINTS = 5;
+
+export function standingHints(meta: Record<string, unknown> | null | undefined): string[] {
+  const m = meta ?? {};
+  const out: string[] = [];
+  const history = Array.isArray((m as { history?: unknown }).history)
+    ? ((m as { history: Array<Record<string, unknown>> }).history)
+    : [];
+  for (const e of history) {
+    if (e && e.action === "rerun-hint" && typeof e.note === "string" && e.note.trim()) {
+      out.push(e.note.trim());
+    }
+  }
+  const stored = typeof m.user_hint === "string" ? m.user_hint.trim() : "";
+  if (stored) out.push(stored);
+  // Dedupe keeping the LAST occurrence: re-stating a correction makes it recent,
+  // not duplicated.
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (let i = out.length - 1; i >= 0; i--) {
+    const key = out[i]!.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.unshift(out[i]!);
+  }
+  return deduped.slice(-MAX_HINTS);
+}
+
+/** The single most recent hint — for the surfaces that carry one string (the
+ *  matchmaker's authoritative correction, the history note). The full sequence
+ *  is standingHints(). */
+export function standingHint(meta: Record<string, unknown> | null | undefined): string | null {
+  const all = standingHints(meta);
+  return all.length ? all[all.length - 1]! : null;
 }

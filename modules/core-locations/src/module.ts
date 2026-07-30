@@ -28,6 +28,15 @@ export default defineModule({
   icon: "map-pin",
   band: "foundational",
 
+  // Browse-not-configure: this is a page you VISIT, so it owns a nav entry
+  // and one canonical URL rather than living under /configuration.
+  nav: {
+    label: "Locations",
+    route: "/locations",
+    icon: "map-pin",
+    overrideKey: "entity_kind:core-locations:location",
+  },
+
   schema: {
     tablePrefix: "core_locations_",
     migrationsDir: "./migrations",

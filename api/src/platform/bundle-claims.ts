@@ -77,15 +77,3 @@ export async function countClaimsFor(orgId: string, type: ClaimType, key: string
     .executeTakeFirst();
   return Number(r?.n ?? 0);
 }
-
-/** Has this org been backfilled yet? (any claim row at all). Used to decide
- *  whether a bundle uninstall can trust the refcount. */
-export async function orgHasClaims(orgId: string): Promise<boolean> {
-  const r = await meta
-    .selectFrom("bundle_resource_claims")
-    .select("id")
-    .where("org_id", "=", orgId)
-    .limit(1)
-    .executeTakeFirst();
-  return !!r;
-}

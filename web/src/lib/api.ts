@@ -513,6 +513,19 @@ export interface OrgModuleListItem {
    *  Optional: real modules from the API always carry it, but synthetic nav
    *  entries (instances, lens bundles) have no module band. */
   band?: "foundational" | "stock" | "marketplace" | "user";
+  /** A user-facing nav entry this module declares even though the `core-*` /
+   *  foundational rule would otherwise hide it from the navbar — a page you
+   *  BROWSE (locations, files, tags, saved views). Replaces the two hardcoded
+   *  synthetic entries useNavModules used to carry.
+   *  See docs/design-decisions/configuration-revamp.md. */
+  nav?: {
+    label: string;
+    route: string;
+    icon?: string;
+    /** Presentation-override key, when the rename should follow an entity kind
+     *  rather than the module name. */
+    overrideKey?: string;
+  };
   /** Release maturity — the UI shows an Experimental/Beta badge for non-stable
    *  modules. Absent → treat as stable. ("hidden" modules never load, so they
    *  never reach this list — listed for type-completeness with the manifest.) */
@@ -3110,7 +3123,7 @@ export const api = {
   // Alternative catalog photos (DDG image search on the resolved name) +
   // pick-one-as-catalog. The "OTHER PHOTO OPTIONS" strip.
   scanPhotoOptions: (slug: string, id: string, q?: string) =>
-    request<{ items: ImageOption[] }>(
+    request<{ items: ImageOption[]; query?: string; color?: string | null }>(
       "GET",
       `/orgs/${slug}/modules/core-scan/inbox/${id}/photo-options${q && q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ""}`,
     ),
@@ -4335,6 +4348,11 @@ export interface ScanCandidate {
   confidence: number;
   name: string;
   fields: Record<string, string | number | boolean>;
+  /** The grouping-axis value, snapped onto the table's existing vocabulary when
+   *  one matched. `category_is_new` means the model proposed a label the table
+   *  does not have yet - nothing is created until the item is filed. */
+  category?: string;
+  category_is_new?: boolean;
   /** Top candidate only: terse reconciliation of all the item data. */
   notes?: string;
   /** Unit count when the item data implies one ("1 Pack Of 9 Skein"). */
@@ -4367,6 +4385,10 @@ export interface ScanMenuEntry {
   noun: string;
   label: string;
   fields: ScanMenuField[];
+  /** This table's declared GROUPING AXIS (`field_role: "category"`) and the
+   *  workspace's existing vocabulary for it. Declared, so the UI never has to
+   *  guess which field is the category by matching values. */
+  category_field?: { name: string; label: string; values: string[] };
   /** Domain routing terms a bundle declared for this table. */
   scan_keywords?: string[];
   /** This kind is tracked ONE BY ONE (its declared traits include `unique` — a

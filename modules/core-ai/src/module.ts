@@ -14,10 +14,10 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-ai",
-  version: "0.12.1",
+  version: "0.16.0",
   displayName: "AI",
   description:
-    "Use AI on your workspace data — classify photos, extract text, summarise, rank product images, match to catalogs. Configure OpenAI, Anthropic, Ollama, or any provider.",
+    "Use AI on your workspace data: classify photos, extract text, summarise, rank product images, match to catalogs. Configure OpenAI, Anthropic, Ollama, or any provider.",
   icon: "sparkles",
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace

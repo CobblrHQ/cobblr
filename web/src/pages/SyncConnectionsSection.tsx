@@ -4,11 +4,13 @@
 // live webhook URL, and lets you toggle + reconcile each entity type.
 
 import { useState } from "react";
+import { RefreshCw } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Modal, JsonField, useToast, useConfirm } from "@cobblr/platform-web";
 import { api, ApiError, type SyncConnectorDef, type SyncConnection, type SyncSourceDef, type ImportPlanItem, type ModuleInstance } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { BridgePicker } from "../components/BridgePicker";
+import { SettingsSection } from "../components/SettingsSection";
 
 type PlanAction = "create" | "update" | "link" | "unchanged" | "delete";
 const ACTION_LABEL: Record<PlanAction, string> = {
@@ -235,15 +237,12 @@ export function SyncConnectionsSection() {
   const orphanConns = connections.filter((c) => !sources.some((s) => s.source_id === c.connector_id));
 
   return (
-    <section className="space-y-3">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-sm font-mono uppercase tracking-widest text-accent">// Live sync</h2>
-          <p className="text-[11px] text-muted dark:text-slate-400 mt-0.5">
-            Mirror records from another system into this workspace - they arrive instantly via webhook, with a reconcile that backstops anything missed.
-          </p>
-        </div>
-        {connectors.length > 0 && (
+    <SettingsSection
+      title="Live sync"
+      icon={RefreshCw}
+      blurb="Mirror records from another system into this workspace - they arrive instantly via webhook, with a reconcile that backstops anything missed."
+      action={
+        connectors.length > 0 ? (
           <button
             type="button"
             onClick={() => setAdding(true)}
@@ -251,8 +250,10 @@ export function SyncConnectionsSection() {
           >
             + Add connection
           </button>
-        )}
-      </div>
+        ) : null
+      }
+    >
+      <div className="space-y-3">
 
       {/* Installed sources — the declarative manifests connections are built on.
           Install one (paste its manifest JSON), then add a connection through it. */}
@@ -340,7 +341,8 @@ export function SyncConnectionsSection() {
           }}
         />
       )}
-    </section>
+      </div>
+    </SettingsSection>
   );
 }
 

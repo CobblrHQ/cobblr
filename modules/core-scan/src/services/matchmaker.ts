@@ -11,6 +11,7 @@
 // becomes scannable just by shipping its fields, no scanner code changes.
 
 import { platform, extractJsonObject, repairJson, parseJsonReply } from "@cobblr/platform-contract";
+import { categoryDisplay } from "@cobblr/platform-contract/category-reconcile";
 
 // A HANG GUARD, not a latency knob: the matchmaker
 // runs detached server-side — nobody is blocked on it — and a queued
@@ -512,6 +513,32 @@ export function filterMenuForItem(item: PerceivedItem, menu: ScanMenuEntry[]): S
  * Returns null when the table declared no category axis, or the model said
  * nothing usable — a category is never invented on the model's behalf.
  */
+/** Resolve the category AND write it onto the candidate's own fields.
+ *
+ *  resolveCategory snaps a raw category onto the table's existing vocabulary,
+ *  and the result was set on `candidate.category` - a field the COMMIT PATH
+ *  never reads. Confirm sends `candidate.fields` as `extras`, so the normalised
+ *  value was computed and then dropped, and the raw per-item string is what
+ *  landed on the entity. That is why three shirts identified as "apparel",
+ *  "apparel" and "clothing" became two different categories on the destination
+ *  table (the author, 2026-07-30) even though the snapping had already agreed.
+ *
+ *  Writing it into `fields[axis.name]` puts it where the confirm already looks,
+ *  and where growCategoryChoices reads it to grow the vocabulary - so the value
+ *  the user is shown is the value that lands, with no new plumbing. */
+export function resolveCategoryInto(
+  entry: Pick<ScanMenuEntry, "category_field">,
+  raw: unknown,
+  fields: Record<string, string | number | boolean>,
+): { value: string; isNew: boolean } | null {
+  const cat = resolveCategory(entry, raw);
+  const axis = entry.category_field?.name;
+  // Never overwrite a value the identify/AI already filled for the axis field
+  // itself - that one was chosen FOR this field, this is a derived fallback.
+  if (cat && axis && (fields[axis] === undefined || fields[axis] === "")) fields[axis] = cat.value;
+  return cat;
+}
+
 export function resolveCategory(
   entry: Pick<ScanMenuEntry, "category_field">,
   raw: unknown,
@@ -761,9 +788,9 @@ export function heuristicMatch(item: PerceivedItem, menuIn: ScanMenuEntry[]): Ma
   if (scored.length === 0) {
     const fallback = pickFallbackEntry(item, menu);
     if (!fallback) return [];
-    const cat = resolveCategory(fallback, item.category);
     const fallbackFields: Record<string, string | number | boolean> = {};
     seedPackSize(fallback, item, fallbackFields);
+    const cat = resolveCategoryInto(fallback, item.category, fallbackFields);
     return [
       {
         module: fallback.module,
@@ -777,7 +804,7 @@ export function heuristicMatch(item: PerceivedItem, menuIn: ScanMenuEntry[]): Ma
         ...(cat ? { category: cat.value, ...(cat.isNew ? { category_is_new: true } : {}) } : {}),
         ...(fallback.bundle_external_id ? { bundle_external_id: fallback.bundle_external_id } : {}),
         notes: cat
-          ? `No specific table matched, so this went to ${fallback.label} as “${cat.value}”. Connect an AI provider for sharper identification + field-fill.`
+          ? `No specific table matched, so this went to ${fallback.label} as “${categoryDisplay(cat.value)}”. Connect an AI provider for sharper identification + field-fill.`
           : "No specific table matched (no AI). Connect an AI provider for sharper identification + field-fill.",
       },
     ];
@@ -788,7 +815,7 @@ export function heuristicMatch(item: PerceivedItem, menuIn: ScanMenuEntry[]): Ma
     seedPackSize(entry, item, fields);
     // The identify already named a category — reuse it rather than paying anyone
     // to re-derive it. resolveCategory snaps it to the table's existing vocabulary.
-    const cat = resolveCategory(entry, item.category);
+    const cat = resolveCategoryInto(entry, item.category, fields);
     return {
       module: entry.module,
       instance: entry.instance,
@@ -1107,7 +1134,7 @@ export async function runMatchmaker(
     // The category — only meaningful for a table that DECLARED a grouping axis.
     // Reuse of an existing value is preferred; a proposal is flagged `is_new` so
     // the card can say so, and nothing is created until the user confirms.
-    const category = resolveCategory(entry, cand.category);
+    const category = resolveCategoryInto(entry, cand.category, fields);
 
     const candidate: MatchCandidate = {
       module: entry.module,
@@ -1175,9 +1202,9 @@ export function applyCorroborationGate(
   if (!primaryEntry) return out;
   const { scoreEntry } = makeLexicalScorer(item);
   if (scoreEntry(primaryEntry).plausible) return out; // corroborated → stands
-  const cat = resolveCategory(fallback, item.category);
   const fields: Record<string, string | number | boolean> = {};
   seedPackSize(fallback, item, fields);
+  const cat = resolveCategoryInto(fallback, item.category, fields);
   const fallbackCand: MatchCandidate = {
     module: fallback.module,
     instance: fallback.instance,

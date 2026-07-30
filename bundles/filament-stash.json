@@ -1,12 +1,12 @@
 {
   "manifest": {
     "id": "cobblr.flagship.filament-stash",
-    "version": "0.5.3",
+    "version": "0.5.4",
     "name": "Filament",
-    "description": "A filament TYPE (Royal Blue PLA) defines the filament once — material, colour, diameter, nozzle/bed temps, needs-drying. SPOOLS pick a type + add only what's per-spool: size, batch code, remaining, state. Each type rolls up its spool count + total kg.",
+    "description": "A filament TYPE (Royal Blue PLA) defines the filament once: material, colour, diameter, nozzle/bed temps, needs-drying. SPOOLS pick a type + add only what's per-spool: size, batch code, remaining, state. Each type rolls up its spool count + total kg.",
     "author": "Cobblr",
     "released_at": "2026-06-17",
-    "changelog": "Types and Spools now sit together in the navbar as one element — a quiet \"Filament\" stem with \"Types │ Spools\" links — so the two related tables read as one thing. (0.5.1: scanning a spool's QR find-or-creates its filament TYPE and links the spool automatically — a scan lands in the type→spool model instead of a flat row. 0.5.0: the TYPE defines the whole filament — colour, diameter, nozzle/bed temps and needs-drying live on the type, not re-entered per spool; a SPOOL just picks its type and carries the per-spool facts — size, batch code, remaining, state. Upgrading carries your existing temps + colour up onto the type automatically.)",
+    "changelog": "Types and Spools now sit together in the navbar as one element, a quiet \"Filament\" stem with \"Types │ Spools\" links, so the two related tables read as one thing. (0.5.1: scanning a spool's QR find-or-creates its filament TYPE and links the spool automatically, a scan lands in the type→spool model instead of a flat row. 0.5.0: the TYPE defines the whole filament: colour, diameter, nozzle/bed temps and needs-drying live on the type, not re-entered per spool; a SPOOL just picks its type and carries the per-spool facts: size, batch code, remaining, state. Upgrading carries your existing temps + colour up onto the type automatically.)",
     "requires": [
       {
         "module": "inventory"
@@ -69,7 +69,7 @@
               "PVA",
               "Other"
             ],
-            "help": "The plastic type — PLA is the easy default; PETG/ABS for tougher parts."
+            "help": "The plastic type. PLA is the easy default; PETG/ABS for tougher parts."
           },
           {
             "entity_kind": "inventory:part",
@@ -90,7 +90,7 @@
               "1.75 mm",
               "2.85 mm"
             ],
-            "help": "Filament thickness — 1.75 mm is by far the most common; 2.85 mm for some older/large printers."
+            "help": "Filament thickness. 1.75 mm is by far the most common; 2.85 mm for some older/large printers."
           },
           {
             "entity_kind": "inventory:part",
@@ -98,7 +98,7 @@
             "display_label": "Nozzle °C",
             "type": "number",
             "position": 4,
-            "help": "The hot-end temperature that prints this filament cleanly — same for every spool of it."
+            "help": "The hot-end temperature that prints this filament cleanly, same for every spool of it."
           },
           {
             "entity_kind": "inventory:part",
@@ -257,7 +257,7 @@
               "5 kg",
               "25 kg"
             ],
-            "help": "The full-spool size you bought (the label weight) — the remaining amount is tracked separately."
+            "help": "The full-spool size you bought (the label weight), the remaining amount is tracked separately."
           },
           {
             "entity_kind": "inventory:part",
@@ -265,7 +265,7 @@
             "display_label": "Batch / lot code",
             "type": "text",
             "position": 2,
-            "help": "The batch or lot code from the maker's label (e.g. Polar's spool code) — for traceability of this exact spool."
+            "help": "The batch or lot code from the maker's label (e.g. Polar's spool code), for traceability of this exact spool."
           },
           {
             "entity_kind": "inventory:part",

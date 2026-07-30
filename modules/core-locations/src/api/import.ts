@@ -66,7 +66,7 @@ function parseLocations(csv: string, matchOn: string): { headers: string[]; rows
     const cells = raw[r]!;
     const get = (i: number) => (i >= 0 && i < cells.length ? cells[i]!.trim() : "");
     const name = nameI >= 0 ? get(nameI) : "";
-    if (!name) { errors.push({ row_number: r, message: "Missing name — skipped" }); continue; }
+    if (!name) { errors.push({ row_number: r, message: "Missing name, skipped" }); continue; }
     const kindRaw = get(idx("kind")).toLowerCase();
     const kind = kindRaw === "container" ? "container" : "area";
     const metadata: Record<string, string> = {};

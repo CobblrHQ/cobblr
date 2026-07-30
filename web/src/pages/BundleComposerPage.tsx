@@ -256,7 +256,7 @@ export function BundleComposerPage() {
           <div className="text-sm text-muted dark:text-slate-400">
             No user-authored wires or field defs in this workspace yet.
             Create some via{" "}
-            <Link to="/bindings" className="text-accent hover:text-accent underline">
+            <Link to="/wires" className="text-accent hover:text-accent underline">
               wires
             </Link>{" "}
             and{" "}

@@ -17,10 +17,11 @@
 import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { CoreScanDB } from "../db.js";
-import { deriveImageQuery, searchImages, selectTopCandidates } from "./ddg-images.js";
+import { colorFromText, deriveImageQuery, searchImages, selectTopCandidates } from "./ddg-images.js";
 import { downloadCatalogImage } from "./enrich.js";
-import { mergeMeta } from "./metadata.js";
-import { rankPhotoWithAi, shouldAutoRank, type AutoRankRow } from "./rank-photo.js";
+import { mergeMeta, standingHints } from "./metadata.js";
+import { nameWithColor, tidyTruncatedName } from "./item-name.js";
+import { rankPhotoWithAi, isRankFailure, shouldAutoRank, type AutoRankRow } from "./rank-photo.js";
 
 /** Candidate images sent to the model per call (the author's "grid of 9"); the user's
  *  own reference photo rides on top of these. */
@@ -58,6 +59,42 @@ export function candidateFieldValue(candidates: unknown, field: string): string 
     if (typeof v === "string" && v.trim()) return v.trim();
   }
   return null;
+}
+
+/** The item's colour, from the most authoritative source that has one.
+ *
+ *  Colour used to come ONLY from a declared `color` field on the destination
+ *  table. Most tables have no such field, so a colour was simply unknowable —
+ *  a user who typed the hint "color: blue" watched it change nothing, because
+ *  the hint steered the identify TEXT and was never turned into a colour fact
+ *  (the author, 2026-07-30: "I manually hinted the colors and it did not help").
+ *
+ *  Precedence, most authoritative first:
+ *    1. the user's research HINT — they are telling us, and the identify prompt
+ *       already treats their words as overriding the pixels;
+ *    2. a declared `color` FIELD on a candidate — real structured data;
+ *    3. the colour the VISION pass observed, kept in metadata (no field needed).
+ *
+ *  Feeding this into the image QUERY is what puts "blue" in the search, and
+ *  into catalogScore/the rank prompt is what sinks the wrong-colour photos. */
+export function resolveItemColor(row: {
+  suggested_candidates?: unknown;
+  suggested_metadata?: Record<string, unknown> | null;
+}): string | null {
+  const meta = row.suggested_metadata ?? {};
+  // Scan the hints NEWEST-first: "color: black" then "color: navy" means navy
+  // (the later correction wins), while "color: black" then "it's the loose fit"
+  // still means black (the newer hint is about something else, so it doesn't
+  // erase the colour). Taking only the newest hint would lose the colour in the
+  // second case — the whole reason the sequence is kept.
+  const hints = standingHints(meta);
+  let fromHint: string | null = null;
+  for (let i = hints.length - 1; i >= 0 && !fromHint; i--) fromHint = colorFromText(hints[i]!);
+  if (fromHint) return fromHint;
+  const fromField = candidateFieldValue(row.suggested_candidates, "color");
+  if (fromField) return fromField;
+  const observed = typeof meta.color === "string" ? meta.color.trim() : "";
+  return observed || null;
 }
 
 /** Everything a rank call needs about the item, derived one way for every
@@ -99,7 +136,7 @@ export async function deriveRankContext(
   const category =
     (typeof meta.category === "string" && meta.category.trim() ? meta.category.trim() : null) ??
     candidateFieldValue(row.suggested_candidates, "category");
-  const color = candidateFieldValue(row.suggested_candidates, "color");
+  const color = resolveItemColor(row);
   const cands = (row.suggested_candidates as Array<{ fields?: Record<string, unknown> }> | null) ?? [];
   const candidateFields: Record<string, unknown> = Object.assign(
     {},
@@ -135,6 +172,33 @@ export async function deriveRankContext(
     referenceB64,
     referenceMediaType,
   };
+}
+
+/** The item's title with its resolved colour in it, or null when nothing should
+ *  change. Pure, so the REPLAY path can apply our deterministic naming rule
+ *  without an AI call - which is what replay is for: "exercise a change to our
+ *  own deterministic code against real items, instantly and for free".
+ *
+ *  A replay of a BARCODE item deliberately skips enrichment entirely (the
+ *  identity stays as stored), so the rename that lives inside the enrich paths
+ *  never ran there. That left the one free way to try a naming change unable to
+ *  try this naming change (the author, 2026-07-30: "should replay handle this too?"). */
+export function colouredTitleFor(row: {
+  suggested_name: string | null;
+  suggested_manufacturer?: string | null;
+  suggested_candidates?: unknown;
+  suggested_metadata?: Record<string, unknown> | null;
+}): string | null {
+  const stored = (row.suggested_name ?? "").trim();
+  if (!stored) return null;
+  // Tidy on READ as well as on parse: a name already stored truncated (from
+  // before the parse-boundary trim) otherwise keeps its dangling bracket
+  // forever, and appending a colour compounds it - "…T-Shirt (Men's, Black".
+  // Deriving means those rows heal themselves with no re-run.
+  const current = tidyTruncatedName(stored);
+  const color = resolveItemColor(row);
+  const titled = color ? nameWithColor(current, color, row.suggested_manufacturer ?? null) : current;
+  return titled && titled !== stored ? titled : null;
 }
 
 export type AutoRankOutcome =
@@ -174,10 +238,11 @@ export async function autoRankCatalogPhoto(opts: {
     .where("id", "=", itemId)
     .executeTakeFirst()) as RankRow | undefined;
   if (!row) return { ranked: false, skipped: "no such row" };
-  if (!shouldAutoRank(row, null)) return { ranked: false, skipped: "guard" };
-
+  // Derive the QUESTION first: the guard compares it to what was last ranked, so
+  // a re-run whose hint changed the colour re-picks while a no-op re-run is free.
   const ctx = await deriveRankContext(orgId, row);
   if (!ctx.query) return { ranked: false, skipped: "nothing searchable" };
+  if (!shouldAutoRank(row, ctx.query)) return { ranked: false, skipped: "guard" };
 
   const pool = await searchImages(ctx.query, 24).catch(() => []);
   const candidates = selectTopCandidates(pool, ctx.brand, ctx.query, IMAGE_BUDGET, ctx.color);
@@ -197,13 +262,15 @@ export async function autoRankCatalogPhoto(opts: {
     referenceMediaType: ctx.referenceMediaType,
     candidates,
   });
-  if (!result) return { ranked: false, skipped: "no pick (no provider, or unreadable candidates)" };
+  if (isRankFailure(result)) return { ranked: false, skipped: `no pick (${result.error})` };
 
   // Download FIRST: a lot of web-image URLs can't be fetched (hotlink block,
   // 404, non-image), and committing the url anyway is how a row ends up wearing
   // a broken image (the same trap POST /catalog-image documents).
   const stored = await downloadCatalogImage({ db, orgId, itemId }, result.chosenUrl);
-  const rankedFor = (ctx.name ?? ctx.query).trim();
+  // Stamp the QUERY we just answered, so the guard can tell a repeat of the same
+  // question from a genuinely new one (a corrected colour changes the query).
+  const rankedFor = ctx.query.trim();
   await db
     .updateTable("core_scan_inbox_items")
     .set({

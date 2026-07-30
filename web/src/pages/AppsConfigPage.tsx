@@ -12,6 +12,7 @@ import { Modal, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web"
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ThemeEditor } from "../components/ThemeEditor";
 import { CustomBlock } from "./AppPlayerPage";
+import { ConfigHeaderActions } from "../components/ConfigPageHeader";
 import {
   api,
   type AppBlock,
@@ -138,15 +139,8 @@ export function AppsConfigPage() {
   };
 
   return (
-    <div className="space-y-5 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-content dark:text-mortar-100">Apps</h1>
-          <p className="text-xs text-faint">
-            Structured worker apps for the member portal. Members see only the apps + fields their
-            capabilities allow.
-          </p>
-        </div>
+    <div className="space-y-5">
+      <ConfigHeaderActions>
         <button
           type="button"
           onClick={createApp}
@@ -154,7 +148,7 @@ export function AppsConfigPage() {
         >
           <Plus size={14} /> New app
         </button>
-      </div>
+      </ConfigHeaderActions>
 
       <Modal
         open={creating}

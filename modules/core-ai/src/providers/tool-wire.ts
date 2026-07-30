@@ -173,3 +173,39 @@ export function parseAnthropicContent(
     .map((c, i) => ({ id: c.id || `call_${i}`, name: c.name ?? "", args: safeParseArgs(c.input) }));
   return calls.length ? { text, tool_calls: calls } : { text };
 }
+
+/** Token usage from a bridge response, whatever shape it speaks.
+ *
+ *  A "bridge" is any local program a user points us at, so the wire format is
+ *  whatever that program happens to emit. We only read Ollama's
+ *  prompt_eval_count / eval_count, so a bridge that proxies an
+ *  Anthropic- or OpenAI-shaped API reported its usage and we threw it away —
+ *  every one of those calls logged 0/0 tokens, which reads like a measured zero
+ *  rather than "nobody told us".
+ *
+ *  Returns {} when the response carries no usage at all, so the caller records
+ *  null and the UI can say "tokens not reported" honestly. Never invents a 0.
+ */
+export function bridgeUsage(body: unknown): {
+  input_tokens?: number;
+  output_tokens?: number;
+} {
+  const b = (body ?? {}) as Record<string, unknown>;
+  const u = (b.usage ?? {}) as Record<string, unknown>;
+  const num = (v: unknown): number | undefined =>
+    typeof v === "number" && Number.isFinite(v) ? v : undefined;
+
+  const input =
+    num(b.prompt_eval_count) ?? // Ollama
+    num(u.input_tokens) ?? //     Anthropic
+    num(u.prompt_tokens); //      OpenAI
+  const output =
+    num(b.eval_count) ?? //       Ollama
+    num(u.output_tokens) ?? //    Anthropic
+    num(u.completion_tokens); //  OpenAI
+
+  return {
+    ...(input !== undefined ? { input_tokens: input } : {}),
+    ...(output !== undefined ? { output_tokens: output } : {}),
+  };
+}

@@ -16,7 +16,7 @@ export default defineModule({
   version: "0.3.0",
   displayName: "Knowledge Base",
   description:
-    "A knowledge base — rich Markdown entries (notes, references, SOPs, prompts, papers) with custom fields, tags, and attachments. Categorise inside one vault; pin entries for quick access.",
+    "A knowledge base: rich Markdown entries (notes, references, SOPs, prompts, papers) with custom fields, tags, and attachments. Categorise inside one vault; pin entries for quick access.",
   icon: "book-open",
   band: "stock",
   autoEnable: false, // opt-in — "do you keep a knowledge base?"

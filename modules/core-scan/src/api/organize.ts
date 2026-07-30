@@ -370,7 +370,7 @@ organizeRouter.post(
       readyGroups.push({
         id: randomUUID(),
         label: loc.title,
-        rationale: "Already set — these just need to be physically put away.",
+        rationale: "Already set, these just need to be physically put away.",
         item_ids: members.map((m) => m.id),
         destination: {
           kind: "existing",
@@ -466,7 +466,7 @@ organizeRouter.post(
     }
     if (row.expires_at < new Date()) {
       res.status(410).json({
-        error: { code: "plan_expired", message: "This plan expired — re-plan and review again." },
+        error: { code: "plan_expired", message: "This plan expired, re-plan and review again." },
       });
       return;
     }
@@ -515,7 +515,7 @@ organizeRouter.post(
         newLocation = { name: group.destination.name, parent_id: group.destination.parent_id };
       }
       if (!locationId && !newLocation) {
-        skipped.push({ group_id: gid, reason: "unassigned — pick a destination first" });
+        skipped.push({ group_id: gid, reason: "unassigned. Pick a destination first" });
         continue;
       }
       const excluded = new Set(ovr?.exclude_item_ids ?? []);
@@ -551,7 +551,7 @@ organizeRouter.post(
             kind: "container",
           });
         } catch {
-          skipped.push({ group_id: gid, reason: "couldn't create the new bin — re-plan and retry" });
+          skipped.push({ group_id: gid, reason: "couldn't create the new bin, re-plan and retry" });
           continue;
         }
         createdLocations.push({ id: locationId, name: newLocation.name, group_id: gid });

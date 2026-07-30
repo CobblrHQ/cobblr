@@ -10,7 +10,7 @@ export default defineModule({
   version: "0.6.0",
   displayName: "Purchases",
   description:
-    "Orders, line items, and cost rollup. Each order is a vendor purchase; line items can link to inventory parts and to whatever consumed them — printer mods, projects, anything.",
+    "Orders, line items, and cost rollup. Each order is a vendor purchase; line items can link to inventory parts and to whatever consumed them: printer mods, projects, anything.",
   icon: "shopping-bag",
   band: "stock",
   instanceability: "multi",
@@ -141,7 +141,7 @@ export default defineModule({
         id: "purchases:draft-po",
         label: "Draft a purchase order",
         description:
-          "Add this part to a draft (planned) purchase order for its usual vendor at its usual quantity — derived from purchase history. Skips parts already on an open order. Args (all optional): { partId, qty, vendorId }.",
+          "Add this part to a draft (planned) purchase order for its usual vendor at its usual quantity: derived from purchase history. Skips parts already on an open order. Args (all optional): { partId, qty, vendorId }.",
         appliesTo: { kinds: ["inventory:part"] },
         invokeHandler: "purchases.draft-po",
         userInvokable: true,
@@ -166,7 +166,7 @@ export default defineModule({
       {
         // The homepage sentence, verbatim: "When a part runs low → draft a
         // PO to the usual vendor." Materialises when purchases is enabled;
-        // fully visible + editable on /bindings like any wire.
+        // fully visible + editable on /wires like any wire.
         source_kind: "inventory:part",
         action_id: "purchases:draft-po",
         trigger_type: "event",

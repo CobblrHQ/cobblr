@@ -55,9 +55,6 @@ export function dotsToMm(dots: number, dpi: number = PHOMEMO_DPI): number {
 export function mmToInch(mm: number): number {
   return mm / 25.4;
 }
-export function inchToMm(inch: number): number {
-  return inch * 25.4;
-}
 
 export interface PhomemoOptions {
   /** Print speed 1..5. */

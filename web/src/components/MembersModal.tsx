@@ -16,6 +16,8 @@ import { displaySlug } from "../lib/workspaceSlug";
 interface Props {
   /** Render in-flow (settings page mode) instead of as an overlay. */
   inline?: boolean;
+  /** With `inline`, render as a plain PAGE body (no dialog chrome). */
+  chromeless?: boolean;
   open: boolean;
   onClose: () => void;
   slug: string;
@@ -24,7 +26,7 @@ interface Props {
 const ROLES: OrgMembership["role"][] = ["owner", "admin", "editor", "member", "guest"];
 const INVITE_ROLES: OrgMembership["role"][] = ["admin", "editor", "member", "guest"];
 
-export function MembersModal({ open, onClose, slug, inline }: Props) {
+export function MembersModal({ open, onClose, slug, inline, chromeless }: Props) {
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
@@ -169,7 +171,7 @@ export function MembersModal({ open, onClose, slug, inline }: Props) {
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Members" subtitle={displaySlug(slug)} size="lg" inline={inline}>
+    <Modal open={open} onClose={onClose} title="Members" subtitle={displaySlug(slug)} size="lg" inline={inline} chromeless={chromeless}>
       <div className="space-y-5">
         {/* Members list */}
         <div>

@@ -4,11 +4,11 @@
 
 import { platform, type AiCapability } from "@cobblr/platform-contract";
 import { identifyPromptFor } from "./identify-prompt.js";
-import { rankImagesPromptFor, rankImageInputs } from "./rank-images-prompt.js";
+import { rankImagesPromptFor } from "./rank-images-prompt.js";
 import { toolsOf, turnsOf, openAiToolsOf, openAiMessagesOf, parseOpenAiToolCalls } from "./tool-wire.js";
 import { promptFingerprint } from "./prompt-fingerprint.js";
 
-const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
+export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
   chat: { models: ["gpt-4o", "gpt-4o-mini", "o1-mini"], defaultModel: "gpt-4o-mini" },
   summarise: { models: ["gpt-4o", "gpt-4o-mini"], defaultModel: "gpt-4o-mini" },
   "classify-image": { models: ["gpt-4o", "gpt-4o-mini"], defaultModel: "gpt-4o-mini" },
@@ -209,13 +209,17 @@ export function buildMessages(
       return [{ role: "user", content }];
     }
     case "rank-images": {
-      // The one multi-image capability: text first, then the candidate images in
-      // order, so "image 0, image 1, …" in the prompt line up with what the model
-      // sees. rankImagesPromptFor is the SAME resolver the fingerprint keys on.
-      const images = rankImageInputs(input);
+      // ONE image: a numbered contact sheet of the candidates (composed by
+      // core-scan). It used to be N attachments, which needed multi-image
+      // support three of the five adapters didn't have — so the capability was
+      // dark on exactly the providers real workspaces use. Same single-image
+      // shape as identify-image now. rankImagesPromptFor is the SAME resolver
+      // the fingerprint keys on.
+      const mediaType = String(input.image_media_type ?? "image/jpeg");
+      const imageB64 = typeof input.image_b64 === "string" ? input.image_b64 : null;
       const content: Array<Record<string, unknown>> = [{ type: "text", text: rankImagesPromptFor(input) }];
-      for (const im of images) {
-        content.push({ type: "image_url", image_url: { url: `data:${im.mediaType};base64,${im.b64}` } });
+      if (imageB64) {
+        content.push({ type: "image_url", image_url: { url: `data:${mediaType};base64,${imageB64}` } });
       }
       return [{ role: "user", content }];
     }

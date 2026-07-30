@@ -12,6 +12,7 @@
 
 import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { tidyTruncatedName } from "./item-name.js";
 import type { CoreScanDB } from "../db.js";
 import { reportBarcodeCorrection, reportBarcodeReject } from "./barcode-corrections.js";
 import { identityMeta, mergeMeta } from "./metadata.js";
@@ -105,6 +106,9 @@ interface PhotoEnrichContext {
    *  identify as an AUTHORITATIVE correction that overrides the visual read, so
    *  a hint naming a DIFFERENT item than the obvious one re-identifies to it. */
   hint?: string;
+  /** Every correction the user has given this item, oldest first (standingHints).
+   *  The prompt weighs later over earlier; `hint` is the newest. */
+  hints?: string[];
   /** REPLAY: re-parse the model's PREVIOUS reply with today's code, never call
    *  the provider (see RerunBody.no_ai). Beats `force`, which means the opposite. */
   replay?: boolean;
@@ -120,6 +124,11 @@ export interface PhotoIdentity {
   name: string;
   brand: string | null;
   category: string | null;
+  /** The item's colour in plain English, when it has one obvious colour. Stored
+   *  as a METADATA fact, so it exists even when the destination table declares
+   *  no colour field — which is the usual case, and why a colour used to be
+   *  unknowable (the author, 2026-07-30). */
+  color: string | null;
   entityType: "asset" | "part" | null;
   /** A known series/franchise this titled work belongs to (Harry Potter,
    *  Little House on the Prairie), or null. Used to group + tag siblings. */
@@ -207,13 +216,26 @@ export async function identifyImage(
   bypassCache?: boolean,
   hint?: string,
   cacheOnly?: boolean,
+  /** Every correction the user has given this item, oldest first. The prompt
+   *  shows them all and weighs later over earlier; `hint` stays the newest for
+   *  callers that only carry one. */
+  hints?: string[],
+  /** The workspace's existing category vocabulary, so the identify reuses a
+   *  label instead of inventing a synonym of one. */
+  knownCategories?: string[],
 ): Promise<PhotoIdentity | null> {
   let parsed: Record<string, unknown> | null = null;
   try {
     const r = await platform().ai.invoke({
       orgId,
       capability: "identify-image",
-      input: { image_b64: imageB64, image_media_type: mediaType, ...(hint ? { user_hint: hint } : {}) },
+      input: {
+        image_b64: imageB64,
+        image_media_type: mediaType,
+        ...(hint ? { user_hint: hint } : {}),
+        ...(hints && hints.length > 1 ? { user_hints: hints } : {}),
+        ...(knownCategories && knownCategories.length ? { known_categories: knownCategories } : {}),
+      },
       source: { kind: "core-scan:photo", id: sourceId ?? "eval" },
       // Route through the caller's own AI connection (the 'own' path), not only
       // the workspace-default share path. Without it a detached photo enrich on a
@@ -274,12 +296,13 @@ export function extractSerial(text: string): string | null {
 export function parseIdentityReply(parsed: Record<string, unknown> | null): PhotoIdentity | null {
   const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
   const p = (parsed ?? {}) as Record<string, unknown>;
-  const name =
+  const name = tidyTruncatedName(
     str(p.name) ||
     [str(p.product_line), str(p.product_name)].filter(Boolean).join(" ").trim() ||
     str(p.product_name) ||
     str(p.title) ||
-    "";
+    "",
+  );
   if (!name) return null;
   const rawType = str(p.entity_type) || str(p.type);
   const et: "asset" | "part" | null = rawType === "asset" || rawType === "part" ? rawType : null;
@@ -287,6 +310,7 @@ export function parseIdentityReply(parsed: Record<string, unknown> | null): Phot
     name,
     brand: str(p.brand) || str(p.manufacturer).split(",")[0]?.trim() || null,
     category: str(p.category) || str(p.product_line) || null,
+    color: str(p.color) || null,
     entityType: et,
     series: str(p.series) || str(p.franchise) || null,
     // A richer-shape reply with no confidence field WAS confident enough to
@@ -343,6 +367,7 @@ export function identityOverlay(
   const set: Record<string, unknown> = {
     source: "vision",
     category: identity.category,
+    ...(identity.color ? { color: identity.color } : {}),
     entity_type: identity.entityType,
   };
   if (identity.series) set.series = identity.series;
@@ -787,6 +812,39 @@ export async function crossCheckScanPhoto(
  *  instead of looking like a silent no-op, and never be mistaken for a failure. */
 export type EnrichOutcome = "identified" | "no-photo-bytes" | "not-identified" | "nothing-cached";
 
+/** Categories this workspace has recently used, most-used first.
+ *
+ *  A DB read, not a model call: the identify is shown the vocabulary so it can
+ *  REUSE a label instead of inventing a synonym of one. Reuse beats
+ *  reconciliation - three shirts scanned together produced "apparel",
+ *  "apparel" and "clothing" precisely because each call was blind to the other
+ *  two (the author, 2026-07-30). Cheap, bounded, and silent on failure: an anchor that
+ *  cannot be read is not worth failing an identify over. */
+export async function knownCategories(
+  db: PhotoEnrichContext["db"],
+  limit = 24,
+): Promise<string[]> {
+  try {
+    const rows = await db
+      .selectFrom("core_scan_inbox_items")
+      .select("suggested_metadata")
+      .where("status", "!=", "discarded")
+      .orderBy("updated_at", "desc")
+      .limit(200)
+      .execute();
+    const counts = new Map<string, number>();
+    for (const r of rows) {
+      const c = (r.suggested_metadata as { category?: unknown } | null)?.category;
+      if (typeof c !== "string" || !c.trim()) continue;
+      const label = c.trim();
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([c]) => c);
+  } catch {
+    return [];
+  }
+}
+
 export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOutcome> {
   // Read the photo bytes via the platform files seam. Prefer the medium
   // variant — resized JPEG, smaller payload + a cheaper vision call —
@@ -800,6 +858,7 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOu
   }
   const imageB64 = Buffer.from(file.bytes).toString("base64");
 
+  const knownCats = await knownCategories(ctx.db);
   const identity = await identifyImage(
     ctx.orgId,
     imageB64,
@@ -810,6 +869,8 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOu
     !ctx.replay && (ctx.force || !!ctx.hint),
     ctx.hint,
     ctx.replay,
+    ctx.hints,
+    knownCats,
   );
   // identifyImage's vision call can run tens of seconds. When enrichPhotoItem
   // runs detached (after the HTTP response has returned), the request's tenant

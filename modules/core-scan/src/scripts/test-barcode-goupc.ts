@@ -11,13 +11,13 @@ const CASES: Array<{ upc: string; expect: "hit" | "miss"; why: string; titleHas?
   {
     upc: "784297017629",
     expect: "hit",
-    why: "Southwire electrical box — the hardware case both free APIs miss",
+    why: "Southwire electrical box, the hardware case both free APIs miss",
     titleHas: /southwire/i,
   },
   {
     upc: "049000006346",
     expect: "hit",
-    why: "Coca-Cola can — easy mainstream hit",
+    why: "Coca-Cola can, easy mainstream hit",
     titleHas: /coca[- ]?cola/i,
   },
   { upc: "784297999994", expect: "miss", why: "valid checksum, unknown → 'Product Not Found'" },

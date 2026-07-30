@@ -15,7 +15,10 @@ import { Modal, useToast, useConfirm, usePageTitle, useImageSrc } from "@cobblr/
 import { Combobox } from "../components/Combobox";
 import { CreateConnectionModal, FleetView, PrintDetailModal, Lightbox, LIBRARY_DRAG_MIME, fetchAllMachines } from "../features/digifab/fleet";
 
-export function DigifabPage({ setupOnly = false }: { setupOnly?: boolean } = {}) {
+export function DigifabPage({
+  setupOnly = false,
+  embedded = false,
+}: { setupOnly?: boolean; embedded?: boolean } = {}) {
   usePageTitle("Digital Fabrication");
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
@@ -131,8 +134,10 @@ export function DigifabPage({ setupOnly = false }: { setupOnly?: boolean } = {})
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2 sm:gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">Digital Fabrication</h1>
+      <div className={"flex flex-wrap items-center gap-2 sm:gap-3 " + (embedded ? "" : "border-b border-line dark:border-slate-700 pb-3")}>
+        {!embedded && (
+          <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">Digital Fabrication</h1>
+        )}
         <span className="text-sm text-muted dark:text-slate-400">{items.length} connection{items.length === 1 ? "" : "s"}</span>
         <div className="flex-1" />
         {setupOnly ? (
@@ -430,7 +435,7 @@ function ShareMachinesModal({ slug, edgeConns, onClose }: { slug: string; edgeCo
           <div className="grid grid-cols-2 gap-2">
             {([
               { id: "read", title: "Read only", note: "Watch status, temps & progress. Can't send or stop prints." },
-              { id: "write", title: "Read + write", note: "Full control — send, pause, cancel prints on your machines." },
+              { id: "write", title: "Read + write", note: "Full control: send, pause, cancel prints on your machines." },
             ] as const).map((o) => (
               <button key={o.id} type="button" onClick={() => { setScope(o.id); setLink(null); }}
                 className={"text-left rounded border p-2 transition " + (scope === o.id ? "border-cobble-500 bg-cobble-50/40 dark:bg-cobble-900/20" : "border-line dark:border-slate-600 hover:border-accent")}>
@@ -1189,7 +1194,7 @@ function PrintHistorySection({ slug }: { slug: string }) {
   const askReprint = async (r: DigifabHistory["recent"][number]) => {
     const ok = await confirm({
       title: `Print "${r.file_ref}" again?`,
-      message: "Clones the original job — same file, routing, material and build — and sends it to the printer. On a live farm this physically starts the print.",
+      message: "Clones the original job (same file, routing, material and build) and sends it to the printer. On a live farm this physically starts the print.",
       confirmLabel: "Print again",
       destructive: true,
     });
@@ -1428,7 +1433,7 @@ function PrintQueueSection({ connections }: { connections: DigifabConnection[] }
     if (!bulkCancelable.length) return;
     const ok = await confirm({
       title: `Cancel ${bulkCancelable.length} print${bulkCancelable.length === 1 ? "" : "s"}?`,
-      message: "Removes the queued ones and tells running ones to stop where supported. On a live farm a printer may keep going — stop it at the machine.",
+      message: "Removes the queued ones and tells running ones to stop where supported. On a live farm a printer may keep going. Stop it at the machine.",
       confirmLabel: `Cancel ${bulkCancelable.length}`,
       destructive: true,
     });

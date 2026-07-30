@@ -10,6 +10,7 @@ import { Download, ArrowRight, Zap, FileUp, type LucideIcon } from "lucide-react
 import { Modal } from "@cobblr/platform-web";
 import { HomeboxImportModal } from "./HomeboxImportModal";
 import { HomeboxLiveImportModal } from "./HomeboxLiveImportModal";
+import { SettingsSection } from "./SettingsSection";
 
 type Method = { id: string; label: string; desc: string; icon: LucideIcon };
 type Source = { id: string; name: string; blurb: string; methods: Method[] };
@@ -31,7 +32,7 @@ const SOURCES: Source[] = [
       {
         id: "csv",
         label: "CSV upload",
-        desc: "No API access? Upload a Homebox CSV export instead — items, the location hierarchy, and labels come across (photos aren't in the CSV).",
+        desc: "No API access? Upload a Homebox CSV export instead: items, the location hierarchy, and labels come across (photos aren't in the CSV).",
         icon: FileUp,
       },
     ],
@@ -57,12 +58,11 @@ export function MigrateInSection() {
   }
 
   return (
-    <section>
-      <div className="flex items-center justify-between mb-2">
-        <h2 className="text-lg font-semibold flex items-center gap-2">
-          <Download className="h-4 w-4" /> Migrate from another app
-        </h2>
-      </div>
+    <SettingsSection
+      title="Migrate from another app"
+      icon={Download}
+      blurb="Bring an existing inventory across, once, from the app you use today."
+    >
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {SOURCES.map((s) => (
           <button
@@ -112,6 +112,6 @@ export function MigrateInSection() {
 
       <HomeboxLiveImportModal open={homeboxLive} onClose={() => setHomeboxLive(false)} />
       <HomeboxImportModal open={homeboxCsv} onClose={() => setHomeboxCsv(false)} />
-    </section>
+    </SettingsSection>
   );
 }

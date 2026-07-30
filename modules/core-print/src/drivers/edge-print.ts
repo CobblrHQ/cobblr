@@ -92,7 +92,7 @@ export class EdgePrintDriver implements PrintDriver {
       const client = this.need();
       const devices = await client.devices();
       if (devices.length === 0) {
-        return { ok: false, error: "the bridge answered but has no device on this instance — check the instance id" };
+        return { ok: false, error: "the bridge answered but has no device on this instance. Check the instance id" };
       }
       // Reachable is not the same as ready. Ask the printer what it reports about
       // itself (roll + battery on a thermal one) so the answer is useful rather

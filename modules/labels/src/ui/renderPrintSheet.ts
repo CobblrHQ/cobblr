@@ -167,7 +167,7 @@ export function renderPrintSheetHtml(
 <html>
 <head>
 <meta charset="utf-8" />
-<title>Cobblr labels — ${escapeHtml(size.label)}</title>
+<title>Cobblr labels: ${escapeHtml(size.label)}</title>
 <style>
   @page { size: ${paper.width_in}in ${paper.height_in}in; margin: 0; }
   * { box-sizing: border-box; }

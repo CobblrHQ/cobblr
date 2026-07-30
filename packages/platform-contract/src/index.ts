@@ -192,7 +192,7 @@ export function packFieldIssues(f: {
     issues.push({
       path: "field_role",
       message:
-        "a field whose label names a 'pack' is the packaging dimension — set field_role:'pack' so the scan fills it from the observed package, instead of a bespoke pack column.",
+        "a field whose label names a 'pack' is the packaging dimension. Set field_role:'pack' so the scan fills it from the observed package, instead of a bespoke pack column.",
     });
   }
   const text = `${f.display_label} ${f.help ?? ""}`;
@@ -200,7 +200,7 @@ export function packFieldIssues(f: {
     issues.push({
       path: "help",
       message:
-        "a pack field records the package you SCANNED, not what you 'usually'/'typically' buy — drop the buying-habit framing (see FIELD_ROLE_PACK).",
+        "a pack field records the package you SCANNED, not what you 'usually'/'typically' buy. Drop the buying-habit framing (see FIELD_ROLE_PACK).",
     });
   }
   return issues;
@@ -984,6 +984,40 @@ const ModuleManifest = z.object({
   // See docs/architecture/module-layers.md.
   autoEnable: z.boolean().default(false),
 
+  // A user-facing NAV entry this module contributes, even though the `core-`
+  // prefix / foundational band would otherwise exclude it from the navbar.
+  //
+  // The nav hides every `core-*` module on the convention that the prefix means
+  // plumbing. That is right for most of them, but a module can be foundational
+  // AND something you browse daily — locations, files, tags, saved views — and
+  // such a module had nowhere to go except /configuration. That is how the
+  // settings area became the dumping ground for data browsers, and why
+  // Locations ended up reachable at two URLs (one of them inside the settings
+  // shell) until 2026-07.
+  //
+  // Declaring `nav` is the escape hatch, made declarative: it used to be two
+  // hardcoded synthetic entries in useNavModules (core-scan, core-locations),
+  // so the next such module needed a code change in the host to be reachable.
+  //
+  // `route` is the canonical URL for the page — the ONE place it lives. Do not
+  // also register it as a settings destination.
+  // See docs/design-decisions/configuration-revamp.md.
+  nav: z
+    .object({
+      /** The noun as the user sees it, singular-or-plural as it reads in a
+       *  navbar ("Locations", "Files", "Tags"). A workspace can rename it via
+       *  Presentation; this is the default. */
+      label: z.string().min(1),
+      /** Canonical route. Must be mounted in the host. */
+      route: z.string().startsWith("/"),
+      /** Lucide icon name, kebab-case (e.g. "map-pin"). */
+      icon: z.string().optional(),
+      /** Presentation-override key, when the module's rename should follow an
+       *  entity kind rather than the module name. */
+      overrideKey: z.string().optional(),
+    })
+    .optional(),
+
   // Whether a workspace can install this module multiple times under
   // different "instance" names. "multi" modules add an `instance`
   // column to their tables (via a migration) and gain instance-
@@ -1234,25 +1268,25 @@ export const FIELD_SCOPE_PRESETS: Array<{
   {
     key: "physical",
     label: "All physical items",
-    hint: "Anything you can hold, store, or point at — parts, assets, machines, places.",
+    hint: "Anything you can hold, store, or point at: parts, assets, machines, places.",
     traits: ["physical"],
   },
   {
     key: "digital",
     label: "All digital items",
-    hint: "Things with no physical body — records, documents, entries.",
+    hint: "Things with no physical body: records, documents, entries.",
     traits: ["digital"],
   },
   {
     key: "physical-unique",
     label: "Things tracked one by one",
-    hint: "Physical AND individually identified — an asset, a machine, a vehicle. Excludes bulk stock.",
+    hint: "Physical AND individually identified: an asset, a machine, a vehicle. Excludes bulk stock.",
     traits: ["physical", "unique"],
   },
   {
     key: "physical-fungible",
     label: "Countable stock",
-    hint: "Physical AND interchangeable — tracked by quantity, not by which specific one.",
+    hint: "Physical AND interchangeable: tracked by quantity, not by which specific one.",
     traits: ["physical", "fungible"],
   },
 ];

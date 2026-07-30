@@ -151,22 +151,6 @@ export async function getInstance(
   return (row as ModuleInstance | undefined) ?? null;
 }
 
-/** Get the default instance for a (workspace, module). Used by
- *  backward-compat code paths that hit /modules/<m>/<r> URLs. */
-export async function getDefaultInstance(
-  orgId: string,
-  moduleName: string,
-): Promise<ModuleInstance | null> {
-  const row = await meta
-    .selectFrom("workspace_module_instances")
-    .selectAll()
-    .where("org_id", "=", orgId)
-    .where("module_name", "=", moduleName)
-    .where("is_default", "=", true)
-    .executeTakeFirst();
-  return (row as ModuleInstance | undefined) ?? null;
-}
-
 /** Delete a non-default instance. Default instances live + die with
  *  the module's enable/disable lifecycle; they can't be deleted
  *  individually. The caller is responsible for cleaning up the
@@ -233,15 +217,6 @@ export async function tearDownInstance(orgId: string, instanceName: string): Pro
   await removeNavMember(orgId, "instance", instanceName);
 }
 
-/** Build the display name from a slug, used when the user doesn't
- *  explicitly supply one (e.g., the default instance created by
- *  enableModuleForOrg uses the module's displayName from the
- *  manifest if available, else this fallback). */
-export function defaultDisplayName(slug: string): string {
-  return slug
-    .replace(/-/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}
 
 // ── Per-instance item counters (multi-instance nav cleanup) ──────────
 // A multi-instance module registers a counter so the kernel can ask "how many

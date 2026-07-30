@@ -598,7 +598,10 @@ function LocationCard({
               {usageTotal} item{usageTotal === 1 ? "" : "s"}
             </span>
           )}
-          <span className="text-[10px] uppercase font-mono tracking-widest text-faint dark:text-slate-500">
+          {/* Hidden on a phone: the name is what you are looking for, and the
+              KindIcon to its left already distinguishes area from container.
+              Keeping the word cost ~9 characters of the name on every row. */}
+          <span className="hidden sm:inline text-[10px] uppercase font-mono tracking-widest text-faint dark:text-slate-500">
             {node.kind}
           </span>
           <button
@@ -962,8 +965,8 @@ function LocationFormModal({
               tapping either is a manual choice that sticks (kindTouched). */}
           <div className="grid grid-cols-2 gap-2">
             {([
-              { k: "area", title: "area", desc: "a region — room, corner, workshop" },
-              { k: "container", title: "container", desc: "things go INTO it — bin, drawer, shelf" },
+              { k: "area", title: "area", desc: "a region: room, corner, workshop" },
+              { k: "container", title: "container", desc: "things go INTO it: bin, drawer, shelf" },
             ] as const).map((opt) => {
               const selected = kind === opt.k;
               return (

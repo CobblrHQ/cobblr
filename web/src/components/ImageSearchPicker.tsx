@@ -35,6 +35,7 @@ export function ImageSearchPicker({
   onPick,
   onPreview,
   onSearch,
+  searchedTerm,
   busy,
   label,
   enabled = true,
@@ -61,6 +62,11 @@ export function ImageSearchPicker({
   onPreview?: (url: string) => void;
   /** Pre-fetched mode only: the caller re-runs its own search for this term. */
   onSearch?: (term: string) => void;
+  /** Pre-fetched mode only: the phrase the SERVER actually searched, so the box
+   *  shows it here too. Without it the scan inbox's box sat blank — hiding the
+   *  one piece of information you need to improve the search, and hiding that a
+   *  hinted colour had (or hadn't) reached the query at all. */
+  searchedTerm?: string | null;
   /** Disable tiles while the caller is saving the pick. */
   busy?: boolean;
   label?: string;
@@ -95,7 +101,7 @@ export function ImageSearchPicker({
   const loading = usesProp ? !!loadingProp : fetched.isFetching;
   const source = itemsProp ?? fetched.data?.items ?? [];
   // What the server actually searched — shown IN the box, not as a placeholder.
-  const searched = applied || (usesProp ? "" : (fetched.data?.query ?? query ?? ""));
+  const searched = applied || (usesProp ? (searchedTerm ?? "") : (fetched.data?.query ?? query ?? ""));
   useEffect(() => {
     setTerm((t) => nextTerm({ searched, term: t, touched }));
   }, [searched, touched]);

@@ -2,12 +2,12 @@
   "manifest": {
     "id": "cobblr.flagship.collections",
     "catalog": "disabled",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "name": "Collections",
-    "description": "Your collection as its own cover wall — condition, edition, paid vs value today, so you stop buying the dupe.",
+    "description": "Your collection as its own cover wall: condition, edition, paid vs value today, so you stop buying the dupe.",
     "author": "Cobblr",
     "released_at": "2026-06-08",
-    "changelog": "Now its OWN table (an inventory instance), not generic Inventory with extra columns — its own nav entry, a “New piece” button, only collector fields (parts/warranty/supplier cruft hidden). Plain-language hints + a pinned “By condition” view.",
+    "changelog": "Now its OWN table (an inventory instance), not generic Inventory with extra columns: its own nav entry, a “New piece” button, only collector fields (parts/warranty/supplier cruft hidden). Plain-language hints + a pinned “By condition” view.",
     "requires": [
       {
         "module": "inventory"
@@ -36,7 +36,7 @@
               "Fair",
               "Poor"
             ],
-            "help": "Collector grade — the table groups by this; condition drives resale value."
+            "help": "Collector grade, the table groups by this; condition drives resale value."
           },
           {
             "entity_kind": "inventory:part",
@@ -44,7 +44,7 @@
             "display_label": "Edition / year",
             "type": "text",
             "position": 2,
-            "help": "Printing/pressing/edition or year — first editions, reissues, etc."
+            "help": "Printing/pressing/edition or year: first editions, reissues, etc."
           },
           {
             "entity_kind": "inventory:part",
@@ -66,7 +66,7 @@
             "display_label": "Value today",
             "type": "number",
             "position": 5,
-            "help": "Roughly what it'd sell for now — for insurance or knowing your collection's worth."
+            "help": "Roughly what it'd sell for now, for insurance or knowing your collection's worth."
           },
           {
             "entity_kind": "inventory:part",
@@ -74,7 +74,7 @@
             "display_label": "Signed / sealed",
             "type": "boolean",
             "position": 6,
-            "help": "Tick if signed, sealed, or otherwise special — usually a value bump."
+            "help": "Tick if signed, sealed, or otherwise special, usually a value bump."
           }
         ],
         "field_overrides": [

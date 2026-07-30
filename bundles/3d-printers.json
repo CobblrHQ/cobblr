@@ -1,9 +1,9 @@
 {
   "manifest": {
     "id": "cobblr.community.3d-printers",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "name": "3D Printers",
-    "description": "A 3D Printers tracker — your printers with hotend, extruder, board, firmware, bed size, and local IP. It's a named view of your machines, so each printer still drives prints, fleet status, and maintenance.",
+    "description": "A 3D Printers tracker: your printers with hotend, extruder, board, firmware, bed size, and local IP. It's a named view of your machines, so each printer still drives prints, fleet status, and maintenance.",
     "author": "Cobblr community",
     "released_at": "2026-06-19",
     "changelog": "Your 3D printers now open the full machine page — set every field (hotend, extruder, mainboard, firmware, bed size, local IP), edit in place, attach files, and link the machine straight to its print manager (FDM Monster / OctoPrint) right from its own page, instead of a name-only stub. Installing now offers a checked-by-default “Connect to your 3D printers” option that brings the Print Manager along — send a file to be made and track the job — which you can uncheck for catalog-only use. Existing installs auto-upgrade: your 3D printers move into the 3D Printers tab automatically, no reinstall.",
@@ -17,7 +17,7 @@
         "key": "digifab",
         "name": "Connect to your 3D printers",
         "question": "Want to send files to your 3D printers and track the job?",
-        "description": "Adds the Print Manager — map each machine to the software that runs it (FDM Monster, OctoPrint, …), send a file to be made, and track the job to completion. Talks to the manager's API; it never drives the hardware. You can link a machine to its manager right from the machine's page.",
+        "description": "Adds the Print Manager: map each machine to the software that runs it (FDM Monster, OctoPrint, …), send a file to be made, and track the job to completion. Talks to the manager's API; it never drives the hardware. You can link a machine to its manager right from the machine's page.",
         "default": true,
         "requires": [
           {

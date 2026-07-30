@@ -15,7 +15,7 @@ export default defineModule({
   version: "0.2.0",
   displayName: "Lists",
   description:
-    "Lightweight checklists — a list + check-off-able items. Shopping lists, to-do, packing. Other modules can auto-add items via a wire (e.g. 'running low' → shopping list).",
+    "Lightweight checklists: a list + check-off-able items. Shopping lists, to-do, packing. Other modules can auto-add items via a wire (e.g. 'running low' → shopping list).",
   icon: "list-checks",
   band: "stock",
   autoEnable: false,

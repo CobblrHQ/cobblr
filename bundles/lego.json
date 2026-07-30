@@ -1,12 +1,12 @@
 {
   "manifest": {
     "id": "cobblr.community.lego",
-    "version": "0.5.0",
+    "version": "0.5.1",
     "name": "Lego",
-    "description": "Lego as its own tables — Sets you own (sealed / built / disassembled) with optional Bricks bins, a Rebrickable catalog link, and a one-tap Disassemble that spawns the parts and opens the sorting planner.",
+    "description": "Lego as its own tables. Sets you own (sealed / built / disassembled) with optional Bricks bins, a Rebrickable catalog link, and a one-tap Disassemble that spawns the parts and opens the sorting planner.",
     "author": "Cobblr community",
     "released_at": "2026-07-11",
-    "changelog": "Lego is now its OWN tables, not a skin over generic inventory. Installing it gives you a Sets table (each set sealed, built, or disassembled) with set number, theme, year, piece count and minifig count — the generic warranty/serial/supplier clutter is hidden. Turn on the checkboxes you want: track individual Bricks in bins, link to the Rebrickable catalog so sets and parts match real data, disassemble a built set into its parts and sort them into bins, print QR labels, or add by scanning.",
+    "changelog": "Lego is now its OWN tables, not a skin over generic inventory. Installing it gives you a Sets table (each set sealed, built, or disassembled) with set number, theme, year, piece count and minifig count: the generic warranty/serial/supplier clutter is hidden. Turn on the checkboxes you want: track individual Bricks in bins, link to the Rebrickable catalog so sets and parts match real data, disassemble a built set into its parts and sort them into bins, print QR labels, or add by scanning.",
     "requires": [
       {
         "module": "inventory"
@@ -32,7 +32,7 @@
               "built",
               "disassembled"
             ],
-            "help": "Where this set is — still sealed in the box, built, or taken apart into bricks."
+            "help": "Where this set is: still sealed in the box, built, or taken apart into bricks."
           },
           {
             "entity_kind": "inventory:part",
@@ -142,7 +142,7 @@
         "key": "bricks",
         "name": "Bricks & bins",
         "question": "Track individual bricks in bins too?",
-        "description": "A separate 'Bricks' table for loose parts — each brick by shape (part category) and colour, filed into a bin. This is where a disassembled set's parts land.",
+        "description": "A separate 'Bricks' table for loose parts: each brick by shape (part category) and colour, filed into a bin. This is where a disassembled set's parts land.",
         "default": true,
         "next_steps": [
           {
@@ -176,7 +176,7 @@
                 "type": "text",
                 "position": 3,
                 "renderer": "color-hex",
-                "help": "The brick's colour — pick a hex/colour for the swatch."
+                "help": "The brick's colour. Pick a hex/colour for the swatch."
               },
               {
                 "entity_kind": "inventory:part",
@@ -257,7 +257,7 @@
         "key": "rebrickable",
         "name": "Rebrickable catalog",
         "question": "Link to the Rebrickable catalog?",
-        "description": "Installs the Rebrickable reference catalogs (themes, part categories, colours, parts, sets, minifigs) so your sets and bricks match real data — and a set's bill of materials powers Disassemble. Import the rows in one tap from the catalog page.",
+        "description": "Installs the Rebrickable reference catalogs (themes, part categories, colours, parts, sets, minifigs) so your sets and bricks match real data, and a set's bill of materials powers Disassemble. Import the rows in one tap from the catalog page.",
         "default": true,
         "requires": [
           {
@@ -276,7 +276,7 @@
           {
             "external_id": "rebrickable-themes",
             "name": "Rebrickable themes",
-            "description": "Lego themes — Star Wars, City, Technic, etc.",
+            "description": "Lego themes. Star Wars, City, Technic, etc.",
             "source_url": "https://cdn.rebrickable.com/media/downloads/themes.csv.gz",
             "puller_id": "rebrickable",
             "schema": {
@@ -289,7 +289,7 @@
           {
             "external_id": "rebrickable-part-categories",
             "name": "Rebrickable part categories",
-            "description": "Part categories — bricks, plates, slopes, tiles, wedges, etc. The bin taxonomy.",
+            "description": "Part categories: bricks, plates, slopes, tiles, wedges, etc. The bin taxonomy.",
             "source_url": "https://cdn.rebrickable.com/media/downloads/part_categories.csv.gz",
             "puller_id": "rebrickable",
             "schema": {
@@ -397,7 +397,7 @@
           {
             "external_id": "rebrickable-inventory-parts",
             "name": "Rebrickable set inventories",
-            "description": "The set bill of materials — which parts each set contains. Powers Disassemble. Large (~5M rows); import when you need it.",
+            "description": "The set bill of materials, which parts each set contains. Powers Disassemble. Large (~5M rows); import when you need it.",
             "source_url": "https://cdn.rebrickable.com/media/downloads/inventory_parts.csv.gz",
             "puller_id": "rebrickable",
             "schema": {
@@ -435,7 +435,7 @@
             "label": "Open a built set to disassemble it",
             "module": "inventory",
             "path": "/instances/sets",
-            "hint": "Open a set, then use Disassemble — its parts land in Bricks and the planner opens."
+            "hint": "Open a set, then use Disassemble: its parts land in Bricks and the planner opens."
           }
         ]
       },

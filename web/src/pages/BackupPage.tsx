@@ -64,6 +64,22 @@ function shortWhen(iso: string | null): string {
     : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+/** A backup's timestamp for the file list — full date + time (these span days,
+ *  so "3:19 PM" alone isn't enough). */
+function backupWhen(iso: string | null): string {
+  if (!iso) return "unknown time";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "unknown time";
+  return d.toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function fmtBytes(n: number | null): string {
+  if (n == null) return "";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function downloadBlob(blob: Blob, name: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -213,12 +229,7 @@ export function BackupPage() {
     "inline-flex items-center gap-2 rounded-lg border border-line dark:border-slate-600 px-3.5 py-2 text-sm font-semibold text-content dark:text-mortar-100 hover:bg-subtle disabled:opacity-50";
 
   return (
-    <div className="space-y-6 max-w-3xl mx-auto">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">backup &amp; blueprints</h1>
-        <span className="page-subtitle">share a setup, or keep a full copy of your workspace</span>
-      </div>
-
+    <div className="space-y-6">
       {/* Blueprint */}
       <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-800/40 p-5 space-y-3">
         <div className="flex items-center gap-2">
@@ -378,6 +389,28 @@ function DestinationsSection({ base, auth }: { base: string; auth: () => Record<
   // destination can run; before that the important ask is "connect it".
   const actionable = (d: Destination): boolean => d.driver !== "google_drive" || d.connected;
 
+  // A live listing of the backups that actually exist in a destination — one
+  // open at a time. Replaces the uninformative "last: ok" with the real files.
+  type BackupFile = { name: string; size: number | null; created_at: string | null; ref: string };
+  const [openBackupsId, setOpenBackupsId] = useState<string | null>(null);
+  const [backupFiles, setBackupFiles] = useState<BackupFile[] | "loading" | "error">("loading");
+  async function toggleBackups(d: Destination) {
+    if (openBackupsId === d.id) {
+      setOpenBackupsId(null);
+      return;
+    }
+    setOpenBackupsId(d.id);
+    setBackupFiles("loading");
+    try {
+      const res = await fetch(`${base}/backup/destinations/${d.id}/backups`, { headers: auth() });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j?.error?.message ?? `HTTP ${res.status}`);
+      setBackupFiles(j.backups ?? []);
+    } catch {
+      setBackupFiles("error");
+    }
+  }
+
   async function create() {
     setBusy("create");
     try {
@@ -505,6 +538,13 @@ function DestinationsSection({ base, auth }: { base: string; auth: () => Record<
                   </span>
                 )}
                 <div className="ml-auto flex gap-2">
+                  <button
+                    className={ghost}
+                    onClick={() => toggleBackups(d)}
+                    disabled={d.driver === "google_drive" && !d.connected}
+                  >
+                    <FileArchive className="h-3.5 w-3.5" /> {openBackupsId === d.id ? "Hide backups" : "View backups"}
+                  </button>
                   <button className={ghost} onClick={() => runNow(d)} disabled={busy !== null || (d.driver === "google_drive" && !d.connected)}>
                     {busy === `run-${d.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />} Back up now
                   </button>
@@ -534,6 +574,36 @@ function DestinationsSection({ base, auth }: { base: string; auth: () => Record<
                   </button>
                 </div>
               )}
+
+              {openBackupsId === d.id && (
+                <div className="rounded-md border border-line dark:border-slate-700 bg-subtle/50 dark:bg-slate-800/30 p-2 text-xs">
+                  {backupFiles === "loading" ? (
+                    <div className="flex items-center gap-2 text-muted px-1 py-2">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Listing your backups in {d.label}…
+                    </div>
+                  ) : backupFiles === "error" ? (
+                    <div className="text-red-600 px-1 py-2">Couldn't list backups here. The destination may be unreachable, or the connection may have expired.</div>
+                  ) : backupFiles.length === 0 ? (
+                    <div className="text-muted italic px-1 py-2">No backups here yet. Press <em>Back up now</em> to send one.</div>
+                  ) : (
+                    <>
+                      <div className="text-[10px] font-mono uppercase tracking-widest text-faint px-1 pb-1">
+                        {backupFiles.length} backup{backupFiles.length === 1 ? "" : "s"} in {d.label}
+                      </div>
+                      <ul className="divide-y divide-line/70 dark:divide-slate-700/70">
+                        {backupFiles.map((f) => (
+                          <li key={f.ref} className="flex items-center gap-3 px-1 py-1.5">
+                            <FileArchive className="h-3.5 w-3.5 text-faint shrink-0" />
+                            <span className="text-content dark:text-mortar-100">{backupWhen(f.created_at)}</span>
+                            <span className="text-faint font-mono truncate">{f.name}</span>
+                            {f.size != null && <span className="ml-auto text-faint font-mono shrink-0">{fmtBytes(f.size)}</span>}
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                </div>
+              )}
             </li>
           ))}
         </ul>
@@ -544,11 +614,32 @@ function DestinationsSection({ base, auth }: { base: string; auth: () => Record<
           <button className={ghost} onClick={() => setAdding(true)} disabled={availableDrivers.length === 0}>
             <Plus className="h-4 w-4" /> Add a destination
           </button>
-          {googleDriver?.available && (
-            <button className={ghost} onClick={connectGoogle} disabled={busy !== null}>
-              {busy === "google" ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Connect Google Drive
-            </button>
-          )}
+          {googleDriver?.available &&
+            (() => {
+              // Don't say "Connect Google Drive" when a Drive destination is
+              // already connected — that's the confusing bit. Connected → a quiet
+              // "Reconnect" link (only for re-auth); a destination that exists but
+              // isn't connected → a clear "Reconnect" CTA; none → "Connect".
+              const driveDest = dests.find((x) => x.driver === "google_drive");
+              if (driveDest?.connected) {
+                return (
+                  <button
+                    onClick={connectGoogle}
+                    disabled={busy !== null}
+                    title="Re-authorize Google Drive (only needed if the connection expires)"
+                    className="self-center text-xs text-faint hover:text-accent underline underline-offset-2"
+                  >
+                    {busy === "google" ? "Reconnecting…" : "Reconnect Google Drive"}
+                  </button>
+                );
+              }
+              return (
+                <button className={ghost} onClick={connectGoogle} disabled={busy !== null}>
+                  {busy === "google" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{" "}
+                  {driveDest ? "Reconnect Google Drive" : "Connect Google Drive"}
+                </button>
+              );
+            })()}
           {googleDriver && !googleDriver.available && (
             <span className="text-xs text-faint self-center">Google Drive needs server setup (GOOGLE_OAUTH_*).</span>
           )}

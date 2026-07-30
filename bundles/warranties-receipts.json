@@ -2,12 +2,12 @@
   "manifest": {
     "id": "cobblr.flagship.warranties-receipts",
     "catalog": "extended",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "name": "Warranties & Receipts",
-    "description": "Your appliances/electronics as their own table — where/when you bought it + warranty and return-by dates, grouped by category.",
+    "description": "Your appliances/electronics as their own table: where/when you bought it + warranty and return-by dates, grouped by category.",
     "author": "Cobblr",
     "released_at": "2026-06-08",
-    "changelog": "Now its OWN table (an inventory instance), not generic Inventory with extra columns — its own nav entry, a “New item” button, only the fields a receipt/warranty tracker needs (the parts/stock cruft is hidden). Plain-language hints + a pinned “By category” view.",
+    "changelog": "Now its OWN table (an inventory instance), not generic Inventory with extra columns: its own nav entry, a “New item” button, only the fields a receipt/warranty tracker needs (the parts/stock cruft is hidden). Plain-language hints + a pinned “By category” view.",
     "requires": [
       {
         "module": "inventory"
@@ -28,7 +28,7 @@
             "display_label": "Bought from",
             "type": "text",
             "position": 1,
-            "help": "Store or site — proof-of-purchase for a warranty/return."
+            "help": "Store or site, proof-of-purchase for a warranty/return."
           },
           {
             "entity_kind": "inventory:part",

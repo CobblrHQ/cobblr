@@ -8,6 +8,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, Trash2, Pencil } from "lucide-react";
 import { Link } from "react-router-dom";
 import { ApiError, api, type PlatformBinding } from "../lib/api";
+import { FEED_SCROLL } from "../lib/feed";
 import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
 
 interface Props {
@@ -210,8 +211,8 @@ export function WireDetailModal({ open, onClose, slug, binding, onEdit }: Props)
               No firings recorded yet for this binding.
             </div>
           ) : (
-            <ul className="space-y-1">
-              {matching.slice(0, 8).map((r) => {
+            <ul className={"space-y-1 " + FEED_SCROLL}>
+              {matching.map((r) => {
                 const failed = r.action === "wire_failed";
                 const d = (r.diff ?? {}) as { error?: string; event?: string };
                 return (

@@ -22,7 +22,7 @@ interface ExportItemLite {
 
 const PHOTO_MODES: { key: PhotoMode; label: string; blurb: string }[] = [
   { key: "link", label: "Link", blurb: "Small file. The destination downloads each photo from this instance during import; links are scoped to just these files and expire. Won't work for an offline / LAN-only destination." },
-  { key: "embed", label: "Baked in", blurb: "Images embedded in the export file. Bigger, but fully self-contained — no public links, works offline / LAN-only / air-gapped." },
+  { key: "embed", label: "Baked in", blurb: "Images embedded in the export file. Bigger, but fully self-contained: no public links, works offline / LAN-only / air-gapped." },
   { key: "none", label: "None", blurb: "Metadata only. No photos travel with the export." },
 ];
 

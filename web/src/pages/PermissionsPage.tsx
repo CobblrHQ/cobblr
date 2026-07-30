@@ -15,7 +15,6 @@
 //     the matrix above.
 
 import { useState } from "react";
-import { AreaTabs, ACCESS_TABS } from "../components/AreaTabs";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { EyeOff, Plus, X } from "lucide-react";
@@ -23,8 +22,54 @@ import { useToast, usePageTitle } from "@cobblr/platform-web";
 import { ApiError, api } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { CapabilityMatrix } from "../components/CapabilityMatrix";
+import { useSearchParams } from "react-router-dom";
 
+import { UsersPage } from "./UsersPage";
+import { RolesPage } from "./RolesPage";
+
+/** /configuration/permissions — one destination for who-can-do-what.
+ *
+ *  Custom roles and minted accounts used to be their own routes
+ *  (/configuration/roles, /configuration/users) reachable ONLY through a tab
+ *  strip: neither appeared in the settings sidebar, and because the sidebar's
+ *  active check is a prefix match on /configuration/permissions, standing on
+ *  either highlighted nothing and you lost your place. Now they are tabs of
+ *  this page and the old routes redirect here.
+ *  See docs/design-decisions/configuration-revamp.md. */
 export function PermissionsPage() {
+  const [params, setParams] = useSearchParams();
+  const raw = params.get("tab");
+  const tab = raw === "roles" || raw === "accounts" ? raw : "overview";
+  const go = (t: "overview" | "roles" | "accounts") =>
+    setParams(t === "overview" ? {} : { tab: t }, { replace: true });
+  const tabCls = (on: boolean) =>
+    "px-3 py-2 text-sm font-medium border-b-2 -mb-px transition " +
+    (on
+      ? "border-cobble-600 text-content dark:text-mortar-100"
+      : "border-transparent text-muted hover:text-content dark:hover:text-mortar-100");
+
+  return (
+    <div className="space-y-4">
+      
+      <div className="flex gap-1 border-b border-line dark:border-slate-700">
+        <button type="button" onClick={() => go("overview")} className={tabCls(tab === "overview")}>
+          Overview &amp; grants
+        </button>
+        <button type="button" onClick={() => go("roles")} className={tabCls(tab === "roles")}>
+          Custom roles
+        </button>
+        <button type="button" onClick={() => go("accounts")} className={tabCls(tab === "accounts")}>
+          Accounts
+        </button>
+      </div>
+      {tab === "overview" && <PermissionsOverview />}
+      {tab === "roles" && <RolesPage embedded />}
+      {tab === "accounts" && <UsersPage embedded />}
+    </div>
+  );
+}
+
+function PermissionsOverview() {
   usePageTitle("Permissions");
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
@@ -127,18 +172,7 @@ export function PermissionsPage() {
     kinds.find((k) => k.id === id)?.display_name ?? id;
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto">
-      <AreaTabs tabs={ACCESS_TABS} area="access" />
-      <div className="border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
-          permissions
-        </h1>
-        <span className="page-subtitle">
-          what each role and member can do, plus field visibility. owners /
-          admins have everything implicitly.
-        </span>
-      </div>
-
+    <div className="space-y-6">
       {members.length > 0 && (
         <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-2">
           <div className="flex items-baseline gap-2">
@@ -179,7 +213,7 @@ export function PermissionsPage() {
                     {adminish
                       ? "everything, implicitly"
                       : m.grants.length + roleNames.length === 0
-                        ? "read-only — no grants"
+                        ? "read-only, no grants"
                         : (m.grants.length > 0 ? `${m.grants.length} direct grant${m.grants.length === 1 ? "" : "s"}` : "") +
                           (m.grants.length > 0 && roleNames.length > 0 ? " + " : "") +
                           (roleNames.length > 0 ? `${roleNames.length} role${roleNames.length === 1 ? "" : "s"}` : "")}

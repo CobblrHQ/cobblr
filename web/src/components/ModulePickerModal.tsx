@@ -56,6 +56,8 @@ function MaturityBadge({ maturity }: { maturity?: OrgModuleListItem["maturity"] 
 interface Props {
   /** Render in-flow (settings page mode) instead of as an overlay. */
   inline?: boolean;
+  /** With `inline`, render as a plain PAGE body (no dialog chrome). */
+  chromeless?: boolean;
   open: boolean;
   onClose: () => void;
   /** When set, the modal opens scoped to specialisations of this
@@ -64,7 +66,7 @@ interface Props {
   scopeToParent?: string;
 }
 
-export function ModulePickerModal({ open, onClose, scopeToParent, inline }: Props) {
+export function ModulePickerModal({ open, onClose, scopeToParent, inline, chromeless }: Props) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
@@ -207,7 +209,7 @@ export function ModulePickerModal({ open, onClose, scopeToParent, inline }: Prop
     : "enable, disable, and reorder per-workspace";
 
   return (
-    <Modal open={open} onClose={onClose} title={title} subtitle={subtitle} size="lg" inline={inline}>
+    <Modal open={open} onClose={onClose} title={title} subtitle={subtitle} size="lg" inline={inline} chromeless={chromeless}>
       <div className="space-y-3">
         {scopeToParent && (
           <div className="flex items-center justify-between text-xs">

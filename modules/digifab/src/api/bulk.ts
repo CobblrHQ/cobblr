@@ -193,6 +193,6 @@ bulkRouter.post(
       const hit = classifyFirmware(tag, json);
       if (hit) return void res.json(hit);
     }
-    res.json({ type: null, detail: "no known firmware answered — pick the type manually" });
+    res.json({ type: null, detail: "no known firmware answered. Pick the type manually" });
   }),
 );

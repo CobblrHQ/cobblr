@@ -10,6 +10,7 @@ import { useToast, usePageTitle } from "@cobblr/platform-web";
 import { ApiError, api, type AppTheme, type PortalConfig } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ThemeEditor } from "../components/ThemeEditor";
+import { ConfigHeaderActions } from "../components/ConfigPageHeader";
 
 export function PortalConfigPage() {
   usePageTitle("Portal config");
@@ -101,17 +102,8 @@ export function PortalConfigPage() {
   }
 
   return (
-    <div className="space-y-5 max-w-3xl mx-auto">
-      <div className="flex items-baseline justify-between border-b border-line dark:border-slate-700 pb-3">
-        <div>
-          <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
-            portal config
-          </h1>
-          <span className="page-subtitle">
-            branding + pinned views shown to members at{" "}
-            <code className="font-mono">/portal/{activeSlug}</code>
-          </span>
-        </div>
+    <div className="space-y-5">
+      <ConfigHeaderActions>
         <Link
           to={`/portal/${activeSlug}`}
           target="_blank"
@@ -119,7 +111,7 @@ export function PortalConfigPage() {
         >
           preview <ExternalLink size={10} />
         </Link>
-      </div>
+      </ConfigHeaderActions>
 
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
         <div className="text-[10px] font-mono uppercase tracking-widest text-accent">

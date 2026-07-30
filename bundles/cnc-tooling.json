@@ -2,12 +2,12 @@
   "manifest": {
     "id": "cobblr.flagship.cnc-tooling",
     "catalog": "extended",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "name": "CNC Tooling",
-    "description": "Your CNC tooling as its own table — end mills, drills, taps, reamers, inserts — by type/diameter/flutes/material, with the bin each lives in. Ships the guided Cataloging Bench app: capture an unknown tool's measurements + observations and it composes the spec for you (AI-enriched when a provider is connected).",
+    "description": "Your CNC tooling as its own table (end mills, drills, taps, reamers, inserts) by type/diameter/flutes/material, with the bin each lives in. Ships the guided Cataloging Bench app: capture an unknown tool's measurements + observations and it composes the spec for you (AI-enriched when a provider is connected).",
     "author": "Cobblr",
     "released_at": "2026-06-12",
-    "changelog": "The guided Cataloging Bench: measure (caliper) → weigh (scale) → observe → photograph → bin, hands-busy, no typing — with a live edge mode that streams real readings from an on-site agent. The structured spec is composed deterministically; a best-effort multimodal AI identify enriches the name/brand from the measurements when a provider is connected. Built on two GENERIC capabilities the bench app wires together — inventory:create-item + core-scan:identify — not a bench-specific module action. See docs/product/cataloging-bench.md.",
+    "changelog": "The guided Cataloging Bench: measure (caliper) → weigh (scale) → observe → photograph → bin, hands-busy, no typing, with a live edge mode that streams real readings from an on-site agent. The structured spec is composed deterministically; a best-effort multimodal AI identify enriches the name/brand from the measurements when a provider is connected. Built on two GENERIC capabilities the bench app wires together, inventory:create-item + core-scan:identify, not a bench-specific module action. See docs/product/cataloging-bench.md.",
     "requires": [
       {
         "module": "inventory"
@@ -43,7 +43,7 @@
               "Collet",
               "Other"
             ],
-            "help": "What kind of tool — the table groups by this."
+            "help": "What kind of tool, the table groups by this."
           },
           {
             "entity_kind": "inventory:part",
@@ -61,7 +61,7 @@
             "type": "number",
             "unit": "mm",
             "position": 3,
-            "help": "Shank diameter — the size your collet/holder needs."
+            "help": "Shank diameter, the size your collet/holder needs."
           },
           {
             "entity_kind": "inventory:part",
@@ -70,7 +70,7 @@
             "type": "number",
             "unit": "mm",
             "position": 4,
-            "help": "Tip to end — for reach + holder clearance."
+            "help": "Tip to end, for reach + holder clearance."
           },
           {
             "entity_kind": "inventory:part",
@@ -142,7 +142,7 @@
             "type": "number",
             "unit": "g",
             "position": 10,
-            "help": "From the scale — helps the AI tell carbide from HSS."
+            "help": "From the scale, helps the AI tell carbide from HSS."
           },
           {
             "entity_kind": "inventory:part",
@@ -150,7 +150,7 @@
             "display_label": "Bin",
             "type": "text",
             "position": 11,
-            "help": "Where it physically lives — “Bin 1 / Comp 6”. Set at the bench."
+            "help": "Where it physically lives. “Bin 1 / Comp 6”. Set at the bench."
           }
         ],
         "field_overrides": [

@@ -151,7 +151,7 @@ export function registerLabelsHandlers(): void {
     }
 
     if (changed.length === 0) {
-      return { ok: false, error: "nothing to change — pass prefix or code_in_qr" };
+      return { ok: false, error: "nothing to change, pass prefix or code_in_qr" };
     }
     return { ok: true, group_key: groupKey, changed };
   });

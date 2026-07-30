@@ -135,7 +135,7 @@ export async function performWrite(
   const id = String(req.entity_id ?? "");
   if (!id) return { ok: false, message: "Missing record id." };
   const before = await imageOf(wsApi, entity_kind, id);
-  if (!before) return { ok: false, message: "Couldn't read the record before changing it — nothing was done." };
+  if (!before) return { ok: false, message: "Couldn't read the record before changing it: nothing was done." };
   const label = labelOfImage(before, id);
 
   if (tool === "update") {
@@ -261,7 +261,7 @@ export async function undoWrite(
       break;
     }
     default:
-      return { ok: false, message: "Actions can't be undone — they have real-world side effects." };
+      return { ok: false, message: "Actions can't be undone: they have real-world side effects." };
   }
 
   if (outcome.ok) {

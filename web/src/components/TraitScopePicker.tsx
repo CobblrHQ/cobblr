@@ -28,35 +28,35 @@ export const TRAIT_AXES: { axis: string; poles: { trait: string; hint: string }[
   {
     axis: "Tangibility",
     poles: [
-      { trait: "physical", hint: "Tangible — a real-world thing you could attach a QR sticker to." },
-      { trait: "digital", hint: "Exists only as data — a record, config, or message." },
+      { trait: "physical", hint: "Tangible, a real-world thing you could attach a QR sticker to." },
+      { trait: "digital", hint: "Exists only as data: a record, config, or message." },
     ],
   },
   {
     axis: "Identity",
     poles: [
-      { trait: "fungible", hint: "Interchangeable — tracked by quantity, not which specific one." },
-      { trait: "unique", hint: "Individually identified — tracked per instance." },
+      { trait: "fungible", hint: "Interchangeable: tracked by quantity, not which specific one." },
+      { trait: "unique", hint: "Individually identified, tracked per instance." },
     ],
   },
   {
     axis: "Containment",
     poles: [
-      { trait: "container", hint: "Holds other things — a place, a bin, a box." },
+      { trait: "container", hint: "Holds other things: a place, a bin, a box." },
       { trait: "containable", hint: "Can live inside something else." },
     ],
   },
   {
     axis: "Time",
     poles: [
-      { trait: "schedulable", hint: "Has a when — a due date, a window, a slot." },
+      { trait: "schedulable", hint: "Has a when: a due date, a window, a slot." },
       { trait: "timeless", hint: "Just exists; no inherent date." },
     ],
   },
   {
     axis: "Lifecycle",
     poles: [
-      { trait: "completable", hint: "Can be finished — it has a done state." },
+      { trait: "completable", hint: "Can be finished: it has a done state." },
       { trait: "indefinite", hint: "Has no natural end; it just persists." },
     ],
   },

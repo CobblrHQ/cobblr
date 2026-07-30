@@ -160,7 +160,7 @@ homeboxRouter.post("/homebox", (req, res, next) => {
     const modList = mods.json?.items ?? mods.json?.modules ?? [];
     const enabled = (name: string) => modList.some((m) => m.name === name && m.enabled);
     if (modList.length && !enabled("inventory")) {
-      res.status(400).json({ error: { code: "inventory_disabled", message: "Enable the Inventory module first — that's where imported items land." } });
+      res.status(400).json({ error: { code: "inventory_disabled", message: "Enable the Inventory module first: that's where imported items land." } });
       return;
     }
     const doLocations = p.location_paths.length > 0 && (!modList.length || enabled("core-locations"));

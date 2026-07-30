@@ -104,12 +104,12 @@ export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) 
               {
                 opt: "descriptive",
                 title: "Self-describing",
-                desc: "Opens with a short type code, like /qr/loc/Xk7Bq2mNp8rL — a phone's link preview hints what the label is before it's tapped.",
+                desc: "Opens with a short type code, like /qr/loc/Xk7Bq2mNp8rL, a phone's link preview hints what the label is before it's tapped.",
               },
               {
                 opt: "opaque",
                 title: "Opaque",
-                desc: "Just the random slug, like /qr/Xk7Bq2mNp8rL — the link reveals nothing about what it points to.",
+                desc: "Just the random slug, like /qr/Xk7Bq2mNp8rL, the link reveals nothing about what it points to.",
               },
             ] as const
           ).map(({ opt, title, desc }) => (

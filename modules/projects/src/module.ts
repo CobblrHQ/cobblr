@@ -14,7 +14,7 @@ export default defineModule({
   version: "0.2.0",
   displayName: "Projects",
   description:
-    "Projects + tasks + dependencies. Tasks can wait on other tasks or on any module's entity — the platform brokers.",
+    "Projects + tasks + dependencies. Tasks can wait on other tasks or on any module's entity, the platform brokers.",
   icon: "layers",
   band: "stock",
   instanceability: "multi",

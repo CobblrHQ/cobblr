@@ -2,11 +2,12 @@
 // 503 HTTP status when any probe is error.
 
 import { useQuery } from "@tanstack/react-query";
-import { HeartPulse, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2 } from "lucide-react";
 import { api } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { usePageTitle } from "@cobblr/platform-web";
 import { QueryError } from "../components/QueryError";
+import { ConfigHeaderActions } from "../components/ConfigPageHeader";
 
 export function HealthPage() {
   usePageTitle("Health");
@@ -27,11 +28,7 @@ export function HealthPage() {
       {snap.isError && (
         <QueryError what="health probes" onRetry={() => snap.refetch()} />
       )}
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <HeartPulse size={20} className="text-accent" />
-        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
-          Healthcheck
-        </h1>
+      <ConfigHeaderActions>
         <span
           className={`text-sm uppercase tracking-wide font-medium ${
             overall === "ok"
@@ -43,7 +40,7 @@ export function HealthPage() {
         >
           {overall}
         </span>
-      </div>
+      </ConfigHeaderActions>
 
       <p className="text-sm text-muted dark:text-slate-400">
         Each module can register a probe via{" "}

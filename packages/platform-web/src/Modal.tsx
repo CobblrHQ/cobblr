@@ -39,6 +39,13 @@ interface Props {
    *  fix: Configuration links must all land on pages, never pop overlays.
    *  onClose still powers the ✕ (usually navigate-back in page mode). */
   inline?: boolean;
+  /** With `inline`, drop the panel chrome too — no card border, no title bar, no
+   *  ✕ — and render just the body. `inline` alone still draws the dialog's own
+   *  header, so a settings ROUTE built this way read as a dialog stranded on a
+   *  page while every neighbouring settings page had a plain heading. A route
+   *  that owns its own heading passes this; a dialog opened over a page does
+   *  not. Ignored unless `inline`. */
+  chromeless?: boolean;
   /** Whether a backdrop click can close the modal. **Default true**, but a click
    *  is ignored while the modal is "dirty" (you've typed into / changed a field),
    *  so unsaved input is never lost to a stray click. Set **false** to forbid
@@ -73,7 +80,7 @@ const SIZE: Record<NonNullable<Props["size"]>, string> = {
   content: "max-w-4xl",
 };
 
-export function Modal({ open, onClose, title, subtitle, children, size = "md", destructive, dismissOnBackdrop = true, inline = false, fillHeight = false, cobb }: Props) {
+export function Modal({ open, onClose, title, subtitle, children, size = "md", destructive, dismissOnBackdrop = true, inline = false, chromeless = false, fillHeight = false, cobb }: Props) {
   // "Dirty" = the user has entered/changed something inside this modal. Tracked
   // by listening (capture) for input/change events bubbling from any descendant
   // field — so we never have to know in advance whether a modal is a form. Only
@@ -205,6 +212,8 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
   );
 
   if (inline) {
+    // AS A PAGE: body only, so the host route's own heading is the heading.
+    if (chromeless) return <div className="w-full">{children}</div>;
     // Same panel, in document flow: no overlay, no height cap (the page
     // scrolls), full width of its container.
     return (

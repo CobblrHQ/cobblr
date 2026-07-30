@@ -22,6 +22,7 @@ import { meta } from "../db/meta.js";
 import { env } from "../env.js";
 import { encryptCredentials, decryptCredentials } from "./integrations.js";
 import { buildBackupZip } from "../routes/backup.js";
+import { isRedundantScheduledRun } from "./backup-schedule.js";
 import * as queue from "./queue.js";
 
 // ── Driver seam ──────────────────────────────────────────────────────
@@ -31,6 +32,14 @@ export interface BackupPutArgs {
   bytes: Buffer;
   config: Record<string, unknown>;
   credentials: Record<string, unknown>;
+}
+/** One backup that actually exists in the destination — what the UI lists so a
+ *  user can SEE their backups, not just "last: ok". */
+export interface BackupEntry {
+  name: string;
+  size: number | null;
+  created_at: string | null;
+  ref: string;
 }
 export interface BackupDestinationDriver {
   id: string;
@@ -45,6 +54,9 @@ export interface BackupDestinationDriver {
   put(args: BackupPutArgs): Promise<{ ref: string }>;
   /** Optional: delete all but the newest `retention` backups. */
   prune?(args: { config: Record<string, unknown>; credentials: Record<string, unknown>; orgId: string; retention: number }): Promise<void>;
+  /** Optional: the backups that currently exist in the destination, newest
+   *  first. Powers the "your backups in <destination>" list. */
+  list?(args: { config: Record<string, unknown>; credentials: Record<string, unknown>; orgId: string }): Promise<BackupEntry[]>;
 }
 
 const registry = new Map<string, BackupDestinationDriver>();
@@ -103,6 +115,22 @@ registerBackupDriver({
     for (const old of withTime.slice(Math.max(1, retention))) {
       await unlink(join(dir, old.n)).catch(() => {});
     }
+  },
+  async list({ orgId, config }) {
+    const dir = fsDirFor(orgId, config);
+    const names = await readdir(dir).catch(() => [] as string[]);
+    const out: BackupEntry[] = [];
+    for (const name of names.filter((n) => n.endsWith(".zip"))) {
+      const st = await stat(join(dir, name)).catch(() => null);
+      out.push({
+        name,
+        size: st?.size ?? null,
+        created_at: st ? new Date(st.mtimeMs).toISOString() : null,
+        ref: join(dir, name),
+      });
+    }
+    out.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+    return out;
   },
 });
 
@@ -173,6 +201,56 @@ registerBackupDriver({
     if (!res.ok) throw new Error(`Drive upload failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
     const j = (await res.json()) as { id?: string };
     return { ref: j.id ?? "uploaded" };
+  },
+  async list({ config, credentials }) {
+    const refresh = typeof credentials.refresh_token === "string" ? credentials.refresh_token : "";
+    if (!refresh) return [];
+    const accessToken = await googleAccessToken(refresh);
+    const folder = typeof config.folder_id === "string" && config.folder_id ? config.folder_id : null;
+    // Scope to the backup folder when one is set; otherwise the files sit in My
+    // Drive root, so filter by the backup name shape (backup-<slug>-<stamp>.zip)
+    // to avoid listing the user's whole Drive.
+    const q = [folder ? `'${folder}' in parents` : null, "trashed = false"].filter(Boolean).join(" and ");
+    const url =
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}` +
+      `&orderBy=createdTime desc&pageSize=100&fields=${encodeURIComponent("files(id,name,size,createdTime)")}`;
+    const res = await fetch(url, { headers: { authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(30000) });
+    if (!res.ok) throw new Error(`Drive list failed (${res.status})`);
+    const j = (await res.json()) as {
+      files?: Array<{ id?: string; name?: string; size?: string; createdTime?: string }>;
+    };
+    return (j.files ?? [])
+      .filter((f) => /^backup-.*\.zip$/.test(f.name ?? ""))
+      .map((f) => ({
+        name: f.name ?? "(unnamed)",
+        size: f.size ? Number(f.size) : null,
+        created_at: f.createdTime ?? null,
+        ref: f.id ?? "",
+      }));
+  },
+  async prune({ config, credentials, retention }) {
+    // Drive had NO prune, so backups piled up forever (the author saw 100+). Keep the
+    // newest `retention`, delete the rest. Scoped to backup-*.zip so we never
+    // touch anything else in the folder / My Drive.
+    const refresh = typeof credentials.refresh_token === "string" ? credentials.refresh_token : "";
+    if (!refresh) return;
+    const accessToken = await googleAccessToken(refresh);
+    const folder = typeof config.folder_id === "string" && config.folder_id ? config.folder_id : null;
+    const q = [folder ? `'${folder}' in parents` : null, "trashed = false"].filter(Boolean).join(" and ");
+    const url =
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}` +
+      `&orderBy=createdTime desc&pageSize=1000&fields=${encodeURIComponent("files(id,name,createdTime)")}`;
+    const res = await fetch(url, { headers: { authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(30000) });
+    if (!res.ok) return;
+    const files = ((await res.json()) as { files?: Array<{ id?: string; name?: string }> }).files ?? [];
+    const backups = files.filter((f) => /^backup-.*\.zip$/.test(f.name ?? "") && f.id);
+    for (const old of backups.slice(Math.max(1, retention))) {
+      await fetch(`https://www.googleapis.com/drive/v3/files/${old.id}`, {
+        method: "DELETE",
+        headers: { authorization: `Bearer ${accessToken}` },
+        signal: AbortSignal.timeout(30000),
+      }).catch(() => {});
+    }
   },
 });
 
@@ -257,7 +335,48 @@ registerBackupDriver({
       await aws.fetch(`${base}/${encodeURI(old.key)}`, { method: "DELETE" }).catch(() => {});
     }
   },
+  async list({ config, credentials }) {
+    const creds = {
+      access_key_id: credentials.access_key_id ?? config.access_key_id,
+      secret_access_key: credentials.secret_access_key ?? config.secret_access_key,
+    };
+    const region = String(config.region || "us-east-1");
+    const bucket = String(config.bucket || "");
+    const prefix = s3Prefix(config);
+    if (!bucket) return [];
+    const aws = s3Client(creds, region);
+    const base = `${s3Endpoint(config, region)}/${bucket}`;
+    const listRes = await aws.fetch(`${base}?list-type=2&prefix=${encodeURIComponent(prefix)}`);
+    if (!listRes.ok) throw new Error(`S3 list failed (${listRes.status})`);
+    const xml = await listRes.text();
+    const out: BackupEntry[] = [];
+    for (const m of xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)) {
+      const b = m[1]!;
+      const key = /<Key>([\s\S]*?)<\/Key>/.exec(b)?.[1];
+      const size = /<Size>([\s\S]*?)<\/Size>/.exec(b)?.[1];
+      const lm = /<LastModified>([\s\S]*?)<\/LastModified>/.exec(b)?.[1];
+      if (key && key.endsWith(".zip"))
+        out.push({ name: key.split("/").pop() ?? key, size: size ? Number(size) : null, created_at: lm ?? null, ref: `${bucket}/${key}` });
+    }
+    out.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+    return out;
+  },
 });
+
+// ── list the backups that actually exist in a destination ────────────
+export async function listDestinationBackups(destId: string, orgId: string): Promise<BackupEntry[]> {
+  const dest = await meta
+    .selectFrom("backup_destinations")
+    .selectAll()
+    .where("id", "=", destId)
+    .where("org_id", "=", orgId)
+    .executeTakeFirst();
+  if (!dest) throw new Error("destination not found");
+  const driver = getBackupDriver(dest.driver);
+  if (!driver?.list) return [];
+  const credentials = dest.credentials_enc ? await decryptCredentials(dest.org_id, dest.credentials_enc) : {};
+  return driver.list({ orgId: dest.org_id, config: dest.config, credentials });
+}
 
 // ── schedule helpers ─────────────────────────────────────────────────
 export function nextRunFrom(schedule: string, from: Date): Date | null {
@@ -304,12 +423,19 @@ export function registerBackupCron(): void {
     if (!destId) return;
     const dest = await meta
       .selectFrom("backup_destinations")
-      .select(["id", "enabled", "schedule"])
+      .select(["id", "enabled", "schedule", "last_run_at"])
       .where("id", "=", destId)
       .executeTakeFirst();
     if (!dest || !dest.enabled || dest.schedule === "off") return; // descheduled
     const now = new Date();
-    await runDestination(destId, now);
+    // De-dupe redundant ticks. `seedBackupSchedules` re-enqueues a tick on every
+    // boot when next_run_at is past, and a blue-green deploy briefly runs two api
+    // containers that both process the queue — so a deploy used to fire several
+    // backups minutes apart (the author saw 100). If a backup already ran within most of
+    // this schedule's interval, this tick is a duplicate: skip the run, but still
+    // reschedule the next so the cadence continues.
+    const ranRecently = isRedundantScheduledRun(dest.schedule, dest.last_run_at ? new Date(dest.last_run_at) : null, now);
+    if (!ranRecently) await runDestination(destId, now);
     const next = nextRunFrom(dest.schedule, now);
     if (next) {
       await meta.updateTable("backup_destinations").set({ next_run_at: next }).where("id", "=", destId).execute();
@@ -332,11 +458,6 @@ export async function seedBackupSchedules(): Promise<void> {
     const runAt = d.next_run_at && d.next_run_at > now ? d.next_run_at : now;
     await queue.enqueue({ orgId: d.org_id, queue: QUEUE, payload: { destinationId: d.id }, runAt }).catch(() => {});
   }
-}
-
-/** Enqueue an immediate run (used by "Back up now" when async is preferred). */
-export async function enqueueRunNow(orgId: string, destId: string): Promise<void> {
-  await queue.enqueue({ orgId, queue: QUEUE, payload: { destinationId: destId }, runAt: new Date() });
 }
 
 export async function encryptDestCredentials(orgId: string, creds: Record<string, unknown>): Promise<string> {

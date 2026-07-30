@@ -6,9 +6,10 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Check, Clock, Link2, Plus, X } from "lucide-react";
+import { ArrowRight, Check, Clock, Plus, X } from "lucide-react";
 import { ApiError, api, type WorkspaceLinkItem } from "../lib/api";
 import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { ConfigHeaderActions } from "../components/ConfigPageHeader";
 
 export function LinksPage() {
   usePageTitle("Workspace links");
@@ -47,22 +48,17 @@ export function LinksPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <Link2 size={20} className="text-accent" />
-        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
-          Workspace links
-        </h1>
+      <ConfigHeaderActions>
         <span className="text-sm text-muted dark:text-slate-400">
           {active.length} active · {pending.length} pending
         </span>
-        <div className="flex-1" />
         <button
           onClick={() => setCreateOpen(true)}
           className="inline-flex items-center gap-2 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition"
         >
           <Plus size={14} /> New link
         </button>
-      </div>
+      </ConfigHeaderActions>
 
       <p className="text-sm text-muted dark:text-slate-400">
         A link grants read access from a <em>source</em> workspace to a{" "}

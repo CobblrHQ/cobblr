@@ -22,7 +22,7 @@ export function QrPage() {
       : "border-transparent text-muted hover:text-content dark:hover:text-mortar-100");
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-6 space-y-4">
+    <div className="space-y-4">
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
         <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title flex items-center gap-2">
           <QrCode size={22} /> QR codes
@@ -38,7 +38,7 @@ export function QrPage() {
         </button>
       </div>
 
-      {tab === "tokens" ? <QrTokensPage embedded /> : <ScanRulesPage embedded />}
+      {tab === "tokens" ? <QrTokensPage embedded /> : <ScanRulesPage />}
     </div>
   );
 }

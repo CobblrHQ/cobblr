@@ -11,7 +11,6 @@ import { announceReturningMessage } from "../platform/announce.js";
 import { reporterCardFields } from "../platform/feedback-card.js";
 import { pokeTriage } from "../platform/triage-trigger.js";
 import { verifyReplyToken } from "../platform/feedback-reply.js";
-import { verifyPrinterDiagnosticToken } from "../platform/printer-diagnostic-token.js";
 import { inboundSecretOk } from "../platform/inbound-secret.js";
 
 export const feedbackRouter = Router();
@@ -91,60 +90,6 @@ feedbackInboundRouter.post("/feedback/append-email", async (req, res, next) => {
     }
     const out = await appendFeedbackReply(parsed.data);
     res.status(out.status).json(out.body);
-  } catch (err) {
-    next(err);
-  }
-});
-
-// POST /feedback/printer-diagnostic — a standalone printer self-test page
-// (debug.cobblr.xyz/<hash>) posts its results here. No user session and no shared
-// secret: the per-ticket hash IS the auth (append-only, scoped to one ticket), so
-// it is safe to ship to the browser. Lands as a `followups` entry with a
-// human-readable summary the text-only triage daemon can read, plus the raw
-// structured report for a human. (Storing the label PNG server-side is staged:
-// it needs the ticket's org resolved for platform().files.write.)
-const PrinterDiagnostic = z.object({
-  token: z.string().min(1).max(200),
-  summary: z.string().trim().min(1).max(4000),
-  report: z.record(z.unknown()).default({}),
-});
-
-feedbackInboundRouter.post("/feedback/printer-diagnostic", async (req, res, next) => {
-  try {
-    const parsed = PrinterDiagnostic.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad diagnostic payload." } });
-      return;
-    }
-    const feedbackId = verifyPrinterDiagnosticToken(parsed.data.token);
-    if (!feedbackId) {
-      res.status(401).json({ error: { code: "bad_token", message: "Invalid or expired diagnostic link." } });
-      return;
-    }
-    const fb = await meta.selectFrom("feedback").select(["id", "status"]).where("id", "=", feedbackId).executeTakeFirst();
-    if (!fb) {
-      res.status(404).json({ error: { code: "not_found", message: "Ticket not found." } });
-      return;
-    }
-    const entry = {
-      at: new Date().toISOString(),
-      from: "printer self-test",
-      role: "system" as const,
-      text: parsed.data.summary,
-      report: parsed.data.report,
-    };
-    const reopened = fb.status === "resolved" || fb.status === "wontfix";
-    await meta
-      .updateTable("feedback")
-      .set({
-        followups: sql`coalesce(followups, '[]'::jsonb) || ${JSON.stringify([entry])}::jsonb`,
-        ...(reopened ? { status: "in_progress" as never } : {}),
-        triaged_at: null,
-      })
-      .where("id", "=", fb.id)
-      .execute();
-    pokeTriage(fb.id);
-    res.status(200).json({ ok: true, feedback_id: fb.id, reopened });
   } catch (err) {
     next(err);
   }

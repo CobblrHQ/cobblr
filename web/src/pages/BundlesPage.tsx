@@ -14,6 +14,7 @@ import { useBundleCatalog } from "../lib/useBundleCatalog";
 import { BundleDetailModal } from "../components/BundleDetailModal";
 import { RegistryItemModal, type RegistryItem } from "../components/RegistryItemModal";
 import { Modal, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
+import { ConfigHeaderActions } from "../components/ConfigPageHeader";
 
 // Third-party source index URLs (the HACS "add a custom repository" list).
 // Instance-wide persistence is a small follow-up; for now they live in the
@@ -272,15 +273,8 @@ export function BundlesPage() {
   );
 
   return (
-    <div className="space-y-5 max-w-6xl">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
-          setups &amp; trackers
-        </h1>
-        <span className="page-subtitle">
-          publishable presets that wire modules together
-        </span>
-        <div className="flex-1" />
+    <div className="space-y-5">
+      <ConfigHeaderActions>
         <Link
           to="/bundles/compose"
           className="text-[10px] font-mono uppercase tracking-widest text-muted hover:text-accent transition flex items-center gap-1"
@@ -296,7 +290,7 @@ export function BundlesPage() {
         >
           <Download size={12} /> publish mine
         </button>
-      </div>
+      </ConfigHeaderActions>
       {exportOpen && (
         <ExportBundleModal slug={slug} onClose={() => setExportOpen(false)} />
       )}

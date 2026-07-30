@@ -23,6 +23,7 @@ import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
 import { platform, planDecodeFill, traitAxisValue, type DecodeFillTarget } from "@cobblr/platform-contract";
+import { categoryDisplay } from "@cobblr/platform-contract/category-reconcile";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { resolveNativeIdentity } from "../native-identity.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
@@ -35,16 +36,17 @@ import {
   observeScanPhoto,
   refreshCatalogImageByName,
 } from "../services/enrich-photo.js";
-import { mergeMeta } from "../services/metadata.js";
+import { mergeMeta, standingHint, standingHints } from "../services/metadata.js";
 import { pickPrimaryId, unionCandidateFields, traitsHaveUnique, combinedQuantity, type CombineItem, type CombineCandidate } from "../services/combine-merge.js";
 import { searchImages, rankImageOptions, selectTopCandidates, deriveImageQuery } from "../services/ddg-images.js";
-import { rankPhotoWithAi } from "../services/rank-photo.js";
+import { rankPhotoWithAi, isRankFailure } from "../services/rank-photo.js";
 import {
   candidateFieldValue,
   deriveRankContext,
   IMAGE_BUDGET,
   readPhotoRankEnabled,
   writePhotoRankEnabled,
+  colouredTitleFor,
 } from "../services/auto-rank.js";
 import {
   assembleScanMenu,
@@ -390,7 +392,7 @@ inboxRouter.post(
     // Photo-only scans (no barcode) are identified by the autonomous
     // photo-sort WIRE (core-scan.scan.received → core-scan:identify-photo,
     // seeded on enable) — fired detached via the emit above, so intake
-    // stays instant and the user can edit / disable it on /bindings.
+    // stays instant and the user can edit / disable it on /wires.
 
     // Re-acquire the tenant DB for the read-back. A slow inline enrichment
     // (go-upc's website fetch, the web-search/vision floor) leaves the pool
@@ -1117,7 +1119,7 @@ inboxRouter.get(
       const row = await cq.executeTakeFirst();
       total = Number(row?.n ?? 0);
     }
-    res.json({ items, batches, next_cursor, ...(total !== undefined ? { total } : {}) });
+    res.json({ items: items.map(withTitle), batches, next_cursor, ...(total !== undefined ? { total } : {}) });
   }),
 );
 
@@ -1139,7 +1141,7 @@ inboxRouter.get(
       res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
       return;
     }
-    res.json(row);
+    res.json(withTitle(row));
   }),
 );
 
@@ -1266,7 +1268,7 @@ inboxRouter.patch(
         ).catch((err) => console.error("[core-scan] catalog refresh after rename threw:", (err as Error).message));
       }
     }
-    res.json(row);
+    res.json(withTitle(row));
   }),
 );
 
@@ -1887,7 +1889,7 @@ inboxRouter.post(
       }
     }
 
-    res.json({ item: resolvedRow, created });
+    res.json({ item: withTitle(resolvedRow), created });
   }),
 );
 
@@ -1935,7 +1937,7 @@ inboxRouter.post(
       res.status(400).json({
         error: {
           code: "no_active_bin",
-          message: "This scan wasn't filed into a bin — scan the bin's QR first, then the product barcode.",
+          message: "This scan wasn't filed into a bin. Scan the bin's QR first, then the product barcode.",
         },
       });
       return;
@@ -2045,7 +2047,7 @@ inboxRouter.post(
       entityId: locId,
     });
 
-    res.json({ item: resolvedRow, location_id: locId });
+    res.json({ item: withTitle(resolvedRow), location_id: locId });
   }),
 );
 
@@ -2076,7 +2078,7 @@ inboxRouter.post(
       orgId: ctx.org.id,
       itemId: id,
     });
-    res.json(row);
+    res.json(withTitle(row));
   }),
 );
 
@@ -2111,7 +2113,7 @@ inboxRouter.post(
         error: {
           code: "was_combined",
           message:
-            "This item was combined into another scan — its quantity already lives there. Split the combined item instead of restoring this one.",
+            "This item was combined into another scan: its quantity already lives there. Split the combined item instead of restoring this one.",
           combined_into: combinedInto,
         },
       });
@@ -2135,13 +2137,71 @@ inboxRouter.post(
       res.status(404).json({ error: { code: "not_found", message: "discarded inbox item not found" } });
       return;
     }
-    res.json(row);
+    res.json(withTitle(row));
   }),
 );
 
 /** Append a triage-action entry to an item's per-item history
  *  (suggested_metadata.history, last 8) — the user-visible "what you did"
  *  timeline shown in the source panel. Best-effort; history is cosmetic. */
+
+/** A scan row as the API returns it, with the colour composed into the title.
+ *
+ *  DERIVED, not stored. NINE different passes write `suggested_name` - the
+ *  barcode paths, the photo identify, the decoder, the thin-hit enrich, the
+ *  cross-check - and the last two run DETACHED, after the response. Storing a
+ *  composed title meant whichever pass finished last silently dropped it: the
+ *  title gained the colour and then lost it "at the end of the AI run" (the author,
+ *  2026-07-30), twice, because patching write sites always misses the next one.
+ *
+ *  So the stored name stays the honest answer from whatever identified it, the
+ *  colour stays in metadata, and the two are composed on the way out. No pass
+ *  can clobber a value that is computed. */
+function withTitle<T extends {
+  suggested_name: string | null;
+  suggested_manufacturer?: string | null;
+  suggested_candidates?: unknown;
+  suggested_metadata?: unknown;
+}>(row: T): T {
+  const titled = colouredTitleFor({
+    suggested_name: row.suggested_name,
+    suggested_manufacturer: row.suggested_manufacturer ?? null,
+    suggested_candidates: row.suggested_candidates,
+    suggested_metadata: (row.suggested_metadata ?? {}) as Record<string, unknown>,
+  });
+  const base = titled ? { ...row, suggested_name: titled } : row;
+  return withDisplayCategory(base);
+}
+
+/**
+ * The routing note quotes the category the item was filed as - and that quote
+ * is STORED, so it kept saying “apparel” under a chip that read “Clothing”
+ * (the author, 2026-07-30). Same class as the title: a value other passes rewrite must
+ * not be frozen into prose. Composing it on the way out heals every row already
+ * in the inbox, with no re-run and no migration.
+ *
+ * Deliberately narrow - it rewrites the quoted label inside the one generated
+ * sentence, and leaves a note a person typed alone.
+ */
+function withDisplayCategory<T extends { suggested_candidates?: unknown }>(row: T): T {
+  const cands = row.suggested_candidates;
+  if (!Array.isArray(cands) || cands.length === 0) return row;
+  let touched = false;
+  const next = cands.map((c) => {
+    if (!c || typeof c !== "object") return c;
+    const cand = c as { notes?: unknown };
+    if (typeof cand.notes !== "string") return c;
+    const fixed = cand.notes.replace(
+      /(No specific table matched, so this went to .*? as )“([^”]+)”/,
+      (_m, lead: string, label: string) => `${lead}“${categoryDisplay(label)}”`,
+    );
+    if (fixed === cand.notes) return c;
+    touched = true;
+    return { ...cand, notes: fixed };
+  });
+  return touched ? { ...row, suggested_candidates: next } : row;
+}
+
 async function appendScanHistory(
   db: ReturnType<typeof tenantDb>,
   id: string,
@@ -2230,9 +2290,25 @@ inboxRouter.post(
       res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
       return;
     }
+    const rerun = RerunBody.safeParse(req.body ?? {}).data;
+    // THE HINT IS A STANDING FACT ABOUT THE ITEM, not a parameter of one press.
+    // A typed hint wins; otherwise the item's existing one keeps applying (and is
+    // recovered from history if it predates user_hint becoming durable). Without
+    // this a re-run silently dropped the correction and re-answered with the very
+    // thing the user had already corrected (the author, 2026-07-30: "the hint is in the
+    // history, I should not have to provide it again").
+    const typedHint = rerun?.hint?.trim() || null;
+    const priorHints = standingHints(row.suggested_metadata as Record<string, unknown>);
+    const effectiveHint = typedHint ?? (priorHints.length ? priorHints[priorHints.length - 1]! : null);
+    // The whole sequence the identify is shown: everything they have told us,
+    // with what they typed THIS time appended as the most recent. Later
+    // corrections override earlier ones on conflict; unrelated ones all apply.
+    const effectiveHints = typedHint
+      ? [...priorHints.filter((h) => h.toLowerCase() !== typedHint.toLowerCase()), typedHint]
+      : priorHints;
+
     // Record the triage action in the item's history (covers the photo branch's
     // early return too) so the source panel can show "you asked for more detail".
-    const rerun = RerunBody.safeParse(req.body ?? {}).data;
     await appendScanHistory(db, id, {
       // Say WHICH kind of run this was — "Re-ran the lookup" hid whether tokens
       // were spent, a hint was folded in, or it was a free replay.
@@ -2242,10 +2318,12 @@ inboxRouter.post(
           ? "enrich"
           : rerun?.no_ai
             ? "replay"
-            : rerun?.hint?.trim()
+            : effectiveHint
               ? "rerun-hint"
               : "rerun",
-      note: rerun?.hint,
+      // The hint the run actually USED — so a re-run that carried a standing hint
+      // says so, instead of reading as a plain re-run that ignored it.
+      note: effectiveHint,
     });
     // The user photographed the product to re-identify it (phone "Not it —
     // photograph it"). Attach the new photo and force the vision path below, even
@@ -2281,7 +2359,7 @@ inboxRouter.post(
           res.status(400).json({ error: { code: "no_input", message: "item has no barcode, photo, or name to look up" } });
           return;
         }
-        const nameQuery = [row.suggested_name, rerun?.hint].filter(Boolean).join(" ").trim();
+        const nameQuery = [row.suggested_name, effectiveHint].filter(Boolean).join(" ").trim();
         const nameBrand = row.suggested_manufacturer;
         await db
           .updateTable("core_scan_inbox_items")
@@ -2290,7 +2368,7 @@ inboxRouter.post(
               || ${JSON.stringify({
                 pipeline_started_at: new Date().toISOString(),
                 pipeline_kind: "rerun",
-                ...(rerun?.hint ? { user_hint: rerun.hint } : {}),
+                ...(effectiveHint ? { user_hint: effectiveHint } : {}),
               })}::jsonb` as never,
             updated_at: new Date(),
           })
@@ -2326,12 +2404,12 @@ inboxRouter.post(
             /* non-fatal bookkeeping */
           }
         })().catch((err) => console.error("[core-scan] name rerun work failed:", (err as Error)?.message ?? err));
-        res.json(row);
+        res.json(withTitle(row));
         return;
       }
       const imageFileId = row.image_file_id;
       const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
-      const photoHint = rerun?.hint;
+      const photoHint = effectiveHint ?? undefined;
       // Mark the pipeline RUNNING before we return, and clear the terminal
       // markers the last run left behind. Without this the card kept the previous
       // run's `matched_at`/`finalized_at` (and its candidate list), so the UI's
@@ -2411,6 +2489,7 @@ inboxRouter.post(
           userId: uid,
           force: true,
           hint: photoHint,
+          hints: effectiveHints,
           replay,
         });
         // A replay with no cached reply keeps the IDENTITY as-is (nothing to
@@ -2450,7 +2529,7 @@ inboxRouter.post(
       })().catch((err) => {
         console.error("[core-scan] photo rerun-ai work failed:", (err as Error)?.message ?? err);
       });
-      res.json(row);
+      res.json(withTitle(row));
       return;
     }
 
@@ -2492,7 +2571,8 @@ inboxRouter.post(
       // "needs detail" → keep identity, fill it in. Either way fold in the note.
       wrong: rerun?.wrong,
       enrich: rerun?.enrich,
-      hint: rerun?.hint,
+      hint: effectiveHint ?? undefined,
+      hints: effectiveHints,
     });
 
     // Stamp the user's hint AFTER enrichment, so the matchmaker sees it as
@@ -2502,7 +2582,7 @@ inboxRouter.post(
     // A merge, not a read-and-rewrite: the enrich above spawns DETACHED work
     // (crossCheckScanPhoto, refreshCatalogImageByName, enrichThinHit), any of
     // which can land between a SELECT here and its UPDATE.
-    const hint = rerun?.hint;
+    const hint = effectiveHint ?? undefined;
     if (hint) {
       await db
         .updateTable("core_scan_inbox_items")
@@ -2533,7 +2613,7 @@ inboxRouter.post(
       .selectAll()
       .where("id", "=", id)
       .executeTakeFirstOrThrow();
-    res.json(fresh);
+    res.json(withTitle(fresh));
   }),
 );
 
@@ -2550,39 +2630,39 @@ inboxRouter.get(
     const db = tenantDb(req);
     const row = await db
       .selectFrom("core_scan_inbox_items")
-      .select(["suggested_name", "suggested_manufacturer", "barcode_text", "suggested_candidates"])
+      .select([
+        "suggested_name",
+        "suggested_manufacturer",
+        "barcode_text",
+        "suggested_candidates",
+        "suggested_metadata",
+        "image_file_id",
+      ])
       .where("id", "=", id ?? "")
       .executeTakeFirst();
-    // ONE derivation, shared with every other entity surface (deriveImageQuery):
-    // a user term wins outright, a junk name searches nothing, and the item's
-    // own fields sharpen it — an author + media word ("… Laura Ingalls Wilder
-    // book"), a resolved vehicle colour. Flattening the candidate field bags is
-    // the only scan-specific part; the phrase itself is platform-standard, so a
-    // record page and the inbox can never search differently for the same thing.
-    const cands = (row?.suggested_candidates as Array<{ fields?: Record<string, unknown> }> | null) ?? [];
-    const color = candidateFieldValue(row?.suggested_candidates, "color");
-    const candidateFields: Record<string, unknown> = Object.assign(
-      {},
-      // reverse: earlier (higher-confidence) candidates win on key collisions
-      ...cands.map((c) => c.fields ?? {}).reverse(),
-      ...(color ? [{ color }] : []),
-    );
-    const q = deriveImageQuery({
-      name: row?.suggested_name ?? null,
-      brand: row?.suggested_manufacturer ?? null,
-      fields: candidateFields,
-      override: typeof req.query.q === "string" ? req.query.q : null,
+    if (!row) {
+      res.json({ items: [] });
+      return;
+    }
+    // THE derivation — the same one the ✨ Pick best button and the always-on
+    // wire use (deriveRankContext). This endpoint used to carry its own copy,
+    // which is how the strip and the ranker could disagree about the very same
+    // row. The colour it resolves now includes the user's research hint, so
+    // hinting "color: blue" actually reaches the search phrase.
+    const rank = await deriveRankContext(tenantContext(req).org.id, row, {
+      queryOverride: typeof req.query.q === "string" ? req.query.q : null,
+      withReference: false, // the strip never sends images to a model
     });
-    if (!q) {
+    if (!rank.query) {
       res.json({ items: [] });
       return;
     }
     // Rank a LARGER pool by catalog quality (retail/brand domain, plausible single-object shape),
     // then return the best — so the clean studio shot is at the front instead of
     // the recipe-blog / social photo DDG happened to put first.
-    const pool = await searchImages(q, 24).catch(() => []);
-    const items = rankImageOptions(pool, row?.suggested_manufacturer, q, color).slice(0, 12);
-    res.json({ items });
+    const pool = await searchImages(rank.query, 24).catch(() => []);
+    const items = rankImageOptions(pool, rank.brand, rank.query, rank.color).slice(0, 12);
+    res.json({ items, query: rank.query, color: rank.color });
   }),
 );
 
@@ -2718,11 +2798,18 @@ inboxRouter.post(
       referenceMediaType: rank.referenceMediaType,
       candidates,
     });
-    if (!result) {
-      res.json({
-        chosen_url: null,
-        reason: "AI couldn't pick a photo (no vision provider is configured, or the candidates couldn't be read).",
-      });
+    // Each failure means something DIFFERENT the user can act on, so say which.
+    // The old single catch-all ("no vision provider is configured, or the
+    // candidates couldn't be read") told someone whose provider was fine to go
+    // check their provider (the author, 2026-07-30).
+    if (isRankFailure(result)) {
+      const reason =
+        result.error === "no-provider"
+          ? "No AI provider in this workspace can rank photos yet. Add one under Settings, AI (or connect your own from your profile)."
+          : result.error === "unreadable"
+            ? "None of the photo options could be downloaded to show the AI. Try a different search term."
+            : "The AI provider couldn't be reached or didn't answer usefully. Try again in a moment.";
+      res.json({ chosen_url: null, reason, error: result.error });
       return;
     }
     res.json({
@@ -2816,7 +2903,7 @@ inboxRouter.post(
         })
         .where("id", "=", row.id)
         .execute();
-      res.json(await fresh());
+      res.json(withTitle(await fresh()));
       return;
     }
 
@@ -2836,7 +2923,7 @@ inboxRouter.post(
         })
         .where("id", "=", row.id)
         .execute();
-      res.json(await fresh());
+      res.json(withTitle(await fresh()));
       return;
     }
 
@@ -2853,7 +2940,7 @@ inboxRouter.post(
         })
         .where("id", "=", row.id)
         .execute();
-      res.json(await fresh());
+      res.json(withTitle(await fresh()));
       return;
     }
 
@@ -2899,7 +2986,7 @@ inboxRouter.post(
         userId: sessionUser(req).id,
       });
     }
-    res.json(await fresh());
+    res.json(withTitle(await fresh()));
   }),
 );
 
@@ -3070,7 +3157,7 @@ inboxRouter.post(
         error: {
           code: "was_split",
           message:
-            "This scan was split into separate items — sending it back would duplicate them. Discard the split items first if you want the original back.",
+            "This scan was split into separate items, sending it back would duplicate them. Discard the split items first if you want the original back.",
         },
       });
       return;
@@ -3392,7 +3479,7 @@ inboxRouter.post(
       const loc = parsed.data.location_id ?? row.target_location_id;
       if (!loc) {
         res.status(400).json({
-          error: { code: "no_location", message: "no target location — set an active bin or pass location_id" },
+          error: { code: "no_location", message: "no target location. Set an active bin or pass location_id" },
         });
         return;
       }
@@ -3556,7 +3643,7 @@ inboxRouter.post(
     const entity = (await getRes.json()) as Record<string, unknown>;
     if (entity.location_id !== req.params.locationId) {
       res.status(409).json({
-        error: { code: "moved", message: "This item no longer lives in that bin — rescan the label." },
+        error: { code: "moved", message: "This item no longer lives in that bin, rescan the label." },
       });
       return;
     }
@@ -3644,7 +3731,7 @@ inboxRouter.post(
       .where("id", "=", id ?? "")
       .returningAll()
       .executeTakeFirstOrThrow();
-    res.json(updated);
+    res.json(withTitle(updated));
   }),
 );
 
@@ -3687,7 +3774,7 @@ inboxRouter.post(
       .where("id", "=", id ?? "")
       .returningAll()
       .executeTakeFirstOrThrow();
-    res.json(updated);
+    res.json(withTitle(updated));
   }),
 );
 
@@ -3729,7 +3816,7 @@ inboxRouter.post(
       .where("id", "=", id ?? "")
       .returningAll()
       .executeTakeFirstOrThrow();
-    res.json(updated);
+    res.json(withTitle(updated));
   }),
 );
 
@@ -3759,7 +3846,7 @@ inboxRouter.delete(
       .where("id", "=", id ?? "")
       .returningAll()
       .executeTakeFirstOrThrow();
-    res.json(updated);
+    res.json(withTitle(updated));
   }),
 );
 
@@ -3821,7 +3908,7 @@ inboxRouter.post(
       res.status(409).json({
         error: {
           code: "nothing_to_split",
-          message: "The AI sees one item in this photo (or couldn't segment it) — nothing to split.",
+          message: "The AI sees one item in this photo (or couldn't segment it): nothing to split.",
         },
       });
       return;

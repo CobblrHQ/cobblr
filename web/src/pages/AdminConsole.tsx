@@ -38,6 +38,7 @@ import {
 import { ADMIN_SECTIONS, isAdminSection, type AdminSectionId } from "../lib/adminSections";
 import { TokenManager } from "../components/TokenManager";
 import { ScanResolversTab } from "../components/ScanResolversTab";
+import { PayloadView, usageLine } from "../components/PayloadView";
 
 // The console content — one routed section at a time. The shell (AdminLayout)
 // owns the operator chrome + the section nav; this just dispatches /admin/:section
@@ -1488,6 +1489,7 @@ function AiActivityDetailModal({ item, onClose }: { item: SuperAdminAiActivityIt
     queryFn: () => api.superAdminAiActivityDetail(item.org_id, item.id),
   });
   const d = q.data;
+  const usage = usageLine(item);
   return (
     <Modal open onClose={onClose} title={`AI call · ${item.capability}`} size="lg">
       <div className="space-y-3 text-sm">
@@ -1496,21 +1498,17 @@ function AiActivityDetailModal({ item, onClose }: { item: SuperAdminAiActivityIt
           <div><span className="text-faint">User:</span> {item.user_email ?? "system"}</div>
           <div><span className="text-faint">Model:</span> {item.model ?? "—"} · {item.provider_id}</div>
           <div><span className="text-faint">When:</span> {new Date(item.invoked_at).toLocaleString()}</div>
-          <div><span className="text-faint">Tokens:</span> {item.input_tokens ?? 0} in / {item.output_tokens ?? 0} out</div>
-          <div><span className="text-faint">Cost:</span> {item.cost_cents != null ? `$${(item.cost_cents / 100).toFixed(2)}` : "—"}{item.cached ? " (cached)" : ""}</div>
+          <div title={usage.title}><span className="text-faint">Usage:</span> {usage.text}</div>
         </div>
         {!d ? (
           <div className="text-faint text-xs">Loading full text…</div>
         ) : (
           <>
-            <div>
-              <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-1">Prompt</div>
-              <pre className="text-xs whitespace-pre-wrap bg-subtle dark:bg-slate-800 border border-line dark:border-slate-700 rounded p-3 max-h-64 overflow-auto text-content dark:text-mortar-200">{d.input_full ?? "(none)"}</pre>
-            </div>
-            <div>
-              <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-1">Response</div>
-              <pre className="text-xs whitespace-pre-wrap bg-subtle dark:bg-slate-800 border border-line dark:border-slate-700 rounded p-3 max-h-64 overflow-auto text-content dark:text-mortar-200">{d.output_full ?? (d.error ? `Error: ${d.error}` : "(none)")}</pre>
-            </div>
+            <PayloadView label="Prompt" raw={d.input_full} />
+            <PayloadView
+              label="Response"
+              raw={d.output_full ?? (d.error ? `Error: ${d.error}` : null)}
+            />
           </>
         )}
       </div>

@@ -66,8 +66,3 @@ export async function emit<T>(eventName: string, payload: T): Promise<void> {
     }
   }
 }
-
-/** For tests + diagnostics. */
-export function listSubscriptionsFor(eventName: string): string[] {
-  return (subs.get(eventName) ?? []).map((s) => s.module);
-}

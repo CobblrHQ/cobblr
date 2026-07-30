@@ -184,7 +184,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
 
           {!inline && (
             <Link to="/me" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
-              <UserCog size={14} className="text-faint dark:text-slate-400" /> Your profile
+              <UserCog size={14} className="text-faint dark:text-slate-400" /> Your account
             </Link>
           )}
           <Link to="/me/feedback" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
@@ -386,7 +386,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
 
           {!inline && (
             <Link to="/me" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
-              <UserCog size={14} className="text-faint dark:text-slate-400" /> Your profile
+              <UserCog size={14} className="text-faint dark:text-slate-400" /> Your account
             </Link>
           )}
           <Link to="/me/feedback" onClick={() => setOpen(false)} className={itemCls} role="menuitem">

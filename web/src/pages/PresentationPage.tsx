@@ -7,9 +7,8 @@
 // doesn't clobber rows in this table (insertOnly on the server).
 
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Eye, EyeOff, Pencil, RotateCcw, SlidersHorizontal } from "lucide-react";
+import { Eye, EyeOff, Pencil, RotateCcw, SlidersHorizontal } from "lucide-react";
 import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import {
   ApiError,
@@ -19,6 +18,7 @@ import {
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { BASE_NATIVE_FIELDS } from "../lib/native-field-policy";
 import { HeadingsBuilder } from "../components/HeadingsBuilder";
+import { ConfigHeaderActions } from "../components/ConfigPageHeader";
 
 export function PresentationPage() {
   usePageTitle("Presentation");
@@ -125,22 +125,11 @@ export function PresentationPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <Link
-          to="/configuration"
-          className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-accent transition inline-flex items-center gap-1"
-        >
-          <ArrowLeft size={10} /> back to configuration
-        </Link>
-      </div>
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
-          Presentation
-        </h1>
+      <ConfigHeaderActions>
         <span className="text-sm text-muted dark:text-slate-400">
           {rows.length} things in your workspace
         </span>
-      </div>
+      </ConfigHeaderActions>
 
       <p className="text-sm text-content dark:text-mortar-200">
         Customise how every top-level thing in your workspace renders - 

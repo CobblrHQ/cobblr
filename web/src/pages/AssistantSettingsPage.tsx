@@ -7,13 +7,13 @@
 // get. See docs/design-decisions/no-ai-chat-training.md.
 
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
-import { ArrowLeft, Bot, Pencil, Plus, RotateCcw, Trash2 } from "lucide-react";
+import { Pencil, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { Modal, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
 import { ApiError, api, type BasicRuleRow, type BasicAnswer } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { ConfigHeaderActions } from "../components/ConfigPageHeader";
 
 export function AssistantSettingsPage() {
   usePageTitle("Assistant");
@@ -54,24 +54,16 @@ export function AssistantSettingsPage() {
   });
 
   return (
-    <div className="space-y-5 max-w-4xl mx-auto">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <Link to="/configuration" className="text-sm text-muted hover:text-accent inline-flex items-center gap-1">
-          <ArrowLeft size={14} /> back
-        </Link>
-        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100 flex items-center gap-2">
-          <Bot size={20} className="text-accent" />
-          Assistant
-        </h1>
+    <div className="space-y-5">
+      <ConfigHeaderActions>
         <span className="text-sm text-muted dark:text-slate-400">{rules.length} answers</span>
-        <div className="flex-1" />
         <button
           onClick={() => setAdding(true)}
           className="inline-flex items-center gap-2 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition"
         >
           <Plus size={14} /> New answer
         </button>
-      </div>
+      </ConfigHeaderActions>
 
       <p className="text-sm text-muted dark:text-slate-400">
         These are the answers <strong>Ask Cobb</strong> gives when your workspace has <strong>no AI connected</strong>  - 

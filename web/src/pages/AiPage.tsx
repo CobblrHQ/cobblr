@@ -1,26 +1,32 @@
-// /configuration/ai — providers, capability defaults, usage.
+// /configuration/ai — where a workspace's AI comes from, and what it costs.
 //
-// Three sections:
-//   - Providers: which AI APIs the workspace can call (OpenAI,
-//     Anthropic, Ollama). Same shape as integrations connectors.
-//   - Capability defaults: for each capability (classify-image,
-//     summarise, ...), which provider + model the workspace picks
-//     by default.
-//   - Usage: this-month spend + per-capability breakdown + recent
-//     calls.
+// Ordered by the question a visitor actually has:
+//   1. Is AI on here?             AiAvailabilityBanner — the SERVER's answer.
+//   2. What's powering it?        SharedAiSection (personal connections routed
+//                                 in) then the workspace's own keys.
+//   3. What does each job use?    Capability defaults.
+//   4. What has it cost?          This month + recent calls.
+//
+// Two bugs shaped this layout, both worth not repeating:
+//
+//   - The page answered "is AI configured" by counting WORKSPACE providers,
+//     which is only one of the ways a workspace gets AI. A workspace whose AI
+//     came from a shared personal connection was told "No AI providers
+//     configured" while Ask Cobb worked fine. The banner now reads the same
+//     canonical status every other AI surface reads, so this page cannot
+//     disagree with the rest of the app.
+//
+//   - The owner's controls for WHICH shared AI is active (and for turning
+//     sharing off) used to live on the /configuration hub and were dropped in
+//     the sections revamp, leaving a workspace with two approved AIs no way to
+//     switch. They live here now, next to everything else about AI.
 
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  ArrowLeft,
-  Pencil,
-  Play,
-  Plus,
-  Sparkles,
-  Trash2,
-} from "lucide-react";
+import { Pencil, Play, Plus, Trash2 } from "lucide-react";
 import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { capabilityLabel } from "../lib/ai-capability-labels";
 import {
   ApiError,
   api,
@@ -28,12 +34,16 @@ import {
   type AiProviderDef,
   type AiCapabilityDefault,
   type AiActivityItem,
+  type WorkspaceAiOffer,
 } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { useAiStatus } from "../components/AiStatusNotice";
+import { PayloadView, usageLine } from "../components/PayloadView";
+import { FEED_SCROLL, FEED_SCROLL_INNER } from "../lib/feed";
 
 export function AiPage() {
   usePageTitle("AI");
-  const { activeSlug } = useActiveOrg();
+  const { activeSlug, activeOrg } = useActiveOrg();
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<AiProvider | null>(null);
   const [editingCapability, setEditingCapability] = useState<string | null>(null);
@@ -78,77 +88,65 @@ export function AiPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Link
-            to="/configuration"
-            className="text-sm text-muted hover:text-content dark:hover:text-slate-300 inline-flex items-center gap-1"
-          >
-            <ArrowLeft className="h-4 w-4" /> Configuration
-          </Link>
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <Sparkles className="h-5 w-5" /> AI
-          </h1>
-        </div>
-      </header>
+      {/* The SERVER's answer to "is AI usable here", same signal every other AI
+          surface reads (AiOffNotice on scan / match / build). This page used to
+          answer that question itself by counting workspace providers, which is
+          only one of the ways a workspace gets AI — so it announced "No AI
+          providers configured" on a workspace whose AI was working, powered by
+          a shared personal connection. Reading the canonical status means this
+          page cannot contradict the rest of the app again. */}
+      <AiAvailabilityBanner />
 
-      <section>
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-lg font-semibold">Providers</h2>
-          <button
-            type="button"
-            onClick={() => setAdding(true)}
-            className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white"
-          >
-            <Plus className="h-4 w-4" /> Add provider
-          </button>
-        </div>
-        <div className="space-y-2">
-          {providersQ.data?.items.length === 0 && (
-            <div className="text-sm text-muted border border-dashed rounded p-4">
-              No AI providers configured. Add one to start using
-              capabilities like classify-image and match-to-catalog.
-            </div>
-          )}
-          {providersQ.data?.items.map((p) => (
-            <ProviderRow
-              key={p.id}
-              provider={p}
-              def={defByPid.get(p.provider_id) ?? null}
-              onEdit={() => setEditing(p)}
-            />
-          ))}
-        </div>
-      </section>
+      {/* ONE list of everything that can power AI here, whatever it came from.
+          Splitting workspace keys from shared personal connections made the
+          reader do the merge themselves, and it was the split that let the page
+          claim "no providers" while a shared connection was serving every call. */}
+      <ConnectionsSection
+        slug={activeSlug}
+        providers={providersQ.data?.items ?? []}
+        defByPid={defByPid}
+        onAdd={() => setAdding(true)}
+        onEdit={setEditing}
+      />
 
-      <section>
-        <h2 className="text-lg font-semibold mb-2">Capability defaults</h2>
-        <div className="text-xs text-muted mb-2">
-          For each capability, which provider + model the workspace
-          uses by default. Wires fire capabilities through these.
-        </div>
-        <div className="space-y-1">
+      <AutoPickPhotosSection
+        slug={activeSlug}
+        canEdit={activeOrg?.role === "owner" || activeOrg?.role === "admin"}
+      />
+
+      <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
+        <h2 className="text-sm font-semibold text-content dark:text-mortar-100">
+          What each job uses
+        </h2>
+        <p className="text-xs text-faint mt-0.5 mb-1">
+          Pin a job to a particular provider and model. Anything left on
+          automatic uses whatever AI is available.
+        </p>
+        <div className="divide-y divide-line dark:divide-slate-700">
           {capDefaultsQ.data?.all_capabilities.map((cap) => {
             const row = capDefaultsByCapability.get(cap);
             return (
-              <div
-                key={cap}
-                className="flex items-center justify-between border-b py-2 last:border-0 dark:border-slate-700"
-              >
-                <div className="font-mono text-sm">{cap}</div>
-                <div className="flex items-center gap-2 text-sm">
+              <div key={cap} className="flex items-center gap-3 py-2.5">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm text-content dark:text-mortar-100">
+                    {capabilityLabel(cap)}
+                  </div>
+                  <div className="text-[10px] font-mono text-faint truncate">{cap}</div>
+                </div>
+                <div className="flex items-center gap-2 text-sm shrink-0">
                   {row ? (
-                    <span>
+                    <span className="text-right">
                       <span className="text-muted">{row.provider_id}</span>
                       <span className="mx-1 text-faint">·</span>
-                      <span className="font-mono">{row.model}</span>
+                      <span className="font-mono text-xs">{row.model}</span>
                     </span>
                   ) : (
-                    <span className="text-faint italic">unset</span>
+                    <span className="text-xs text-faint">automatic</span>
                   )}
                   <button
                     type="button"
                     onClick={() => setEditingCapability(cap)}
+                    aria-label={`Change what ${capabilityLabel(cap)} uses`}
                     className="p-1.5 text-muted hover:text-content dark:hover:text-slate-200 rounded hover:bg-subtle dark:hover:bg-slate-800"
                   >
                     <Pencil className="h-4 w-4" />
@@ -160,42 +158,53 @@ export function AiPage() {
         </div>
       </section>
 
-      <section>
-        <h2 className="text-lg font-semibold mb-2">This month</h2>
-        {summaryQ.data?.items.length === 0 && (
-          <div className="text-sm text-muted">No AI calls yet this month.</div>
-        )}
-        <div className="space-y-1">
-          {summaryQ.data?.items.map((s) => (
-            <div
-              key={`${s.capability}:${s.provider_id}`}
-              className="flex items-center justify-between text-sm border-b py-1 last:border-0 dark:border-slate-700"
-            >
-              <div>
-                <span className="font-mono">{s.capability}</span>
-                <span className="mx-1 text-faint">·</span>
-                <span className="text-muted">{s.provider_id}</span>
-              </div>
-              <div className="text-muted text-xs">
-                {s.calls} calls
-                {Number(s.cached_calls) > 0 && (
-                  <span> ({s.cached_calls} cached)</span>
-                )}
-                {Number(s.failed) > 0 && (
-                  <span className="text-red-500"> · {s.failed} failed</span>
-                )}
-                {" · "}
-                {((Number(s.total_cost_cents ?? 0)) / 100).toFixed(2)}{" "}
-                <span className="text-faint">USD</span>
-              </div>
+      <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
+        <h2 className="text-sm font-semibold text-content dark:text-mortar-100 mb-3">
+          This month
+        </h2>
+        {summaryQ.data?.items.length === 0 ? (
+          <p className="text-sm text-faint">No AI calls yet this month.</p>
+        ) : (
+          <>
+            <MonthTotals items={summaryQ.data?.items ?? []} />
+            <div className="mt-3 divide-y divide-line dark:divide-slate-700">
+              {summaryQ.data?.items.map((s) => (
+                <div
+                  key={`${s.capability}:${s.provider_id}`}
+                  className="flex items-center justify-between gap-3 py-2"
+                >
+                  <div className="min-w-0">
+                    <div className="text-sm text-content dark:text-mortar-100 truncate">
+                      {capabilityLabel(s.capability)}
+                    </div>
+                    <div className="text-[11px] text-faint">{s.provider_id}</div>
+                  </div>
+                  <div className="text-xs text-muted text-right shrink-0">
+                    <div>
+                      {s.calls} call{Number(s.calls) === 1 ? "" : "s"}
+                      {Number(s.cached_calls) > 0 && (
+                        <span className="text-faint"> · {s.cached_calls} cached</span>
+                      )}
+                      {Number(s.failed) > 0 && (
+                        <span className="text-ember-500"> · {s.failed} failed</span>
+                      )}
+                    </div>
+                    <div className="text-faint">
+                      ${((Number(s.total_cost_cents ?? 0)) / 100).toFixed(2)}
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          </>
+        )}
       </section>
 
-      <section>
-        <h2 className="text-lg font-semibold mb-2">Recent calls</h2>
-        <div className="text-xs font-mono space-y-1">
+      <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
+        <h2 className="text-sm font-semibold text-content dark:text-mortar-100 mb-2">
+          Recent calls
+        </h2>
+        <div className={"text-xs font-mono space-y-1 overflow-x-auto " + FEED_SCROLL}>
           {callsQ.data?.items.length === 0 && (
             <div className="text-sm text-muted">No calls yet.</div>
           )}
@@ -751,6 +760,301 @@ function CapabilityDefaultModal({
   );
 }
 
+/** Is AI usable in this workspace, according to the server? Rendered at the top
+ *  of the AI page so the page's own headline can never disagree with what the
+ *  scan / match / build surfaces tell the same user. `reason` distinguishes an
+ *  operator kill-switch and an entitlement problem from "nothing set up", which
+ *  matters because only the last one is fixable on this page. */
+function AiAvailabilityBanner() {
+  const status = useAiStatus();
+  if (!status) return null;
+  if (status.available) {
+    return (
+      <div className="flex items-center gap-2 rounded-xl border border-moss-200 dark:border-moss-800/60 bg-moss-50 dark:bg-moss-950/30 px-4 py-2.5">
+        <span className="w-1.5 h-1.5 rounded-full bg-moss-500 shrink-0" />
+        <span className="text-sm text-content dark:text-mortar-100">
+          AI is on in this workspace.
+        </span>
+      </div>
+    );
+  }
+  const why: Record<string, string> = {
+    no_provider:
+      "Nothing is connected yet. Add a workspace key below, or share a personal connection from your account.",
+    operator_disabled: "An operator has turned AI off for this instance.",
+    not_entitled: "This workspace's plan does not include AI.",
+    ok: "",
+  };
+  return (
+    <div className="rounded-xl border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-950/30 px-4 py-2.5">
+      <div className="text-sm font-medium text-content dark:text-mortar-100">
+        AI is off in this workspace.
+      </div>
+      <p className="text-xs text-muted dark:text-mortar-200 mt-0.5">
+        {why[status.reason] ?? why.no_provider}
+      </p>
+    </div>
+  );
+}
+
+/** Capability ids are machine names ("classify-image"). Show a human label with
+ *  the id underneath, so the page reads as English while staying greppable. */
+
+/** Month totals as three plain numbers. The per-capability rows below answer
+ *  "where did it go"; this answers "how much", which is the first question. */
+function MonthTotals({
+  items,
+}: {
+  items: Array<{ calls: number | string; failed: number | string; total_cost_cents?: number | string | null }>;
+}) {
+  const n = (v: unknown) => Number(v ?? 0);
+  const calls = items.reduce((a, s) => a + n(s.calls), 0);
+  const failed = items.reduce((a, s) => a + n(s.failed), 0);
+  const cost = items.reduce((a, s) => a + n(s.total_cost_cents), 0) / 100;
+  const Tile = ({ label, value, tone }: { label: string; value: string; tone?: string }) => (
+    <div className="flex-1 min-w-[7rem] rounded-lg bg-subtle dark:bg-slate-800/60 px-3 py-2">
+      <div className={"text-lg font-semibold " + (tone ?? "text-content dark:text-mortar-100")}>
+        {value}
+      </div>
+      <div className="text-[10px] font-mono uppercase tracking-widest text-faint">{label}</div>
+    </div>
+  );
+  return (
+    <div className="flex flex-wrap gap-2">
+      <Tile label="calls" value={String(calls)} />
+      <Tile label="spent" value={`$${cost.toFixed(2)}`} />
+      <Tile
+        label="failed"
+        value={String(failed)}
+        tone={failed > 0 ? "text-ember-500" : undefined}
+      />
+    </div>
+  );
+}
+
+/** Personal connections routed INTO this workspace.
+ *
+ *  A workspace's AI very often comes from here rather than from a key the
+ *  workspace owns: someone sets up their own provider (or a local-AI edge
+ *  bridge) under their account and shares it in. This page had no idea those
+ *  existed, so it rendered "No AI providers configured" on a workspace whose
+ *  AI was working fine — the exact contradiction that surfaced this.
+ *
+ *  It also carries the owner's controls for WHICH shared AI is active and for
+ *  turning sharing off. Those briefly had no home at all: they used to live on
+ *  the /configuration hub and were dropped in the sections revamp, leaving a
+ *  workspace with two approved AIs no way to switch between them. They belong
+ *  here, with the rest of the AI setup, rather than on a hub. */
+/** Everything that can power AI in this workspace, in ONE list: keys the
+ *  workspace owns AND personal connections routed in. Each row says where it
+ *  came from and whether it is the one currently serving calls.
+ *
+ *  Keeping them apart made the reader assemble the picture themselves, and the
+ *  split is what let this page announce "No AI providers configured" while a
+ *  shared connection was answering every call. */
+function ConnectionsSection({
+  slug,
+  providers,
+  defByPid,
+  onAdd,
+  onEdit,
+}: {
+  slug: string;
+  providers: AiProvider[];
+  defByPid: Map<string, AiProviderDef>;
+  onAdd: () => void;
+  onEdit: (p: AiProvider) => void;
+}) {
+  const shares = useQuery({
+    queryKey: ["ai-shares", slug],
+    queryFn: () => api.listAiShares(slug),
+    enabled: !!slug,
+  });
+  const shared = shares.data?.items ?? [];
+  const empty = providers.length === 0 && shared.length === 0;
+
+  return (
+    <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold text-content dark:text-mortar-100">
+            Connections
+          </h2>
+          <p className="text-xs text-faint mt-0.5">
+            Everything that can answer an AI call here, whether this workspace
+            owns it or someone shared it in.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onAdd}
+          className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white shrink-0"
+        >
+          <Plus className="h-4 w-4" /> Add provider
+        </button>
+      </div>
+
+      {empty ? (
+        <p className="text-sm text-faint">
+          Nothing connected yet. Add a key this workspace owns, or set up a
+          personal connection at{" "}
+          <Link to="/me/connections" className="text-accent hover:underline">
+            your account
+          </Link>{" "}
+          and route it here.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {providers.map((p) => (
+            <ProviderRow
+              key={p.id}
+              provider={p}
+              def={defByPid.get(p.provider_id) ?? null}
+              onEdit={() => onEdit(p)}
+            />
+          ))}
+          <SharedAiRows slug={slug} items={shared} />
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** The shared-personal-connection rows of the Connections list, plus the
+ *  owner's controls for which one is active. */
+function SharedAiRows({ slug, items }: { slug: string; items: WorkspaceAiOffer[] }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const { activeOrg } = useActiveOrg();
+  const isOwner = activeOrg?.role === "owner";
+
+  const approved = items.filter((i) => i.status === "approved");
+  const pending = items.filter((i) => i.status === "pending");
+
+  const onItems = (r: { items: WorkspaceAiOffer[] }) => {
+    qc.setQueryData(["ai-shares", slug], r);
+    void qc.invalidateQueries({ queryKey: ["ai-status"] });
+  };
+  const activate = useMutation({
+    mutationFn: (cid: string | null) => api.setActiveAiShare(slug, cid),
+    onSuccess: onItems,
+    onError: (e) => toast.error((e as Error).message),
+  });
+  const approve = useMutation({
+    mutationFn: (cid: string) => api.approveAiShare(slug, cid),
+    onSuccess: (r) => {
+      onItems(r);
+      toast.success("Approved - this AI now powers the workspace.");
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+  const reject = useMutation({
+    mutationFn: (cid: string) => api.rejectAiShare(slug, cid),
+    onSuccess: (r) => {
+      onItems(r);
+      toast.success("Offer declined.");
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+
+  if (items.length === 0) return null;
+
+  return (
+    <>
+      {pending.length > 0 && (
+        <div className="space-y-2">
+          {pending.map((o) => (
+            <div
+              key={o.credential_id}
+              className="flex items-center gap-2 rounded-lg border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-950/30 px-3 py-2"
+            >
+              <div className="flex-1 min-w-0 text-sm">
+                <span className="text-content dark:text-mortar-100">
+                  {o.offered_by_name}
+                </span>
+                <span className="text-faint"> wants to share their AI here</span>
+              </div>
+              {isOwner ? (
+                <>
+                  <button
+                    type="button"
+                    disabled={approve.isPending}
+                    onClick={() => approve.mutate(o.credential_id)}
+                    className="shrink-0 rounded bg-cobble-600 hover:bg-cobble-700 text-white text-xs font-medium px-2.5 py-1 disabled:opacity-50"
+                  >
+                    Approve
+                  </button>
+                  <button
+                    type="button"
+                    disabled={reject.isPending}
+                    onClick={() => reject.mutate(o.credential_id)}
+                    className="shrink-0 rounded border border-line dark:border-slate-600 text-muted hover:text-ember-500 text-xs font-medium px-2.5 py-1"
+                  >
+                    Decline
+                  </button>
+                </>
+              ) : (
+                <span className="text-xs text-faint shrink-0">waiting for the owner</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Same card shape as a workspace-owned provider row, so the list reads
+          as one list. The only difference is the source line and, when there is
+          more than one to choose from, the radio. */}
+      {approved.map((o) => (
+        <label
+          key={o.credential_id}
+          className={
+            "flex items-center gap-2.5 rounded-lg border border-line dark:border-slate-700 px-3 py-2.5 " +
+            (isOwner && approved.length > 1 ? "cursor-pointer" : "")
+          }
+        >
+          {isOwner && approved.length > 1 && (
+            <input
+              type="radio"
+              name={`active-ai-${slug}`}
+              checked={o.active}
+              onChange={() => activate.mutate(o.credential_id)}
+              className="accent-cobble-600 shrink-0"
+              aria-label={`Use ${o.is_own ? o.label || o.provider_id : `${o.offered_by_name}'s AI`} for this workspace`}
+            />
+          )}
+          <div className="min-w-0 flex-1">
+            <div className="text-sm text-content dark:text-mortar-100 truncate">
+              {o.is_own ? o.label || o.provider_id : `${o.offered_by_name}'s AI`}
+            </div>
+            <div className="text-[11px] text-faint truncate">
+              {o.provider_id} ·{" "}
+              {o.is_own ? "your personal connection" : `shared by ${o.offered_by_name}`}
+            </div>
+          </div>
+          {o.active ? (
+            <span className="shrink-0 inline-flex items-center gap-1.5 text-xs text-moss-600 dark:text-moss-300">
+              <span className="w-1.5 h-1.5 rounded-full bg-moss-500" />
+              in use
+            </span>
+          ) : (
+            <span className="shrink-0 text-xs text-faint">standing by</span>
+          )}
+        </label>
+      ))}
+
+      {isOwner && approved.some((o) => o.active) && (
+        <button
+          type="button"
+          onClick={() => activate.mutate(null)}
+          className="text-[11px] text-faint hover:text-ember-500"
+        >
+          Stop using shared connections in this workspace
+        </button>
+      )}
+    </>
+  );
+}
+
 // ── AI activity — your own AI calls (prompts + responses); owners/admins can
 // toggle to the whole workspace. Full text in the detail modal. ──
 function AiActivitySection({ slug }: { slug: string }) {
@@ -783,7 +1087,7 @@ function AiActivitySection({ slug }: { slug: string }) {
       <p className="text-xs text-faint dark:text-slate-500">
         Every AI call you made - the chat, Build, scan, summaries - with the full prompt + response. {scope === "workspace" ? "Showing everyone's (owner/admin)." : "Showing yours."}
       </p>
-      <div className="rounded-xl border border-line dark:border-slate-700 overflow-hidden overflow-x-auto">
+      <div className={"rounded-xl border border-line dark:border-slate-700 overflow-hidden " + FEED_SCROLL_INNER}>
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b border-line dark:border-slate-700 bg-subtle/60 dark:bg-slate-800/40 text-left">
@@ -817,25 +1121,23 @@ function AiActivitySection({ slug }: { slug: string }) {
 function AiActivityDetail({ slug, item, onClose }: { slug: string; item: AiActivityItem; onClose: () => void }) {
   const q = useQuery({ queryKey: ["ai-activity-detail", slug, item.id], queryFn: () => api.aiActivityDetail(slug, item.id) });
   const d = q.data;
+  const usage = usageLine(item);
   return (
     <Modal open onClose={onClose} title={`AI call · ${item.capability}`} size="lg">
       <div className="space-y-3 text-sm">
-        <div className="text-xs text-muted">
-          {item.model ?? "—"} · {new Date(item.invoked_at).toLocaleString()} · {(item.input_tokens ?? 0)}/{(item.output_tokens ?? 0)} tokens
-          {item.cost_cents != null ? ` · $${(item.cost_cents / 100).toFixed(2)}` : ""}{item.cached ? " · cached" : ""}
+        <div className="text-xs text-muted" title={usage.title}>
+          {item.model ?? "—"} · {new Date(item.invoked_at).toLocaleString()} · {usage.text}
         </div>
         {!d ? (
           <div className="text-faint text-xs">Loading full text…</div>
         ) : (
           <>
-            <div>
-              <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-1">Prompt</div>
-              <pre className="text-xs whitespace-pre-wrap bg-subtle dark:bg-slate-800 border border-line dark:border-slate-700 rounded p-3 max-h-64 overflow-auto text-content dark:text-mortar-200">{d.input_full ?? "(purged or none)"}</pre>
-            </div>
-            <div>
-              <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-1">Response</div>
-              <pre className="text-xs whitespace-pre-wrap bg-subtle dark:bg-slate-800 border border-line dark:border-slate-700 rounded p-3 max-h-64 overflow-auto text-content dark:text-mortar-200">{d.output_full ?? (d.error ? `Error: ${d.error}` : "(purged or none)")}</pre>
-            </div>
+            <PayloadView label="Prompt" raw={d.input_full} emptyText="(purged or none)" />
+            <PayloadView
+              label="Response"
+              raw={d.output_full ?? (d.error ? `Error: ${d.error}` : null)}
+              emptyText="(purged or none)"
+            />
           </>
         )}
       </div>
@@ -869,3 +1171,71 @@ function WorkspaceBridgeHint() {
     </div>
   );
 }
+
+// ── Auto-pick photos ────────────────────────────────────────────────────────
+// The workspace switch for AI-picking a scanned item's catalog photo on every
+// enriched scan, rather than only when someone presses ✨ Pick best on the item.
+//
+// It also lives as a chip in the scan inbox header, which is where you are when
+// you think about photos — but a chip in a busy toolbar is not where anyone
+// LOOKS for "the global AI switch" (the author went hunting for it and had to ask). A
+// setting that spends AI belongs on the AI page too, next to the connections
+// that pay for it.
+function AutoPickPhotosSection({ slug, canEdit }: { slug: string; canEdit: boolean }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const cfg = useQuery({
+    queryKey: ["scan-photo-rank-config", slug],
+    queryFn: () => api.getScanPhotoRankConfig(slug),
+    enabled: !!slug && canEdit,
+    staleTime: 60_000,
+  });
+  const save = useMutation({
+    mutationFn: (enabled: boolean) => api.setScanPhotoRankConfig(slug, enabled),
+    onSuccess: (r) => {
+      toast.success(
+        r.enabled
+          ? "Catalog photos will be AI-picked on every scan"
+          : "Back to picking photos only when you press Pick best",
+      );
+      void qc.invalidateQueries({ queryKey: ["scan-photo-rank-config", slug] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't save that"),
+  });
+  if (!canEdit) return null;
+  const on = cfg.data?.enabled === true;
+  return (
+    <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
+      <h2 className="text-sm font-semibold text-content dark:text-mortar-100">Scan photos</h2>
+      <label className="mt-2 flex items-start gap-3 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={on}
+          disabled={save.isPending || cfg.isLoading}
+          onChange={(e) => save.mutate(e.target.checked)}
+          className="mt-0.5 h-4 w-4 accent-cobble-600 shrink-0"
+        />
+        <span className="min-w-0">
+          <span className="text-sm text-content dark:text-mortar-100">
+            Pick the catalog photo with AI on every scan
+          </span>
+          <span className="block text-xs text-faint dark:text-slate-400">
+            Off by default. On, each newly identified item gets its photo chosen the same way the
+            ✨ Pick best button does - the product alone, correct colour, no people - with no tapping.
+            It uses AI on every scan rather than only when you ask, never replaces a photo you chose
+            yourself, and never pays twice for the same item.
+          </span>
+          <span className="block text-xs text-faint dark:text-slate-400 mt-1">
+            This is WHETHER Cobblr picks photos on its own. Which AI does the picking is the
+            "Pick the best product photo" row under "What each job uses" below - that one is
+            routing, and it applies to the ✨ Pick best button too.
+          </span>
+        </span>
+      </label>
+    </section>
+  );
+}
+
+// The labels live in lib/ai-capability-labels.ts so a test can assert the
+// contract's capabilities are all named. Re-exported for existing importers.
+export { capabilityLabel } from "../lib/ai-capability-labels";

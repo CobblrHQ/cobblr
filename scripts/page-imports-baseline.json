@@ -24,14 +24,6 @@
     "spec": "./PlanPrintPage"
   },
   {
-    "file": "web/src/pages/QrPage.tsx",
-    "spec": "./QrTokensPage"
-  },
-  {
-    "file": "web/src/pages/QrPage.tsx",
-    "spec": "./ScanRulesPage"
-  },
-  {
     "file": "web/src/pages/SavedViewPage.tsx",
     "spec": "./ViewsPage"
   },

@@ -64,7 +64,7 @@ function WriteModeChip({ mode, onCycle }: { mode: "off" | "ask" | "auto"; onCycl
       label: "Changes: auto",
       cls: "border-cobble-500 bg-cobble-600 text-white",
       title:
-        "Record changes apply IMMEDIATELY — every one is tracked and undoable (actions still ask; they can be irreversible). Click for Off.",
+        "Record changes apply IMMEDIATELY: every one is tracked and undoable (actions still ask; they can be irreversible). Click for Off.",
     },
     off: {
       label: "Changes: off",
@@ -404,7 +404,7 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
       });
       return;
     }
-    patch({ building: false, content: "That took longer than expected — try again in a moment." });
+    patch({ building: false, content: "That took longer than expected. Try again in a moment." });
   }
 
   function markResolved(idx: number) {
@@ -445,7 +445,7 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
 
   function cancel(idx: number) {
     markResolved(idx);
-    setMessages((prev) => [...prev, { role: "assistant", content: "Okay — left it alone." }]);
+    setMessages((prev) => [...prev, { role: "assistant", content: "Okay, left it alone." }]);
   }
 
   async function undoWrite(idx: number) {

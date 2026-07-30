@@ -10,6 +10,8 @@ import { sql } from "kysely";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
+import { listEntries } from "../modules/registry.js";
+import { capabilityModule, scopeToWorkspace } from "../platform/grantable-scope.js";
 import { effectiveCapabilities } from "../auth/effective-capabilities.js";
 import * as activity from "../platform/activity.js";
 
@@ -211,10 +213,6 @@ const ENDPOINT_CAPABILITIES = [
 /** The module a capability belongs to, for grouping in the admin UI.
  *  Registered actions know theirs; everything else is namespaced
  *  `<module>:<verb>`, so the prefix is the answer. */
-function capabilityModule(actionId: string, moduleName?: string | null): string {
-  return moduleName || actionId.split(":")[0] || "platform";
-}
-
 /** Every capability an admin can grant a member: the registered actions
  *  (entity_actions) plus the endpoint-gate caps above. Single source of
  *  truth for both the matrix columns and grant validation.
@@ -288,7 +286,40 @@ async function grantableActions(
       });
     }
   }
-  return items;
+  return orgId ? await onlyEnabledHere(items, orgId) : items;
+}
+
+/** Drop capabilities belonging to a module this WORKSPACE has not enabled.
+ *
+ *  entity_actions is a cobblr_meta table: it registers what every module loaded
+ *  by the SERVER declares, not what any one workspace turned on. So a workspace
+ *  that never enabled BrickLink was still offered `bricklink:disassemble-kit`
+ *  when creating a role — a permission to do something the workspace cannot do,
+ *  named after a product its owner may never have heard of.
+ *
+ *  Conservative on purpose: a capability is dropped only when its module is one
+ *  we can SEE in the registry and the workspace lacks it. Anything we cannot
+ *  attribute (platform endpoint gates, field-scope caps, a capability whose id
+ *  does not name a loaded module) is kept, because silently hiding a grantable
+ *  capability locks an admin out of their own permissions with no error to
+ *  explain it. Showing one extra is a wart; hiding one is a bug. */
+async function onlyEnabledHere<T extends { module: string }>(
+  items: T[],
+  orgId: string,
+): Promise<T[]> {
+  const enabled = new Set(
+    (
+      await meta
+        .selectFrom("org_modules")
+        .select("module_name")
+        .where("org_id", "=", orgId)
+        .execute()
+    ).map((r) => r.module_name),
+  );
+  return scopeToWorkspace(items, {
+    enabled,
+    known: new Set(listEntries().map((e) => e.manifest.name)),
+  });
 }
 
 portalRouter.post(

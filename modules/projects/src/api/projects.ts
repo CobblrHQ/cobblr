@@ -453,7 +453,7 @@ projectsRouter.post(
       const m = content.match(/\{[\s\S]*\}/);
       const obj = m ? (JSON.parse(m[0]) as Record<string, unknown>) : null;
       if (!obj) {
-        res.json({ ai: false, reason: "Couldn't read that pattern — try pasting more of it.", yarn: [], hooks: [] });
+        res.json({ ai: false, reason: "Couldn't read that pattern. Try pasting more of it.", yarn: [], hooks: [] });
         return;
       }
       res.json({

@@ -2,12 +2,12 @@
   "manifest": {
     "id": "cobblr.flagship.medications",
     "catalog": "extended",
-    "version": "0.3.1",
+    "version": "0.3.2",
     "name": "Medications & Refills",
-    "description": "Your medications as their own table — dose, schedule, instructions, prescriber/pharmacy, refills left + a refill-by date. Caregiver-friendly.",
+    "description": "Your medications as their own table: dose, schedule, instructions, prescriber/pharmacy, refills left + a refill-by date. Caregiver-friendly.",
     "author": "Cobblr",
     "released_at": "2026-06-08",
-    "changelog": "Richer prescription fields: Instructions + Important information (how to take it, warnings), a Time of day field (Morning/Midday/Evening/Bedtime), interval schedules (Every 4/6/8/12 hours) with a First-dose-at time, and a unit picker on the quantity. — Its OWN table (an inventory instance), not generic Inventory with extra columns: its own nav entry, a “New medication” button, only med fields (parts/warranty/supplier cruft hidden), plain-language hints + a pinned “Current meds” view.",
+    "changelog": "Richer prescription fields: Instructions + Important information (how to take it, warnings), a Time of day field (Morning/Midday/Evening/Bedtime), interval schedules (Every 4/6/8/12 hours) with a First-dose-at time, and a unit picker on the quantity.: Its OWN table (an inventory instance), not generic Inventory with extra columns: its own nav entry, a “New medication” button, only med fields (parts/warranty/supplier cruft hidden), plain-language hints + a pinned “Current meds” view.",
     "requires": [
       {
         "module": "inventory"
@@ -40,7 +40,7 @@
             "display_label": "Dose",
             "type": "text",
             "position": 1,
-            "help": "How much per take — e.g. “10 mg”, “1 tablet”, “5 mL”."
+            "help": "How much per take, e.g. “10 mg”, “1 tablet”, “5 mL”."
           },
           {
             "entity_kind": "inventory:part",
@@ -75,7 +75,7 @@
               "Bedtime",
               "Other / see directions"
             ],
-            "help": "When in the day to take it — pick the closest, or type your own (e.g. “Morning, Evening”)."
+            "help": "When in the day to take it. Pick the closest, or type your own (e.g. “Morning, Evening”)."
           },
           {
             "entity_kind": "inventory:part",
@@ -83,7 +83,7 @@
             "display_label": "First dose at",
             "type": "text",
             "position": 4,
-            "help": "For interval schedules (e.g. every 8 hours), the time of the first dose — e.g. “8:00 AM”."
+            "help": "For interval schedules (e.g. every 8 hours), the time of the first dose, e.g. “8:00 AM”."
           },
           {
             "entity_kind": "inventory:part",
@@ -91,7 +91,7 @@
             "display_label": "Instructions",
             "type": "text",
             "position": 5,
-            "help": "How to take it — e.g. “Take 1 capsule by mouth every 8 hours.”"
+            "help": "How to take it, e.g. “Take 1 capsule by mouth every 8 hours.”"
           },
           {
             "entity_kind": "inventory:part",
@@ -99,7 +99,7 @@
             "display_label": "Important information",
             "type": "text",
             "position": 6,
-            "help": "Warnings or must-knows — e.g. “Take with food”, “Finish all of this medication.”"
+            "help": "Warnings or must-knows, e.g. “Take with food”, “Finish all of this medication.”"
           },
           {
             "entity_kind": "inventory:part",
@@ -137,7 +137,7 @@
             "display_label": "Rx number",
             "type": "text",
             "position": 10,
-            "help": "The prescription number on the label — quote it to the pharmacy for a refill."
+            "help": "The prescription number on the label, quote it to the pharmacy for a refill."
           },
           {
             "entity_kind": "inventory:part",

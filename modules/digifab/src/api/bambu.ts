@@ -56,9 +56,9 @@ function publicDevices(devices: BambuCloudDevice[]): Array<{ dev_id: string; nam
 export function modeCapabilities(mode: string): { monitor: boolean; control: boolean; available: boolean; note: string } {
   switch (mode) {
     case "cloud":
-      return { monitor: true, control: true, available: true, note: "Live status, temps & progress, plus chamber light and pause/resume/stop over the cloud. Jog, home, set-temp, starting a print and the camera need LAN — Bambu blocks raw G-code over the cloud. Add per-printer LAN access (hybrid) to unlock those without giving up cloud telemetry." };
+      return { monitor: true, control: true, available: true, note: "Live status, temps & progress, plus chamber light and pause/resume/stop over the cloud. Jog, home, set-temp, starting a print and the camera need LAN. Bambu blocks raw G-code over the cloud. Add per-printer LAN access (hybrid) to unlock those without giving up cloud telemetry." };
     case "lan":
-      return { monitor: true, control: true, available: true, note: "Full control — start, pause, cancel, jog, home, set temps, live camera — over your LAN via the Cobblr edge-bridge. Needs Developer Mode (LAN access code) on the printer and a bridge on the same network." };
+      return { monitor: true, control: true, available: true, note: "Full control (start, pause, cancel, jog, home, set temps, live camera) over your LAN via the Cobblr edge-bridge. Needs Developer Mode (LAN access code) on the printer and a bridge on the same network." };
     case "hybrid":
       return { monitor: true, control: true, available: true, note: "Best of both: cloud login for live status anywhere, plus per-printer LAN access (edge-bridge + Developer Mode) for full control and the camera. Cloud keeps reporting even when the bridge is offline." };
     default:
@@ -120,7 +120,7 @@ bambuRouter.post("/code", asyncHandler(async (req, res) => {
   if (!parsed.success) return badBody(res, parsed.error);
   prune();
   const s = sessions.get(parsed.data.session);
-  if (!s) return void res.status(410).json({ error: { code: "expired", message: "Login session expired — start again" } });
+  if (!s) return void res.status(410).json({ error: { code: "expired", message: "Login session expired. Start again" } });
   const cloud = new BambuCloud(s.region);
   try {
     if (s.awaiting === "email") s.token = await cloud.submitEmailCode(s.email, parsed.data.code);
@@ -151,7 +151,7 @@ bambuRouter.post("/create", asyncHandler(async (req, res) => {
   if (!caps.available) return void res.status(400).json({ error: { code: "mode_unavailable", message: caps.note } });
   prune();
   const s = sessions.get(parsed.data.session);
-  if (!s?.token || !s.devices) return void res.status(410).json({ error: { code: "expired", message: "Login session expired — start again" } });
+  if (!s?.token || !s.devices) return void res.status(410).json({ error: { code: "expired", message: "Login session expired. Start again" } });
 
   const ctx = tenantContext(req);
   const mode = parsed.data.mode;
@@ -214,7 +214,7 @@ bambuRouter.post("/command", asyncHandler(async (req, res) => {
   if (!parsed.success) return badBody(res, parsed.error);
   const sent = sendBambuCommand(parsed.data.connection_id, parsed.data.serial, parsed.data.command);
   if (!sent) {
-    return void res.status(503).json({ error: { code: "no_pump", message: "No live cloud stream for that printer right now — try again in a moment." } });
+    return void res.status(503).json({ error: { code: "no_pump", message: "No live cloud stream for that printer right now. Try again in a moment." } });
   }
   res.json({ sent: true });
 }));

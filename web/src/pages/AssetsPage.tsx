@@ -377,7 +377,7 @@ export function AssetsPage({
               onClick={async () => {
                 const ok = await confirm({
                   title: `Delete ${selected.size} asset${selected.size === 1 ? "" : "s"}?`,
-                  message: "This is permanent — the rows will be removed from the workspace.",
+                  message: "This is permanent, the rows will be removed from the workspace.",
                   confirmLabel: "Delete",
                   destructive: true,
                 });

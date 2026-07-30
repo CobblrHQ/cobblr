@@ -57,16 +57,7 @@ export function ActionsPage() {
   });
 
   return (
-    <div className="space-y-5 max-w-3xl mx-auto">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
-          actions
-        </h1>
-        <span className="page-subtitle">
-          cross-module action predicates
-        </span>
-      </div>
-
+    <div className="space-y-5">
       <p className="text-sm text-content dark:text-mortar-200">
         Each cross-module action declares which entities it applies to. For
         trait-based actions you can adjust that per-axis here - e.g. broaden

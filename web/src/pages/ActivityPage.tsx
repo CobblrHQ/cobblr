@@ -9,6 +9,7 @@ import { api, type ActivityEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { usePageTitle } from "@cobblr/platform-web";
 import { QueryError } from "../components/QueryError";
+import { FEED_SCROLL_PAGE } from "../lib/feed";
 
 type AuthMethod = "session" | "api_token" | "system";
 
@@ -33,16 +34,7 @@ export function ActivityPage() {
   const items = activity.data?.items ?? [];
 
   return (
-    <div className="space-y-4 max-w-4xl mx-auto">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
-          activity
-        </h1>
-        <span className="page-subtitle">
-          everything that's happened in this workspace
-        </span>
-      </div>
-
+    <div className="space-y-4">
       <div className="flex items-center gap-4 flex-wrap text-xs">
         <div className="flex items-center gap-1.5">
           <Filter size={11} className="text-faint" />
@@ -84,7 +76,7 @@ export function ActivityPage() {
         <div className="text-xs text-faint italic">No activity matches these filters.</div>
       )}
 
-      <ul className="space-y-1.5">
+      <ul className={"space-y-1.5 " + FEED_SCROLL_PAGE}>
         {items.map((it) => (
           <ActivityRow key={it.id} entry={it} />
         ))}

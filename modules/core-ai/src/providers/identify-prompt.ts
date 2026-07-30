@@ -72,7 +72,12 @@ export const IDENTIFY_PROMPT =
   'or more, list them in "items" — one entry per DIFFERENT thing, each named as ' +
   "specifically as the photo allows, with how many of that one are visible — " +
   'and let "name" describe the group as a whole. Otherwise "items" is [].\n\n' +
+  "If the item has an obvious single COLOUR (a garment, a tool body, a phone " +
+  "case), name it in plain English (\"black\", \"navy\", \"red\"). Use the " +
+  "colour of the ITEM, not its packaging. Omit it for something with no one " +
+  "colour, and never guess from a colour CODE you cannot interpret.\n\n" +
   'Reply with ONLY a JSON object: {"name": <string>, "brand": <string|null>, ' +
+  '"color": <the item\'s colour in plain English, else null>, ' +
   '"category": <string|null>, "entity_type": "asset"|"part"|null, ' +
   '"series": <the series/franchise name if this is part of one, else null>, ' +
   '"barcode": <the UPC/EAN digits if clearly legible, else null>, ' +
@@ -102,7 +107,28 @@ export function measurementContext(input: Record<string, unknown>): string {
   // "it's the headset" when the photo shows a carrying case means the item they
   // want is the headset (inside/attached), not the most prominent object. Trust
   // the words over the pixels; the hint may name a DIFFERENT item than the obvious one.
-  const hint = typeof input.user_hint === "string" ? input.user_hint.trim() : "";
+  // The user's corrections, OLDEST first. They accumulate: a later one can
+  // contradict an earlier one, or be about something else entirely, so the model
+  // is shown all of them and told how to weigh them rather than being handed only
+  // the newest (which silently discarded, say, a colour when the next hint was
+  // about size).
+  // Categories this workspace is ALREADY using. Every item is identified on its
+  // own, so without this each call invents its own wording and siblings drift
+  // apart by construction - three shirts scanned together came back "apparel",
+  // "apparel" and "clothing" (the author, 2026-07-30). Showing the vocabulary is the
+  // cheapest fix: reuse beats reconciliation.
+  const known = Array.isArray(input.known_categories)
+    ? (input.known_categories as unknown[])
+        .filter((c): c is string => typeof c === "string" && !!c.trim())
+        .map((c) => c.trim())
+        .slice(0, 24)
+    : [];
+  const hints = Array.isArray(input.user_hints)
+    ? (input.user_hints as unknown[]).filter((h): h is string => typeof h === "string" && !!h.trim()).map((h) => h.trim())
+    : [];
+  const single = typeof input.user_hint === "string" ? input.user_hint.trim() : "";
+  if (single && !hints.some((h) => h.toLowerCase() === single.toLowerCase())) hints.push(single);
+  const hint = hints.length === 1 ? hints[0]! : "";
   let out = "";
   if (parts.length) {
     out +=
@@ -111,7 +137,19 @@ export function measurementContext(input: Record<string, unknown>): string {
       "specifically (they override anything ambiguous in the photo):\n" +
       parts.join("\n");
   }
-  if (hint) {
+  if (hints.length > 1) {
+    // Several corrections. State the ordering rule explicitly — a model given a
+    // bare list will otherwise treat them as equally current, and two colours in
+    // that list is a coin flip.
+    out +=
+      "\n\nThe user has told you the following about this item, OLDEST FIRST. " +
+      "These are AUTHORITATIVE corrections and they OVERRIDE your own read of the " +
+      "photo. Weigh them like this: where two of them CONFLICT (they state a " +
+      "different value for the same thing), the LATER one wins and the earlier is " +
+      "obsolete. Where they concern DIFFERENT things, they ALL still apply " +
+      "together. The last one is the most recent thing they told you.\n" +
+      hints.map((h, i) => `  ${i + 1}. "${h}"${i === hints.length - 1 ? "  <- most recent" : ""}`).join("\n");
+  } else if (hint) {
     out +=
       `\n\nThe user says this item IS: "${hint}". This is an AUTHORITATIVE ` +
       "correction — identify THAT specific item and return it as the name, even " +
@@ -119,6 +157,15 @@ export function measurementContext(input: Record<string, unknown>): string {
       "attached to, or partly hidden by another object). The user's words " +
       "override your own read of the photo; do NOT keep the previously-identified " +
       "item if it conflicts with this.";
+  }
+  if (known.length) {
+    out +=
+      "\n\nThis workspace already files things under these categories: " +
+      known.join(", ") +
+      ". If the item belongs in one of them, answer with that EXACT wording - " +
+      "reusing an existing category is always better than a synonym of it " +
+      "(\"apparel\" when the workspace says \"Clothing\" splits one shelf in two). " +
+      "Only propose a new category when none of these genuinely fit.";
   }
   return out;
 }

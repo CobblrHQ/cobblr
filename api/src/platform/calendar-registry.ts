@@ -15,10 +15,6 @@ export function registerSource(id: string, source: CalendarSource): void {
   sources.set(id, source);
 }
 
-export function listSources(): string[] {
-  return [...sources.keys()];
-}
-
 export async function collect(
   orgId: string,
   fromISO: string,

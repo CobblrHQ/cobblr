@@ -18,7 +18,7 @@ import { useTheme } from "../theme/ThemeContext";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
 
 export function MeProfilePage() {
-  usePageTitle("Profile");
+  usePageTitle("Your account");
   const { user } = useAuth();
   const { activeOrg } = useActiveOrg();
   // A locked managed app ("Cobblr for Yarn") hides the platform — so the profile
@@ -33,7 +33,7 @@ export function MeProfilePage() {
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
         <UserCog size={20} className="text-accent" />
         <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
-          Your profile
+          Your account
         </h1>
       </div>
 

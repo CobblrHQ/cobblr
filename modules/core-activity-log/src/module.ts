@@ -24,7 +24,7 @@ export default defineModule({
   version: "0.1.0",
   displayName: "Activity Log",
   description:
-    "Append-only audit trail. Every meaningful write across modules — org changes, module enable/disable, wire firings, invites — lands here for visibility and forensics.",
+    "Append-only audit trail. Every meaningful write across modules (org changes, module enable/disable, wire firings, invites) lands here for visibility and forensics.",
   icon: "history",
   band: "foundational",
 

@@ -7,10 +7,12 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ListTodo } from "lucide-react";
+
 import { api, type QueueJob } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { usePageTitle } from "@cobblr/platform-web";
+import { ConfigHeaderActions } from "../components/ConfigPageHeader";
+import { FEED_SCROLL_PAGE_INNER } from "../lib/feed";
 
 const STATUSES = ["queued", "running", "done", "failed"] as const;
 type Status = (typeof STATUSES)[number];
@@ -41,15 +43,10 @@ export function QueuePage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3 flex-wrap">
-        <ListTodo size={20} className="text-accent" />
-        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
-          Background queue
-        </h1>
+      <ConfigHeaderActions>
         <span className="text-sm text-muted dark:text-slate-400">
           {items.length} jobs
         </span>
-        <div className="flex-1" />
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as "" | Status)}
@@ -62,7 +59,7 @@ export function QueuePage() {
             </option>
           ))}
         </select>
-      </div>
+      </ConfigHeaderActions>
 
       <p className="text-sm text-muted dark:text-slate-400">
         Background jobs for this workspace. The worker process polls
@@ -81,7 +78,7 @@ export function QueuePage() {
       )}
 
       {items.length > 0 && (
-        <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-x-auto">
+        <div className={"rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 " + FEED_SCROLL_PAGE_INNER}>
           <table className="w-full text-sm">
             <thead className="bg-subtle/60 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
               <tr>

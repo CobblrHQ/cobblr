@@ -16,13 +16,21 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-scan",
-  version: "0.27.0",
+  version: "0.36.1",
   displayName: "Scan",
   description:
     "Scan a barcode or take a photo of a thing; end up with a draft inventory row, pre-filled with the resolved name + brand + catalog photo. One tap to commit.",
   icon: "scan-line",
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace
+
+  // Browse-not-configure: this is a page you VISIT, so it owns a nav entry
+  // and one canonical URL rather than living under /configuration.
+  nav: {
+    label: "Scan Inbox",
+    route: "/scan",
+    icon: "scan-line",
+  },
 
   // The scan/camera button earns a permanent icon slot in the navbar's
   // right cluster — it's the most-used action for camera-first intake
@@ -114,7 +122,7 @@ export default defineModule({
         id: "core-scan:identify",
         label: "Identify a thing",
         description:
-          "PURE 'what is this?' — from a photo and/or captured measurements + observations. Returns the suggestion ({ name, brand, category, confidence }); writes nothing. A capture app calls it and decides whether to use the suggestion or keep its own name. User-invokable. Args: { image_file_id?, measurements?, observations? }.",
+          "PURE 'what is this?': from a photo and/or captured measurements + observations. Returns the suggestion ({ name, brand, category, confidence }); writes nothing. A capture app calls it and decides whether to use the suggestion or keep its own name. User-invokable. Args: { image_file_id?, measurements?, observations? }.",
         // DELIBERATELY universal: args-driven (a capture app supplies the
         // photo/measurements) — there is no entity source to scope by.
         appliesTo: { any: true },
@@ -130,7 +138,7 @@ export default defineModule({
   // The autonomous photo-sort ships as a default WIRE, not a cron baked
   // into the module: every scan.received fires identify-photo, which
   // vision-identifies photo-only rows detached. Editable / disable-able
-  // on /bindings like any wire — Pillar-C consistency over hardcoded
+  // on /wires like any wire — Pillar-C consistency over hardcoded
   // automation. source_kind "core-scan:item" → the engine reads the
   // row id from payload.itemId; target defaults to "self".
   contributes: {
@@ -148,7 +156,7 @@ export default defineModule({
       // cannot express "disabled" — the SPEND gate is the workspace's opt-in
       // setting (core_scan_photo_rank_config, off unless turned on), so an
       // enabled wire costs nothing until someone asks for it. A workspace can
-      // still disable the wire itself on /bindings; that survives boot
+      // still disable the wire itself on /wires; that survives boot
       // (backfillDefaultBindings only INSERTS what is missing, and its probe
       // ignores `enabled`, so it never re-enables what you turned off).
       {

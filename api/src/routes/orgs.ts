@@ -94,6 +94,12 @@ orgsRouter.get("/:slug/modules", requireAuth, withTenant, async (req, res, next)
         // Module layer (foundational/stock/marketplace/user) — the empty
         // dashboard suggests only `stock` first-party domains.
         band: m.band,
+        // A user-facing nav entry the module declares despite the core-*/
+        // foundational rule that otherwise hides it from the navbar — a page
+        // you BROWSE (locations, files, tags, views). Without this the nav had
+        // two hardcoded exceptions and everything else landed in
+        // /configuration. See docs/design-decisions/configuration-revamp.md.
+        nav: m.nav ?? null,
         // Release maturity — the UI shows an Experimental/Beta badge.
         maturity: m.maturity,
         // "multi" → the module can host several named instances (the "+ New
@@ -240,6 +246,16 @@ orgsRouter.post("/:slug/convert-to-keep", requireAuth, withTenant, async (req, r
     const row = await meta.selectFrom("orgs").select("trial_expires_at").where("id", "=", orgId).executeTakeFirst();
     if (!row || row.trial_expires_at == null) {
       res.status(409).json({ error: { code: "not_a_trial", message: "This workspace isn't a trial or demo." } });
+      return;
+    }
+    // Keeping a trial/demo moves it to a PAID plan — gate through the entitlement seam so it
+    // can't be a free self-serve escape from the trial cap. The trial guard denies
+    // `plan.upgrade` (unless this specific demo was unlocked for it); the cloud billing
+    // overlay registers a guard that allows it after checkout. No guard (self-host) → allowed,
+    // but self-host has no trial_expires_at so it already 409'd above.
+    const ent = await checkEntitlement({ orgId, feature: "plan.upgrade", userId: req.session?.id });
+    if (!ent.allow) {
+      res.status(402).json({ error: { code: "upgrade_required", message: ent.reason ?? "Keeping this workspace requires checkout." } });
       return;
     }
     await convertDemoToKeep(orgId);

@@ -12,10 +12,11 @@
 //     bottom-right; tapping it morphs into a panel whose collapse strip is at the
 //     BOTTOM, the same corner you tapped to open.
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useLayoutEffect } from "react";
+import { createPortal } from "react-dom";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { ChevronDown, Maximize2, Bot } from "lucide-react";
+import { ChevronDown, Bot } from "lucide-react";
 import { api } from "../lib/api";
 import {
   useToast, usePrintProgress, useBridgeLive, BridgePrinterCard,
@@ -441,6 +442,25 @@ function Panel({
 
 export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: string | undefined }) {
   const [open, setOpen] = useState(false);
+  // The sidebar flyout is PORTALED to <body> and fixed-positioned: rendered in
+  // place (absolute left-full) it flew out past the sidebar's overflow-hidden
+  // edge and got clipped, so the menu "never opened" (the author, 2026-07-30). rowRef
+  // anchors it to the right of the icon row.
+  const rowRef = useRef<HTMLDivElement>(null);
+  const [flyoutPos, setFlyoutPos] = useState<{ left: number; bottom: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!open || mode !== "sidebar" || !rowRef.current) {
+      setFlyoutPos(null);
+      return;
+    }
+    const set = () => {
+      const r = rowRef.current?.getBoundingClientRect();
+      if (r) setFlyoutPos({ left: r.right + 8, bottom: window.innerHeight - r.bottom });
+    };
+    set();
+    window.addEventListener("resize", set);
+    return () => window.removeEventListener("resize", set);
+  }, [open, mode]);
   const { controls: serverControls, states: serverStates } = useLive(slug ?? "");
   const toggle = useToggle(slug ?? "");
   const drive = useDrive();
@@ -559,9 +579,10 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
     // their own surfaces (e.g. the Labels page's Auto-print button). An OFFER has
     // already returned above and is unaffected.
     if (onIcons.length === 0 && printing === 0) return null;
-    // Bare ring row in the sidebar foot; expands into a right-flyout panel.
+    // Bare ring row in the sidebar foot; expands into a right-flyout panel that
+    // is PORTALED to <body> so the sidebar's overflow-hidden can't clip it.
     return (
-      <div className="relative">
+      <div className="relative" ref={rowRef}>
         <div className="flex items-center gap-2.5 overflow-hidden px-0.5 py-1">
           {controls.map((c) => (
             <Ring key={c.id} control={c} on={isOn(states[c.id] ?? null)} size={28} onClick={() => fire(c)} badge={badgeFor(c)} />
@@ -572,14 +593,18 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
             title={open ? "Collapse" : "Expand"}
             className="ml-auto shrink-0 text-content dark:text-mortar-100 hover:text-accent p-1"
           >
-            {open ? <ChevronDown size={16} /> : <Maximize2 size={15} />}
+            {/* Same chevron affordance as the account menu (UserMenu): points up
+                to open, flips down to collapse — not the confusing expand-arrows. */}
+            <ChevronDown size={16} className={"transition " + (open ? "" : "rotate-180")} />
           </button>
         </div>
-        {open && (
-          <div className="absolute left-full bottom-1 ml-1.5 z-[60]">
-            <Panel controls={controls} states={states} onToggle={fire} segmentState={segmentState} badgeFor={badgeFor} detailFor={detailFor} onClose={() => setOpen(false)} />
-          </div>
-        )}
+        {open && flyoutPos &&
+          createPortal(
+            <div className="fixed z-[900]" style={{ left: flyoutPos.left, bottom: flyoutPos.bottom }}>
+              <Panel controls={controls} states={states} onToggle={fire} segmentState={segmentState} badgeFor={badgeFor} detailFor={detailFor} onClose={() => setOpen(false)} />
+            </div>,
+            document.body,
+          )}
       </div>
     );
   }

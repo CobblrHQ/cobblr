@@ -31,7 +31,7 @@ export const MANAGED_APPS: Record<string, ManagedAppMeta> = {
     label: "Cobblr for Yarn",
     navSuffix: "for Yarn",
     headline: "Your yarn stash, sorted.",
-    blurb: "Scan a ball-band, never double-buy. Track every skein — colorway, fiber, weight class, dye lot — in one place.",
+    blurb: "Scan a ball-band, never double-buy. Track every skein (colorway, fiber, weight class, dye lot) in one place.",
     // A warm wool/craft palette — parchment page, espresso text, a dusty-rose
     // accent — so Cobblr for Yarn reads as a yarn app, not blueprint Cobblr.
     theme: {

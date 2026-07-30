@@ -24,7 +24,7 @@ function toBase64(s: string): string {
   return btoa(bin);
 }
 
-export function PrintPage() {
+export function PrintPage({ embedded = false }: { embedded?: boolean } = {}) {
   usePageTitle("Printers");
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
@@ -122,8 +122,10 @@ export function PrintPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">Printers</h1>
+      <div className={"flex items-baseline gap-3 " + (embedded ? "" : "border-b border-line dark:border-slate-700 pb-3")}>
+        {!embedded && (
+          <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">Printers</h1>
+        )}
         <span className="text-sm text-muted dark:text-slate-400">
           {items.length} printer{items.length === 1 ? "" : "s"}
         </span>

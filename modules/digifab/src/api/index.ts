@@ -35,7 +35,7 @@ platform().edge.registerConsumer({
   module: "digifab",
   label: "Machine managers",
   description:
-    "Attach the software that runs your machines — Klipper, PrusaLink, Duet, a LAN Bambu, LightBurn — through your bridge as edge-adapter connections.",
+    "Attach the software that runs your machines (Klipper, PrusaLink, Duet, a LAN Bambu, LightBurn) through your bridge as edge-adapter connections.",
   href: "/digifab",
 });
 

@@ -22,11 +22,12 @@ import { buildMessages } from "./openai.js";
 import { toolsOf, openAiToolsOf, parseOpenAiToolCalls, looksLikeNoToolSupport } from "./tool-wire.js";
 import { promptFingerprint } from "./prompt-fingerprint.js";
 
-const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
+export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
   chat: { models: ["default"], defaultModel: "default" },
   summarise: { models: ["default"], defaultModel: "default" },
   "classify-image": { models: ["default"], defaultModel: "default" },
   "identify-image": { models: ["default"], defaultModel: "default" },
+  "rank-images": { models: ["default"], defaultModel: "default" },
   "extract-text": { models: ["default"], defaultModel: "default" },
   "match-to-catalog": { models: ["default"], defaultModel: "default" },
   "embed-text": { models: ["default"], defaultModel: "default" },
@@ -119,6 +120,7 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
         case "summarise":
         case "classify-image":
         case "identify-image":
+        case "rank-images":
         case "extract-text":
         case "match-to-catalog": {
           const body: Record<string, unknown> = {
@@ -207,15 +209,15 @@ export function register(): void {
       label: "OpenAI-compatible (LM Studio, vLLM, …)",
       describeCredentials: () => ({
         base_url: {
-          label: "Base URL (e.g. http://192.168.1.50:1234/v1 — LM Studio's local server)",
+          label: "Base URL (e.g. http://192.168.1.50:1234/v1, LM Studio's local server)",
           secret: false,
         },
         api_key: {
-          label: "API key (optional — LM Studio needs none; gateways need one)",
+          label: "API key (optional. LM Studio needs none; gateways need one)",
           secret: true,
         },
         model: {
-          label: "Model (optional — leave blank for LM Studio; gateways/vLLM need the exact name)",
+          label: "Model (optional. Leave blank for LM Studio; gateways/vLLM need the exact name)",
           secret: false,
         },
         mcp_relay: {
@@ -223,7 +225,7 @@ export function register(): void {
           secret: false,
           choices: [
             { value: "", label: "Returns tool calls for Cobblr to run (standard)" },
-            { value: "bridge", label: "Runs tools itself — give it read-only workspace access via MCP" },
+            { value: "bridge", label: "Runs tools itself. Give it read-only workspace access via MCP" },
           ],
         },
         ...TRANSIT_FIELD,

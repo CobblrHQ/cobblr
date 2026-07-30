@@ -10,7 +10,7 @@ export default defineModule({
   version: "0.3.0",
   displayName: "Machines",
   description:
-    "Physical machines you own. The base layer — install a specialisation (3D Printers / Laser Cutters / CNC Machines) for type-specific fields.",
+    "Physical machines you own. The base layer. Install a specialisation (3D Printers / Laser Cutters / CNC Machines) for type-specific fields.",
   icon: "wrench",
   band: "stock",
   instanceability: "multi",
@@ -82,7 +82,7 @@ export default defineModule({
         id: "machines:record-usage",
         label: "Record machine usage",
         description:
-          "Add to a machine's lifetime usage counters (print_count, print_hours). Wire it to digifab.print.completed to accrue usage as prints finish — the foundation for maintenance-by-usage ('nozzle due at 500 prints'). Args: { machineId, prints?, hours? }; machineId falls back to the event's linkedMachineId.",
+          "Add to a machine's lifetime usage counters (print_count, print_hours). Wire it to digifab.print.completed to accrue usage as prints finish: the foundation for maintenance-by-usage ('nozzle due at 500 prints'). Args: { machineId, prints?, hours? }; machineId falls back to the event's linkedMachineId.",
         appliesTo: { kinds: ["machines:machine"] },
         invokeHandler: "machines.record-usage",
         userInvokable: false,

@@ -22,28 +22,28 @@ export interface FeatureHit {
   keywords: string;
 }
 
+// CURATED must NOT collide by route with a registry destination. When it did,
+// the same page carried two independently-maintained descriptions and they
+// drifted; the dedup below silently picked the curated one, so editing the
+// registry appeared to do nothing. Anything the registry owns (Edge bridges,
+// Digifab, Units, Custom fields, Backup, Members, API tokens, Maintenance…) is
+// deliberately absent here and folded in from CONFIG_DESTINATIONS instead.
+// lint:config-routes enforces it.
+//
+// What's left is genuinely NOT in the settings registry: task-first entry
+// points and pages that live elsewhere in the app.
 const CURATED: FeatureHit[] = [
-  { label: "Edge bridges", hint: "see + manage your on-site bridges", route: "/configuration/edge", keywords: "edge bridge adapter relay agent bambu lightburn on-site local tunnel device gateway" },
-  { label: "Digital Fabrication", hint: "send files to printers & machines", route: "/configuration/digifab", keywords: "digifab print farm fdm monster octoprint machine manager job fleet gcode" },
   { label: "Scan Inbox", hint: "review + file captures", route: "/scan", keywords: "scan inbox barcode photo capture review file queue" },
   { label: "Scanner (camera)", hint: "scan a barcode now", route: "/scan/camera", keywords: "camera scanner scan barcode photo upc" },
   { label: "Pair your phone", hint: "phone camera → this workspace", route: "/scan", keywords: "pair phone qr mobile handoff scanner" },
   { label: "Build with AI", hint: "describe what you have", route: "/build?mode=workspace", keywords: "build ai builder describe generate workspace design custom setup" },
   { label: "Your app (generate)", hint: "a member page from your trackers", route: "/build?mode=app", keywords: "your app generate member page worker app player" },
-  { label: "Setups & trackers", hint: "ready-made bundles", route: "/bundles", keywords: "setups trackers bundles marketplace install recipes skins" },
   { label: "Configuration", hint: "modules, fields, wires, everything", route: "/configuration", keywords: "configuration settings customize workspace modules admin" },
   { label: "Email in", hint: "forward receipts by email; reply-by-email", route: "/configuration/integrations#email-in", keywords: "email forward receipt receipts inbox mail forwarding address reply gmail scan invoice ingest" },
-  { label: "Custom fields", hint: "per-kind field definitions", route: "/fields", keywords: "fields custom field defs columns choices computed" },
-  { label: "AI connections", hint: "connect a provider / local AI", route: "/configuration/ai", keywords: "ai provider ollama claude openai connect llm smart matching" },
   { label: "Your connections", hint: "personal AI + edge relays", route: "/me/connections", keywords: "personal connections byo credentials relay ai keys" },
-  { label: "API tokens", hint: "tokens for scripts + bridges", route: "/configuration/tokens", keywords: "api token key script bridge automation" },
   { label: "Calendar", hint: "everything with a date, one view", route: "/calendar", keywords: "calendar dates ical schedule month" },
   { label: "Locations", hint: "rooms, shelves, bins", route: "/locations", keywords: "locations rooms bins shelves places where" },
   { label: "Labels & printing", hint: "QR labels, templates, print queue", route: "/labels", keywords: "labels qr print sticker template queue" },
-  { label: "Members & sharing", hint: "invite people to this workspace", route: "/configuration/members", keywords: "members invite share people roles portal access" },
-  { label: "Backup & blueprints", hint: "export / restore the workspace", route: "/configuration/backup", keywords: "backup export blueprint restore download drive" },
-  { label: "Maintenance", hint: "service log across everything", route: "/configuration/maintenance", keywords: "maintenance service overdue schedule log" },
-  { label: "Units", hint: "the quantity vocabulary", route: "/configuration/units", keywords: "units gram meter each vocabulary quantity" },
 ];
 
 /** A short right-hand hint from a registry destination's full description:

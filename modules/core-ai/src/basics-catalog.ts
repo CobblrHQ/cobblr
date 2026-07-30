@@ -44,28 +44,28 @@ export const BUILTIN_BASICS: BasicRule[] = [
     intent: "what is Cobblr",
     keywords: ["what is cobblr", "what is this", "what does this do", "what's this app", "how does cobblr work", "what can this do"],
     reply:
-      "Cobblr is a build-it-yourself workspace — switch on the pieces you need (inventory, machines, projects, labels…) and it becomes a tool shaped to *your* thing, no code. Ask me **\"what can you do\"** for the tour, or open **Build** to describe what you want.",
+      "Cobblr is a build-it-yourself workspace: switch on the pieces you need (inventory, machines, projects, labels…) and it becomes a tool shaped to *your* thing, no code. Ask me **\"what can you do\"** for the tour, or open **Build** to describe what you want.",
   },
   {
     key: "connect-ai",
     intent: "connect / enable AI",
     keywords: ["connect ai", "enable ai", "turn on ai", "set up ai", "add ai", "ai provider", "ai key", "ai setup", "ai settings"],
     reply:
-      "You connect AI under **Configuration → AI** (there's a link in the strip at the top of this panel). Add a provider key there and I can start answering questions about your workspace and making changes for you.",
+      "You connect AI under **Configuration → Connections → AI** (there's a link in the strip at the top of this panel). Add a provider key there and I can start answering questions about your workspace and making changes for you.",
   },
   {
     key: "who-is-cobb",
     intent: "who / what is Cobb",
     keywords: ["who are you", "what are you", "your name", "are you cobb", "who is cobb"],
     reply:
-      "I'm Cobb — the workshop assistant. I help you set up and run your workspace. With AI connected I can dig through your data and make changes; without it I can still help you find your way around.",
+      "I'm Cobb, the workshop assistant. I help you set up and run your workspace. With AI connected I can dig through your data and make changes; without it I can still help you find your way around.",
   },
   {
     key: "add-item",
     intent: "add a part / item",
     keywords: ["how do i add", "add a part", "add an item", "new part", "new item", "create a", "add something", "add"],
     reply:
-      "Use **+ New** at the top of the relevant list (Parts, Printers, Orders…), or hit **Scan** to add something by its barcode or a photo. Once AI's connected you can just tell me here — \"add a part called Widget\" — and I'll do it.",
+      "Use **+ New** at the top of the relevant list (Parts, Printers, Orders…), or hit **Scan** to add something by its barcode or a photo. Once AI's connected you can just tell me here (\"add a part called Widget\") and I'll do it.",
   },
   {
     key: "scan",
@@ -79,14 +79,14 @@ export const BUILTIN_BASICS: BasicRule[] = [
     intent: "build / describe workspace",
     keywords: ["build my workspace", "set up my workspace", "what should i track", "describe what", "build page", "make an app", "build"],
     reply:
-      "Head to the **Build** page — describe what you want to track in plain English and it'll propose the fields and modules, then set them up once you confirm.",
+      "Head to the **Build** page: describe what you want to track in plain English and it'll propose the fields and modules, then set them up once you confirm.",
   },
   {
     key: "find-search",
     intent: "find / search",
     keywords: ["search", "find", "how do i find", "where is", "look for", "look up", "can't find"],
     reply:
-      "Use the **search box** at the top — it spans every module (parts, machines, projects…). Or hit **⌘K / Ctrl-K** for the command palette to jump anywhere fast.",
+      "Use the **search box** at the top: it spans every module (parts, machines, projects…). Or hit **⌘K / Ctrl-K** for the command palette to jump anywhere fast.",
   },
   {
     key: "edit-update",
@@ -100,70 +100,70 @@ export const BUILTIN_BASICS: BasicRule[] = [
     intent: "delete / remove something",
     keywords: ["how do i delete", "delete", "remove", "get rid of", "trash"],
     reply:
-      "Open the item and use **delete** (usually a trash icon), then confirm — that removes just that item. To drop a whole *feature*, turn its module off under Configuration → Modules.",
+      "Open the item and use **delete** (usually a trash icon), then confirm: that removes just that item. To drop a whole *feature*, turn its module off under Configuration → Build → Modules.",
   },
   {
     key: "custom-fields",
     intent: "custom fields",
     keywords: ["how do i add a field", "add a custom field", "custom field", "add a field", "new field", "extra field", "more fields", "track extra", "fields"],
     reply:
-      "Add your own fields to any kind of thing under **Configuration → Fields** — a \"warranty expires\" date on parts, a \"shelf\" on inventory, whatever you track. New fields show up in forms, tables, and search automatically.",
+      "Add your own fields to any kind of thing under **Configuration → Build → Fields & forms**: a \"warranty expires\" date on parts, a \"shelf\" on inventory, whatever you track. New fields show up in forms, tables, and search automatically.",
   },
   {
     key: "enable-module",
     intent: "enable a module / feature",
     keywords: ["how do i add a module", "enable a module", "enable module", "turn on", "add a module", "enable inventory", "enable machines", "modules", "features", "add a feature"],
     reply:
-      "Turn features on under **Configuration → Modules**. A new workspace starts lean; switch on the parts you want — inventory, machines, projects, labels, and more — whenever you need them. They do nothing until you enable them.",
+      "Turn features on under **Configuration → Build → Modules**. A new workspace starts lean; switch on the parts you want (inventory, machines, projects, labels, and more) whenever you need them. They do nothing until you enable them.",
   },
   {
     key: "invite-people",
     intent: "invite people / sharing",
     keywords: ["how do i add a user", "how do i add someone", "invite", "add a user", "add someone", "add people", "share", "team", "members", "collaborator", "permissions", "who can"],
     reply:
-      "Invite people and set what each can do under **Configuration → Access & permissions**. Roles run owner → admin → member → guest, so you decide who can edit, who can just look, and who runs the place.",
+      "Invite people and set what each can do under **Configuration → People → Permissions**. Roles run owner → admin → member → guest, so you decide who can edit, who can just look, and who runs the place.",
   },
   {
     key: "settings",
     intent: "settings / configuration",
     keywords: ["settings", "configuration", "configure", "where are the settings", "preferences"],
     reply:
-      "Workspace settings live under **Configuration** (the hub) — modules, fields, members, AI, and more. Your *personal* settings (profile, notifications) are in the **account menu** at the top-right.",
+      "Workspace settings live under **Configuration** (the hub): modules, fields, members, AI, and more. Your *personal* settings (profile, notifications) are in the **account menu** at the top-right.",
   },
   {
     key: "export-backup",
     intent: "export / backup",
     keywords: ["export", "backup", "back up", "download my data", "blueprint", "save a copy", "migrate"],
     reply:
-      "You can **export or back up** the whole workspace as a **Blueprint** under Configuration — it captures your setup and data so you can restore it or clone it into another workspace.",
+      "You can **export or back up** the whole workspace as a **Blueprint** under Configuration: it captures your setup and data so you can restore it or clone it into another workspace.",
   },
   {
     key: "labels-qr",
     intent: "labels / QR / printing",
     keywords: ["print a label", "print label", "label", "print", "sticker"],
     reply:
-      "With **Labels & QR** enabled, open an item to print a label or generate a **QR code** that links back to it — great for bins and shelves. Don't see it? Turn it on under Configuration → Modules.",
+      "With **Labels & QR** enabled, open an item to print a label or generate a **QR code** that links back to it, great for bins and shelves. Don't see it? Turn it on under Configuration → Build → Modules.",
   },
   {
     key: "mobile-app",
     intent: "mobile / app",
     keywords: ["mobile", "phone", "is there an app", "pair my phone", "ios", "android", "add to home screen"],
     reply:
-      "Cobblr is a **PWA** — open it in your phone's browser and \"Add to Home Screen\" for an app-like icon. You can also **pair your phone** to a workspace (to scan with its camera) from the capture/scan screen.",
+      "Cobblr is a **PWA**. Open it in your phone's browser and \"Add to Home Screen\" for an app-like icon. You can also **pair your phone** to a workspace (to scan with its camera) from the capture/scan screen.",
   },
   {
     key: "account",
     intent: "account / password / sign out",
     keywords: ["log out", "logout", "sign out", "password", "reset password", "my account", "profile", "log in"],
     reply:
-      "Your **account menu** is at the top-right — profile, password, notifications, and **sign out**. Locked out? An admin on this workspace can reset your password (there's no email reset).",
+      "Your **account menu** is at the top-right: profile, password, notifications, and **sign out**. Locked out? An admin on this workspace can reset your password (there's no email reset).",
   },
   {
     key: "feedback-support",
     intent: "feedback / report a bug",
     keywords: ["feedback", "report a bug", "bug", "contact support", "support", "something's broken", "something is broken", "suggestion"],
     reply:
-      "Found a bug or have an idea? Use **feedback** in your **account menu** (top-right) — it goes straight to whoever runs this Cobblr.",
+      "Found a bug or have an idea? Use **feedback** in your **account menu** (top-right): it goes straight to whoever runs this Cobblr.",
   },
   {
     key: "thanks",
@@ -176,7 +176,7 @@ export const BUILTIN_BASICS: BasicRule[] = [
     intent: "greeting",
     keywords: ["hi", "hey", "hello", "yo", "howdy", "sup", "hiya", "heya", "good morning", "good afternoon", "good evening", "greetings"],
     reply:
-      "Hey — I'm Cobb. AI chat isn't wired up here yet, so I can't rummage through your workspace, but I can help you find your way around. Try **\"what can you do\"**.",
+      "Hey. I'm Cobb. AI chat isn't wired up here yet, so I can't rummage through your workspace, but I can help you find your way around. Try **\"what can you do\"**.",
   },
 ];
 

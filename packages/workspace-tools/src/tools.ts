@@ -122,7 +122,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_related",
     description:
-      "List the records LINKED to one record (its pairings) — which project a part belongs to, what's stored in a location, what a build consumed. Returns each link's relationship kind, direction, and the other record's kind + id (fetch it with get_record). Call with just kind + id first to discover what relationships exist.",
+      "List the records LINKED to one record (its pairings): which project a part belongs to, what's stored in a location, what a build consumed. Returns each link's relationship kind, direction, and the other record's kind + id (fetch it with get_record). Call with just kind + id first to discover what relationships exist.",
     mode: "read",
     params: {
       kind: z.string().describe("The record's entity kind id"),
@@ -183,7 +183,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_actions",
     description:
-      "Discover the operations (actions) this workspace can run. Each item has a `scope`: an 'entity' action runs on a record (adjust stock, mark a task done, build one) — its matched_kinds lists which record kinds it applies to; a 'workspace' action is a config/admin operation that runs on the whole workspace (rename a label-code prefix, change a default) and is invoked WITHOUT a record. Optionally filter to one entity kind — workspace actions are always included. Use invoke_action to run one.",
+      "Discover the operations (actions) this workspace can run. Each item has a `scope`: an 'entity' action runs on a record (adjust stock, mark a task done, build one) (its matched_kinds lists which record kinds it applies to; a 'workspace' action is a config/admin operation that runs on the whole workspace (rename a label-code prefix, change a default) and is invoked WITHOUT a record. Optionally filter to one entity kind) workspace actions are always included. Use invoke_action to run one.",
     mode: "read",
     params: {
       kind: z.string().optional().describe("Only entity actions applicable to this kind id (workspace actions still included)"),
@@ -205,7 +205,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "get_putaway_plan",
     description:
-      "The user's live put-away situation: how many scanned items still have no home, and the CURRENT organize plan (groups, destinations, evidence, unresolved items). Use this whenever the user talks about putting things away, organizing scanned items, bins, or 'the plan' — it is always fresher than anything pasted into chat. To help further, create core-locations:location records for places they describe (with their confirmation); the plan routes to real locations by evidence.",
+      "The user's live put-away situation: how many scanned items still have no home, and the CURRENT organize plan (groups, destinations, evidence, unresolved items). Use this whenever the user talks about putting things away, organizing scanned items, bins, or 'the plan': it is always fresher than anything pasted into chat. To help further, create core-locations:location records for places they describe (with their confirmation); the plan routes to real locations by evidence.",
     mode: "read",
     params: {},
     execute: async (api) => {
@@ -247,7 +247,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "replan_putaway",
     description:
-      "Recompute the user's put-away plan against the CURRENT workspace. Non-destructive: it only refreshes the proposal (nothing files, the user still accepts groups). Call this ONCE after you finish creating or renaming locations for them — the open plan updates automatically. Optionally pass a hint distilling what you learned in this conversation (e.g. 'the user is organizing camping gear; the hallway closet holds electronics').",
+      "Recompute the user's put-away plan against the CURRENT workspace. Non-destructive: it only refreshes the proposal (nothing files, the user still accepts groups). Call this ONCE after you finish creating or renaming locations for them, the open plan updates automatically. Optionally pass a hint distilling what you learned in this conversation (e.g. 'the user is organizing camping gear; the hallway closet holds electronics').",
     mode: "read",
     params: {
       hint: z
@@ -278,7 +278,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
             .slice(0, 15)
             .map((id) => names[id] ?? id),
         })),
-        note: "The user's open plan refreshes itself — summarize what changed instead of pasting the whole plan.",
+        note: "The user's open plan refreshes itself, summarize what changed instead of pasting the whole plan.",
       });
     },
   },
@@ -304,7 +304,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "update_record",
     description:
-      "Update fields on ONE existing record (partial update — only the fields you pass change). Only kinds with can_update are accepted.",
+      "Update fields on ONE existing record (partial update, only the fields you pass change). Only kinds with can_update are accepted.",
     mode: "write",
     params: {
       kind: z.string().describe("Entity kind id with can_update true"),
@@ -324,7 +324,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "delete_record",
     description:
-      "Delete ONE record. Only kinds with can_delete are accepted. Destructive — double-check you have the right record (get_record) before deleting.",
+      "Delete ONE record. Only kinds with can_delete are accepted. Destructive, double-check you have the right record (get_record) before deleting.",
     mode: "write",
     params: {
       kind: z.string().describe("Entity kind id with can_delete true"),
@@ -343,7 +343,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "invoke_action",
     description:
-      "Run a registered action (see list_actions). Two shapes: an ENTITY action runs on one record — pass entity_kind + entity_id (adjust stock, mark done, build one, print a label). A WORKSPACE action (scope 'workspace' in list_actions) is a config/admin operation that runs on the whole workspace — OMIT entity_kind/entity_id and pass its args (e.g. rename a label-code prefix). This is how config changes happen without a record.",
+      "Run a registered action (see list_actions). Two shapes: an ENTITY action runs on one record (pass entity_kind + entity_id (adjust stock, mark done, build one, print a label). A WORKSPACE action (scope 'workspace' in list_actions) is a config/admin operation that runs on the whole workspace) OMIT entity_kind/entity_id and pass its args (e.g. rename a label-code prefix). This is how config changes happen without a record.",
     mode: "write",
     params: {
       action_id: z.string().describe("Action id, e.g. inventory:adjust-stock or labels:set-code"),
@@ -375,7 +375,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_label_codes",
     description:
-      "List the workspace's label-code groups (one per kind + instance, e.g. 3D Printers under Machines). Each entry has its code prefix (the letters before the number, e.g. 'p' in p42), how many codes exist, whether it is frozen (a label was printed, so existing codes are fixed), whether its code shows inside the QR, and its group_key. Call this to find the group_key, then change it by invoking the labels:set-code action (invoke_action with no entity) — pass group_key plus prefix and/or code_in_qr (the QR toggle is per group, so 3d printers can differ from cnc).",
+      "List the workspace's label-code groups (one per kind + instance, e.g. 3D Printers under Machines). Each entry has its code prefix (the letters before the number, e.g. 'p' in p42), how many codes exist, whether it is frozen (a label was printed, so existing codes are fixed), whether its code shows inside the QR, and its group_key. Call this to find the group_key, then change it by invoking the labels:set-code action (invoke_action with no entity): pass group_key plus prefix and/or code_in_qr (the QR toggle is per group, so 3d printers can differ from cnc).",
     mode: "read",
     params: {},
     execute: async (api) => {

@@ -4,7 +4,7 @@
 // The autonomous photo-sort is a WIRE, not a cron baked into the
 // module: a default binding fires core-scan:identify-photo on every
 // core-scan.scan.received. Photo-only rows get vision-identified
-// detached; the user can edit / disable the wire on /bindings like any
+// detached; the user can edit / disable the wire on /wires like any
 // other. (The barcode fast path stays inline in POST /scan — it needs
 // the request's ~12s budget for responsiveness.)
 
@@ -44,7 +44,7 @@ export function registerScanHandlers(): void {
   // core-scan.scan.enriched — the event both intake paths reach once a NAME
   // exists (the barcode fast path and the photo identify above), which is what
   // the image search needs. It is a wire for the same Pillar-C reason the photo
-  // sort is: editable + inspectable on /bindings, not a cron in a module.
+  // sort is: editable + inspectable on /wires, not a cron in a module.
   //
   // TWO gates, because this one SPENDS on its own: the workspace must have opted
   // in (readPhotoRankEnabled — no config row means off, so silence is free), and

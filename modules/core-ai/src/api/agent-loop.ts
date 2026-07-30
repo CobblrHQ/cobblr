@@ -133,7 +133,7 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
   transcript.push({
     role: "user",
     content:
-      "(You've used the maximum number of tool rounds. Answer the user now with what you've learned — no more tool calls.)",
+      "(You've used the maximum number of tool rounds. Answer the user now with what you've learned: no more tool calls.)",
   });
   const last = await deps.callModel(transcript);
   return { kind: "reply", text: last.content, applied };

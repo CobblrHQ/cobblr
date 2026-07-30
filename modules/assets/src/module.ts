@@ -10,7 +10,7 @@ export default defineModule({
   version: "0.3.0",
   displayName: "Assets",
   description:
-    "Physical things you own that aren't fungible stock and aren't machines. Appliances, tools, collections — anything you'd want to track individually.",
+    "Physical things you own that aren't fungible stock and aren't machines. Appliances, tools, collections, anything you'd want to track individually.",
   icon: "box",
   band: "stock",
   instanceability: "multi",
@@ -101,7 +101,7 @@ export default defineModule({
         id: "assets:update-fields",
         label: "Update an asset's fields",
         description:
-          "Set metadata fields on an asset from a wire — the inbound-telemetry shape. Canonical use: an inbound webhook (OBD dongle, Home Assistant, telematics) fires core-integrations.inbound.received and a target:\"none\" wire invokes this with template-rendered args. `asset` (id or name) is the one control arg; every other arg is a metadata field to set ({ asset: \"{{event.body.vehicle}}\", mileage: \"{{event.body.odometer}}\" }). Metadata only — native columns aren't wire-writable.",
+          "Set metadata fields on an asset from a wire (the inbound-telemetry shape. Canonical use: an inbound webhook (OBD dongle, Home Assistant, telematics) fires core-integrations.inbound.received and a target:\"none\" wire invokes this with template-rendered args. `asset` (id or name) is the one control arg; every other arg is a metadata field to set ({ asset: \"{{event.body.vehicle}}\", mileage: \"{{event.body.odometer}}\" }). Metadata only) native columns aren't wire-writable.",
         // DELIBERATELY universal: the target:"none" inbound-telemetry shape —
         // the wire fires on webhook events with no entity source; the handler
         // locates the asset from args. Scoping would break that pattern.
@@ -114,7 +114,7 @@ export default defineModule({
         id: "assets:field-to-location",
         label: "Move a place field into Location",
         description:
-          "Bundle-migration engine (the assets mirror of inventory:field-to-location): retire a bundle's bespoke place field (e.g. a 'Location' text field) into the platform's canonical Location — for each asset with a value, find-or-create a matching Location AREA, file the asset into it (location_id), then clear the field. Idempotent + safe: never invents a place, never overwrites an already-filed asset, re-uses an existing same-named area. Args: { field, instance }.",
+          "Bundle-migration engine (the assets mirror of inventory:field-to-location): retire a bundle's bespoke place field (e.g. a 'Location' text field) into the platform's canonical Location: for each asset with a value, find-or-create a matching Location AREA, file the asset into it (location_id), then clear the field. Idempotent + safe: never invents a place, never overwrites an already-filed asset, re-uses an existing same-named area. Args: { field, instance }.",
         appliesTo: { kinds: ["assets:asset"] },
         invokeHandler: "assets.field-to-location",
         // Migration-only: run by the bundle-upgrade flow, never a detail button.

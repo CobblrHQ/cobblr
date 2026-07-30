@@ -2,12 +2,12 @@
   "manifest": {
     "id": "cobblr.flagship.wardrobe",
     "catalog": "extended",
-    "version": "0.1.2",
+    "version": "0.1.3",
     "name": "Wardrobe",
-    "description": "Catalog your clothing as its own table — type, colour, season, formality, a photo each — grouped by type. Optional Outfits table for planning looks.",
+    "description": "Catalog your clothing as its own table (type, colour, season, formality, a photo each) grouped by type. Optional Outfits table for planning looks.",
     "author": "Cobblr",
     "released_at": "2026-06-08",
-    "changelog": "First release — your wardrobe as its own inventory table (a “New garment” button, only clothing fields, the parts/stock cruft hidden), with a pinned “By type” view + plain-language hints. Turn on Outfits to plan looks by occasion + the date you'll wear them (they land on your calendar); the Outfit Planner app drags garments onto a figure.",
+    "changelog": "First release: your wardrobe as its own inventory table (a “New garment” button, only clothing fields, the parts/stock cruft hidden), with a pinned “By type” view + plain-language hints. Turn on Outfits to plan looks by occasion + the date you'll wear them (they land on your calendar); the Outfit Planner app drags garments onto a figure.",
     "requires": [
       {
         "module": "inventory"
@@ -60,7 +60,7 @@
               "Underwear",
               "Other"
             ],
-            "help": "What kind of piece — the closet groups by this."
+            "help": "What kind of piece, the closet groups by this."
           },
           {
             "entity_kind": "inventory:part",
@@ -84,7 +84,7 @@
               "Winter",
               "All-season"
             ],
-            "help": "When you wear it — filter to the right season fast."
+            "help": "When you wear it, filter to the right season fast."
           },
           {
             "entity_kind": "inventory:part",
@@ -100,7 +100,7 @@
               "Formal",
               "Athletic"
             ],
-            "help": "How dressed-up it is — for building work vs weekend looks."
+            "help": "How dressed-up it is, for building work vs weekend looks."
           },
           {
             "entity_kind": "inventory:part",
@@ -120,7 +120,7 @@
               "Blend",
               "Other"
             ],
-            "help": "Main material — handy for care + seasonality."
+            "help": "Main material, handy for care + seasonality."
           },
           {
             "entity_kind": "inventory:part",
@@ -135,7 +135,7 @@
             "display_label": "Last worn",
             "type": "date",
             "position": 7,
-            "help": "Update when you wear it — surfaces the pieces you never reach for."
+            "help": "Update when you wear it, surfaces the pieces you never reach for."
           }
         ],
         "field_overrides": [
@@ -224,7 +224,7 @@
         "key": "outfits",
         "name": "Outfit planning",
         "question": "Plan outfits from your wardrobe?",
-        "description": "Adds an 'Outfits' table — each look by occasion + the date you'll wear it (so it lands on your calendar) — plus the Outfit Planner app, where you drag garments onto a figure to compose a look visually.",
+        "description": "Adds an 'Outfits' table (each look by occasion + the date you'll wear it (so it lands on your calendar)) plus the Outfit Planner app, where you drag garments onto a figure to compose a look visually.",
         "default": true,
         "requires": [
           {
@@ -291,7 +291,7 @@
                   "Workout",
                   "Special"
                 ],
-                "help": "What the look is for — the table groups by this."
+                "help": "What the look is for, the table groups by this."
               },
               {
                 "entity_kind": "projects:project",
@@ -299,7 +299,7 @@
                 "display_label": "Wear on",
                 "type": "date",
                 "position": 2,
-                "help": "When you'll wear it — lands on your calendar as “what to wear”."
+                "help": "When you'll wear it, lands on your calendar as “what to wear”."
               },
               {
                 "entity_kind": "projects:project",
@@ -307,7 +307,7 @@
                 "display_label": "Pieces",
                 "type": "text",
                 "position": 3,
-                "help": "The garments in this look — jot them here, or build it visually in the Outfit Planner app."
+                "help": "The garments in this look: jot them here, or build it visually in the Outfit Planner app."
               }
             ],
             "saved_views": [

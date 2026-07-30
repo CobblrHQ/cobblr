@@ -5,7 +5,7 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
 <html>
 <head>
 <meta charset="utf-8" />
-<title>Cobblr labels — Avery 5160 — 1 × 2⅝&quot; address · 30 up</title>
+<title>Cobblr labels: Avery 5160 - 1 × 2⅝&quot; address · 30 up</title>
 <style>
   @page { size: 8.5in 11in; margin: 0; }
   * { box-sizing: border-box; }
@@ -126,7 +126,7 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
 <html>
 <head>
 <meta charset="utf-8" />
-<title>Cobblr labels — Avery 22805 — 1½ × 1½&quot; square · 24 up</title>
+<title>Cobblr labels: Avery 22805 - 1½ × 1½&quot; square · 24 up</title>
 <style>
   @page { size: 8.5in 11in; margin: 0; }
   * { box-sizing: border-box; }
@@ -247,7 +247,7 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
 <html>
 <head>
 <meta charset="utf-8" />
-<title>Cobblr labels — 2 × 2&quot; square — 20 up</title>
+<title>Cobblr labels: 2 × 2&quot; square - 20 up</title>
 <style>
   @page { size: 8.5in 11in; margin: 0; }
   * { box-sizing: border-box; }
@@ -368,7 +368,7 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
 <html>
 <head>
 <meta charset="utf-8" />
-<title>Cobblr labels — 1½ × 1½&quot; square — 8 up</title>
+<title>Cobblr labels: 1½ × 1½&quot; square - 8 up</title>
 <style>
   @page { size: 4in 6in; margin: 0; }
   * { box-sizing: border-box; }
@@ -489,7 +489,7 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
 <html>
 <head>
 <meta charset="utf-8" />
-<title>Cobblr labels — 2 × 2&quot; square — 6 up</title>
+<title>Cobblr labels: 2 × 2&quot; square - 6 up</title>
 <style>
   @page { size: 4in 6in; margin: 0; }
   * { box-sizing: border-box; }
@@ -610,7 +610,7 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
 <html>
 <head>
 <meta charset="utf-8" />
-<title>Cobblr labels — 4 × 6&quot; — 1 up</title>
+<title>Cobblr labels: 4 × 6&quot; - 1 up</title>
 <style>
   @page { size: 4in 6in; margin: 0; }
   * { box-sizing: border-box; }
@@ -737,7 +737,7 @@ exports[`renderPrintSheetHtml (rotate — opt-in 90° content turn) > on ⇒ ren
 <html>
 <head>
 <meta charset="utf-8" />
-<title>Cobblr labels — 50 × 30 mm — 1 up</title>
+<title>Cobblr labels: 50 × 30 mm - 1 up</title>
 <style>
   @page { size: 1.968503937007874in 1.1811023622047245in; margin: 0; }
   * { box-sizing: border-box; }
