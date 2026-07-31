@@ -479,13 +479,21 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
   const printersQ = useQuery({
     queryKey: ["live-printers", slug],
     queryFn: () => api.listPrinters(slug!),
-    enabled: !!slug && open,
+    // Fetched even while the box is closed so the configured-channel filter below
+    // is ready the instant it opens (no flash of unfiltered bridge channels).
+    enabled: !!slug,
     staleTime: 60_000,
   });
   const rowForInstance = (instance: string) =>
     (printersQ.data?.items ?? []).find(
       (p) => (p.settings as { bridge?: { instance?: string } } | undefined)?.bridge?.instance === instance,
     );
+  // The bridge ships EVERY driver (label printers, laser/LightBurn, …) and reports
+  // all of them, connected or not. Only surface a channel this workspace has
+  // actually set up — one with a saved printer pointing at it. A channel you never
+  // touched in Cobblr must not appear as if it's yours (the author, 2026-07-31: "I never
+  // did anything with lightburn, thus I should not be seeing anything about it").
+  const configuredInstances = bridge.instances.filter((i) => !!rowForInstance(i.instance));
   const printing = printProgress ? Math.max(0, printProgress.total - printProgress.done) : 0;
   // The batch count belongs to the control the batch runs through — auto-print,
   // which is browser-driven. The bridge row shares the printer icon but not the
@@ -495,7 +503,7 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
   // Fold the drive indicator in as a DATA control (green ring while this tab is
   // driven, grey while another window is); an offer is a prompt, handled below.
   const dc = driveControl(drive.state, drive.byScans);
-  const bc = bridgeControl(bridge);
+  const bc = bridgeControl({ ...bridge, instances: configuredInstances });
   const controls = [dc, bc, ...serverControls].filter((c): c is LiveControlPublic => !!c);
   // Tab-scoped controls carry their on/off from a client adapter, not the server:
   // scan.drive from localStorage, drive from the SSE state.
@@ -504,7 +512,7 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
     [SCAN_DRIVE_ID]: { enabled: scanDrive.on },
     ...(dc ? { [DRIVE_ID]: { enabled: drive.state === "active" } } : {}),
     // ON = the bridge is holding a link, so a print fires immediately.
-    ...(bc ? { [BRIDGE_ID]: { enabled: bridge.instances.some((i) => i.link === "connected" || i.link === "printing") } } : {}),
+    ...(bc ? { [BRIDGE_ID]: { enabled: configuredInstances.some((i) => i.link === "connected" || i.link === "printing") } } : {}),
   };
 
   const fire = (c: LiveControlPublic) => {
@@ -539,7 +547,7 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
   const detailFor = (c: LiveControlPublic) =>
     c.id !== BRIDGE_ID ? undefined : (
       <>
-        {bridge.instances.map((inst) => (
+        {configuredInstances.map((inst) => (
           <BridgePrinterCard
             key={inst.instance}
             printer={inst}

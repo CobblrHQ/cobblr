@@ -349,6 +349,54 @@ export function BuildPage() {
   const canApply = isAppMode ? !!validation?.valid : (!!validation?.valid && addsSomething);
   const label = useMemo(() => (s: string) => s.split(":")[1] ?? s, []);
 
+  // Cobb greets you only before you've actually run something (typing doesn't
+  // dismiss him), so he and the mode picker share the whole setup phase — which
+  // is why the picker can sit beside him instead of stranding dead space below.
+  const greeting = !aiOff && !prompt && !validation && busy === null;
+  const modeSelector = (
+    // Two shapes, one control. Below lg: a 2x2 grid. The row's max-content is
+    // 638px and the column beside Cobb only reaches that at ~770px wide, so
+    // every phone AND every tablet would have had to scroll it sideways — which
+    // hides half the modes behind a gesture nobody knows to make. From lg both
+    // render sites have the room, so it's the segmented row.
+    // The scroller belongs to the control, not the caller (the picker renders in
+    // two places and only one had it once, so the standalone copy pushed the
+    // whole page sideways). It should now never engage; it's the backstop for
+    // browser font scaling.
+    <div className="overflow-x-auto">
+      <div className="grid grid-cols-2 lg:flex w-full lg:min-w-max rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-0.5 text-sm">
+      {(["tweak", "workspace", "app", "app-custom"] as const).map((m) => (
+        <button
+          key={m}
+          type="button"
+          onClick={() => setMode(m)}
+          className={
+            // In the grid a label may wrap (cells share a height, so a 2-line
+            // label just makes both rows taller — no clipping, no page overflow
+            // at 320px). In the row it must NOT: equal-width segments give
+            // "Design my workspace" less room than its label needs, and a
+            // wrapped label doubles the strip's height.
+            "flex-1 text-center whitespace-normal lg:whitespace-nowrap px-2.5 py-1.5 rounded-md font-medium transition " +
+            (mode === m
+              ? "bg-cobble-600 text-white"
+              : "text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-200")
+          }
+        >
+          {/* User nouns, not platform jargon ("worker app" meant nothing
+              to a new user — redesign A2). */}
+          {m === "tweak"
+            ? "Add to what I have"
+            : m === "workspace"
+              ? "Design my workspace"
+              : m === "app"
+                ? "A page for members"
+                : "Custom page (HTML)"}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
   return (
     <div className="max-w-3xl mx-auto space-y-6">
       <div>
@@ -388,13 +436,42 @@ export function BuildPage() {
       {/* Cobb greeting — the face of "just describe it". Only before you've
           started (no prompt/preview/build yet) and only when AI can actually do
           the work; he offers, he doesn't linger once you're going. */}
-      {!aiOff && !prompt && !validation && busy === null && (
-        <div className="flex items-center gap-3 rounded-xl border border-cobble-200 dark:border-slate-700 bg-mortar-50/60 dark:bg-slate-900/40 px-4 py-3">
-          <Cobb pose="idle" size={56} className="shrink-0 cobb-lift" title="Cobb" />
-          <p className="text-sm text-content dark:text-mortar-100">
-            Tell me what you need. I'll cobble it together, verify it works, and leave it on the bench for you to look
-            over.
-          </p>
+      {greeting && (
+        // No card around the pair: Cobb stands on the PAGE and the copy is a
+        // speech bubble at his side, so it reads as him talking. The mode picker
+        // rides underneath the bubble, which is what stops his height from
+        // becoming dead space (it used to sit stranded below a Cobb-tall box).
+        // A grid, not nested flexes, so ONE picker serves both layouts: on a
+        // phone it spans under Cobb and the bubble (full width, which is what
+        // lets it be a 2x2 instead of a scroller); from sm it tucks into the
+        // bubble's column. Rendering it twice behind `hidden`/`sm:hidden` would
+        // put the same four buttons in the DOM twice.
+        <div className="grid grid-cols-[auto_1fr] items-end gap-x-3 sm:gap-x-5 gap-y-3">
+          {/* CSS height wins over the svg's height attribute, and w-auto lets the
+              crop's aspect drive the width — so one element covers both sizes.
+              The phone size is set by the bubble beside him: he's as tall as it
+              is, and every px of him narrows it, so this is about as big as he
+              goes before the copy starts stacking up. */}
+          <Cobb pose="idle" size={150} className="shrink-0 cobb-lift h-28 w-auto sm:h-[150px]" title="Cobb" />
+          <div className="cobb-bubble relative min-w-0 rounded-xl border border-cobble-200 dark:border-slate-700 bg-mortar-50 dark:bg-slate-900 px-4 py-3 mb-1">
+            <p className="text-base sm:text-lg font-semibold text-content dark:text-mortar-100">
+              Tell me what you need.
+            </p>
+            <p className="text-sm text-muted dark:text-slate-400 mt-0.5">
+              I'll cobble it together, verify it works, and leave it on the bench for you to look over.
+            </p>
+          </div>
+          {/* In the row layout the picker reaches LEFT across the gap, right up
+              to Cobb, while the bubble stays clear of him: the four nowrap labels
+              want 638px and the column alone leaves 656px at full page width,
+              which is closer than it looks. Below lg it spans both columns
+              instead, which is the room that lets it be a 2x2. */}
+          {/* min-w-0: a grid item defaults to min-width:auto, so without it the
+              picker's own sm:min-w-max forces the 1fr column wider than the page
+              and the whole page scrolls sideways (at ~640px, where the row is
+              live but doesn't fit). The scroller can only do its job if the
+              column is allowed to be narrower than its content. */}
+          <div className="col-span-2 lg:col-span-1 lg:col-start-2 min-w-0 lg:-ml-5">{modeSelector}</div>
         </div>
       )}
 
@@ -423,32 +500,9 @@ export function BuildPage() {
         </button>
       )}
 
-      {/* Mode — one tweak vs. design the whole workspace */}
-      <div className="inline-flex rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-0.5 text-sm">
-        {(["tweak", "workspace", "app", "app-custom"] as const).map((m) => (
-          <button
-            key={m}
-            type="button"
-            onClick={() => setMode(m)}
-            className={
-              "px-3 py-1.5 rounded-md font-medium transition " +
-              (mode === m
-                ? "bg-cobble-600 text-white"
-                : "text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-200")
-            }
-          >
-            {/* User nouns, not platform jargon ("worker app" meant nothing
-                to a new user — redesign A2). */}
-            {m === "tweak"
-              ? "Add to what I have"
-              : m === "workspace"
-                ? "Design my workspace"
-                : m === "app"
-                  ? "A page for members"
-                  : "Custom page (HTML)"}
-          </button>
-        ))}
-      </div>
+      {/* Mode — one tweak vs. design the whole workspace. While Cobb is greeting
+          you it renders BESIDE him (above); on its own once he's gone. */}
+      {!greeting && modeSelector}
 
       {/* Step 1 — pick kinds + intent */}
       <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3">

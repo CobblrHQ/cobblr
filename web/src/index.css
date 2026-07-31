@@ -156,23 +156,31 @@ html[data-nav-fullside] #cobblr-toasts {
   width: 13rem;
 }
 
-/* Cobb the mascot — the "working overnight" hammer swing (subtle, looped).
-   Held still for anyone who prefers reduced motion. */
-@keyframes cobb-swing {
-  0%, 100% { transform: rotate(-7deg); }
-  50%      { transform: rotate(3deg); }
+/* Cobb's speech bubble — a tail on the left edge pointing back at him, so the
+   copy reads as HIM talking rather than a notice that happens to sit nearby.
+   Two stacked triangles (border colour behind, fill in front, offset 1px) give
+   the tail the same 1px edge as the bubble. The fill must be opaque or the page
+   shows through the tail, which is why the bubble doesn't use a /60 background. */
+.cobb-bubble { --tail-edge: #D5BFA0; --tail-fill: #FBF9F4; }
+.dark .cobb-bubble { --tail-edge: #262B33; --tail-fill: #334155; }
+.cobb-bubble::before,
+.cobb-bubble::after {
+  content: "";
+  position: absolute;
+  top: 26px;
+  width: 0;
+  height: 0;
+  border-style: solid;
 }
-.cobb-hammer { animation: cobb-swing 1.1s ease-in-out infinite; }
-@media (prefers-reduced-motion: reduce) {
-  .cobb-hammer { animation: none; }
-}
+.cobb-bubble::before { left: -10px; border-width: 9px 10px 9px 0; border-color: transparent var(--tail-edge) transparent transparent; }
+.cobb-bubble::after  { left: -9px;  border-width: 8px 9px 8px 0;  border-color: transparent var(--tail-fill) transparent transparent; }
 
-/* Dark-mode legibility: Cobb's arms are bare slate (#3D4451) strokes with no
-   fill, so on a dark slate panel they blend into the background (the head/apron
-   still read — they have light fills). The art is verbatim, so rather than
-   recolour it we lift the whole figure off dark surfaces with a faint
-   paper-coloured outline (stacked drop-shadows ≈ a thin sticker edge). Light
-   mode needs nothing — the art already sits on light surfaces. */
+/* Dark-mode legibility: Cobb's tee and boots are slate (#3D4451), which is the
+   dark-mode surface colour — on a dark panel they sink into the background (his
+   head and apron still read; they have light fills). The art is verbatim, so
+   rather than recolour it we lift the whole figure off dark surfaces with a
+   faint paper-coloured outline (stacked drop-shadows ≈ a thin sticker edge).
+   Light mode needs nothing — the art already sits on light surfaces. */
 .dark .cobb-lift {
   filter: drop-shadow(0 0 1.3px rgba(246, 242, 234, 0.92))
           drop-shadow(0 0 1.3px rgba(246, 242, 234, 0.92))

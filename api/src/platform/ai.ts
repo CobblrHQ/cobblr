@@ -293,18 +293,47 @@ function truncate(s: string, n = 200): string {
  *  connection → workspace/managed provider → entitlement guard — so the
  *  UI can warn *before* a feature silently degrades (the scan inbox's
  *  "no AI is hooked up" notice). Never throws; never calls a provider. */
+export type AiAvailabilityReason =
+  | "ok"
+  | "operator_disabled"
+  | "not_entitled"
+  | "no_provider"
+  | "workspace_disabled";
+/** Where an available AI call would be served from — drives honest UI copy
+ *  ("provided by your plan" vs "your own key" vs a workspace provider). */
+export type AiSource = "personal" | "workspace" | "managed";
+
 export async function checkAvailability(
   orgId: string,
   userId: string | null,
   capability: AiCapability = "chat",
-): Promise<{ available: boolean; reason: "ok" | "operator_disabled" | "not_entitled" | "no_provider" }> {
+): Promise<{ available: boolean; reason: AiAvailabilityReason; source?: AiSource }> {
   if (!env.COBBLR_AI_ENABLED) return { available: false, reason: "operator_disabled" };
+  // A user's OWN personal connection always works — it's their key, not the
+  // workspace's — so it wins even when the workspace turned shared AI off.
   const personal = await resolvePersonalProvider(
     orgId,
     userId,
     (pid) => !!providers.get(pid)?.capabilities[capability],
   ).catch(() => null);
-  if (personal) return { available: true, reason: "ok" };
+  if (personal) return { available: true, reason: "ok", source: "personal" };
+  // Workspace opted out of shared/managed AI (the personal check above already
+  // let a personal key through; this blocks the workspace + managed defaults).
+  const org = await meta.selectFrom("orgs").select("ai_disabled").where("id", "=", orgId).executeTakeFirst().catch(() => null);
+  if (org?.ai_disabled) {
+    // Still report WHAT WOULD serve AI if the workspace turned it back on, so the
+    // UI can say "AI is available from your plan - flip the switch" rather than
+    // leaving the user unsure whether anything is there. `source` undefined means
+    // nothing would be available even once re-enabled (no provider connected).
+    let source: AiSource | undefined;
+    try {
+      const { row } = await resolveProviderAndModel(orgId, capability);
+      source = String(row.id).startsWith("virtual:") ? "managed" : "workspace";
+    } catch {
+      source = undefined;
+    }
+    return { available: false, reason: "workspace_disabled", source };
+  }
   try {
     const { row, model } = await resolveProviderAndModel(orgId, capability);
     if (entitlementGuard) {
@@ -316,7 +345,10 @@ export async function checkAvailability(
       });
       if (!verdict.allow) return { available: false, reason: "not_entitled" };
     }
-    return { available: true, reason: "ok" };
+    // A credential-less provider resolves to a synthesized `virtual:` row — that
+    // is the managed/plan provider; a real row is a workspace-owned key.
+    const source: AiSource = String(row.id).startsWith("virtual:") ? "managed" : "workspace";
+    return { available: true, reason: "ok", source };
   } catch {
     return { available: false, reason: "no_provider" };
   }
@@ -363,6 +395,18 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
         };
         personalCredentials = personal.credentials;
       }
+    }
+  }
+  // Per-workspace AI opt-out: if this workspace turned shared AI off, the
+  // workspace/managed DEFAULT path is refused (same "no provider" family as the
+  // instance kill-switch, so every caller's basic-mode degrade handles it). A
+  // personal connection (resolved above) or an explicit forced provider still
+  // go through — the opt-out is about the workspace's own default, not a user's
+  // own key.
+  if (!resolved && !req.provider_id) {
+    const org = await meta.selectFrom("orgs").select("ai_disabled").where("id", "=", req.orgId).executeTakeFirst().catch(() => null);
+    if (org?.ai_disabled) {
+      throw new Error("no provider configured: AI is turned off for this workspace");
     }
   }
   const { row, model } =

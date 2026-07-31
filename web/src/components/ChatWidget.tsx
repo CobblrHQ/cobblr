@@ -10,7 +10,7 @@ import ReactMarkdown from "react-markdown";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Sparkles, X, Send, Check, Eye, PencilLine, Trash2 } from "lucide-react";
 import { api, ApiError, type AiChatProposal, type BundleValidationPreview } from "../lib/api";
-import { Cobb } from "./Cobb";
+import { Cobb, CobbBust, COBB_POSES, type CobbPose } from "./Cobb";
 import { useNavigate } from "react-router-dom";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { getChatPageContext } from "../lib/chat-context";
@@ -199,6 +199,13 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
   }, []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // DEV ONLY — which Cobb pose this panel draws. Cobb normally only reaches
+  // `working`/`tada` by way of a real AI build, so there is otherwise no way to
+  // see those poses in situ (at their real size, against the real panel, in the
+  // theme you're running). Clicking him in the header cycles. `import.meta.env.DEV`
+  // is a literal `false` in a production build, so the control and this state's
+  // only writer are eliminated there and Cobb stays `idle` for users.
+  const [devPose, setDevPose] = useState<CobbPose>("idle");
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const dividerRef = useRef<HTMLDivElement>(null);
@@ -502,7 +509,25 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
         >
           <header className="flex items-center justify-between px-4 py-3 border-b border-line dark:border-slate-700 shrink-0">
             <div className="flex items-center gap-2 text-sm font-semibold text-content dark:text-mortar-100">
-              <Cobb pose="idle" bust size={42} title="Cobb" className="cobb-lift" /> Ask Cobb
+              {/* The bust is always the wave — it takes no pose (see CobbBust).
+                  In dev this is also the pose-cycler button, but what it cycles is
+                  the FULL-BODY Cobb below, which is where poses are reviewable. */}
+              {import.meta.env.DEV ? (
+                <button
+                  type="button"
+                  onClick={() => setDevPose((p) => COBB_POSES[(COBB_POSES.indexOf(p) + 1) % COBB_POSES.length]!)}
+                  title={`Cobb — cycle the full-body pose below: ${devPose} (dev only)`}
+                  className="rounded hover:bg-subtle/60 dark:hover:bg-slate-800/60 transition"
+                >
+                  <CobbBust size={42} title="Cobb" className="cobb-lift" />
+                </button>
+              ) : (
+                <CobbBust size={42} title="Cobb" className="cobb-lift" />
+              )}
+              Ask Cobb
+              {import.meta.env.DEV && (
+                <span className="font-mono text-[10px] font-normal text-faint">{devPose}</span>
+              )}
             </div>
             <div className="flex items-center gap-1">
               {messages.length > 0 && (
@@ -566,7 +591,7 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
           <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
             {messages.length === 0 && (
               <div className="mt-6 px-4 flex flex-col items-center text-center">
-                <Cobb pose="idle" size={150} title="Cobb" className="cobb-lift" />
+                <Cobb pose={devPose} size={150} title="Cobb" className="cobb-lift" />
                 <p className="text-xs text-faint dark:text-slate-500 leading-relaxed mt-2">
                   {aiOff ? (
                     <>Ask me the basics - "what can you do", "how do I add a part", "where do I scan". For
@@ -585,6 +610,16 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
                 </p>
               </div>
             )}
+            {/* DEV ONLY — the big Cobb normally lives in the empty state, so he
+                vanishes the moment a conversation starts and you can no longer
+                see the pose you're reviewing. While a non-idle pose is selected,
+                keep him pinned above the turns. Idle behaves exactly like prod. */}
+            {import.meta.env.DEV && messages.length > 0 && devPose !== "idle" && (
+              <div className="flex flex-col items-center border-b border-dashed border-line dark:border-slate-700 pb-3">
+                <Cobb pose={devPose} size={150} title={`Cobb ${devPose}`} className="cobb-lift" />
+                <span className="font-mono text-[10px] text-faint mt-1">dev preview · {devPose}</span>
+              </div>
+            )}
             {messages.map((m, i) => {
               const el =
               m.role === "user" ? (
@@ -598,14 +633,21 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
                   <div className="prose prose-sm dark:prose-invert max-w-none text-content dark:text-mortar-100 prose-p:my-1.5 prose-headings:my-2 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5 prose-pre:my-2 break-words">
                     <ReactMarkdown>{m.content}</ReactMarkdown>
                   </div>
+                  {/* A workspace build running in the background — the longest
+                      wait in the product, and the most literal `working`. */}
                   {m.building && (
                     <div className="mt-1 flex items-center gap-2 text-xs text-faint dark:text-slate-500">
-                      <span className="inline-block h-2 w-2 rounded-full bg-accent animate-pulse" />
+                      <Cobb pose="working" size={52} title="Cobb, at work" className="cobb-lift shrink-0" />
                       Turning on modules and building your fields - this takes a minute or two…
                     </div>
                   )}
+                  {/* He built it and is holding it out for you to check before it
+                      lands — the same beat (and the same pose) the Build page
+                      uses for "Built it. Verified it." */}
                   {m.buildPreview && !m.resolved && (
-                    <div className="mt-2 rounded-lg border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800/60 px-3 py-2 text-xs space-y-1.5">
+                    <div className="mt-2 flex items-start gap-2">
+                      <Cobb pose="tada" size={48} title="Cobb presents the build" className="cobb-lift shrink-0" />
+                      <div className="flex-1 min-w-0 rounded-lg border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800/60 px-3 py-2 text-xs space-y-1.5">
                       {m.buildPreview.modules_to_enable.length > 0 && (
                         <div className="text-content dark:text-mortar-100">
                           <span className="text-faint">Turns on:</span> {m.buildPreview.modules_to_enable.join(", ")}
@@ -631,10 +673,15 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
                           <span className="text-faint">Creates:</span> {m.buildSeedCount} starter record{m.buildSeedCount === 1 ? "" : "s"}
                         </div>
                       )}
+                      </div>
                     </div>
                   )}
+                  {/* He's proposing a change and waiting on your call — the
+                      suggestion moment the `idea` pose was drawn for. Only while
+                      it's unresolved: once you decide, he stops asking. */}
                   {m.proposal && !m.resolved && (
-                    <div className="mt-2 flex gap-2">
+                    <div className="mt-2 flex items-center gap-2">
+                      <Cobb pose="idea" size={44} title="Cobb suggests" className="cobb-lift shrink-0" />
                       <button
                         type="button"
                         onClick={() => void confirm(i)}
@@ -712,8 +759,14 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
                 <div className="min-h-[70vh] shrink-0" aria-hidden="true" />
               </>
             )}
+            {/* Waiting on a reply. Cobb's poses are STATES, not decoration, so
+                the wait is where `working` belongs: he's at the bench while you
+                wait, instead of a generic dot. Deliberately small and static —
+                he shows up because something is happening, and leaves when it
+                stops. */}
             {busy && (
-              <div className="text-left">
+              <div className="flex items-end gap-2">
+                <Cobb pose="working" size={52} title="Cobb, at work" className="cobb-lift shrink-0" />
                 <div className="inline-block rounded-lg px-3 py-2 bg-subtle dark:bg-slate-800 text-faint text-sm">…</div>
               </div>
             )}

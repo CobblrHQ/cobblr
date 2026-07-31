@@ -244,12 +244,21 @@ registerBackupDriver({
     if (!res.ok) return;
     const files = ((await res.json()) as { files?: Array<{ id?: string; name?: string }> }).files ?? [];
     const backups = files.filter((f) => /^backup-.*\.zip$/.test(f.name ?? "") && f.id);
-    for (const old of backups.slice(Math.max(1, retention))) {
-      await fetch(`https://www.googleapis.com/drive/v3/files/${old.id}`, {
-        method: "DELETE",
-        headers: { authorization: `Bearer ${accessToken}` },
-        signal: AbortSignal.timeout(30000),
-      }).catch(() => {});
+    const toDelete = backups.slice(Math.max(1, retention));
+    // Delete in parallel batches, not one-at-a-time: a big backlog (the author hit 1500+
+    // because Drive never pruned before) took 10+ minutes sequentially and got
+    // killed before finishing. Batches of 15 clear even a large backlog in seconds.
+    const CONCURRENCY = 15;
+    for (let i = 0; i < toDelete.length; i += CONCURRENCY) {
+      await Promise.all(
+        toDelete.slice(i, i + CONCURRENCY).map((old) =>
+          fetch(`https://www.googleapis.com/drive/v3/files/${old.id}`, {
+            method: "DELETE",
+            headers: { authorization: `Bearer ${accessToken}` },
+            signal: AbortSignal.timeout(30000),
+          }).catch(() => {}),
+        ),
+      );
     }
   },
 });
@@ -399,12 +408,19 @@ export async function runDestination(destId: string, now: Date): Promise<{ ok: b
     const credentials = dest.credentials_enc ? await decryptCredentials(dest.org_id, dest.credentials_enc) : {};
     const { buffer, filename } = await buildBackupZip(org.id, org.slug);
     const { ref } = await driver.put({ orgId: org.id, filename, bytes: buffer, config: dest.config, credentials });
-    if (driver.prune) await driver.prune({ orgId: org.id, config: dest.config, credentials, retention: dest.retention }).catch(() => {});
+    // Record success the moment the backup is safely uploaded — pruning is
+    // cleanup and must NOT gate the run record. A large first-run backlog made
+    // prune take many minutes; if the process was recycled mid-prune, the whole
+    // run (and the schedule advance) was silently lost. Mark ok now, prune after.
     await meta
       .updateTable("backup_destinations")
       .set({ last_run_at: now, last_status: "ok", updated_at: now })
       .where("id", "=", destId)
       .execute();
+    if (driver.prune)
+      await driver
+        .prune({ orgId: org.id, config: dest.config, credentials, retention: dest.retention })
+        .catch((e) => console.warn(`[backup] prune failed for ${destId}:`, (e as Error).message));
     return { ok: true, ref };
   } catch (err) {
     await meta

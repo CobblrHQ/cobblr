@@ -16,7 +16,14 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { buildEnvelope, buildCsv, type ScanRowForExport, type PhotoResolver, type EmbeddedPhoto } from "../services/export.js";
+import {
+  buildEnvelope,
+  buildCsv,
+  type ScanRowForExport,
+  type BatchRowForExport,
+  type PhotoResolver,
+  type EmbeddedPhoto,
+} from "../services/export.js";
 import { signExportToken } from "../services/export-token.js";
 
 export const exportRouter = Router({ mergeParams: true });
@@ -60,13 +67,13 @@ const EXPORT_COLS = [
   "suggested_manufacturer", "suggested_sku", "suggested_metadata", "ai_notes",
   "ai_confidence", "target_kind", "scan_area", "quantity",
   "suggested_candidates", "suggested_location_note", "scan_batch_id",
-  "created_at", "updated_at",
+  "target_location_id", "created_at", "updated_at",
 ] as const;
 
 async function loadRows(
   req: Request,
   sel: { status?: string; batchId?: string | null; ids?: string[] | null } = {},
-): Promise<{ rows: ScanRowForExport[]; status: string; batchId: string | null }> {
+): Promise<{ rows: ScanRowForExport[]; batches: BatchRowForExport[]; status: string; batchId: string | null }> {
   const db = tenantDb(req);
   const statusQ = sel.status ?? (typeof req.query.status === "string" ? req.query.status : "all");
   const batchId = sel.batchId ?? (typeof req.query.batch === "string" && req.query.batch ? req.query.batch : null);
@@ -79,7 +86,25 @@ async function loadRows(
     if (batchId) q = q.where("scan_batch_id", "=", batchId);
   }
   const rows = (await q.orderBy("created_at", "asc").execute()) as unknown as ScanRowForExport[];
-  return { rows, status: sel.ids?.length ? "selection" : statusQ, batchId };
+  const batches = await loadBatches(db, rows);
+  return { rows, batches, status: sel.ids?.length ? "selection" : statusQ, batchId };
+}
+
+/** The sessions the exported rows belong to. Derived from the ITEMS rather than
+ *  the whole table, so exporting one session carries exactly that one and a
+ *  selection carries only the sessions it touches. */
+async function loadBatches(
+  db: ReturnType<typeof tenantDb>,
+  rows: ScanRowForExport[],
+): Promise<BatchRowForExport[]> {
+  const ids = [...new Set(rows.map((r) => r.scan_batch_id).filter((v): v is string => !!v))];
+  if (ids.length === 0) return [];
+  return (await db
+    .selectFrom("core_scan_batches")
+    .select(["id", "label", "origin", "vendor", "order_ref", "source_file_id", "created_at"])
+    .where("id", "in", ids)
+    .orderBy("created_at", "asc")
+    .execute()) as unknown as BatchRowForExport[];
 }
 
 /** A `link`-mode resolver: one PER-FILE signed token baked into each URL (scoped
@@ -95,18 +120,27 @@ function linkResolver(req: Request, orgId: string, ttlMs: number): PhotoResolver
 /** An `embed`-mode resolver: pre-read every referenced file's bytes and base64
  *  them, so the export is fully self-contained (no public links, works offline /
  *  LAN-only). Files over the cap (or unreadable / non-image) are simply omitted. */
-async function embedResolver(orgId: string, rows: ScanRowForExport[]): Promise<PhotoResolver> {
+async function embedResolver(
+  orgId: string,
+  rows: ScanRowForExport[],
+  batches: BatchRowForExport[] = [],
+): Promise<PhotoResolver> {
   const fileIds = new Set<string>();
   for (const r of rows) {
     if (r.image_file_id) fileIds.add(r.image_file_id);
     if (r.catalog_image_file_id) fileIds.add(r.catalog_image_file_id);
   }
+  // A receipt session's original document rides along too - it is the evidence
+  // behind every line the parser produced, and the inbox's "Original" button.
+  for (const b of batches) if (b.source_file_id) fileIds.add(b.source_file_id);
   const map = new Map<string, EmbeddedPhoto>();
   await Promise.all(
     [...fileIds].map(async (id) => {
       try {
         const f = (await platform().files.read(orgId, id, "medium")) ?? (await platform().files.read(orgId, id, "original"));
-        if (!f || !f.mimeType.startsWith("image/")) return;
+        // Images for item photos, PDFs because a receipt session's original is
+        // often one - restricting to image/* silently dropped those.
+        if (!f || !(f.mimeType.startsWith("image/") || f.mimeType === "application/pdf")) return;
         const bytes = Buffer.from(f.bytes);
         if (bytes.byteLength > EMBED_MAX_BYTES) return;
         map.set(id, { mime: f.mimeType, data: bytes.toString("base64") });
@@ -119,6 +153,24 @@ async function embedResolver(orgId: string, rows: ScanRowForExport[]): Promise<P
     const e = map.get(fileId);
     return e ? { embed: e } : null;
   };
+}
+
+/** id → human name for this workspace's locations, so an export can carry WHERE
+ *  an item was filed as a name. Read through the entities seam (never a direct
+ *  query into another module's tables). Best-effort: no locations module, or a
+ *  failure, just means the export omits the suggestion. */
+async function locationNamer(orgId: string): Promise<(id: string) => string | null> {
+  const byId = new Map<string, string>();
+  try {
+    const locs = await platform().entities.list(orgId, "core-locations:location", { limit: 2000 });
+    for (const l of locs.items) {
+      const name = l.title ?? String((l.fields as Record<string, unknown>)?.name ?? "");
+      if (name) byId.set(String(l.id), name);
+    }
+  } catch {
+    /* no locations to name → the export simply carries none */
+  }
+  return (id) => byId.get(id) ?? null;
 }
 
 const stamp = () => new Date().toISOString().slice(0, 10);
@@ -155,14 +207,14 @@ exportRouter.post(
     const ctx = tenantContext(req);
     const mode: PhotoMode = body.photo_mode ?? defaultPhotoMode();
     const ttlMs = body.ttl_ms ?? DEFAULT_TTL_MS;
-    const { rows, status, batchId } = await loadRows(req, {
+    const { rows, batches, status, batchId } = await loadRows(req, {
       status: body.status,
       batchId: body.batch ?? null,
       ids: body.ids ?? null,
     });
     const resolve: PhotoResolver =
       mode === "embed"
-        ? await embedResolver(ctx.org.id, rows)
+        ? await embedResolver(ctx.org.id, rows, batches)
         : mode === "none"
           ? () => null
           : linkResolver(req, ctx.org.id, ttlMs);
@@ -171,6 +223,8 @@ exportRouter.post(
       exportedAt: new Date().toISOString(),
       status,
       batchId,
+      batches,
+      locationName: await locationNamer(ctx.org.id),
     });
     res.setHeader("Content-Type", "application/json");
     res.setHeader("Content-Disposition", `attachment; filename="cobblr-scan-${status}-${stamp()}.json"`);
@@ -183,7 +237,7 @@ exportRouter.get(
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const ctx = tenantContext(req);
-    const { rows, status, batchId } = await loadRows(req);
+    const { rows, batches, status, batchId } = await loadRows(req);
     // Legacy GET keeps link photos at the default TTL (the modal's POST is where
     // embed / selection / custom TTL live).
     const env = buildEnvelope(rows, linkResolver(req, ctx.org.id, DEFAULT_TTL_MS), {
@@ -191,6 +245,8 @@ exportRouter.get(
       exportedAt: new Date().toISOString(),
       status,
       batchId,
+      batches,
+      locationName: await locationNamer(ctx.org.id),
     });
     res.setHeader("Content-Type", "application/json");
     res.setHeader("Content-Disposition", `attachment; filename="cobblr-scan-${status}-${stamp()}.json"`);

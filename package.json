@@ -58,6 +58,8 @@
     "lint:no-emdash": "tsx scripts/lint-no-emdash.ts",
     "lint:scan-row-title": "tsx scripts/lint-scan-row-title.ts",
     "lint:scan-session-header": "tsx scripts/lint-scan-session-header.ts",
+    "lint:scan-export-fidelity": "tsx scripts/lint-scan-export-fidelity.ts",
+    "lint:jsonb-array-writes": "tsx scripts/lint-jsonb-array-writes.ts",
     "lint:lints-are-wired": "tsx scripts/lint-lints-are-wired.ts",
     "lint:image-text-fonts": "tsx scripts/lint-image-text-fonts.ts",
     "lint:write-guards": "tsx scripts/lint-module-write-guards.ts",
@@ -103,6 +105,7 @@
     "lint:view-config-keys": "tsx scripts/lint-view-config-keys.ts",
     "lint:bench-not-shipped": "tsx scripts/lint-bench-not-shipped.ts",
     "lint:generated-artifact-paths": "tsx scripts/lint-generated-artifact-paths.ts",
+    "lint:cobb-art": "node scripts/build-cobb-art.mjs --check",
     "lint:dead-exports": "tsx scripts/lint-dead-exports.ts",
     "lint:auth-rate-limits": "tsx scripts/lint-auth-rate-limits.ts"
   },

@@ -37,6 +37,45 @@ export interface NormalizedImportItem {
    *  user_hint (matchmaker prior), barcode_aliases, source pack/box states,
    *  notes/research_hint, originally_captured_at, import_provenance. */
   metadata: Record<string, unknown>;
+  /**
+   * Cobblr-native fields restored verbatim from a Cobblr export's `x_cobblr`.
+   *
+   * These used to be parsed and thrown away: the exporter emitted them, the
+   * importer never looked. A real 69-item transfer measured against prod lost
+   * 97 history entries, 8 typed hints, 69 candidate sets and 43 manufacturers
+   * that were all sitting in the file (2026-07-31). Null for a non-Cobblr CSV,
+   * where these concepts do not exist.
+   */
+  x_manufacturer: string | null;
+  x_location_note: string | null;
+  x_candidates: unknown;
+  x_entity_type: string | null;
+  /** The exported batch this item belonged to; remapped to a local batch id. */
+  x_batch_source_id: string | null;
+  /** Where the source had it filed, BY NAME. Matched against the destination's
+   *  own locations; when nothing matches it survives as a visible suggestion
+   *  rather than being dropped. */
+  x_location_name: string | null;
+  /** Filled by the router once the name is matched against local locations. */
+  x_target_location_id: string | null;
+  /** An external catalog image link, kept as-is so the copy renders what the
+   *  source rendered without re-fetching anything. */
+  x_catalog_image_url: string | null;
+  /** The item's ORIGINAL creation time. Sessions group by time, so stamping
+   *  import-time here collapses months of scanning into one bogus session. */
+  x_created_at: string | null;
+}
+
+/** A scan session carried by a Cobblr export (envelope `x_cobblr_batches`). */
+export interface NormalizedImportBatch {
+  source_id: string;
+  label: string | null;
+  origin: string | null;
+  vendor: string | null;
+  order_ref: string | null;
+  created_at: string | null;
+  document_url: string | null;
+  document_embedded: { mime: string; data: string } | null;
 }
 
 export interface ParsedImport {
@@ -44,6 +83,8 @@ export interface ParsedImport {
   source_instance: string | null;
   items: NormalizedImportItem[];
   errors: ImportRowError[];
+  /** Sessions from a Cobblr export; empty for CSV / foreign sources. */
+  batches?: NormalizedImportBatch[];
   /** CSV only: the headers seen, and which canonical fields they resolved to
    *  (null = unmapped) — drives the UI's column mapper. */
   columns?: Array<{ header: string; field: string | null }>;
@@ -248,6 +289,24 @@ function normalize(raw: Record<string, unknown>, row: number, sourceInstance: st
   const captured = asStr(raw.created_at);
   if (captured) metadata.originally_captured_at = captured;
 
+  // A Cobblr export carries the row's ACTUAL metadata (history, typed hints,
+  // source states) under x_cobblr. Restore it as the BASE and let the interop
+  // fields above win on conflict: both are derived from the same source row, so
+  // they agree, and a foreign CSV (no x_cobblr) keeps exactly its old behaviour.
+  const x = (raw.x_cobblr ?? null) as Record<string, unknown> | null;
+  const xMeta = x && typeof x.metadata === "object" && x.metadata ? (x.metadata as Record<string, unknown>) : null;
+  const merged: Record<string, unknown> = xMeta ? { ...xMeta, ...metadata } : metadata;
+  // Never carry the SOURCE instance's provenance stamp across - this import's
+  // own provenance is what dedupe matches on.
+  if (xMeta && !provenance) delete merged.import_provenance;
+  // The interop `user_hint` above is SYNTHESISED from the source's category
+  // ("source system categorised as Clothing"). A Cobblr export already carries
+  // the hint the user actually TYPED ("black"), and that is the one the
+  // matchmaker weights and that later re-runs read back out of history - so the
+  // real hint must not be overwritten by the synthetic one.
+  const realHint = xMeta ? asStr(xMeta.user_hint) : null;
+  if (realHint) merged.user_hint = realHint;
+
   // source_kind: what the scan primarily IS. Barcode wins; then photo; then
   // url; a hint-only row (name/notes, no capture artifact) imports as a note.
   const source_kind = barcode ? ("barcode" as const) : identify ? ("photo" as const) : sourceUrl ? ("url" as const) : ("note" as const);
@@ -273,7 +332,16 @@ function normalize(raw: Record<string, unknown>, row: number, sourceInstance: st
     photo_display_url: display,
     photo_identify_embedded: identifyEmbedded,
     photo_display_embedded: displayEmbedded,
-    metadata,
+    metadata: merged,
+    x_manufacturer: x ? asStr(x.suggested_manufacturer) : null,
+    x_location_note: x ? asStr(x.suggested_location_note) : null,
+    x_candidates: x ? (x.suggested_candidates ?? null) : null,
+    x_entity_type: entityType,
+    x_batch_source_id: x ? asStr(x.scan_batch_id) : null,
+    x_location_name: x ? asStr(x.target_location_name) : null,
+    x_catalog_image_url: x ? asStr(x.catalog_image_url) : null,
+    x_target_location_id: null,
+    x_created_at: captured,
   };
 }
 
@@ -309,7 +377,41 @@ export function parseJsonImport(body: unknown): ParsedImport {
     const n = normalize(it as Record<string, unknown>, idx + 1, sourceInstance, source, errors);
     if (n) out.push(n);
   });
-  return { source, source_instance: sourceInstance, items: out, errors };
+  return { source, source_instance: sourceInstance, items: out, errors, batches: parseBatches(body) };
+}
+
+/** The envelope's `x_cobblr_batches`, if this is a Cobblr export that carried
+ *  its sessions. Unknown/absent → no batches, and every item still imports. */
+function parseBatches(body: unknown): NormalizedImportBatch[] {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return [];
+  const raw = (body as { x_cobblr_batches?: unknown }).x_cobblr_batches;
+  if (!Array.isArray(raw)) return [];
+  const asEmbed = (v: unknown): { mime: string; data: string } | null => {
+    if (!v || typeof v !== "object") return null;
+    const o = v as { mime?: unknown; data?: unknown };
+    const mime = asStr(o.mime);
+    const data = asStr(o.data);
+    return mime && data ? { mime, data } : null;
+  };
+  const out: NormalizedImportBatch[] = [];
+  for (const b of raw) {
+    if (!b || typeof b !== "object") continue;
+    const o = b as Record<string, unknown>;
+    const sourceId = asStr(o.source_id);
+    if (!sourceId) continue;
+    const doc = (o.source_document ?? null) as Record<string, unknown> | null;
+    out.push({
+      source_id: sourceId,
+      label: asStr(o.label),
+      origin: asStr(o.origin),
+      vendor: asStr(o.vendor),
+      order_ref: asStr(o.order_ref),
+      created_at: asStr(o.created_at),
+      document_url: doc ? asStr(doc.url) : null,
+      document_embedded: doc ? asEmbed(doc.embed) : null,
+    });
+  }
+  return out;
 }
 
 /** Parse CSV text (canonical headers or custom via `mapping`). */

@@ -48,6 +48,9 @@ export interface OrgsTable {
   db_name: string;
   db_credentials_encrypted: string | null;
   plan: Generated<"free" | "paid" | "disabled">;
+  /** Per-workspace AI opt-out. When true, the workspace/managed AI default is
+   *  off here; a user's own personal connection still works. */
+  ai_disabled: Generated<boolean>;
   /** Member-portal config — branding + pinned views shown in the
    *  slimmed-down `/portal/:slug` shell. See
    *  docs/modules/member-portal-and-permissions.md. */

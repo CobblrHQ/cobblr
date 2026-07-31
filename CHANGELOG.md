@@ -2,6 +2,24 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-07-31
+
+### Features
+- You can now turn AI off for a single workspace. On Configuration then AI, owners and admins get a "Use AI in this workspace" switch: off, that workspace runs in basic mode and Cobblr makes no AI calls on its behalf, even when the server or your plan has AI available. A member's own personal AI key still works there. The status banner now also says where an "on" workspace's AI comes from (your plan, your personal connection, or a workspace key) so it stops contradicting the "nothing connected" state below it.
+
+### Improvements
+- On Configuration then AI, a job you can't pin yet (because AI comes from your plan and this workspace has no provider of its own) now shows a small info hint inline instead of an edit pencil that opened a dead-end modal. The pencil only appears when there's actually a provider to pin to. If a pinned job's provider is later removed, opening it now offers a Clear pin action rather than a wall of text.
+- When AI is turned off for a workspace, the page now says plainly that AI is available from your Cobblr plan (or a connected workspace provider) and that flipping the switch back on will use it, so "off" reads as a choice rather than a dead end.
+- Cobb turns up where he has something to say. Ask Cobb shows him at the bench while he's thinking instead of a grey dot, holding out the result when a build lands, and pointing at what he's proposing while it waits on your confirm. The Build page greets you with a proper hello: he stands beside a speech bubble with the mode picker tucked in next to him, in place of the small icon in a tall empty box.
+- Cobb has a new look. The assistant who greets you on the Build page and heads up Ask Cobb was redrawn by an illustrator: a proper faceted cobblestone head with a sprout, a leather work apron, and a friendlier face. His four moments now read at a glance, and the "working" one finally shows the work: he's shaping a stone on his stump while your build runs, instead of the old snoozing pose that looked like he had dozed off on the job.
+- "More ways to start" on the dashboard now opens one browse surface with a single search box and three clear sections (ready-made trackers, full setups, start from a blank slate) instead of two columns. Kinds you already track are offered as another category of the same thing, so the blank-slate list no longer shrinks to a handful of leftovers as your workspace fills up.
+- Moving a scan inbox between Cobblr instances now carries the whole item, not just its current state: each item's history, your typed hints, its routing suggestions, the manufacturer, and the scan session it belongs to (with its label, order ref and original receipt) all come across, alongside the photos that already did.
+
+### Fixes
+- Fixed backups still piling up in Google Drive: a large backlog made the cleanup take so long the run was lost before it finished, so retention never took effect. Cleanup now runs in parallel and no longer blocks recording the backup, so Drive is trimmed to your retention count reliably.
+- Items whose only picture is a catalog link now keep that picture when a scan inbox is imported into another workspace, instead of arriving blank.
+- Importing a scan export no longer fails partway with a database error; routing suggestions are written in the format Postgres expects.
+
 ## 2026-07-30
 
 ### Features

@@ -696,9 +696,9 @@ export function CreateWorkspaceModal({
           {bpError && <span className="mt-1 block text-[11px] text-ember-600 dark:text-ember-300">{bpError}</span>}
         </label>
         <p className="text-xs text-muted dark:text-slate-400">
-          Cobblr will provision a fresh tenant Postgres database, enable
-          all installed modules, and seed default wires. Inventory in
-          this workspace is invisible to your other workspaces.
+          A new workspace is a clean, separate space with its own data. Nothing
+          you add here shows up in your other workspaces, and it starts ready to
+          use with the same features turned on.
         </p>
         <div className="flex items-center justify-end gap-2 pt-2 border-t border-line dark:border-slate-700">
           <button

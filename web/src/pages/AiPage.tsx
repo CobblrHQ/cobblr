@@ -24,7 +24,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Play, Plus, Trash2 } from "lucide-react";
+import { Info, Pencil, Play, Plus, Sparkles, Trash2 } from "lucide-react";
 import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import { capabilityLabel } from "../lib/ai-capability-labels";
 import {
@@ -85,6 +85,13 @@ export function AiPage() {
     for (const r of capDefaultsQ.data?.items ?? []) m.set(r.capability, r);
     return m;
   }, [capDefaultsQ.data]);
+  // Is there any workspace-owned provider you could actually pin a job to? When
+  // there isn't (e.g. AI is provided only by the plan), the pencil would open a
+  // dead-end modal - so the row shows an inline hint instead (the author, 2026-07-31).
+  const canPin = (cap: string): boolean =>
+    (providersQ.data?.items ?? []).some(
+      (p) => p.enabled && defByPid.get(p.provider_id)?.capabilities[cap as never] !== undefined,
+    );
 
   return (
     <div className="space-y-6">
@@ -143,14 +150,24 @@ export function AiPage() {
                   ) : (
                     <span className="text-xs text-faint">automatic</span>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => setEditingCapability(cap)}
-                    aria-label={`Change what ${capabilityLabel(cap)} uses`}
-                    className="p-1.5 text-muted hover:text-content dark:hover:text-slate-200 rounded hover:bg-subtle dark:hover:bg-slate-800"
-                  >
-                    <Pencil className="h-4 w-4" />
-                  </button>
+                  {row || canPin(cap) ? (
+                    <button
+                      type="button"
+                      onClick={() => setEditingCapability(cap)}
+                      aria-label={`Change what ${capabilityLabel(cap)} uses`}
+                      className="p-1.5 text-muted hover:text-content dark:hover:text-slate-200 rounded hover:bg-subtle dark:hover:bg-slate-800"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                  ) : (
+                    // Nothing to pin to yet: an inline hint, not a dead-end modal.
+                    <span
+                      className="p-1.5 text-faint"
+                      title="Runs on whatever AI is available (your Cobblr plan, if your subscription includes it). Add your own provider below to pin this job to a specific provider or model."
+                    >
+                      <Info className="h-4 w-4" />
+                    </span>
+                  )}
                 </div>
               </div>
             );
@@ -671,21 +688,54 @@ function CapabilityDefaultModal({
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
+  const aiStatus = useAiStatus();
+  const planProvided = aiStatus?.available && aiStatus.source === "managed";
   return (
     <Modal open onClose={onClose} title={`Default for ${capability}`} size="md">
       {eligible.length === 0 ? (
-        <div className="space-y-2">
-          <div className="text-sm text-muted">
-            No enabled provider currently supports this capability.
-            Add one first.
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
-          >
-            Close
-          </button>
+        <div className="space-y-3">
+          {existing ? (
+            // Reachable only as a STALE pin: the provider this was pinned to is
+            // gone/disabled, so the job fell back to automatic. Let them clear it.
+            <>
+              <div className="text-sm text-muted">
+                This job was pinned to <span className="font-mono">{existing.provider_id}</span>, which isn't an enabled
+                provider here anymore - so it's running on automatic. Clear the pin, or add that provider back below.
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => clearM.mutate()}
+                  disabled={clearM.isPending}
+                  className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50"
+                >
+                  Clear pin
+                </button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
+                >
+                  Close
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="text-sm text-muted">
+                {planProvided
+                  ? "This job runs on your Cobblr plan's AI (automatic). To pin it to a specific provider or model, add your own key first."
+                  : "No enabled provider supports this capability yet. Add a provider first."}
+              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
+              >
+                Close
+              </button>
+            </>
+          )}
         </div>
       ) : (
         <form
@@ -766,33 +816,95 @@ function CapabilityDefaultModal({
  *  operator kill-switch and an entitlement problem from "nothing set up", which
  *  matters because only the last one is fixable on this page. */
 function AiAvailabilityBanner() {
+  const { activeSlug, activeOrg } = useActiveOrg();
+  const qc = useQueryClient();
+  const toast = useToast();
   const status = useAiStatus();
+  const canEdit = activeOrg?.role === "owner" || activeOrg?.role === "admin";
+  const settingsQ = useQuery({
+    queryKey: ["ai-settings", activeSlug],
+    queryFn: () => api.getAiSettings(activeSlug),
+    enabled: !!activeSlug,
+  });
+  const disabled = settingsQ.data?.ai_disabled ?? false;
+  const toggle = useMutation({
+    mutationFn: (next: boolean) => api.updateAiSettings(activeSlug, { ai_disabled: next }),
+    onSuccess: (r) => {
+      toast.success(r.ai_disabled ? "AI turned off for this workspace." : "AI turned back on for this workspace.");
+      void qc.invalidateQueries({ queryKey: ["ai-settings", activeSlug] });
+      void qc.invalidateQueries({ queryKey: ["ai-status", activeSlug] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
   if (!status) return null;
-  if (status.available) {
-    return (
-      <div className="flex items-center gap-2 rounded-xl border border-moss-200 dark:border-moss-800/60 bg-moss-50 dark:bg-moss-950/30 px-4 py-2.5">
-        <span className="w-1.5 h-1.5 rounded-full bg-moss-500 shrink-0" />
-        <span className="text-sm text-content dark:text-mortar-100">
-          AI is on in this workspace.
-        </span>
-      </div>
-    );
-  }
-  const why: Record<string, string> = {
-    no_provider:
-      "Nothing is connected yet. Add a workspace key below, or share a personal connection from your account.",
-    operator_disabled: "An operator has turned AI off for this instance.",
-    not_entitled: "This workspace's plan does not include AI.",
-    ok: "",
-  };
+
+  // Explain WHERE an "on" workspace's AI comes from, so "on" next to
+  // "Nothing connected yet" below stops being a contradiction.
+  const sourceNote =
+    status.source === "managed"
+      ? " It's provided by your Cobblr plan - add your own key below only if you want a specific provider or to track spend."
+      : status.source === "personal"
+        ? " It's running on your own personal connection."
+        : status.source === "workspace"
+          ? " It's using a key this workspace added."
+          : "";
+  const offReason =
+    status.reason === "workspace_disabled"
+      ? "You turned AI off for this workspace. A member's own personal connection would still work here."
+      : status.reason === "operator_disabled"
+        ? "An operator has turned AI off for this whole server."
+        : status.reason === "not_entitled"
+          ? "This workspace's plan does not include AI."
+          : "Nothing is connected yet. Add a workspace key below, or share a personal connection from your account.";
+  // When it's off but AI WOULD work if re-enabled (the plan or a connected
+  // workspace key would serve it), say so plainly so the switch reads as a
+  // choice, not a dead end.
+  const enableHint =
+    status.reason === "workspace_disabled" && status.source === "managed"
+      ? "AI is available from your Cobblr plan - turn the switch below on to use it across this workspace."
+      : status.reason === "workspace_disabled" && status.source === "workspace"
+        ? "A provider is connected for this workspace - turn the switch below on to use it."
+        : null;
+
   return (
-    <div className="rounded-xl border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-950/30 px-4 py-2.5">
-      <div className="text-sm font-medium text-content dark:text-mortar-100">
-        AI is off in this workspace.
-      </div>
-      <p className="text-xs text-muted dark:text-mortar-200 mt-0.5">
-        {why[status.reason] ?? why.no_provider}
-      </p>
+    <div className="space-y-2">
+      {status.available ? (
+        <div className="flex items-center gap-2 rounded-xl border border-moss-200 dark:border-moss-800/60 bg-moss-50 dark:bg-moss-950/30 px-4 py-2.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-moss-500 shrink-0" />
+          <span className="text-sm text-content dark:text-mortar-100">AI is on in this workspace.{sourceNote}</span>
+        </div>
+      ) : (
+        <div className="rounded-xl border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-950/30 px-4 py-2.5">
+          <div className="text-sm font-medium text-content dark:text-mortar-100">AI is off in this workspace.</div>
+          <p className="text-xs text-muted dark:text-mortar-200 mt-0.5">{offReason}</p>
+          {enableHint && (
+            <p className="text-xs font-medium text-content dark:text-mortar-100 mt-1.5 flex items-start gap-1.5">
+              <Sparkles className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
+              {enableHint}
+            </p>
+          )}
+        </div>
+      )}
+
+      {canEdit && status.reason !== "operator_disabled" && (
+        <label className="flex items-start gap-3 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-4 py-2.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={!disabled}
+            disabled={toggle.isPending || settingsQ.isLoading}
+            onChange={(e) => toggle.mutate(!e.target.checked)}
+            className="mt-0.5 h-4 w-4 accent-cobble-600 shrink-0"
+          />
+          <span className="min-w-0">
+            <span className="text-sm text-content dark:text-mortar-100">Use AI in this workspace</span>
+            <span className="block text-xs text-faint dark:text-slate-400">
+              On, this workspace uses whatever AI is available - your Cobblr plan's, or a key you add below. Off, Cobblr
+              runs in basic mode here and makes no AI calls on the workspace's behalf. Either way, a member who connects
+              their OWN personal key can still use it here.
+            </span>
+          </span>
+        </label>
+      )}
     </div>
   );
 }
@@ -872,6 +984,8 @@ function ConnectionsSection({
   });
   const shared = shares.data?.items ?? [];
   const empty = providers.length === 0 && shared.length === 0;
+  const aiStatus = useAiStatus();
+  const planProvided = empty && aiStatus?.available && aiStatus.source === "managed";
 
   return (
     <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
@@ -896,12 +1010,24 @@ function ConnectionsSection({
 
       {empty ? (
         <p className="text-sm text-faint">
-          Nothing connected yet. Add a key this workspace owns, or set up a
-          personal connection at{" "}
-          <Link to="/me/connections" className="text-accent hover:underline">
-            your account
-          </Link>{" "}
-          and route it here.
+          {planProvided ? (
+            <>
+              AI here is provided by your Cobblr plan - nothing to connect. Add a key this workspace owns to use a
+              specific provider or track spend, or set up a personal connection at{" "}
+              <Link to="/me/connections" className="text-accent hover:underline">
+                your account
+              </Link>{" "}
+              and route it here.
+            </>
+          ) : (
+            <>
+              Nothing connected yet. Add a key this workspace owns, or set up a personal connection at{" "}
+              <Link to="/me/connections" className="text-accent hover:underline">
+                your account
+              </Link>{" "}
+              and route it here.
+            </>
+          )}
         </p>
       ) : (
         <div className="space-y-2">

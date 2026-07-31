@@ -1113,6 +1113,30 @@ platformOrgRouter.get(
   },
 );
 
+// Per-workspace AI opt-out setting. GET is member-readable (drives the toggle +
+// honest banner); the write is owner/admin. Turning it off disables the
+// workspace/managed AI default here — a user's own personal connection still works.
+platformOrgRouter.get("/:slug/ai-settings", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    const row = await meta.selectFrom("orgs").select("ai_disabled").where("id", "=", req.tenant!.org.id).executeTakeFirst();
+    res.json({ ai_disabled: !!row?.ai_disabled });
+  } catch (err) {
+    next(err);
+  }
+});
+// AI-REACH: exempt — a workspace configuration toggle, not a Cobb action (a
+// person flips it in settings; Cobb never turns its own AI off).
+platformOrgRouter.patch("/:slug/ai-settings", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const disabled = !!(req.body as { ai_disabled?: unknown })?.ai_disabled;
+    await meta.updateTable("orgs").set({ ai_disabled: disabled }).where("id", "=", req.tenant!.org.id).execute();
+    res.json({ ai_disabled: disabled });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Native-field presentation overrides (relabel / show-hide) for a kind. The
 // entity forms read this to reshape their native fields; the config UI writes
 // it. Mirrors /field-defs but targets the fields the module already declares.

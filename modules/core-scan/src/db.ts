@@ -186,6 +186,29 @@ export interface CoreScanDB {
   core_scan_decode_cache: CoreScanDecodeCacheTable;
   core_scan_eval_cases: CoreScanEvalCasesTable;
   core_scan_qr_rules: CoreScanQrRulesTable;
+  core_scan_import_runs: CoreScanImportRunsTable;
+}
+
+/** One bulk import, with everything needed to reverse it. An import can touch
+ *  hundreds of rows at once and, with duplicate_policy=replace, OVERWRITE rows
+ *  that were already there - so the before-state is recorded rather than lost,
+ *  and "that import was wrong" has an answer that is not "restore a backup". */
+export interface CoreScanImportRunsTable {
+  id: Generated<string>;
+  created_at: Generated<Date>;
+  created_by_user_id: string | null;
+  source_instance: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  source_label: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  item_count: ColumnType<number, number | undefined, number | undefined>;
+  created_count: ColumnType<number, number | undefined, number | undefined>;
+  replaced_count: ColumnType<number, number | undefined, number | undefined>;
+  /** { created_item_ids, created_batch_ids, replaced: [{ id, before }] } */
+  undo: ColumnType<
+    Record<string, unknown>,
+    Record<string, unknown> | undefined,
+    Record<string, unknown> | undefined
+  >;
+  undone_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;
 }
 
 export type OrgRole = "owner" | "admin" | "member" | "guest";

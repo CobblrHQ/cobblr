@@ -3231,6 +3231,10 @@ export const api = {
     ),
   getAiStatus: (slug: string) =>
     request<AiStatus>("GET", `/orgs/${slug}/ai-status`),
+  getAiSettings: (slug: string) =>
+    request<{ ai_disabled: boolean }>("GET", `/orgs/${slug}/ai-settings`),
+  updateAiSettings: (slug: string, body: { ai_disabled: boolean }) =>
+    request<{ ai_disabled: boolean }>("PATCH", `/orgs/${slug}/ai-settings`, body),
 
   // Ask Cobb "basic mode" — the no-AI floor. When AI is off, the chat asks the
   // server to match a message against the effective ruleset (no model, no cost).
@@ -3957,7 +3961,9 @@ export interface LocationImportResponse {
 
 export interface AiStatus {
   available: boolean;
-  reason: "ok" | "operator_disabled" | "not_entitled" | "no_provider";
+  reason: "ok" | "operator_disabled" | "not_entitled" | "no_provider" | "workspace_disabled";
+  /** When available, where the call would be served from — drives honest copy. */
+  source?: "personal" | "workspace" | "managed";
 }
 
 /** Result of the no-AI basic-mode matcher (POST …/core-ai/basics/answer). */

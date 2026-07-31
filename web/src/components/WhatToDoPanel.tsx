@@ -1,26 +1,25 @@
-// "What do you want to do?" — the funnel-distillation onboarding homepage (v2).
+// "What do you want to do?" — the capture-first onboarding homepage (v3).
 //
-// One question, then three columns + a build-it CTA + a mini scan inbox:
+//   ┌ Add another thing ─────────────┐ ┌ ready-made: chips …  ┐
+//   │ [ type what you've got   ]     │ │                      │
+//   │ [ + Add it ] [ Pair phone ]    │ │ [ Describe what you  │
+//   │  Start a Live Sort…            │ │   have → AI builds ] │
+//   └────────────────────────────────┘ └──────────────────────┘
+//     More ways to start ⌄
+//   ┌ every way to start ─────────── [ search ] ──────────────┐
+//   │ Ready-made trackers   🖨 3D Printers  📚 Bookshelf  …   │
+//   │ Full setups           🛠 Maker Workshop  …              │
+//   │ Start from a blank slate  + Tracking  + New Inventory…  │
+//   └─────────────────────────────────────────────────────────┘
+//   [ mini scan inbox — what you've captured shows here ]
 //
-//   [ ✨ Describe what you have → AI builds it ]      ← build-it CTA (above)
-//
-//   ┌ Building blocks ┐ ┌ Ready-made setups ┐ ┌ Add your first thing ┐
-//   │ [type a kind…]   │ │ [find a recipe…]   │ │ [add a 3d printer…]  │
-//   │ Inventory        │ │ 🏠 Home Inventory   │ │  + 📷 Scan            │
-//   │ Machines         │ │ 🧵 Yarn             │ │                       │
-//   └──────────────────┘ └─────────────────────┘ └───────────────────────┘
-//
-//   [ mini scan inbox — what you've captured shows here ]   ← below
-//
-// Every column takes free text and acts on it: type in Building blocks to
-// drill into that kind's recipes ("machine → what kind?"); type in Ready-made
-// to filter/open a recipe; type in "Add your first thing" to capture it and
-// have Cobblr find/build the tracker. Pick a building block and the recipes
-// column funnels to ITS ready-made versions — modules and bundles converge.
-// Build-it-yourself is a CTA, not a lane; the 3rd column is the guided
-// add + scan, and a mini scan inbox lives below.
+// The top row never changes width; "More ways to start" opens ONE browse
+// surface below it (one search, three sections in priority order) rather than
+// the old building-blocks/recipes column pair. A tile pick primes the hero:
+// a ready-made tracker → "set it up & drop me in"; a blank slate → "add a
+// blank one" / "name a new category". Build-it-yourself is a CTA, not a lane.
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@cobblr/platform-web";
@@ -53,54 +52,18 @@ function LaneHeader({ kicker, title, count }: { kicker: string; title: string; c
   );
 }
 
-/** A scrollable card list that makes "there's more below" obvious — but
- *  HONESTLY: overflow + at-bottom come from real scroll metrics (the old
- *  static "N more" pill kept showing at the bottom of the scroll, and its
- *  count went stale as the column height changed). On md+ the list FILLS the
- *  column height (absolute-inset inside a flex-1 wrapper, so it doesn't
- *  contribute intrinsic height) — the row is driven by the tallest column
- *  (e.g. a busy col 3), with the old 40rem cap kept as the MINIMUM. */
-function ScrollList({ children }: { children: ReactNode }) {
-  const ref = useRef<HTMLUListElement | null>(null);
-  const [flags, setFlags] = useState({ overflow: false, atBottom: false });
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const measure = () =>
-      setFlags({
-        overflow: el.scrollHeight > el.clientHeight + 4,
-        atBottom: el.scrollTop + el.clientHeight >= el.scrollHeight - 4,
-      });
-    measure();
-    el.addEventListener("scroll", measure, { passive: true });
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    window.addEventListener("resize", measure);
-    return () => {
-      el.removeEventListener("scroll", measure);
-      ro.disconnect();
-      window.removeEventListener("resize", measure);
-    };
-  }, []);
-  const hint = flags.overflow && !flags.atBottom;
+/** One section of the browse surface — a labelled tile grid. The hint says what
+ *  the section IS in the user's terms, so the three sections read as an ordered
+ *  offer (pick one ready-made · a whole setup · or shape your own) instead of
+ *  three unexplained lists. */
+function BrowseSection({ title, hint, children }: { title: string; hint: string; children: ReactNode }) {
   return (
-    <div className="relative md:flex-1 md:min-h-[40rem]">
-      <ul
-        ref={ref}
-        className={"space-y-1.5 overflow-y-auto pr-1 max-h-[40rem] md:max-h-none md:absolute md:inset-0 " + (hint ? "pb-5" : "")}
-      >
-        {children}
-      </ul>
-      {hint && (
-        <>
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-cobble-50 via-cobble-50/90 dark:from-slate-900 dark:via-slate-900/90 to-transparent rounded-b" />
-          <div className="pointer-events-none absolute inset-x-0 bottom-1 flex justify-center">
-            <span className="rounded-full bg-surface dark:bg-slate-800 border border-line dark:border-slate-700 px-2 py-0.5 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-300 shadow-sm">
-              ↓ more
-            </span>
-          </div>
-        </>
-      )}
+    <div>
+      <div className="mb-2 flex flex-wrap items-baseline gap-x-2">
+        <span className="text-[10px] font-mono uppercase tracking-widest text-accent">{title}</span>
+        <span className="text-[11px] text-faint dark:text-slate-500">{hint}</span>
+      </div>
+      <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">{children}</ul>
     </div>
   );
 }
@@ -258,18 +221,19 @@ export function WhatToDoPanel({
     try { localStorage.setItem(openKey, v ? "1" : "0"); } catch { /* ignore */ }
   };
 
-  // One input per column ("at each of the 3 columns you can type something in").
-  const [blockQ, setBlockQ] = useState("");
-  const [recipeQ, setRecipeQ] = useState("");
+  // ONE search across the whole browse surface — trackers, setups and blank
+  // kinds all answer the same question ("what do I start with?"), so splitting
+  // them across two boxes only made the user guess which one to type in.
+  const [browseQ, setBrowseQ] = useState("");
   const [addText, setAddText] = useState("");
   const [categoryName, setCategoryName] = useState(""); // col 3: a new category (named instance)
   // A no-camera desktop scans by pairing a phone (QR → phone signs in to THIS
   // workspace → its camera scans land in the inbox below); touch devices use
   // their own camera. Decide once on mount.
   const [isTouch] = useState(() => typeof window !== "undefined" && !!window.matchMedia?.("(pointer: coarse)").matches);
-  // The funnel selection: a kind (col 1) narrows the recipes (col 2); a recipe
-  // (col 2) is the chosen setup that col 3 (the captive "add your first one"
-  // step) acts on. They flow left→right and drive col 3.
+  // The funnel selection: a tile pick on the browse surface primes the hero
+  // (the captive "add your first one" step). A recipe and a kind are mutually
+  // exclusive - whichever you picked last is what the hero acts on.
   const [selectedModule, setSelectedModule] = useState<string | null>(null);
   const [selectedRecipe, setSelectedRecipe] = useState<CatalogBundle | null>(null);
   const [picked, setPicked] = useState<CatalogBundle | null>(null); // "details" modal only
@@ -294,20 +258,39 @@ export function WhatToDoPanel({
     refetchInterval: (q) => ((q.state.data?.items?.length ?? 0) > 0 ? 4000 : 20000),
   });
 
-  const domainModules = useMemo(
-    () =>
-      (modulesQ.data?.items ?? [])
-        .filter(
-          (m) =>
-            !m.enabled &&
-            m.band === "stock" &&
-            !m.name.startsWith("core-") &&
-            // Operators (labels, digifab) act ON things — not a kind you track.
-            (m.operates_on?.length ?? 0) === 0,
-        )
-        .sort((a, b) => kindRank(a.name) - kindRank(b.name) || a.displayName.localeCompare(b.displayName)),
-    [modulesQ.data],
-  );
+  // The blank-slate offer: an empty kind you shape yourself. A kind you HAVEN'T
+  // enabled is offered whole; one you already have is offered as another
+  // CATEGORY of it (multi-instance kinds only — a pantry next to your parts
+  // bin). Without the category half this section decayed into a remainder list:
+  // the more of Cobblr you used, the more it looked like four random leftovers
+  // (the author, 2026-07-31).
+  const blankSlates = useMemo(() => {
+    const domains = (modulesQ.data?.items ?? []).filter(
+      (m) =>
+        m.band === "stock" &&
+        !m.name.startsWith("core-") &&
+        // Operators (labels, digifab) act ON things — not a kind you track.
+        (m.operates_on?.length ?? 0) === 0,
+    );
+    return domains
+      .filter((m) => !m.enabled || m.instanceability === "multi")
+      .map((m) => ({
+        module: m.name,
+        isCategory: m.enabled,
+        label: m.enabled ? `New ${m.displayName} category` : m.displayName,
+        description: m.enabled
+          ? `Another separate ${m.displayName.toLowerCase()} table${KIND_VOCAB[m.name] ? ` - like ${KIND_VOCAB[m.name]!.categoryEg}` : ""}.`
+          : firstSentence(m.description),
+      }))
+      .sort(
+        (a, b) =>
+          // Kinds you don't have yet lead — starting one is a bigger step than
+          // adding another category to a kind you already run.
+          Number(a.isCategory) - Number(b.isCategory) ||
+          kindRank(a.module) - kindRank(b.module) ||
+          a.label.localeCompare(b.label),
+      );
+  }, [modulesQ.data]);
   // The operators, offered as a quiet "also add" strip under col 1 so they stay
   // discoverable without masquerading as trackable kinds.
   const capabilityModules = useMemo(
@@ -323,15 +306,15 @@ export function WhatToDoPanel({
         .sort((a, b) => a.displayName.localeCompare(b.displayName)),
     [modulesQ.data],
   );
-  const blockMatches = useMemo(() => {
-    const q = blockQ.trim().toLowerCase();
-    if (!q) return domainModules;
-    return domainModules
-      .map((m) => ({ m, r: rankMatch(q, m.displayName, `${m.description} ${m.name}`) }))
+  const blankMatches = useMemo(() => {
+    const q = browseQ.trim().toLowerCase();
+    if (!q) return blankSlates;
+    return blankSlates
+      .map((s) => ({ s, r: rankMatch(q, s.label, `${s.description} ${s.module}`) }))
       .filter((x) => x.r > 0)
       .sort((a, b) => b.r - a.r)
-      .map((x) => x.m);
-  }, [domainModules, blockQ]);
+      .map((x) => x.s);
+  }, [blankSlates, browseQ]);
 
   // Skins vs setups (the author's baby-bundle model, inverted 2026-07-02): a SKIN is a
   // pre-shaped tracker of ONE kind (an instance + a few ready-made fields —
@@ -340,14 +323,7 @@ export function WhatToDoPanel({
   // ALWAYS — unscoped too — and the multi-module setups sit under a quieter
   // "Full setups" subheading instead of being the default face of the column.
   const { skins, setups } = useMemo(() => {
-    const q = recipeQ.trim().toLowerCase();
-    // A recipe belongs to a kind if it REQUIRES it OR PROVISIONS an instance of
-    // it. The machine specialisations (3D Printers / Laser Cutters / CNC) are
-    // provides_instances of `machines`, so this surfaces them under Machines.
-    const relatesTo = (b: CatalogBundle, mod: string) =>
-      (b.manifest.requires ?? []).some((r) => r.module === mod) ||
-      (b.manifest.provides_instances ?? []).some((i) => i.module === mod);
-    const byKind = (b: CatalogBundle) => !selectedModule || relatesTo(b, selectedModule);
+    const q = browseQ.trim().toLowerCase();
     const moduleSpan = (b: CatalogBundle) =>
       new Set([
         ...(b.manifest.requires ?? []).map((r) => r.module),
@@ -356,7 +332,7 @@ export function WhatToDoPanel({
     const isSkin = (b: CatalogBundle) =>
       moduleSpan(b) <= 1 && (b.manifest.provides_instances?.length ?? 0) >= 1;
 
-    let base = catalog.filter(byKind);
+    let base = [...catalog];
     if (q) {
       // Searching: rank name-prefix > name > blurb/description so the first
       // visible card is what Enter selects. Rank order is preserved within
@@ -374,8 +350,7 @@ export function WhatToDoPanel({
       );
     }
     return { skins: base.filter(isSkin), setups: base.filter((b) => !isSkin(b)) };
-  }, [catalog, recipeQ, selectedModule]);
-  const recipes = useMemo(() => [...skins, ...setups], [skins, setups]);
+  }, [catalog, browseQ]);
 
   // ── actions ─────────────────────────────────────────────────────────────
   const enableModuleMut = useMutation({
@@ -490,8 +465,8 @@ export function WhatToDoPanel({
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't set that up"),
   });
 
-  // Picking a kind narrows the recipes + resets the recipe choice; picking it
-  // again clears back to everything. Picking a recipe also implies its kind.
+  // Picking a kind clears any chosen recipe (they drive the same hero); picking
+  // the same kind again deselects it.
   const pickModule = (name: string) =>
     setSelectedModule((cur) => {
       const next = cur === name ? null : name;
@@ -509,7 +484,7 @@ export function WhatToDoPanel({
   // small "details" button opens the full modal. The card is a
   // div[role=button] (NOT <button>) because it contains that inner button —
   // nested buttons are invalid HTML and break keyboard/screen-reader semantics.
-  const recipeCard = (b: CatalogBundle) => {
+  const recipeTile = (b: CatalogBundle) => {
     const on = selectedRecipe?.manifest.id === b.manifest.id;
     return (
       <li key={b.manifest.id}>
@@ -520,7 +495,7 @@ export function WhatToDoPanel({
           onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pickRecipe(b); } }}
           title={on ? "Click again to deselect" : undefined}
           className={
-            "w-full cursor-pointer text-left rounded-lg border p-2.5 flex items-start gap-2.5 transition group " +
+            "h-full cursor-pointer text-left rounded-lg border p-2.5 flex items-start gap-2.5 transition group " +
             (on ? "border-accent bg-accent/5" : "border-line dark:border-slate-700 bg-surface dark:bg-slate-900 hover:border-cobble-300 dark:hover:border-cobble-700")
           }
         >
@@ -532,6 +507,35 @@ export function WhatToDoPanel({
           </div>
           <ArrowRight size={13} className={(on ? "text-accent" : "text-faint dark:text-slate-600 group-hover:text-accent") + " transition mt-1 shrink-0"} />
         </div>
+      </li>
+    );
+  };
+
+  // One blank-slate tile: an empty kind, or another category of one you already
+  // run. Deliberately quieter than a recipe tile (a dashed glyph, no cover art)
+  // so the ready-made offer stays the loudest thing on the surface.
+  const blankTile = (s: { module: string; label: string; description: string; isCategory: boolean }) => {
+    const on = selectedModule === s.module;
+    return (
+      <li key={`${s.module}:${s.isCategory ? "cat" : "new"}`}>
+        <button
+          type="button"
+          onClick={() => pickModule(s.module)}
+          title={on ? "Click again to deselect" : undefined}
+          className={
+            "w-full h-full cursor-pointer text-left rounded-lg border p-2.5 flex items-start gap-2.5 transition group " +
+            (on ? "border-accent bg-accent/5" : "border-line dark:border-slate-700 bg-surface dark:bg-slate-900 hover:border-cobble-300 dark:hover:border-cobble-700")
+          }
+        >
+          <span className={"w-8 h-8 rounded-lg border border-dashed flex items-center justify-center shrink-0 " + (on ? "border-accent text-accent" : "border-line dark:border-slate-600 text-faint dark:text-slate-500 group-hover:text-accent")}>
+            {s.isCategory ? <Plus size={15} /> : <Boxes size={15} />}
+          </span>
+          <span className="flex-1 min-w-0">
+            <span className="block font-medium text-content dark:text-mortar-100 text-sm">{s.label}</span>
+            <span className="block text-xs text-faint dark:text-slate-400 line-clamp-2">{s.description}</span>
+          </span>
+          <ArrowRight size={13} className={(on ? "text-accent" : "text-faint dark:text-slate-600 group-hover:text-accent") + " transition mt-1 shrink-0"} />
+        </button>
       </li>
     );
   };
@@ -616,13 +620,13 @@ export function WhatToDoPanel({
   // empty space. Applies to both the full-width empty-state hero and the collapsed
   // established-workspace card. Only in the compact, not-expanded state — once
   // "More ways" opens, the building-blocks/trackers columns take the full row.
-  const twoCol = !moreOpen;
 
   // Extracted so the same blocks serve both the two-column layout and the
   // original single-column one below it.
   const readyMadeStrip = (
-    <div data-strip="ready-made" className="flex flex-wrap gap-1.5 items-center">
-      <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">ready-made:</span>
+    <div data-strip="ready-made">
+      <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-2">ready-made:</div>
+      <div className="flex flex-wrap gap-2">
       {skins
         .filter((b) => (b.manifest.catalog ?? "core") === "core")
         .slice(0, 8)
@@ -641,6 +645,7 @@ export function WhatToDoPanel({
           <span aria-hidden>{b.glyph}</span> {b.manifest.name}
         </button>
       ))}
+      </div>
     </div>
   );
 
@@ -730,121 +735,13 @@ export function WhatToDoPanel({
           blocks · all trackers) only render once "More ways to start" is
           opened. Selection state still lives IN the columns; a strip pick or a
           column pick primes the same hero. */}
-      <div className={"grid gap-3 items-start " + (twoCol ? "md:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]" : "md:grid-cols-2")}>
-        {moreOpen && (<>
-        {/* Col 1 — Building blocks (modules) */}
-        <div className="order-2 md:order-none rounded-xl border border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/40 p-3 md:flex md:flex-col">
-          <LaneHeader kicker="// building blocks" title="Track a kind of thing" count={blockMatches.length} />
-          <div className="relative mb-2">
-            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-faint dark:text-slate-500" />
-            <input
-              value={blockQ}
-              onChange={(e) => setBlockQ(e.target.value)}
-              placeholder="e.g. machines, projects…"
-              className="input !pl-8 !py-1.5 !text-sm"
-              onKeyDown={(e) => { if (e.key === "Enter" && blockMatches[0]) pickModule(blockMatches[0].name); }}
-            />
-          </div>
-          {blockMatches.length === 0 ? (
-            <p className="text-xs text-faint dark:text-slate-500 py-1">{blockQ ? `No kind matches “${blockQ.trim()}”.` : "All set."}</p>
-          ) : (
-            <ScrollList>
-              {blockMatches.map((m) => (
-                <li key={m.name}>
-                  <button
-                    type="button"
-                    // Click to narrow the recipes to this kind + prime col 3; click
-                    // the SAME one again to deselect and go back to everything.
-                    onClick={() => pickModule(m.name)}
-                    title={selectedModule === m.name ? "Click again to see everything" : undefined}
-                    className={
-                      "w-full text-left rounded-lg border p-2.5 flex items-start gap-2.5 transition group " +
-                      (selectedModule === m.name ? "border-accent bg-accent/5" : "border-line dark:border-slate-700 bg-surface dark:bg-slate-900 hover:border-cobble-300 dark:hover:border-cobble-700")
-                    }
-                  >
-                    <div className="w-8 h-8 rounded-lg bg-accent/10 text-accent flex items-center justify-center shrink-0"><Boxes size={16} /></div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-content dark:text-mortar-100 text-sm">{m.displayName}</div>
-                      <div className="text-xs text-faint dark:text-slate-400 line-clamp-2">{firstSentence(m.description)}</div>
-                    </div>
-                    <ArrowRight size={13} className="text-faint dark:text-slate-600 group-hover:text-accent transition mt-1 shrink-0" />
-                  </button>
-                </li>
-              ))}
-            </ScrollList>
-          )}
-          {/* Operators (labels, digifab) — capabilities that act ON your
-              things, not kinds you track. A quiet strip keeps them one tap
-              away without letting them masquerade as trackable kinds. */}
-          {capabilityModules.length > 0 && !blockQ && (
-            <div className="mt-2 pt-2 border-t border-line/60 dark:border-slate-700/60">
-              <div className="text-[10px] uppercase tracking-wider text-faint dark:text-slate-500 mb-1.5">
-                Add a capability
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {capabilityModules.map((m) => (
-                  <button
-                    key={m.name}
-                    type="button"
-                    disabled={enableModuleMut.isPending}
-                    onClick={() => enableModuleMut.mutate(m.name)}
-                    title={firstSentence(m.description)}
-                    className="inline-flex items-center gap-1 rounded-full border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2.5 py-1 text-xs text-content dark:text-mortar-100 hover:border-accent hover:text-accent transition disabled:opacity-50"
-                  >
-                    <Plus size={11} />
-                    {m.displayName}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Col 2 — trackers (skins) first, full setups under a quiet subheading */}
-        <div className="order-3 md:order-none rounded-xl border border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/40 p-3 md:flex md:flex-col">
-          <LaneHeader kicker="// recipes" title={selectedModuleObj ? `${selectedModuleObj.displayName} trackers` : "Pre-shaped trackers"} count={recipes.length} />
-          <div className="relative mb-2">
-            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-faint dark:text-slate-500" />
-            <input
-              value={recipeQ}
-              onChange={(e) => setRecipeQ(e.target.value)}
-              placeholder="e.g. yarn, filament, fasteners…"
-              className="input !pl-8 !py-1.5 !text-sm"
-              onKeyDown={(e) => { if (e.key === "Enter" && recipes[0]) pickRecipe(recipes[0]); }}
-            />
-          </div>
-          {registry.isLoading && recipes.length === 0 ? (
-            <div className="text-xs text-faint dark:text-slate-500 py-2">Loading…</div>
-          ) : recipes.length === 0 ? (
-            <p className="text-xs text-faint dark:text-slate-500 py-1">{recipeQ ? `No ready-made tracker for “${recipeQ.trim()}”.` : "Nothing here yet."}</p>
-          ) : (
-            <ScrollList>
-              {/* Skins lead: one-kind trackers with the fields pre-shaped —
-                  the relatable front door. Multi-module setups follow under
-                  their own quiet subheading instead of being the default face
-                  of the column (the author, 2026-07-02). */}
-              {skins.map((b) => recipeCard(b))}
-              {setups.length > 0 && (
-                <li aria-hidden className="pt-1.5 pb-0.5">
-                  <div className="text-[10px] uppercase tracking-wider text-faint dark:text-slate-500">
-                    Full setups - several parts working together
-                  </div>
-                </li>
-              )}
-              {setups.map((b) => recipeCard(b))}
-            </ScrollList>
-          )}
-        </div>
-        </>)}
+      <div className="grid gap-3 items-stretch md:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
 
         {/* The hero — the captive terminal step. Reacts to the funnel: a chosen
             recipe → "set it up & drop me in"; a chosen kind → "add a blank one";
             nothing → the freeform "type what you've got". */}
         <div className={
           "order-first rounded-xl border p-3 transition " +
-          // In the two-column layout the hero IS the left column; otherwise it
-          // spans the full row (above the building-blocks/trackers columns).
-          (twoCol ? "" : "md:col-span-2 ") +
           (selectedRecipe || selectedModuleObj ? "border-accent/60 bg-accent/5 dark:bg-cobble-900/15" : "border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/40")
         }>
           <LaneHeader
@@ -852,6 +749,9 @@ export function WhatToDoPanel({
             title={
               selectedRecipe ? `Set up ${selectedRecipe.manifest.name}`
               : selectedModuleObj ? (kindIsMulti ? `New ${selectedModuleObj.displayName} category` : `Add a ${selectedModuleObj.displayName}`)
+              // startCollapsed ⇒ an established workspace (Dashboard only collapses
+              // the panel once it has content), so "first thing" would be wrong.
+              : startCollapsed ? "Add another thing"
               : "Add your first thing"
             }
           />
@@ -1002,42 +902,18 @@ export function WhatToDoPanel({
             </div>
           )}
         </div>
-        {/* Right column (two-column layout): pick a ready-made, or describe it. */}
-        {twoCol && (
-          <div className="space-y-3">
-            {skins.length > 0 && readyMadeStrip}
-            {describeCard}
-          </div>
-        )}
+        {/* Right column (two-column layout): pick a ready-made up top, or describe
+            it. The chips take mb-auto so the Describe card anchors to the bottom,
+            lining the column's base up with the taller hero on the left. */}
+        <div className="flex flex-col">
+          {skins.length > 0 && <div className="mb-auto">{readyMadeStrip}</div>}
+          <div className={skins.length > 0 ? "mt-4" : ""}>{describeCard}</div>
+        </div>
       </div>
 
-      {/* Short tracker strip — the ready-made front door without the wall.
-          Disappears once the full columns are open (col 2 lists everything).
-          In the two-column layout it moves into the right column above. */}
-      {!twoCol && !moreOpen && skins.length > 0 && (
-        <div data-strip="ready-made" className="flex flex-wrap gap-1.5 items-center">
-          <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">ready-made:</span>
-          {skins
-            .filter((b) => (b.manifest.catalog ?? "core") === "core")
-            .slice(0, 8)
-            .map((b) => (
-            <button
-              key={b.manifest.id}
-              type="button"
-              onClick={() => pickRecipe(b)}
-              className={
-                "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs transition " +
-                (selectedRecipe?.manifest.id === b.manifest.id
-                  ? "border-accent text-accent bg-accent/5"
-                  : "border-line dark:border-slate-700 bg-surface dark:bg-slate-900 text-content dark:text-mortar-100 hover:border-accent hover:text-accent")
-              }
-            >
-              <span aria-hidden>{b.glyph}</span> {b.manifest.name}
-            </button>
-          ))}
-        </div>
-      )}
-
+      {/* More/Fewer ways to start - a full-width toggle right under the two-column
+          top row. Expanding opens the building-blocks/trackers columns BELOW, so
+          the top row keeps its width instead of snapping to full (the author, 2026-07-31). */}
       <button
         type="button"
         onClick={() => setMoreOpen((v) => !v)}
@@ -1045,18 +921,96 @@ export function WhatToDoPanel({
       >
         {moreOpen
           ? (<>Fewer ways to start <ChevronUp size={13} /></>)
-          : (<>More ways to start - building blocks &amp; every tracker <ChevronDown size={13} /></>)}
+          : (<>More ways to start - browse every tracker &amp; setup <ChevronDown size={13} /></>)}
       </button>
+
+      {moreOpen && (
+        <div className="rounded-xl border border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/40 p-3 space-y-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex-1 min-w-0 text-[10px] font-mono uppercase tracking-widest text-accent">// every way to start</div>
+            <div className="relative w-full sm:w-72">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-faint dark:text-slate-500" />
+              <input
+                value={browseQ}
+                onChange={(e) => setBrowseQ(e.target.value)}
+                placeholder="Search trackers, setups, kinds…"
+                className="input !pl-8 !py-1.5 !text-sm"
+                onKeyDown={(e) => {
+                  // Enter takes the first tile in section order, so the top-left
+                  // result is always what a blind Enter selects.
+                  if (e.key !== "Enter") return;
+                  if (skins[0]) pickRecipe(skins[0]);
+                  else if (setups[0]) pickRecipe(setups[0]);
+                  else if (blankMatches[0]) pickModule(blankMatches[0].module);
+                }}
+              />
+            </div>
+          </div>
+
+          {registry.isLoading && skins.length === 0 && setups.length === 0 ? (
+            <div className="text-xs text-faint dark:text-slate-500 py-2">Loading…</div>
+          ) : skins.length === 0 && setups.length === 0 && blankMatches.length === 0 ? (
+            <p className="text-xs text-faint dark:text-slate-500 py-1">
+              Nothing here matches “{browseQ.trim()}”. Type it into the box above instead - Cobblr will build a tracker that fits.
+            </p>
+          ) : (
+            <>
+              {/* Ready-made leads: a one-kind tracker with the fields already
+                  shaped is the most relatable front door. Multi-module setups
+                  come next, and the blank kinds last - the escape hatch, not
+                  the offer. */}
+              {skins.length > 0 && (
+                <BrowseSection title="// ready-made trackers" hint="fields already shaped - add your first item right away">
+                  {skins.map((b) => recipeTile(b))}
+                </BrowseSection>
+              )}
+              {setups.length > 0 && (
+                <BrowseSection title="// full setups" hint="several trackers wired together">
+                  {setups.map((b) => recipeTile(b))}
+                </BrowseSection>
+              )}
+              {blankMatches.length > 0 && (
+                <BrowseSection title="// start from a blank slate" hint="an empty kind you shape yourself">
+                  {blankMatches.map((s) => blankTile(s))}
+                </BrowseSection>
+              )}
+            </>
+          )}
+
+          {/* Operators (labels, digifab) — capabilities that act ON your
+              things, not kinds you track. A quiet strip keeps them one tap
+              away without letting them masquerade as trackable kinds. */}
+          {capabilityModules.length > 0 && !browseQ.trim() && (
+            <div className="pt-3 border-t border-line/60 dark:border-slate-700/60">
+              <div className="mb-2 flex flex-wrap items-baseline gap-x-2">
+                <span className="text-[10px] font-mono uppercase tracking-widest text-accent">// add a capability</span>
+                <span className="text-[11px] text-faint dark:text-slate-500">acts on things you already track</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {capabilityModules.map((m) => (
+                  <button
+                    key={m.name}
+                    type="button"
+                    disabled={enableModuleMut.isPending}
+                    onClick={() => enableModuleMut.mutate(m.name)}
+                    title={firstSentence(m.description)}
+                    className="inline-flex items-center gap-1 rounded-full border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2.5 py-1 text-xs text-content dark:text-mortar-100 hover:border-accent hover:text-accent transition disabled:opacity-50"
+                  >
+                    <Plus size={11} />
+                    {m.displayName}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* One shared AI-honesty pattern (redesign A1): say basic-mode up front. */}
       <AiOffNotice status={aiStatus} compact>
         <strong>AI isn't connected - matching runs in basic mode.</strong>{" "}
         Common things still find a home by keywords; connect AI to identify anything (and to use the builder below).{" "}
       </AiOffNotice>
-
-      {/* Build-it-yourself CTA — a button, not a column (per feedback). In the
-          two-column layout it moves into the right column above. */}
-      {!twoCol && describeCard}
 
       <Link to="/bundles" className="inline-block text-xs text-faint dark:text-slate-400 hover:text-accent transition">
         browse all setups & trackers →
