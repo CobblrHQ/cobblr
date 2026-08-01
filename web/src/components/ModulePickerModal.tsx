@@ -444,7 +444,7 @@ function ParentCard({
       {kids.length > 0 && (
         <div className="pl-9 pr-3 pb-3 space-y-1.5">
           <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-            specialisations
+            categories
           </div>
           {kids.map((k) => (
             <Row

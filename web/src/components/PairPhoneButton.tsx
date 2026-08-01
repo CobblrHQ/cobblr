@@ -27,7 +27,7 @@ function isTouchPrimary(): boolean {
   }
 }
 
-export function PairPhoneButton({ className }: { className?: string }) {
+export function PairPhoneButton({ className, dataTour }: { className?: string; dataTour?: string }) {
   const [open, setOpen] = useState(false);
   // Decide once on mount (SSR-safe-ish; this app is client-rendered).
   const [touch] = useState(isTouchPrimary);
@@ -36,6 +36,7 @@ export function PairPhoneButton({ className }: { className?: string }) {
     <>
       <button
         type="button"
+        data-tour={dataTour}
         onClick={() => setOpen(true)}
         title="Scan with your phone instead"
         className={

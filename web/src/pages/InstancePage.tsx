@@ -49,8 +49,11 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
   if (!inst) {
     return (
       <div className="text-sm text-muted dark:text-slate-400 italic p-4">
-        No instance "{name}" in this workspace. It may have been deleted - 
-        check Configuration → "+ New thing".
+        No instance "{name}" in this workspace. It may have been deleted -{" "}
+        <Link to="/configuration/new-thing" className="text-accent hover:underline not-italic">
+          create a new one
+        </Link>
+        .
       </div>
     );
   }

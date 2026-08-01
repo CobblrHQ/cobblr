@@ -166,7 +166,12 @@ export async function ingestReceiptEmail(
     }
   }
 
-  const scanUrl = absoluteAppUrl(`/w/${slug}/scan`);
+  // link_url is stored RELATIVE (the in-app bell routes it with React Router,
+  // which takes a PATH; an absolute URL matches no route and dumps you on the
+  // dashboard - the author, 2026-08-01). Outbound channels absolutize it themselves.
+  // The absolute form is still what goes in email/DM BODY text.
+  const scanPath = `/w/${slug}/scan`;
+  const scanUrl = absoluteAppUrl(scanPath);
   const sessionToken = await signSession(userId);
   const post = (path: string, payload: Record<string, unknown>) =>
     fetch(`${INTERNAL_API}/api/v1/orgs/${slug}${path}`, {
@@ -301,7 +306,7 @@ export async function ingestReceiptEmail(
       representativeOrgId: orgId,
       notificationType: "core-scan.email.imported",
       message: `Imported ${parsedCount} item${parsedCount === 1 ? "" : "s"} from your emailed receipt${subj ? ` "${subj}"` : ""} into your scan inbox.`,
-      link_url: scanUrl,
+      link_url: scanPath,
       email: {
         subject: reSubject("Your emailed receipt is in your scan inbox"),
         text: `We captured ${parsedCount} item${parsedCount === 1 ? "" : "s"} from your receipt. Review them in your scan inbox:\n${scanUrl}`,
@@ -314,15 +319,14 @@ export async function ingestReceiptEmail(
     const n = duplicate.item_count;
     // Deep link that re-runs the import with force for THIS file if the user
     // really wants the duplicate; the scan page confirms before importing.
-    const reimportUrl = absoluteAppUrl(
-      `/w/${slug}/scan?reimport_file=${duplicate.fileId}${duplicate.order_ref ? `&ref=${encodeURIComponent(duplicate.order_ref)}` : ""}`,
-    );
+    const reimportPath = `/w/${slug}/scan?reimport_file=${duplicate.fileId}${duplicate.order_ref ? `&ref=${encodeURIComponent(duplicate.order_ref)}` : ""}`;
+    const reimportUrl = absoluteAppUrl(reimportPath);
     await notifyAccount({
       userId,
       representativeOrgId: orgId,
       notificationType: "core-scan.email.duplicate",
       message: `You already imported this receipt${refLabel}${fromLabel} — its ${n} item${n === 1 ? "" : "s"} ${n === 1 ? "is" : "are"} already in your scan inbox. Open it there, or import this copy anyway.`,
-      link_url: reimportUrl,
+      link_url: reimportPath,
       email: {
         subject: reSubject("You already imported this receipt"),
         text: `Looks like you already imported this receipt${refLabel}. Its items are already in your scan inbox. To import this copy anyway:\n${reimportUrl}`,
@@ -335,7 +339,7 @@ export async function ingestReceiptEmail(
       representativeOrgId: orgId,
       notificationType: "core-scan.email.received",
       message: `Saved your emailed receipt${subj ? ` "${subj}"` : ""} to your scan inbox — I couldn't split it into line items, so it's there as one note to sort.`,
-      link_url: scanUrl,
+      link_url: scanPath,
       email: {
         subject: reSubject("Your receipt is in your scan inbox (as a note)"),
         text: `We saved your receipt to your scan inbox. We couldn't split it into line items automatically, so it's there as a single note for you to sort:\n${scanUrl}`,
@@ -348,7 +352,7 @@ export async function ingestReceiptEmail(
       representativeOrgId: orgId,
       notificationType: "core-scan.email.no_receipt",
       message: "We got your email but couldn't find a receipt to import. Reply with the receipt as a PDF or photo, or forward the store's receipt email.",
-      link_url: scanUrl,
+      link_url: scanPath,
       email: {
         subject: reSubject("We couldn't find a receipt in your email"),
         text: `We got your email but couldn't find a receipt to import. Reply with the receipt as a PDF or photo, or forward the store's receipt email:\n${scanUrl}`,

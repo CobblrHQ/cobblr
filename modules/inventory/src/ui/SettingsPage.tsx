@@ -3,6 +3,7 @@
 // canonical UI for them is /locations in the host app.
 
 import { useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, X } from "lucide-react";
 import { useInventory } from "./context";
@@ -14,7 +15,6 @@ export function SettingsPage() {
   return (
     <div className="grid gap-5 sm:grid-cols-2">
       <FieldsCard />
-      <CategoriesCard />
       <NounCard />
       <StockTrackingCard />
     </div>
@@ -130,7 +130,7 @@ function StockTrackingCard() {
  *  Scoped to the active entity kind, so on the Yarn instance it shows the
  *  yarn fields. */
 function FieldsCard() {
-  const { api, orgSlug, entityKind } = useInventory();
+  const { api, orgSlug, entityKind, itemNoun } = useInventory();
   const defs = useQuery({
     queryKey: ["platform-field-defs", orgSlug, entityKind],
     queryFn: () => api.listFieldDefs(entityKind),
@@ -143,13 +143,25 @@ function FieldsCard() {
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5">
       <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-1">
-        // fields &amp; options
+        // fields
       </div>
+      {/* Say what CAN be done here. The old copy promised only "edit the
+          dropdown options" while the heading read "fields & options", so a
+          field with no options showed "text field - no dropdown options" and
+          no way to act on it: "how do I actually edit it in here?" (the author,
+          2026-08-01). Renaming works inline now; the rest is one link away. */}
       <p className="text-[11px] text-faint dark:text-slate-500 mb-3 leading-snug">
-        Edit the dropdown options for this list. New options also appear the next
-        time you add an item.
+        What each {itemNoun} records. Click a name to rename it, and manage its
+        dropdown options below. To add or remove fields, change a type, or
+        reorder them, open the{" "}
+        <Link to="/fields" className="text-accent hover:underline">field builder</Link>.
       </p>
       <ul className="space-y-3">
+        {/* Categories sit IN this list, not in a card of their own: they are the
+            Category field's options as far as anyone using this page is
+            concerned, and two panels for one idea read as two ideas (the author,
+            2026-08-01). They keep their own API + slugs underneath. */}
+        <CategoryRow />
         {fields.map((f) => (
           <FieldRow key={f.id} def={f} />
         ))}
@@ -177,6 +189,18 @@ function FieldRow({ def }: { def: InvFieldDef }) {
     },
     onError: (e: unknown) => setError(e instanceof InventoryApiError ? e.message : "Couldn't save"),
   });
+  // Rename in place. The PATCH already accepted display_label; only this typed
+  // client narrowed it away, which is a large part of why the panel looked
+  // read-only. Type changes stay in the field builder - they have data
+  // consequences this row can't explain.
+  const rename = useMutation({
+    mutationFn: (display_label: string) => api.updateFieldDef(def.id, { display_label }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["platform-field-defs", orgSlug, entityKind] });
+      setError(null);
+    },
+    onError: (e: unknown) => setError(e instanceof InventoryApiError ? e.message : "Couldn't rename"),
+  });
 
   function add(e: FormEvent) {
     e.preventDefault();
@@ -194,7 +218,18 @@ function FieldRow({ def }: { def: InvFieldDef }) {
 
   return (
     <li>
-      <div className="text-sm text-content dark:text-mortar-100 font-medium">{def.display_label}</div>
+      <input
+        defaultValue={def.display_label}
+        aria-label={`Rename ${def.display_label}`}
+        title="Click to rename this field"
+        onBlur={(e) => {
+          const v = e.target.value.trim();
+          if (!v) { e.target.value = def.display_label; return; }
+          if (v !== def.display_label) rename.mutate(v);
+        }}
+        onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+        className="w-full bg-transparent border border-transparent hover:border-line dark:hover:border-slate-700 focus:border-accent rounded px-1 -mx-1 text-sm text-content dark:text-mortar-100 font-medium focus:outline-none transition"
+      />
       {def.type === "boolean" ? (
         // A yes/no field: edit the two state labels (shown instead of true/false
         // everywhere). Stored as `choices` = [off-label, on-label]; blank → Yes/No.
@@ -265,7 +300,9 @@ function FieldRow({ def }: { def: InvFieldDef }) {
   );
 }
 
-function CategoriesCard() {
+/** Categories, rendered as a field row. They have their own table + slugs
+ *  underneath, but on this page they are simply the Category options. */
+function CategoryRow() {
   const { api } = useInventory();
   const qc = useQueryClient();
   const list = useQuery({ queryKey: ["inventory-categories"], queryFn: () => api.listCategories() });
@@ -278,50 +315,48 @@ function CategoriesCard() {
       setName("");
       setError(null);
     },
-    onError: (e: unknown) => {
-      setError(e instanceof InventoryApiError ? e.message : "Couldn't create");
-    },
+    onError: (e: unknown) => setError(e instanceof InventoryApiError ? e.message : "Couldn't create"),
   });
-
   function submit(e: FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
     create.mutate();
   }
-
+  const items = list.data?.items ?? [];
   return (
-    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-3">
-        // categories
-      </div>
-      <ul className="space-y-1 mb-3">
-        {list.data?.items.map((c) => (
-          <li key={c.id} className="flex items-baseline gap-2 text-sm">
-            <span className="text-content dark:text-mortar-100">{c.name}</span>
-            <span className="text-[10px] font-mono text-faint dark:text-slate-500">{c.slug}</span>
-          </li>
+    <li>
+      <div className="text-sm text-content dark:text-mortar-100 font-medium">Category</div>
+      <div className="flex flex-wrap gap-1.5 mt-1.5">
+        {items.map((c) => (
+          <span
+            key={c.id}
+            title={c.slug}
+            className="inline-flex items-center gap-1 rounded-full bg-subtle dark:bg-slate-800 border border-line dark:border-slate-700 px-2.5 py-0.5 text-xs text-content dark:text-mortar-100"
+          >
+            {c.name}
+          </span>
         ))}
-        {list.data && list.data.items.length === 0 && (
-          <li className="text-xs text-faint dark:text-slate-500 italic">No categories yet.</li>
+        {list.data && items.length === 0 && (
+          <span className="text-[11px] text-faint dark:text-slate-500 italic">No categories yet.</span>
         )}
-      </ul>
-      <form onSubmit={submit} className="flex gap-2 border-t border-line dark:border-slate-700 pt-3">
+      </div>
+      <form onSubmit={submit} className="mt-1.5 flex gap-1.5">
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="new category…"
-          className="input flex-1 text-sm"
+          placeholder="add a category…"
+          className="input flex-1 !py-1 text-xs"
         />
         <button
           type="submit"
           disabled={create.isPending || !name.trim()}
-          className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-xs font-medium px-3 transition disabled:opacity-50 flex items-center gap-1"
+          className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-xs font-medium px-2.5 transition disabled:opacity-50 flex items-center gap-1"
         >
-          <Plus size={12} /> Add
+          <Plus size={11} /> Add
         </button>
       </form>
-      {error && <div className="text-xs text-ember-500 mt-2">{error}</div>}
-    </div>
+      {error && <div className="text-xs text-ember-500 mt-1">{error}</div>}
+    </li>
   );
 }
 

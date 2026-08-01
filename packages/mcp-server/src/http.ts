@@ -108,7 +108,7 @@ async function main(): Promise<void> {
         res,
         401,
         -32001,
-        "Missing bearer token. Send `Authorization: Bearer <cbt_…>` (mint one in Cobblr → Settings → API tokens).",
+        "Missing bearer token. Send `Authorization: Bearer <cbt_…>` (mint one in Cobblr → Configuration → API tokens).",
       );
       return;
     }

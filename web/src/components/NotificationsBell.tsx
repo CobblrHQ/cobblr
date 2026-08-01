@@ -11,16 +11,21 @@
 // position:fixed (CLAUDE.md modal note).
 
 import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, Check, PanelRight, PanelRightClose, X } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import { api, type CrossOrgNotificationEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { SidePanel } from "./SidePanel";
 
 type Mode = "dropdown" | "sidebar";
 const MODE_KEY = "cobblr.notif.mode";
+
+/** Notifications whose MESSAGE is the whole point — clicking marks them read
+ *  and stays put. A reply to your feedback reads like a conversation, not a
+ *  link (the author, 2026-08-01). */
+const NO_NAVIGATE = new Set(["platform.feedback.replied"]);
 
 export function NotificationsBell({ panelOnly = false, asRow = false }: { panelOnly?: boolean; asRow?: boolean } = {}) {
   const [open, setOpen] = useState(false);
@@ -105,13 +110,43 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
   const otherOnly = count > 0 && here === 0;
   const other = Math.max(0, count - here);
 
+  /** A stored link_url as something React Router can route.
+   *
+   *  `navigate()` takes a PATH. An ABSOLUTE url ("https://cobblr.me/w/x/scan")
+   *  matches no route, so it fell through to the catch-all and dumped you on
+   *  the dashboard — which is what every emailed-receipt notification did
+   *  (the author, 2026-08-01). Producers now store relative paths, but notification
+   *  rows are IMMUTABLE (only read_at / delivered_via are ever updated), so
+   *  every row written before that fix still carries an absolute url forever.
+   *  Hence: strip our own origin here rather than only fixing it upstream.
+   *  A link to some OTHER origin is not ours to route — open it in a new tab. */
+  function routeFor(link: string): { path?: string; external?: string } {
+    if (!/^https?:\/\//i.test(link)) return { path: link.startsWith("/") ? link : `/${link}` };
+    try {
+      const u = new URL(link);
+      if (u.origin === window.location.origin) return { path: `${u.pathname}${u.search}${u.hash}` };
+      return { external: link };
+    } catch {
+      return {};
+    }
+  }
+
   function handleItemClick(n: CrossOrgNotificationEntry) {
     if (!n.read_at) markRead.mutate(n.id);
+    // Some notifications have no destination worth taking you to: a reply to
+    // your feedback is the message ITSELF, so hijacking the click to a queue
+    // page is a detour (the row keeps a quiet "view thread" link for anyone who
+    // wants it). Clicking just marks it read.
+    if (NO_NAVIGATE.has(n.event_type)) { setOpen(false); return; }
     // A workspace-invite is about ANOTHER workspace you're not in yet — it's
     // scoped to one of your own only so it surfaces. Don't switch to that scope
     // workspace; just open the accept link.
     if (n.event_type !== "workspace.invited") setActiveSlug(n.org_slug);
-    if (n.link_url) navigate(n.link_url);
+    if (n.link_url) {
+      const { path, external } = routeFor(n.link_url);
+      if (path) navigate(path);
+      else if (external) window.open(external, "_blank", "noopener");
+    }
     setOpen(false);
   }
 
@@ -214,6 +249,24 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
                   <div className="prose prose-sm dark:prose-invert max-w-none text-sm text-content dark:text-mortar-100 prose-p:my-1 prose-blockquote:my-1 break-words">
                     <ReactMarkdown>{n.message}</ReactMarkdown>
                   </div>
+                  {/* A no-navigate notification still has somewhere to go for
+                      anyone who wants it — just not by hijacking the click. */}
+                  {NO_NAVIGATE.has(n.event_type) && n.link_url && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!n.read_at) markRead.mutate(n.id);
+                        setActiveSlug(n.org_slug);
+                        const { path } = routeFor(n.link_url!);
+                        if (path) navigate(path);
+                        setOpen(false);
+                      }}
+                      className="mt-1.5 text-[11px] text-faint dark:text-slate-500 hover:text-accent transition"
+                    >
+                      view thread →
+                    </button>
+                  )}
                 </div>
                 {/* Mark read WITHOUT navigating — a checkmark (not an ×) so it reads
                     as "acknowledge", not "delete" (reported). */}
@@ -282,19 +335,14 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
         </div>
       )}
 
-      {/* SIDEBAR mode — full-height right panel (mirrors ChatWidget). Portals to
-          <body> so the header's backdrop-blur can't trap position:fixed. */}
-      {open &&
-        mode === "sidebar" &&
-        createPortal(
-          <div
-            ref={sidebarRef}
-            className="fixed top-0 right-0 z-[60] h-screen w-[min(100vw,420px)] border-l border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-2xl flex flex-col"
-          >
-            {body}
-          </div>,
-          document.body,
-        )}
+      {/* SIDEBAR mode — the shared right panel (same one Ask Cobb uses): a
+          full-width sheet under the navbar on a phone, a right drawer on
+          desktop. */}
+      {open && mode === "sidebar" && (
+        <SidePanel width="sm:w-[min(100vw,420px)]" panelRef={sidebarRef}>
+          {body}
+        </SidePanel>
+      )}
     </div>
   );
 }

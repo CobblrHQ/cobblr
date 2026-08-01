@@ -7,12 +7,13 @@
 // loop proven on someone else's compute. See
 // docs/modules/ai-bundle-builder.md.
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AiOffNotice, useAiStatus } from "../components/AiStatusNotice";
 import { generateYourApp } from "../lib/generate-your-app";
 import { suggestFeatured } from "../lib/suggest-featured";
-import { Link } from "react-router-dom";
+import { suggestKinds } from "../lib/suggest-kinds";
+import { useBundleDetail } from "../components/useBundleDetail";
 import { useQuery } from "@tanstack/react-query";
 import { Wand2, Copy, Check, AlertTriangle, Sparkles } from "lucide-react";
 import { usePageTitle, useToast } from "@cobblr/platform-web";
@@ -31,6 +32,24 @@ function extractJson(raw: string): unknown {
   } catch {
     return undefined;
   }
+}
+
+/** Cobb at the bench, for any step that keeps you waiting.
+ *
+ *  One component rather than a copy per step: `busy` has five states and only
+ *  `building` ever showed him, so the other four (writing the prompt, checking
+ *  a paste, applying, writing a repair prompt) said nothing but a greyed button
+ *  reading "Checking…". The pose IS the loading state — see
+ *  docs/design-decisions/cobb-mascot-art.md — so a waiting state without him is
+ *  a waiting state with no feedback. BuildPage.test.ts fails if a new `busy`
+ *  state ships without one. */
+function CobbAtWork({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex items-center gap-3 mt-2">
+      <Cobb pose="working" size={54} className="shrink-0 cobb-lift" title="Cobb, at work" />
+      <p className="text-xs text-faint dark:text-slate-500">{children}</p>
+    </div>
+  );
 }
 
 function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
@@ -84,6 +103,9 @@ export function BuildPage() {
     urlMode === "workspace" || urlMode === "app" || urlMode === "app-custom" || urlMode === "tweak" ? urlMode : "tweak",
   );
   const navigate = useNavigate();
+  // The ready-made callout opens its bundle HERE, so the intent you just typed
+  // survives (house rule: a modal shows up on the page it was invoked from).
+  const bundleDetail = useBundleDetail(slug);
   // The compile/build body per mode: tweak → a bundle scoped to picked kinds;
   // workspace → a whole-workspace bundle; app → a worker app (structured blocks);
   // app-custom → a custom HTML app (design-app-custom).
@@ -94,25 +116,22 @@ export function BuildPage() {
         ? { intent: intent.trim(), task: "design-app" }
         : mode === "app-custom"
           ? { intent: intent.trim(), task: "design-app-custom" }
-          : { intent: intent.trim(), selected_kinds: [...selected] };
+          : { intent: intent.trim(), selected_kinds: effectiveScope };
   // Both app tasks create a WorkspaceApp + have no bundle diff/preview.
   const isAppMode = mode === "app" || mode === "app-custom";
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Scope is DERIVED from the intent text (see suggest-kinds.ts). `manualScope`
+  // is the escape hatch: null = "use what Cobblr worked out", a Set = the user
+  // took over via Change. The old UI asked for this pick BEFORE the sentence,
+  // as a chip per entity kind - the model's scope cap made the user's problem.
+  const [manualScope, setManualScope] = useState<Set<string> | null>(null);
+  const [scopeOpen, setScopeOpen] = useState(false);
   const [intent, setIntent] = useState("");
-  // Ready-made catch: if the intent reads like a curated featured bundle
-  // ("track Books" → Bookshelf), offer the refined install BEFORE burning AI
-  // on a worse hand-rolled version (the templates-first cheap path).
   const liveInstances = useQuery({
     queryKey: ["instances", activeSlug],
     queryFn: () => api.listInstances(activeSlug),
     enabled: !!activeSlug,
     staleTime: 60_000,
   });
-  const readyMade = useMemo(() => {
-    if (intent.trim().length < 8) return null;
-    const live = new Set((liveInstances.data?.items ?? []).map((i) => i.instance_name));
-    return suggestFeatured(intent, live);
-  }, [intent, liveInstances.data]);
   const [draftId, setDraftId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -131,9 +150,44 @@ export function BuildPage() {
   });
   const kindItems = kinds.data?.items ?? [];
 
+  // What the sentence itself says it touches. Recomputed as you type; costs
+  // nothing (pure string work over the kinds already fetched). Computed in BOTH
+  // build modes, not just tweak: the tweak UI displays it, and both modes use
+  // it to tell a MODIFICATION of what you have apart from a NEW thing (see
+  // readyMade below).
+  const derivedScope = useMemo(
+    () => (isAppMode ? [] : suggestKinds(intent, kindItems)),
+    [isAppMode, intent, kindItems],
+  );
+  // Ready-made catch: if the intent names something we already ship a refined
+  // bundle for, offer THAT before burning AI on a worse hand-rolled version
+  // (the templates-first cheap path).
+  //
+  // It fires in BOTH build modes and on a BARE NOUN. Typing "yarn" is the most
+  // natural thing anyone does and it used to match nothing anywhere, because
+  // the matcher demanded a "track/collect/…" verb AND an 8-character intent
+  // (the author, 2026-08-01). What stops it hijacking a field tweak is no longer a
+  // verb list but the workspace itself: a sentence that lands on kinds you
+  // ALREADY HAVE is a modification ("add a warranty date to parts" → Part), so
+  // there is no install to pitch. Landing on nothing means it is a new thing.
+  const readyMade = useMemo(() => {
+    if (isAppMode || intent.trim().length < 3 || derivedScope.length > 0) return null;
+    const live = new Set((liveInstances.data?.items ?? []).map((i) => i.instance_name));
+    return suggestFeatured(intent, live);
+  }, [isAppMode, intent, derivedScope, liveInstances.data]);
+  const effectiveScope = manualScope
+    ? [...manualScope]
+    : derivedScope.map((s) => s.kind.id);
+  // Every word that put SOMETHING in scope, deduped - the "why", covering all
+  // the chips rather than just the top one.
+  const derivedWords = [...new Set(derivedScope.flatMap((s) => s.matched))];
+  const scopeKinds = effectiveScope
+    .map((id) => kindItems.find((k) => k.id === id))
+    .filter((k): k is (typeof kindItems)[number] => !!k);
+
   const toggleKind = (id: string) =>
-    setSelected((prev) => {
-      const next = new Set(prev);
+    setManualScope((prev) => {
+      const next = new Set(prev ?? effectiveScope);
       if (next.has(id)) next.delete(id);
       else if (next.size < 3) next.add(id);
       else toast.error("Pick at most 3 kinds - fewer is more reliable.");
@@ -325,7 +379,8 @@ export function BuildPage() {
       setDraftId(null);
       setPasteText("");
       setIntent("");
-      setSelected(new Set());
+      setManualScope(null);
+      setScopeOpen(false);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Apply failed.");
     } finally {
@@ -415,7 +470,7 @@ export function BuildPage() {
               Describe a <strong>page for your members</strong>  - forms, action buttons and a scanner over
               your existing data. The AI assembles it from safe building blocks (no code), and we check it before it goes
               live. Or skip the prompt: <strong>Generate from my workspace</strong> builds one instantly from your
-              trackers - no AI needed - and you can regenerate it any time they change.
+              modules - no AI needed - and you can regenerate it any time they change.
             </>
           ) : mode === "workspace" ? (
             <>
@@ -452,7 +507,13 @@ export function BuildPage() {
               The phone size is set by the bubble beside him: he's as tall as it
               is, and every px of him narrows it, so this is about as big as he
               goes before the copy starts stacking up. */}
-          <Cobb pose="idle" size={150} className="shrink-0 cobb-lift h-28 w-auto sm:h-[150px]" title="Cobb" />
+          {/* lg:row-span-2 + self-end: in the row layout the picker sits in column
+              2 UNDER the bubble, so Cobb has to span both rows to stand on the
+              same baseline as it. Spanning only row 1 (the grid's default) left
+              his feet level with the BOTTOM OF THE BUBBLE and the picker hanging
+              below him, which is the misalignment the grid introduced. Below lg
+              the picker spans both columns, so one row is correct there. */}
+          <Cobb pose="idle" size={150} className="shrink-0 cobb-lift h-28 w-auto sm:h-[150px] lg:row-span-2 self-end" title="Cobb" />
           <div className="cobb-bubble relative min-w-0 rounded-xl border border-cobble-200 dark:border-slate-700 bg-mortar-50 dark:bg-slate-900 px-4 py-3 mb-1">
             <p className="text-base sm:text-lg font-semibold text-content dark:text-mortar-100">
               Tell me what you need.
@@ -506,34 +567,6 @@ export function BuildPage() {
 
       {/* Step 1 — pick kinds + intent */}
       <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3">
-        {mode === "tweak" && (
-          <div>
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-2">
-              What does this touch? (pick 1–3)
-            </span>
-            <div className="flex flex-wrap gap-2">
-              {kindItems.map((k) => (
-                <button
-                  key={k.id}
-                  type="button"
-                  onClick={() => toggleKind(k.id)}
-                  className={
-                    "px-3 py-1 rounded-full text-sm border transition " +
-                    (selected.has(k.id)
-                      ? "bg-cobble-600 border-cobble-600 text-white"
-                      : "border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:border-accent")
-                  }
-                  title={k.id}
-                >
-                  {k.display_name}
-                </button>
-              ))}
-              {kindItems.length === 0 && (
-                <span className="text-xs text-faint italic">No entity kinds yet - enable a domain module first.</span>
-              )}
-            </div>
-          </div>
-        )}
         <label className="block">
           <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
             {mode === "workspace"
@@ -557,22 +590,117 @@ export function BuildPage() {
             }
             className="w-full px-3 py-2 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
-          {readyMade && !isAppMode && (
+          {readyMade && (
             <div className="mt-2 flex items-center gap-3 rounded-lg border border-moss-500/40 bg-moss-50 dark:bg-moss-950/30 px-3 py-2 text-sm">
-              <span className="text-lg leading-none shrink-0">{readyMade.bundle.glyph}</span>
+              {/* `idea` is the SUGGEST pose, and this is the page's one suggest
+                  moment: he's read what you typed and knows a better answer than
+                  the one you asked for. The bundle's own glyph stays inline with
+                  its name, where it identifies the bundle. */}
+              <Cobb pose="idea" size={44} className="shrink-0 cobb-lift" title="Cobb has a suggestion" />
               <span className="flex-1 text-moss-800 dark:text-moss-200">
-                There's a ready-made <strong>{readyMade.bundle.manifest.name}</strong> set-up for this ("{readyMade.matched}") - 
+                There's a ready-made <span className="leading-none">{readyMade.bundle.glyph}</span>{" "}
+                <strong>{readyMade.bundle.manifest.name}</strong> set-up for this ("{readyMade.matched}") - 
                 a refined bundle beats a generated one.
               </span>
-              <Link
-                to={`/bundles?open=${encodeURIComponent(readyMade.bundle.manifest.id)}`}
+              <button
+                type="button"
+                onClick={() => bundleDetail.open(readyMade.bundle.manifest.id)}
                 className="shrink-0 rounded-md bg-moss-600 hover:bg-moss-700 text-white text-xs font-medium px-2.5 py-1"
               >
                 View &amp; install
-              </Link>
+              </button>
             </div>
           )}
         </label>
+
+        {/* The scope, DERIVED and shown as a result rather than asked as the
+            first question. It appears only once you've typed, says what it
+            worked out and why, and hides the full kind picker behind "Change"
+            for the rare miss (the author, 2026-08-01 - new-user-flow follow-up). */}
+        {mode === "tweak" && intent.trim().length > 2 && kindItems.length > 0 && (
+          <div className="text-xs">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              {scopeKinds.length > 0 ? (
+                <>
+                  <span className="text-faint dark:text-slate-500">This will touch</span>
+                  {scopeKinds.map((k) => (
+                    <span
+                      key={k.id}
+                      title={k.id}
+                      className="inline-flex items-center rounded-full border border-accent/50 bg-accent/5 text-accent px-2 py-0.5 font-medium"
+                    >
+                      {k.display_name}
+                    </span>
+                  ))}
+                  {!manualScope && derivedWords.length > 0 && (
+                    <span className="text-faint dark:text-slate-500">
+                      (from &ldquo;{derivedWords.join("\u201d, \u201c")}&rdquo;)
+                    </span>
+                  )}
+                </>
+              ) : readyMade ? (
+                // The ready-made banner above is already the better answer for
+                // this sentence; don't argue with it from down here.
+                <span className="text-faint dark:text-slate-500">Nothing here to change yet.</span>
+              ) : (
+                <span className="text-faint dark:text-slate-500">
+                  Nothing in this workspace obviously matches, so Cobblr will look at everything. Naming what it
+                  touches makes the result better.
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => setScopeOpen((v) => !v)}
+                className="text-accent hover:underline font-medium"
+              >
+                {scopeOpen ? "Done" : scopeKinds.length > 0 ? "Change" : "Pick what it touches"}
+              </button>
+              {manualScope && !scopeOpen && (
+                <button
+                  type="button"
+                  onClick={() => setManualScope(null)}
+                  className="text-faint dark:text-slate-500 hover:text-accent"
+                >
+                  reset
+                </button>
+              )}
+            </div>
+
+            {scopeOpen && (
+              <div className="mt-2 rounded-lg border border-line dark:border-slate-700 p-2.5">
+                <div className="mb-2 flex flex-wrap items-baseline gap-x-2">
+                  <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
+                    // pick up to 3
+                  </span>
+                  <span className="text-[11px] text-faint dark:text-slate-500">
+                    fewer is more reliable - the AI wires to the wrong thing when handed everything
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {kindItems.map((k) => {
+                    const on = effectiveScope.includes(k.id);
+                    return (
+                      <button
+                        key={k.id}
+                        type="button"
+                        onClick={() => toggleKind(k.id)}
+                        title={k.id}
+                        className={
+                          "px-2.5 py-1 rounded-full text-xs border transition " +
+                          (on
+                            ? "bg-cobble-600 border-cobble-600 text-white"
+                            : "border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:border-accent")
+                        }
+                      >
+                        {k.display_name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-2">
           {/* With no AI, the roles swap: the copy-paste prompt is the real
               path, so IT gets the primary style and "Build it for me" is
@@ -606,14 +734,14 @@ export function BuildPage() {
           </button>
         </div>
         {busy === "building" && (
-          <div className="flex items-center gap-3 mt-1">
-            <Cobb pose="working" size={54} className="shrink-0 cobb-lift" title="Cobb, at work" />
-            <p className="text-xs text-faint dark:text-slate-500">
-              {mode === "workspace"
-                ? "On the bench — turning on the modules you need, building your fields + automations, then verifying it. A minute or two…"
-                : "On the bench — running it, then checking the result against the validator (auto-retrying if needed). A few seconds…"}
-            </p>
-          </div>
+          <CobbAtWork>
+            {mode === "workspace"
+              ? "On the bench — turning on the modules you need, building your fields + automations, then verifying it. A minute or two…"
+              : "On the bench — running it, then checking the result against the validator (auto-retrying if needed). A few seconds…"}
+          </CobbAtWork>
+        )}
+        {busy === "compile" && (
+          <CobbAtWork>Writing you a prompt to run in your own AI. Reading your workspace first, so it knows what you already have…</CobbAtWork>
         )}
       </section>
 
@@ -656,6 +784,9 @@ export function BuildPage() {
           >
             {busy === "validate" ? "Checking…" : "Check it"}
           </button>
+          {busy === "validate" && (
+            <CobbAtWork>Reading what you pasted and checking it against the validator, the same gate a bundle install goes through…</CobbAtWork>
+          )}
         </section>
       )}
 
@@ -718,7 +849,7 @@ export function BuildPage() {
                 <div key={inst.instance_name}>
                   <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
                     New section · <span className="text-emerald-600 dark:text-emerald-400">{inst.display_name}</span>
-                    <span className="normal-case text-faint"> (a {inst.item_noun ?? "record"} tracker)</span>
+                    <span className="normal-case text-faint"> (a table of {inst.item_noun ?? "record"}s)</span>
                   </div>
                   <ul className="text-sm text-content dark:text-mortar-100 space-y-0.5">
                     {inst.fields.length === 0 ? (
@@ -770,6 +901,7 @@ export function BuildPage() {
               >
                 {busy === "apply" ? "Applying…" : "Apply"}
               </button>
+              {busy === "apply" && <CobbAtWork>Landing it on your workspace…</CobbAtWork>}
               {/* Phase 3 — react by ITERATING, not re-describing: refine the
                   current result with a change request before (or instead of)
                   applying. */}
@@ -816,6 +948,7 @@ export function BuildPage() {
               >
                 {busy === "apply" ? "Creating…" : "Create app"}
               </button>
+              {busy === "apply" && <CobbAtWork>Building your page…</CobbAtWork>}
               {/* Phase 3 — apps refine too: same box as bundles, the route
                   picks refine-app from the parent draft's task. */}
               <div className="pt-3 mt-1 border-t border-line dark:border-slate-700">
@@ -875,10 +1008,12 @@ export function BuildPage() {
               >
                 <Copy size={14} /> {busy === "repair" ? "…" : "Copy repair prompt"}
               </button>
+              {busy === "repair" && <CobbAtWork>Writing a repair prompt with the errors above spelled out…</CobbAtWork>}
             </>
           )}
         </section>
       )}
+      {bundleDetail.element}
     </div>
   );
 }

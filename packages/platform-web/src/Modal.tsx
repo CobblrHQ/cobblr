@@ -21,6 +21,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Sparkles, X } from "lucide-react";
+import { useOverlayOpenFlag } from "./overlay-open";
 
 interface Props {
   open: boolean;
@@ -91,6 +92,9 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
   useEffect(() => {
     if (open) dirtyRef.current = false; // reset each time it opens
   }, [open]);
+  // Floating chrome (the Live pill, Quick access) out-stacks this overlay, so
+  // it has to yield while we're up. `inline` is page content, not an overlay.
+  useOverlayOpenFlag(open && !inline);
   const handleBackdrop = () => {
     if (!dismissOnBackdrop || dirtyRef.current) return;
     onClose();
@@ -130,11 +134,22 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
           // hit). my-8 = 4rem of vertical margin (was 6rem — a content-heavy
           // modal like the put-away plan was wasting a band of screen top and
           // bottom, the author 2026-07-11), so cap at 100vh − 4rem to match.
-          "bg-surface dark:bg-slate-900 rounded-xl shadow-2xl border w-full my-8 " +
-          "flex flex-col max-h-[calc(100vh-4rem)] " +
-          // fillHeight: also claim a min-height so the panel stays tall even when
-          // its content is short (no dead band below); the body scrolls within.
-          (fillHeight ? "min-h-[calc(100vh-4rem)] " : "") +
+          // On a PHONE a modal is the whole screen: no margin, no radius, no
+          // wasted band — a floating card with 1rem gutters wastes the little
+          // room there is and pushed action rows under the Live pill (the author,
+          // 2026-08-01). From sm up it's the familiar centred card again.
+          "bg-surface dark:bg-slate-900 shadow-2xl border w-full flex flex-col " +
+          "my-0 rounded-none sm:my-8 sm:rounded-xl " +
+          // dvh, never vh: on iOS 100vh is the LARGE viewport (as if the
+          // toolbars were retracted), so a vh-sized overlay is taller than the
+          // screen and its bottom row is unreachable — the same bug that hid
+          // Ask Cobb's composer. lint:no-vh-overlays enforces this.
+          "max-h-[100dvh] sm:max-h-[calc(100dvh-4rem)] " +
+          "min-h-[100dvh] sm:min-h-0 " +
+          // The home indicator sits over the sheet's last few points, so pad the
+          // footer up off it (0 in a browser / on desktop).
+          "pb-[env(safe-area-inset-bottom)] sm:pb-0 " +
+          (fillHeight ? "sm:min-h-[calc(100dvh-4rem)] " : "") +
           SIZE[size] +
           " " +
           (destructive
@@ -228,7 +243,7 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
       // as --modal-inset-left/right on <html>, and the overlay pads by them —
       // "the active window is the part without the sidebar" (the author).
       // Defaults to 0, so shells without chrome are unaffected.
-      className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto md:pl-[calc(1rem+var(--modal-inset-left,0px))] xl:pr-[calc(1rem+var(--modal-inset-right,0px))]"
+      className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-start justify-center p-0 sm:p-4 overflow-y-auto md:pl-[calc(1rem+var(--modal-inset-left,0px))] xl:pr-[calc(1rem+var(--modal-inset-right,0px))]"
       onClick={handleBackdrop}
       role="dialog"
       aria-modal="true"

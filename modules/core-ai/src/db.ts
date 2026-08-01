@@ -139,3 +139,11 @@ export function tenantContext(req: Request) {
 export function sessionUserId(req: Request): string | null {
   return (req as unknown as RequestWithTenant).session?.id ?? null;
 }
+
+/** The signed-in user's display name — the person Cobb is ACTUALLY talking to.
+ *  Must come from the request session, never the AI connection's owner (a shared
+ *  connection is someone else's key; the caller is still the caller). */
+export function sessionDisplayName(req: Request): string | null {
+  const n = (req as unknown as RequestWithTenant).session?.display_name;
+  return typeof n === "string" && n.trim() ? n.trim() : null;
+}

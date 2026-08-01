@@ -2,6 +2,32 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-08-01
+
+### Features
+- New workspaces get a short guided tour on first load, once per user and only while the workspace is still empty. It welcomes you, asks whether you want the navigation across the top or down a sidebar (and switches the whole app live as you try each), then spotlights the key parts of the dashboard one at a time. Skippable, and replayable any time from the account menu.
+
+### Improvements
+- The Build page no longer opens with a wall of chips asking which things your change touches. Describe what you want and Cobblr works out what it touches from your own words and field names, shows it back to you, and keeps the full picker one click away under "Change" for the rare miss.
+- Cobb now shows you what he is doing on the Build page. He is at the bench while a prompt is being written, a paste is checked, a build is applied or a repair prompt is drafted, where before those steps showed nothing but a greyed-out button. When something you typed matches a ready-made setup, he turns up to point at it.
+- The words for adding things to a workspace are settled: modules and bundles, everywhere. The same objects were called trackers, recipes, presets, specialisations, or starter packs depending on which screen you were on; those are gone from headings and buttons. A named copy of a module is a category (the "+ New thing" dialog is now "+ New category"), and a machine's Specialisation picker is now Machine type.
+- An inventory list's tabs now read as tabs rather than a path, and the first one is named after what the list actually holds, so a Yarn list says "Yarns" instead of "List". Its Settings tab is one panel instead of two: categories sit with the other fields, you can rename a field by clicking its name, and the copy says plainly what you can change here and where to go for the rest.
+- A brand-new workspace's dashboard no longer opens with "Pin a saved view here" and "no activity yet" placeholders, and the "New thing" dialog now offers every kind of thing you can track, turning one on for you as part of Create instead of telling you to go enable it elsewhere. Small dead ends fixed too: the bundles page's empty list points at the marketplace above it, a deleted category's page links straight to creating a new one, and the machine-type hint opens the marketplace already filtered.
+- The dashboard's "More ways to start" browser and the Bundles marketplace now look like one catalog: the same tiles and the same two sections (ready-made bundles, then full setups) on both, instead of two different grids showing the same list.
+- Scanning a barcode shows its name and picture noticeably faster: the scanner no longer waits for the catalog image to be archived before answering, and the scan card checks for late-arriving results more often.
+
+### Fixes
+- Assets can be created and updated with flags again; setting any flag previously failed with "Malformed identifier or value". Bulk scan imports also no longer drop the occasional photo when the database is busy.
+- Opening a bundle's details from the Build page, Configuration, a field or a wire now shows the bundle right where you are instead of throwing you onto the Bundles page. Anything you had typed is still there when you close it.
+- Ask Cobb now addresses the person actually chatting. When a workspace runs on an AI connection someone else shared in (for example a Claude bridge), Cobb used to greet everyone by the connection owner's name; it now uses the signed-in user's name and ignores any name the underlying connection's environment suggests.
+- A pool no longer sends a second print to a printer that is already spoken for. A printer counted as free while its file was still uploading, while the manager had the job but had not started it, and while a print was paused, so two plates could go to one machine.
+- The floating Live pill (and the Quick access button) now hide while Ask Cobb or the notifications panel is open, instead of floating over the message box.
+- Every modal now fills the screen on a phone instead of floating as a cramped card, and the Live pill, Quick access and Feedback bubble step out of the way while one is open rather than covering its buttons. The scan inbox session row also stopped overlapping itself: it wraps when it needs to, the location button reads "Set location", and the longest labels shorten on small screens.
+- Ask Cobb and the notifications panel now open as a proper full-width sheet on a phone, starting below the navbar and ending above the home indicator. They were sized with the browser's full viewport height, which on iOS is taller than the screen you can actually see, so the message box at the bottom was cut off.
+- Typing a plain word like "yarn" on the Build page now offers the ready-made Yarn bundle instead of nothing, in both build modes. It only stayed quiet before if you happened to phrase it as "track my yarn stash" in eight characters or more. Notifications about an emailed receipt now open your scan inbox instead of dropping you on the dashboard, and a reply to your feedback just gets marked read rather than navigating away.
+- A scan session header no longer claims a filing location the whole session does not have, and says how many items still need one. Categories are shown using your own word ("Books", not "Book"), and a session only offers to file under a category when the destination can actually store one. Replaying an item no longer destroys the snapshot that powers "Put it back", so a hand-picked catalog photo can be recovered.
+- Undoing a scan import now works when the import replaced existing items; repeat syncs no longer store duplicate copies of unchanged photos; imported sessions keep their original origin (an emailed receipt still reads "emailed"); and assets whose flags were corrupted by the earlier bug are healed automatically.
+
 ## 2026-07-31
 
 ### Features

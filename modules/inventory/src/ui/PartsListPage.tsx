@@ -1251,7 +1251,7 @@ function SpoolmanModal({
     <Modal open onClose={onClose} title="Spoolman" size="sm">
       <div className="space-y-3">
         <p className="text-[13px] text-muted dark:text-slate-400">
-          Link Cobblr to your Spoolman. Spoolman stays the tracker - Cobblr pulls each spool's remaining weight in (as an item here) and won't deduct it itself.
+          Link Cobblr to your Spoolman. Spoolman stays the source of truth - Cobblr pulls each spool's remaining weight in (as an item here) and won't deduct it itself.
         </p>
         {items.map((c) => (
           <div key={c.id} className="flex items-center gap-2 rounded border border-line dark:border-slate-700 p-2">

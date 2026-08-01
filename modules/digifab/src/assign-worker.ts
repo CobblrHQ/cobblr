@@ -11,7 +11,7 @@
 import { platform } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { DigifabDB } from "./db.js";
-import { buildDriverById, sendJob } from "./jobs-core.js";
+import { buildDriverById, occupiesDevice, sendJob } from "./jobs-core.js";
 import { mintRunJobs, runStatuses } from "./runs-core.js";
 import { enqueuePoll } from "./poll-worker.js";
 import { classify } from "./state.js";
@@ -65,14 +65,20 @@ export async function assignPoolJobs(db: Kysely<DigifabDB>, orgId: string): Prom
     .execute();
   if (!queued.length) return 0;
 
-  // Devices already busy with an assigned Cobblr job.
+  // Devices already busy with an assigned Cobblr job. Which statuses count is
+  // occupiesDevice()'s call, NOT a list written out here: this was
+  // `["sent", "printing"]`, which missed `assigning` — the status a job carries
+  // while it is mid-sendJob — so two overlapping passes each saw a printer being
+  // loaded as free and sent it a second plate.
   const active = await db
     .selectFrom("digifab_jobs")
-    .select(["connection_id", "target_device"])
-    .where("status", "in", ["sent", "printing"])
+    .select(["connection_id", "target_device", "status"])
+    .where("status", "not in", ["queued", "completed", "failed", "cancelled"])
     .execute();
   const busy = new Set(
-    active.filter((a) => a.connection_id && a.target_device).map((a) => `${a.connection_id}:${a.target_device}`),
+    active
+      .filter((a) => a.connection_id && a.target_device && occupiesDevice(a.status))
+      .map((a) => `${a.connection_id}:${a.target_device}`),
   );
 
   // F-1: devices awaiting a human bed-clear ack — NEVER assign onto an occupied

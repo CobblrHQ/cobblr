@@ -162,8 +162,16 @@ export function NewThingFunnelModal({
   // multi-instance module appears automatically and the funnel can't drift from
   // the real set. (Audit 2026-06-26 follow-up — was a hardcoded allowlist that
   // had already missed `sales`.)
+  // ...and a kind that is NOT enabled yet still shows, marked, and gets turned
+  // on as part of Create. The old behaviour told a brand-new workspace "No
+  // multi-instance modules enabled. Turn on one of: ..." over a permanently
+  // disabled Create button - an instruction to go somewhere else from a modal
+  // that could just do it (new-user-flow.md F5). Only stock domain kinds are
+  // offered for enabling; already-enabled ones appear regardless of band.
   const candidates = (modules.data?.items ?? []).filter(
-    (m) => m.instanceability === "multi",
+    (m) =>
+      m.instanceability === "multi" &&
+      (m.enabled || (m.band === "stock" && !m.name.startsWith("core-"))),
   );
 
   // The nudge. Preselects the likeliest kind AS YOU TYPE, and stops the moment
@@ -186,6 +194,12 @@ export function NewThingFunnelModal({
   const create = useMutation({
     mutationFn: async () => {
       if (!pickedModule) throw new Error("module not picked");
+      // A not-yet-enabled kind is enabled here, idempotently, as part of the
+      // same Create - the modal resolves its own precondition (same move as
+      // WhatToDoPanel's category path).
+      if (!candidates.find((m) => m.name === pickedModule)?.enabled) {
+        await api.enableModule(activeSlug, pickedModule).catch(() => undefined);
+      }
       const slug = slugify(displayName);
       const inst = await api.createInstance(activeSlug, {
         module_name: pickedModule,
@@ -217,6 +231,7 @@ export function NewThingFunnelModal({
       void qc.invalidateQueries({ queryKey: ["instances", activeSlug] });
       void qc.invalidateQueries({ queryKey: ["entity-kind-overrides", activeSlug] });
       void qc.invalidateQueries({ queryKey: ["nav-headings", activeSlug] });
+      void qc.invalidateQueries({ queryKey: ["org-modules", activeSlug] });
       reset();
       onClose();
     },
@@ -248,7 +263,7 @@ export function NewThingFunnelModal({
         reset();
         onClose();
       }}
-      title="New thing in workspace"
+      title="New category"
       size="md"
       inline={inline}
       chromeless={chromeless}
@@ -285,12 +300,7 @@ export function NewThingFunnelModal({
               What is {displayName.trim()}, roughly?
             </div>
             {modules.isLoading && <div className="text-sm text-muted">Loading…</div>}
-            {candidates.length === 0 && !modules.isLoading && (
-              <div className="text-sm italic text-muted dark:text-slate-400">
-                No multi-instance modules enabled. Turn on one of: Assets, Inventory,
-                Machines, Projects, Purchases.
-              </div>
-            )}
+
             {candidates.map((m: OrgModuleListItem) => {
               const copy = KIND_COPY[m.name];
               const picked = pickedModule === m.name;
@@ -315,6 +325,14 @@ export function NewThingFunnelModal({
                     {isSuggested && (
                       <span className="text-[10px] font-mono uppercase tracking-wider rounded-full bg-accent/10 text-accent px-1.5 py-0.5">
                         suggested
+                      </span>
+                    )}
+                    {!m.enabled && (
+                      <span
+                        className="text-[10px] font-mono uppercase tracking-wider rounded-full bg-subtle dark:bg-slate-800 text-faint dark:text-slate-400 px-1.5 py-0.5"
+                        title={`${m.displayName ?? m.name} isn't on in this workspace yet - creating this turns it on.`}
+                      >
+                        will be turned on
                       </span>
                     )}
                   </div>

@@ -336,7 +336,10 @@ function normalize(raw: Record<string, unknown>, row: number, sourceInstance: st
     x_manufacturer: x ? asStr(x.suggested_manufacturer) : null,
     x_location_note: x ? asStr(x.suggested_location_note) : null,
     x_candidates: x ? (x.suggested_candidates ?? null) : null,
-    x_entity_type: entityType,
+    // Only a Cobblr envelope may write the target_kind COLUMN - there the value
+    // came from target_kind on the source. A foreign CSV's entity type is
+    // freetext and stays a metadata hint (hint_entity_type above), never a kind.
+    x_entity_type: x ? entityType : null,
     x_batch_source_id: x ? asStr(x.scan_batch_id) : null,
     x_location_name: x ? asStr(x.target_location_name) : null,
     x_catalog_image_url: x ? asStr(x.catalog_image_url) : null,

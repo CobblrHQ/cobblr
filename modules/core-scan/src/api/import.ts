@@ -13,7 +13,8 @@
 // Nothing here auto-fires AI: 500 imported rows must not mean 500 surprise
 // model calls. The inbox's existing suggest/rerun flows pick them up.
 
-import { Router, json as expressJson, text as expressText } from "express";
+import { createHash } from "node:crypto";
+import { Router, text as expressText } from "express";
 import { z } from "zod";
 import multer from "multer";
 import { platform } from "@cobblr/platform-contract";
@@ -38,7 +39,17 @@ export const importRouter = Router({ mergeParams: true });
 
 const PHOTO_TIMEOUT_MS = 10_000;
 const PHOTO_MAX_BYTES = 5 * 1024 * 1024;
-const PHOTO_CONCURRENCY = 4;
+// Each stored photo takes a tenant DB connection for its metadata row, so a
+// wide fan-out here competes with the rest of the instance for Postgres slots.
+// At 4, a real 69-item import lost 4-6 photos per run to "remaining connection
+// slots are reserved for roles with the SUPERUSER attribute" (2026-07-31). The
+// import is not latency-sensitive - it is a bulk operation someone triggers and
+// walks away from - so trading a little wall-clock for not being the reason
+// another request cannot get a connection is the right way round.
+const PHOTO_CONCURRENCY = 2;
+/** Connection-pool contention is transient by nature: the fix is to wait and
+ *  ask again, not to fail the photo. */
+const PHOTO_RETRIES = 3;
 const MAX_UPLOAD_BYTES = 32 * 1024 * 1024;
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES } });
@@ -90,21 +101,71 @@ function parseRequest(req: {
   return parseJsonImport(bodyObj);
 }
 
+/** What a repeat import needs to know about an already-imported row: where it
+ *  is, which photo files it holds, and the content hashes of the photos the
+ *  LAST import stored - so an unchanged photo is never stored again. */
+interface ExistingImported {
+  id: string;
+  image_file_id: string | null;
+  catalog_image_file_id: string | null;
+  photo_hashes: { identify?: string; display?: string };
+}
+
 /** All already-imported provenance keys for this workspace, in one query. */
-async function existingProvenance(db: ReturnType<typeof tenantDb>): Promise<Map<string, string>> {
+async function existingProvenance(db: ReturnType<typeof tenantDb>): Promise<Map<string, ExistingImported>> {
   const rows = await db
     .selectFrom("core_scan_inbox_items")
-    .select(["id", "suggested_metadata"])
+    .select(["id", "suggested_metadata", "image_file_id", "catalog_image_file_id"])
     .where("suggested_metadata", "is not", null)
     .execute();
-  const map = new Map<string, string>();
+  const map = new Map<string, ExistingImported>();
   for (const r of rows) {
-    const p = (r.suggested_metadata as { import_provenance?: { source_id?: unknown; source_instance?: unknown } } | null)?.import_provenance;
+    const meta = r.suggested_metadata as {
+      import_provenance?: { source_id?: unknown; source_instance?: unknown };
+      import_photo_hashes?: { identify?: unknown; display?: unknown };
+    } | null;
+    const p = meta?.import_provenance;
     if (p && p.source_id !== undefined) {
-      map.set(`${String(p.source_instance ?? "")}::${String(p.source_id)}`, r.id);
+      const h = meta?.import_photo_hashes ?? {};
+      map.set(`${String(p.source_instance ?? "")}::${String(p.source_id)}`, {
+        id: r.id,
+        image_file_id: (r.image_file_id as string | null) ?? null,
+        catalog_image_file_id: (r.catalog_image_file_id as string | null) ?? null,
+        photo_hashes: {
+          ...(typeof h.identify === "string" ? { identify: h.identify } : {}),
+          ...(typeof h.display === "string" ? { display: h.display } : {}),
+        },
+      });
     }
   }
   return map;
+}
+
+/** Content identity of an embedded photo. Hashing the base64 text is enough -
+ *  identical bytes encode identically - and avoids a decode. */
+export const photoHash = (embed: { data: string }): string =>
+  createHash("sha256").update(embed.data).digest("hex");
+
+/**
+ * Should this run STORE the photo, or is the destination's existing file
+ * already those bytes?
+ *
+ * Without this, every `replace` re-sync stored every embedded photo as a brand
+ * new file and re-pointed the row, orphaning the previous file: three sync runs
+ * left ~240 stored files for 81 photos (2026-08-01) - the same silent
+ * unbounded growth as the web-static leak, in the file store. A matching hash
+ * plus a surviving file id means the bytes are already here; a changed photo
+ * still propagates because its hash differs.
+ */
+export function shouldStorePhoto(opts: {
+  action: "create" | "replace";
+  existingFileId: string | null;
+  existingHash: string | undefined;
+  newHash: string;
+}): boolean {
+  if (opts.action !== "replace") return true;
+  if (!opts.existingFileId) return true;
+  return opts.existingHash !== opts.newHash;
 }
 
 const provKey = (i: NormalizedImportItem): string | null =>
@@ -113,11 +174,15 @@ const provKey = (i: NormalizedImportItem): string | null =>
 /**
  * Recreate the exported SESSIONS locally and return sourceId → local batch id.
  *
- * A batch carries its origin id in `origin` as `import:<source_id>`, which is
- * both the provenance stamp and the idempotency key: syncing the same prod
- * inbox twice reuses the session instead of cloning it, so items added to a
- * session later land in the SAME session here. Best-effort per batch - a
- * session that fails to create just leaves its items ungrouped rather than
+ * Provenance lives in its own `import_source_id` column - it used to be
+ * stamped into `origin`, which overwrote the exported origin and cost imported
+ * receipt sessions their "emailed <when>" rendering. The source id is the
+ * idempotency key: syncing the same inbox twice reuses the session instead of
+ * cloning it, and a reused session REFRESHES its label/origin/vendor/order_ref
+ * from the envelope (the source is the source of truth, same as the items -
+ * this is also what heals sessions imported under the old origin-stamp
+ * scheme, whose origin the 0018 migration reset to null). Best-effort per
+ * batch: a session that fails just leaves its items ungrouped rather than
  * failing the whole import.
  */
 async function upsertBatches(
@@ -129,24 +194,35 @@ async function upsertBatches(
   const map = new Map<string, string>();
   const created: string[] = [];
   if (batches.length === 0) return { map, created };
-  const stamps = batches.map((b) => `import:${b.source_id}`);
   const existing = await db
     .selectFrom("core_scan_batches")
-    .select(["id", "origin"])
-    .where("origin", "in", stamps)
+    .select(["id", "import_source_id"])
+    .where("import_source_id", "in", batches.map((b) => b.source_id))
     .execute();
   for (const r of existing) {
-    const src = String(r.origin ?? "").replace(/^import:/, "");
-    if (src) map.set(src, r.id as string);
+    if (r.import_source_id) map.set(String(r.import_source_id), r.id as string);
   }
   for (const b of batches) {
-    if (map.has(b.source_id)) continue;
+    const reuseId = map.get(b.source_id);
+    if (reuseId) {
+      try {
+        await db
+          .updateTable("core_scan_batches")
+          .set({ label: b.label, origin: b.origin, vendor: b.vendor, order_ref: b.order_ref })
+          .where("id", "=", reuseId)
+          .execute();
+      } catch {
+        /* a stale label is not worth failing the import over */
+      }
+      continue;
+    }
     try {
       const ins = await db
         .insertInto("core_scan_batches")
         .values({
           label: b.label,
-          origin: `import:${b.source_id}`,
+          origin: b.origin,
+          import_source_id: b.source_id,
           vendor: b.vendor,
           order_ref: b.order_ref,
           created_by_user_id: userId,
@@ -227,6 +303,51 @@ async function storeEmbeddedToFile(orgId: string, embed: { mime: string; data: s
   return written.fileId;
 }
 
+/**
+ * A replaced row's snapshot, made safe to write back.
+ *
+ * The snapshot comes straight out of jsonb, so `suggested_candidates` is a JS
+ * array - and writing a JS array to a jsonb column is the exact node-pg
+ * array-literal bug this module has now hit twice (#1536, and here). The undo
+ * path escaped the lint because it writes a spread variable, not a literal
+ * key, and it escaped testing because no test undid a REPLACE run - which is
+ * the only kind the prod->staging sync produces. Every array value is
+ * stringified (this table's only array-typed columns are jsonb; there are no
+ * text[] columns to corrupt), and the identity/timestamp columns Postgres owns
+ * are stripped.
+ */
+export function encodeRowForRestore(before: Record<string, unknown>): Record<string, unknown> {
+  const { id: _id, created_at: _created, ...rest } = before;
+  for (const [k, v] of Object.entries(rest)) {
+    if (Array.isArray(v)) rest[k] = JSON.stringify(v);
+  }
+  return rest;
+}
+
+/** Is this failure worth another go? Pool exhaustion and the driver's own
+ *  "too many clients" are transient contention; a 404, a bad mime or a decode
+ *  failure will fail identically every time and must not be retried. */
+export function isTransientStorageError(message: string): boolean {
+  return /remaining connection slots|too many clients|connection terminated|ECONNRESET|timeout expired|timed out|Connection terminated unexpectedly/i.test(
+    message,
+  );
+}
+
+/** Run `fn`, retrying only transient storage failures with a widening backoff. */
+async function withStorageRetry<T>(fn: () => Promise<T>): Promise<T> {
+  let last: unknown;
+  for (let attempt = 1; attempt <= PHOTO_RETRIES; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      last = e;
+      if (attempt === PHOTO_RETRIES || !isTransientStorageError((e as Error).message ?? "")) throw e;
+      await new Promise((r) => setTimeout(r, 250 * attempt * attempt));
+    }
+  }
+  throw last;
+}
+
 async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let next = 0;
@@ -246,12 +367,6 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R
 importRouter.post(
   "/import/preview",
   expressText({ type: ["text/csv", "text/plain"], limit: "32mb" }),
-  // A JSON envelope needs the SAME headroom as a CSV. It did not have it:
-  // CSV was raised to 32mb here while application/json fell through to the
-  // app-level parser default (~100kb), so an embed-mode export - the very
-  // thing this endpoint exists to consume - was rejected with
-  // PayloadTooLargeError. A real 69-item export is 5.4MB (2026-07-31).
-  expressJson({ limit: "32mb" }),
   upload.single("file"),
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
@@ -281,12 +396,6 @@ importRouter.post(
 importRouter.post(
   "/import",
   expressText({ type: ["text/csv", "text/plain"], limit: "32mb" }),
-  // A JSON envelope needs the SAME headroom as a CSV. It did not have it:
-  // CSV was raised to 32mb here while application/json fell through to the
-  // app-level parser default (~100kb), so an embed-mode export - the very
-  // thing this endpoint exists to consume - was rejected with
-  // PayloadTooLargeError. A real 69-item export is 5.4MB (2026-07-31).
-  expressJson({ limit: "32mb" }),
   upload.single("file"),
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
@@ -317,15 +426,17 @@ importRouter.post(
     // Also dedupe within the file itself (same source_id twice in one export).
     const seenInFile = new Set<string>();
 
-    type Plan = { item: NormalizedImportItem; action: "create" | "skip" | "replace"; existingId?: string };
+    type Plan = { item: NormalizedImportItem; action: "create" | "skip" | "replace"; existingId?: string; prior?: ExistingImported };
     const plan: Plan[] = parsed.items.map((item) => {
       const key = provKey(item);
       if (!key || policy === "append") return { item, action: "create" as const };
       if (seenInFile.has(key)) return { item, action: "skip" as const };
       seenInFile.add(key);
-      const existingId = existing.get(key);
-      if (!existingId) return { item, action: "create" as const };
-      return policy === "replace" ? { item, action: "replace" as const, existingId } : { item, action: "skip" as const, existingId };
+      const prior = existing.get(key);
+      if (!prior) return { item, action: "create" as const };
+      return policy === "replace"
+        ? { item, action: "replace" as const, existingId: prior.id, prior }
+        : { item, action: "skip" as const, existingId: prior.id };
     });
 
     const toWrite = plan.filter((p) => p.action !== "skip");
@@ -383,12 +494,21 @@ importRouter.post(
         ["identify", fetchPhotos ? i.photo_identify_url : null, i.photo_identify_embedded],
         ["display", fetchPhotos ? i.photo_display_url : null, i.photo_display_embedded],
       ] as const;
+      const hashes: Record<string, string> = {};
       for (const [role, url, embed] of roles) {
         if (!embed && !url) continue;
         try {
-          const fileId = embed
-            ? await storeEmbeddedToFile(ctx.org.id, embed)
-            : await fetchPhotoToFile(ctx.org.id, url!);
+          if (embed) {
+            const h = photoHash(embed);
+            hashes[role] = h;
+            const existingFileId = role === "identify" ? (p.prior?.image_file_id ?? null) : (p.prior?.catalog_image_file_id ?? null);
+            if (!shouldStorePhoto({ action: p.action as "create" | "replace", existingFileId, existingHash: p.prior?.photo_hashes[role], newHash: h })) {
+              continue; // bytes already here from a previous sync - keep the file
+            }
+          }
+          const fileId = await withStorageRetry(() =>
+            embed ? storeEmbeddedToFile(ctx.org.id, embed) : fetchPhotoToFile(ctx.org.id, url!),
+          );
           const slot = photoIds.get(i.row) ?? {};
           slot[role] = fileId;
           photoIds.set(i.row, slot);
@@ -398,6 +518,10 @@ importRouter.post(
           errors.push({ row: i.row, field: embed ? `${role}_photo_embedded` : `${role}_photo_url`, message: (e as Error).message });
         }
       }
+      // The hashes ride in the row's metadata so the NEXT sync can recognise
+      // unchanged bytes. Written into i.metadata here, before the transaction
+      // builds its values from it.
+      if (Object.keys(hashes).length) i.metadata.import_photo_hashes = hashes;
     });
 
     // ── Then ONE transaction for every row ───────────────────────────────
@@ -611,12 +735,9 @@ importRouter.post(
         removed = Number(del.numDeletedRows ?? 0);
       }
       for (const r of undo.replaced ?? []) {
-        // Put back exactly what was there, minus the identity/timestamp columns
-        // Postgres owns.
-        const { id: _id, created_at: _c, ...rest } = r.before as Record<string, unknown>;
         await trx
           .updateTable("core_scan_inbox_items")
-          .set(rest as never)
+          .set(encodeRowForRestore(r.before) as never)
           .where("id", "=", r.id)
           .execute();
         restored++;

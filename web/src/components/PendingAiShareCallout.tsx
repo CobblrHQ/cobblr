@@ -87,8 +87,8 @@ export function PendingAiShareCallout({ slug, role }: { slug: string; role: stri
       ))}
 
       <div className="pl-6">
-        <Link to="/configuration" className="text-[11px] text-muted hover:text-accent">
-          Manage in Settings → AI sharing
+        <Link to="/configuration/ai" className="text-[11px] text-muted hover:text-accent">
+          Manage in Configuration → AI
         </Link>
       </div>
     </div>

@@ -29,6 +29,27 @@ async function cameraFor(db: Kysely<DigifabDB>, connectionId: string | null, dev
 }
 
 export const TERMINAL = new Set(["completed", "failed", "cancelled"]);
+
+/** Is a job in this status physically holding its target printer?
+ *
+ *  DERIVED, never an allowlist. Everything that isn't finished and isn't still
+ *  waiting in the queue is on the machine: `assigning` (claimed, mid-sendJob),
+ *  `awaiting-assignment` (uploaded, manager hasn't started it), `sent`,
+ *  `printing`, `paused` (the part is still on the bed). A status added later
+ *  counts as occupying until someone deliberately excludes it, because the two
+ *  mistakes don't cost the same: a false "busy" delays a plate by one tick, a
+ *  false "free" drops a second plate onto an occupied bed.
+ *
+ *  The assign worker used to hardcode `["sent", "printing"]`, which omitted
+ *  `assigning` — the status set immediately BEFORE the awaited sendJob (a file
+ *  upload, so the window is seconds wide on a real manager). Two overlapping
+ *  passes (kickAssign on create, the 15s re-tick, pollJob's terminal kick) both
+ *  read a mid-send printer as free and dispatched to it. `awaiting-assignment`
+ *  and `paused` had the same hole. */
+export function occupiesDevice(status: string): boolean {
+  return !TERMINAL.has(status) && status !== "queued";
+}
+
 /** Consecutive poll errors before a live job is declared `failed` (F-12) — so a
  *  transient network blip doesn't kill a healthy print. Driver-aware: the mock
  *  fails fast for tests/demos; a REAL farm gets a much longer grace window — a

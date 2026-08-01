@@ -11,7 +11,7 @@ import { Boxes } from "lucide-react";
 // Side-effect: registers the inventory "at a glance" dashboard tile through
 // platform-web's registerDashboardWidget seam when this UI bundle loads.
 import "./DashboardWidget";
-import { InventoryProvider, type ParentConfig } from "./context";
+import { InventoryProvider, useInventory, type ParentConfig } from "./context";
 import { PartsListPage } from "./PartsListPage";
 import { SettingsPage } from "./SettingsPage";
 
@@ -50,7 +50,7 @@ export function InventoryUI({ orgSlug, getToken, instance, displayName, itemNoun
   return (
     <InventoryProvider orgSlug={orgSlug} getToken={getToken} instance={instance} itemNoun={itemNoun} itemNounPlural={itemNounPlural} qtyUnit={qtyUnit} parent={parent}>
       <div className="space-y-4">
-        <Header title={displayName ?? "inventory"} scoped={!!instance} />
+        <Header title={displayName ?? "inventory"} />
         <Routes>
           {/* Both render the list; parts/:id additionally opens the
               detail MODAL (D4) — the list stays mounted underneath,
@@ -73,9 +73,22 @@ export function InventoryUI({ orgSlug, getToken, instance, displayName, itemNoun
   );
 }
 
-function Header({ title, scoped }: { title: string; scoped: boolean }) {
+function Header({ title }: { title: string }) {
+  // The list tab is named after WHAT IT HOLDS. The noun is already in context
+  // (every instance declares it) and the tabs used to throw it away: a base
+  // inventory hardcoded "Parts" and a skinned instance fell back to the generic
+  // "List", so Yarn's tab read "List" instead of "Skeins" (the author, 2026-08-01).
+  const { itemNounPlural } = useInventory();
+  const listLabel = itemNounPlural
+    ? itemNounPlural.charAt(0).toUpperCase() + itemNounPlural.slice(1)
+    : "Items";
+  // Underline TABS, not "// path" links. Prefixing each with "//" made a pair of
+  // peers read as a breadcrumb - as though Settings lived under Parts.
   const cls = ({ isActive }: { isActive: boolean }) =>
-    isActive ? "text-accent font-semibold" : "text-faint dark:text-slate-500 hover:text-accent";
+    "pb-3 -mb-3 border-b-2 transition " +
+    (isActive
+      ? "border-accent text-content dark:text-mortar-100 font-semibold"
+      : "border-transparent text-faint dark:text-slate-500 hover:text-content dark:hover:text-mortar-200");
   // Link the tabs ABSOLUTELY off the instance/module base — everything up
   // through ".../instances/<name>" (or ".../inventory"). InventoryUI's inner
   // <Routes> mounts under a splat, so a RELATIVE `to="settings"` resolves
@@ -97,9 +110,9 @@ function Header({ title, scoped }: { title: string; scoped: boolean }) {
           instance (Yarn) "parts" is the wrong noun, but settings still has to be
           reachable — it's where you edit a list's dropdown options (otherwise
           there's no findable "config area"). So keep a settings link either way. */}
-      <nav className="flex gap-3 text-xs font-mono">
-        <NavLink to={base} end className={cls}>{scoped ? "// List" : "// Parts"}</NavLink>
-        <NavLink to={`${base}/settings`} className={cls}>// Settings</NavLink>
+      <nav className="flex items-baseline gap-5 text-sm">
+        <NavLink to={base} end className={cls}>{listLabel}</NavLink>
+        <NavLink to={`${base}/settings`} className={cls}>Settings</NavLink>
       </nav>
     </div>
   );

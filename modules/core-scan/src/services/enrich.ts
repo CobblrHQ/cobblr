@@ -368,7 +368,12 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
       })
       .where("id", "=", ctx.itemId)
       .execute();
-    if (vendor.imageUrl) await downloadCatalogImage(ctx, vendor.imageUrl).catch(() => {});
+    // Download DETACHED: the row already carries catalog_image_url, and the
+    // card renders a remote URL directly - the stored copy is for permanence,
+    // not for first paint. Awaiting it held the scan response hostage to a
+    // stranger's image server. Skipped entirely under a user lock (downloading
+    // a file we would immediately un-point was pure waste).
+    if (vendor.imageUrl && !lockedImg) void downloadCatalogImage(ctx, vendor.imageUrl).catch(() => {});
     await reassertLockedImage();
     return;
   }
@@ -654,7 +659,9 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
           .sharedCache.put(BARCODE_NS, ctx.upc, webValue, GLOBAL_MISS_TTL_SEC)
           .catch(() => {});
       }
-      if (web.imageUrl) await downloadCatalogImage(ctx, web.imageUrl);
+      // Detached for the same reason as the provider-image download below: the
+      // URL is on the row, the card renders it, the file is bookkeeping.
+      if (web.imageUrl && !lockedImg) void downloadCatalogImage(ctx, web.imageUrl).catch(() => {});
       // A web-search title is the weakest source (a UPC search can surface a
       // SPURIOUS listing — e.g. a J-Link probe coming back as a power supply). If
       // the user gave us a photo, let it arbitrate: the cross-check replaces the
@@ -761,14 +768,23 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
     .where("id", "=", ctx.itemId)
     .execute();
 
-  // 3. Download the catalog image into core-files (best-effort). The provider's
+  // 3. Download the catalog image into core-files - DETACHED. The provider's
   // image comes from the SAME catalog record as the title, so when it's real it
   // is the most authoritative picture for this code — better than any search.
+  //
+  // Detached because the response does not need the FILE: catalog_image_url is
+  // already written on the row above, and the card renders a remote URL
+  // directly (a third of a real inbox displays exactly that way). Awaiting the
+  // download meant a 4ms cache hit still paid an external image server's
+  // latency before the scanner saw the name - the largest single cost on the
+  // measured hot path (2026-08-01: 0.76s total, most of it here). The stored
+  // copy still lands seconds later for permanence; the poll picks it up.
+  // Skipped entirely under a user lock (the download would be un-pointed
+  // immediately by the reassert below).
   const providerImg = catalogImageUrlOrNull(hit.image_url);
-  if (providerImg) await downloadCatalogImage(ctx, providerImg);
+  if (providerImg && !lockedImg) void downloadCatalogImage(ctx, providerImg).catch(() => {});
   // A user-locked catalog image wins over the provider's — restore it (the hit
-  // write above clobbered the url + dropped the lock; the download replaced the
-  // file). The detached refresh/cross-check below re-read the lock and skip.
+  // write above clobbered the url + dropped the lock).
   await reassertLockedImage();
 
   // No real provider image (absent, or a stock "no image" placeholder we just

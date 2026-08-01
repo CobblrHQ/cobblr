@@ -24,7 +24,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
 
   if (!token) {
     throw new Error(
-      "COBBLR_API_TOKEN is required. Mint one in Cobblr (Settings → API tokens, or POST /me/api-tokens) and set it in your MCP client config.",
+      "COBBLR_API_TOKEN is required. Mint one in Cobblr (Configuration → API tokens, or POST /me/api-tokens) and set it in your MCP client config.",
     );
   }
   if (!token.startsWith("cbt_")) {

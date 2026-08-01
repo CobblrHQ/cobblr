@@ -27,7 +27,7 @@ export const FEED_SCROLL_INNER = "max-h-[28rem] overflow-y-auto overflow-x-auto"
  *
  *  The 15rem covers the app chrome above: navbar, breadcrumb, page header.
  *  Bounded either way, just at the size the content deserves. */
-export const FEED_SCROLL_PAGE = "max-h-[calc(100vh-15rem)] overflow-y-auto";
+export const FEED_SCROLL_PAGE = "max-h-[calc(100dvh-15rem)] overflow-y-auto";
 
 /** Same, for a bordered wrapper that must keep its rounded corners. */
-export const FEED_SCROLL_PAGE_INNER = "max-h-[calc(100vh-15rem)] overflow-y-auto overflow-x-auto";
+export const FEED_SCROLL_PAGE_INNER = "max-h-[calc(100dvh-15rem)] overflow-y-auto overflow-x-auto";

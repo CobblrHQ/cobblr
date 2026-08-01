@@ -25,7 +25,9 @@ import {
   SlidersHorizontal,
   Sun,
   UserCog,
+  Compass,
 } from "lucide-react";
+import { startTour } from "../tour/useTour";
 import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useTheme } from "../theme/ThemeContext";
@@ -223,6 +225,9 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
               <Link to="/changelog" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
                 <Sparkles size={14} className="text-faint dark:text-slate-400" /> What's new
               </Link>
+              <button type="button" onClick={() => { setOpen(false); startTour(); }} className={itemCls} role="menuitem">
+                <Compass size={14} className="text-faint dark:text-slate-400" /> Take the tour
+              </button>
               {/* Personal edge bridge liveness — only shows for users running one. */}
               <EdgeBridgeMenuRow itemCls={itemCls} onNavigate={() => setOpen(false)} />
               {/* Configuration is the build-it hub (modules / bundles / wires /
@@ -320,6 +325,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
             lives INSIDE it as the first item (and the identity header). */}
         <button
           ref={btnRef}
+          data-tour="account"
           onClick={() => setOpen((v) => !v)}
           className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded text-[13px] text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/40 transition"
           title={`${user.display_name} — account menu`}
@@ -338,6 +344,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
     <div className="relative">
       <button
         ref={btnRef}
+        data-tour="account"
         onClick={() => setOpen((v) => !v)}
         className="relative flex items-center gap-1.5 px-2 py-1 rounded-md text-xs text-muted dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-700/60 transition"
         title={`${user.display_name} — account menu`}
@@ -425,6 +432,9 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
               <Link to="/changelog" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
                 <Sparkles size={14} className="text-faint dark:text-slate-400" /> What's new
               </Link>
+              <button type="button" onClick={() => { setOpen(false); startTour(); }} className={itemCls} role="menuitem">
+                <Compass size={14} className="text-faint dark:text-slate-400" /> Take the tour
+              </button>
               {/* Personal edge bridge liveness — only shows for users running one. */}
               <EdgeBridgeMenuRow itemCls={itemCls} onNavigate={() => setOpen(false)} />
               {/* Configuration is the build-it hub (modules / bundles / wires /

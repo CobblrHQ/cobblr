@@ -25,7 +25,7 @@ import { UserMenu } from "./UserMenu";
 import { MobileNav } from "./MobileNav";
 import { EmailVerifyBanner } from "./EmailVerifyBanner";
 import { SimpleModeNotice } from "./SimpleModeNotice";
-import { ChatWidget } from "./ChatWidget";
+import { ChatLauncher, ChatPanel } from "./ChatWidget";
 import { FeedbackWidget } from "./FeedbackWidget";
 import { GlobalScanWedge } from "./GlobalScanWedge";
 import { SearchBar } from "./SearchBar";
@@ -36,10 +36,15 @@ import { ErrorBoundary } from "./ErrorBoundary";
 import { LabelsBasket } from "@cobblr/labels/ui";
 import { api, getToken, isFocused } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { useAuth } from "../auth/AuthContext";
+import { useWorkspaceContentProbe } from "../lib/workspaceContent";
 import { getManagedAppMeta } from "../lib/managed-apps";
 import { adminHtmlVars, fontFaceCss } from "../lib/appTheme";
 import { useDeployEnv, DEFAULT_HEADER } from "../lib/deploy-env";
 import { useNavMode, useNavAutoHide, useNavTopBar, setNavMode, setNavAutoHide, setNavTopBar } from "../lib/nav-mode";
+import { GuidedTour } from "../tour/GuidedTour";
+import { useTour } from "../tour/useTour";
+import { DASHBOARD_TOUR } from "../tour/tour.config";
 import { useTheme } from "../theme/ThemeContext";
 import { useToast } from "@cobblr/platform-web";
 
@@ -65,24 +70,47 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
   // it scrolls away, so track its live bottom edge instead of guessing.
   const headerRef = useRef<HTMLElement>(null);
   const [hideTop, setHideTop] = useState(56);
+  // Tracked ALWAYS (not just in auto-hide mode) because it is also published as
+  // --app-header-bottom, which every overlay that must sit under the navbar
+  // reads — SidePanel's mobile sheet above all. Header height moves with the
+  // env chip, banners and the safe-area inset, so measuring beats guessing.
+  const trackHideTop = navMode === "side" && navAutoHide;
   useEffect(() => {
-    if (!(navMode === "side" && navAutoHide)) return;
     const el = headerRef.current;
     if (!el) return;
-    const update = () => setHideTop(Math.max(0, el.getBoundingClientRect().bottom));
-    update();
+    let queued = 0;
+    const measure = () => {
+      queued = 0;
+      const bottom = Math.max(0, el.getBoundingClientRect().bottom);
+      // A CSS var costs no render, so it updates for everyone. React state is
+      // only for the auto-hide panel — setting it on every scroll frame would
+      // re-render the whole app tree.
+      document.documentElement.style.setProperty("--app-header-bottom", `${bottom}px`);
+      if (trackHideTop) setHideTop(bottom);
+    };
+    const update = () => { if (!queued) queued = requestAnimationFrame(measure); };
+    measure();
     const ro = new ResizeObserver(update);
     ro.observe(el);
     window.addEventListener("scroll", update, { passive: true });
     return () => {
+      if (queued) cancelAnimationFrame(queued);
       ro.disconnect();
       window.removeEventListener("scroll", update);
+      document.documentElement.style.removeProperty("--app-header-bottom");
     };
-  }, [navMode, navAutoHide]);
+  }, [trackHideTop]);
   const { activeOrg } = useActiveOrg();
   const qc = useQueryClient();
   // Managed-app mode: no workspace switching, no platform nav — just the app.
   const appMode = activeOrg?.app_mode ?? null;
+  // First-load guided tour: auto-opens once per USER, on the dashboard of a
+  // still-EMPTY workspace only (the first-run hero state) - never over an
+  // established one. Replays from the account menu. Steps: tour/tour.config.ts.
+  const onDashboard = location.pathname === "/" && !appMode;
+  const contentProbe = useWorkspaceContentProbe(onDashboard ? activeSlug : "");
+  const { user } = useAuth();
+  const tour = useTour(onDashboard && contentProbe.ready && !contentProbe.hasContent, user?.id ?? null);
 
   // Is the labels module on? Gates the label-queue foot row below. Shares the
   // cached ["org-modules"] query the nav already fetches — no extra request.
@@ -241,7 +269,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
         {wsLogo && <img src={wsLogo} alt="" className="w-5 h-5 rounded object-contain shrink-0 border border-line dark:border-slate-700" />}
         {/* z-10 so the inline workspace dropdown (which ACCORDIONS full-width
             under this row) renders OVER the env chip below. */}
-        <div className="relative z-10 min-w-0 flex-1">
+        <div data-tour="workspace" className="relative z-10 min-w-0 flex-1">
           {/* inline → the workspace list ACCORDIONS under this row (no
               floating popover in the sidebar — the author's rule). */}
           <WorkspaceSwitcher inline />
@@ -279,7 +307,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
       <div className="my-1 border-t border-line dark:border-slate-700" />
       {/* Module quick-actions (Build/Scan) SHARE one row — half-width each,
           wrapping if a third ever appears. */}
-      <div className="flex flex-wrap gap-0.5 [&_a]:flex-1 [&_a]:min-w-[45%] [&_a]:px-3 [&_a]:py-1.5 [&_a]:rounded [&_a]:text-[13px] [&_a]:gap-2.5">
+      <div data-tour="actions" className="flex flex-wrap gap-0.5 [&_a]:flex-1 [&_a]:min-w-[45%] [&_a]:px-3 [&_a]:py-1.5 [&_a]:rounded [&_a]:text-[13px] [&_a]:gap-2.5">
         <HeaderActions />
       </div>
       {/* Search opens the ⌘K palette — a centered overlay beats an expanding
@@ -303,7 +331,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
       {/* Live box — ongoing session modes (auto-print, …), tucked at the foot.
           Self-hides when the workspace has no applicable live capability. */}
       <LiveBox mode="sidebar" slug={activeSlug} />
-      <ChatWidget open={chatOpen} setOpen={setChatOpen} asRow />
+      <ChatLauncher open={chatOpen} setOpen={setChatOpen} asRow />
       {/* Configuration lives HERE, not behind the account flyout — the flyout
           detour (open menu → Configuration → back into the sidebar) was the
           exact loop the author flagged. */}
@@ -351,6 +379,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
     // viewport, that's a layout bug to fix locally rather than mask
     // here.
     <DriveProvider>
+    {tour.open && <GuidedTour steps={DASHBOARD_TOUR} onClose={tour.close} />}
     <div className="min-h-screen grid grid-rows-[auto_1fr] grid-cols-1">
       {fontFace && <style dangerouslySetInnerHTML={{ __html: fontFace }} />}
       {/* Header + the email-verify nudge share the grid's auto row, so the
@@ -447,7 +476,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
               {/* min-w-0 (not shrink-0): if the row is still too tight, the
                   workspace name truncates here FIRST, keeping the right-side menu
                   button on-screen instead of clipping it. */}
-              <div className="min-w-0">
+              <div data-tour="workspace" className="min-w-0">
                 <WorkspaceSwitcher />
               </div>
             </>
@@ -461,7 +490,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
               its platform affordances (dashboard, Configuration gear) in
               app mode. */}
           {navMode === "top" ? (
-            <nav className="hidden md:flex flex-nowrap items-center gap-0.5 flex-1 min-w-0">
+            <nav data-tour="nav" className="hidden md:flex flex-nowrap items-center gap-0.5 flex-1 min-w-0">
               <ModuleNav />
             </nav>
           ) : (
@@ -472,13 +501,13 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
               row (super-admin / calendar / configuration / profile /
               theme / sign-out) is folded into UserMenu; scan, search +
               notifications stay as their own affordances. */}
-          <div className="hidden md:flex items-center gap-1 shrink-0">
+          <div data-tour="actions" className="hidden md:flex items-center gap-1 shrink-0">
             {/* Module-contributed critical quick-actions (e.g. scan). */}
             <HeaderActions />
             <SearchBar />
             <NotificationsBell />
             {/* Ask-Cobblr launcher — a header button, not a floating FAB. */}
-            <ChatWidget open={chatOpen} setOpen={setChatOpen} />
+            <ChatLauncher open={chatOpen} setOpen={setChatOpen} />
             <UserMenu themed={!!skin} />
           </div>
 
@@ -488,11 +517,16 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           <div className="flex-1 md:hidden" />
           <div className="shrink-0 md:hidden flex items-center gap-0.5">
             <HeaderActions />
-            <ChatWidget open={chatOpen} setOpen={setChatOpen} />
+            <ChatLauncher open={chatOpen} setOpen={setChatOpen} />
             <MobileNav />
           </div>
         </div>
       </header>
+      {/* THE chat panel — one mount for however many launchers the chrome has.
+          It portals to <body>, so where it sits here is bookkeeping, but that it
+          appears exactly once is not: a second mount is a second conversation
+          stacked over the first (ChatWidget.test.ts pins this). */}
+      <ChatPanel open={chatOpen} setOpen={setChatOpen} />
 
         {!fullSide && <SimpleModeNotice />}
         {!fullSide && <EmailVerifyBanner />}

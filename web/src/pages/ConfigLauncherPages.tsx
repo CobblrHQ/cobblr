@@ -75,13 +75,13 @@ export function ConfigMembersPage() {
 }
 
 export function ConfigNewThingPage() {
-  usePageTitle("New thing");
+  usePageTitle("New category");
   const navigate = useNavigate();
   return (
     <div className="max-w-4xl mx-auto">
       <PageHead
         icon={<FolderPlus size={22} />}
-        title="New thing in workspace"
+        title="New category"
         blurb="Add a top-level thing to track. Pick whether it is its own separate thing or a sub-category of something you already have."
       />
       <NewThingFunnelModal

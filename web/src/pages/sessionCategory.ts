@@ -89,8 +89,19 @@ export function extrasWithCategory(
 export interface SessionFilingReadiness {
   /** The agreed category, or null when nothing proposed one. */
   category: string | null;
-  /** Ready items with nowhere to go (no per-item location, no active bin). */
+  /** Ready items carrying no location of their own. Reported honestly even when
+   *  an active bin could cover them - see `fallbackLocation`. */
   missingLocation: string[];
+  /**
+   * Where `missingLocation` items should be filed without asking, because the
+   * person already chose a standing bin. Null when there is nothing missing, or
+   * when nothing has been chosen and we must ask.
+   *
+   * **Callers MUST pass this to `fileSession` / `confirmBodyFor`.** It is the
+   * whole reason we are allowed to skip the prompt; skipping the prompt without
+   * passing it files the items with no location at all.
+   */
+  fallbackLocation: string | null;
   /** True when filing right now would land items with no home or no category. */
   needsInput: boolean;
   /** The single reason to show, most blocking first. */
@@ -108,21 +119,32 @@ export interface SessionFilingReadiness {
  * someone who genuinely wants to file now and place later - the UI offers the
  * override rather than the gate deciding for them.
  *
- * `activeBin` is the scan page's standing filing bin: when one is set, every
- * item already has a home and nothing is missing.
+ * `activeBin` is the scan page's standing filing bin. It stamps
+ * `target_location_id` AT SCAN TIME, so it says nothing about items scanned
+ * before it was set. This used to read "when one is set, every item already has
+ * a home and nothing is missing", and forced `missingLocation` to [] - so
+ * scanning ten things and THEN setting the bin hid the warning, skipped the
+ * prompt, and filed all ten with no location, because `confirmBodyFor` only
+ * writes `it.target_location_id ?? agreedLocationId`. The bin meant to prevent
+ * homeless filing was causing it.
+ *
+ * A chosen bin now ANSWERS the question instead of deleting it: the items are
+ * still reported missing, and the bin is handed back as `fallbackLocation` for
+ * the caller to actually file into.
  */
 export function sessionFilingReadiness(
   readyItems: ScanInboxItem[],
   opts: { activeBin?: string | null } = {},
 ): SessionFilingReadiness {
   const category = sessionCategory(readyItems).suggestion;
-  const missingLocation = opts.activeBin
-    ? []
-    : readyItems.filter((i) => !i.target_location_id).map((i) => i.id);
+  const missingLocation = readyItems.filter((i) => !i.target_location_id).map((i) => i.id);
+  const fallbackLocation = missingLocation.length > 0 ? opts.activeBin ?? null : null;
   // Location first: an item with no category is still findable in its table,
-  // an item with no location is loose in the house.
-  const reason = missingLocation.length > 0 ? "location" : !category ? "category" : null;
-  return { category, missingLocation, needsInput: reason !== null, reason };
+  // an item with no location is loose in the house. We only need to ASK when
+  // something is missing and no standing bin can answer for it.
+  const mustAsk = missingLocation.length > 0 && !fallbackLocation;
+  const reason = mustAsk ? "location" : !category ? "category" : null;
+  return { category, missingLocation, fallbackLocation, needsInput: reason !== null, reason };
 }
 
 /** Where a whole session is headed, when its items agree. */

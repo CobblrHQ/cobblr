@@ -88,6 +88,7 @@ import {
   sessionFilingReadiness,
   sessionLocation,
   declaredCategoryAxis,
+  categoryAxisKey,
   categoryDisplay,
 } from "./sessionCategory";
 import { usePublishChatContext } from "../lib/chat-context";
@@ -1880,7 +1881,10 @@ export function ScanPage() {
   };
   const bulkConfirm = async () => {
     setBulkBusy(true);
-    await confirmItemsToTheirCandidate(selected);
+    // The standing bin covers selected items that carry no location of their
+    // own (scanned before it was set) — same rule as the header's File all.
+    // An item's own location still wins inside confirmBodyFor.
+    await confirmItemsToTheirCandidate(selected, null, fileBin || null);
     setBulkBusy(false);
     clearSelected();
   };
@@ -2735,11 +2739,31 @@ export function ScanPage() {
             const readyIds = g.items.filter(isReadyToFile).map((it) => it.id);
                 const readyItems = g.items.filter(isReadyToFile);
                 const filing = sessionFilingReadiness(readyItems, { activeBin: fileBin || null });
+                // Filing into the standing bin without SAYING so is how the two
+                // location controls got confusing - the copy names the place.
+                const fallbackLoc = filing.fallbackLocation
+                  ? (locsQ.data?.items ?? []).find((l) => l.id === filing.fallbackLocation)
+                  : null;
+                const fallbackClause =
+                  filing.fallbackLocation && filing.missingLocation.length > 0
+                    ? `; the ${filing.missingLocation.length} without a place go to ${fallbackLoc ? filingLabel(fallbackLoc) : "the filing location"}`
+                    : "";
                 const sessionLoc = sessionLocation(readyItems);
                 const sessionLocName = sessionLoc.id
                   ? (locsQ.data?.items ?? []).find((l) => l.id === sessionLoc.id)
                   : null;
-                const sessionCat = { suggestion: filing.category, unanimous: sessionCategory(g.items).unanimous, seen: sessionCategory(g.items).seen };
+                // A category is only worth NAMING if the destination can hold
+                // one. A Bookshelf table whose fields are isbn/genre/author has
+                // no category axis, so `extrasWithCategory` writes the category
+                // nowhere - while the button still promised "file all 1 into
+                // Book" (the author, 2026-08-01). Silence beats a filing that will not
+                // happen; the items still file, just without the clause.
+                const sessionHasCategoryAxis = readyItems.some((it) => !!categoryAxisKey(it, menu));
+                const sessionCat = {
+                  suggestion: sessionHasCategoryAxis ? filing.category : null,
+                  unanimous: sessionCategory(g.items).unanimous,
+                  seen: sessionCategory(g.items).seen,
+                };
             const pendingInSession = g.items.filter((it) => it.status === "pending").length;
             // This group IS the live scanning session (localStorage) — so it
             // carries the "active" pulse + End control that used to live in the
@@ -2928,24 +2952,45 @@ export function ScanPage() {
                         setPlacingSession(placingSession === g.key ? null : g.key);
                       }}
                       title={
-                        sessionLocName
-                          ? `These ${readyIds.length} are set to ${filingLabel(sessionLocName)} - tap to move them somewhere else`
-                          : sessionLoc.mixed
+                        sessionLoc.mixed
                           ? "These are set to different places - tap to give the whole session one location"
+                          : sessionLocName && sessionLoc.missing === 0
+                          ? `All ${readyIds.length} are set to ${filingLabel(sessionLocName)} - tap to move them somewhere else`
+                          : sessionLocName
+                          ? `${readyIds.length - sessionLoc.missing} of ${readyIds.length} are in ${filingLabel(sessionLocName)}; the other ${sessionLoc.missing} have no location yet - tap to place them`
                           : `None of these ${readyIds.length} have a location yet - tap to set where they go`
                       }
-                      className={`shrink-0 inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${
-                        sessionLocName
-                          ? "border-line/70 dark:border-slate-700/70 text-muted hover:text-content dark:hover:text-mortar-100"
-                          : "border-amber-300 dark:border-amber-800/70 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400"
+                      className={`shrink-0 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] font-medium ${
+                        sessionLocName && sessionLoc.missing === 0
+                          ? "border-line/70 dark:border-slate-700/70 text-content dark:text-mortar-100 hover:border-cobble-400"
+                          : "border-amber-400 dark:border-amber-700/80 bg-amber-50 dark:bg-amber-900/25 text-amber-700 dark:text-amber-300 hover:border-amber-500"
                       }`}
                     >
-                      <MapPin size={9} />
-                      {sessionLocName
-                        ? filingLabel(sessionLocName)
-                        : sessionLoc.mixed
-                        ? "mixed locations"
-                        : "no location set"}
+                      <MapPin size={12} />
+                      {sessionLoc.mixed ? (
+                        <>
+                          Mixed<span className="hidden sm:inline">&nbsp;locations</span>
+                        </>
+                      ) : sessionLocName && sessionLoc.missing === 0 ? (
+                        filingLabel(sessionLocName)
+                      ) : sessionLocName ? (
+                        // PARTIAL. Naming the one location that IS set reads as
+                        // the whole session's home, when most of it has nowhere
+                        // to go - a session where 1 of 3 was placed showed a
+                        // confident "White Bookshelf" (the author, 2026-08-01). Lead
+                        // with what is missing, because that is the thing left
+                        // to do; `sessionLocation` has always returned the count
+                        // and this is the render that finally reads it.
+                        <>
+                          {sessionLoc.missing} of {readyIds.length}
+                          <span className="hidden sm:inline">&nbsp;need a place</span>
+                        </>
+                      ) : (
+                        // It's a button: say the action, not the absence. Also
+                        // the shortest honest label, which this row needs
+                        // (the author, 2026-08-01).
+                        "Set location"
+                      )}
                     </button>
                   )}
                   {busy > 0 ? (
@@ -2964,7 +3009,11 @@ export function ScanPage() {
                         if (filing.reason === "location") {
                           setPlacingMode("file");
                           setPlacingSession(g.key);
-                        } else void fileSession(readyIds, sessionCat.suggestion);
+                        } else {
+                          // fallbackLocation is why we are allowed to skip the
+                          // prompt; not passing it is what filed items homeless.
+                          void fileSession(readyIds, sessionCat.suggestion, filing.fallbackLocation);
+                        }
                       }}
                       title={
                         filing.reason === "location"
@@ -2976,8 +3025,8 @@ export function ScanPage() {
                               sessionCat.unanimous
                                 ? ""
                                 : ` (the items suggested ${sessionCat.seen.join(", ")} - this files them as one)`
-                            }`
-                          : `Add all ${readyIds.length} to their destinations — each goes where the AI matched it`
+                            }${fallbackClause}`
+                          : `Add all ${readyIds.length} to their destinations — each goes where the AI matched it${fallbackClause}`
                       }
                       className="shrink-0 inline-flex items-center gap-1 rounded-md bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 px-2 py-1 text-[11px] font-medium text-white"
                     >
@@ -2987,7 +3036,7 @@ export function ScanPage() {
                           has to admit the question is coming (the author, 2026-07-30). */}
                       {filing.reason === "location" ? (
                         <>
-                          <MapPin size={11} /> Place &amp; file all {readyIds.length}
+                          <MapPin size={11} /> Place<span className="hidden sm:inline">&nbsp;&amp; file all</span> {readyIds.length}
                           {sessionCat.suggestion ? (
                             <span className="hidden sm:inline max-w-[9rem] truncate opacity-80">
                               as {sessionCat.suggestion}
@@ -2996,7 +3045,7 @@ export function ScanPage() {
                         </>
                       ) : (
                         <>
-                          <CheckCircle size={11} /> File all {readyIds.length}
+                          <CheckCircle size={11} /> File<span className="hidden sm:inline">&nbsp;all</span> {readyIds.length}
                           {sessionCat.suggestion ? (
                             <span className="hidden sm:inline max-w-[9rem] truncate opacity-80">
                               into {sessionCat.suggestion}
@@ -3024,7 +3073,7 @@ export function ScanPage() {
                     <Link
                       to={`/scan?batch=${g.batchId}`}
                       title="Review just this session"
-                      className="shrink-0 text-faint hover:text-accent"
+                      className="hidden sm:inline shrink-0 text-faint hover:text-accent"
                     >
                       open →
                     </Link>

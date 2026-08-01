@@ -108,6 +108,19 @@ export function createApp(): AppHandles {
       ? importJson(req, res, next)
       : next(),
   );
+  // A scan-inbox export with embedded photos is one JSON envelope carrying a
+  // whole inbox's images as base64 (a real 69-item export is 5.4MB). Same
+  // pre-mount pattern as above - and it MUST live here: a limit raised on the
+  // module router is dead code, because this file's global 1mb parser has
+  // already consumed and rejected the body before the router ever runs. That
+  // exact mistake shipped once (#1534 claimed the route-level raise fixed it;
+  // the live path still 500'd with PayloadTooLargeError until this).
+  const scanImportJson = express.json({ limit: "32mb" });
+  app.use((req, res, next) =>
+    req.method === "POST" && /\/modules\/core-scan\/import(\/preview)?$/.test(req.path)
+      ? scanImportJson(req, res, next)
+      : next(),
+  );
   app.use(
     express.json({
       limit: "1mb",

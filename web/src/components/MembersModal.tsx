@@ -397,7 +397,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless }: Props)
                   />
                   <span>
                     <span className="font-medium">Send them a premade workspace</span>  - seed their new workspace with a
-                    copy of <span className="font-semibold">{displaySlug(slug)}</span>'s setup (modules, trackers, fields,
+                    copy of <span className="font-semibold">{displaySlug(slug)}</span>'s setup (modules, bundles, fields,
                     views - <span className="font-semibold">no data</span>). Configure this workspace for them first,
                     then mint.
                   </span>

@@ -180,7 +180,7 @@ export function SidebarNav({
     <div className="flex flex-col h-full min-h-0">
       {head}
       {!head && controls && <div className="shrink-0 flex justify-end px-2 pt-1.5">{controls}</div>}
-      <nav className="flex-1 min-h-0 overflow-y-auto px-2 py-3 space-y-0.5">
+      <nav data-tour="nav" className="flex-1 min-h-0 overflow-y-auto px-2 py-3 space-y-0.5">
         {!appMode && (
           <NavLink to="/" end className={linkCls}>
             Dashboard

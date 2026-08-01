@@ -516,7 +516,7 @@ function ModuleGroupChip({
           e.stopPropagation();
           setOpen((o) => !o);
         }}
-        aria-label={parent.groupLabel || `${parent.displayName} specialisations`}
+        aria-label={parent.groupLabel || `${parent.displayName} categories`}
         className="pl-0.5 pr-1.5 py-1 rounded-r text-faint dark:text-slate-500 hover:text-accent transition"
       >
         <ChevronDown
@@ -538,7 +538,7 @@ function ModuleGroupChip({
             {parent.name.startsWith(HEADING_PREFIX)
               ? parent.displayName.toLowerCase()
               : (parent.groupLabel?.toLowerCase()
-                ?? `${parent.displayName.toLowerCase()} specialisations`)}
+                ?? `${parent.displayName.toLowerCase()} categories`)}
           </div>
           <ul>
             {kids.map((k) => {
@@ -579,7 +579,7 @@ function ModuleGroupChip({
             })}
             {kids.length === 0 && (
               <li className="px-3 py-2 text-xs text-faint italic">
-                No specialisations enabled yet.
+                No categories enabled yet.
               </li>
             )}
           </ul>
@@ -595,7 +595,7 @@ function ModuleGroupChip({
             className="w-full text-left px-3 py-2 border-t border-line dark:border-slate-700 hover:bg-subtle dark:hover:bg-slate-800 transition flex items-center gap-2 text-sm text-accent dark:text-cobble-300"
           >
             <Settings2 size={13} />
-            Manage specialisations…
+            Manage categories…
           </button>
           )}
         </div>,

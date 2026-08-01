@@ -178,3 +178,4 @@ export {
 export { BridgePrinterCard } from "./BridgePrinterCard";
 export { BatteryGauge, PrinterReadout, batteryTone } from "./BatteryGauge";
 export { ConnectPrinterModal, type ConnectPrinterModalProps, type ConnectPrinterInput } from "./ConnectPrinterModal";
+export { HIDE_WHEN_OVERLAY_OPEN, useOverlayOpenFlag } from "./overlay-open";

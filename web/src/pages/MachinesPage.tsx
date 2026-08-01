@@ -474,7 +474,7 @@ export function MachinesPage({
               if (e.target.value) navigate(`/machines?lens=${encodeURIComponent(e.target.value)}`);
             }}
             className="input !py-1 !text-xs !w-auto"
-            title="Focus the table on one specialisation's fields"
+            title="Focus the table on one machine type's fields"
           >
             <option value="">lens…</option>
             {availableLenses.map((l) => (
@@ -1368,7 +1368,7 @@ function MachineDetailModal({
                 )}
                 {specialisations.length > 0 && (
                   <label className="block">
-                    <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Specialisation</span>
+                    <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Machine type</span>
                     <select
                       value={typeof m.metadata?.specialisation === "string" ? (m.metadata.specialisation as string) : ""}
                       onChange={(e) => update.mutate({ metadata: { ...m.metadata, specialisation: e.target.value || null } })}
@@ -1951,8 +1951,8 @@ function NewMachineModal({
 
         {!instance && (
           <p className="text-[10px] text-faint">
-            Want make/model fields - hotend, firmware, bed size, etc.? Add a specialization for your machine type from the{" "}
-            <Link to="/bundles" className="text-accent hover:underline">marketplace</Link>{" "}
+            Want make/model fields - hotend, firmware, bed size, etc.? Install a machine-type bundle from the{" "}
+            <Link to="/bundles?q=machine" className="text-accent hover:underline">marketplace</Link>{" "}
             (e.g. “3D Printers”) and they’ll show up here.
           </p>
         )}

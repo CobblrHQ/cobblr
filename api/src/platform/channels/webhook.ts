@@ -16,6 +16,7 @@
 //   }
 
 import { lookup as dnsLookup } from "node:dns/promises";
+import { absoluteAppUrl } from "../public-url.js";
 import { isIP } from "node:net";
 import { postJson } from "./http-helpers.js";
 import { isPrivateIp } from "../../sandbox/ssrf.js";
@@ -76,7 +77,7 @@ export const webhookChannel: Channel = {
         notification_id: event.notificationId,
         event_type: event.eventType,
         message: event.message,
-        link_url: event.link_url,
+        link_url: event.link_url ? absoluteAppUrl(event.link_url) : null,
         priority: event.priority,
         org_id: event.orgId,
         user_id: event.userId,

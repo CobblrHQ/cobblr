@@ -135,7 +135,7 @@ export const CONFIG_SECTIONS: Record<ConfigSection, ConfigSectionMeta> = {
     label: "Build",
     blurb: "What this workspace is made of, and how the pieces connect.",
     icon: Blocks,
-    action: { label: "+ New thing", to: "/configuration/new-thing" },
+    action: { label: "+ New category", to: "/configuration/new-thing" },
   },
   people: {
     label: "People",
@@ -257,7 +257,7 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     section: "build",
     icon: Boxes,
     label: "Modules",
-    description: "Enable / disable modules and their specialisations for this workspace.",
+    description: "Enable / disable modules and their categories for this workspace.",
     to: "/configuration/modules",
     keywords: ["enable", "disable", "install", "features"],
   },
@@ -266,7 +266,7 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     icon: Package,
     label: "Bundles",
     description:
-      "One-click presets that ship a set of custom fields and wires. Browse the featured catalog, paste a manifest, or export your own.",
+      "One-click bundles that ship a set of custom fields and wires. Browse the featured catalog, paste a manifest, or export your own.",
     to: "/bundles",
     keywords: ["presets", "recipes", "trackers", "skins", "marketplace", "setups"],
     width: "wide",

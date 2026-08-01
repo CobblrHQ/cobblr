@@ -19,7 +19,7 @@
 // a ready-made tracker → "set it up & drop me in"; a blank slate → "add a
 // blank one" / "name a new category". Build-it-yourself is a CTA, not a lane.
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@cobblr/platform-web";
@@ -29,6 +29,7 @@ import { useBundleCatalog, type CatalogBundle } from "../lib/useBundleCatalog";
 import { fuzzyMatch } from "../lib/fuzzy";
 import { BundleDetailModal } from "./BundleDetailModal";
 import { PairPhoneButton } from "./PairPhoneButton";
+import { BundleSection, BundleTile, splitCatalog } from "./BundleBrowse";
 import { AiOffNotice, useAiStatus } from "./AiStatusNotice";
 
 function firstSentence(s: string): string {
@@ -52,21 +53,6 @@ function LaneHeader({ kicker, title, count }: { kicker: string; title: string; c
   );
 }
 
-/** One section of the browse surface — a labelled tile grid. The hint says what
- *  the section IS in the user's terms, so the three sections read as an ordered
- *  offer (pick one ready-made · a whole setup · or shape your own) instead of
- *  three unexplained lists. */
-function BrowseSection({ title, hint, children }: { title: string; hint: string; children: ReactNode }) {
-  return (
-    <div>
-      <div className="mb-2 flex flex-wrap items-baseline gap-x-2">
-        <span className="text-[10px] font-mono uppercase tracking-widest text-accent">{title}</span>
-        <span className="text-[11px] text-faint dark:text-slate-500">{hint}</span>
-      </div>
-      <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">{children}</ul>
-    </div>
-  );
-}
 
 /** Name a bare photo capture that couldn't be auto-identified — naming it
  *  triggers a server re-match so the heuristic routes it. */
@@ -78,7 +64,7 @@ function NameIt({ slug, itemId }: { slug: string; itemId: string }) {
     mutationFn: () => api.updateScanItem(slug, itemId, { name: name.trim() }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["capture-inbox", slug] });
-      toast.success("Got it - finding the right tracker…");
+      toast.success("Got it - finding the right home…");
     },
   });
   return (
@@ -324,14 +310,6 @@ export function WhatToDoPanel({
   // "Full setups" subheading instead of being the default face of the column.
   const { skins, setups } = useMemo(() => {
     const q = browseQ.trim().toLowerCase();
-    const moduleSpan = (b: CatalogBundle) =>
-      new Set([
-        ...(b.manifest.requires ?? []).map((r) => r.module),
-        ...(b.manifest.provides_instances ?? []).map((i) => i.module),
-      ]).size;
-    const isSkin = (b: CatalogBundle) =>
-      moduleSpan(b) <= 1 && (b.manifest.provides_instances?.length ?? 0) >= 1;
-
     let base = [...catalog];
     if (q) {
       // Searching: rank name-prefix > name > blurb/description so the first
@@ -349,7 +327,7 @@ export function WhatToDoPanel({
           a.manifest.name.localeCompare(b.manifest.name),
       );
     }
-    return { skins: base.filter(isSkin), setups: base.filter((b) => !isSkin(b)) };
+    return splitCatalog(base);
   }, [catalog, browseQ]);
 
   // ── actions ─────────────────────────────────────────────────────────────
@@ -368,7 +346,7 @@ export function WhatToDoPanel({
     onSuccess: () => {
       setAddText("");
       void qc.invalidateQueries({ queryKey: ["capture-inbox", slug] });
-      toast.success("Added - finding the right tracker…");
+      toast.success("Added - finding the right home…");
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't add that"),
   });
@@ -376,8 +354,8 @@ export function WhatToDoPanel({
   // banner (A3). Shared by the one-shot path and the post-modal commit.
   const landAfterMaterialize = (r: { route?: string | null; label?: string | null; created: number }) => {
     void qc.invalidateQueries();
-    toast.success(`Created your ${r.label ?? "tracker"} with ${r.created} item${r.created === 1 ? "" : "s"}.`);
-    if (r.route) navigate(`${r.route}${r.route.includes("?") ? "&" : "?"}created=${encodeURIComponent(r.label ?? "Your tracker")}&count=${r.created}`);
+    toast.success(`Created your ${r.label ?? "bundle"} with ${r.created} item${r.created === 1 ? "" : "s"}.`);
+    if (r.route) navigate(`${r.route}${r.route.includes("?") ? "&" : "?"}created=${encodeURIComponent(r.label ?? "Your bundle")}&count=${r.created}`);
   };
   const materializeMut = useMutation({
     mutationFn: (bundleId: string) => api.materializeQuickstart(slug, bundleId),
@@ -484,32 +462,15 @@ export function WhatToDoPanel({
   // small "details" button opens the full modal. The card is a
   // div[role=button] (NOT <button>) because it contains that inner button —
   // nested buttons are invalid HTML and break keyboard/screen-reader semantics.
-  const recipeTile = (b: CatalogBundle) => {
-    const on = selectedRecipe?.manifest.id === b.manifest.id;
-    return (
-      <li key={b.manifest.id}>
-        <div
-          role="button"
-          tabIndex={0}
-          onClick={() => pickRecipe(b)}
-          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pickRecipe(b); } }}
-          title={on ? "Click again to deselect" : undefined}
-          className={
-            "h-full cursor-pointer text-left rounded-lg border p-2.5 flex items-start gap-2.5 transition group " +
-            (on ? "border-accent bg-accent/5" : "border-line dark:border-slate-700 bg-surface dark:bg-slate-900 hover:border-cobble-300 dark:hover:border-cobble-700")
-          }
-        >
-          <div className="text-xl shrink-0 leading-none mt-0.5">{b.glyph}</div>
-          <div className="flex-1 min-w-0">
-            <div className="font-medium text-content dark:text-mortar-100 text-sm">{b.manifest.name}</div>
-            <div className="text-xs text-faint dark:text-slate-400 line-clamp-2">{b.blurb}</div>
-            <button type="button" onClick={(e) => { e.stopPropagation(); setPicked(b); }} className="mt-1 text-[11px] text-faint dark:text-slate-500 hover:text-accent transition">details →</button>
-          </div>
-          <ArrowRight size={13} className={(on ? "text-accent" : "text-faint dark:text-slate-600 group-hover:text-accent") + " transition mt-1 shrink-0"} />
-        </div>
-      </li>
-    );
-  };
+  const recipeTile = (b: CatalogBundle) => (
+    <BundleTile
+      key={b.manifest.id}
+      b={b}
+      selected={selectedRecipe?.manifest.id === b.manifest.id}
+      onOpen={() => pickRecipe(b)}
+      onDetails={() => setPicked(b)}
+    />
+  );
 
   // One blank-slate tile: an empty kind, or another category of one you already
   // run. Deliberately quieter than a recipe tile (a dashed glyph, no cover art)
@@ -714,7 +675,7 @@ export function WhatToDoPanel({
 
   return (
     <>
-    <section className="rounded-xl border-2 border-dashed border-cobble-300 dark:border-cobble-700 bg-cobble-50/30 dark:bg-cobble-900/10 p-5 space-y-4">
+    <section data-tour="do-box" className="rounded-xl border-2 border-dashed border-cobble-300 dark:border-cobble-700 bg-cobble-50/30 dark:bg-cobble-900/10 p-5 space-y-4">
       <div className="flex items-center gap-2">
         <Sparkles size={16} className="text-accent" />
         <h2 className="font-semibold text-content dark:text-mortar-100 flex-1">What do you want to do?</h2>
@@ -764,7 +725,7 @@ export function WhatToDoPanel({
                 ? (kindIsMulti
                     ? `Name a category${kindVocab ? ` — like ${kindVocab.categoryEg}` : ""} — then add things inside it.`
                     : `Turn on ${selectedModuleObj.displayName} and add your first one.`)
-                : "Type what you've got — Cobblr finds or builds the right tracker and files it."}
+                : "Type what you've got - Cobblr finds or builds the right home and files it."}
           </p>
 
           {/* Mode D — a recipe. Featureless: install + drop straight in. With
@@ -845,11 +806,11 @@ export function WhatToDoPanel({
               {noteMut.isPending ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add it
             </button>
             {isTouch ? (
-              <Link to="/scan/camera" title="Scan a barcode or snap a photo" className="inline-flex items-center gap-1.5 rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-1.5 text-sm font-medium text-content dark:text-mortar-100 hover:border-cobble-300 dark:hover:border-cobble-700 transition">
+              <Link data-tour="capture-scan" to="/scan/camera" title="Scan a barcode or snap a photo" className="inline-flex items-center gap-1.5 rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-1.5 text-sm font-medium text-content dark:text-mortar-100 hover:border-cobble-300 dark:hover:border-cobble-700 transition">
                 <Camera size={15} /> Scan
               </Link>
             ) : (
-              <PairPhoneButton className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-1.5 text-sm font-medium text-content dark:text-mortar-100 hover:border-cobble-300 dark:hover:border-cobble-700 transition" />
+              <PairPhoneButton dataTour="capture-scan" className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-1.5 text-sm font-medium text-content dark:text-mortar-100 hover:border-cobble-300 dark:hover:border-cobble-700 transition" />
             )}
           </div>
           <p className="text-[11px] text-faint dark:text-slate-500 mt-2">
@@ -916,12 +877,13 @@ export function WhatToDoPanel({
           the top row keeps its width instead of snapping to full (the author, 2026-07-31). */}
       <button
         type="button"
+        data-tour="more-ways"
         onClick={() => setMoreOpen((v) => !v)}
         className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:underline"
       >
         {moreOpen
           ? (<>Fewer ways to start <ChevronUp size={13} /></>)
-          : (<>More ways to start - browse every tracker &amp; setup <ChevronDown size={13} /></>)}
+          : (<>More ways to start - browse every bundle &amp; module <ChevronDown size={13} /></>)}
       </button>
 
       {moreOpen && (
@@ -933,7 +895,7 @@ export function WhatToDoPanel({
               <input
                 value={browseQ}
                 onChange={(e) => setBrowseQ(e.target.value)}
-                placeholder="Search trackers, setups, kinds…"
+                placeholder="Search bundles and modules…"
                 className="input !pl-8 !py-1.5 !text-sm"
                 onKeyDown={(e) => {
                   // Enter takes the first tile in section order, so the top-left
@@ -951,7 +913,7 @@ export function WhatToDoPanel({
             <div className="text-xs text-faint dark:text-slate-500 py-2">Loading…</div>
           ) : skins.length === 0 && setups.length === 0 && blankMatches.length === 0 ? (
             <p className="text-xs text-faint dark:text-slate-500 py-1">
-              Nothing here matches “{browseQ.trim()}”. Type it into the box above instead - Cobblr will build a tracker that fits.
+              Nothing here matches “{browseQ.trim()}”. Type it into the box above instead - Cobblr will build the right home for it.
             </p>
           ) : (
             <>
@@ -960,19 +922,19 @@ export function WhatToDoPanel({
                   come next, and the blank kinds last - the escape hatch, not
                   the offer. */}
               {skins.length > 0 && (
-                <BrowseSection title="// ready-made trackers" hint="fields already shaped - add your first item right away">
+                <BundleSection title="// ready-made bundles" hint="one kind of thing, fields already shaped - add your first item right away">
                   {skins.map((b) => recipeTile(b))}
-                </BrowseSection>
+                </BundleSection>
               )}
               {setups.length > 0 && (
-                <BrowseSection title="// full setups" hint="several trackers wired together">
+                <BundleSection title="// full-setup bundles" hint="several modules wired together">
                   {setups.map((b) => recipeTile(b))}
-                </BrowseSection>
+                </BundleSection>
               )}
               {blankMatches.length > 0 && (
-                <BrowseSection title="// start from a blank slate" hint="an empty kind you shape yourself">
+                <BundleSection title="// start from a blank slate" hint="an empty module you shape yourself">
                   {blankMatches.map((s) => blankTile(s))}
-                </BrowseSection>
+                </BundleSection>
               )}
             </>
           )}
@@ -1013,7 +975,7 @@ export function WhatToDoPanel({
       </AiOffNotice>
 
       <Link to="/bundles" className="inline-block text-xs text-faint dark:text-slate-400 hover:text-accent transition">
-        browse all setups & trackers →
+        browse all bundles →
       </Link>
 
       {picked && (

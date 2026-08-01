@@ -20,7 +20,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, CheckCircle2, ChevronDown, Compass, Download, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Pin, Plus, Sliders, Sparkles, X } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, CheckCircle2, ChevronDown, Compass, Download, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Pin, Sliders, Sparkles, X } from "lucide-react";
 import { useBundleUpdates, type BundleUpdate } from "../lib/useBundleUpdates";
 import { classifyBundleUpdate, tierAutoApplies, updateMayTeardownCatalogs } from "../lib/bundleUpdateTier";
 import { useDetailRoute } from "../lib/useDetailRoute";
@@ -54,6 +54,7 @@ import {
   type QuickstartSuggestion,
   type SavedView,
 } from "../lib/api";
+import { useWorkspaceContentProbe } from "../lib/workspaceContent";
 
 /** Homepage quick-links: big tap targets for the destinations this workspace
  *  actually uses (Scan Inbox, each instance like "Yarn", the domain modules),
@@ -155,7 +156,7 @@ export function Dashboard() {
             of VIN scans → Vehicles); renders nothing when there's nothing to suggest. */}
       <div className="flex flex-col md:flex-row gap-3 md:items-stretch empty:hidden">
         <PutAwayCard slug={activeSlug} />
-        <BundleSuggestionsCard slug={activeSlug} enabled={enabled} role={activeOrg.role} />
+        <BundleSuggestionsCard slug={activeSlug} role={activeOrg.role} />
       </div>
 
       {/* Quick links to the things this workspace uses most (Scan Inbox, Yarn,
@@ -165,11 +166,7 @@ export function Dashboard() {
 
       <SetupCardsPanel slug={activeSlug} />
 
-      <GettingStartedPanel
-        slug={activeSlug}
-        enabled={enabled}
-        modules={modulesQ.data?.items ?? []}
-      />
+      <GettingStartedPanel slug={activeSlug} />
 
       {/* The arrangeable body — at-a-glance tiles + pinned views + the scanner
           capture queue ("what to do" + waiting-to-file) + recent activity, all
@@ -180,7 +177,6 @@ export function Dashboard() {
         slug={activeSlug}
         enabled={enabled}
         role={activeOrg.role}
-        modules={modulesQ.data?.items ?? []}
       />
     </div>
   );
@@ -250,43 +246,17 @@ function PutAwayCard({ slug }: { slug: string }) {
   );
 }
 
-/** Cheap "does this workspace have any committed content?" probe — mirrors
- *  GettingStartedPanel's, so BundleSuggestionsCard only surfaces on an
- *  ESTABLISHED workspace (a brand-new one gets the prominent first-run hero,
- *  which already offers the same install). One limit=1 read per enabled domain
- *  module + each named instance; cached. */
-async function probeWorkspaceItemCount(slug: string, enabled: Set<string>): Promise<number> {
-  const wrap = (path: string) =>
-    api.request<{ items: unknown[] }>("GET", `/orgs/${slug}${path}`).then((r) => r.items.length).catch(() => 0);
-  const probes: Array<Promise<number>> = [];
-  if (enabled.has("inventory")) probes.push(wrap("/modules/inventory/parts?limit=1"));
-  if (enabled.has("machines")) probes.push(wrap("/modules/machines/machines?limit=1"));
-  if (enabled.has("assets")) probes.push(wrap("/modules/assets/assets?limit=1"));
-  if (enabled.has("projects")) probes.push(wrap("/modules/projects/projects?limit=1"));
-  if (enabled.has("purchases")) probes.push(wrap("/modules/purchases/orders?limit=1"));
-  const instances = await api.listInstances(slug).then((r) => r.items).catch(() => []);
-  for (const inst of instances.filter((i) => !i.is_default))
-    probes.push(wrap(`/instances/${encodeURIComponent(inst.instance_name)}/items?limit=1`));
-  const counts = await Promise.all(probes);
-  return counts.reduce((a, b) => a + b, 0);
-}
 
 /** Established-workspace nudge: pending scan captures that fit a bundle you
  *  haven't installed ("3 look like Vehicles → install"). One tap installs the
  *  bundle AND files every fitting capture into it (the capture-first materialize
  *  path). Owner/admin only (install changes composition). Hidden on empty
  *  workspaces (the first-run hero owns that) and when there's nothing to suggest. */
-function BundleSuggestionsCard({ slug, enabled, role }: { slug: string; enabled: Set<string>; role?: string }) {
+function BundleSuggestionsCard({ slug, role }: { slug: string; role?: string }) {
   const qc = useQueryClient();
   const toast = useToast();
   const canInstall = role === "owner" || role === "admin";
-  const contentQ = useQuery({
-    queryKey: ["dash-content-probe", slug, Array.from(enabled).sort().join(",")],
-    queryFn: () => probeWorkspaceItemCount(slug, enabled),
-    enabled: canInstall && enabled.size > 0,
-    staleTime: 60_000,
-  });
-  const hasContent = (contentQ.data ?? 0) > 0;
+  const { hasContent } = useWorkspaceContentProbe(slug);
   const qs = useQuery({
     queryKey: ["quickstart", slug],
     queryFn: () => api.quickstart(slug),
@@ -597,129 +567,25 @@ function SetupCardsPanel({ slug }: { slug: string }) {
   );
 }
 
-// Suggestion = a user-facing module a brand-new workspace can be nudged to
-// turn on. Derived data-drivenly from the workspace's module catalog (no
-// hardcoded list): the `stock` band is Cobblr's shipped first-party domains
-// (assets / inventory / projects / …), which excludes `core-*` plumbing,
-// marketplace connectors, and `user`-band samples — exactly the set that
-// would earn a nav entry. Copy comes from each module's own displayName +
-// description, so new modules appear automatically and never drift.
-type Suggestion = { name: string; to: string; label: string; description: string };
-// Plain-language, outcome-first card copy for the common domains — module
-// `description`s are written for builders ("polymorphic allocations") and read
-// poorly on a first-run card. Anything not in this map falls back to the
-// module's own description, so new/3rd-party modules still appear automatically.
-const SUGGESTION_COPY: Record<string, string> = {
-  inventory: "Track parts & supplies you keep on hand — quantities, locations, low-stock alerts.",
-  assets: "Track things you own and look after — tools, gear, plants, collectibles.",
-  machines: "Catalog your machines — printers, tools, equipment — with photos and state.",
-  projects: "Plan projects & tasks, including ones that wait on parts or other work.",
-  lists: "Keep simple checklists — shopping, packing, to-dos.",
-  tracking: "Log a number over time toward a goal and watch the trend.",
-  purchases: "Record orders and what they cost, and roll the spend up.",
-  labels: "Print QR / labels for anything in your workspace.",
-  digifab: "Send design files to the software that runs your machine.",
-};
-// Card blurbs read better as one line — take the module description's first
-// sentence (full descriptions can be a paragraph of detail).
-function firstSentence(s: string): string {
-  const m = s.match(/^.*?[.!?](\s|$)/);
-  return (m ? m[0] : s).trim();
-}
-
 // Empty-state onboarding. Shows when the active workspace has no
 // entities across any of the user-facing modules — the dashboard
 // would otherwise show a row of "0" tiles with no clear next step.
 // Hides itself the moment any module gets its first entity.
 function GettingStartedPanel({
   slug,
-  enabled,
-  modules,
   collapsedOnly = false,
 }: {
   slug: string;
-  enabled: Set<string>;
-  modules: OrgModuleListItem[];
   /** Bottom slot: render ONLY the collapsed add-more bar (non-empty
    *  workspaces); the top slot renders only the empty-state hero. */
   collapsedOnly?: boolean;
 }) {
-  const qc = useQueryClient();
-  const navigate = useNavigate();
-  const toast = useToast();
   const { activeOrg } = useActiveOrg();
-  // Focused mode: this whole panel is platform onboarding (the bundle wizard,
-  // the "browse the marketplace" + "Configuration" cards) — exactly the builder
-  // chrome focused mode hides. A focused workspace's empty domains show their
-  // OWN add flows, so suppress the platform onboarding entirely here.
+  // Focused mode: this whole panel is platform onboarding - exactly the
+  // builder chrome focused mode hides. A focused workspace's empty domains
+  // show their OWN add flows, so suppress the platform onboarding here.
   const focused = isFocused(activeOrg);
-  // First-run wizard is the default empty-state. "Skip for now" remembers the
-  // dismissal per-workspace (device-local) and falls back to the plain
-  // action-card panel. The empty-state self-heals once any entity exists, so
-  // this flag only matters for a skipped-but-still-empty workspace.
-  // Legacy: a workspace dismissed before the onboarding-start redesign falls to
-  // the plain action-card panel. Nothing sets this now (the start screen has no
-  // "skip"); read-only so old dismissals still resolve.
-  const dismissKey = `cobblr.firstRun.dismissed.${slug}`;
-  const skippedWizard = (() => {
-    try {
-      return localStorage.getItem(dismissKey) === "1";
-    } catch {
-      return false;
-    }
-  })();
-  // Turn on a not-yet-enabled module straight from a suggestion card and
-  // drop the user into it — no detour through Configuration.
-  const enableMut = useMutation({
-    mutationFn: (s: Suggestion) => api.enableModule(slug, s.name),
-    onSuccess: async (_r, s) => {
-      await qc.invalidateQueries({ queryKey: ["org-modules", slug] });
-      navigate(s.to);
-    },
-    onError: (e) =>
-      toast.error(
-        e instanceof Error ? e.message : "Couldn't enable that — open Configuration.",
-      ),
-  });
-
-  // One cheap probe per enabled module: any items at all?
-  const probe = useQuery({
-    queryKey: ["dash-getting-started", slug, Array.from(enabled).sort().join(",")],
-    queryFn: async () => {
-      const probes: Array<Promise<number>> = [];
-      const wrap = (path: string) =>
-        api
-          .request<{ items: unknown[] }>("GET", `/orgs/${slug}${path}`)
-          .then((r) => r.items.length)
-          .catch(() => 0);
-      if (enabled.has("inventory"))
-        probes.push(wrap("/modules/inventory/parts?limit=1"));
-      if (enabled.has("machines"))
-        probes.push(wrap("/modules/machines/machines?limit=1"));
-      if (enabled.has("assets")) probes.push(wrap("/modules/assets/assets?limit=1"));
-      if (enabled.has("projects"))
-        probes.push(wrap("/modules/projects/projects?limit=1"));
-      if (enabled.has("purchases"))
-        probes.push(wrap("/modules/purchases/orders?limit=1"));
-      // Module INSTANCES (Yarn, Wardrobe, Outfits…) hold their items under
-      // /instances/<name>/items, NOT the base module list — so a workspace whose
-      // data lives entirely in instances (most flagship bundles) looked empty
-      // here and the first-run wizard never went away. Count instance items too.
-      const instances = await api
-        .listInstances(slug)
-        .then((r) => r.items)
-        .catch(() => []);
-      // NAMED instances only: default instances are covered by the module
-      // probes above, and the defaults of core-* capability modules have no
-      // items router at all — probing them 501s on every dashboard load.
-      for (const inst of instances.filter((i) => !i.is_default))
-        probes.push(wrap(`/instances/${encodeURIComponent(inst.instance_name)}/items?limit=1`));
-      const counts = await Promise.all(probes);
-      return counts.reduce((a, b) => a + b, 0);
-    },
-    enabled: enabled.size > 0,
-    staleTime: 60_000,
-  });
+  const contentProbe = useWorkspaceContentProbe(slug);
 
   // Render once we know the workspace is empty. A brand-new workspace
   // with NO modules enabled (enabled.size === 0) leaves the probe
@@ -727,164 +593,27 @@ function GettingStartedPanel({
   // still greets a truly blank install. Hide the moment any module
   // gains its first entity.
   if (focused) return null; // focused mode: no platform onboarding chrome
-  if (enabled.size > 0 && probe.data === undefined) return null; // still probing
+  if (!contentProbe.ready) return null; // still probing
 
   // The guided "What do you want to do?" panel PERSISTS — it no longer vanishes
   // the moment you add your first thing, because the guided add (and the mini
   // scan inbox) are useful for adding MORE, not just the first. Once the
   // workspace has content it renders collapsed (a slim bar that expands), so it
   // stays one click away without dominating an established dashboard.
-  if (!skippedWizard) {
-    const hasContent = (probe.data ?? 0) > 0;
-    // Audit 2026-07-03: the collapsed "Add more" bar lives BELOW the data
-    // sections on an established workspace — prime rows belong to the
-    // workspace's own state, not a growth affordance. The empty-state hero
-    // keeps the top slot.
-    // Established workspace: the panel is a growth affordance, not the hero, so it
-    // renders collapsed BELOW the data (the author, 2026-07-18). The empty-state hero
-    // below keeps the top slot: on a blank workspace it IS the dashboard. Both use
-    // the same two-column guided box (hero left, ready-made/describe right); the
-    // panel handles that internally, so neither needs a width prop anymore.
-    if (collapsedOnly)
-      return hasContent ? <WhatToDoPanel slug={slug} startCollapsed /> : null;
-    if (hasContent) return null;
-    return <WhatToDoPanel slug={slug} startCollapsed={false} />;
-  }
-  if (collapsedOnly) return null;
-
-  // Determine the most relevant "first thing to do" based on which
-  // user-facing modules are enabled.
-  const firstActions: Array<{ to: string; label: string; description: string }> = [];
-  if (enabled.has("inventory"))
-    firstActions.push({
-      to: "/inventory",
-      label: "Add a part",
-      description:
-        "Countable stock you keep on hand (components, materials, consumables) with quantities and low-stock alerts. Bulk-import via CSV.",
-    });
-  if (enabled.has("machines"))
-    firstActions.push({
-      to: "/machines",
-      label: "Add a machine",
-      description: "Catalog your tools, printers, and equipment with photos + state.",
-    });
-  if (enabled.has("assets"))
-    firstActions.push({
-      to: "/assets",
-      label: "Add an asset",
-      description:
-        "Something you own and look after over time (a tool, plant, or collectible) with photos, notes, and recurring care reminders.",
-    });
-  if (enabled.has("projects"))
-    firstActions.push({
-      to: "/projects",
-      label: "Start a project",
-      description: "Group tasks and cross-module dependencies under one heading.",
-    });
-
-  // Greyed-out "turn this on" cards for the curated domain modules that
-  // are available in this workspace's catalog but not yet enabled.
-  const suggestions: Suggestion[] = modules
-    .filter(
-      (m) => !m.enabled && m.band === "stock" && !m.name.startsWith("core-"),
-    )
-    .map((m) => ({
-      name: m.name,
-      to: `/${m.name}`,
-      label: m.displayName,
-      description: SUGGESTION_COPY[m.name] ?? firstSentence(m.description),
-    }))
-    .sort((a, b) => a.label.localeCompare(b.label));
-
-  return (
-    <section className="rounded-xl border-2 border-dashed border-cobble-300 dark:border-cobble-700 bg-cobble-50/30 dark:bg-cobble-900/10 p-5 space-y-3">
-      <div className="flex items-center gap-2">
-        <Sparkles size={16} className="text-accent" />
-        <h2 className="font-semibold text-content dark:text-mortar-100">
-          Welcome - this workspace is empty.
-        </h2>
-      </div>
-      <p className="text-sm text-content dark:text-mortar-200">
-        {firstActions.length > 0
-          ? "Pick a first thing to add below, or install a ready-made starter pack from the marketplace."
-          : "Cobblr starts empty and shows only what you switch on. Turn on a module below to get going, or install a ready-made starter pack — build exactly the workspace you need, nothing you don't."}
-      </p>
-      <div className="grid gap-2 sm:grid-cols-2">
-        {firstActions.map((a) => (
-          <Link
-            key={a.to}
-            to={a.to}
-            className="rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 hover:border-accent transition"
-          >
-            <div className="text-sm font-medium text-content dark:text-mortar-100">
-              {a.label}
-            </div>
-            <div className="text-xs text-muted dark:text-slate-400 mt-0.5">
-              {a.description}
-            </div>
-          </Link>
-        ))}
-        <Link
-          to="/bundles"
-          className="rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 hover:border-accent transition"
-        >
-          <div className="text-sm font-medium text-content dark:text-mortar-100">
-            Browse the marketplace
-          </div>
-          <div className="text-xs text-muted dark:text-slate-400 mt-0.5">
-            One-click install of a starter pack - Lego, Garden, Tool
-            Library, Bookshelf, and more. Comes wired up and ready to use.
-          </div>
-        </Link>
-        <Link
-          to="/configuration"
-          className="rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 hover:border-accent transition"
-        >
-          <div className="text-sm font-medium text-content dark:text-mortar-100">
-            Tune what's installed
-          </div>
-          <div className="text-xs text-muted dark:text-slate-400 mt-0.5">
-            Enable / disable modules, tweak custom fields, wire
-            up integrations.
-          </div>
-        </Link>
-      </div>
-
-      {/* Greyed-out suggestions — so a new user discovers what Cobblr can
-          track without first digging into Configuration. One tap turns
-          the module on and drops them straight into it. */}
-      {suggestions.length > 0 && (
-        <div className="pt-1 space-y-2">
-          <p className="text-[10px] font-mono uppercase tracking-widest text-accent">
-            // or turn one on to get started
-          </p>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {suggestions.map((s) => {
-              const busy =
-                enableMut.isPending && enableMut.variables?.name === s.name;
-              return (
-                <button
-                  key={s.name}
-                  type="button"
-                  disabled={enableMut.isPending}
-                  onClick={() => enableMut.mutate(s)}
-                  className="text-left rounded-lg border border-dashed border-line dark:border-slate-700 bg-surface/40 dark:bg-slate-900/40 p-3 opacity-70 hover:opacity-100 hover:border-accent disabled:cursor-wait transition"
-                >
-                  <div className="flex items-center gap-1.5 text-sm font-medium text-content dark:text-mortar-100">
-                    <Plus size={13} className="text-accent shrink-0" />
-                    {busy ? "Enabling…" : `Enable ${s.label}`}
-                  </div>
-                  <div className="text-xs text-muted dark:text-slate-400 mt-0.5">
-                    {s.description}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-    </section>
-  );
+  const hasContent = contentProbe.hasContent;
+  // The guided "What do you want to do?" panel PERSISTS - the guided add
+  // (and the mini scan inbox) are useful for adding MORE, not just the
+  // first thing. Established workspace: the panel is a growth affordance,
+  // not the hero, so it renders collapsed BELOW the data (the author, 2026-07-18);
+  // on a blank workspace the hero IS the dashboard and keeps the top slot.
+  // (The pre-panel "first-run wizard" and its skippedWizard localStorage
+  // fossil are gone - nothing had set the flag since the onboarding-start
+  // redesign, and the dead branch kept implying a wizard that no longer
+  // exists: new-user-flow.md F4.)
+  if (collapsedOnly)
+    return hasContent ? <WhatToDoPanel slug={slug} startCollapsed /> : null;
+  if (hasContent) return null;
+  return <WhatToDoPanel slug={slug} startCollapsed={false} />;
 }
 
 // ──────────────────────── workspace header ─────────────────────────
@@ -1267,12 +996,10 @@ function ArrangeableBody({
   slug,
   enabled,
   role,
-  modules,
 }: {
   slug: string;
   enabled: Set<string>;
   role: string;
-  modules: OrgModuleListItem[];
 }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -1363,7 +1090,7 @@ function ArrangeableBody({
     if (id === "scan_inbox")
       // The "what do you want to do" + waiting-to-file capture queue, now a
       // first-class section above recent activity (was demoted below everything).
-      return <GettingStartedPanel slug={slug} enabled={enabled} modules={modules} collapsedOnly />;
+      return <GettingStartedPanel slug={slug} collapsedOnly />;
     return <RecentActivity slug={slug} editing={editing} />;
   };
 
@@ -1656,6 +1383,7 @@ function PinnedViewsGhost({ slug }: { slug: string }) {
 }
 
 function PinnedViews({ slug, editing = false }: { slug: string; editing?: boolean }) {
+  const { ready, hasContent } = useWorkspaceContentProbe(slug);
   const views = useQuery({
     queryKey: ["dash-views", slug],
     queryFn: () => api.listSavedViews(slug),
@@ -1676,10 +1404,13 @@ function PinnedViews({ slug, editing = false }: { slug: string; editing?: boolea
   if (pinned.length === 0) {
     if (editing)
       return <p className="text-xs text-faint dark:text-slate-500 italic">No pinned views yet.</p>;
-    // Ghost card (prototype, the author sign-off pending): the section used to hide
-    // entirely when nothing was pinned, so most users never learned it exists.
-    // One dismissible dashed invitation; gone forever once dismissed or once
-    // anything is pinned.
+    // Ghost card: the section used to hide entirely when nothing was pinned, so
+    // most users never learned it exists. One dismissible dashed invitation;
+    // gone once dismissed or once anything is pinned. On a workspace with NO
+    // content it stays hidden - a brand-new user has nothing to pin, and the
+    // first screen shouldn't be apologies about missing furniture
+    // (new-user-flow.md F3).
+    if (!ready || !hasContent) return null;
     return <PinnedViewsGhost slug={slug} />;
   }
   return (
@@ -1973,6 +1704,7 @@ function PinnedView({
 const ACTIVITY_NOISE = new Set(["org_module", "org", "user", "tenant"]);
 
 function RecentActivity({ slug, editing = false }: { slug: string; editing?: boolean }) {
+  const { ready, hasContent } = useWorkspaceContentProbe(slug);
   const q = useQuery({
     queryKey: ["dash-activity", slug],
     queryFn: () => api.orgActivity(slug, 50),
@@ -1982,6 +1714,10 @@ function RecentActivity({ slug, editing = false }: { slug: string; editing?: boo
     (e) => !ACTIVITY_NOISE.has(e.entity_type ?? ""),
   );
   const groups = groupActivity(items);
+  // A workspace with no content has no activity by definition: hide the whole
+  // section rather than open the first dashboard with "no activity yet"
+  // (new-user-flow.md F3). Arrange mode still shows it so it stays orderable.
+  if (!editing && items.length === 0 && (!ready || !hasContent)) return null;
   return (
     <section>
       {!editing && <SectionTitle>recent activity</SectionTitle>}

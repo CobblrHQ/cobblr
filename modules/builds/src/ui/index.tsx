@@ -66,7 +66,7 @@ export function BuildsUI({ orgSlug, getToken }: Props) {
       {builds.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {builds.data?.items.length === 0 && (
         <div className="text-sm text-muted italic">
-          No builds yet. A build is a recipe - a thing you assemble from tracked parts. Create one to see
+          No builds yet. A build is a parts list - a thing you assemble from tracked parts. Create one to see
           how many you can build right now.
         </div>
       )}

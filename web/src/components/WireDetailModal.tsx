@@ -4,9 +4,10 @@
 // Destructive delete moved here too, behind a confirm modal.
 
 import { useState, useEffect } from "react";
+import { useBundleDetail } from "./useBundleDetail";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, Trash2, Pencil } from "lucide-react";
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { ApiError, api, type PlatformBinding } from "../lib/api";
 import { FEED_SCROLL } from "../lib/feed";
 import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
@@ -21,6 +22,8 @@ interface Props {
 }
 
 export function WireDetailModal({ open, onClose, slug, binding, onEdit }: Props) {
+  const navigate = useNavigate();
+  const bundleDetail = useBundleDetail(slug);
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
@@ -140,13 +143,18 @@ export function WireDetailModal({ open, onClose, slug, binding, onEdit }: Props)
           </Row>
           <Row label="Origin">
             {binding.bundle_id ? (
-              <Link
-                to={originBundle ? `/bundles?open=${originBundle.external_id}` : "/bundles"}
-                onClick={onClose}
+              <button
+                type="button"
+                // Opens ON TOP of this modal rather than navigating away (house
+                // rule: a modal shows up on the page it was invoked from).
+                onClick={() => {
+                  if (originBundle) bundleDetail.open(originBundle.external_id);
+                  else navigate("/bundles");
+                }}
                 className="text-accent hover:text-accent inline-flex items-center gap-1"
               >
                 {originBundle?.name ?? "bundle"} <ExternalLink size={11} />
-              </Link>
+              </button>
             ) : (
               <span className="text-muted">user-authored</span>
             )}
@@ -281,6 +289,7 @@ export function WireDetailModal({ open, onClose, slug, binding, onEdit }: Props)
           </div>
         </div>
       </div>
+      {bundleDetail.element}
     </Modal>
   );
 }

@@ -8,6 +8,7 @@
 //   { webhook_url: "https://hooks.slack.com/services/<workspace>/<channel>/<token>" }
 
 import { postJson } from "./http-helpers.js";
+import { absoluteAppUrl } from "../public-url.js";
 import type { Channel, ChannelEvent } from "./types.js";
 
 interface SlackConfig {
@@ -50,7 +51,7 @@ export const slackChannel: Channel = {
             {
               type: "button",
               text: { type: "plain_text", text: "Open in Cobblr" },
-              url: event.link_url,
+              url: absoluteAppUrl(event.link_url),
             },
           ],
         },

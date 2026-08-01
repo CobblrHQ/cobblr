@@ -18,6 +18,7 @@ import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { ChevronDown, Bot } from "lucide-react";
 import { api } from "../lib/api";
+import { HIDE_WHEN_SIDE_PANEL_OPEN } from "./SidePanel";
 import {
   useToast, usePrintProgress, useBridgeLive, BridgePrinterCard,
   isLocalBridgePrinter, readLocalBridgeStatus, setPrinterStatus,
@@ -182,7 +183,7 @@ function OfferPrompt({
       </div>
     </div>
   );
-  if (mode === "floating") return <div className="fixed bottom-4 right-4 z-[900]">{card}</div>;
+  if (mode === "floating") return <div className={"fixed bottom-4 right-4 z-[900] " + HIDE_WHEN_SIDE_PANEL_OPEN}>{card}</div>;
   return (
     <div className="relative">
       <div className="absolute left-full bottom-1 ml-1.5 z-[60]">{card}</div>
@@ -620,7 +621,7 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
   // floating (mobile + top-bar mode): a single outlined pill that morphs to a panel
   // whose collapse strip is at the bottom (same corner).
   return (
-    <div className="fixed bottom-4 right-4 z-[900] flex flex-col items-end">
+    <div className={"fixed bottom-4 right-4 z-[900] flex flex-col items-end " + HIDE_WHEN_SIDE_PANEL_OPEN}>
       {open ? (
         <Panel controls={controls} states={states} onToggle={fire} segmentState={segmentState} badgeFor={badgeFor} detailFor={detailFor} footerAtBottom onClose={() => setOpen(false)} />
       ) : (

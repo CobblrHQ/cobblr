@@ -10,8 +10,9 @@
 // docs/architecture/ui-conventions.md — "overlay or in place".
 
 import { useEffect, useState } from "react";
+import { useBundleDetail } from "./useBundleDetail";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { Trash2, X } from "lucide-react";
 import { ApiError, api, type PlatformFieldDef } from "../lib/api";
 import { useToast, useConfirm } from "@cobblr/platform-web";
@@ -28,6 +29,8 @@ interface Props {
 }
 
 export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
+  const navigate = useNavigate();
+  const bundleDetail = useBundleDetail(slug);
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
@@ -211,13 +214,20 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
 
         <div className="flex items-center justify-between pt-3 border-t border-line dark:border-slate-700">
           {fieldDef.bundle_id ? (
-            <Link
-              to={fieldDef.bundle_external_id ? `/bundles?open=${encodeURIComponent(fieldDef.bundle_external_id)}` : "/bundles"}
-              onClick={onClose}
+            <button
+              type="button"
+              onClick={() => {
+                // Opens ON TOP of this modal (it portals to body) instead of
+                // navigating to the bundles page - house rule: a modal shows up
+                // on the page it was invoked from, and leaving would throw away
+                // whatever the user was doing there.
+                if (fieldDef.bundle_external_id) bundleDetail.open(fieldDef.bundle_external_id);
+                else navigate("/bundles");
+              }}
               className="text-[10px] font-mono uppercase tracking-widest text-accent hover:underline"
             >
               part of {fieldDef.bundle_name ?? "a bundle"}  - manage the bundle →
-            </Link>
+            </button>
           ) : (
             <button
               onClick={handleDelete}
@@ -235,6 +245,7 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
           </button>
         </div>
       </div>
+      {bundleDetail.element}
     </div>
   );
 }

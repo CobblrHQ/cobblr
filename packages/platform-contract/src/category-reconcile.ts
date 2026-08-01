@@ -111,20 +111,60 @@ export interface CategoryConsensus {
  * item with no category at all does not vote (a blank is not an opinion) but is
  * still covered by the result, which is the point: the user gets one section.
  */
+/**
+ * The label to SHOW for a winning canonical key.
+ *
+ * Canonicalisation exists so "Book" and "Books" can AGREE with each other. It is
+ * a matching device, and it used to leak into naming: a workspace whose category
+ * is "Books" was shown "Book", a word that appears nowhere in their data
+ * (the author, 2026-08-01: "why does this say file into book").
+ *
+ * So an OBSERVED label wins whenever one of them is the canonical word itself,
+ * plural and casing intact. The invented broad term is reserved for the case it
+ * was actually chosen for: genuinely different words merged onto a canonical
+ * none of them used ("apparel" + "garment" -> "Clothing").
+ */
+function labelForKey(key: string, labels: Map<string, number> | undefined): string {
+  if (labels) {
+    let best: string | null = null;
+    let bestCount = 0;
+    for (const [label, count] of labels) {
+      // comparable() strips case and plural, so "Books" matches key "book".
+      if (comparable(label) === key && count > bestCount) {
+        best = label;
+        bestCount = count;
+      }
+    }
+    // Their word, their casing. An all-lowercase label carries no intent, so it
+    // is title-cased; anything with capitals is left exactly as written.
+    if (best) return /[A-Z]/.test(best) ? best : displayCategory(best);
+  }
+  return displayCategory(key);
+}
+
 export function unifyCategories(raw: Array<string | null | undefined>): CategoryConsensus {
   const seen: string[] = [];
   const votes = new Map<string, number>();
   const order: string[] = [];
+  /** Per canonical key, the ACTUAL labels filed under it and how often. */
+  const labelsByKey = new Map<string, Map<string, number>>();
   for (const r of raw) {
     const label = (r ?? "").trim();
     if (label && !seen.includes(label)) seen.push(label);
     const key = normaliseCategory(r);
     if (!key) continue;
-    if (!votes.has(key)) order.push(key);
+    if (!votes.has(key)) {
+      order.push(key);
+      labelsByKey.set(key, new Map());
+    }
     votes.set(key, (votes.get(key) ?? 0) + 1);
+    if (label) {
+      const m = labelsByKey.get(key)!;
+      m.set(label, (m.get(label) ?? 0) + 1);
+    }
   }
   if (votes.size === 0) return { suggestion: null, unanimous: false, seen };
   let best = order[0]!;
   for (const k of order) if ((votes.get(k) ?? 0) > (votes.get(best) ?? 0)) best = k;
-  return { suggestion: displayCategory(best), unanimous: votes.size === 1, seen };
+  return { suggestion: labelForKey(best, labelsByKey.get(best)), unanimous: votes.size === 1, seen };
 }

@@ -218,7 +218,7 @@ export function WorkspaceSwitcher({ inline = false }: { inline?: boolean } = {})
           <button
             onClick={() => { setOpen(false); navigate("/configuration"); }}
             className="w-full text-left px-3 py-2 border-t border-line dark:border-slate-700 hover:bg-subtle dark:hover:bg-slate-800 transition flex items-center gap-2 text-sm text-content dark:text-mortar-200"
-            title="Turn on modules, install a starter pack, customize this workspace"
+            title="Turn on modules, install a bundle, customize this workspace"
           >
             <Sliders size={13} className="text-accent" />
             Customize workspace
@@ -275,7 +275,7 @@ export function WorkspaceSwitcher({ inline = false }: { inline?: boolean } = {})
           <button
             onClick={() => { setOpen(false); navigate("/configuration"); }}
             className="w-full text-left px-3 py-2 border-t border-line dark:border-slate-700 hover:bg-subtle dark:hover:bg-slate-800 transition flex items-center gap-2 text-sm text-content dark:text-mortar-200"
-            title="Turn on modules, install a starter pack, customize this workspace"
+            title="Turn on modules, install a bundle, customize this workspace"
           >
             <Sliders size={13} className="text-accent" />
             Customize workspace
@@ -682,7 +682,7 @@ export function CreateWorkspaceModal({
                   setBlueprint({ manifest, label: typeof manifest.name === "string" ? manifest.name : f.name });
                   if (!name.trim() && typeof manifest.name === "string") setName(manifest.name.slice(0, 120));
                 } catch {
-                  setBpError("That file isn't valid JSON — export a blueprint from Settings → Blueprint.");
+                  setBpError("That file isn't valid JSON — export a blueprint from Configuration → Backup & blueprints.");
                 }
               });
             }}

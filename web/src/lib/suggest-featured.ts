@@ -42,8 +42,20 @@ function bundleVocab(fb: FeaturedBundle): Map<string, number> {
  *    (document-frequency weighting over the catalog itself);
  *  - a suggestion needs a strong term that is UNIQUE to the winning bundle;
  *  - callers pass the live instance names so an already-installed thing is
- *    never suggested ("install Laser Cutters" when they have laser cutters). */
-const TRACK_VERB = /\b(track|collect|collection|catalogu?e?|organi[sz]e|inventory|library|shelf|stash|manage|log)\b/i;
+ *    never suggested ("install Laser Cutters" when they have laser cutters).
+ *
+ *  It used to ALSO require a "track/collect/inventory/stash/…" verb, so that a
+ *  field tweak ("add a warranty date to parts") was never answered with
+ *  "install a bundle". That gate silently swallowed the most natural input
+ *  there is - a bare noun. Typing "yarn" matched nothing in either Build mode,
+ *  even though a Yarn bundle ships (the author, 2026-08-01).
+ *
+ *  The tweak-vs-new question is now answered by the CALLER, and answered
+ *  better: it asks suggest-kinds.ts whether the sentence lands on kinds the
+ *  workspace ALREADY HAS. "add a warranty date to parts" resolves onto Part →
+ *  a modification, no install pitch. "yarn" resolves onto nothing → a new
+ *  thing, and there's a refined bundle for it. That reads the workspace
+ *  instead of guessing from a verb list. */
 
 /** intent word ~ vocab term: exact after stemming, or a ≥4-char prefix of the
  *  other ("book" ~ "bookshelf"). */
@@ -57,9 +69,6 @@ export function suggestFeatured(
   intent: string,
   liveInstances: ReadonlySet<string> = new Set(),
 ): { bundle: FeaturedBundle; matched: string } | null {
-  // Only fire on "set me up to track a thing" intents — a field tweak ("add a
-  // warranty date to parts") should never be answered with "install a bundle".
-  if (!TRACK_VERB.test(intent)) return null;
   const words = new Set((intent.toLowerCase().match(WORD) ?? []).map(stem));
   if (words.size === 0) return null;
 

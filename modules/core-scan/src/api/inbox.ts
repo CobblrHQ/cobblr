@@ -1576,10 +1576,17 @@ inboxRouter.post(
       // specific intent, and the placement seam clears location_id for a
       // non-location container anyway — stamping one here just made the
       // create carry a home the placement below immediately retracts.
-      ...(parsed.data.location_id &&
+      //
+      // The row's OWN stored home (the active bin stamped at scan time, or a
+      // bulk "Set location") is the default when the body brings none — the
+      // same server-side fallback the container path below and
+      // /confirm-into-location already apply. It used to be the client's job
+      // to echo it back, and any confirm caller that didn't (WhatToDoPanel)
+      // silently dropped a location the user had already set.
+      ...((parsed.data.location_id ?? row.target_location_id) &&
       !(row.target_container_kind && row.target_container_id) &&
       (meta as { box_state?: string }).box_state !== "empty-box"
-        ? { location_id: parsed.data.location_id }
+        ? { location_id: parsed.data.location_id ?? row.target_location_id }
         : {}),
       ...restExtras,
     };
@@ -2222,9 +2229,17 @@ async function appendScanHistory(
       : [];
     const e: Record<string, unknown> = { action: entry.action, at: new Date().toISOString() };
     if (entry.note && entry.note.trim()) e.note = entry.note.trim();
+    // Write ONLY the history key, DB-side. This used to write the whole bag
+    // back from the copy read above - a lost update that destroyed anything
+    // committed in between. The replay handler writes `pre_rerun` (the
+    // before-image that powers "Put it back", including the user's chosen
+    // catalog photo) and then calls this to record the replay: the history
+    // entry deleted the snapshot of the very action it was recording, so the
+    // undo button never appeared and a hand-picked photo was unrecoverable
+    // (the author, 2026-08-01). `catalog_image_user_set` went the same way.
     await db
       .updateTable("core_scan_inbox_items")
-      .set({ suggested_metadata: JSON.stringify({ ...meta, history: [...prev, e].slice(-8) }) as never })
+      .set({ suggested_metadata: mergeMeta({ history: [...prev, e].slice(-8) }) as never })
       .where("id", "=", id)
       .execute();
   } catch {
@@ -2805,7 +2820,7 @@ inboxRouter.post(
     if (isRankFailure(result)) {
       const reason =
         result.error === "no-provider"
-          ? "No AI provider in this workspace can rank photos yet. Add one under Settings, AI (or connect your own from your profile)."
+          ? "No AI provider in this workspace can rank photos yet. Add one under Configuration → AI (or connect your own from your profile)."
           : result.error === "unreadable"
             ? "None of the photo options could be downloaded to show the AI. Try a different search term."
             : "The AI provider couldn't be reached or didn't answer usefully. Try again in a moment.";
@@ -3064,6 +3079,13 @@ inboxRouter.post(
           || ${JSON.stringify({
             ...(snap.category != null ? { category: snap.category } : {}),
             ...(snap.entity_type != null ? { entity_type: snap.entity_type } : {}),
+            // Restore the LOCK with the picture. An undo that hands back a
+            // hand-picked catalog photo without its protected status leaves it
+            // one enrichment away from being overwritten again - the picture is
+            // back but the CHOICE is not.
+            ...(snap.catalog_image_file_id || snap.catalog_image_url
+              ? { catalog_image_user_set: true }
+              : {}),
           })}::jsonb` as never,
         updated_at: new Date(),
       })

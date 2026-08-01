@@ -175,6 +175,17 @@ html[data-nav-fullside] #cobblr-toasts {
 .cobb-bubble::before { left: -10px; border-width: 9px 10px 9px 0; border-color: transparent var(--tail-edge) transparent transparent; }
 .cobb-bubble::after  { left: -9px;  border-width: 8px 9px 8px 0;  border-color: transparent var(--tail-fill) transparent transparent; }
 
+/* Small borderless variant — the chat's "…" typing chip while Cobb works.
+   The base bubble's tail sits at a fixed 26px (tuned to the Build greeting's
+   heading line); on a one-line chip that lands at the bottom edge, so centre it.
+   Both triangle layers take the CHIP's own background (bg-subtle / slate-800):
+   with no 1px border on the chip there is no edge colour to echo, and a
+   two-tone tail on a borderless bubble reads as a rendering glitch. */
+.cobb-bubble-sm { --tail-edge: #FBF9F4; --tail-fill: #FBF9F4; }
+.dark .cobb-bubble-sm { --tail-edge: #262B33; --tail-fill: #262B33; }
+.cobb-bubble-sm::before,
+.cobb-bubble-sm::after { top: 50%; transform: translateY(-50%); }
+
 /* Dark-mode legibility: Cobb's tee and boots are slate (#3D4451), which is the
    dark-mode surface colour — on a dark panel they sink into the background (his
    head and apron still read; they have light fills). The art is verbatim, so

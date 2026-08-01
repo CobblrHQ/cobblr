@@ -311,7 +311,7 @@ export function ConfigurationLayout() {
   return (
     <ConfigHeaderProvider>
     <div className="md:grid md:grid-cols-[13.5rem_1fr] md:gap-6 md:items-start">
-      <aside className="hidden md:block sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto pr-1">
+      <aside className="hidden md:block sticky top-4 max-h-[calc(100dvh-2rem)] overflow-y-auto pr-1">
         <ConfigSidebarBody />
       </aside>
       <div className={"min-w-0 " + column}>

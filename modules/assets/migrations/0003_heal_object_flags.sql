@@ -1,0 +1,13 @@
+-- Heal `flags` values stored as an empty OBJECT.
+--
+-- Until 2026-08-01 the create/update handlers passed `flags` as a JS array,
+-- which node-pg renders as a Postgres ARRAY literal. A non-empty array was
+-- rejected outright ("Malformed identifier or value" - nobody could set a flag
+-- at all), but the common EMPTY case slipped through: `[]` became the literal
+-- '{}', which jsonb accepts as an empty OBJECT. So every asset created through
+-- the API carries flags = {} where the schema promises a string array, and any
+-- consumer that maps over it breaks.
+--
+-- The column has only ever legitimately held arrays, so any object here is the
+-- bug's residue. jsonb_typeof guards the write to exactly those rows.
+update assets_assets set flags = '[]'::jsonb where jsonb_typeof(flags) = 'object';

@@ -167,10 +167,13 @@ export function ScanResultModal({
     queryKey: ["scan-item-live", activeSlug, item?.id],
     queryFn: () => api.getScanItem(activeSlug, item!.id),
     enabled: !!item?.id && (stillEnriching || reading),
-    // 2s cadence while enrichment is in flight; `enabled` (stillEnriching) is
-    // bounded by the 180s window above, so this self-stops. The generous hard
-    // cap is just a runaway guard (>200s of polls) if that ever gets stuck.
-    refetchInterval: (query) => (query.state.dataUpdateCount >= 100 ? false : 2_000),
+    // 750ms cadence while enrichment is in flight: the by-name image search
+    // measures ~500ms and the web-search tail lands mid-second, so a 2s poll
+    // added up to 2s of "it is there but the card has not asked" - the scan
+    // moment is exactly where that lag is felt. Single-row GET, bounded by the
+    // 180s window above, so this self-stops. The hard cap is just a runaway
+    // guard if that ever gets stuck.
+    refetchInterval: (query) => (query.state.dataUpdateCount >= 260 ? false : 750),
     gcTime: 0,
   });
   const readingAnchor = useRef<string | null>(null);

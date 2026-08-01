@@ -43,20 +43,10 @@ function jsonbArrayColumns(): Set<string> {
 
 const COLUMNS = jsonbArrayColumns();
 
-/**
- * Pre-existing writes, grandfathered so this lint blocks NEW ones without
- * changing another module's behaviour on an unverified theory.
- *
- * `assets.flags` is a genuine `.values()` write of a JS array to a jsonb column
- * and looks like the same defect, but it has not been reproduced against a live
- * assets table - and the usual value is `[]`, which Postgres accepts as the
- * array literal `{}` and stores as an empty OBJECT rather than erroring. That
- * makes it a silent wrong-value rather than a crash, which is worth its own
- * look rather than a drive-by fix here.
- */
-const BASELINE = new Set<string>([
-  "modules/assets/src/api/assets.ts::flags",
-]);
+/** Nothing is grandfathered: the one pre-existing hit turned out to be a live
+ *  bug (assets could not be created with flags at all) and was fixed rather
+ *  than baselined. */
+const BASELINE = new Set<string>([]);
 
 const offenders: Array<{ file: string; line: number; col: string; text: string }> = [];
 
@@ -155,7 +145,9 @@ for (const file of walk(join(ROOT, "modules"))) {
   for (const region of writeRegions(src)) {
     for (const a of columnAssignments(region.text)) {
       if (!COLUMNS.has(a.key)) continue;
-      if (/JSON\.stringify|sql`|^null\b|^undefined\b/.test(a.value)) continue;
+      // Safe: JSON-encoded inline, encoded by a named helper (jsonbArray /
+      // toJsonb), a raw SQL fragment, or an explicit null.
+      if (/JSON\.stringify|jsonbArray\(|toJsonb\(|sql`|^null\b|^undefined\b/.test(a.value)) continue;
       if (BASELINE.has(`${relative(ROOT, file)}::${a.key}`)) continue;
       const line = src.slice(0, region.start + a.offset).split("\n").length;
       offenders.push({ file, line, col: a.key, text: `${a.key}: ${a.value}`.slice(0, 110) });

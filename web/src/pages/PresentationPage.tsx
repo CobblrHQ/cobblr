@@ -582,19 +582,19 @@ function PresentationFields({
       {showGroupLabel && setGroupLabel && (
         <label className="block">
           <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-            Specialisations heading (optional)
+            Categories heading (optional)
           </span>
           <input
             type="text"
             value={groupLabel ?? ""}
             onChange={(e) => setGroupLabel(e.target.value)}
-            placeholder={`${(label || "module").toLowerCase()} specialisations`}
+            placeholder={`${(label || "module").toLowerCase()} categories`}
             className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
           <span className="mt-1 block text-[11px] text-faint dark:text-slate-500">
             The heading over this module's dropdown of lenses / instances
             in the nav. Defaults to "{(label || "module").toLowerCase()}{" "}
-            specialisations".
+            categories".
           </span>
         </label>
       )}

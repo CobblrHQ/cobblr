@@ -4,6 +4,7 @@
 // (super-admin → Feedback) has context. POSTs to /feedback.
 
 import { useState, useRef, useEffect } from "react";
+import { HIDE_WHEN_OVERLAY_OPEN } from "@cobblr/platform-web";
 import { createPortal } from "react-dom";
 import { Modal, useToast } from "@cobblr/platform-web";
 import { MessageSquare, ImagePlus, X } from "lucide-react";
@@ -220,7 +221,7 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
             onClick={() => setOpen(true)}
             title="Send feedback"
             aria-label="Send feedback"
-            className="fixed bottom-4 right-4 z-[55] flex items-center gap-1.5 rounded-full bg-cobble-600 hover:bg-cobble-700 text-white shadow-lg px-3 py-2.5 text-xs font-medium transition"
+            className={"fixed bottom-4 right-4 z-[55] " + HIDE_WHEN_OVERLAY_OPEN + " flex items-center gap-1.5 rounded-full bg-cobble-600 hover:bg-cobble-700 text-white shadow-lg px-3 py-2.5 text-xs font-medium transition"}
           >
             <MessageSquare size={15} />
             <span className="hidden sm:inline">Feedback</span>

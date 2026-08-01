@@ -14,6 +14,7 @@ import { Markdown, QrCode, useImageSrc } from "@cobblr/platform-web";
 import { Zap, X, Pin, BookOpen } from "lucide-react";
 import { getToken } from "../lib/api";
 import { useNavModules } from "./useNavModules";
+import { HIDE_WHEN_SIDE_PANEL_OPEN } from "./SidePanel";
 
 interface PinnedEntry {
   id: string;
@@ -59,7 +60,7 @@ export function QuickAccess({ activeSlug }: { activeSlug: string }) {
         type="button"
         onClick={() => setOpen(true)}
         title="Quick Access - your pinned entries"
-        className="fixed bottom-20 md:bottom-6 right-4 z-[80] inline-flex items-center gap-1.5 rounded-full border border-cobble-400 dark:border-cobble-600 bg-surface dark:bg-slate-900 shadow-lg px-3.5 py-2 text-sm font-medium text-content dark:text-mortar-100 hover:border-accent transition"
+        className={"fixed bottom-20 md:bottom-6 right-4 z-[80] " + HIDE_WHEN_SIDE_PANEL_OPEN + " inline-flex items-center gap-1.5 rounded-full border border-cobble-400 dark:border-cobble-600 bg-surface dark:bg-slate-900 shadow-lg px-3.5 py-2 text-sm font-medium text-content dark:text-mortar-100 hover:border-accent transition"}
       >
         <Zap size={15} className="text-accent" />
         Quick Access

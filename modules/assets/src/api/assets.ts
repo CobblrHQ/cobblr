@@ -39,6 +39,18 @@ const AssetCreate = z.object({
 });
 
 const ASSET_NATIVE_KEYS = new Set(Object.keys(AssetCreate.shape));
+
+/**
+ * `flags` is a jsonb ARRAY column, and node-pg renders a JS array as a POSTGRES
+ * array literal ({a,b}) - which jsonb rejects. Creating or updating an asset
+ * with any non-empty flags therefore failed outright with "Malformed identifier
+ * or value" (reproduced against a live workspace, 2026-08-01); an empty array
+ * silently stored as `{}`, an empty OBJECT, rather than `[]`.
+ *
+ * Passing undefined through untouched matters: a PATCH that does not mention
+ * flags must not rewrite them.
+ */
+const jsonbArray = (v: unknown): unknown => (Array.isArray(v) ? JSON.stringify(v) : v);
 const AssetUpdate = AssetCreate.partial();
 
 assetsRouter.get(
@@ -95,7 +107,7 @@ assetsRouter.post(
       .values({
         ...createRest,
         instance: instanceOf(req),
-        flags: parsed.data.flags ?? [],
+        flags: jsonbArray(parsed.data.flags ?? []),
         metadata: parsed.data.metadata ?? {},
       } as never)
       .returningAll()
@@ -171,6 +183,9 @@ assetsRouter.patch(
     // step 1) instead of the column write; parsed.data stays intact so the
     // activity diff and the change-event bags still carry the transition.
     const { location_id: patchLocationId, ...patchRest } = parsed.data;
+    if (patchRest.flags !== undefined) {
+      (patchRest as Record<string, unknown>).flags = jsonbArray(patchRest.flags);
+    }
     const updated = await db
       .updateTable("assets_assets")
       .set({ ...patchRest, updated_at: new Date() } as never)

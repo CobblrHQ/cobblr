@@ -118,7 +118,9 @@ async function notifyOwnersOfOffers(
       .where("id", "=", r.org_id)
       .executeTakeFirst();
     const wsName = org?.name ?? "your workspace";
-    const configUrl = absoluteAppUrl("/configuration");
+    // Stored relative (see receipt-ingest); the absolute form is for the DM body.
+    const configPath = "/configuration/ai";
+    const configUrl = absoluteAppUrl(configPath);
     for (const ownerId of nonSelf) {
       // Collapse any prior unread offer for this owner+workspace first, so a
       // re-share doesn't stack up identical "wants to share their AI" rows — the
@@ -132,15 +134,15 @@ async function notifyOwnersOfOffers(
         userId: ownerId,
         representativeOrgId: r.org_id,
         notificationType: "platform.ai.share_offered",
-        message: `${offererName} offered to share their AI with this workspace. Review it in Settings → AI sharing.`,
-        link_url: configUrl,
+        message: `${offererName} offered to share their AI with this workspace. Review it under Configuration → AI.`,
+        link_url: configPath,
         email: {
           subject: `${offererName} wants to share their AI with ${wsName}`,
           text:
             `${offererName} offered to share their AI connection with ${wsName} on Cobblr.\n\n` +
             `Until you approve it, the workspace's Ask Cobb chat and other AI features stay off. ` +
             `Approve or decline the offer here:\n${configUrl}\n\n` +
-            `(You can always change this later in Settings → AI sharing.)`,
+            `(You can always change this later under Configuration → AI.)`,
         },
       }).catch(() => {});
     }

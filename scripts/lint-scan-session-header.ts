@@ -30,12 +30,14 @@ const errors: string[] = [];
  *  they survive refactors that rename variables or reshape the JSX. */
 const at = (needle: string) => src.indexOf(needle);
 
-const LOCATION = at('"no location set"');
-const FILE_ALL = at("File all {readyIds.length}");
+// Renamed 2026-08-01 (the author: shorten this row rather than let it wrap): the
+// unset chip says the ACTION now, and the verbs drop their long half below sm.
+const LOCATION = at('"Set location"');
+const FILE_ALL = at("File<span className=\"hidden sm:inline\">&nbsp;all</span> {readyIds.length}");
 const OPEN = at("open →");
 
 for (const [name, idx] of [
-  ["the location chip (\"no location set\")", LOCATION],
+  ["the location chip (\"Set location\")", LOCATION],
   ["the File-all button", FILE_ALL],
   ["the open → link", OPEN],
 ] as const) {

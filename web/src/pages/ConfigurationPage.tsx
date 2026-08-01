@@ -27,6 +27,7 @@ import { useHostedPanels, type HostedPanel } from "../lib/useHostedPanels";
 import { useConfigVisibility } from "../lib/useConfigVisibility";
 import { isFocused } from "../lib/api";
 import { useBundleUpdates } from "../lib/useBundleUpdates";
+import { useBundleDetail } from "../components/useBundleDetail";
 
 export function ConfigurationPage() {
   usePageTitle("Configuration");
@@ -303,7 +304,9 @@ function SimpleModeCard() {
 // the place to apply it. Renders nothing when everything is up to date.
 function BundleUpdatesCallout({ slug }: { slug: string }) {
   const updates = useBundleUpdates(slug);
-  const navigate = useNavigate();
+  // Opens right here, not by navigating to the bundles page (house rule: a
+  // modal shows up on the page it was invoked from).
+  const bundleDetail = useBundleDetail(slug);
   if (updates.length === 0) return null;
   return (
     <section className="rounded-xl border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 p-4 space-y-2">
@@ -322,17 +325,14 @@ function BundleUpdatesCallout({ slug }: { slug: string }) {
             </span>
             <button
               type="button"
-              onClick={() =>
-                navigate(
-                  `/bundles?open=${encodeURIComponent(u.externalId)}&returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`,
-                )
-              }
+              onClick={() => bundleDetail.open(u.externalId)}
               className="shrink-0 rounded bg-amber-600 hover:bg-amber-700 text-white text-xs font-medium px-2.5 py-1"
             >
               Update
             </button>
           </div>
         ))}
+        {bundleDetail.element}
       </div>
     </section>
   );

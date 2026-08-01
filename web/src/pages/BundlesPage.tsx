@@ -6,6 +6,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Copy, Download, Library, Package, Plus, Search, Share2, Trash2, X } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
+import { BundleSection, BundleTile, splitCatalog } from "../components/BundleBrowse";
 import { ApiError, api, type PlatformBundle, type PlatformBundleManifest, type RegistryDriverEntry, type RegistryModuleEntry, type RegistryRendererEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
@@ -35,7 +36,7 @@ type SelectedBundle =
   | null;
 
 export function BundlesPage() {
-  usePageTitle("Setups & trackers");
+  usePageTitle("Bundles");
   const { activeSlug: slug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
@@ -104,7 +105,7 @@ export function BundlesPage() {
     if (b.manifest.id.includes(".community.")) return 2;
     return 1; // other official
   };
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(() => searchParams.get("q") ?? "");
   const q = query.trim().toLowerCase();
   const shownCatalog = [...catalog]
     .sort((a, b) => tierOf(a) - tierOf(b))
@@ -115,6 +116,9 @@ export function BundlesPage() {
           .toLowerCase()
           .includes(q),
     );
+  // Same grouping as the dashboard's browse surface - ONE catalog, one shape
+  // (new-user-flow.md F2). Tier order is preserved within each section.
+  const shownSections = splitCatalog(shownCatalog);
 
   const [paste, setPaste] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -408,60 +412,49 @@ export function BundlesPage() {
             No bundles match “{query.trim()}”.
           </div>
         )}
-        <ul className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {shownCatalog.map((b) => {
-            const installed = installedIds.has(b.manifest.id);
-            const installedV = installedVersionById.get(b.manifest.id);
-            const updateAvailable = installed && !!installedV && installedV !== b.manifest.version;
-            const thirdParty = b.source && b.source !== "official";
-            return (
-              <li key={b.manifest.id}>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setSelected({
-                      mode: "featured",
-                      featured: b,
-                      alreadyInstalled: installed,
-                    })
-                  }
-                  className="w-full h-full text-left rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 flex items-start gap-3 hover:border-cobble-300 dark:hover:border-cobble-700 transition group"
-                >
-                  <div className="text-2xl shrink-0">{b.glyph}</div>
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium text-content dark:text-mortar-100 text-sm flex items-center gap-2 flex-wrap">
-                      {b.manifest.name}
-                      {updateAvailable ? (
-                        <span className="text-[10px] font-mono uppercase tracking-widest text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded px-1.5 py-0.5" title={`Installed v${installedV} · latest v${b.manifest.version}`}>
-                          update available
-                        </span>
-                      ) : installed ? (
-                        <span className="text-[10px] font-mono uppercase tracking-widest text-moss-600 bg-moss-50 dark:bg-moss-950/30 border border-moss-200 dark:border-moss-800 rounded px-1.5 py-0.5">
-                          installed
-                        </span>
-                      ) : null}
-                      {thirdParty && (
-                        <span className="text-[10px] font-mono uppercase tracking-widest text-faint border border-line dark:border-slate-700 rounded px-1.5 py-0.5" title={`From ${b.source}`}>
-                          3rd-party
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-[10px] font-mono text-faint dark:text-slate-500 mt-0.5">
-                      {b.manifest.id}
-                    </div>
-                    <div className="text-xs text-content dark:text-mortar-200 mt-1.5">
-                      {b.blurb}
-                    </div>
-                  </div>
-                  <ChevronRight
-                    size={14}
-                    className="text-faint dark:text-slate-600 group-hover:text-accent transition mt-1 shrink-0"
-                  />
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+        <div className="space-y-4">
+          {([
+            ["// ready-made bundles", "one kind of thing, fields already shaped", shownSections.skins],
+            ["// full-setup bundles", "several modules wired together", shownSections.setups],
+          ] as const).map(([title, hint, list]) =>
+            list.length === 0 ? null : (
+              <BundleSection key={title} title={title} hint={hint}>
+                {list.map((b) => {
+                  const installed = installedIds.has(b.manifest.id);
+                  const installedV = installedVersionById.get(b.manifest.id);
+                  const updateAvailable = installed && !!installedV && installedV !== b.manifest.version;
+                  const thirdParty = b.source && b.source !== "official";
+                  return (
+                    <BundleTile
+                      key={b.manifest.id}
+                      b={b}
+                      showId
+                      onOpen={() => setSelected({ mode: "featured", featured: b, alreadyInstalled: installed })}
+                      badges={
+                        <>
+                          {updateAvailable ? (
+                            <span className="text-[10px] font-mono uppercase tracking-widest text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded px-1.5 py-0.5" title={`Installed v${installedV} · latest v${b.manifest.version}`}>
+                              update available
+                            </span>
+                          ) : installed ? (
+                            <span className="text-[10px] font-mono uppercase tracking-widest text-moss-600 bg-moss-50 dark:bg-moss-950/30 border border-moss-200 dark:border-moss-800 rounded px-1.5 py-0.5">
+                              installed
+                            </span>
+                          ) : null}
+                          {thirdParty && (
+                            <span className="text-[10px] font-mono uppercase tracking-widest text-faint border border-line dark:border-slate-700 rounded px-1.5 py-0.5" title={`From ${b.source}`}>
+                              3rd-party
+                            </span>
+                          )}
+                        </>
+                      }
+                    />
+                  );
+                })}
+              </BundleSection>
+            ),
+          )}
+        </div>
       </div>
 
       {/* ── Drivers lane (digifab declarative-HTTP machine drivers) ── */}
@@ -632,7 +625,7 @@ export function BundlesPage() {
         {bundles.isLoading && <div className="text-xs text-faint">loading…</div>}
         {bundles.data?.items.length === 0 && (
           <div className="text-xs text-faint dark:text-slate-500 italic">
-            No bundles installed.
+            Nothing installed yet - pick a bundle from the marketplace above and it lands here.
           </div>
         )}
         <ul className="space-y-2">

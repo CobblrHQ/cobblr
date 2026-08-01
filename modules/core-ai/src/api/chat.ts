@@ -11,7 +11,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
-import { tenantContext, sessionUserId, tenantDb } from "../db.js";
+import { tenantContext, sessionUserId, sessionDisplayName, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import {
   WORKSPACE_TOOLS,
@@ -134,14 +134,23 @@ async function createPathFor(c: Ctx, kind: string): Promise<string | null> {
 
 interface Ctx {
   slug: string;
+  /** Workspace display name ("Log it or Frog it") for prose; slug is for routing. */
+  orgName: string;
   auth: string;
   base: string;
+  /** The signed-in user Cobb is talking to — the only identity in the prompt.
+   *  The bridge runs claude -p hermetically, so there is no host name to
+   *  override; we just state who this is. */
+  userName: string | null;
 }
 function ctxOf(req: Parameters<typeof tenantContext>[0]): Ctx {
+  const org = tenantContext(req).org;
   return {
-    slug: tenantContext(req).org.slug,
+    slug: org.slug,
+    orgName: org.name,
     auth: req.headers.authorization ?? "",
     base: `http://127.0.0.1:${process.env.API_PORT ?? "4000"}/api/v1`,
+    userName: sessionDisplayName(req),
   };
 }
 
@@ -210,7 +219,13 @@ async function buildSystemPrompt(c: Ctx): Promise<string> {
     })
     .filter(Boolean) as string[];
 
-  return `You are Cobb, the helpful assistant inside the user's Cobblr workspace "${c.slug}". Be genuinely useful and warm — you are NOT limited to workspace chores.
+  const whoLine = c.userName
+    ? `You are talking to ${c.userName}.`
+    : `You do not know the user's name — greet them without one, and do not guess.`;
+
+  return `You are Cobb, the helpful assistant inside the "${c.orgName}" Cobblr workspace. Be genuinely useful and warm — you are NOT limited to workspace chores.
+
+${whoLine}
 
 Your name is Cobb. When the user asks who or what you are, introduce yourself as "Cobb, your assistant" — never as a generic "Cobblr workspace assistant" or "AI assistant". Cobb is who you are; Cobblr is the app you live in.
 
@@ -374,7 +389,7 @@ chatRouter.post(
     try {
       system = await buildSystemPrompt(c);
     } catch {
-      system = `You are Cobb, the helpful assistant inside the Cobblr workspace "${c.slug}". Introduce yourself as Cobb if asked. Chat helpfully; reply with {"type":"reply","text":"..."}.`;
+      system = `You are Cobb, the helpful assistant inside the "${c.orgName}" Cobblr workspace. Introduce yourself as Cobb if asked.${c.userName ? ` You are talking to ${c.userName}.` : ""} Chat helpfully; reply with {"type":"reply","text":"..."}.`;
     }
     // Situational awareness: what screen is the user on right now?
     system += pageContextLine(parsed.data.context);

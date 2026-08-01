@@ -5,7 +5,6 @@
 // header's backdrop-blur can't trap its position:fixed (CLAUDE.md modal note).
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Sparkles, X, Send, Check, Eye, PencilLine, Trash2 } from "lucide-react";
@@ -16,6 +15,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { getChatPageContext } from "../lib/chat-context";
 import { useDetailRoute } from "../lib/useDetailRoute";
 import { useAiStatus, AiOffNotice } from "./AiStatusNotice";
+import { SidePanel } from "./SidePanel";
 
 // Shown only if the basic-mode endpoint itself is unreachable (network error) —
 // the server otherwise always returns a reply (its own no-match nudge).
@@ -133,9 +133,38 @@ function ConsentToggle({
   );
 }
 
-/** `open`/`setOpen` are lifted to AppLayout so the main content can shift left
- *  when the panel opens (the two breakpoint-gated instances share one state). */
-export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; setOpen: (v: boolean) => void; asRow?: boolean }) {
+/** The Ask-Cobb button alone — safe to render in as many chrome spots as the
+ *  layout needs (desktop header, mobile header, sidebar row). The conversation
+ *  lives in the ONE <ChatPanel> AppLayout mounts; keeping the panel out of this
+ *  component is the point. It used to be bundled in (one ChatWidget = button +
+ *  panel), and because the panel PORTALS to <body>, the wrappers' hidden /
+ *  md:hidden gating hid only the buttons — every mounted instance's panel
+ *  rendered when the shared `open` flipped, stacked, each holding its own
+ *  conversation. You typed into whichever was on top; a breakpoint resize
+ *  changed which one that was. */
+export function ChatLauncher({ open, setOpen, asRow = false }: { open: boolean; setOpen: (v: boolean) => void; asRow?: boolean }) {
+  const { activeSlug } = useActiveOrg();
+  if (!activeSlug) return null;
+  return (
+    <button
+      type="button"
+      onClick={() => setOpen(!open)}
+      className={asRow ? "w-full flex items-center gap-2.5 px-3 py-1.5 rounded text-[13px] text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/40 transition" : "transition p-1.5 text-faint dark:text-slate-500 hover:text-accent"}
+      title={open ? "Hide Cobb" : "Ask Cobb"}
+      aria-label={open ? "Hide Cobb" : "Ask Cobb"}
+    >
+      <Sparkles size={16} className="shrink-0" />
+      {asRow && <span>Ask Cobb</span>}
+    </button>
+  );
+}
+
+/** The conversation panel. Mounted ONCE (AppLayout), not per launcher: it stays
+ *  mounted while closed so the conversation survives close/reopen, and being
+ *  the only instance is what guarantees one conversation, one portal, one
+ *  prefs fetch, one cobblr:open-chat listener. `open`/`setOpen` are lifted to
+ *  AppLayout so the main content can shift left when the panel opens. */
+export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boolean) => void }) {
   const { activeSlug } = useActiveOrg();
   const navigate = useNavigate();
   const detailRoute = useDetailRoute(activeSlug ?? "");
@@ -483,30 +512,10 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
     </div>
   );
 
-  if (!activeSlug) return null;
+  if (!activeSlug || !open) return null;
 
   return (
-    <>
-      {/* Header trigger — an icon button in the navbar's right cluster (was a
-          floating bottom-right FAB that overlapped modals/cards). The panel
-          still portals to <body> so the header's backdrop-blur can't trap it. */}
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className={asRow ? "w-full flex items-center gap-2.5 px-3 py-1.5 rounded text-[13px] text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/40 transition" : "transition p-1.5 text-faint dark:text-slate-500 hover:text-accent"}
-        title={open ? "Hide Cobb" : "Ask Cobb"}
-        aria-label={open ? "Hide Cobb" : "Ask Cobb"}
-      >
-        <Sparkles size={16} className="shrink-0" />
-        {asRow && <span>Ask Cobb</span>}
-      </button>
-
-      {open &&
-        createPortal(
-        <div
-          data-modal-escape-exempt
-          className="fixed top-0 right-0 z-[60] h-screen w-[min(100vw,440px)] border-l border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-2xl flex flex-col"
-        >
+    <SidePanel width="sm:w-[min(100vw,440px)]" escapeExempt>
           <header className="flex items-center justify-between px-4 py-3 border-b border-line dark:border-slate-700 shrink-0">
             <div className="flex items-center gap-2 text-sm font-semibold text-content dark:text-mortar-100">
               {/* The bust is always the wave — it takes no pose (see CobbBust).
@@ -756,7 +765,7 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
             {sessionStart != null && sessionStart === messages.length && messages.length > 0 && (
               <>
                 {sessionDivider}
-                <div className="min-h-[70vh] shrink-0" aria-hidden="true" />
+                <div className="min-h-[70dvh] shrink-0" aria-hidden="true" />
               </>
             )}
             {/* Waiting on a reply. Cobb's poses are STATES, not decoration, so
@@ -765,9 +774,12 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
                 he shows up because something is happening, and leaves when it
                 stops. */}
             {busy && (
-              <div className="flex items-end gap-2">
+              <div className="flex items-center gap-3">
                 <Cobb pose="working" size={52} title="Cobb, at work" className="cobb-lift shrink-0" />
-                <div className="inline-block rounded-lg px-3 py-2 bg-subtle dark:bg-slate-800 text-faint text-sm">…</div>
+                {/* The "…" is HIS speech bubble (tail pointing back at him), not
+                    a widget that happens to sit nearby — same device as the
+                    Build greeting, in miniature. */}
+                <div className="cobb-bubble cobb-bubble-sm relative rounded-lg px-3 py-2 bg-subtle dark:bg-slate-800 text-faint text-sm">…</div>
               </div>
             )}
             {error && (
@@ -803,9 +815,6 @@ export function ChatWidget({ open, setOpen, asRow = false }: { open: boolean; se
               <Send size={16} />
             </button>
           </div>
-        </div>,
-          document.body,
-        )}
-    </>
+    </SidePanel>
   );
 }

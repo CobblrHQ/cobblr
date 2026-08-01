@@ -9,6 +9,7 @@
 // trivial and dodges email-client rendering quirks.
 
 import { checkEmailConfig, sendEmailVia, type EmailConfig, type ValidConfig } from "../email-send.js";
+import { absoluteAppUrl } from "../public-url.js";
 import type { Channel, ChannelEvent } from "./types.js";
 
 /** Validate config for the chosen provider; null (+ a warn) if incomplete. */
@@ -32,7 +33,7 @@ export const emailChannel: Channel = {
     const text = [
       event.message,
       "",
-      event.link_url ? `Link: ${event.link_url}` : null,
+      event.link_url ? `Link: ${absoluteAppUrl(event.link_url)}` : null,
       "",
       `Priority: ${event.priority}`,
       `Sent by Cobblr.`,
