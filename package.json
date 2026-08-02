@@ -16,8 +16,9 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "typecheck": "pnpm -r run --if-present typecheck",
+    "typecheck": "pnpm -r --no-sort --workspace-concurrency=8 run --if-present typecheck",
     "verify:served": "node scripts/verify-served.mjs",
+    "lint:all": "node scripts/run-lints.mjs",
     "lint:isolation": "tsx scripts/lint-module-isolation.ts",
     "lint:manifests": "tsx scripts/lint-manifests.ts",
     "lint:panel-registry": "tsx scripts/lint-panel-registry.ts",
@@ -65,6 +66,9 @@
     "lint:no-emdash": "tsx scripts/lint-no-emdash.ts",
     "lint:scan-row-title": "tsx scripts/lint-scan-row-title.ts",
     "lint:scan-session-header": "tsx scripts/lint-scan-session-header.ts",
+    "lint:location-vocabulary": "tsx scripts/lint-location-vocabulary.ts",
+    "lint:one-category-normalizer": "tsx scripts/lint-one-category-normalizer.ts",
+    "lint:session-reconciled-props": "tsx scripts/lint-session-reconciled-props.ts",
     "lint:scan-export-fidelity": "tsx scripts/lint-scan-export-fidelity.ts",
     "lint:jsonb-array-writes": "tsx scripts/lint-jsonb-array-writes.ts",
     "lint:metadata-merge": "tsx scripts/lint-metadata-merge.ts",

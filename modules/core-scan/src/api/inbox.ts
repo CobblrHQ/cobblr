@@ -66,6 +66,7 @@ import { findBinContents, findTracked } from "../services/entity-match.js";
 import { cropRegion, detectSplitItems, rotateImage } from "../services/image-ops.js";
 import { extractLocation, type LocationLite } from "../services/note-location.js";
 import { suggestLocationForItem } from "../services/suggest-location.js";
+import { normaliseCategory } from "@cobblr/platform-contract/category-reconcile";
 
 export const inboxRouter = Router({ mergeParams: true });
 
@@ -1307,8 +1308,13 @@ async function growCategoryChoices(
   if (typeof value !== "string" || !value.trim()) return;
   const chosen = value.trim();
   const choices = axis.choices ?? [];
-  const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
-  if (choices.some((c) => norm(c) === norm(chosen))) return; // already in the vocabulary
+  // The SHARED reconciler, not a local normalizer: a local one compared
+  // "Figurines" against "Figurine" and called them different, so confirming the
+  // nine character jugs would have grown TWO entries for one kind - permanently,
+  // and every later scan could then "reuse an existing value" and pick either.
+  // The vocabulary meant to make scans converge was what split them.
+  const key = normaliseCategory(chosen);
+  if (key && choices.some((c) => normaliseCategory(c) === key)) return; // already in the vocabulary
   await fetch(`${baseUrl}/api/v1/orgs/${slug}/field-defs/${axis.id}`, {
     method: "PATCH",
     headers: auth,

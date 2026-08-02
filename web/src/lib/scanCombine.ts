@@ -50,16 +50,58 @@ export function isTitledMedia(it: ScanInboxItem): boolean {
 const UNIT_TOKEN = /^\d+(pk|ct|pcs?|oz|ml|lb|kg|mm|cm|in|ft|gal|qt|ah|mah|[wvagl])$/;
 
 /** Tokens that read as MODEL NUMBERS: letters+digits interleaved ("F27T350FHN",
- *  "S23A300B", "MSB1G"). A model number IS the product's identity — two names
+ *  "S23A300B", "MSB1G"), or a single-letter prefix on a run of digits ("D6733",
+ *  "A1234") - the catalogue-code shape used by Royal Doulton, Hummel, Lego and
+ *  most part numbering. A model number IS the product's identity: two names
  *  whose model numbers disagree are different products no matter how many
- *  generic words ("inch", "monitor") they share. Exported for tests. */
+ *  generic words ("inch", "monitor", "character jug") they share.
+ *
+ *  Requiring TWO letters made a single-letter code invisible, so nine different
+ *  character jugs (D6733, D6527, D6691…) sailed past the veto written for
+ *  exactly this (the author, 2026-08-02). The digit floor is what keeps the looser
+ *  shape honest - "3d", "x10" and "a4" stay words, not identities.
+ *  Exported for tests. */
 export function modelNumberTokens(s: string | null | undefined): Set<string> {
   const out = new Set<string>();
   for (const w of (s ?? "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/)) {
     if (w.length < 4 || UNIT_TOKEN.test(w)) continue;
     const letters = (w.match(/[a-z]/g) ?? []).length;
     const digits = (w.match(/[0-9]/g) ?? []).length;
-    if (letters >= 2 && digits >= 1) out.add(w);
+    if ((letters >= 2 && digits >= 1) || (letters >= 1 && digits >= 3)) out.add(w);
+  }
+  return out;
+}
+
+/**
+ * Words that describe the KIND of thing, not which one - and therefore carry no
+ * identity. "character" and "jug" put nine different Royal Doulton jugs in one
+ * cluster because they cleared the "≥2 shared words" bar between them.
+ *
+ * These are found from the batch, NOT from a list. A list would have to
+ * anticipate every domain (jug, jug, figurine, spool, cartridge, …) and would be
+ * wrong the first time someone scans something we did not think of. What makes a
+ * word a type word is measurable and domain-free: nearly every item in the batch
+ * has it. A word shared by 8 of 9 names is telling you what these things ARE; a
+ * word in 2 of 9 is telling you which one.
+ *
+ * Inert on small batches by design: with two items every shared word trivially
+ * appears in "all" of them, so nothing is suppressed below MIN_DOCS.
+ */
+const GENERIC_MIN_DOCS = 3;
+const GENERIC_MIN_SHARE = 0.4;
+export function genericTokens(items: ScanInboxItem[]): Set<string> {
+  const named = items.filter((i) => i.suggested_name);
+  if (named.length < GENERIC_MIN_DOCS) return new Set();
+  const df = new Map<string, number>();
+  for (const it of named) {
+    const brand = (it.suggested_manufacturer ?? "").trim().toLowerCase();
+    for (const w of productTokens(it.suggested_name, brand)) {
+      df.set(w, (df.get(w) ?? 0) + 1);
+    }
+  }
+  const out = new Set<string>();
+  for (const [w, n] of df) {
+    if (n >= GENERIC_MIN_DOCS && n / named.length >= GENERIC_MIN_SHARE) out.add(w);
   }
   return out;
 }
@@ -101,6 +143,8 @@ export function combinable(
   b: ScanInboxItem,
   seed: Set<string>,
   brand: string,
+  /** Type words measured across the batch; they never count as identity. */
+  generic: Set<string> = new Set(),
 ): boolean {
   if ((b.suggested_manufacturer ?? "").trim().toLowerCase() !== brand) return false;
 
@@ -126,16 +170,22 @@ export function combinable(
     return jaccard(seed, productTokens(b.suggested_name, brand)) >= 0.6;
   }
 
-  const product = productTokens(b.suggested_name, brand);
+  // Compare on what DISTINGUISHES these items, not on what every item in the
+  // batch says. Both sides drop the batch's type words before the count and the
+  // jaccard, so "character jug" cannot vote and "robin hood d6527" still can.
+  const distinct = (t: Set<string>) => new Set([...t].filter((w) => !generic.has(w)));
+  const seedD = distinct(seed);
+  const product = distinct(productTokens(b.suggested_name, brand));
   let shared = 0;
-  for (const w of product) if (seed.has(w)) shared++;
-  return shared >= 2 || jaccard(seed, product) >= 0.5;
+  for (const w of product) if (seedD.has(w)) shared++;
+  return shared >= 2 || jaccard(seedD, product) >= 0.5;
 }
 
 /** Cluster pending items that look like the same product, so the inbox can OFFER
  *  to combine them. Each candidate is compared to the cluster's SEED (its first
  *  member) so a cluster can't drift member-to-member into a different product. */
 export function findCombineClusters(items: ScanInboxItem[]): ScanInboxItem[][] {
+  const generic = genericTokens(items);
   const clusters: { brand: string; seed: Set<string>; head: ScanInboxItem; items: ScanInboxItem[] }[] = [];
   for (const it of items) {
     if (isTitledMedia(it)) continue; // a different title = a different work
@@ -143,7 +193,7 @@ export function findCombineClusters(items: ScanInboxItem[]): ScanInboxItem[][] {
     if (!brand || !it.suggested_name) continue;
     const product = productTokens(it.suggested_name, brand);
     if (product.size === 0) continue;
-    const hit = clusters.find((c) => combinable(c.head, it, c.seed, c.brand));
+    const hit = clusters.find((c) => combinable(c.head, it, c.seed, c.brand, generic));
     if (hit) hit.items.push(it);
     else clusters.push({ brand, seed: product, head: it, items: [it] });
   }

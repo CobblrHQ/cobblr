@@ -54,9 +54,15 @@ export function canonicalSynonym(raw: string | null | undefined): string | null 
   return null;
 }
 
-/** Lowercase, unpunctuated, singular - the form two labels are compared in. */
+/** Lowercase, unpunctuated, singular - the form two labels are compared in.
+ *
+ *  The hyphen used to survive, which quietly defeated the synonym table:
+ *  "Power Tool" reduced to "tool" while "power-tool" stayed "power-tool", so two
+ *  spellings of one category compared as different. Folding it to a space makes
+ *  this strictly stronger than the ad-hoc `[^a-z0-9]` normalizers it replaces,
+ *  which is what let all of them adopt it without trading one gap for another. */
 function comparable(raw: string | null | undefined): string | null {
-  const s = (raw ?? "").toLowerCase().replace(/[^a-z0-9\s-]/g, " ").replace(/\s+/g, " ").trim();
+  const s = (raw ?? "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
   if (!s) return null;
   return s.split(" ").map(singular).join(" ");
 }

@@ -8,73 +8,76 @@
 // PR as the thing that "forces every response through withTitle()". It had never
 // executed once.
 //
-// So the wiring is checked mechanically: a lint:* script in package.json must
-// appear in .forgejo/workflows/ci.yml or in the pre-push hook, or be listed
-// below as deliberately manual WITH a reason.
+// The wiring used to be per-lint CI steps, so this lint grepped ci.yml for each
+// name. It is now DISCOVERY: scripts/run-lints.mjs reads package.json and runs
+// every lint:* it finds, concurrently, in one step. So what has to be checked is
+// different, and stronger:
+//
+//   1. run-lints.mjs's discovery covers every lint:* (minus its own MANUAL list),
+//   2. something actually invokes run-lints.mjs — ci.yml and the pre-push hook,
+//   3. MANUAL carries no entry for a lint that no longer exists.
+//
+// A new lint is now wired by existing. There is nothing to paste and nothing to
+// forget, which is the property that stops the orphan class coming back.
 //
 //   npx tsx scripts/lint-lints-are-wired.ts   (npm run lint:lints-are-wired)
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { MANUAL, discoverLints } from "./run-lints.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-/**
- * Lints that are deliberately NOT in CI. Each needs a reason - "we never got
- * round to it" is not one, and an entry here is a standing invitation to argue.
- */
-const MANUAL: Record<string, string> = {
-  "lint:pdf-bench":
-    "renders PDFs and compares ink coverage, so its baseline is font- and " +
-    "renderer-sensitive; in CI it would report label regressions that are really " +
-    "container font differences. Run it locally when changing label layout.",
-};
-
-const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as {
-  scripts: Record<string, string>;
-};
+const { all, run } = discoverLints();
 const ci = readFileSync(join(ROOT, ".forgejo", "workflows", "ci.yml"), "utf8");
 const hook = readFileSync(join(ROOT, "scripts", "git-hooks", "pre-push"), "utf8");
 
-const lints = Object.keys(pkg.scripts).filter((s) => s.startsWith("lint:"));
-const orphans: string[] = [];
-for (const l of lints) {
-  if (l in MANUAL) continue;
-  // Word-boundary match so `lint:scan-row` does not "find" `lint:scan-row-title`.
-  const re = new RegExp(`${l.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w:-])`);
-  if (!re.test(ci) && !re.test(hook)) orphans.push(l);
+const problems: string[] = [];
+
+// 1. Discovery gap — a lint that is neither run by the runner nor MANUAL.
+const orphans = all.filter((l) => !run.includes(l) && !(l in MANUAL));
+if (orphans.length) {
+  problems.push(
+    `${orphans.length} lint script(s) are neither run by scripts/run-lints.mjs nor listed in its MANUAL:\n` +
+      orphans.map((o) => `    - ${o}`).join("\n"),
+  );
 }
 
-// A stale allowlist is its own rot: an entry for a lint that no longer exists
-// hides the fact that nobody re-checked the list.
-const stale = Object.keys(MANUAL).filter((m) => !lints.includes(m));
+// 2. The runner itself must be invoked. Discovery is worthless if nothing calls it.
+const runsTheRunner = (text: string) => /run-lints\.mjs|\blint:all\b/.test(text);
+if (!runsTheRunner(ci)) {
+  problems.push(
+    "no CI job runs the lint suite — .forgejo/workflows/ci.yml must call `pnpm run lint:all`.\n" +
+      "    Every lint is discovery-wired through that one step; without it, none of them run.",
+  );
+}
+if (!runsTheRunner(hook)) {
+  problems.push(
+    "scripts/git-hooks/pre-push does not run `pnpm run lint:all`, so a push gets no local lint gate.",
+  );
+}
 
-if (orphans.length === 0 && stale.length === 0) {
+// 3. MANUAL rot: an entry for a lint that no longer exists hides the fact that
+//    nobody re-checked the list. `lint:all` is the runner itself, not a script
+//    it should find in its own discovery, so it is exempt from this check.
+const stale = Object.keys(MANUAL).filter((m) => m !== "lint:all" && !all.includes(m));
+if (stale.length) {
+  problems.push(
+    `MANUAL lists ${stale.length} lint(s) that no longer exist:\n` +
+      stale.map((s) => `    - ${s}`).join("\n") +
+      "\n    Remove them from MANUAL in scripts/run-lints.mjs.",
+  );
+}
+
+if (problems.length === 0) {
   console.log(
-    `[lint:lints-are-wired] ✓ all ${lints.length} lint scripts run in CI or pre-push ` +
-      `(${Object.keys(MANUAL).length} deliberately manual).`,
+    `[lint:lints-are-wired] ✓ all ${all.length} lint scripts are discovered by run-lints.mjs and run in ` +
+      `CI + pre-push (${Object.keys(MANUAL).length - 1} deliberately manual).`,
   );
   process.exit(0);
 }
 
-if (orphans.length) {
-  console.error(
-    `\n[lint:lints-are-wired] ✗ ${orphans.length} lint script(s) are never run, so they guard nothing:\n`,
-  );
-  for (const o of orphans) console.error(`  - ${o}`);
-  console.error(
-    `\nAdd a step to .forgejo/workflows/ci.yml:\n\n` +
-      `      - name: <what it protects>\n` +
-      `        run: |\n` +
-      `          set -o pipefail\n` +
-      `          pnpm run ${orphans[0]} 2>&1 | tee -a /tmp/typecheck.out\n\n` +
-      `...or add it to scripts/git-hooks/pre-push, or list it in MANUAL in this file with a reason.\n`,
-  );
-}
-if (stale.length) {
-  console.error(`\n[lint:lints-are-wired] ✗ MANUAL lists ${stale.length} lint(s) that no longer exist:\n`);
-  for (const s of stale) console.error(`  - ${s}`);
-  console.error("\nRemove them from MANUAL in scripts/lint-lints-are-wired.ts.\n");
-}
+console.error("\n[lint:lints-are-wired] ✗\n");
+for (const p of problems) console.error(`  - ${p}\n`);
 process.exit(1);

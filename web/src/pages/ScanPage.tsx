@@ -29,9 +29,13 @@ import {
   Image as ImageIcon,
   LayoutGrid,
   Library,
+  List,
   Loader2,
+  Mail,
   MapPin,
   MonitorSmartphone,
+  MoreHorizontal,
+  Paperclip,
   RefreshCw,
   Pencil,
   RotateCcw,
@@ -50,7 +54,6 @@ import { Modal, useImageSrc, useToast, usePageTitle, colorSwatch, wantsSwatch } 
 import { ScanImportModal } from "../components/ScanImportModal";
 import { ExportInboxModal } from "../components/ExportInboxModal";
 import { CameraCaptureSheet } from "../components/CameraCaptureSheet";
-import { LocationTreePicker } from "../components/LocationTreePicker";
 import { LocationChipPicker } from "../components/LocationChipPicker";
 import { SessionLocationModal } from "../components/SessionLocationModal";
 import { OrganizePlanSheet, SortingPlanView } from "../components/OrganizePlanSheet";
@@ -63,6 +66,8 @@ import { canRerunLookup } from "../lib/scanRerun";
 import { TrackedMatchBanner } from "../components/TrackedMatchBanner";
 import { BinAdjustModal } from "../components/BinAdjustModal";
 import { PairPhoneButton } from "../components/PairPhoneButton";
+import { HeaderMenu, MenuHead, MenuItem, MenuNote, MenuSep } from "../components/HeaderMenu";
+import { classifyOmni, omniPlaceholder } from "./omniIntake";
 import { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 export { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 import { decideLocationScan, filingLabel } from "../lib/scanFiling";
@@ -89,7 +94,7 @@ import {
   sessionLocation,
   declaredCategoryAxis,
   categoryAxisKey,
-  categoryDisplay,
+  categoryChipLabel,
 } from "./sessionCategory";
 import { usePublishChatContext } from "../lib/chat-context";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
@@ -647,12 +652,12 @@ export function ScanPage() {
 
   const qc = useQueryClient();
   const toast = useToast();
-  // UPC entry is the only intake that needs a modal (it needs a keyboard
-  // anyway); Upload triggers the hidden file input DIRECTLY — no modal hop.
-  const [upcOpen, setUpcOpen] = useState(false);
+  // Typing a UPC and pasting product URLs used to be a modal each, reached by
+  // their own header buttons. Both are now the SAME header box, routed by what
+  // was pasted, so the modals and their state are gone. Upload triggers the
+  // hidden file input directly - no modal hop.
   const [importOpen, setImportOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
-  const [urlsOpen, setUrlsOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const receiptRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
@@ -879,7 +884,14 @@ export function ScanPage() {
   // Free-text search over the pending queue: tokenized — every word must
   // match somewhere across name / barcode / AI notes / brand / scan area.
   const [searchQ, setSearchQ] = useState("");
-  const searchTokens = searchQ.toLowerCase().split(/\s+/).filter(Boolean);
+  // ONE box: typing filters the list, a pasted code or link offers to ADD.
+  // `classifyOmni` is pure + unit-tested because mistaking a search for an add
+  // is the one failure that costs the user something (a spurious item to
+  // delete); everything ambiguous therefore stays a search.
+  const omniIntent = classifyOmni(searchQ);
+  // Only PLAIN WORDS filter - a half-typed barcode must not empty the list.
+  const searchTokens =
+    omniIntent.kind === "text" ? omniIntent.value.toLowerCase().split(/\s+/).filter(Boolean) : [];
   const matchesSearch = (it: ScanInboxItem): boolean => {
     if (!searchTokens.length) return true;
     const hay = [
@@ -1109,6 +1121,25 @@ export function ScanPage() {
     }
     return groups.sort((a, b) => b.latest - a.latest);
   }, [batchId, visibleItems, batchMeta]);
+
+  // The category label each item's SESSION agreed on, by item id.
+  //
+  // Reconciliation is cross-item, so a card cannot work it out alone: nine jugs
+  // identified independently rendered "Figurines" and "Figurine" side by side
+  // (the author, 2026-08-02). Computed once here and handed to every InboxCard, so the
+  // list, the sorting-plan card and the gallery modal cannot disagree - three
+  // call sites, one answer.
+  const sessionCategoryByItem = useMemo(() => {
+    const m = new Map<string, string | null>();
+    const groups: ScanInboxItem[][] = sessionGroups
+      ? sessionGroups.map((g) => g.items)
+      : [visibleItems];
+    for (const g of groups) {
+      const agreed = sessionCategory(g).suggestion;
+      for (const it of g) m.set(it.id, agreed);
+    }
+    return m;
+  }, [sessionGroups, visibleItems]);
   // Every group (session or day) carries a meaningful time header now, so show
   // them whenever we're grouping at all.
   const showSessionHeaders = !!sessionGroups && sessionGroups.length > 0;
@@ -1392,7 +1423,7 @@ export function ScanPage() {
   // BT scanner, or — Phase 2 — an edge bridge) drives whichever tab opted in.
   const scanDrive = useScanDrive(activeSlug, batchId ?? undefined);
   useBarcodeWedge({
-    enabled: !!activeSlug && !upcOpen,
+    enabled: !!activeSlug,
     onScan: (code) => {
       if (scanDrive.on) {
         scanDrive.scan(code);
@@ -1586,8 +1617,76 @@ export function ScanPage() {
     }
   };
 
-  const headerBtn =
-    "inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-700 text-sm text-content hover:bg-subtle dark:hover:bg-slate-800/70 px-2.5 py-1.5 transition shrink-0";
+  /** An icon-sized header control. */
+  const headerIcon =
+    "inline-flex items-center justify-center rounded border border-line dark:border-slate-700 text-content hover:bg-subtle dark:hover:bg-slate-800/70 p-1.5 transition shrink-0";
+
+  // ── the one intake box ────────────────────────────────────────────────────
+  const [omniOpen, setOmniOpen] = useState(false);
+  const omniRef = useRef<HTMLInputElement>(null);
+  const submitOmni = async () => {
+    const intent = classifyOmni(searchQ);
+    if (intent.kind === "upc") {
+      wedgeScan.mutate(intent.value);
+      setSearchQ("");
+      return;
+    }
+    if (intent.kind === "url" || intent.kind === "urls") {
+      const urls = intent.value.split("\n").slice(0, 50);
+      setSearchQ("");
+      let ok = 0;
+      for (const url of urls) {
+        try {
+          await api.scanBarcode(activeSlug, {
+            source_kind: "url",
+            source_url: url,
+            target_location_id: fileBin || undefined,
+          });
+          ok++;
+        } catch {
+          /* skip bad ones; the summary reflects what landed */
+        }
+      }
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      toast.success(`Added ${ok} URL${ok === 1 ? "" : "s"} - identifying in the inbox.`);
+    }
+  };
+  // Dropping a file on the box routes by TYPE, so there is no "which kind of
+  // file" question: images are photo intake, a PDF/CSV is a receipt.
+  const [dropHot, setDropHot] = useState(false);
+  const onOmniDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDropHot(false);
+    const files = Array.from(e.dataTransfer.files ?? []);
+    if (!files.length) return;
+    const images = files.filter((f) => f.type.startsWith("image/"));
+    if (images.length === files.length) {
+      void uploadPhotos(images);
+      return;
+    }
+    const first = files[0];
+    if (first) void uploadReceipt(first);
+  };
+
+  // The inbox's own numbers, as ONE statement rather than four chips. They are
+  // facets of the SAME pending items, so they read as a sentence and each is a
+  // filter (a count in a header is a filter, never a verb).
+  //
+  // DISJOINT on purpose: `isReadyToFile` (a name + a destination) and
+  // `needsReview` (no name / low confidence / rate-limited) genuinely overlap in
+  // the data - a named item at 0.4 confidence is both - and showing 5 ready + 3
+  // review over 8 items when two are counted twice is a lie the eye can check.
+  // Review wins, matching how the page tells you to work: bulk-confirm the
+  // confident ones, then focus the rest.
+  const confidentCount = items.filter((i) => isReadyToFile(i) && !needsReview(i)).length;
+
+  // The standing bin, resolved to a location so the chip can NAME it.
+  const fileBinName = fileBin ? (locsQ.data?.items ?? []).find((l) => l.id === fileBin) : null;
+  // Items sitting here with no location of their own. The standing bin only
+  // stamps target_location_id at SCAN time, so anything scanned before it was
+  // set is still loose - this is the count the menu offers to fix.
+  const looseIds = items.filter((i) => !i.target_location_id).map((i) => i.id);
+  const looseCount = looseIds.length;
 
   // Bulk triage: select N items, then confirm / discard the whole selection at
   // once (each confirm routes to its own matchmaker top candidate, fields and
@@ -1683,6 +1782,7 @@ export function ScanPage() {
         item={it}
         pageTarget={target}
         menu={menu}
+        sessionCategoryLabel={sessionCategoryByItem.get(it.id) ?? null}
         hasLocations={hasLocations}
         rateLimitGaveUp={rlGaveUp.has(it.id)}
         defaultExpanded
@@ -1702,10 +1802,13 @@ export function ScanPage() {
       toast.error("Couldn't load the plan for the walk.");
     }
   };
-  const bulkApplyLocation = async (locId: string) => {
+  /** Set a location on a set of items. Defaults to the current selection; the
+   *  header's "also set location on the N already here" passes ids directly,
+   *  since those items are not (and need not be) selected. */
+  const bulkApplyLocation = async (locId: string, explicitIds?: string[]) => {
     setBulkBusy(true);
     setBulkLocOpen(false);
-    const ids = [...selected];
+    const ids = explicitIds ?? [...selected];
     let ok = 0;
     for (const id of ids) {
       try {
@@ -1716,7 +1819,7 @@ export function ScanPage() {
       }
     }
     setBulkBusy(false);
-    clearSelected();
+    if (!explicitIds) clearSelected();
     void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
     const name = (locsQ.data?.items ?? []).find((l) => l.id === locId);
     toast.success(`Filed ${ok} item${ok === 1 ? "" : "s"} into ${name ? filingLabel(name) : "the location"}.`);
@@ -1927,210 +2030,380 @@ export function ScanPage() {
 
   return (
     <div className="space-y-3 max-w-4xl mx-auto">
-      {/* ── the ONE header row: identity + intake. Short word labels;
-            compact paddings keep it one row on phones. ──────────────── */}
-      {/* flex-wrap at every size: the identity chips are all shrink-0, so
-          without wrapping the two clusters OVERLAP at mid widths (~1500px
-          with several chips visible). Wrapping drops intake to its own row
-          exactly when it needs one. */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:flex-wrap border-b border-line dark:border-slate-700 pb-2.5">
-        {/* identity — title, count, review/session chips */}
-        <div className="flex items-center gap-2 min-w-0 flex-wrap">
-        <h1 className="text-lg font-semibold text-content dark:text-mortar-100 shrink-0">
+      {/* ── ONE header row ───────────────────────────────────────────────────
+          It never WRAPS; it yields, in a declared order (the field collapses to
+          a magnifier, labels drop to icons, the title goes, informational
+          labels truncate to a legible floor). Picking max-widths that happen to
+          fit today's copy is what produced the old two-row header, where
+          "Email receipts" and the overflow orphaned onto a second line.
+          See docs/design-decisions/interface-principles.md #5 and #6. */}
+      <div className="flex items-center gap-2 flex-nowrap border-b border-line dark:border-slate-700 pb-2.5">
+        {/* The nav bar above already names this page, so on a phone the word
+            "Inbox" is row width spent repeating the shell (principle #4). */}
+        <h1 className="hidden sm:block text-lg font-semibold text-content dark:text-mortar-100 shrink-0">
           Inbox
         </h1>
-        <span className="text-sm text-muted dark:text-slate-400 shrink-0">
-          {totalPending}
-          <span className="hidden sm:inline"> pending</span>
-        </span>
-        {/* The two lenses on the same pending items: by scan session, or by
-            destination (the sorting plan). Only worth offering when there's a
-            backlog to sort. */}
-        {(unfiledCount > 0 || readyCount > 0) && (
-          <div className="inline-flex items-center rounded-full border border-line dark:border-slate-700 p-0.5 text-xs shrink-0">
-            {(
-              [
-                ["sessions", "By session"],
-                ["plan", "Sorting plan"],
-              ] as const
-            ).map(([mode, label]) => (
+
+        {/* The backlog as ONE sentence. Facets of the same items, each a
+            filter, never a verb (principle #3 - there is no bulk confirm). */}
+        <div className="flex items-baseline gap-0 shrink-0 whitespace-nowrap text-[13px] text-muted dark:text-slate-400">
+          <span className="text-sm font-semibold text-content dark:text-mortar-100">
+            {totalPending}
+          </span>
+          {/* `xs:` is not a breakpoint in this project (no custom screens), so
+              the old "hidden xs:inline sm:inline" was just "hidden sm:inline"
+              wearing a dead class. The word costs ~50px that a phone row spends
+              better on the location; an EMPTY inbox keeps it, because a lone
+              "0" is a riddle. */}
+          <span className={totalPending === 0 ? "" : "hidden sm:inline"}>&nbsp;pending</span>
+          {confidentCount > 0 && confidentCount < totalPending && (
+            <>
+              <span className="px-0.5 sm:px-1 text-faint">·</span>
               <button
-                key={mode}
                 type="button"
-                onClick={() => setViewMode(mode)}
-                aria-pressed={viewMode === mode}
+                onClick={() => {
+                  setReviewOnly(false);
+                  setStaleOnly(false);
+                }}
+                title="A confident name and destination, nothing flagged - these are what File all commits"
+                className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate-800 transition"
+              >
+                <b className="font-semibold text-emerald-600 dark:text-emerald-400">
+                  {confidentCount}
+                </b>
+                <span className="hidden lg:inline">&nbsp;ready</span>
+                <span className="lg:hidden">&nbsp;✓</span>
+              </button>
+            </>
+          )}
+          {reviewCount > 0 && (
+            <>
+              <span className="px-0.5 sm:px-1 text-faint">·</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setStaleOnly(false);
+                  setReviewOnly((v) => !v);
+                }}
+                aria-pressed={reviewOnly}
+                title="No clean name, low confidence, or the lookup was rate-limited - these need a human"
                 className={
-                  "rounded-full px-2.5 py-0.5 transition " +
-                  (viewMode === mode
-                    ? "bg-cobble-600 text-white font-medium"
-                    : "text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100")
+                  "rounded px-1 py-0.5 text-[12.5px] transition " +
+                  (reviewOnly
+                    ? "bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200"
+                    : "hover:bg-subtle dark:hover:bg-slate-800")
                 }
               >
-                {label}
+                <b className="font-semibold text-amber-600 dark:text-amber-400">{reviewCount}</b>
+                <span className="hidden lg:inline">&nbsp;to review</span>
+                <span className="lg:hidden">&nbsp;⚠</span>
               </button>
-            ))}
-          </div>
-        )}
-        {/* The always-on catalog-photo pick. A workspace switch, so it lives on
-            the page (not per card): the per-item press is the ✨ button in a
-            card's photo strip. Owner/admin only — flipping it on starts paying a
-            vision call per enriched scan. */}
-        {canSetPhotoRank && photoRank.data && (
-          <button
-            type="button"
-            disabled={setPhotoRank.isPending}
-            onClick={() => setPhotoRank.mutate(!photoRank.data.enabled)}
-            aria-pressed={photoRank.data.enabled}
-            title={
-              photoRank.data.enabled
-                ? "AI picks the catalog photo on every scan. Tap to go back to picking only when you press Pick best."
-                : "Let AI pick the catalog photo on every scan (uses more AI). Today it only runs when you press Pick best on an item."
-            }
-            className={
-              "shrink-0 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition disabled:opacity-50 " +
-              (photoRank.data.enabled
-                ? "border-accent bg-cobble-50 dark:bg-cobble-900/30 text-accent"
-                : "border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:text-content hover:border-faint")
-            }
-          >
-            <Sparkles size={11} className={setPhotoRank.isPending ? "animate-pulse" : ""} />
-            <span className="hidden sm:inline">Auto-pick photos</span>
-            <span className="sm:hidden">Auto-pick</span>
-            <span className="font-medium">{photoRank.data.enabled ? "on" : "off"}</span>
-          </button>
-        )}
-        {reviewCount > 0 && (
-          <button
-            type="button"
-            onClick={() => setReviewOnly((v) => !v)}
-            title="Show only items that didn't cleanly resolve"
-            className={
-              "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs shrink-0 transition " +
-              (reviewOnly
-                ? "border-amber-500 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300"
-                : "border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:border-amber-400")
-            }
-          >
-            ⚠ {reviewCount} need{reviewCount === 1 ? "s" : ""} review
-          </button>
-        )}
-        <div className="relative inline-flex items-center shrink-0">
-          <Search size={12} className="absolute left-2 text-faint pointer-events-none" />
-          <input
-            value={searchQ}
-            onChange={(e) => setSearchQ(e.target.value)}
-            placeholder="search inbox…"
-            aria-label="Search the pending queue"
-            className="w-36 sm:w-44 rounded-full border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 pl-7 pr-6 py-0.5 text-xs text-content focus:border-accent outline-none"
-          />
-          {searchQ && (
-            <button
-              type="button"
-              onClick={() => setSearchQ("")}
-              aria-label="Clear search"
-              className="absolute right-1.5 text-faint hover:text-content"
-            >
-              <X size={11} />
-            </button>
+            </>
+          )}
+          {/* A facet covering the WHOLE set states one fact twice ("69 pending ·
+              69 waiting 2d+"), so it earns its space only as a subset. */}
+          {staleCount > 0 && staleCount < totalPending && (
+            <>
+              <span className="px-0.5 sm:px-1 text-faint">·</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setReviewOnly(false);
+                  setStaleOnly((v) => !v);
+                }}
+                aria-pressed={staleOnly}
+                title="Waiting more than two days"
+                className={
+                  "rounded px-1 py-0.5 text-[12.5px] transition " +
+                  (staleOnly
+                    ? "bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200"
+                    : "hover:bg-subtle dark:hover:bg-slate-800")
+                }
+              >
+                <b className="font-semibold">{staleCount}</b>
+                <span className="hidden lg:inline">&nbsp;waiting 2d+</span>
+                <span className="lg:hidden">&nbsp;⏱</span>
+              </button>
+            </>
           )}
         </div>
-        {searchTokens.length > 0 && (
-          <span className="text-[11px] text-muted shrink-0">
-            {visibleItems.length} / {items.length}
-          </span>
-        )}
-        {staleCount > 0 && (
-          <button
-            type="button"
-            onClick={() => setStaleOnly((v) => !v)}
-            title="Items that have been waiting over two days"
-            className={
-              "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs shrink-0 transition " +
-              (staleOnly
-                ? "border-amber-500 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300"
-                : "border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:border-amber-400")
-            }
-          >
-            🕰 {staleCount} waiting 2d+
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={toggleGalleryView}
-          title={galleryView ? "List view" : "Gallery view — big photo tiles"}
-          className="inline-flex items-center gap-1 rounded-full border border-line dark:border-slate-700 px-2 py-0.5 text-xs text-muted dark:text-slate-400 hover:border-accent shrink-0"
-        >
-          <LayoutGrid size={12} className={galleryView ? "text-accent" : ""} />
-          {galleryView ? "gallery" : "list"}
-        </button>
-        <button
-          type="button"
-          onClick={() =>
-            void api
-              .backfillScanCatalogPhotos(activeSlug)
-              .then((r) =>
-                toast.success(
-                  r.queued
-                    ? `Finding photos for ${r.queued} item${r.queued === 1 ? "" : "s"}…`
-                    : "Every named item already has a photo",
-                ),
-              )
-              .catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)))
-          }
-          title="Find catalog photos for named items that don't have one"
-          className="inline-flex items-center gap-1 rounded-full border border-line dark:border-slate-700 px-2 py-0.5 text-xs text-muted dark:text-slate-400 hover:border-accent shrink-0"
-        >
-          <ImageIcon size={12} /> fill photos
-        </button>
+
+        {/* Reviewing one session (?batch). Was a chip at the end of a wrapping
+            row, where it was the first thing to fall off. */}
         {batchId && (
           <Link
             to="/scan"
             title="Filtered to this scan session - tap to show everything pending"
-            className="inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-2.5 py-0.5 text-xs text-content dark:text-mortar-100 shrink-0 hover:border-cobble-400"
+            className="inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-2.5 py-0.5 text-xs text-content dark:text-mortar-100 shrink min-w-0 max-w-[9rem] sm:max-w-none hover:border-cobble-400"
           >
-            {(() => {
-              // Name the session by its newest item's time (+ area) so the chip
-              // says WHICH burst you're reviewing, not just "session".
-              const newest = items[0];
-              const t = newest ? Date.parse(newest.created_at) : NaN;
-              const area = items.find((i) => i.scan_area)?.scan_area;
-              return `session${Number.isFinite(t) ? ` · ${formatSessionTime(t)}` : ""}${area ? ` · ${area}` : ""}`;
-            })()}
-            <X size={12} className="text-faint" />
+            <span className="truncate">
+              {(() => {
+                const newest = items[0];
+                const t = newest ? Date.parse(newest.created_at) : NaN;
+                const area = items.find((i) => i.scan_area)?.scan_area;
+                return `session${Number.isFinite(t) ? ` · ${formatSessionTime(t)}` : ""}${area ? ` · ${area}` : ""}`;
+              })()}
+            </span>
+            <X size={12} className="text-faint shrink-0" />
           </Link>
         )}
-        </div>
-        <div className="hidden sm:block sm:flex-1" />
-        {/* intake — a horizontal-scroll strip on mobile so it NEVER overflows no
-            matter how many buttons get added; a normal row on desktop. */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 -mb-1 sm:overflow-visible sm:pb-0 sm:mb-0">
-        <button
-          type="button"
-          onClick={() => setUpcOpen(true)}
-          title="Type or scan-gun a UPC"
-          className={headerBtn}
+
+        {/* Where the NEXT scan files. The label is the ACTION at every width -
+            "Set location" reads the same on a phone and a desktop, so there is
+            one term to learn rather than a per-breakpoint synonym
+            (the author, 2026-08-01). The MENU carries the scope the label cannot. */}
+        {locsEnabled && (
+          <HeaderMenu
+            width={300}
+            // The declared order of sacrifice: this label truncates before the
+            // row is allowed to overflow, and never below a legible floor.
+            shrinkable
+            minWidth={104}
+            trigger={({ open, toggle }) => (
+              <button
+                type="button"
+                onClick={toggle}
+                aria-expanded={open}
+                title={
+                  fileBinName
+                    ? `New scans file into ${filingLabel(fileBinName)}. Items already in the inbox keep their own location.`
+                    : "Choose where new scans file as you scan them"
+                }
+                className={
+                  "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11.5px] font-medium min-w-0 transition " +
+                  (fileBin
+                    ? "border-cobble-400 dark:border-cobble-600 bg-cobble-50/60 dark:bg-cobble-900/25 text-content dark:text-mortar-100"
+                    : "border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:border-cobble-400")
+                }
+              >
+                <MapPin size={12} className="shrink-0" />
+                <span className="truncate">
+                  {fileBinName ? filingLabel(fileBinName) : "Set location"}
+                </span>
+              </button>
+            )}
+          >
+            {({ close }) => (
+              <>
+                <MenuHead>New scans go to</MenuHead>
+                <MenuNote>
+                  Applies to what you scan next. Items already here keep their own
+                  location until you file them.
+                </MenuNote>
+                {/* The CHIP picker, not the tree picker: a tree picker is itself
+                    a collapsed dropdown, so nesting one here made setting a
+                    location a two-click errand inside a menu that exists to
+                    make it one. */}
+                <div className="max-h-64 overflow-y-auto px-2 pb-1.5">
+                  <LocationChipPicker
+                    value={fileBin || null}
+                    onChange={(v) => {
+                      setFileBin(v ?? "");
+                      close();
+                    }}
+                  />
+                </div>
+                {fileBin && (
+                  <>
+                    <MenuSep />
+                    {/* The bridge between the two location controls: the standing
+                        bin only stamps FUTURE scans, so this is how the items
+                        already sitting here get the same home. Without it, a bin
+                        set after scanning silently left them unplaced. */}
+                    {looseCount > 0 && (
+                      <MenuItem
+                        icon={<MapPin size={14} />}
+                        label={
+                          <>
+                            Also set location on the <b>{looseCount}</b> already here
+                          </>
+                        }
+                        hint="The ones with no location of their own"
+                        onClick={() => {
+                          close();
+                          void bulkApplyLocation(fileBin, looseIds);
+                        }}
+                      />
+                    )}
+                    <MenuItem
+                      icon={<X size={14} />}
+                      label="Stop filing new scans"
+                      onClick={() => {
+                        setFileBin("");
+                        close();
+                      }}
+                    />
+                  </>
+                )}
+              </>
+            )}
+          </HeaderMenu>
+        )}
+
+        {/* ONE intake box. Words filter; a pasted code or link offers to add;
+            a dropped file routes by type. Two text boxes side by side was the
+            reason this header needed two rows. */}
+        <label
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDropHot(true);
+          }}
+          onDragLeave={() => setDropHot(false)}
+          onDrop={onOmniDrop}
+          onClick={() => {
+            if (!omniOpen) {
+              setOmniOpen(true);
+              setTimeout(() => omniRef.current?.focus(), 0);
+            }
+          }}
+          className={
+            "flex items-center gap-1.5 rounded-full border px-2.5 py-1 transition min-w-0 " +
+            (dropHot
+              ? "border-accent border-dashed bg-cobble-50/60 dark:bg-cobble-900/25 "
+              : "border-dashed border-line dark:border-slate-700 ") +
+            // Wide: always open and elastic. Tight: a magnifier that expands to
+            // the whole row when used - a placeholder truncated to "Search, pa"
+            // tells nobody anything and reads as broken.
+            (omniOpen
+              ? "flex-1 min-w-[9rem] order-last sm:order-none w-full sm:w-auto"
+              : "flex-1 min-w-[9rem] hidden sm:flex") +
+            " " +
+            (omniOpen ? "" : "cursor-text")
+          }
         >
-          <ScanLine size={15} /> UPC
-        </button>
-        {/* Photo intake sits SECOND (right after UPC) so it's reachable on
-            mobile without scrolling the strip — and carries an image icon, not
-            the Upload icon, so it can't be mistaken for the batch Import below.
-            accept="image/*" + multiple → phone offers Take Photo / Photo Library
-            (multi-select) / Files; a multi-select groups as one batch. */}
-        <button
-          type="button"
-          onClick={() => fileRef.current?.click()}
-          disabled={uploading}
-          title="Add photos - take one now or pick several from this device; multiple photos come in as one batch"
-          className={headerBtn + (uploading ? " opacity-50" : "")}
-        >
-          <ImageIcon size={15} />{" "}
-          {uploadProgress
-            ? `adding ${uploadProgress.done}/${uploadProgress.total}…`
-            : uploading
-              ? "adding…"
-              : "Photos"}
-        </button>
+          {omniIntent.kind === "upc" ? (
+            <ScanLine size={13} className="shrink-0 text-accent" />
+          ) : omniIntent.kind === "url" || omniIntent.kind === "urls" ? (
+            <ExternalLink size={13} className="shrink-0 text-accent" />
+          ) : (
+            <Search size={13} className="shrink-0 text-faint" />
+          )}
+          <input
+            ref={omniRef}
+            value={searchQ}
+            onChange={(e) => setSearchQ(e.target.value)}
+            onBlur={() => {
+              // Collapsing while it holds text would eat the search you are
+              // in the middle of typing.
+              if (!searchQ.trim()) setOmniOpen(false);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && omniIntent.action) {
+                e.preventDefault();
+                void submitOmni();
+              } else if (e.key === "Escape") {
+                setSearchQ("");
+                e.currentTarget.blur();
+              }
+            }}
+            placeholder={omniPlaceholder(false)}
+            aria-label="Search the inbox, or paste a UPC or link to add"
+            className="min-w-0 flex-1 bg-transparent text-[13px] text-content dark:text-mortar-100 placeholder:text-faint outline-none"
+          />
+          {/* Upload progress reports where the upload was STARTED, so a
+              multi-photo add still says "3/8" instead of going quiet once its
+              button became a menu row. */}
+          {uploading && (
+            <span className="shrink-0 inline-flex items-center gap-1 text-[11px] text-muted dark:text-slate-400">
+              <Loader2 size={11} className="animate-spin" />
+              {uploadProgress ? `${uploadProgress.done}/${uploadProgress.total}` : "adding…"}
+            </span>
+          )}
+          {omniIntent.action ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                void submitOmni();
+              }}
+              className="shrink-0 rounded-full bg-cobble-600 hover:bg-cobble-700 px-2 py-0.5 text-[11px] font-medium text-white transition"
+            >
+              {omniIntent.action}
+            </button>
+          ) : searchQ ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                setSearchQ("");
+              }}
+              aria-label="Clear search"
+              className="shrink-0 text-faint hover:text-content"
+            >
+              <X size={12} />
+            </button>
+          ) : null}
+          {/* Files, by what they ARE - not a "which kind of upload" question. */}
+          <HeaderMenu
+            align="right"
+            trigger={({ toggle }) => (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  toggle();
+                }}
+                aria-label="Add a file"
+                title="Photos, a receipt, or an export to import"
+                className="shrink-0 text-faint hover:text-accent transition"
+              >
+                <Paperclip size={13} />
+              </button>
+            )}
+          >
+            {({ close }) => (
+              <>
+                <MenuHead>Add a file</MenuHead>
+                <MenuItem
+                  icon={<ImageIcon size={14} />}
+                  label="Photos"
+                  hint="Several at once come in as one session"
+                  disabled={uploading}
+                  onClick={() => {
+                    close();
+                    fileRef.current?.click();
+                  }}
+                />
+                <MenuItem
+                  icon={<FileText size={14} />}
+                  label="Receipt"
+                  hint="CSV, PDF or a photo - we pull out the line items"
+                  disabled={uploading}
+                  onClick={() => {
+                    close();
+                    receiptRef.current?.click();
+                  }}
+                />
+                <MenuItem
+                  icon={<Upload size={14} />}
+                  label="Import an export"
+                  hint="JSON or CSV, reversible in one click"
+                  onClick={() => {
+                    close();
+                    setImportOpen(true);
+                  }}
+                />
+              </>
+            )}
+          </HeaderMenu>
+        </label>
+
+        {/* Tight widths: the magnifier that opens the box above. */}
+        {!omniOpen && (
+          <button
+            type="button"
+            onClick={() => {
+              setOmniOpen(true);
+              setTimeout(() => omniRef.current?.focus(), 0);
+            }}
+            aria-label="Search the inbox"
+            className={headerIcon + " sm:hidden"}
+          >
+            <Search size={14} />
+          </button>
+        )}
+
         <input
           ref={fileRef}
           type="file"
@@ -2142,55 +2415,6 @@ export function ScanPage() {
             if (fs.length) void uploadPhotos(fs);
           }}
         />
-        <button
-          type="button"
-          onClick={() => setUrlsOpen(true)}
-          title="Paste product URLs - one per line - to catalog them in bulk"
-          className={headerBtn}
-        >
-          <ExternalLink size={15} /> URLs
-        </button>
-        <button
-          type="button"
-          onClick={() => setImportOpen(true)}
-          title="Import a batch from a file - JSON/CSV inbox exports or any CSV"
-          className={headerBtn}
-        >
-          <Upload size={15} /> Import
-        </button>
-        <button
-          type="button"
-          onClick={() => setExportOpen(true)}
-          title="Export inbox items to a file - pick which items and how photos travel (link vs baked-in)"
-          className={headerBtn}
-        >
-          <Download size={15} /> Export
-        </button>
-        <button
-          type="button"
-          onClick={() => setOrganizeUnplacedOpen(true)}
-          title="Plan homes for tracked things that have no location yet - grouped, with destination bins proposed"
-          className={headerBtn}
-        >
-          <Wand2 size={15} /> Organize
-        </button>
-        <button
-          type="button"
-          onClick={() => setLiveSortOpen(true)}
-          title="Live Sort: scan a thing, get told which bin it goes in, confirm, next - sort a pile in one pass"
-          className={headerBtn}
-        >
-          <Zap size={15} /> Live Sort
-        </button>
-        <button
-          type="button"
-          onClick={() => receiptRef.current?.click()}
-          disabled={uploading}
-          title="Upload a receipt - CSV, PDF, or a photo - we'll pull out the line items"
-          className={headerBtn + (uploading ? " opacity-50" : "")}
-        >
-          <FileText size={15} /> Receipt
-        </button>
         <input
           ref={receiptRef}
           type="file"
@@ -2201,79 +2425,163 @@ export function ScanPage() {
             if (f) void uploadReceipt(f);
           }}
         />
+
+        {/* The camera stays on desktop (some do have one) but quietly; on a
+            phone the app shell's HeaderActions already renders core-scan's
+            camera, and a second door to it is just another thing to scan past
+            (principle #4). */}
         <Link
           to={`/scan/camera${params.toString() ? `?${params}` : ""}`}
           title="Open the full-screen scanner"
           aria-label="Open the camera scanner"
-          className="inline-flex items-center rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2.5 py-1.5 transition shrink-0"
+          className={headerIcon + " hidden sm:inline-flex"}
         >
-          <Camera size={16} />
+          <Camera size={15} />
         </Link>
-        {/* Desktop (no camera) → pair a phone to scan into this same inbox.
-            Renders null on touch devices, where the camera above is primary. */}
-        <PairPhoneButton className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-700 text-sm text-content hover:bg-subtle dark:hover:bg-slate-800/70 px-2.5 py-1.5 transition shrink-0" />
-        </div>
-      </div>
+        <button
+          type="button"
+          onClick={() => setLiveSortOpen(true)}
+          title="Live Sort: scan a thing, get told which location it goes in, confirm, next - sort a pile in one pass"
+          aria-label="Live Sort"
+          className={headerIcon}
+        >
+          <Zap size={15} className="text-amber-500" />
+        </button>
 
-      {/* Secondary intake metadata — the active filing bin (every scan files
-          into this core-locations node until cleared) + the receipt drop-box
-          address — packed onto ONE wrapping row so the header stays short. */}
-      {(locsEnabled || receiptAddress) && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm -mt-1">
-          {locsEnabled && (
-            <div className="flex items-center gap-2 min-w-0">
-              <span
-                className="inline-flex items-center gap-1 text-muted dark:text-slate-400 shrink-0"
-                title="New scans auto-file into this location as you scan. To set a location on items you've ALREADY scanned, select them and use ‘Set location’ in the toolbar."
-              >
-                <MapPin size={14} /> New scans →
-              </span>
-              <div className="min-w-0 max-w-[16rem] sm:max-w-[26rem]">
-                <LocationTreePicker
-                  value={fileBin || null}
-                  onChange={(v) => setFileBin(v ?? "")}
-                  placeholder="pick a location"
-                  size="sm"
-                />
-              </div>
-              {fileBin && (
-                <button
-                  type="button"
-                  onClick={() => setFileBin("")}
-                  className="text-xs text-faint hover:text-content dark:hover:text-mortar-100 shrink-0"
-                >
-                  clear
-                </button>
-              )}
-            </div>
-          )}
-          {receiptAddress && (
-            // sm:ml-auto pushes the receipt drop-box to the far right on a wide
-            // header, freeing the middle so the location picker (widened above)
-            // can show a full "Room > Bin" path instead of truncating.
-            <div className="flex items-center gap-1.5 min-w-0 text-xs text-muted dark:text-slate-400 sm:ml-auto">
-              <FileText size={13} className="text-faint shrink-0" />
-              <span className="shrink-0">Email receipts to</span>
-              {/* Capped, horizontally-scrollable chip: the long +tag address is
-                  cut off so it never eats a full row, but stays fully selectable
-                  and scrollable (and Copy grabs the whole thing regardless). */}
-              <code className="block max-w-[8.5rem] sm:max-w-[13rem] overflow-x-auto whitespace-nowrap rounded bg-mortar-100 dark:bg-slate-800 px-1.5 py-0.5 text-content dark:text-mortar-100 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                {receiptAddress}
-              </code>
+        {/* A feature nobody can find is a feature that does not exist, so the
+            receipt address keeps a visible affordance on desktop and reveals +
+            copies in one press (principle #2). On a phone it moves into the
+            overflow rather than vanishing. */}
+        {receiptAddress && (
+          <HeaderMenu
+            width={280}
+            align="right"
+            className="hidden sm:inline-flex"
+            trigger={({ toggle }) => (
               <button
                 type="button"
-                className="shrink-0 text-accent hover:underline"
-                onClick={() => {
-                  void navigator.clipboard?.writeText(receiptAddress);
-                  toast.success("Address copied");
-                }}
+                onClick={toggle}
+                title="Forward a receipt to this address and its lines become items"
+                className={
+                  "inline-flex items-center gap-1.5 rounded-full border border-line dark:border-slate-700 px-2.5 py-1 text-[11.5px] text-muted dark:text-slate-400 hover:border-accent hover:text-content transition shrink-0"
+                }
               >
-                Copy
+                <Mail size={12} />
+                <span className="hidden lg:inline">Email receipts</span>
               </button>
-            </div>
+            )}
+          >
+            {() => (
+              <>
+                <MenuHead>Email receipts to</MenuHead>
+                <div className="px-3 pb-2">
+                  <code className="block overflow-x-auto whitespace-nowrap rounded bg-mortar-100 dark:bg-slate-800 px-1.5 py-1 text-[11px] text-content dark:text-mortar-100 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                    {receiptAddress}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(receiptAddress);
+                      toast.success("Address copied");
+                    }}
+                    className="mt-1.5 w-full rounded bg-cobble-600 hover:bg-cobble-700 px-2 py-1 text-[11px] font-medium text-white transition"
+                  >
+                    Copy address
+                  </button>
+                </div>
+              </>
+            )}
+          </HeaderMenu>
+        )}
+
+        {/* Everything that is real but rare. Grouped by what it acts ON, so
+            "this inbox" and "elsewhere in the workspace" cannot be confused. */}
+        <HeaderMenu
+          width={264}
+          align="right"
+          trigger={({ toggle }) => (
+            <button
+              type="button"
+              onClick={toggle}
+              aria-label="More inbox actions"
+              className={headerIcon}
+            >
+              <MoreHorizontal size={15} />
+            </button>
           )}
-        </div>
-      )}
+        >
+          {({ close }) => (
+            <>
+              <MenuHead>This inbox</MenuHead>
+              <MenuItem
+                icon={<ImageIcon size={14} />}
+                label="Fill missing photos"
+                hint="Find catalog photos for named items without one"
+                onClick={() => {
+                  close();
+                  void api
+                    .backfillScanCatalogPhotos(activeSlug)
+                    .then((r) =>
+                      toast.success(
+                        r.queued
+                          ? `Finding photos for ${r.queued} item${r.queued === 1 ? "" : "s"}…`
+                          : "Every named item already has a photo",
+                      ),
+                    )
+                    .catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)));
+                }}
+              />
+              <MenuItem
+                icon={<Download size={14} />}
+                label="Export…"
+                hint="Pick items and how photos travel"
+                onClick={() => {
+                  close();
+                  setExportOpen(true);
+                }}
+              />
+              {receiptAddress && (
+                <span className="sm:hidden">
+                  <MenuItem
+                    icon={<Mail size={14} />}
+                    label="Email receipts to…"
+                    hint="Forward a receipt; its lines become items"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(receiptAddress);
+                      toast.success("Address copied");
+                      close();
+                    }}
+                  />
+                </span>
+              )}
+              <MenuSep />
+              <MenuHead>Elsewhere</MenuHead>
+              <MenuItem
+                icon={<Wand2 size={14} />}
+                label="Things with no location"
+                hint="Already filed - not in this inbox"
+                onClick={() => {
+                  close();
+                  setOrganizeUnplacedOpen(true);
+                }}
+              />
+              <MenuSep />
+              <MenuHead>Capture setup</MenuHead>
+              <PairPhoneButton asMenuItem onPaired={close} />
+              {canSetPhotoRank && photoRank.data && (
+                <MenuItem
+                  icon={<Sparkles size={14} />}
+                  label="Auto-pick photos"
+                  hint="AI picks the catalog photo on every scan"
+                  state={photoRank.data.enabled ? "on" : "off"}
+                  disabled={setPhotoRank.isPending}
+                  onClick={() => setPhotoRank.mutate(!photoRank.data.enabled)}
+                />
+              )}
+            </>
+          )}
+        </HeaderMenu>
+      </div>
 
       <AiOffNotice status={aiStatus} />
 
@@ -2621,6 +2929,87 @@ export function ScanPage() {
         </div>
       )}
 
+      {/* ── the LIST's own bar ───────────────────────────────────────────────
+          How the list is grouped and how dense it is are properties OF THE
+          LIST, so they sit with it rather than in the page header. That also
+          takes four controls out of a row that had eighteen. */}
+      {items.length > 0 && (
+        <div className="flex items-center gap-2 text-xs -mb-1">
+          {(unfiledCount > 0 || readyCount > 0) && (
+            <HeaderMenu
+              width={248}
+              trigger={({ toggle }) => (
+                <button
+                  type="button"
+                  onClick={toggle}
+                  className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition"
+                >
+                  {viewMode === "plan" ? "Sorting plan" : "By session"}
+                  <ChevronDown size={12} className="text-faint" />
+                </button>
+              )}
+            >
+              {({ close }) => (
+                <>
+                  <MenuHead>Group these {totalPending} by</MenuHead>
+                  <MenuItem
+                    label="Session"
+                    hint="When you scanned them"
+                    state={viewMode === "sessions" ? "on" : undefined}
+                    onClick={() => {
+                      setViewMode("sessions");
+                      close();
+                    }}
+                  />
+                  <MenuItem
+                    label="Sorting plan"
+                    hint="Where each one would go"
+                    state={viewMode === "plan" ? "on" : undefined}
+                    onClick={() => {
+                      setViewMode("plan");
+                      close();
+                    }}
+                  />
+                </>
+              )}
+            </HeaderMenu>
+          )}
+          {/* How far the list is narrowed right now. Was a bare "12 / 69". */}
+          {visibleItems.length !== items.length && (
+            <span className="text-faint dark:text-slate-500">
+              {visibleItems.length} of {items.length} shown
+            </span>
+          )}
+          <span className="flex-1" />
+          <div className="inline-flex items-center rounded-full border border-line dark:border-slate-700 p-0.5">
+            {(
+              [
+                [false, <List key="l" size={12} />, "List"],
+                [true, <LayoutGrid key="g" size={12} />, "Gallery - big photo tiles"],
+              ] as const
+            ).map(([grid, icon, label]) => (
+              <button
+                key={String(grid)}
+                type="button"
+                onClick={() => {
+                  if (galleryView !== grid) toggleGalleryView();
+                }}
+                aria-pressed={galleryView === grid}
+                title={label}
+                className={
+                  "rounded-full px-2 py-0.5 transition " +
+                  (galleryView === grid
+                    ? "bg-cobble-600 text-white"
+                    : "text-muted dark:text-slate-400 hover:text-content")
+                }
+              >
+                {icon}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="space-y-2">
         {viewMode === "plan" && (unfiledCount > 0 || readyCount > 0) ? (
           // The sorting plan: the inbox re-expressed by DESTINATION. An inline
@@ -2697,6 +3086,7 @@ export function ScanPage() {
                   item={item}
                   pageTarget={target}
                   menu={menu}
+                  sessionCategoryLabel={sessionCategoryByItem.get(item.id) ?? null}
                   hasLocations={hasLocations}
                   selected={selected.has(item.id)}
                   onToggleSelect={() => toggleSelected(item.id)}
@@ -2746,7 +3136,7 @@ export function ScanPage() {
                   : null;
                 const fallbackClause =
                   filing.fallbackLocation && filing.missingLocation.length > 0
-                    ? `; the ${filing.missingLocation.length} without a place go to ${fallbackLoc ? filingLabel(fallbackLoc) : "the filing location"}`
+                    ? `; the ${filing.missingLocation.length} without a location go to ${fallbackLoc ? filingLabel(fallbackLoc) : "the set location"}`
                     : "";
                 const sessionLoc = sessionLocation(readyItems);
                 const sessionLocName = sessionLoc.id
@@ -2773,8 +3163,19 @@ export function ScanPage() {
               <div key={g.key} id={g.batchId ? `s-${g.batchId}` : undefined} className="space-y-2 scroll-mt-24">
                 {/* ONE row, always. No `flex-wrap`, and `overflow-hidden` so a
                     session with every control present clips inside its own bar
-                    instead of pushing the page sideways. */}
-                <div className="flex w-full items-center gap-2 overflow-hidden rounded-md bg-mortar-50 dark:bg-slate-800/40 px-2.5 py-1.5 text-left text-xs">
+                    instead of pushing the page sideways.
+
+                    `data-session-header` is the anchor lint:scan-session-header
+                    slices on. It used to find this row by the first
+                    `"Set location"` in the file, which silently became the PAGE
+                    header's chip once that label was made consistent everywhere
+                    - so the lint reported all four utilities as misplaced when
+                    nothing had moved. A structural anchor cannot be captured by
+                    a string appearing somewhere else. */}
+                <div
+                  data-session-header
+                  className="flex w-full items-center gap-2 overflow-hidden rounded-md bg-mortar-50 dark:bg-slate-800/40 px-2.5 py-1.5 text-left text-xs"
+                >
                   {/* Burst select-all: grab the whole session for the
                       bulk toolbar (location / confirm / discard). */}
                   <input
@@ -2957,8 +3358,8 @@ export function ScanPage() {
                           : sessionLocName && sessionLoc.missing === 0
                           ? `All ${readyIds.length} are set to ${filingLabel(sessionLocName)} - tap to move them somewhere else`
                           : sessionLocName
-                          ? `${readyIds.length - sessionLoc.missing} of ${readyIds.length} are in ${filingLabel(sessionLocName)}; the other ${sessionLoc.missing} have no location yet - tap to place them`
-                          : `None of these ${readyIds.length} have a location yet - tap to set where they go`
+                          ? `${readyIds.length - sessionLoc.missing} of ${readyIds.length} are in ${filingLabel(sessionLocName)}; the other ${sessionLoc.missing} have no location yet - tap to set it`
+                          : `None of these ${readyIds.length} have a location yet - tap to set it`
                       }
                       className={`shrink-0 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] font-medium ${
                         sessionLocName && sessionLoc.missing === 0
@@ -2983,7 +3384,7 @@ export function ScanPage() {
                         // and this is the render that finally reads it.
                         <>
                           {sessionLoc.missing} of {readyIds.length}
-                          <span className="hidden sm:inline">&nbsp;need a place</span>
+                          <span className="hidden sm:inline">&nbsp;need a location</span>
                         </>
                       ) : (
                         // It's a button: say the action, not the absence. Also
@@ -3172,6 +3573,7 @@ export function ScanPage() {
                 item={focus}
                 pageTarget={target}
                 menu={menu}
+                sessionCategoryLabel={sessionCategoryByItem.get(focus.id) ?? null}
                 hasLocations={hasLocations}
                 rateLimitGaveUp={rlGaveUp.has(focus.id)}
                 defaultExpanded
@@ -3325,8 +3727,6 @@ export function ScanPage() {
           onClose={() => setExportOpen(false)}
         />
       )}
-      {upcOpen && <UpcModal onClose={() => setUpcOpen(false)} />}
-      {urlsOpen && <UrlsModal onClose={() => setUrlsOpen(false)} />}
       {viewSource && (
         <ReceiptSourceViewer slug={activeSlug} fileId={viewSource} onClose={() => setViewSource(null)} />
       )}
@@ -3339,136 +3739,10 @@ export function ScanPage() {
 // fire (a physical scan gun types a code + Enter; the input refocuses
 // after every submit). Upload and Camera act directly from the header —
 // this modal exists only because typing needs a keyboard.
-function UpcModal({ onClose }: { onClose: () => void }) {
-  const { activeSlug } = useActiveOrg();
-  const qc = useQueryClient();
-  const toast = useToast();
-  const [barcode, setBarcode] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
-
-  const scan = useMutation({
-    mutationFn: async (value: string) =>
-      api.scanBarcode(activeSlug, {
-        barcode: value.trim(),
-        // Same time-gap session the wedge/camera use — typed UPCs join the burst.
-        scan_batch_id:
-          (await resolveSessionBatch(activeSlug, () =>
-            api.createScanBatch(activeSlug).then((b) => b.id).catch(() => null),
-          )) ?? undefined,
-      }),
-    onSuccess: (item) => {
-      toast.success(`Scanned: ${item.suggested_name ?? `Barcode ${item.barcode_text}`}`);
-      setBarcode("");
-      inputRef.current?.focus();
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-    },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
-  });
-
-  return (
-    <Modal open onClose={onClose} title="Scan a UPC" size="sm">
-      <div className="space-y-2">
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!barcode.trim()) return;
-            scan.mutate(barcode.trim());
-          }}
-          className="flex gap-2 items-center"
-        >
-          <input
-            ref={inputRef}
-            type="text"
-            value={barcode}
-            onChange={(e) => setBarcode(e.target.value)}
-            placeholder="UPC / EAN / GTIN, then Enter"
-            className="flex-1 min-w-0 px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900 font-mono"
-            inputMode="numeric"
-            autoComplete="off"
-          />
-          <button
-            type="submit"
-            disabled={!barcode.trim() || scan.isPending}
-            className="rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm font-medium disabled:opacity-50 shrink-0"
-          >
-            {scan.isPending ? "…" : "Scan"}
-          </button>
-        </form>
-        <p className="text-xs text-faint dark:text-slate-500">
-          Stays open - keep scanning. A scan gun's Enter submits each code.
-        </p>
-      </div>
-    </Modal>
-  );
-}
 
 // Bulk URL intake: paste product URLs (one per line) — each becomes an inbox item
 // enriched through the URL path (vendor resolver → web search). For cataloging an
 // order/wishlist without a barcode.
-function UrlsModal({ onClose }: { onClose: () => void }) {
-  const { activeSlug } = useActiveOrg();
-  const qc = useQueryClient();
-  const toast = useToast();
-  const [text, setText] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  const urls = text
-    .split(/\s+/)
-    .map((s) => s.trim())
-    .filter((s) => /^https?:\/\/\S+$/i.test(s))
-    .slice(0, 50);
-
-  const submit = async () => {
-    if (!urls.length) return;
-    setBusy(true);
-    let ok = 0;
-    for (const url of urls) {
-      try {
-        await api.scanBarcode(activeSlug, { source_kind: "url", source_url: url });
-        ok++;
-      } catch {
-        /* skip bad ones; summary reflects what landed */
-      }
-    }
-    setBusy(false);
-    void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-    toast.success(`Added ${ok} URL${ok === 1 ? "" : "s"} — identifying in the inbox.`);
-    onClose();
-  };
-
-  return (
-    <Modal open onClose={onClose} title="Paste product URLs" size="sm">
-      <div className="space-y-2">
-        <textarea
-          autoFocus
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder={"One URL per line\nhttps://www.example.com/product/123\nhttps://…"}
-          rows={6}
-          className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900 font-mono"
-        />
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted dark:text-slate-400">
-            {urls.length} URL{urls.length === 1 ? "" : "s"} detected{urls.length === 50 ? " (max)" : ""}
-          </span>
-          <span className="flex-1" />
-          <button
-            type="button"
-            disabled={busy || urls.length === 0}
-            onClick={() => void submit()}
-            className="rounded bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-1.5 transition disabled:opacity-50"
-          >
-            {busy ? "Adding…" : `Add ${urls.length || ""}`}
-          </button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
 
 // ── one inbox item: an accordion triage card ──────────────────────────
 // Collapsed: the at-a-glance match (thumb, name, one-tap table chips).
@@ -3479,6 +3753,7 @@ function InboxCard({
   item,
   pageTarget,
   menu,
+  sessionCategoryLabel,
   hasLocations,
   selected,
   onToggleSelect,
@@ -3490,6 +3765,9 @@ function InboxCard({
   item: ScanInboxItem;
   pageTarget: ScanTarget | null;
   menu: ScanMenuEntry[] | null;
+  /** The label this item's SESSION agreed on, so sibling cards cannot show one
+   *  category two ways. Null when the session settled on nothing. */
+  sessionCategoryLabel?: string | null;
   hasLocations: boolean;
   selected?: boolean;
   onToggleSelect?: () => void;
@@ -4550,7 +4828,7 @@ function InboxCard({
                           <span className="text-faint shrink-0">{menuFieldLabel(menu, topCand, k)}</span>
                           <span className="truncate">
                             {k === axisKey || (topCand.category && v === topCand.category)
-                              ? categoryDisplay(String(v))
+                              ? categoryChipLabel(String(v), sessionCategoryLabel)
                               : String(v)}
                           </span>
                         </span>
@@ -6230,7 +6508,7 @@ function ConfirmForm({
                   aria-expanded={locOpen}
                 >
                   <span className={selLabel ? "inline-flex items-center gap-1.5 text-content dark:text-mortar-100" : "text-faint"}>
-                    {selLabel ? <><MapPin size={13} className="shrink-0 text-accent" />{selLabel}</> : "Choose a location…"}
+                    {selLabel ? <><MapPin size={13} className="shrink-0 text-accent" />{selLabel}</> : "Set location"}
                   </span>
                   <ChevronDown size={15} className={`shrink-0 text-faint transition ${locOpen ? "rotate-180" : ""}`} />
                 </button>

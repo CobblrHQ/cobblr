@@ -22,6 +22,8 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Sparkles, X } from "lucide-react";
 import { useOverlayOpenFlag } from "./overlay-open";
+import { useOverLiveSurface } from "./live-surface";
+import { modalPanelLayout, modalOverlayPadding } from "./modal-layout";
 
 interface Props {
   open: boolean;
@@ -95,6 +97,10 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
   // Floating chrome (the Live pill, Quick access) out-stacks this overlay, so
   // it has to yield while we're up. `inline` is page content, not an overlay.
   useOverlayOpenFlag(open && !inline);
+  // Over a LIVE surface (the camera viewfinder) a modal stays a card at every
+  // width: full-bleed would hide the thing the user is pointing at. Declared by
+  // the surface, not by each modal - see live-surface.tsx.
+  const overLive = useOverLiveSurface();
   const handleBackdrop = () => {
     if (!dismissOnBackdrop || dirtyRef.current) return;
     onClose();
@@ -139,17 +145,7 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
           // room there is and pushed action rows under the Live pill (the author,
           // 2026-08-01). From sm up it's the familiar centred card again.
           "bg-surface dark:bg-slate-900 shadow-2xl border w-full flex flex-col " +
-          "my-0 rounded-none sm:my-8 sm:rounded-xl " +
-          // dvh, never vh: on iOS 100vh is the LARGE viewport (as if the
-          // toolbars were retracted), so a vh-sized overlay is taller than the
-          // screen and its bottom row is unreachable — the same bug that hid
-          // Ask Cobb's composer. lint:no-vh-overlays enforces this.
-          "max-h-[100dvh] sm:max-h-[calc(100dvh-4rem)] " +
-          "min-h-[100dvh] sm:min-h-0 " +
-          // The home indicator sits over the sheet's last few points, so pad the
-          // footer up off it (0 in a browser / on desktop).
-          "pb-[env(safe-area-inset-bottom)] sm:pb-0 " +
-          (fillHeight ? "sm:min-h-[calc(100dvh-4rem)] " : "") +
+          modalPanelLayout(overLive, fillHeight) +
           SIZE[size] +
           " " +
           (destructive
@@ -243,7 +239,10 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
       // as --modal-inset-left/right on <html>, and the overlay pads by them —
       // "the active window is the part without the sidebar" (the author).
       // Defaults to 0, so shells without chrome are unaffected.
-      className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-start justify-center p-0 sm:p-4 overflow-y-auto md:pl-[calc(1rem+var(--modal-inset-left,0px))] xl:pr-[calc(1rem+var(--modal-inset-right,0px))]"
+      className={
+        "fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-start justify-center overflow-y-auto md:pl-[calc(1rem+var(--modal-inset-left,0px))] xl:pr-[calc(1rem+var(--modal-inset-right,0px))] " +
+        modalOverlayPadding(overLive)
+      }
       onClick={handleBackdrop}
       role="dialog"
       aria-modal="true"

@@ -31,6 +31,7 @@ import { getTenantDb } from "../db/tenant.js";
 import { createInstance, getInstance, tearDownInstance, type ModuleInstance } from "./instances.js";
 import { upsertOverride } from "./entity-kind-overrides.js";
 import { singularize, pluralize } from "../lib/inflect.js";
+import { normaliseCategory } from "@cobblr/platform-contract/category-reconcile";
 
 /** The value of a custom field lives in the row's `metadata` jsonb blob, so the
  *  category predicate is a jsonb key test — not a column. */
@@ -382,8 +383,10 @@ async function growParentCategory(orgId: string, parentKind: string, value: stri
     .executeTakeFirst();
   if (!axis) return;
   const choices = (axis.choices ?? []) as string[];
-  const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
-  if (choices.some((c) => norm(c) === norm(value))) return;
+  // The SHARED reconciler - see growCategoryChoices; promoting an instance must
+  // not seed a duplicate spelling into the parent's vocabulary either.
+  const key = normaliseCategory(value);
+  if (!key || choices.some((c) => normaliseCategory(c) === key)) return;
   await meta
     .updateTable("module_field_defs")
     .set({ choices: sql`${JSON.stringify([...choices, value].sort((a, b) => a.localeCompare(b)))}::jsonb` as never })

@@ -32,11 +32,11 @@ export function placementCopy(
   const subtitle =
     mode === "set"
       ? category
-        ? `Set a location for the whole session, then file as ${category}.`
-        : "Set a location for the whole session."
+        ? `Set the location for the whole session, then file as ${category}.`
+        : "Set the location for the whole session."
       : category
-      ? `Pick a place and all ${count} are filed as ${category}.`
-      : `Pick a place and all ${count} are filed.`;
+      ? `Pick a location and all ${count} are filed as ${category}.`
+      : `Pick a location and all ${count} are filed.`;
   return { title, subtitle };
 }
 

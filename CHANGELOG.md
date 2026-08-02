@@ -2,6 +2,20 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-08-02
+
+### Features
+- Add a second photo to something you just captured, without it becoming a second record: ＋ Photo in the capture drawer arms the shutter so your next shot joins the same item. Take the informative shot first (the label, the writing on the box), then the nice one. Retake replaces the photo and reads it again.
+- Tap the capture drawer to open it: the shot full-size, every photo on that item with a tap to pick which one is the cover, plus its name, quantity and location. The location starts from where you are standing and can be changed for just that one item.
+
+### Improvements
+- The capture drawer now has a Confirm button where your thumb already is: it files what you just captured and clears the drawer, so you can deal with an item and move on without leaving the camera. Undo moved down to the small print where it cannot be hit by accident, and an ✕ hides the drawer without filing anything.
+- After every camera capture, a drawer above the shutter now shows the photo you just took, the name as soon as it is identified, a quantity stepper, and Undo, replacing the three little notices that used to take turns down there. You can check the shot came out, set "I have 3 of these", and keep scanning without ever leaving the camera. A photo that fails to upload stays in the drawer with a Retry.
+
+### Fixes
+- Scanning a barcode no longer shows you the result card and then the capture drawer for the same item. The drawer belongs to the shutter, so barcodes get the result card alone and photos get the drawer alone.
+- The barcode scan result no longer takes over the whole phone screen. It is a card over the live viewfinder again, so you can keep the item in frame while you read the match. Same for the bin picker and the "which one is it?" prompt.
+
 ## 2026-08-01
 
 ### Features

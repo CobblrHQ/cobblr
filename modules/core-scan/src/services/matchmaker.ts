@@ -12,6 +12,7 @@
 
 import { platform, extractJsonObject, repairJson, parseJsonReply } from "@cobblr/platform-contract";
 import { categoryDisplay } from "@cobblr/platform-contract/category-reconcile";
+import { normaliseCategory } from "@cobblr/platform-contract/category-reconcile";
 
 // A HANG GUARD, not a latency knob: the matchmaker
 // runs detached server-side — nobody is blocked on it — and a queued
@@ -547,10 +548,12 @@ export function resolveCategory(
   if (!axis) return null;
   const proposed = typeof raw === "string" ? raw.trim() : "";
   if (!proposed || proposed.length > 60) return null;
-  const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
-  const key = norm(proposed);
+  // The SHARED reconciler, so enforcement is as strong as the reconciliation the
+  // session header and the chips already do. A local normalizer let a plural or a
+  // synonym past as "new", which is how one kind gets two entries.
+  const key = normaliseCategory(proposed);
   if (!key) return null;
-  const existing = axis.values.find((v) => norm(v) === key);
+  const existing = axis.values.find((v) => normaliseCategory(v) === key);
   // A value the table already uses always wins over the model's spelling of it.
   if (existing) return { value: existing, isNew: false };
   return { value: proposed, isNew: true };

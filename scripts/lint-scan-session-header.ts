@@ -22,12 +22,40 @@ import { dirname, join, relative } from "node:path";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const FILE = join(ROOT, "web", "src", "pages", "ScanPage.tsx");
 const REL = relative(ROOT, FILE);
-const src = readFileSync(FILE, "utf8");
+const whole = readFileSync(FILE, "utf8");
 
 const errors: string[] = [];
 
-/** Where a marker sits in the file, or -1. Markers are the rendered strings, so
- *  they survive refactors that rename variables or reshape the JSX. */
+// Scope to the SESSION HEADER, not the whole file. These markers are rendered
+// strings, and a rendered string is only a reliable marker while it is unique -
+// "Set location" stopped being unique the moment the page header adopted the
+// same label (deliberately: one action, one name at every width). The lint then
+// measured every session utility against the PAGE header's chip and reported
+// four misplacements when nothing had moved.
+//
+// `data-session-header` is a structural anchor: it cannot be captured by a
+// string that happens to appear elsewhere.
+// Comments are blanked (length-preserving) before anchoring, so the lint cannot
+// match its OWN prose: the comment documenting this anchor names both the
+// attribute and "Set location", and searching the raw file found the comment
+// first - which made the slice start above the row and every check nonsense.
+const withoutComments = whole
+  .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+  .replace(/(^|[^:])\/\/[^\n]*/g, (m, p1: string) => p1 + m.slice(p1.length).replace(/./g, " "));
+
+const ANCHOR = "data-session-header";
+const anchorAt = withoutComments.indexOf(ANCHOR);
+if (anchorAt === -1) {
+  console.error(
+    `[lint:scan-session-header] ✗ could not find the ${ANCHOR} anchor in ${REL}.\n` +
+      `This lint slices the file at that attribute; if the session header moved or was\n` +
+      `renamed, put the anchor back on its container (or update this lint).`,
+  );
+  process.exit(1);
+}
+const src = withoutComments.slice(anchorAt);
+
+/** Where a marker sits WITHIN the session header, or -1. */
 const at = (needle: string) => src.indexOf(needle);
 
 // Renamed 2026-08-01 (the author: shorten this row rather than let it wrap): the
@@ -119,7 +147,9 @@ if (LOCATION !== -1 && FILE_ALL !== -1) {
 
 // One row. `flex-wrap` on the header bar would let a busy session spill onto a
 // second line, which is the thing the ordering was meant to make scannable.
-const headerBar = src.match(/<div className="flex w-full items-center gap-2[^"]*"/);
+// Tolerates a multi-line opening tag: prettier splitting the attributes across
+// lines is not a layout change, and the old single-line regex called it one.
+const headerBar = src.match(/className="flex w-full items-center gap-2[^"]*"/);
 if (!headerBar) {
   errors.push(`could not find the session header bar in ${REL} - if its classes changed, update this lint`);
 } else if (headerBar[0].includes("flex-wrap")) {

@@ -32,10 +32,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeftRight, ArrowRight, Camera, Check, Flashlight, Loader2, MapPin, Package, RefreshCw, ScanLine, SkipForward, Undo2, X, Zap } from "lucide-react";
-import { Modal, usePageTitle, useToast } from "@cobblr/platform-web";
+import { ArrowLeftRight, ArrowRight, Camera, Check, Flashlight, Loader2, MapPin, Package, ScanLine, SkipForward, Undo2, X, Zap } from "lucide-react";
+import { LiveSurfaceProvider, Modal, usePageTitle, useToast } from "@cobblr/platform-web";
 import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
 import { ApiError, api, type LiveSortEntry, type ScanInboxItem, type ScanResolveCandidate, type TrackedMatch } from "../lib/api";
 import { LOCATION_ENTITY_KIND, decideLocationScan, filingLabel } from "../lib/scanFiling";
@@ -52,6 +52,7 @@ import {
 } from "../lib/barcodeScanner";
 import { armScanAudio, scanBeep } from "../lib/scanFeedback";
 import { ScanResultModal } from "./ScanResultModal";
+import { ScanCaptureDrawer } from "./ScanCaptureDrawer";
 import { BinAdjustModal } from "../components/BinAdjustModal";
 import { ScanAmbiguityModal } from "../components/ScanAmbiguityModal";
 
@@ -160,9 +161,12 @@ export function ScanCameraPage() {
 
   const [supported, setSupported] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [recent, setRecent] = useState<ScanInboxItem[]>([]);
   const [manual, setManual] = useState("");
   const [pendingBarcode, setPendingBarcode] = useState<string | null>(null);
+  // While armed for ＋Photo/Retake the scanner must not auto-detect: the label
+  // you're photographing usually HAS a barcode on it, and a detection would
+  // create a separate item mid-append (the orphan case).
+  const armedRef = useRef(false);
   // The viewfinder frame captured at the instant of the last barcode hit.
   // A PROMISE: canvas.toBlob is async, and the result modal fires its scan
   // within milliseconds of the hit — reading a plain ref lost the race and
@@ -183,6 +187,10 @@ export function ScanCameraPage() {
   const [containerBin, setContainerBin] = useState<{ kind: string; id: string } | null>(null);
   const containerBinRef = useRef<{ kind: string; id: string } | null>(null);
   const [assignOpen, setAssignOpen] = useState(false);
+  // Per-ITEM location override. Deliberately its own layer, not inline in the
+  // sheet: a full picker can't fit in the height above the shutter, and the
+  // session chip must keep meaning "where I'm standing" for the fast path.
+  const [placingItem, setPlacingItem] = useState<ScanInboxItem | null>(null);
   const [shutterBusy, setShutterBusy] = useState(false);
   const [flash, setFlash] = useState(false);
   // A shutter capture whose SAVE failed — the framed photo survives for a
@@ -197,11 +205,36 @@ export function ScanCameraPage() {
     };
   } | null>(null);
   const [retryBusy, setRetryBusy] = useState(false);
+  const [undoBusy, setUndoBusy] = useState(false);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  // ＋Photo: the next shutter press APPENDS to this item instead of creating a
+  // new one (the label shot then the display shot, on one record). Held in a
+  // ref too because the shutter reads it from a callback.
+  const [appendTo, setAppendTo] = useState<{ id: string; name: string } | null>(null);
+  const appendToRef = useRef<{ id: string; name: string } | null>(null);
+  appendToRef.current = appendTo;
+  const [retakeOf, setRetakeOf] = useState<string | null>(null);
+  const retakeOfRef = useRef<string | null>(null);
+  retakeOfRef.current = retakeOf;
+  armedRef.current = !!appendTo || !!retakeOf;
+  // Dismissed = "I've dealt with this one, hide it". Cleared on the next save
+  // so the drawer comes back for the next capture.
+  const [drawerDismissed, setDrawerDismissed] = useState(false);
+  const [drawerItem, setDrawerItem] = useState<ScanInboxItem | null>(null);
   // A camera-LOCAL "photo saved" note (the author): the global toast landed at the
   // bottom and covered the shutter / UPC field, blocking rapid back-to-back
   // captures. This shows briefly at the TOP over the dark preview instead.
-  const [savedNote, setSavedNote] = useState(false);
-  const savedNoteTimer = useRef<number | null>(null);
+  // The last shutter frame as an object URL — the drawer's thumbnail, shown
+  // the instant it's captured (before the upload finishes, offline included).
+  // itemId is attached once the save lands so the drawer knows whose it is.
+  const [lastFrame, setLastFrame] = useState<{ url: string; itemId: string | null } | null>(null);
+  const setFrame = useCallback((blob: Blob) => {
+    setLastFrame((prev) => {
+      if (prev) URL.revokeObjectURL(prev.url);
+      return { url: URL.createObjectURL(blob), itemId: null };
+    });
+  }, []);
+  useEffect(() => () => setLastFrame((prev) => { if (prev) URL.revokeObjectURL(prev.url); return null; }), []);
   // Filing feedback ("Filing into Guest Bedroom") shows HERE, at the top over the
   // dark preview — not through the global toast, which renders at the bottom and
   // sat directly on top of the shutter (the exact obstruction the author already
@@ -813,6 +846,10 @@ export function ScanCameraPage() {
   const onDetect = useCallback(
     (rawIn: string) => {
       if (phaseRef.current !== "scanning") return;
+      // Armed for ＋Photo / Retake: ignore codes entirely. You are pointing at a
+      // label to photograph it, and that label usually carries a barcode - a
+      // detection here would mint a separate item mid-append.
+      if (armedRef.current) return;
       const raw = rawIn.trim();
       if (!raw) return;
       // HOLD a generic web link (a product's marketing QR — NOT a Cobblr label,
@@ -1090,7 +1127,7 @@ export function ScanCameraPage() {
       if (cancelled) return;
       const video = videoRef.current;
       const detector = detectorRef.current;
-      if (!video || !detector || video.readyState < 2 || phaseRef.current !== "scanning") {
+      if (!video || !detector || video.readyState < 2 || phaseRef.current !== "scanning" || armedRef.current) {
         raf = requestAnimationFrame(loop);
         return;
       }
@@ -1164,9 +1201,12 @@ export function ScanCameraPage() {
     setPhase(streamRef.current ? "scanning" : "idle");
   }, [setPhase]);
 
+  /** A save happened — count it and re-arm the drawer. WHICH item the drawer
+   *  shows is set separately by the shutter path (see drawerItem): a barcode
+   *  result belongs to ScanResultModal and must not be re-presented here. */
   const onSaved = useCallback(
-    (item: ScanInboxItem) => {
-      setRecent((prev) => [item, ...prev.filter((p) => p.id !== item.id)].slice(0, 8));
+    (_item: ScanInboxItem) => {
+      setDrawerDismissed(false);
       setSavedCount((n) => {
         persistSession({ count: n + 1 });
         return n + 1;
@@ -1197,11 +1237,11 @@ export function ScanCameraPage() {
         scan_batch_id: batchId ?? undefined,
       });
       onSaved(item);
+      setDrawerItem(item);
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-      // Local, top-of-frame, auto-hiding — never covers the shutter/UPC row.
-      setSavedNote(true);
-      if (savedNoteTimer.current) window.clearTimeout(savedNoteTimer.current);
-      savedNoteTimer.current = window.setTimeout(() => setSavedNote(false), 1800);
+      // The drawer is the confirmation now — it shows the frame itself, which
+      // answers "did that come out?" better than a green note ever did.
+      setLastFrame((prev) => (prev ? { ...prev, itemId: item.id } : prev));
     },
     [activeSlug, ensureBatchId, onSaved, qc],
   );
@@ -1228,11 +1268,42 @@ export function ScanCameraPage() {
     try {
       const blob = await captureFrame(video);
       if (!blob) throw new Error("could not capture a frame");
+      setFrame(blob);
+      const appending = appendToRef.current;
+      const retaking = retakeOfRef.current;
       try {
-        await saveShot(blob, stamps);
-        setFailedShot(null);
+        if (appending || retaking) {
+          // Both paths upload the frame and attach it to an EXISTING item.
+          const file = new File([blob], `scan-${Date.now()}.jpg`, { type: "image/jpeg" });
+          const rec = await api.uploadFile(activeSlug, file);
+          const targetId = (appending ?? { id: retaking! }).id;
+          let updated: ScanInboxItem;
+          if (retaking) {
+            // A RETAKE replaces the shot the name was derived from, so the name
+            // has to be derived again — rerun-ai with the new image is the
+            // existing "photograph it again" path, not a new endpoint.
+            updated = await api.rerunScanAi(activeSlug, targetId, { imageFileId: rec.id, wrong: true });
+          } else {
+            updated = await api.addScanPhoto(activeSlug, targetId, rec.id);
+          }
+          onSaved(updated);
+          setDrawerItem(updated);
+          setLastFrame((prev) => (prev ? { ...prev, itemId: targetId } : prev));
+          void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+          // The drawer reads its item from this key too. Without invalidating
+          // it, an append/retake renders against a CACHED pre-change copy — the
+          // new photo simply doesn't appear in the gallery.
+          void qc.invalidateQueries({ queryKey: ["scan-item-live", activeSlug, targetId] });
+          toast.success(retaking ? "Retaken - reading it again…" : `Added to ${appending!.name}.`);
+          setAppendTo(null);
+          setRetakeOf(null);
+          setFailedShot(null);
+        } else {
+          await saveShot(blob, stamps);
+          setFailedShot(null);
+        }
       } catch (e) {
-        setFailedShot({ blob, stamps });
+        if (!appending && !retaking) setFailedShot({ blob, stamps });
         toast.error(e instanceof ApiError ? e.message : String(e));
       }
     } catch (e) {
@@ -1240,7 +1311,7 @@ export function ScanCameraPage() {
     } finally {
       setShutterBusy(false);
     }
-  }, [saveShot, shutterBusy, toast]);
+  }, [activeSlug, onSaved, qc, saveShot, shutterBusy, toast]);
 
   const retryShot = useCallback(async () => {
     if (!failedShot || retryBusy) return;
@@ -1255,9 +1326,19 @@ export function ScanCameraPage() {
     }
   }, [failedShot, retryBusy, saveShot, toast]);
 
-  const lastSaved = recent[0] ?? null;
+  // What the DRAWER is showing. Deliberately NOT recent[0]: a barcode result is
+  // owned by ScanResultModal, which calls the same onSaved, so the drawer used
+  // to re-present an item you had just dealt with in the modal - a blocking
+  // modal followed by a redundant drawer (the author, on a real shelf, 2026-08-02).
+  // The drawer owns the SHUTTER path only; the modal clears it so a stale photo
+  // can't linger behind a barcode either. recent/savedCount still count both.
+  const lastSaved = drawerItem;
 
   return createPortal(
+    // The viewfinder keeps running behind every modal this page opens, so they
+    // must stay CARDS on a phone rather than claiming the screen - declared
+    // once here instead of per modal (see platform-web/live-surface.tsx).
+    <LiveSurfaceProvider>
     <div className="fixed inset-0 z-40 bg-black">
       <video
         ref={videoRef}
@@ -1272,17 +1353,6 @@ export function ScanCameraPage() {
       {/* "Photo saved" — top of frame, over the dark preview, tap-through.
           Doesn't touch the bottom controls (the author: the toast there blocked
           rapid capture). */}
-      {savedNote && (
-        <div
-          className="absolute inset-x-0 z-30 flex justify-center pointer-events-none px-4"
-          style={{ top: UNDER_TOP_CHROME }}
-        >
-          <div className="inline-flex items-center gap-2 rounded-full bg-emerald-600/90 text-white text-xs font-medium px-3 py-1.5 shadow-lg backdrop-blur-sm">
-            <Check size={13} className="shrink-0" /> Photo saved - identifying in the inbox
-          </div>
-        </div>
-      )}
-
       {/* Filing feedback — top of frame, over the dark preview, tap-through. The
           global toast rendered at the BOTTOM, directly over the shutter (see the
           savedNote comment). Same slot, same reason. */}
@@ -1596,68 +1666,70 @@ export function ScanCameraPage() {
             </button>
           </div>
         )}
-        {lastSaved && (
-          <div className="flex items-center gap-2 bg-black/55 rounded-full px-3 py-2 text-white text-xs max-w-md mx-auto">
-            <Check size={14} className="text-emerald-400 shrink-0" />
-            <Link
-              to={batchIdRef.current ? `/scan#s-${batchIdRef.current}` : backToScan}
-              className="min-w-0 flex-1 truncate"
-            >
-              {lastSaved.suggested_name ?? lastSaved.barcode_text}
-              {savedCount > 1 && ` · ${savedCount} this session`}
-              <span className="text-white/70"> · Open inbox →</span>
-            </Link>
-            {/* Undo the last save — discards it (restorable). */}
-            <button
-              type="button"
-              onClick={() => {
-                const it = lastSaved;
-                void api
-                  .discardScanItem(activeSlug, it.id)
-                  .then(() => {
-                    setRecent((prev) => prev.filter((p) => p.id !== it.id));
-                    void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-                    toast.success("Undone - removed from the inbox");
-                  })
-                  .catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)));
-              }}
-              className="inline-flex items-center gap-1 text-white/80 hover:text-white shrink-0"
-            >
-              <Undo2 size={13} /> Undo
-            </button>
-          </div>
-        )}
-        {failedShot && (
-          <div
-            className="flex items-center gap-2 bg-amber-400/95 rounded-full px-3 py-2 text-slate-900 text-xs max-w-md mx-auto"
-            data-testid="camera-shot-retry"
-          >
-            <Camera size={14} className="shrink-0" />
-            <span className="min-w-0 flex-1 truncate font-medium">
-              Photo didn&apos;t save - it&apos;s still here
-            </span>
-            <button
-              type="button"
-              disabled={retryBusy}
-              onClick={() => void retryShot()}
-              className="inline-flex items-center gap-1 font-semibold underline disabled:opacity-50 shrink-0"
-            >
-              {retryBusy ? (
-                <Loader2 size={13} className="animate-spin" />
-              ) : (
-                <RefreshCw size={13} />
-              )}{" "}
-              Retry
-            </button>
-            <button
-              type="button"
-              onClick={() => setFailedShot(null)}
-              aria-label="Discard failed photo"
-              className="p-1 rounded-full hover:bg-black/10 shrink-0"
-            >
-              <X size={12} />
-            </button>
-          </div>
+        {/* The capture drawer — the one "what just happened" surface. Replaces
+            the last-saved pill, the failed-shot pill and the top-of-frame saved
+            note. Suppressed in sort mode (the directive card owns the bottom
+            there) and behind the result modal. */}
+        {!sortMode && phase !== "result" && !drawerDismissed && (
+          <ScanCaptureDrawer
+            slug={activeSlug}
+            item={lastSaved}
+            localFrameUrl={lastFrame?.url ?? null}
+            localFrameItemId={lastFrame?.itemId ?? null}
+            sessionCount={savedCount}
+            batchId={batchIdRef.current}
+            failed={
+              failedShot
+                ? { retry: () => void retryShot(), discard: () => setFailedShot(null), busy: retryBusy }
+                : null
+            }
+            undoBusy={undoBusy}
+            confirmBusy={confirmBusy}
+            armed={appendTo ? "append" : retakeOf ? "retake" : null}
+            onCancelArm={() => { setAppendTo(null); setRetakeOf(null); }}
+            onAddPhoto={(it) => {
+              setRetakeOf(null);
+              setAppendTo({ id: it.id, name: it.suggested_candidates?.[0]?.name ?? it.suggested_name ?? "this item" });
+            }}
+            onRetake={(it) => { setAppendTo(null); setRetakeOf(it.id); }}
+            onPickLocation={(it) => setPlacingItem(it)}
+            sessionLocationLabel={areaName ?? null}
+            containerLabel={containerBin ? (containerName ?? "this container") : null}
+            onDismiss={() => setDrawerDismissed(true)}
+            onConfirm={(it) => {
+              // The candidate's own destination when it has one; an empty body
+              // lets the backend pick its generic home (same fallback the
+              // capture panel uses for an unidentified item).
+              const c = it.suggested_candidates?.[0];
+              const body = c?.module
+                ? { target_module: c.module, target_kind: c.kind, ...(c.instance ? { instance: c.instance } : {}) }
+                : {};
+              setConfirmBusy(true);
+              void api
+                .confirmScanItem(activeSlug, it.id, body)
+                .then(() => {
+                  void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+                  toast.success(`Filed to ${c?.label ?? "your inbox's default"}.`);
+                  setDrawerItem(null);
+                  setDrawerDismissed(true);
+                })
+                .catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)))
+                .finally(() => setConfirmBusy(false));
+            }}
+            onUndo={(it) => {
+              setUndoBusy(true);
+              void api
+                .discardScanItem(activeSlug, it.id)
+                .then(() => {
+                  setDrawerItem((prev) => (prev?.id === it.id ? null : prev));
+                  setLastFrame((prev) => (prev?.itemId === it.id ? (URL.revokeObjectURL(prev.url), null) : prev));
+                  void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+                  toast.success("Undone - removed from the inbox");
+                })
+                .catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)))
+                .finally(() => setUndoBusy(false));
+            }}
+          />
         )}
         <form
           onSubmit={(e) => {
@@ -1704,13 +1776,21 @@ export function ScanCameraPage() {
             disabled={!running || phase !== "scanning" || shutterBusy}
             aria-label="Take a photo of the item"
             title="Photograph the item (no barcode needed)"
-            className="w-[72px] h-[72px] rounded-full bg-white/95 hover:bg-white disabled:opacity-40 flex items-center justify-center shadow-lg"
+            className={
+              "w-[72px] h-[72px] rounded-full disabled:opacity-40 flex items-center justify-center shadow-lg " +
+              (armedRef.current ? "bg-slate-900 ring-4 ring-cobble-400" : "bg-white/95 hover:bg-white")
+            }
           >
-            <span className="w-[60px] h-[60px] rounded-full border-[3px] border-slate-900/80 flex items-center justify-center">
+            <span
+              className={
+                "w-[60px] h-[60px] rounded-full border-[3px] flex items-center justify-center " +
+                (armedRef.current ? "border-cobble-400" : "border-slate-900/80")
+              }
+            >
               {shutterBusy ? (
                 <Loader2 size={24} className="text-slate-900 animate-spin" />
               ) : (
-                <Camera size={26} className="text-slate-900" />
+                <Camera size={26} className={armedRef.current ? "text-cobble-300" : "text-slate-900"} />
               )}
             </span>
           </button>
@@ -1735,6 +1815,43 @@ export function ScanCameraPage() {
 
       {/* Assign sheet — pick the scan area. A z-50 Modal, so it stacks over
           the z-40 scanner overlay like the result modal does. */}
+      {/* Per-item location override — the same LocationChipPicker the Assign
+          sheet uses, writing to THIS item instead of the session. */}
+      {placingItem && (
+        <div className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end" onClick={() => setPlacingItem(null)}>
+          <div
+            className="w-full max-h-[75dvh] overflow-y-auto rounded-t-2xl bg-surface dark:bg-slate-900 p-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2 mb-3">
+              <div className="text-sm font-semibold text-content dark:text-mortar-100 flex-1 min-w-0 truncate">
+                Where does this one go?
+              </div>
+              <button type="button" onClick={() => setPlacingItem(null)} className="text-faint hover:text-content dark:hover:text-mortar-100">
+                <X size={16} />
+              </button>
+            </div>
+            <LocationChipPicker
+              value={placingItem.target_location_id ?? null}
+              kind="area"
+              onChange={(id) => {
+                const it = placingItem;
+                setPlacingItem(null);
+                void api
+                  .updateScanItem(activeSlug, it.id, { target_location_id: id })
+                  .then((updated) => {
+                    onSaved(updated);
+                    setDrawerItem(updated);
+                    void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+                    void qc.invalidateQueries({ queryKey: ["scan-item-live", activeSlug, it.id] });
+                  })
+                  .catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)));
+              }}
+            />
+          </div>
+        </div>
+      )}
+
       {assignOpen && (
         <Modal open onClose={() => setAssignOpen(false)} title="Scan area" size="sm">
           <div className="space-y-3">
@@ -1817,7 +1934,12 @@ export function ScanCameraPage() {
             kind: params.get("kind"),
             label: params.get("label"),
           }}
-          onSaved={onSaved}
+          onSaved={(it) => {
+            // A barcode is the modal's business. Clear the drawer so it neither
+            // duplicates the modal nor leaves an older photo sitting behind it.
+            onSaved(it);
+            setDrawerItem(null);
+          }}
           onClose={rearm}
           moveMode={moveMode}
           onAttached={(r, m, mode) => {
@@ -1830,7 +1952,8 @@ export function ScanCameraPage() {
           }}
         />
       )}
-    </div>,
+    </div>
+    </LiveSurfaceProvider>,
     document.body,
   );
 }

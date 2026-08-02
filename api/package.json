@@ -8,7 +8,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit && npm run -s typecheck:tests",
+    "typecheck": "node ../scripts/run-parallel.mjs \"tsc --noEmit\" \"tsc --noEmit -p tsconfig.tests.json\"",
     "typecheck:tests": "tsc --noEmit -p tsconfig.tests.json",
     "test": "vitest run"
   },

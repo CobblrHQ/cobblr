@@ -27,26 +27,62 @@ function isTouchPrimary(): boolean {
   }
 }
 
-export function PairPhoneButton({ className, dataTour }: { className?: string; dataTour?: string }) {
+export function PairPhoneButton({
+  className,
+  dataTour,
+  /** Render as a dropdown row instead of a standalone button, for headers that
+   *  moved their rare actions into an overflow menu. Still returns null on
+   *  touch devices, so the menu simply does not carry the row there. */
+  asMenuItem,
+  /** Called when the menu row is pressed, so the host can close itself. */
+  onPaired,
+}: {
+  className?: string;
+  dataTour?: string;
+  asMenuItem?: boolean;
+  onPaired?: () => void;
+}) {
   const [open, setOpen] = useState(false);
   // Decide once on mount (SSR-safe-ish; this app is client-rendered).
   const [touch] = useState(isTouchPrimary);
   if (touch) return null;
   return (
     <>
-      <button
-        type="button"
-        data-tour={dataTour}
-        onClick={() => setOpen(true)}
-        title="Scan with your phone instead"
-        className={
-          className ??
-          "shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-2 text-sm font-medium text-content dark:text-mortar-100 hover:border-cobble-400 dark:hover:border-cobble-600 transition"
-        }
-      >
-        <Smartphone size={16} />
-        <span className="hidden sm:inline">Pair phone</span>
-      </button>
+      {asMenuItem ? (
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            setOpen(true);
+            onPaired?.();
+          }}
+          className="flex w-full items-start gap-2.5 px-3 py-1.5 text-left text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition"
+        >
+          <span className="mt-0.5 shrink-0 text-faint dark:text-slate-500">
+            <Smartphone size={14} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate">Pair phone</span>
+            <span className="block text-[11px] leading-snug text-faint dark:text-slate-500">
+              Scan with your phone into this same inbox
+            </span>
+          </span>
+        </button>
+      ) : (
+        <button
+          type="button"
+          data-tour={dataTour}
+          onClick={() => setOpen(true)}
+          title="Scan with your phone instead"
+          className={
+            className ??
+            "shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-2 text-sm font-medium text-content dark:text-mortar-100 hover:border-cobble-400 dark:hover:border-cobble-600 transition"
+          }
+        >
+          <Smartphone size={16} />
+          <span className="hidden sm:inline">Pair phone</span>
+        </button>
+      )}
       {open && <PairPhoneModal onClose={() => setOpen(false)} />}
     </>
   );

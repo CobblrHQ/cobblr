@@ -10,6 +10,7 @@
 import {
   unifyCategories,
   categoryDisplay,
+  normaliseCategory,
   type CategoryConsensus,
 } from "@cobblr/platform-contract/category-reconcile";
 import type { ScanInboxItem, ScanMenuEntry } from "../lib/api";
@@ -177,4 +178,25 @@ export function sessionLocation(readyItems: ScanInboxItem[]): SessionLocation {
   if (set.size === 0) return { id: null, mixed: false, missing };
   if (set.size > 1) return { id: null, mixed: true, missing };
   return { id: [...set][0]!, mixed: false, missing };
+}
+
+/**
+ * The label an item's category CHIP should show, given the label its session
+ * agreed on.
+ *
+ * `categoryDisplay` is per-item and deliberately preserves a value that already
+ * carries capitals, so nine jugs identified independently showed "Figurines" on
+ * some cards and "Figurine" on others (the author, 2026-08-02). Reconciliation is
+ * inherently cross-item, so a per-item function could never have fixed it: the
+ * chip has to be TOLD what the session settled on.
+ *
+ * When the item's own value means the same thing (case, plural or synonym), the
+ * session's label wins, so one session never shows one category two ways. When
+ * it genuinely means something else, the item keeps its own label rather than
+ * being relabelled into a category it is not in.
+ */
+export function categoryChipLabel(raw: string, sessionLabel: string | null | undefined): string {
+  const key = normaliseCategory(raw);
+  if (sessionLabel && key && key === normaliseCategory(sessionLabel)) return sessionLabel;
+  return categoryDisplay(raw);
 }
