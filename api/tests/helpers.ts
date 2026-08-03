@@ -10,6 +10,7 @@
 // session themselves; helper exported here for that case.
 
 import { registerOrgForTeardown } from "./setup-teardown.js";
+import { fetchTransient } from "./fetch-transient.js";
 
 export { registerOrgForTeardown };
 
@@ -43,28 +44,13 @@ export interface TestSession {
  *  error or a retryable status (5xx/429), with backoff. A real signup bug
  *  (4xx, bad body) still throws on the first attempt — we only retry transients. */
 async function signupOnce(body: unknown): Promise<Response> {
-  const MAX = 4;
-  let lastErr: unknown;
-  for (let attempt = 1; attempt <= MAX; attempt++) {
-    try {
-      const res = await fetch(`${BASE}/api/v1/auth/signup`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      // 5xx / 429 = transient (container/DB under load) → retry. Other non-2xx
-      // (e.g. 400/409) is a real failure → return it so the caller throws.
-      if (res.ok || (res.status < 500 && res.status !== 429) || attempt === MAX) return res;
-      lastErr = new Error(`signup ${res.status} (attempt ${attempt}/${MAX})`);
-    } catch (e) {
-      // Network-level failure (ECONNRESET, fetch timeout) → retry.
-      lastErr = e;
-      if (attempt === MAX) throw e;
-    }
-    // Backoff with jitter so 8 forks that collided don't retry in lockstep.
-    await new Promise((r) => setTimeout(r, attempt * 300 + Math.floor(Math.random() * 200)));
-  }
-  throw lastErr instanceof Error ? lastErr : new Error("signup failed after retries");
+  // Retries transients (network error + 5xx/429) so a signup blip under 8-fork
+  // load doesn't cascade; a 400/409 (real failure) returns on the first attempt.
+  return fetchTransient(`${BASE}/api/v1/auth/signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
 
 /** Pool fast path: check out a pre-provisioned org instead of provisioning one.
@@ -73,7 +59,10 @@ async function signupOnce(body: unknown): Promise<Response> {
 async function tryCheckoutPoolOrg(): Promise<TestSession | null> {
   if (!process.env.COBBLR_TEST_ORG_POOL) return null;
   try {
-    const res = await fetch(`${BASE}/api/v1/test-support/checkout-org`, { method: "POST" });
+    // Retry the CHEAP checkout on a transient blip. Falling back to a full
+    // signup (CREATE DATABASE) on every blip would ADD to the storm that caused
+    // the blip. A real 409 (pool_exhausted) still returns immediately → signup.
+    const res = await fetchTransient(`${BASE}/api/v1/test-support/checkout-org`, { method: "POST" });
     if (!res.ok) return null; // 409 pool_exhausted → fall back to real signup
     const j = (await res.json()) as { token: string; userId: string; orgId: string; slug: string };
     return { token: j.token, userId: j.userId, orgId: j.orgId, slug: j.slug };
@@ -146,7 +135,7 @@ export async function enableAllModulesForTests(session: {
   token: string;
   slug: string;
 }): Promise<void> {
-  const res = await fetch(`${BASE}/api/v1/orgs/${session.slug}/modules`, {
+  const res = await fetchTransient(`${BASE}/api/v1/orgs/${session.slug}/modules`, {
     headers: { Authorization: `Bearer ${session.token}` },
   });
   if (!res.ok) return;
@@ -158,7 +147,7 @@ export async function enableAllModulesForTests(session: {
 
   const enableOne = async (name: string): Promise<boolean> => {
     try {
-      const r = await fetch(`${BASE}/api/v1/orgs/${session.slug}/modules/${name}/enable`, {
+      const r = await fetchTransient(`${BASE}/api/v1/orgs/${session.slug}/modules/${name}/enable`, {
         method: "POST",
         headers: { Authorization: `Bearer ${session.token}`, "Content-Type": "application/json" },
         body: "{}",
@@ -201,11 +190,14 @@ export async function http<T = unknown>(
     headers["Content-Type"] = "application/json";
     body = JSON.stringify(init.body);
   }
-  const res = await fetch(`${BASE}${path}`, {
-    method: init?.method ?? "GET",
-    headers,
-    body,
-  });
+  // Network-only retry: absorbs a transient "fetch failed" when http() is used
+  // in a beforeAll/afterAll (which vitest's per-test retry never re-runs), but
+  // does NOT retry 5xx — a test may legitimately assert one via expectStatus.
+  const res = await fetchTransient(
+    `${BASE}${path}`,
+    { method: init?.method ?? "GET", headers, body },
+    { retryServerErrors: false },
+  );
   if (init?.expectStatus !== undefined) {
     if (res.status !== init.expectStatus) {
       throw new Error(

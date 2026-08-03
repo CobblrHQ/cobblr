@@ -19,6 +19,7 @@ import {
   flagshipBundleMenu,
   flagshipBundleTargets,
   getFlagshipManifest,
+  listFlagshipManifests,
   type BundleMenuEntry,
   type BundleMenuField,
 } from "../lib/flagship-bundles.js";
@@ -140,6 +141,14 @@ quickstartRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
     const items = await fetchPendingInbox(baseUrl, req.tenant!.org.slug, token);
     const menu = flagshipBundleMenu();
     const labelOf = new Map(menu.map((m) => [m.bundle_external_id, { label: m.label, noun: m.noun }]));
+    // A capture's top candidate can be an EXTENDED (or even demoted) bundle —
+    // installable, but not in the suggested per-scan menu, so labelOf misses it
+    // and the raw id ("cobblr.flagship.medications") would leak into the card.
+    // Resolve the display name from the FULL manifest set (unfiltered) so no id
+    // ever surfaces, whatever tier matched.
+    const nameOf = new Map(
+      listFlagshipManifests("all").map((m) => [String(m.id), String(m.name ?? m.id)]),
+    );
 
     const groups = new Map<string, { count: number; samples: string[] }>();
     for (const it of items) {
@@ -155,7 +164,7 @@ quickstartRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
     const suggestions = [...groups.entries()]
       .map(([bundle_external_id, g]) => ({
         bundle_external_id,
-        bundle_name: labelOf.get(bundle_external_id)?.label ?? bundle_external_id,
+        bundle_name: labelOf.get(bundle_external_id)?.label ?? nameOf.get(bundle_external_id) ?? bundle_external_id,
         noun: labelOf.get(bundle_external_id)?.noun ?? "item",
         count: g.count,
         sample_names: g.samples,

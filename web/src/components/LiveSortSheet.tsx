@@ -21,7 +21,7 @@ import {
   SkipForward,
   X,
 } from "lucide-react";
-import { useToast } from "@cobblr/platform-web";
+import { useToast, OverlayFlag } from "@cobblr/platform-web";
 import { api, ApiError, type LiveSortEntry } from "../lib/api";
 import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
@@ -343,6 +343,7 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
       className="fixed inset-0 z-[70] bg-surface dark:bg-slate-950 flex flex-col"
       data-testid="live-sort-sheet"
     >
+      <OverlayFlag />
       {/* Header */}
       <div className="flex items-center gap-3 border-b border-line dark:border-slate-800 px-4 py-3">
         <div className="min-w-0 flex-1">

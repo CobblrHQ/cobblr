@@ -20,16 +20,100 @@
 // The quantity stepper is the same − N + shape as ScanResultModal's, PATCHed
 // debounced so mashing + doesn't stack requests.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, Check, ChevronDown, Loader2, MapPin, Minus, Plus, RefreshCw, Trash2, Undo2, X } from "lucide-react";
 import { useImageSrc } from "@cobblr/platform-web";
 import { api, type ScanInboxItem } from "../lib/api";
+import { useScanQuantity } from "../lib/scanQuantity";
+import { useAnimatedHeight } from "../lib/useAnimatedHeight";
 
 /** How long a photo item may sit un-named before we stop saying "identifying…"
  *  (mirrors the inbox's own stale rule). */
 const IDENTIFY_WINDOW_MS = 60_000;
+
+/** Vertical swipe on a sheet: up opens, down collapses/dismisses (the mock's
+ *  grip + "swipe up for more"). A swipe that starts in an input/textarea is
+ *  ignored — dragging while editing a name must not fling the sheet away —
+ *  and a mostly-horizontal move is not a swipe. Tap targets keep working:
+ *  a real tap never travels the 42px threshold. */
+function useSheetSwipe(onUp?: () => void, onDown?: () => void) {
+  const start = useRef<{ x: number; y: number } | null>(null);
+  return {
+    onTouchStart: (e: React.TouchEvent) => {
+      const t = e.touches[0];
+      // Only an input being EDITED blocks the gesture - an unfocused field is
+      // just surface under the thumb, and treating every field as a dead zone
+      // made most of the sheet unswipable.
+      const el = e.target as HTMLElement;
+      const field = el.closest("input,textarea,select");
+      if (!t || (field && field === document.activeElement)) {
+        start.current = null;
+        return;
+      }
+      start.current = { x: t.clientX, y: t.clientY };
+    },
+    onTouchEnd: (e: React.TouchEvent) => {
+      const s = start.current;
+      start.current = null;
+      const t = e.changedTouches[0];
+      if (!s || !t) return;
+      const dy = t.clientY - s.y;
+      if (Math.abs(dy) < 42 || Math.abs(t.clientX - s.x) > Math.abs(dy)) return;
+      if (dy < 0) onUp?.();
+      else onDown?.();
+    },
+  };
+}
+
+/** The locked quantity stepper (the mock's wire shape): one bordered group,
+ *  [−  N  +], thumb-sized buttons, no free-text input. SHARED by the drawer,
+ *  the expanded sheet and the barcode result so the shape can't drift again
+ *  (the author, 2026-08-03: the result card had grown its own circles-and-input
+ *  variant). `big` pads the buttons up for the primary sheets. */
+export function QtyStepper({
+  value,
+  onBump,
+  big,
+  testId,
+}: {
+  value: number;
+  onBump: (d: 1 | -1) => void;
+  big?: boolean;
+  testId?: string;
+}) {
+  const pad = big ? "px-4 py-2.5" : "px-3 py-1.5";
+  return (
+    <div className="flex items-center rounded-lg border border-white/25 bg-white/10 overflow-hidden shrink-0">
+      <button type="button" onClick={() => onBump(-1)} aria-label="Fewer" disabled={value <= 1} className={`${pad} text-white disabled:opacity-40`}>
+        <Minus size={big ? 15 : 13} />
+      </button>
+      <span data-testid={testId} className={`min-w-[1.9rem] text-center text-white font-bold ${big ? "text-[14.5px]" : "text-[13px]"}`}>
+        {value}
+      </span>
+      <button type="button" onClick={() => onBump(1)} aria-label="More" className={`${pad} text-white`}>
+        <Plus size={big ? 15 : 13} />
+      </button>
+    </div>
+  );
+}
+
+/** The mock's grip bar — the sheet's handle. Tappable when given an action. */
+function Grip({ onTap, label }: { onTap?: () => void; label?: string }) {
+  const bar = <div className="h-1 w-9 rounded-full bg-white/35 mx-auto" />;
+  if (!onTap) return <div className="pt-2 pb-1">{bar}</div>;
+  return (
+    <button
+      type="button"
+      onClick={onTap}
+      aria-label={label ?? "Collapse"}
+      className="block w-full pt-2 pb-1"
+    >
+      {bar}
+    </button>
+  );
+}
 
 export function ScanCaptureDrawer({
   slug,
@@ -51,6 +135,9 @@ export function ScanCaptureDrawer({
   onPickLocation,
   sessionLocationLabel,
   containerLabel,
+  onExpandedChange,
+  collapseNonce,
+  onExpandBarcode,
 }: {
   slug: string;
   /** The most recent save this session (photo or barcode), or null. */
@@ -77,7 +164,7 @@ export function ScanCaptureDrawer({
   /** Arm the shutter to REPLACE this item's photo and read it again. */
   onRetake: (item: ScanInboxItem) => void;
   /** Which arm is live, so the drawer can say so and offer a way out. */
-  armed: "append" | "retake" | null;
+  armed: "append" | "retake" | "catalog" | null;
   onCancelArm: () => void;
   /** Open the per-item location override (its own layer — a full picker can't
    *  fit inside a sheet that isn't allowed to scroll). */
@@ -86,6 +173,17 @@ export function ScanCaptureDrawer({
   sessionLocationLabel: string | null;
   /** A container bin is armed → the item files INTO it, not into a location. */
   containerLabel: string | null;
+  /** The page needs to know when the sheet is open: it dims the viewfinder
+   *  behind it and PAUSES barcode detection (a code drifting into frame while
+   *  you edit would flip to the result phase and unmount this sheet). */
+  onExpandedChange?: (open: boolean) => void;
+  /** Bumped by the page to ask for the expanded sheet to collapse (the +
+   *  shutter puts every sheet away before arming). */
+  collapseNonce?: number;
+  /** A BARCODE item expands into the same "Scanned" sheet it was born in
+   *  (review mode - no re-scan), never the photo sheet. One item, one sheet:
+   *  the author counted three different drawers for one scanned item (2026-08-03). */
+  onExpandBarcode?: (item: ScanInboxItem) => void;
 }) {
   const qc = useQueryClient();
 
@@ -112,18 +210,34 @@ export function ScanCaptureDrawer({
 
   // Quantity: optimistic local value, debounced PATCH (mashing + must not
   // stack requests). Resets whenever the drawer's subject changes.
-  const [expanded, setExpanded] = useState(false);
-  const [qty, setQty] = useState<number | null>(null);
-  const qtyTimer = useRef<number | null>(null);
+  const [expanded, setExpandedState] = useState(false);
+  const setExpanded = (v: boolean) => {
+    setExpandedState(v);
+    onExpandedChange?.(v);
+  };
   useEffect(() => {
-    setQty(null);
-    setExpanded(false); // a new capture always starts closed — never interrupt the burst
-    if (qtyTimer.current) window.clearTimeout(qtyTimer.current);
-  }, [item?.id]);
-  const saveQty = useMutation({
-    mutationFn: (quantity: number) => api.updateScanItem(slug, item!.id, { quantity }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] }),
-  });
+    setExpandedState(false); // a new capture always starts closed — never interrupt the burst
+    onExpandedChange?.(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item?.id, collapseNonce]);
+  // Declared with the other hooks: the failed-save branch returns early below.
+  const slide = useAnimatedHeight<HTMLDivElement>();
+  const openSheet = () => {
+    if (!it || failed || armed) return;
+    if (it.source_kind !== "photo" && onExpandBarcode) onExpandBarcode(it);
+    else setExpanded(true);
+  };
+  const swipe = useSheetSwipe(
+    () => {
+      if (!expanded) openSheet();
+    },
+    () => {
+      // Down on the open sheet collapses it; down on the CLOSED drawer is
+      // "I'm done with this one" - same as the ✕ (it stays in the inbox).
+      if (expanded) setExpanded(false);
+      else onDismiss();
+    },
+  );
   const rename = useMutation({
     mutationFn: (name: string) => api.updateScanItem(slug, item!.id, { name }),
     onSuccess: () => {
@@ -141,14 +255,8 @@ export function ScanCaptureDrawer({
       void qc.invalidateQueries({ queryKey: ["scan-item-live", slug, item?.id] });
     },
   });
-  const shownQty = qty ?? (it && it.quantity > 0 ? it.quantity : 1);
-  const bump = (d: 1 | -1) => {
-    if (!item) return;
-    const next = Math.max(1, shownQty + d);
-    setQty(next);
-    if (qtyTimer.current) window.clearTimeout(qtyTimer.current);
-    qtyTimer.current = window.setTimeout(() => saveQty.mutate(next), 500);
-  };
+  // The quantity and its persistence come as one thing — see lib/scanQuantity.
+  const { value: shownQty, bump } = useScanQuantity(slug, it ?? null);
 
   if (!failed && !it) return null;
 
@@ -192,7 +300,17 @@ export function ScanCaptureDrawer({
   const identifying =
     isPhoto && !name && !it!.ai_suggested_at &&
     Date.now() - new Date(it!.created_at).getTime() < IDENTIFY_WINDOW_MS;
-  const dest = it!.suggested_candidates?.[0]?.label ?? it!.scan_area ?? null;
+  // Identify FINISHED (or timed out) with no name. Saying so is the whole
+  // point of the drawer — "identifying…" that silently becomes "Captured
+  // item" reads as the resolution having been eaten (the author, 2026-08-03). The
+  // sheet's name field is one swipe away.
+  const identifyFailed = isPhoto && !name && !identifying;
+  // Interplay rule from the mock: with a container bin armed the line reads
+  // "Into <container>" — it's a container target, not a location id.
+  const dest =
+    it!.suggested_candidates?.[0]?.label ??
+    it!.scan_area ??
+    (containerLabel ? `Into ${containerLabel}` : null);
   // Local frame beats everything for a PHOTO item (never swap away from the
   // user's own shot); a barcode item may show its catalog image.
   const thumbUrl =
@@ -205,8 +323,13 @@ export function ScanCaptureDrawer({
   return (
     <div
       data-testid="capture-drawer"
+      {...swipe}
+      // The height is driven, not natural, so tall <-> short is a slide rather
+      // than a pop; overflow-hidden is what clips the taller contents mid-slide.
+      style={slide.style}
       className="relative max-w-md mx-auto rounded-2xl border border-white/15 bg-black/70 backdrop-blur-md overflow-hidden"
     >
+      <div ref={slide.innerRef}>
       {expanded ? (
         <ExpandedSheet
           slug={slug}
@@ -239,33 +362,45 @@ export function ScanCaptureDrawer({
       >
         <X size={13} />
       </button>
+      {/* The grip: the sheet's handle — swipe up (or tap it / the identity
+          row) for the full sheet. The hint under it is the mock's copy. */}
+      {!armed && <Grip onTap={openSheet} label="Open the full sheet" />}
+      {!armed && (
+        <div className="text-center text-[10px] text-white/30 leading-none pb-0.5">
+          swipe up for more
+        </div>
+      )}
       {/* TWO rows on purpose. Everything on one line left the name ~48px at
           phone width ("Ca…"): thumb + stepper + Confirm + the ✕ gutter eat
           310 of 374. The identity gets a full-width line; the controls get
           their own, with Confirm still in the right-thumb corner. */}
-      {/* Tap the identity row (or the grip) to open the sheet. The stepper and
-          the footer buttons stopPropagation so they never expand by accident. */}
       <div
         role="button"
         tabIndex={0}
-        onClick={() => setExpanded(true)}
-        onKeyDown={(e) => { if (e.key === "Enter") setExpanded(true); }}
-        className="flex items-start gap-2.5 px-3 pt-2.5 pr-8 cursor-pointer"
+        onClick={openSheet}
+        onKeyDown={(e) => { if (e.key === "Enter") openSheet(); }}
+        className="flex items-start gap-2.5 px-3 pt-1.5 pr-8 cursor-pointer"
       >
         <Thumb url={thumbUrl} name={name ?? "item"} />
         <div className="flex-1 min-w-0 pt-0.5">
           <div className="text-white text-[13.5px] font-semibold leading-tight line-clamp-2">
-            {name ?? (identifying ? "Photo saved" : "Captured item")}
+            {name ?? (identifying ? "Photo saved" : identifyFailed ? "Couldn't identify" : "Captured item")}
           </div>
           <div className="text-white/60 text-[11px] truncate mt-0.5">
             {armed ? (
               <span className="text-cobble-300 font-medium">
-                {armed === "append" ? "next shot joins this one" : "next shot replaces the photo"}
+                {armed === "append"
+                  ? "next shot joins this one"
+                  : armed === "catalog"
+                    ? "next shot becomes its photo"
+                    : "next shot replaces the photo"}
               </span>
             ) : identifying ? (
               <span className="inline-flex items-center gap-1.5">
                 <Loader2 size={10} className="animate-spin" /> identifying…
               </span>
+            ) : identifyFailed ? (
+              <span className="text-amber-300">swipe up to name it</span>
             ) : dest ? (
               <>→ {dest}</>
             ) : (
@@ -277,7 +412,11 @@ export function ScanCaptureDrawer({
       {armed ? (
         <div className="flex items-center gap-2 px-3 pt-2 pb-2.5">
           <span className="text-[11px] text-cobble-300 flex-1 min-w-0">
-            barcode reading is paused - press the shutter
+            {armed === "append"
+              ? "taking another photo for this item - press the shutter"
+              : armed === "catalog"
+                ? "the next shot becomes its photo - press the shutter"
+                : "retaking its photo - press the shutter"}
           </span>
           <button
             type="button"
@@ -290,18 +429,7 @@ export function ScanCaptureDrawer({
         </div>
       ) : (
       <div className="flex items-center gap-2 px-3 pt-2 pb-1.5">
-        {/* − N + : the ScanResultModal stepper's shape, thumb-sized. */}
-        <div className="flex items-center rounded-lg border border-white/25 bg-white/10 overflow-hidden shrink-0">
-          <button type="button" onClick={() => bump(-1)} aria-label="Fewer" className="px-3 py-1.5 text-white disabled:opacity-40" disabled={shownQty <= 1}>
-            <Minus size={13} />
-          </button>
-          <span data-testid="capture-drawer-qty" className="min-w-[1.7rem] text-center text-white text-[13px] font-bold">
-            {shownQty}
-          </span>
-          <button type="button" onClick={() => bump(1)} aria-label="More" className="px-3 py-1.5 text-white">
-            <Plus size={13} />
-          </button>
-        </div>
+        <QtyStepper value={shownQty} onBump={bump} testId="capture-drawer-qty" />
         <div className="flex-1" />
         {/* The right slot is where the thumb lands, so it belongs to the action
             you take every time. CONFIRM is the platform's verb for filing an
@@ -359,6 +487,7 @@ export function ScanCaptureDrawer({
           Open inbox →
         </Link>
       </div>
+      </div>
     </div>
   );
 }
@@ -414,19 +543,23 @@ function ExpandedSheet({
   const where = containerLabel ?? it.scan_area ?? sessionLocationLabel;
 
   return (
-    <div data-testid="capture-sheet">
+    // The sheet may use the whole viewport above the shutter and its contents
+    // must FIT — the max-h + overflow is a backstop for short phones, not a
+    // design surface (the mock: content that stops fitting means cut content).
+    <div data-testid="capture-sheet" className="max-h-[calc(100dvh-15rem)] overflow-y-auto">
       <button
         type="button"
         onClick={onCollapse}
         data-testid="capture-sheet-collapse"
         aria-label="Close"
-        className="w-full flex justify-center py-2 text-white/40 hover:text-white/80"
+        className="w-full flex flex-col items-center gap-1 pt-2 pb-1 text-white/40 hover:text-white/80"
       >
-        <ChevronDown size={18} />
+        <span className="h-1 w-9 rounded-full bg-white/35" />
+        <ChevronDown size={16} />
       </button>
 
       <div className="px-3">
-        <div className="w-full h-[150px] rounded-xl border border-white/15 bg-white/5 overflow-hidden grid place-items-center">
+        <div className="w-full h-[124px] rounded-xl border border-white/15 bg-white/5 overflow-hidden grid place-items-center">
           {cover ? (
             <img src={cover} alt={name ?? "capture"} className="w-full h-full object-cover" />
           ) : (
@@ -462,7 +595,7 @@ function ExpandedSheet({
         </div>
       </div>
 
-      <label className="block px-3 mt-3">
+      <label className="block px-3 mt-2.5">
         <span className="block text-[9.5px] font-mono uppercase tracking-widest text-white/40 mb-1">What is it</span>
         <input
           defaultValue={name ?? ""}
@@ -478,14 +611,10 @@ function ExpandedSheet({
         />
       </label>
 
-      <div className="flex items-end gap-3 px-3 mt-3">
+      <div className="flex items-end gap-3 px-3 mt-2.5">
         <div>
           <span className="block text-[9.5px] font-mono uppercase tracking-widest text-white/40 mb-1">Quantity</span>
-          <div className="flex items-center rounded-lg border border-white/25 bg-white/10 overflow-hidden">
-            <button type="button" onClick={() => bump(-1)} aria-label="Fewer" disabled={shownQty <= 1} className="px-3 py-2 text-white disabled:opacity-40"><Minus size={13} /></button>
-            <span className="min-w-[1.8rem] text-center text-white text-[13px] font-bold">{shownQty}</span>
-            <button type="button" onClick={() => bump(1)} aria-label="More" className="px-3 py-2 text-white"><Plus size={13} /></button>
-          </div>
+          <QtyStepper value={shownQty} onBump={bump} big />
         </div>
         <div className="flex-1 min-w-0">
           <span className="block text-[9.5px] font-mono uppercase tracking-widest text-white/40 mb-1">Location</span>
@@ -511,7 +640,7 @@ function ExpandedSheet({
             : "from where you're standing - tap to override just this one"}
       </div>
 
-      <div className="flex items-center gap-2 px-3 mt-3 pb-1">
+      <div className="flex items-center gap-2 px-3 mt-2.5 pb-1">
         <button
           type="button"
           onClick={onDelete}
@@ -571,6 +700,62 @@ function GalleryTile({
           <X size={9} />
         </button>
       )}
+    </div>
+  );
+}
+
+/** The capture surface's SHELL — the rounded panel that sits above the shutter.
+ *  Exported so the barcode result renders in the same place, shape AND surface
+ *  as a photo capture: one surface, whatever you pointed the camera at (the author,
+ *  2026-08-03: "aren't you making it always be JUST a drawer?").
+ *
+ *  It is deliberately not the Modal primitive. A centred dialog over a live
+ *  viewfinder hides what you're aiming at, and the standing rule is that
+ *  nothing covers the shutter row.
+ *
+ *  Surface: the drawer's dark sheet, at every app theme. The content inside
+ *  (ScanResultModal + TrackedMatchBanner) is written in semantic tokens with
+ *  `dark:` variants — `dark force-dark` flips both halves of that system for
+ *  this subtree only, so a light-theme session gets the same legible dark
+ *  sheet without restyling a single child (see index.css .force-dark).
+ *
+ *  Height: the whole viewport above the shutter is available, and content is
+ *  meant to FIT — the max-h + overflow is a short-phone backstop, not a design
+ *  surface (the author: no scroll / cut-off elements inside the sheet). */
+export function CaptureSheetShell({
+  title,
+  onClose,
+  children,
+}: {
+  title?: string;
+  onClose?: () => void;
+  children: ReactNode;
+}) {
+  const swipe = useSheetSwipe(undefined, onClose);
+  const slide = useAnimatedHeight<HTMLDivElement>();
+  return (
+    <div
+      data-testid="capture-shell"
+      {...swipe}
+      // Same rule as the drawer: the sheet grows into a result (the name
+      // arriving, a tracked-match banner appearing) instead of jumping.
+      style={slide.style}
+      className="dark force-dark relative max-w-md mx-auto rounded-2xl border border-white/15 bg-[#0b1119]/95 backdrop-blur-md shadow-2xl overflow-hidden"
+    >
+      <div ref={slide.innerRef}>
+      {/* No ✕. It did exactly what the grip, a swipe-down and "Save & next"
+          already do — three controls, one action, and "what does the X
+          actually do? does it save? or discard?" (the author) is the cost of the
+          redundancy. The grip is the dismiss affordance; the button row below
+          carries the labeled exits. */}
+      {onClose && <Grip onTap={onClose} label="Dismiss, it stays in the inbox" />}
+      {title && (
+        <div className={"flex items-center gap-2 px-3 pb-1.5 " + (onClose ? "-mt-1" : "pt-3")}>
+          <div className="text-content text-[13.5px] font-semibold flex-1">{title}</div>
+        </div>
+      )}
+      <div className="px-3 pb-3 max-h-[calc(100dvh-15rem)] overflow-y-auto">{children}</div>
+      </div>
     </div>
   );
 }

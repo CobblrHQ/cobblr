@@ -149,14 +149,62 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
 
 const BY_KEY = new Map(TOKEN_SCOPES.map((s) => [s.key, s] as const));
 
+// ── Parameterized record-data scopes ─────────────────────────────────────────
+// A `records:<target>:<action>` scope is generated on the fly — there's one per
+// workspace record kind, so unlike the static defs above we can't enumerate
+// them. `<target>` names a kind the way the entity-kind registry routes it:
+//   - `<instance>`            → an instance kind at /instances/<instance>/items
+//   - `<module>/<collection>` → a module kind at /modules/<module>/<collection>
+//   - `*`                     → any record, either family
+// `<action>` is read | create | write | delete (write ⊇ create + update). The
+// frontend derives the target from a kind's own module_name + endpoints (the
+// same registry it lists), so scope and snippet always address the same route.
+// Deny-by-default, enforced HERE server-side — the mint UI is never the boundary.
+const SEG = "[a-z0-9][a-z0-9_-]{0,62}";
+const RECORD_SCOPE_RE = new RegExp(`^records:(\\*|${SEG}(?:/${SEG})?):(read|create|write|delete)$`);
+
+export function isRecordScope(key: string): boolean {
+  return RECORD_SCOPE_RE.test(key);
+}
+
+/** The path base a target clamps to (no `^`/`$`; the collection route itself). */
+function recordScopeBase(target: string): string {
+  if (target === "*") return "/orgs/[^/]+/(?:instances/[^/]+/items|modules/[^/]+/[^/]+)";
+  if (target.includes("/")) {
+    const [mod, coll] = target.split("/");
+    return `/orgs/[^/]+/modules/${mod}/${coll}`;
+  }
+  return `/orgs/[^/]+/instances/${target}/items`;
+}
+
+/** Does one records:<target>:<action> scope permit this method + path? */
+function recordScopeAllows(key: string, method: string, rel: string): boolean {
+  const m = RECORD_SCOPE_RE.exec(key);
+  if (!m) return false;
+  const base = recordScopeBase(m[1]!); // RE already limits target to safe segments
+  const action = m[2];
+  const collection = new RegExp(`^${base}$`);
+  const item = new RegExp(`^${base}/[^/]+$`);
+  const allow: Array<[string, RegExp]> =
+    action === "read"
+      ? [["GET", collection], ["GET", item]]
+      : action === "create"
+        ? [["POST", collection]]
+        : action === "write"
+          ? [["POST", collection], ["PATCH", item]] // create + update
+          : [["DELETE", item]]; // delete
+  return allow.some(([mm, re]) => mm === method && re.test(rel));
+}
+
 /** Public, secret-free view for the mint UI. */
 export function listScopeChoices(): Array<{ key: string; label: string; description: string }> {
   return TOKEN_SCOPES.map(({ key, label, description }) => ({ key, label, description }));
 }
 
-/** Keep only keys we actually know about (drop typos / removed scopes). */
+/** Keep only keys we actually know about (drop typos / removed scopes). Static
+ *  keys must be in BY_KEY; record scopes must match the parameterized grammar. */
 export function sanitizeScopes(scopes: string[]): string[] {
-  return [...new Set(scopes.filter((s) => BY_KEY.has(s)))];
+  return [...new Set(scopes.filter((s) => BY_KEY.has(s) || isRecordScope(s)))];
 }
 
 /** /api/v1-relative path: no query, no trailing slash, prefix stripped. */
@@ -175,6 +223,10 @@ export function tokenScopeAllows(scopes: string[], method: string, originalUrl: 
   const rel = relPath(originalUrl);
   if (rel.includes("..")) return false;
   for (const key of scopes) {
+    if (isRecordScope(key)) {
+      if (recordScopeAllows(key, method, rel)) return true;
+      continue;
+    }
     const def = BY_KEY.get(key);
     if (!def) continue;
     for (const [m, re] of def.allow) {

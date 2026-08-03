@@ -7,9 +7,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Sparkles, X, Send, Check, Eye, PencilLine, Trash2 } from "lucide-react";
+import { X, Send, Check, Eye, PencilLine, Trash2 } from "lucide-react";
 import { api, ApiError, type AiChatProposal, type BundleValidationPreview } from "../lib/api";
-import { Cobb, CobbBust, COBB_POSES, type CobbPose } from "./Cobb";
+import { Cobb, CobbBust, CobbHead, COBB_POSES, type CobbPose } from "./Cobb";
 import { useNavigate } from "react-router-dom";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { getChatPageContext } from "../lib/chat-context";
@@ -153,7 +153,10 @@ export function ChatLauncher({ open, setOpen, asRow = false }: { open: boolean; 
       title={open ? "Hide Cobb" : "Ask Cobb"}
       aria-label={open ? "Hide Cobb" : "Ask Cobb"}
     >
-      <Sparkles size={16} className="shrink-0" />
+      {/* A button labelled "Ask Cobb" should show Cobb, not a sparkle. The head
+          is the mark drawn for this size — full-body is unreadable at 18px, and
+          it stays lit even when AI is off, because basic mode still answers. */}
+      <CobbHead size={18} className="shrink-0" title="Cobb" />
       {asRow && <span>Ask Cobb</span>}
     </button>
   );

@@ -1,0 +1,22 @@
+[
+  {
+    "file": "api/src/platform/entities.ts",
+    "text": "filter(): (k) => k.is_primary"
+  },
+  {
+    "file": "api/src/routes/blueprint.ts",
+    "text": "filter(): (i) => !existingInstances.has(i.instance_name)"
+  },
+  {
+    "file": "api/src/routes/bundles.ts",
+    "text": "filter(): (k) => k.is_primary"
+  },
+  {
+    "file": "modules/labels/src/api/codes.ts",
+    "text": "filter(): (k) => k.instance_name"
+  },
+  {
+    "file": "web/src/components/WhatToDoPanel.tsx",
+    "text": "filter(): (i) => i.module_name === module_name && !i.is_default && i.instance_name !== ins"
+  }
+]

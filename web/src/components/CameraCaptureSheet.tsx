@@ -15,7 +15,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Camera, Check, RotateCcw, X } from "lucide-react";
-import { useToast } from "@cobblr/platform-web";
+import { useToast, OverlayFlag } from "@cobblr/platform-web";
 import { acquireScannerStream } from "../lib/barcodeScanner";
 
 export function CameraCaptureSheet({
@@ -132,6 +132,7 @@ export function CameraCaptureSheet({
   if (!open) return null;
   return createPortal(
     <div className="fixed inset-0 z-[70] bg-black flex flex-col" data-testid="camera-capture-sheet">
+      <OverlayFlag />
       <div className="relative flex-1 min-h-0">
         {mode === "preview" && preview ? (
           <img src={preview.url} alt="preview" className="absolute inset-0 w-full h-full object-contain" />

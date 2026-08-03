@@ -5,7 +5,7 @@
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { Sparkles } from "lucide-react";
+import { CobbHead } from "./Cobb";
 import { api, type AiStatus } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
@@ -34,7 +34,11 @@ export function AiOffNotice({ status, compact, children }: { status: AiStatus | 
         (compact ? "px-2.5 py-1.5 text-xs" : "px-3 py-2 text-sm")
       }
     >
-      <Sparkles size={compact ? 13 : 15} className="text-amber-500 shrink-0 mt-0.5" />
+      {/* The RESTING head, not a generic sparkle. The illustrator drew this
+          state for exactly this moment: Cobb is off the clock because no AI is
+          connected, greyed rather than absent, so the notice reads as "he can't
+          do that here" instead of a system warning about a feature. */}
+      <CobbHead size={compact ? 18 : 22} sleeping className="shrink-0 mt-0.5" title="Cobb is resting" />
       <div>
         {children ?? (
           <>

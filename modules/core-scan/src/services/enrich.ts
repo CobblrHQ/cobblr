@@ -17,7 +17,7 @@ import { platform } from "@cobblr/platform-contract";
 import { lookupBarcode, type BarcodeHit } from "./barcode-lookup.js";
 import { resolveBarcodeViaWebSearch } from "./barcode-websearch.js";
 import { reportBarcodeCorrection } from "./barcode-corrections.js";
-import { classifyScanCode, resolveIsbn, resolveAsin } from "./scan-router.js";
+import { classifyScanCode, resolveIsbn, resolveAsin, type ScanCodeType } from "./scan-router.js";
 import { crossCheckScanPhoto, identifyImage, parsePackSize, refreshCatalogImageByName } from "./enrich-photo.js";
 import { identityMeta, mergeMeta } from "./metadata.js";
 import { tidyTruncatedName } from "./item-name.js";
@@ -564,24 +564,43 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
     // A junk "name" ("Unknown Item" / "XXXXXXXX") means the web couldn't identify
     // it either — DON'T accept it as a result. Fall through to the photo/manual
     // path with no name, so it never gets shown as valid or image-searched.
-    if (web && !isJunkName(web.name) && !web.corroborated && !hasScanPhoto) {
+    if (
+      web &&
+      !isJunkName(web.name) &&
+      shouldHoldWebName({
+        corroborated: web.corroborated,
+        hasScanPhoto,
+        codeType: codeClass.type,
+      })
+    ) {
       // Blank beats wrong, at the DISPLAY layer too. The cache gate below has
-      // always refused to store an uncorroborated web title — but with no scan
-      // photo to arbitrate, that same guess used to be WRITTEN AS THE ROW'S
-      // NAME at confidence 0.2 (the hardware-wedge path: no photo, so nothing
-      // ever cross-checked it). "411 - White Pages" on the row is worse than a
-      // blank row. Hold the name in metadata as a hint; say why it's blank.
+      // always refused to store an uncorroborated web title — but that same
+      // guess used to be WRITTEN AS THE ROW'S NAME at confidence 0.2 in two
+      // shapes of the same trap:
+      //  · no scan photo, so nothing ever cross-checked it (the hardware-wedge
+      //    path — "411 - White Pages" on the row is worse than a blank row);
+      //  · a NON-PRODUCT code (a serial / asset tag): no catalog can ever
+      //    corroborate it, and the photo cross-check is deliberately
+      //    conservative, so a search of the bare number surfaced an unrelated
+      //    product that then survived the hedge (a shipping-label serial coming
+      //    back as women's boots). The photo — which nameFromPhoto above
+      //    already got first shot at — is the identifier there, never the web.
+      // Hold the name in metadata as a hint; say why it's blank.
+      const heldName = withBrandPrefix(web.name, web.brand);
       await ctx.db
         .updateTable("core_scan_inbox_items")
         .set({
           suggested_metadata: identityMeta({
             source: "web-search",
             method: web.method,
-            held_name: withBrandPrefix(web.name, web.brand),
+            held_name: heldName,
             held_reason: "uncorroborated",
           }) as never,
           ai_confidence: "0.2",
-          ai_notes: `Web search suggested “${withBrandPrefix(web.name, web.brand)}” but nothing corroborated it — left blank. Add a photo or type a name to pin it down.`,
+          ai_notes:
+            codeClass.type === "unknown"
+              ? `“${ctx.upc}” reads as a serial or asset code, not a product barcode, so the web guess “${heldName}” wasn't trusted — left blank. The photo (or a typed name) is what identifies it.`
+              : `Web search suggested “${heldName}” but nothing corroborated it — left blank. Add a photo or type a name to pin it down.`,
           ai_suggested_at: new Date(),
           updated_at: new Date(),
         })
@@ -961,6 +980,29 @@ function isThinHit(hit: BarcodeHit): boolean {
     "musicbrainz",
   ]);
   return (brand.length >= 2 && words.length <= 3) || (LIGHT.has(hit.source) && words.length <= 2);
+}
+
+/** May an UNCORROBORATED web-search name be written as the row's
+ *  `suggested_name` at all, or must it be HELD as a metadata hint?
+ *
+ *  Blank beats wrong. Two cases hold:
+ *   · no scan photo — nothing can ever cross-check the guess, so a spurious
+ *     listing would sit on the row looking authoritative;
+ *   · a code that isn't a product barcode ("unknown": a serial, an asset tag) —
+ *     no catalog can EVER corroborate it, web search of the bare number
+ *     reliably surfaces an unrelated product, and the photo cross-check is
+ *     conservative by design, so the junk survived the hedge. The photo is the
+ *     identifier for these; the web result is at best a hint.
+ *  A "url" code stays on the gated path: a product's marketing QR genuinely
+ *  resolves to its product page, which corroboration can confirm. */
+export function shouldHoldWebName(opts: {
+  corroborated: boolean;
+  hasScanPhoto: boolean;
+  codeType: ScanCodeType;
+}): boolean {
+  if (opts.corroborated) return false;
+  if (opts.codeType === "unknown") return true;
+  return !opts.hasScanPhoto;
 }
 
 /** A name that is NOT a real identification — the web-search LLM's "I give up"

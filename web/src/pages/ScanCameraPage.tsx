@@ -34,8 +34,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeftRight, ArrowRight, Camera, Check, Flashlight, Loader2, MapPin, Package, ScanLine, SkipForward, Undo2, X, Zap } from "lucide-react";
-import { LiveSurfaceProvider, Modal, usePageTitle, useToast } from "@cobblr/platform-web";
+import { ArrowLeftRight, ArrowRight, Camera, Check, Flashlight, Loader2, MapPin, Package, Plus, ScanLine, SkipForward, Undo2, X, Zap } from "lucide-react";
+import { LiveSurfaceProvider, Modal, usePageTitle, useOverlayOpenFlag, useToast } from "@cobblr/platform-web";
 import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
 import { ApiError, api, type LiveSortEntry, type ScanInboxItem, type ScanResolveCandidate, type TrackedMatch } from "../lib/api";
 import { LOCATION_ENTITY_KIND, decideLocationScan, filingLabel } from "../lib/scanFiling";
@@ -117,6 +117,13 @@ function writeScanSession(slug: string, s: ScanSession) {
 
 export function ScanCameraPage() {
   usePageTitle("Scan");
+  // This page IS an overlay — a body-portaled fixed inset-0 surface over the
+  // whole app — so it raises the same flag every Modal and SidePanel raises.
+  // Without it, floating chrome that yields to overlays (the Live pill, Quick
+  // access, the feedback bubble) had no idea the scanner was up and floated
+  // over the viewfinder (the author: "it def does not belong anywhere in the camera
+  // scanner").
+  useOverlayOpenFlag();
   // Preserve the instance-scan target (?into=…) so the modal + return keep it.
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
@@ -210,17 +217,71 @@ export function ScanCameraPage() {
   // ＋Photo: the next shutter press APPENDS to this item instead of creating a
   // new one (the label shot then the display shot, on one record). Held in a
   // ref too because the shutter reads it from a callback.
-  const [appendTo, setAppendTo] = useState<{ id: string; name: string } | null>(null);
-  const appendToRef = useRef<{ id: string; name: string } | null>(null);
-  appendToRef.current = appendTo;
-  const [retakeOf, setRetakeOf] = useState<string | null>(null);
-  const retakeOfRef = useRef<string | null>(null);
-  retakeOfRef.current = retakeOf;
-  armedRef.current = !!appendTo || !!retakeOf;
+  // THE ARM — "the next shutter press attaches to THIS item instead of making
+  // a new one", which is what the paperclip on the shutter means. One state
+  // with a mode, not a parallel useState per mode: a third one (catalog) as
+  // its own flag would have meant three refs, three clears and three places to
+  // forget. The mode only decides where the shot LANDS.
+  //   append  — another shot on the record (the label, then the display shot)
+  //   retake  — replace the shot the name came from, and read it again
+  //   catalog — this shot becomes the item's display photo (the "nice photo",
+  //             ADDED alongside the catalog art rather than replacing anything
+  //             about the identification)
+  type ArmMode = "append" | "retake" | "catalog";
+  const [arm, setArm] = useState<{ id: string; name: string; mode: ArmMode } | null>(null);
+  const armRef = useRef<{ id: string; name: string; mode: ArmMode } | null>(null);
+  armRef.current = arm;
+  armedRef.current = !!arm;
+  // An arm taken FROM a sheet must also surface the mini drawer: the armed
+  // strip ("taking another photo…") lives there, and the sheet is about to
+  // close without restoring it.
+  const armFromSheet = (it: ScanInboxItem, mode: ArmMode) => {
+    armFor(it, mode);
+    setDrawerItem(it);
+    setDrawerDismissed(false);
+  };
+  const armFor = useCallback(
+    (it: ScanInboxItem, mode: ArmMode) =>
+      setArm({
+        id: it.id,
+        name: it.suggested_candidates?.[0]?.name ?? it.suggested_name ?? "this item",
+        mode,
+      }),
+    [],
+  );
   // Dismissed = "I've dealt with this one, hide it". Cleared on the next save
   // so the drawer comes back for the next capture.
   const [drawerDismissed, setDrawerDismissed] = useState(false);
   const [drawerItem, setDrawerItem] = useState<ScanInboxItem | null>(null);
+  // The drawer's full sheet is open: dim the viewfinder behind it and PAUSE
+  // barcode detection — a code drifting into frame mid-edit would flip to the
+  // result phase and unmount the sheet under the user's fingers. A ref twin
+  // because the decode callbacks are bound once.
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const sheetOpenRef = useRef(false);
+  const handleSheetExpanded = useCallback((open: boolean) => {
+    sheetOpenRef.current = open;
+    setSheetOpen(open);
+  }, []);
+  // A barcode item being REVIEWED: the drawer's swipe-up reopens the same
+  // "Scanned" sheet it was born in (ScanResultModal in existingItem mode)
+  // instead of the photo sheet - one item, one sheet. Blocks detection and
+  // dims the viewfinder exactly like an open drawer sheet.
+  const [reviewItem, setReviewItem] = useState<ScanInboxItem | null>(null);
+  const reviewItemRef = useRef<ScanInboxItem | null>(null);
+  reviewItemRef.current = reviewItem;
+  // The live Scanned sheet's row. The PAGE owns the barcode ingest (below) so
+  // the sheet can close the instant an action is taken — an intent pressed
+  // before the row lands is queued in earlyIntentRef and runs on arrival
+  // (the author: "if I'm moving fast… I should be able to do that").
+  const [resultItem, setResultItem] = useState<ScanInboxItem | null>(null);
+  const [ingestBusy, setIngestBusy] = useState(false);
+  const ingestKeyRef = useRef<string | null>(null);
+  const earlyIntentRef = useRef<"discard" | "retake" | "photo" | null>(null);
+  const resultItemRef = useRef<ScanInboxItem | null>(null);
+  // Bumped to ask the drawer to collapse its expanded sheet (the + shutter
+  // path for a photo item); the drawer owns the state, the page only asks.
+  const [collapseNonce, setCollapseNonce] = useState(0);
   // A camera-LOCAL "photo saved" note (the author): the global toast landed at the
   // bottom and covered the shutter / UPC field, blocking rapid back-to-back
   // captures. This shows briefly at the TOP over the dark preview instead.
@@ -850,6 +911,9 @@ export function ScanCameraPage() {
       // label to photograph it, and that label usually carries a barcode - a
       // detection here would mint a separate item mid-append.
       if (armedRef.current) return;
+      // The drawer's full sheet (or a barcode review sheet) is open: the user
+      // is editing, not scanning.
+      if (sheetOpenRef.current || reviewItemRef.current) return;
       const raw = rawIn.trim();
       if (!raw) return;
       // HOLD a generic web link (a product's marketing QR — NOT a Cobblr label,
@@ -1127,7 +1191,7 @@ export function ScanCameraPage() {
       if (cancelled) return;
       const video = videoRef.current;
       const detector = detectorRef.current;
-      if (!video || !detector || video.readyState < 2 || phaseRef.current !== "scanning" || armedRef.current) {
+      if (!video || !detector || video.readyState < 2 || phaseRef.current !== "scanning" || armedRef.current || sheetOpenRef.current || reviewItemRef.current) {
         raf = requestAnimationFrame(loop);
         return;
       }
@@ -1183,21 +1247,34 @@ export function ScanCameraPage() {
   // stream + lens lock stay live underneath, so re-arm is still instant). A
   // live feed wiggling behind the modal read as "it's still scanning"; the
   // freeze says "got it".
+  // "The camera should still be active, but the background frame should be
+  // frozen" (the author) — for EVERY blocking sheet, not just the result phase. The
+  // review sheet and the expanded photo sheet used to leave the video running
+  // behind themselves, which is the flicker the author saw while resizing the drawer.
+  const sheetBlocking = sheetOpen || !!reviewItem || phase === "result" || phase === "resolving";
+  // The + repurpose applies only when an actual SHEET holds the slot — a QR
+  // label being resolved ("Reading label…") also freezes, but it is a sub-
+  // second wait with no item, so the shutter stays a disabled camera there.
+  const plusMode = sheetOpen || !!reviewItem || (phase === "result" && !!pendingBarcode);
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    if (phase === "result" || phase === "resolving") {
+    if (sheetBlocking) {
       v.pause();
     } else if (phase === "scanning" && v.paused && v.srcObject) {
       void v.play().catch(() => {
         // Autoplay refusal here is transient; the stream effect owns recovery.
       });
     }
-  }, [phase]);
+  }, [phase, sheetBlocking]);
 
   // Modal closed → re-arm the scanner (or back to idle if the camera stopped).
   const rearm = useCallback(() => {
     setPendingBarcode(null);
+    setResultItem(null);
+    setIngestBusy(false);
+    ingestKeyRef.current = null;
+    resultItemRef.current = null;
     setPhase(streamRef.current ? "scanning" : "idle");
   }, [setPhase]);
 
@@ -1269,23 +1346,25 @@ export function ScanCameraPage() {
       const blob = await captureFrame(video);
       if (!blob) throw new Error("could not capture a frame");
       setFrame(blob);
-      const appending = appendToRef.current;
-      const retaking = retakeOfRef.current;
+      const armed = armRef.current;
       try {
-        if (appending || retaking) {
-          // Both paths upload the frame and attach it to an EXISTING item.
+        if (armed) {
+          // Every arm uploads the frame and attaches it to an EXISTING item;
+          // the mode only decides where it lands.
           const file = new File([blob], `scan-${Date.now()}.jpg`, { type: "image/jpeg" });
           const rec = await api.uploadFile(activeSlug, file);
-          const targetId = (appending ?? { id: retaking! }).id;
-          let updated: ScanInboxItem;
-          if (retaking) {
-            // A RETAKE replaces the shot the name was derived from, so the name
-            // has to be derived again — rerun-ai with the new image is the
-            // existing "photograph it again" path, not a new endpoint.
-            updated = await api.rerunScanAi(activeSlug, targetId, { imageFileId: rec.id, wrong: true });
-          } else {
-            updated = await api.addScanPhoto(activeSlug, targetId, rec.id);
-          }
+          const targetId = armed.id;
+          const updated =
+            armed.mode === "retake"
+              ? // A RETAKE replaces the shot the name was derived from, so the
+                // name has to be derived again — rerun-ai with the new image is
+                // the existing "photograph it again" path, not a new endpoint.
+                await api.rerunScanAi(activeSlug, targetId, { imageFileId: rec.id, wrong: true })
+              : armed.mode === "catalog"
+                ? // The display photo. Identification is untouched — this is an
+                  // ADDITION (your shot of the thing) over the stock catalog art.
+                  await api.setScanCatalogFile(activeSlug, targetId, rec.id)
+                : await api.addScanPhoto(activeSlug, targetId, rec.id);
           onSaved(updated);
           setDrawerItem(updated);
           setLastFrame((prev) => (prev ? { ...prev, itemId: targetId } : prev));
@@ -1294,16 +1373,28 @@ export function ScanCameraPage() {
           // it, an append/retake renders against a CACHED pre-change copy — the
           // new photo simply doesn't appear in the gallery.
           void qc.invalidateQueries({ queryKey: ["scan-item-live", activeSlug, targetId] });
-          toast.success(retaking ? "Retaken - reading it again…" : `Added to ${appending!.name}.`);
-          setAppendTo(null);
-          setRetakeOf(null);
+          // TOP-of-frame note, NOT a bottom toast: a toast here lands exactly
+          // on the drawer/shutter and eats the next touch — the same
+          // obstruction the filing note was moved to the top for. (Found by
+          // the e2e: a swipe right after an armed snap hit the toast, not the
+          // drawer.)
+          showFilingNote(
+            armed.mode === "retake"
+              ? "Retaken - reading it again…"
+              : armed.mode === "catalog"
+                ? "That's the photo for it now."
+                : `Added to ${armed.name}.`,
+          );
+          setArm(null);
           setFailedShot(null);
         } else {
           await saveShot(blob, stamps);
           setFailedShot(null);
         }
       } catch (e) {
-        if (!appending && !retaking) setFailedShot({ blob, stamps });
+        // Only a NEW capture can be retried from the drawer; an arm's target
+        // may be gone by then, so those surface as a toast and keep the arm.
+        if (!armed) setFailedShot({ blob, stamps });
         toast.error(e instanceof ApiError ? e.message : String(e));
       }
     } catch (e) {
@@ -1311,7 +1402,116 @@ export function ScanCameraPage() {
     } finally {
       setShutterBusy(false);
     }
-  }, [activeSlug, onSaved, qc, saveShot, shutterBusy, toast]);
+  }, [activeSlug, onSaved, qc, saveShot, showFilingNote, shutterBusy, toast]);
+
+  // The + shutter: while a sheet blocks the viewfinder the shutter can't
+  // photograph anything, so it becomes "add a photo to THIS item" — it puts
+  // the sheet away (the mini drawer's armed strip takes over as the "still on
+  // this scan" indicator), unfreezes the camera, and arms the next shot to
+  // attach (the author's design, 2026-08-03).
+  const addPhotoFromSheet = useCallback(() => {
+    const it = reviewItemRef.current ?? resultItemRef.current ?? drawerItem;
+    if (!it) {
+      // Lookup still running — queue the arm and close the sheet NOW.
+      if (phaseRef.current === "result") {
+        earlyIntentRef.current = "photo";
+        showFilingNote("One sec - the shutter arms when the scan lands…");
+        rearm();
+      }
+      return;
+    }
+    // Where the shot lands is the item's business, not a button choice: a
+    // barcode item's next shot becomes its DISPLAY photo (the "nice photo" —
+    // the catalog render isn't yours), a photo item's next shot joins the
+    // record. This is what made the Nice photo button unnecessary.
+    armFor(it, it.source_kind === "photo" ? "append" : "catalog");
+    setDrawerItem(it);
+    setDrawerDismissed(false);
+    if (reviewItemRef.current) setReviewItem(null);
+    else if (phaseRef.current === "result") rearm();
+    else setCollapseNonce((n) => n + 1); // the expanded photo sheet
+  }, [armFor, drawerItem, rearm, showFilingNote]);
+  // The barcode INGEST — page-owned so the sheet is presentation only. The
+  // sheet used to run this itself, which forced its buttons to wait for the
+  // row and meant closing it early could orphan the bookkeeping.
+  useEffect(() => {
+    if (phase !== "result" || !pendingBarcode || ingestKeyRef.current) return;
+    const key = `${pendingBarcode}:${Date.now()}`;
+    ingestKeyRef.current = key;
+    setIngestBusy(true);
+    const barcode = pendingBarcode;
+    void (async () => {
+      try {
+        const frame = await (frameBlobRef.current ?? Promise.resolve(null)).catch(() => null);
+        const [batchId, frameFileId] = await Promise.all([
+          ensureBatchId(),
+          frame
+            ? api
+                .uploadFile(activeSlug, new File([frame], `scan-${barcode}.jpg`, { type: "image/jpeg" }))
+                .then((f) => f.id)
+                .catch(() => null)
+            : Promise.resolve(null),
+        ]);
+        const it = await api.scanBarcode(activeSlug, {
+          barcode,
+          scan_area: areaIdRef.current
+            ? ((locsRef.current ?? []).find((l) => l.id === areaIdRef.current)?.short_name ??
+               (locsRef.current ?? []).find((l) => l.id === areaIdRef.current)?.name)
+            : undefined,
+          target_location_id: areaIdRef.current ?? undefined,
+          target_container_kind: containerBinRef.current?.kind,
+          target_container_id: containerBinRef.current?.id,
+          scan_batch_id: batchId ?? undefined,
+          image_file_id: frameFileId ?? undefined,
+        });
+        onSaved(it);
+        void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+        if (ingestKeyRef.current === key) {
+          // Only while the sheet is still on THIS scan: a late-landing ingest
+          // must not blank a drawer the user has since filled with a photo.
+          setDrawerItem(null); // the sheet owns the slot while it's up
+          resultItemRef.current = it;
+          setResultItem(it);
+        }
+        // A queued early intent runs the moment the row exists — the user
+        // already moved on; the system catches up.
+        const intent = earlyIntentRef.current;
+        if (intent) {
+          earlyIntentRef.current = null;
+          if (intent === "discard") {
+            await api.discardScanItem(activeSlug, it.id).catch(() => {});
+            showFilingNote("Discarded.");
+            void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+          } else {
+            armFor(it, intent === "photo" ? (it.source_kind === "photo" ? "append" : "catalog") : "retake");
+            setDrawerItem(it);
+            setDrawerDismissed(false);
+          }
+        }
+      } catch (e) {
+        earlyIntentRef.current = null;
+        toast.error(e instanceof ApiError ? e.message : String(e));
+        if (phaseRef.current === "result") rearm();
+      } finally {
+        if (ingestKeyRef.current === key) setIngestBusy(false);
+      }
+    })();
+  }, [phase, pendingBarcode, activeSlug, armFor, ensureBatchId, onSaved, qc, rearm, showFilingNote, toast]);
+
+  // An action taken while the lookup is still running: the sheet closes NOW,
+  // the intent executes when the row lands.
+  const handleEarly = useCallback(
+    (intent: "discard" | "retake") => {
+      earlyIntentRef.current = intent;
+      showFilingNote(
+        intent === "discard"
+          ? "Discarding as soon as the scan lands…"
+          : "One sec - the shutter arms when the scan lands…",
+      );
+      rearm();
+    },
+    [rearm, showFilingNote],
+  );
 
   const retryShot = useCallback(async () => {
     if (!failedShot || retryBusy) return;
@@ -1334,6 +1534,15 @@ export function ScanCameraPage() {
   // can't linger behind a barcode either. recent/savedCount still count both.
   const lastSaved = drawerItem;
 
+  // The drawer unmounts whenever sort mode takes the bottom, a barcode result
+  // takes the slot, or it was dismissed — its sheet can't report "closed" from
+  // inside an unmounted component, so clear the flag here or the scrim sticks
+  // and detection stays paused.
+  const drawerVisible = !sortMode && phase !== "result" && !drawerDismissed && !reviewItem;
+  useEffect(() => {
+    if (!drawerVisible && !reviewItemRef.current && sheetOpenRef.current) handleSheetExpanded(false);
+  }, [drawerVisible, handleSheetExpanded]);
+
   return createPortal(
     // The viewfinder keeps running behind every modal this page opens, so they
     // must stay CARDS on a phone rather than claiming the screen - declared
@@ -1349,6 +1558,14 @@ export function ScanCameraPage() {
 
       {/* Shutter flash — a quick white blink confirming the capture. */}
       {flash && <div className="absolute inset-0 bg-white/80 pointer-events-none" />}
+
+      {/* Scrim while a sheet is open (the drawer's full sheet, or a barcode
+          result): the mock's rule — blocking comes from the scrim + the paused
+          scanner, not from a different component. The positioned chrome
+          (top bar, bottom stack) paints above it; the shutter stays visible. */}
+      {(sheetOpen || !!reviewItem || (phase === "result" && !!pendingBarcode)) && (
+        <div className="absolute inset-0 bg-black/45 pointer-events-none" />
+      )}
 
       {/* "Photo saved" — top of frame, over the dark preview, tap-through.
           Doesn't touch the bottom controls (the author: the toast there blocked
@@ -1505,7 +1722,7 @@ export function ScanCameraPage() {
       )}
 
       {/* ── reticle + caption ────────────────────────────────────────── */}
-      {phase === "scanning" && (
+      {phase === "scanning" && !sheetOpen && !reviewItem && (
         <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 pointer-events-none">
           <div className="mx-8 border-2 border-accent/80 rounded-xl h-40" />
           <div className="mt-4 text-center text-white/85 text-sm px-8 [text-shadow:0_1px_2px_rgba(0,0,0,0.7)]">
@@ -1670,7 +1887,83 @@ export function ScanCameraPage() {
             the last-saved pill, the failed-shot pill and the top-of-frame saved
             note. Suppressed in sort mode (the directive card owns the bottom
             there) and behind the result modal. */}
-        {!sortMode && phase !== "result" && !drawerDismissed && (
+        {/* A barcode result renders HERE, in the same slot as the capture
+            drawer, so the camera has ONE surface whatever you pointed it at
+            (the author, 2026-08-03). It is the same content as before - all the
+            enrichment, tracked-match and destination behaviour is untouched -
+            just no longer inside a centred dialog over the viewfinder. */}
+        {phase === "result" && pendingBarcode && (
+            <ScanResultModal
+            barcode={pendingBarcode}
+            item={resultItem}
+            pending={ingestBusy}
+            scanArea={areaName}
+            scanAreaId={areaId}
+            getFrameBlob={() => frameBlobRef.current}
+            scanTarget={{
+              into: params.get("into"),
+              module: params.get("module"),
+              kind: params.get("kind"),
+              label: params.get("label"),
+            }}
+            onRetake={(it) => armFromSheet(it, "retake")}
+            onEarly={handleEarly}
+            onClose={(_outcome, _current) => {
+              // Save & next / Discard / an arm are the only exits, and none of
+              // them warrants a mini-drawer echo: the item is in the inbox
+              // (the sheet says so) and "I don't see the point of a small
+              // drawer" for a barcode (the author). The drawer still appears for the
+              // + flow, where it is the armed working surface.
+              rearm();
+            }}
+            moveMode={moveMode}
+            onAttached={(r, m, mode) => {
+              if (mode === "move") {
+                setMoveStack((s) => [
+                  ...s,
+                  { itemId: r.itemId, match: m, prevLocationId: r.prevLocationId, title: r.entityTitle },
+                ]);
+              }
+            }}
+          />
+        )}
+        {/* Review mode: the same Scanned sheet, reopened on an existing item.
+            No ingest, no qty bump - edits land straight on the drawer item. */}
+        {reviewItem && phase !== "result" && (
+          <ScanResultModal
+            key={reviewItem.id}
+            barcode={reviewItem.barcode_text ?? ""}
+            item={reviewItem}
+            scanArea={areaName}
+            scanAreaId={areaId}
+            scanTarget={{
+              into: params.get("into"),
+              module: params.get("module"),
+              kind: params.get("kind"),
+              label: params.get("label"),
+            }}
+            onRetake={(it) => armFromSheet(it, "retake")}
+            onClose={(outcome, current) => {
+              setReviewItem(null);
+              if (outcome === "handled") {
+                setDrawerItem(null);
+                setDrawerDismissed(true);
+              } else if (current) {
+                setDrawerItem(current);
+              }
+            }}
+            moveMode={moveMode}
+            onAttached={(r, m, mode) => {
+              if (mode === "move") {
+                setMoveStack((s) => [
+                  ...s,
+                  { itemId: r.itemId, match: m, prevLocationId: r.prevLocationId, title: r.entityTitle },
+                ]);
+              }
+            }}
+          />
+        )}
+        {drawerVisible && (
           <ScanCaptureDrawer
             slug={activeSlug}
             item={lastSaved}
@@ -1685,17 +1978,17 @@ export function ScanCameraPage() {
             }
             undoBusy={undoBusy}
             confirmBusy={confirmBusy}
-            armed={appendTo ? "append" : retakeOf ? "retake" : null}
-            onCancelArm={() => { setAppendTo(null); setRetakeOf(null); }}
-            onAddPhoto={(it) => {
-              setRetakeOf(null);
-              setAppendTo({ id: it.id, name: it.suggested_candidates?.[0]?.name ?? it.suggested_name ?? "this item" });
-            }}
-            onRetake={(it) => { setAppendTo(null); setRetakeOf(it.id); }}
+            armed={arm?.mode ?? null}
+            onCancelArm={() => setArm(null)}
+            onAddPhoto={(it) => armFor(it, "append")}
+            onRetake={(it) => armFor(it, "retake")}
             onPickLocation={(it) => setPlacingItem(it)}
             sessionLocationLabel={areaName ?? null}
             containerLabel={containerBin ? (containerName ?? "this container") : null}
             onDismiss={() => setDrawerDismissed(true)}
+            onExpandedChange={handleSheetExpanded}
+            collapseNonce={collapseNonce}
+            onExpandBarcode={(it) => setReviewItem(it)}
             onConfirm={(it) => {
               // The candidate's own destination when it has one; an empty body
               // lets the backend pick its generic home (same fallback the
@@ -1731,6 +2024,10 @@ export function ScanCameraPage() {
             }}
           />
         )}
+        {/* Hidden while a sheet is open: you already scanned/opened something,
+            so "Or type the UPC" is dead weight under the sheet - the row (and
+            its height) comes back the moment the sheet closes. */}
+        {!(sheetOpen || !!reviewItem || (phase === "result" && !!pendingBarcode)) && (
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -1759,6 +2056,7 @@ export function ScanCameraPage() {
             Scan
           </button>
         </form>
+        )}
 
         {/* Assign · SHUTTER · Done — the bottom bar. The shutter is the
             photo path for items with no barcode; barcodes never need it. */}
@@ -1770,12 +2068,30 @@ export function ScanCameraPage() {
           >
             <MapPin size={15} /> Assign
           </button>
+          {/* Three shutter states, and never a dead one:
+                camera — photograph a NEW item;
+                +      — a sheet is blocking the viewfinder, so a real capture
+                         is impossible; the press puts the sheet away, unfreezes
+                         the camera and arms the next shot to ATTACH to that
+                         sheet's item (the author's design, 2026-08-03);
+                armed  — gold ring, camera icon: the next press attaches. The
+                         words live in the drawer's strip — the paperclip icon
+                         is gone ("I have literally no idea what the paperclip
+                         icon means"). */}
           <button
             type="button"
-            onClick={() => void takePhoto()}
-            disabled={!running || phase !== "scanning" || shutterBusy}
-            aria-label="Take a photo of the item"
-            title="Photograph the item (no barcode needed)"
+            onClick={() => (plusMode ? addPhotoFromSheet() : void takePhoto())}
+            disabled={
+              !running ||
+              shutterBusy ||
+              (plusMode ? false : phase !== "scanning")
+            }
+            aria-label={plusMode ? "Add a photo to this item" : "Take a photo of the item"}
+            title={
+              plusMode
+                ? "Add a photo to this item - the sheet gets out of the way and the next shot attaches"
+                : "Photograph the item (no barcode needed)"
+            }
             className={
               "w-[72px] h-[72px] rounded-full disabled:opacity-40 flex items-center justify-center shadow-lg " +
               (armedRef.current ? "bg-slate-900 ring-4 ring-cobble-400" : "bg-white/95 hover:bg-white")
@@ -1789,6 +2105,8 @@ export function ScanCameraPage() {
             >
               {shutterBusy ? (
                 <Loader2 size={24} className="text-slate-900 animate-spin" />
+              ) : plusMode ? (
+                <Plus size={28} className="text-slate-900" data-testid="shutter-plus" />
               ) : (
                 <Camera size={26} className={armedRef.current ? "text-cobble-300" : "text-slate-900"} />
               )}
@@ -1916,39 +2234,6 @@ export function ScanCameraPage() {
           onClose={() => {
             setAmbiguous(null);
             setPhase("scanning");   // dismissing re-arms rather than stranding the camera
-          }}
-        />
-      )}
-      {phase === "result" && pendingBarcode && (
-        <ScanResultModal
-          barcode={pendingBarcode}
-          scanArea={areaName}
-          scanAreaId={areaId}
-          scanContainer={containerBin}
-          ensureBatchId={ensureBatchId}
-          getFrameBlob={() => frameBlobRef.current}
-          getStream={() => streamRef.current}
-          scanTarget={{
-            into: params.get("into"),
-            module: params.get("module"),
-            kind: params.get("kind"),
-            label: params.get("label"),
-          }}
-          onSaved={(it) => {
-            // A barcode is the modal's business. Clear the drawer so it neither
-            // duplicates the modal nor leaves an older photo sitting behind it.
-            onSaved(it);
-            setDrawerItem(null);
-          }}
-          onClose={rearm}
-          moveMode={moveMode}
-          onAttached={(r, m, mode) => {
-            if (mode === "move") {
-              setMoveStack((s) => [
-                ...s,
-                { itemId: r.itemId, match: m, prevLocationId: r.prevLocationId, title: r.entityTitle },
-              ]);
-            }
           }}
         />
       )}

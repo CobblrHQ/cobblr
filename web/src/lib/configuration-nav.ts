@@ -47,6 +47,7 @@ import {
   Shield,
   Sliders,
   Sparkles,
+  Terminal,
   Users,
 } from "lucide-react";
 
@@ -493,6 +494,15 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     to: "/configuration/health",
     module: "core-healthcheck",
     keywords: ["status", "probes", "diagnostics"],
+  },
+  {
+    section: "system",
+    icon: Terminal,
+    label: "Use from a script",
+    description:
+      "Ready-to-run curl / Python / Node / TypeScript for creating and reading records from a script, using your own kinds and fields. Mints a scoped token for you.",
+    to: "/configuration/api-recipes",
+    keywords: ["api", "script", "curl", "token", "automation", "use from a script", "integrate", "rest", "recipe"],
   },
   {
     section: "system",

@@ -584,8 +584,15 @@ export const api = {
   authConfig: () =>
     request<{ signup_enabled: boolean; self_serve_invites?: boolean; hosted?: boolean }>("GET", "/auth/config"),
   // Mint an API token (plaintext returned ONCE). Used by the edge-bridge setup to
-  // generate a least-privilege devices:edge token in-flow — no trip to the tokens page.
-  createApiToken: (body: { name: string; scopes?: string[] }) =>
+  // generate a least-privilege devices:edge token in-flow, and by the API Recipes
+  // auto-scoper (records:* scopes + source/meta provenance) — no trip to the tokens page.
+  createApiToken: (body: {
+    name: string;
+    scopes?: string[];
+    expires_at?: string;
+    source?: string;
+    meta?: Record<string, unknown>;
+  }) =>
     request<{ id: string; name: string; token: string; token_prefix: string }>("POST", "/me/api-tokens", body),
   signup: (body: {
     email: string;
@@ -2725,7 +2732,17 @@ export const api = {
     ),
   /** Receipt sessions imported but not yet confirmed into a purchase order. */
   getPendingReceiptGroups: (slug: string) =>
-    request<{ groups: Array<{ groupId: string; vendor: string | null; count: number }>; total_items: number }>(
+    request<{
+      groups: Array<{
+        groupId: string;
+        vendor: string | null;
+        /** Order / invoice number when the receipt stated one - what tells two
+         *  receipts from the same vendor apart. */
+        orderRef: string | null;
+        count: number;
+      }>;
+      total_items: number;
+    }>(
       "GET",
       `/orgs/${slug}/modules/core-scan/inbox/receipt-groups/pending`,
     ),
@@ -3038,6 +3055,8 @@ export const api = {
       wrong?: boolean | undefined;
       enrich?: boolean | undefined;
       imageFileId?: string | undefined;
+      /** The corrected barcode - replaces barcode_text and re-runs the lookup. */
+      barcode?: string | undefined;
       noAi?: boolean | undefined;
     } = {},
   ) =>
@@ -3049,6 +3068,7 @@ export const api = {
         ...(opts.wrong ? { wrong: true } : {}),
         ...(opts.enrich ? { enrich: true } : {}),
         ...(opts.imageFileId ? { image_file_id: opts.imageFileId } : {}),
+        ...(opts.barcode ? { barcode: opts.barcode } : {}),
         ...(opts.noAi ? { no_ai: true } : {}),
       },
     ),

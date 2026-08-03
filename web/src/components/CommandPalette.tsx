@@ -14,6 +14,7 @@ import { useThemeToggle } from "../theme/useThemeToggle";
 import { fuzzyMatch } from "../lib/fuzzy";
 import { searchFeatures } from "../lib/feature-index";
 import { mergePaletteRows, PALETTE_RANK, type PaletteRow, type PaletteRowKind } from "../lib/paletteRows";
+import { OverlayFlag } from "@cobblr/platform-web";
 
 /** Anything (the mobile bar, the palette) can ask for the quick-add sheet. */
 export const OPEN_ADD_SHEET_EVENT = "cobblr:open-add-sheet";
@@ -195,6 +196,7 @@ export function CommandPalette() {
   if (!open || !activeSlug) return null;
   return createPortal(
     <div className="fixed inset-0 z-[110] bg-black/40 flex items-start justify-center pt-[12vh] px-4" onClick={() => setOpen(false)}>
+      <OverlayFlag />
       <div
         className="w-full max-w-lg rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}

@@ -88,6 +88,7 @@ const CalendarPage = lazy(() => import("./pages/CalendarPage").then((m) => ({ de
 const QrPage = lazy(() => import("./pages/QrPage").then((m) => ({ default: m.QrPage })));
 const HealthPage = lazy(() => import("./pages/HealthPage").then((m) => ({ default: m.HealthPage })));
 const OpenApiPage = lazy(() => import("./pages/OpenApiPage").then((m) => ({ default: m.OpenApiPage })));
+const ApiRecipesPage = lazy(() => import("./pages/ApiRecipesPage").then((m) => ({ default: m.ApiRecipesPage })));
 const QueuePage = lazy(() => import("./pages/QueuePage").then((m) => ({ default: m.QueuePage })));
 const LinksPage = lazy(() => import("./pages/LinksPage").then((m) => ({ default: m.LinksPage })));
 const LocationsPage = lazy(() => import("./pages/LocationsPage").then((m) => ({ default: m.LocationsPage })));
@@ -646,6 +647,7 @@ function ActiveOrgScopedRoutes() {
               element={<Navigate to="/configuration/permissions?tab=roles" replace />}
             />
             <Route path="/configuration/openapi" element={<OpenApiPage />} />
+            <Route path="/configuration/api-recipes" element={<ApiRecipesPage />} />
             <Route path="/configuration/queue" element={<QueuePage />} />
             <Route path="/configuration/links" element={<LinksPage />} />
             {/* Settings FAMILY pages that live outside /configuration/* render

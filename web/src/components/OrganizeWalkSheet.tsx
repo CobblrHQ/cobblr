@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CheckCircle2, ChevronRight, Circle, MapPin, PartyPopper, X } from "lucide-react";
-import { useToast } from "@cobblr/platform-web";
+import { useToast, OverlayFlag } from "@cobblr/platform-web";
 import { api, type OrganizeStoredPlan, type ScanInboxItem } from "../lib/api";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
 
@@ -163,6 +163,7 @@ export function OrganizeWalkSheet({
       className="fixed inset-0 z-[70] bg-surface dark:bg-slate-950 flex flex-col"
       data-testid="organize-walk-sheet"
     >
+      <OverlayFlag />
       <div className="flex items-center gap-3 border-b border-line dark:border-slate-800 px-4 py-3">
         <div className="min-w-0 flex-1">
           <div className="text-sm text-muted">

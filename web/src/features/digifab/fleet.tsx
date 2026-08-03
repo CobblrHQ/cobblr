@@ -19,7 +19,7 @@ import { deviceBucket, fleetStatusChip } from "../../lib/fleet-status";
 import { BambuConnectWizard } from "../../components/BambuConnectWizard";
 import { BridgePicker } from "../../components/BridgePicker";
 import { useActiveOrg } from "../../auth/ActiveOrgContext";
-import { Modal, useToast, useConfirm, useImageSrc } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, useImageSrc, useOverlayOpenFlag } from "@cobblr/platform-web";
 import { Combobox } from "../../components/Combobox";
 import type { ModulePageTabCtx, EntityDetailPanelCtx } from "../../panels/types";
 
@@ -2201,6 +2201,7 @@ function FilesPanel({ slug, connId, deviceId, onZoom, history, onOpenPrint, onRe
 // A full-screen image viewer — click anywhere to close. Portals to body so the
 // header's backdrop-blur can't trap it.
 export function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
+  useOverlayOpenFlag(); // full-screen: floating chrome must yield (lint:overlay-flag)
   return createPortal(
     <div className="fixed inset-0 z-[120] bg-black/80 flex items-center justify-center p-6 cursor-zoom-out" onClick={onClose}>
       <img src={src} alt="" className="max-w-full max-h-full object-contain rounded shadow-2xl" />

@@ -2,6 +2,34 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-08-03
+
+### Features
+- New Configuration to Use from a script page: copy-paste code for creating and reading records from your own scripts, in curl, Python, Node.js, or TypeScript, generated from your workspace's own kinds and fields. Answer a few questions and it mints a scoped API token for you (limited to one record type and action), and the snippet loads it from an environment variable so the token never lives in your code.
+- API tokens can now be scoped to a single record type and one action (create, read, write, or delete), and carry a provenance label recording where and why they were minted. A script or integration gets exactly the access it needs and nothing more, and a leaked token can only do what its scope allows.
+- The barcode on a pending scan is now editable, a hint that names the correct barcode actually fixes it, and an added photo can drive a re-identify.
+
+### Improvements
+- A barcode result now appears in the same place as a photo capture: a sheet above the shutter rather than a card floating over the middle of the viewfinder. Same information, same buttons, one surface whatever you point the camera at.
+- The camera's capture drawer now works the way the design intended: swipe up (or tap the grip) for the full sheet, swipe down to put it away, and the viewfinder dims while it is open so a stray barcode cannot interrupt an edit. A barcode result opens that same sheet and collapses back to the mini drawer instead of vanishing. Scanning a serial or asset code no longer shows a random web guess as the name; it stays blank and the photo does the identifying.
+- One item, one sheet: swiping a scanned barcode item back up now reopens the same Scanned sheet it arrived in, instead of a different photo-shaped one. Swiping the mini drawer down dismisses it. The Scanned sheet got the platform quantity stepper (big thumb buttons, no tiny number box), a cleaner action row (photograph-it and Save & next side by side, Discard and Nice photo tucked below), and the type-a-UPC row hides while any sheet is open. When a photo can't be identified the drawer now says so instead of silently reading "Captured item".
+- The Ask Cobb button now shows Cobb rather than a generic sparkle, and when no AI is connected he turns up resting on the notice that says so.
+- The capture drawer now slides between its tall and short sizes instead of snapping to the new one in a single frame. The scanned-result sheet grows the same way as its details arrive.
+- Scan actions no longer wait for the lookup: press Discard, Not it, or the plus shutter the instant a result sheet appears and it closes right away, with the action running the moment the scan lands. The Nice photo button is gone because the plus shutter now knows where a shot belongs: on a barcode item it becomes the display photo, on a photo item it joins the record.
+- Pending receipts on the Purchases page now show their order/invoice number, so three receipts from the same vendor are told apart by what identifies them rather than by a line count.
+- While a scan sheet is open the camera now truly freezes behind it, and the shutter becomes a plus: pressing it puts the sheet away, wakes the camera, and your next shot attaches to that item instead of starting a new one. The paperclip icon is gone; the drawer says what the next shot will do in words.
+- The Purchases header is one row that never wraps, and the receipt drop-box address is the same one-press chip the scan inbox uses instead of a wall of text on its own line.
+- Nice photo and Not it now arm the camera shutter, so you frame the shot full screen with the real shutter instead of a small capture window stacked over the viewfinder you were already looking through. The paperclip on the shutter means the same thing everywhere: your next shot attaches to the item you are looking at. The buttons on a scanned result are also all proper thumb targets again.
+- A scanned barcode result now asks for a decision: Save & next, Discard, or one of the camera actions. The ambiguous X and the swipe-away are gone, so a result never disappears without you choosing what happened to it. All of the sheet's buttons are also there from the moment it opens, lighting up when the lookup lands, instead of appearing one at a time.
+- On the Use-from-a-script page you can now scope one token to several record types at once. "Which kinds can it touch?" adds a "Pick kinds" option with a checklist of everything in the workspace, so a single script that logs computers and updates locations gets one token with exactly those kinds and nothing more.
+
+### Fixes
+- The Live box now sits below anything that covers the page, so modals, panels and the camera scanner are no longer floated over by it. It never appears over the viewfinder.
+- Floating chrome now gets out of the way of every full-screen surface, not just some of them. The Quick Access pill and the feedback button no longer sit on top of the command palette, an image lightbox, the guided tour, a confirm dialog, or a mobile nav drawer.
+- Changing the quantity on a scanned item now saves however you leave the sheet. Setting 2 down to 1 and swiping the sheet away used to revert it, because the count was only written by the Save and next button.
+- Four scan fixes from shelf testing. Committing an item with a very long catalog title no longer fails with bad request body; the name is trimmed to fit instead. The scanned-result sheet no longer offers to file the item anywhere, since scans always land in the inbox and routing happens there. The sheet gained a photo strip showing every picture on the item, so a shot added with the plus shutter never vanishes into a different surface, and the drawer thumbnail no longer goes blank after adding one. The scan inbox session header also stops overlapping its End control on phones.
+- A scanned barcode result no longer scrolls. Long catalog titles are marketing copy and one of them ran to thirteen lines, pushing Save and next off the bottom of the sheet; the name is now capped at three lines so everything fits.
+
 ## 2026-08-02
 
 ### Features

@@ -15,6 +15,7 @@ import { Check, ChevronDown, ChevronRight, MapPin, Plus, Search, X } from "lucid
 import { api, type Location } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { QuickCreateLocation } from "./LocationPicker";
+import { OverlayFlag } from "@cobblr/platform-web";
 
 interface Props {
   value: string | null;
@@ -170,7 +171,9 @@ export function LocationTreePicker({
     rect &&
     createPortal(
       <>
-        <div className="fixed inset-0 z-[60]" onClick={() => setOpen(false)} />
+        <div className="fixed inset-0 z-[60]" onClick={() => setOpen(false)}>
+          <OverlayFlag />
+        </div>
         <div
           className="fixed z-[61] flex flex-col overflow-hidden rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-xl"
           style={{

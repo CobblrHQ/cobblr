@@ -25,6 +25,7 @@ import { usePendingAiShares } from "../lib/usePendingAiShares";
 import { useAuth } from "../auth/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { useNavModules, NAVGROUP_PREFIX, INSTANCE_PREFIX } from "./useNavModules";
+import { OverlayFlag } from "@cobblr/platform-web";
 
 export function MobileNav() {
   const { activeOrg, activeSlug } = useActiveOrg();
@@ -111,6 +112,7 @@ export function MobileNav() {
       {open &&
         createPortal(
           <div className="md:hidden fixed inset-0 z-[80]">
+            <OverlayFlag />
             {/* backdrop — tap to dismiss */}
             <div
               className="absolute inset-0 bg-slate-900/40"

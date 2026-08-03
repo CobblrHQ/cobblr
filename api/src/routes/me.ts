@@ -826,6 +826,10 @@ const TokenCreate = z.object({
   /** Capability scopes. Omitted/empty = unrestricted (legacy full access).
    *  Unknown keys are dropped server-side (sanitizeScopes). */
   scopes: z.array(z.string().max(80)).max(20).optional(),
+  /** Provenance — the surface that minted this (e.g. "api-recipes"). */
+  source: z.string().max(60).optional(),
+  /** Provenance payload — the wizard's answers ({ kind, action, org }). */
+  meta: z.record(z.unknown()).optional(),
 });
 
 // The capability scopes a token can be minted with (secret-free; for the
@@ -842,7 +846,7 @@ meRouter.get("/me/api-tokens", requireAuth, async (req, res, next) => {
       .selectFrom("api_tokens")
       .select([
         "id", "name", "token_prefix", "expires_at",
-        "last_used_at", "revoked_at", "created_at", "scopes",
+        "last_used_at", "revoked_at", "created_at", "scopes", "source", "meta",
       ])
       .where("user_id", "=", req.session!.id)
       .orderBy("created_at", "desc")
@@ -874,8 +878,11 @@ meRouter.post("/me/api-tokens", requireAuth, async (req, res, next) => {
         expires_at: parsed.data.expires_at ? new Date(parsed.data.expires_at) : null,
         // Empty → NULL = unrestricted (legacy). Non-empty = deny-by-default.
         scopes: cleanScopes.length > 0 ? cleanScopes : null,
+        source: parsed.data.source?.trim() || null,
+        // jsonb: pg parses the JSON string on insert (same idiom as blueprint).
+        meta: parsed.data.meta ? JSON.stringify(parsed.data.meta) : null,
       })
-      .returning(["id", "name", "token_prefix", "expires_at", "created_at", "scopes"])
+      .returning(["id", "name", "token_prefix", "expires_at", "created_at", "scopes", "source", "meta"])
       .executeTakeFirstOrThrow();
     // Plaintext goes back exactly once. The DB only ever has the hash.
     res.status(201).json({ ...inserted, token: plaintext });

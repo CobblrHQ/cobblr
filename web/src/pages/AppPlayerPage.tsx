@@ -23,6 +23,7 @@ import {
   EntityThumb,
   usePageTitle,
   useToast,
+  OverlayFlag,
 } from "@cobblr/platform-web";
 import { NewPartDialog, InventoryProvider } from "@cobblr/inventory/ui";
 import { api, getToken, type AppBlock, type AppTheme } from "../lib/api";
@@ -149,6 +150,7 @@ export function AppPlayerPage() {
     const ff = fontFaceCss(theme);
     return createPortal(
       <div className="fixed inset-0 z-50 overflow-y-auto" style={themeWrapperStyle(theme)}>
+        <OverlayFlag />
         {ff && <style>{ff}</style>}
         <div className="min-h-full max-w-3xl mx-auto px-5 py-7 sm:py-9 space-y-6">
           <div className="flex items-start justify-between gap-4 border-b pb-3" style={{ borderColor: "var(--app-border)" }}>

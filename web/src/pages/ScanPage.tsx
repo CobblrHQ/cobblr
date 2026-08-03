@@ -67,6 +67,7 @@ import { TrackedMatchBanner } from "../components/TrackedMatchBanner";
 import { BinAdjustModal } from "../components/BinAdjustModal";
 import { PairPhoneButton } from "../components/PairPhoneButton";
 import { HeaderMenu, MenuHead, MenuItem, MenuNote, MenuSep } from "../components/HeaderMenu";
+import { ReceiptAddressChip } from "../components/ReceiptAddressChip";
 import { classifyOmni, omniPlaceholder } from "./omniIntake";
 import { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 export { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
@@ -2451,47 +2452,10 @@ export function ScanPage() {
         {/* A feature nobody can find is a feature that does not exist, so the
             receipt address keeps a visible affordance on desktop and reveals +
             copies in one press (principle #2). On a phone it moves into the
-            overflow rather than vanishing. */}
+            overflow rather than vanishing. The chip itself is shared with the
+            Purchases header - see ReceiptAddressChip. */}
         {receiptAddress && (
-          <HeaderMenu
-            width={280}
-            align="right"
-            className="hidden sm:inline-flex"
-            trigger={({ toggle }) => (
-              <button
-                type="button"
-                onClick={toggle}
-                title="Forward a receipt to this address and its lines become items"
-                className={
-                  "inline-flex items-center gap-1.5 rounded-full border border-line dark:border-slate-700 px-2.5 py-1 text-[11.5px] text-muted dark:text-slate-400 hover:border-accent hover:text-content transition shrink-0"
-                }
-              >
-                <Mail size={12} />
-                <span className="hidden lg:inline">Email receipts</span>
-              </button>
-            )}
-          >
-            {() => (
-              <>
-                <MenuHead>Email receipts to</MenuHead>
-                <div className="px-3 pb-2">
-                  <code className="block overflow-x-auto whitespace-nowrap rounded bg-mortar-100 dark:bg-slate-800 px-1.5 py-1 text-[11px] text-content dark:text-mortar-100 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                    {receiptAddress}
-                  </code>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void navigator.clipboard?.writeText(receiptAddress);
-                      toast.success("Address copied");
-                    }}
-                    className="mt-1.5 w-full rounded bg-cobble-600 hover:bg-cobble-700 px-2 py-1 text-[11px] font-medium text-white transition"
-                  >
-                    Copy address
-                  </button>
-                </div>
-              </>
-            )}
-          </HeaderMenu>
+          <ReceiptAddressChip address={receiptAddress} className="hidden sm:inline-flex" />
         )}
 
         {/* Everything that is real but rare. Grouped by what it acts ON, so
@@ -4074,15 +4038,26 @@ function InboxCard({
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
   const rerun = useMutation({
-    mutationFn: (vars?: { hint?: string; wrong?: boolean; enrich?: boolean; noAi?: boolean }) =>
+    mutationFn: (vars?: {
+      hint?: string;
+      wrong?: boolean;
+      enrich?: boolean;
+      noAi?: boolean;
+      /** Corrected barcode - lands on barcode_text, then the lookup re-runs. */
+      barcode?: string;
+      /** Re-identify from THIS photo (an extra photo the user just added). */
+      imageFileId?: string;
+    }) =>
       api.rerunScanAi(activeSlug, item.id, {
         hint: vars?.hint,
         wrong: vars?.wrong,
         enrich: vars?.enrich,
         noAi: vars?.noAi,
+        barcode: vars?.barcode,
+        imageFileId: vars?.imageFileId,
       }),
-    onMutate: () => {
-      if (isPhotoItem) {
+    onMutate: (vars) => {
+      if (isPhotoItem || vars?.imageFileId) {
         readingSnapshot.current = item.ai_suggested_at ?? null;
         setReading(true);
       }
@@ -4091,6 +4066,19 @@ function InboxCard({
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
       if (vars?.noAi) {
         toast.success("Replaying the cached read through the current code…");
+        return;
+      }
+      if (vars?.barcode) {
+        // The barcode branch runs INLINE, so `fresh` is the re-resolved row.
+        toast.success(
+          fresh.suggested_name
+            ? `Barcode corrected - now reads as ${fresh.suggested_name}`
+            : "Barcode corrected - no match yet for the new code.",
+        );
+        return;
+      }
+      if (vars?.imageFileId) {
+        toast.success("Re-identifying from your photo…");
         return;
       }
       if (isPhotoItem) {
@@ -4286,7 +4274,13 @@ function InboxCard({
       api.uploadFile(activeSlug, toFile(b, "photo")).then((up) => api.addScanPhoto(activeSlug, item.id, up.id)),
     onSuccess: () => {
       setCaptureSheet(null);
-      toast.success("Photo added");
+      // Adding a photo is inert for identification on its own - say where the
+      // "use it" button lives, or the pic sits there doing nothing.
+      toast.success(
+        item.status === "pending"
+          ? "Photo added - tap ↺ on it to re-identify from this shot"
+          : "Photo added",
+      );
       invalidateInbox();
     },
     onError: onErr,
@@ -4311,6 +4305,21 @@ function InboxCard({
     onSuccess: invalidateInbox,
     onError: onErr,
   });
+  // Barcode editor: digits (spaces/dashes ok while typing) → Save re-runs the
+  // lookup on the corrected code via rerun-ai {barcode}.
+  const [editingBarcode, setEditingBarcode] = useState(false);
+  const [barcodeDraft, setBarcodeDraft] = useState("");
+  const barcodeDigits = barcodeDraft.replace(/[\s-]/g, "");
+  const barcodeDraftValid =
+    /^\d+$/.test(barcodeDigits) && [8, 12, 13, 14].includes(barcodeDigits.length);
+  const saveBarcode = () => {
+    if (!barcodeDraftValid || barcodeDigits === item.barcode_text) {
+      setEditingBarcode(false);
+      return;
+    }
+    setEditingBarcode(false);
+    rerun.mutate({ barcode: barcodeDigits });
+  };
   const extraPhotos = Array.isArray((item.suggested_metadata as { extra_photos?: unknown })?.extra_photos)
     ? ((item.suggested_metadata as { extra_photos: string[] }).extra_photos)
     : [];
@@ -4974,7 +4983,13 @@ function InboxCard({
                   fileId={pid}
                   onMakePrimary={() => setPrimaryPhoto.mutate(pid)}
                   onRemove={() => removeExtraPhoto.mutate(pid)}
-                  busy={setPrimaryPhoto.isPending || removeExtraPhoto.isPending}
+                  // "I added this pic to give you more info - get it right."
+                  // Re-identifies from THIS photo; without it an added photo was
+                  // inert for identification (the author, 2026-08-03).
+                  onReidentify={
+                    item.status === "pending" ? () => rerun.mutate({ imageFileId: pid }) : undefined
+                  }
+                  busy={setPrimaryPhoto.isPending || removeExtraPhoto.isPending || rerun.isPending}
                 />
               ))}
             </div>
@@ -5182,6 +5197,7 @@ function InboxCard({
                   rerun: "Re-ran the lookup with AI",
                   replay: "Replayed from cached data (no AI)",
                   "rerun-hint": "Re-ran with a hint",
+                  barcode: "Corrected the barcode",
                   wrong: "Flagged wrong — re-checked everything",
                   enrich: "Asked for more detail",
                   confirm: "Locked into the barcode database",
@@ -5257,11 +5273,77 @@ function InboxCard({
 
           {/* Identity row: barcode + area + sanity-check links. */}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-            {item.barcode_text && (
-              <span className="font-mono text-content dark:text-mortar-200 bg-subtle dark:bg-slate-800 rounded px-2 py-0.5">
-                ▌▌{item.barcode_text}
+            {/* The barcode is EDITABLE while pending. The camera/vision can read
+                a digit wrong, and before this the row was display-only: the one
+                field a "correct barcode X" correction was about was the one
+                field it couldn't reach, so every re-run faithfully re-resolved
+                the misread code (the author, 2026-08-03). Saving re-runs the lookup on
+                the corrected code. */}
+            {editingBarcode ? (
+              <span className="inline-flex items-center gap-1 font-mono" onClick={(e) => e.stopPropagation()}>
+                ▌▌
+                <input
+                  autoFocus
+                  inputMode="numeric"
+                  value={barcodeDraft}
+                  onChange={(e) => setBarcodeDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") saveBarcode();
+                    else if (e.key === "Escape") setEditingBarcode(false);
+                  }}
+                  placeholder="digits from the label"
+                  className="w-36 rounded border border-accent bg-surface dark:bg-slate-900 px-1.5 py-0.5 font-mono text-content outline-none"
+                />
+                <button
+                  type="button"
+                  disabled={rerun.isPending || !barcodeDraftValid}
+                  onClick={saveBarcode}
+                  className="rounded bg-cobble-600 hover:bg-cobble-700 px-2 py-0.5 text-[11px] font-medium text-white transition disabled:opacity-50"
+                >
+                  {rerun.isPending ? "Looking up…" : "Save & re-run"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingBarcode(false)}
+                  className="text-faint hover:text-content"
+                  aria-label="Cancel barcode edit"
+                >
+                  <X size={12} />
+                </button>
               </span>
-            )}
+            ) : item.barcode_text ? (
+              <span className="inline-flex items-center gap-1 font-mono text-content dark:text-mortar-200 bg-subtle dark:bg-slate-800 rounded px-2 py-0.5">
+                ▌▌{item.barcode_text}
+                {item.status === "pending" && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setBarcodeDraft(item.barcode_text ?? "");
+                      setEditingBarcode(true);
+                    }}
+                    title="Fix the barcode - saving re-runs the lookup on the corrected code"
+                    aria-label="Edit the barcode"
+                    className="text-faint hover:text-accent transition"
+                  >
+                    <Pencil size={11} />
+                  </button>
+                )}
+              </span>
+            ) : item.status === "pending" ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setBarcodeDraft("");
+                  setEditingBarcode(true);
+                }}
+                title="Type the barcode off the label - it identifies the product exactly"
+                className="inline-flex items-center gap-1 font-mono text-muted dark:text-slate-400 border border-dashed border-line dark:border-slate-700 rounded px-2 py-0.5 hover:border-accent hover:text-content transition"
+              >
+                ▌▌ Add barcode
+              </button>
+            ) : null}
             {item.scan_area && (
               <span className="inline-flex items-center gap-1 text-muted dark:text-slate-400">
                 <MapPin size={11} className="text-accent" /> {item.scan_area}
@@ -5392,12 +5474,15 @@ function ExtraPhotoThumb({
   fileId,
   onMakePrimary,
   onRemove,
+  onReidentify,
   busy,
 }: {
   slug: string;
   fileId: string;
   onMakePrimary: () => void;
   onRemove: () => void;
+  /** Re-run the identify FROM this photo. Present only while pending. */
+  onReidentify?: () => void;
   busy: boolean;
 }) {
   const src = useImageSrc(`/api/v1/orgs/${slug}/modules/core-files/files/${fileId}/raw?variant=thumb`);
@@ -5421,6 +5506,18 @@ function ExtraPhotoThumb({
       >
         <X size={10} />
       </button>
+      {onReidentify && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onReidentify}
+          title="Re-identify the item from this photo"
+          aria-label="Re-identify from this photo"
+          className="absolute -bottom-1.5 -right-1.5 rounded-full bg-cobble-600 text-white p-0.5 hover:bg-cobble-700 disabled:opacity-50"
+        >
+          <RotateCcw size={10} />
+        </button>
+      )}
     </div>
   );
 }
@@ -5591,7 +5688,7 @@ function HintBox({
           }
         }}
         rows={2}
-        placeholder="Anything that helps - a model number, a better name, a correction… (Enter to submit, Shift+Enter for a newline)"
+        placeholder="Anything that helps - a model number, a better name, the correct barcode… (Enter to submit, Shift+Enter for a newline)"
         className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800 resize-none"
       />
       <div className="mt-1.5 flex items-center justify-end gap-2">

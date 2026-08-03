@@ -6,13 +6,14 @@
 // re-arms the scanner. The item lands in the inbox either way, so desktop
 // triage still works; this just lets you set qty / commit on the spot.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Camera, Check, CheckCircle, MapPin, Minus, Plus, ScanLine, Sparkles, Trash2 } from "lucide-react";
-import { Modal, useToast } from "@cobblr/platform-web";
+import { Camera, Check, CheckCircle, MapPin, ScanLine, Sparkles, Trash2 } from "lucide-react";
+import { useToast } from "@cobblr/platform-web";
 import { ApiError, api, type ScanCandidate, type ScanInboxItem, type TrackedMatch } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { CameraCaptureSheet } from "../components/CameraCaptureSheet";
+import { useScanQuantity } from "../lib/scanQuantity";
+import { CaptureSheetShell, QtyStepper } from "./ScanCaptureDrawer";
 import { TrackedMatchBanner } from "../components/TrackedMatchBanner";
 import { AiOffMissHint, useAiStatus } from "./ScanPage";
 
@@ -29,44 +30,52 @@ function candidateKind(c: ScanCandidate): string {
 
 export function ScanResultModal({
   barcode,
+  item: itemProp,
+  pending,
   scanArea,
   scanAreaId,
-  scanContainer,
-  ensureBatchId,
   getFrameBlob,
-  getStream,
   scanTarget,
-  onSaved,
   onClose,
+  onRetake,
+  onEarly,
   moveMode,
   onAttached,
 }: {
   barcode: string;
+  /** The inbox row this sheet is about. The CAMERA PAGE owns the ingest and
+   *  hands the row over when it lands (null while the lookup runs) — the sheet
+   *  never creates anything, so closing it early can't lose the scan, and
+   *  actions taken before the row exists can be queued by the page. Review
+   *  mode passes the row immediately. */
+  item?: ScanInboxItem | null;
+  /** The page's ingest is still in flight ("Looking up…"). */
+  pending?: boolean;
   /** The scanner session's area (a location name) — stamped on the item as
    *  `scan_area` at ingest, shown back in the card. */
   scanArea?: string | null;
   /** The area's location id — passed to confirm as `location_id` so a
    *  one-tap commit files the entity where you were standing. */
   scanAreaId?: string | null;
-  /** Scan-into-container: the active bin is a container ENTITY (a server/asset,
-   *  a machine) instead of a location. Sent as target_container_* at ingest;
-   *  confirm places the created item inside it (the server reads it off the
-   *  inbox row, so no confirm-body change needed). */
-  scanContainer?: { kind: string; id: string } | null;
-  /** Lazily mints the scanner session's shared scan_batch_id (single-flight
-   *  in the caller). Omitted → un-batched. */
-  ensureBatchId?: () => Promise<string | null>;
-  /** The viewfinder frame captured at the scan moment — uploaded as the
-   *  item's own photo (shown beside the catalog image at triage). A promise
-   *  because canvas.toBlob is async (reading a plain value lost the race). */
+  /** The viewfinder frame captured at the scan moment, as a LOCAL preview
+   *  while the server copies resolve. A promise because canvas.toBlob is
+   *  async (reading a plain value lost the race). */
   getFrameBlob?: () => Promise<Blob | null> | null;
-  /** The live camera MediaStream (from the scanner page). When present, the
-   *  "Nice photo" button captures IN-APP off this stream via a drawer instead of
-   *  launching the iOS native camera. Absent (desktop / no camera) → native input. */
-  getStream?: () => MediaStream | null;
   scanTarget: CameraScanTarget;
-  onSaved: (item: ScanInboxItem) => void;
-  onClose: () => void;
+  /** "handled" = the item left the pending state here (committed / attached /
+   *  discarded / written onto the bin) — the camera clears its drawer.
+   *  "dismissed" = "not now" (✕, swipe-down, Save & next): the item is still
+   *  pending, so the camera collapses to the CLOSED drawer showing it — the
+   *  mock's state-2 rule, "the item is saved either way". `current` is the
+   *  freshest copy of the row for that drawer. */
+  onClose: (outcome?: "handled" | "dismissed", current?: ScanInboxItem | null) => void;
+  /** "Not it" — arm the shutter to RETAKE this item's photo, then close so
+   *  the viewfinder is yours. The camera owns the arm. */
+  onRetake?: (item: ScanInboxItem) => void;
+  /** An action taken BEFORE the row exists (the author: "if I'm moving fast… I
+   *  should be able to do that"). The page closes the sheet immediately and
+   *  runs the intent the moment its ingest lands. */
+  onEarly?: (intent: "discard" | "retake") => void;
   /** Move mode: a single exact "already tracked" barcode match
    *  auto-moves that entity to the active bin — no triage stop. */
   moveMode?: boolean;
@@ -82,61 +91,25 @@ export function ScanResultModal({
   const qc = useQueryClient();
   const toast = useToast();
 
-  const [item, setItem] = useState<ScanInboxItem | null>(null);
-  const [qty, setQty] = useState(1);
+  const [item, setItem] = useState<ScanInboxItem | null>(itemProp ?? null);
+  // Quantity + its write, together: this sheet used to hold the count in local
+  // state and PATCH it only from "Save & next", so closing any other way threw
+  // the edit away (the author, 2026-08-03). See lib/scanQuantity.
+  const { value: qty, bump: bumpQty, flush: flushQty } = useScanQuantity(activeSlug, item);
   // URLs that 404'd/hotlink-blocked — each candidate gets one try, then we
   // fall to the next rung (a URL that failed once will fail again).
   const [brokenSrcs, setBrokenSrcs] = useState<ReadonlySet<string>>(new Set());
-  const started = useRef(false);
-
-  // Ingest the barcode on mount → the enriched row comes back (≤12s budget).
-  const scan = useMutation({
-    mutationFn: async () => {
-      const frame = await (getFrameBlob?.() ?? null);
-      const [batchId, frameFileId] = await Promise.all([
-        ensureBatchId ? ensureBatchId() : Promise.resolve(null),
-        frame
-          ? api
-              .uploadFile(
-                activeSlug,
-                new File([frame], `scan-${barcode}.jpg`, { type: "image/jpeg" }),
-              )
-              .then((f) => f.id)
-              .catch(() => null)
-          : Promise.resolve(null),
-      ]);
-      return api.scanBarcode(activeSlug, {
-        barcode,
-        scan_area: scanArea ?? undefined,
-        target_location_id: scanAreaId ?? undefined,
-        target_container_kind: scanContainer?.kind,
-        target_container_id: scanContainer?.id,
-        scan_batch_id: batchId ?? undefined,
-        image_file_id: frameFileId ?? undefined,
-      });
-    },
-    onSuccess: (it) => {
-      setItem(it);
-      setQty(it.quantity > 0 ? it.quantity : 1);
-      onSaved(it);
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-    },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
-  });
+  // The page's ingest lands after mount — adopt the row once, then the live
+  // poll below owns freshness.
   useEffect(() => {
-    if (started.current) return;
-    started.current = true;
-    scan.mutate();
-  }, [scan]);
+    if (itemProp && !item) setItem(itemProp);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemProp]);
 
   // LIVE-LOAD the enrichment: a slow lookup detaches past the ingest budget
   // and finishes in the background — keep polling the row while the card is
   // up so the name/photo pop in a second later instead of never (the same
   // lazy fill). Stops once the row looks final or after ~24s.
-  // After "Not it — photograph it" the vision identify runs DETACHED, but the item
-  // already carries the (wrong) barcode name, so stillEnriching is false. Force the
-  // poll while `reading` and clear it once vision stamps ai_suggested_at.
-  const [reading, setReading] = useState(false);
   // Enrichment is still plausibly running until the item is FULLY enriched (a
   // name AND a catalog image) or a generous window from scan time elapses. A
   // thin catalog hit stamps `ai_suggested_at` early while the web-search +
@@ -162,11 +135,11 @@ export function ScanResultModal({
   // Keep the live poll going while the cross-check is unresolved, so the
   // "checking…" state flips to confirmed/corrected in-place (same 180s bound).
   const stillEnriching =
-    !!item && (!enrichedFully || photoCheckPending) && (withinEnrichWindow || reading);
+    !!item && (!enrichedFully || photoCheckPending) && withinEnrichWindow;
   const live = useQuery({
     queryKey: ["scan-item-live", activeSlug, item?.id],
     queryFn: () => api.getScanItem(activeSlug, item!.id),
-    enabled: !!item?.id && (stillEnriching || reading),
+    enabled: !!item?.id && stillEnriching,
     // 750ms cadence while enrichment is in flight: the by-name image search
     // measures ~500ms and the web-search tail lands mid-second, so a 2s poll
     // added up to 2s of "it is there but the card has not asked" - the scan
@@ -176,24 +149,11 @@ export function ScanResultModal({
     refetchInterval: (query) => (query.state.dataUpdateCount >= 260 ? false : 750),
     gcTime: 0,
   });
-  const readingAnchor = useRef<string | null>(null);
   useEffect(() => {
     const fresh = live.data;
     if (!fresh || !item) return;
-    if (fresh.updated_at !== item.updated_at) {
-      setItem(fresh);
-      // vision finished (fresh ai_suggested_at past the moment we started) → done.
-      if (reading && fresh.ai_suggested_at && fresh.ai_suggested_at !== readingAnchor.current) {
-        setReading(false);
-      }
-    }
-  }, [live.data, item, reading]);
-  // Safety: never spin forever if the detached work dies.
-  useEffect(() => {
-    if (!reading) return;
-    const t = setTimeout(() => setReading(false), 30_000);
-    return () => clearTimeout(t);
-  }, [reading]);
+    if (fresh.updated_at !== item.updated_at) setItem(fresh);
+  }, [live.data, item]);
 
   // Once identified, ask the matchmaker which table(s) fit — shown as tap chips.
   const match = useQuery({
@@ -204,22 +164,12 @@ export function ScanResultModal({
   });
   const candidates = (match.data?.candidates ?? []).slice(0, 3);
 
-  // Save the quantity (if changed) and re-arm. The row already exists.
-  const save = useMutation({
-    mutationFn: async () => {
-      if (!item) return null;
-      if (qty !== item.quantity) {
-        return api.updateScanItem(activeSlug, item.id, { quantity: qty });
-      }
-      return item;
-    },
-    onSuccess: (updated) => {
-      if (updated) onSaved(updated);
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-      onClose();
-    },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
-  });
+  // Re-arm. The row already exists and the stepper already wrote the count —
+  // flush covers a tap made inside the debounce window.
+  const saveAndNext = () => {
+    flushQty();
+    onClose("dismissed", item ? { ...item, quantity: qty } : null);
+  };
 
   // One-tap commit into a table (a matchmaker chip, or the ?into= target).
   const commit = useMutation({
@@ -257,7 +207,7 @@ export function ScanResultModal({
         )) as never,
       );
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-      onClose();
+      onClose("handled");
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -271,7 +221,7 @@ export function ScanResultModal({
       toast.success(`${scanArea ?? "Bin"} identified: ${item?.suggested_name ?? "container"}`);
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
       void qc.invalidateQueries({ queryKey: ["locations", activeSlug] });
-      onClose();
+      onClose("handled");
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -280,70 +230,7 @@ export function ScanResultModal({
     mutationFn: () => api.discardScanItem(activeSlug, item!.id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-      onClose();
-    },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
-  });
-
-  // Phone "Not right?" — re-ask everything (the same wrong-flag re-derive the
-  // desktop triage uses). A barcode re-run is inline, so the response IS the
-  // re-identified row; swap it straight in so the card updates on the spot.
-  const rerunWrong = useMutation({
-    mutationFn: () => api.rerunScanAi(activeSlug, item!.id, { wrong: true }),
-    onSuccess: (fresh) => {
-      setItem(fresh);
-      setQty(fresh.quantity > 0 ? fresh.quantity : 1);
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-      void qc.invalidateQueries({ queryKey: ["scan-match", activeSlug, fresh.id] });
-      toast.success("Re-checked");
-    },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
-  });
-
-  // Phone "Not it — photograph it" — the junk-barcode rescue. The OS camera
-  // captures the product; we attach it and force the VISION identify (detached),
-  // which overrides a junk/non-product barcode no source can fix. The poll above
-  // (driven by `reading`) surfaces the corrected name a few seconds later.
-  const photoIdentify = useMutation({
-    mutationFn: async (file: Blob) => {
-      readingAnchor.current = item?.ai_suggested_at ?? null;
-      const named = new File([file], `identify-${Date.now()}.jpg`, { type: "image/jpeg" });
-      const f = await api.uploadFile(activeSlug, named);
-      return api.rerunScanAi(activeSlug, item!.id, { imageFileId: f.id });
-    },
-    onMutate: () => setReading(true),
-    onSuccess: (fresh) => {
-      setItem(fresh);
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-      setCaptureFor(null); // close the capture drawer
-      toast.success("Reading the photo with AI…");
-    },
-    onError: (e) => {
-      setReading(false);
-      toast.error(e instanceof ApiError ? e.message : String(e));
-    },
-  });
-
-  // In-app photo capture (shared CameraCaptureSheet). Both the catalog re-shoot
-  // ("Nice photo") and the re-identify ("Not it — photograph it") capture through
-  // the SAME drawer off the live scanner stream — never the iOS native camera on
-  // top of the running scanner. `captureFor` says which action the shot feeds.
-  const [captureFor, setCaptureFor] = useState<"nice" | "identify" | null>(null);
-  const [niceDone, setNiceDone] = useState(false);
-  // "Take a nice picture" — a fresh capture becomes the DISPLAY/catalog image
-  // (the identify photo is untouched). The photo-roles model, phone-first.
-  const nicePhoto = useMutation({
-    mutationFn: async (file: Blob) => {
-      const named = new File([file], `nice-${Date.now()}.jpg`, { type: "image/jpeg" });
-      const f = await api.uploadFile(activeSlug, named);
-      return api.setScanCatalogFile(activeSlug, item!.id, f.id);
-    },
-    onSuccess: (fresh) => {
-      setItem(fresh); // swaps the modal's catalog image inline
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-      setCaptureFor(null); // close the drawer
-      setNiceDone(true); // brief inline "updated" confirm (replaces the toast)
-      window.setTimeout(() => setNiceDone(false), 2200);
+      onClose("handled");
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -373,7 +260,7 @@ export function ScanResultModal({
   }, []);
 
   const looking =
-    scan.isPending || rerunWrong.isPending || (!!item && !item.suggested_name && !match.isFetched);
+    (!!pending && !item) || (!!item && !item.suggested_name && !match.isFetched);
   // Catalog image first; the user's own photo as the fallback (photo scans
   // and barcode items that resolved without catalog art still get a face) —
   // EXCEPT while the catalog result is unverified against the user's photo
@@ -397,23 +284,16 @@ export function ScanResultModal({
       : [...catalogRungs, ownPhotoUrl, frameUrl]
     ).find((u): u is string => !!u && !brokenSrcs.has(u)) ?? null;
   const areaLabel = item?.scan_area ?? scanArea ?? null;
-  const busy =
-    commit.isPending ||
-    save.isPending ||
-    discard.isPending ||
-    rerunWrong.isPending ||
-    photoIdentify.isPending ||
-    intoBin.isPending;
+  const busy = commit.isPending || discard.isPending || intoBin.isPending;
 
   return (
-    <>
-    <Modal open onClose={onClose} title="Scanned" size="sm">
+    // Deliberately NO onClose: no grip-dismiss, no swipe-down, no ✕. A barcode
+    // result wants a decision — confirm it's right and move on (Save & next),
+    // reject it (Discard), or hand the camera an arm. A gesture that silently
+    // does one of those is how "what did the X do?" happens (the author, 2026-08-03:
+    // "user needs to confirm or reject the result or at least move on").
+    <CaptureSheetShell title="Scanned">
       <div className="space-y-4">
-        {niceDone && (
-          <div className="flex items-center gap-1.5 rounded-md bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-300 dark:border-emerald-700 px-2.5 py-1.5 text-xs text-emerald-700 dark:text-emerald-300">
-            <CheckCircle size={13} /> Catalog photo updated with your shot.
-          </div>
-        )}
         <div className="flex items-center gap-3">
           <div className="w-24 h-24 shrink-0 rounded-md overflow-hidden border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 flex items-center justify-center">
             {catalogImg ? (
@@ -431,7 +311,7 @@ export function ScanResultModal({
             )}
           </div>
           <div className="min-w-0 flex-1">
-            {scan.isPending ? (
+            {pending && !item ? (
               <div className="text-sm text-muted animate-pulse">Looking up…</div>
             ) : (
               <div className="font-medium text-content dark:text-mortar-100">
@@ -444,20 +324,15 @@ export function ScanResultModal({
                 )}
               </div>
             )}
-            {!scan.isPending && item && !item.suggested_name && (
+            {!looking && item && !item.suggested_name && (
               <AiOffMissHint status={aiStatus} />
             )}
-            {reading && (
-              <div className="text-[11px] text-accent animate-pulse mt-0.5 flex items-center gap-1">
-                <Camera size={11} /> Reading the photo with AI…
-              </div>
-            )}
-            {!reading && photoCheckPending && (
+            {photoCheckPending && (
               <div className="text-[11px] text-accent animate-pulse mt-0.5 flex items-center gap-1">
                 <Camera size={11} /> Checking this against your photo…
               </div>
             )}
-            {!reading && !photoCheckPending && photoMismatch && (
+            {!photoCheckPending && photoMismatch && (
               <div className="text-[11px] text-amber-600 dark:text-amber-400 mt-0.5 flex items-center gap-1">
                 <Camera size={11} /> May not match your photo - double-check the name.
               </div>
@@ -474,34 +349,11 @@ export function ScanResultModal({
           </div>
         </div>
 
-        {/* Quantity stepper — set the count once when holding a stack. */}
+        {/* Quantity — the LOCKED stepper (shared with the drawer), not a
+            circles-and-input variant of its own. */}
         <div className="flex items-center justify-between">
           <span className="text-[10px] font-mono uppercase tracking-widest text-muted">quantity</span>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setQty((q) => Math.max(1, q - 1))}
-              className="rounded-full border border-line dark:border-slate-600 p-1.5 text-content hover:bg-subtle dark:hover:bg-slate-800"
-              aria-label="Decrease quantity"
-            >
-              <Minus size={14} />
-            </button>
-            <input
-              type="number"
-              min={1}
-              value={qty}
-              onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))}
-              className="w-14 text-center px-1 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900 font-mono"
-            />
-            <button
-              type="button"
-              onClick={() => setQty((q) => q + 1)}
-              className="rounded-full border border-line dark:border-slate-600 p-1.5 text-content hover:bg-subtle dark:hover:bg-slate-800"
-              aria-label="Increase quantity"
-            >
-              <Plus size={14} />
-            </button>
-          </div>
+          <QtyStepper value={qty} onBump={bumpQty} big />
         </div>
 
         {/* "Already tracked" — act on the EXISTING entity
@@ -519,7 +371,7 @@ export function ScanResultModal({
                 m,
                 mode,
               );
-              onClose();
+              onClose("handled");
             }}
           />
         )}
@@ -594,61 +446,49 @@ export function ScanResultModal({
           </button>
         )}
 
-        <div className="flex items-center justify-between gap-2 pt-1">
-          <button
-            type="button"
-            disabled={!item || busy}
-            onClick={() => discard.mutate()}
-            className="inline-flex items-center gap-1 text-xs text-faint hover:text-ember-500 disabled:opacity-40"
-          >
-            <Trash2 size={13} /> Discard
-          </button>
-          {/* Phone wrong-path: photograph the product and identify from the package
-              — the only thing that rescues a junk / non-product barcode. Plus the
-              nice-shot: a fresh capture as the DISPLAY photo (identify untouched). */}
-          {item && (
-            <>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => setCaptureFor("identify")}
-                className="inline-flex items-center gap-1 text-xs text-red-600 dark:text-red-400 hover:underline disabled:opacity-40"
-              >
-                <Camera size={13} className={photoIdentify.isPending ? "animate-pulse" : ""} /> Not it - 
-                photograph it
-              </button>
-              {item.suggested_name && (
-                <button
-                  type="button"
-                  disabled={busy || nicePhoto.isPending}
-                  onClick={() => setCaptureFor("nice")}
-                  title="Take a nice picture - it becomes the catalog/display photo"
-                  className="inline-flex items-center gap-1 text-xs text-muted hover:text-content disabled:opacity-40"
-                >
-                  <Camera size={13} className={nicePhoto.isPending ? "animate-pulse" : ""} /> Nice photo
-                </button>
-              )}
-            </>
-          )}
+        {/* One camera action, one destructive action, one way out — and NONE
+            of them wait for the lookup (the author: "if I'm moving fast and I want to
+            take a nice pic instantly after scanning a barcode, I should be
+            able to do that. same for discard."). Before the row lands the
+            press goes through onEarly: the page closes the sheet NOW and runs
+            the intent the moment its ingest returns.
+            "Nice photo" is gone — the + shutter covers it: a barcode item's
+            next shot becomes its display photo, a photo item's next shot joins
+            the record. One button fewer, same power. */}
+        <div className="flex items-center gap-2 pt-1">
           <button
             type="button"
             disabled={busy}
-            onClick={() => (item ? save.mutate() : onClose())}
-            className="inline-flex items-center gap-1 rounded-md border border-line dark:border-slate-600 text-content hover:bg-subtle dark:hover:bg-slate-800 text-sm font-medium px-4 py-2"
+            onClick={() => (item ? discard.mutate() : onEarly?.("discard"))}
+            aria-label="Discard this scan"
+            title="Discard this scan"
+            className="w-11 h-11 shrink-0 inline-flex items-center justify-center rounded-lg border border-line dark:border-slate-600 text-faint hover:text-ember-500 hover:border-ember-500 disabled:opacity-40"
           >
-            <Check size={15} /> Save &amp; next
+            <Trash2 size={16} />
           </button>
+          {onRetake && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                item ? (onRetake(item), onClose("dismissed", item)) : onEarly?.("retake")
+              }
+              title="Photograph the item - the shutter arms, and vision re-identifies it from your shot"
+              className="flex-1 h-11 inline-flex items-center justify-center gap-1.5 rounded-lg border border-line dark:border-slate-600 text-content text-[12.5px] font-medium px-2 disabled:opacity-40"
+            >
+              <Camera size={14} /> Not it - retake
+            </button>
+          )}
         </div>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={saveAndNext}
+          className="w-full h-11 inline-flex items-center justify-center gap-1.5 rounded-lg bg-cobble-600 hover:bg-cobble-700 text-white text-[13px] font-semibold disabled:opacity-50"
+        >
+          <Check size={15} /> Save &amp; next
+        </button>
       </div>
-    </Modal>
-    <CameraCaptureSheet
-      open={captureFor !== null}
-      title={captureFor === "nice" ? "Nice photo" : "Photograph the item"}
-      stream={getStream?.() ?? null}
-      busy={nicePhoto.isPending || photoIdentify.isPending}
-      onCapture={(blob) => (captureFor === "nice" ? nicePhoto.mutate(blob) : photoIdentify.mutate(blob))}
-      onClose={() => setCaptureFor(null)}
-    />
-    </>
+    </CaptureSheetShell>
   );
 }

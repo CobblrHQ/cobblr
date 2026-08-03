@@ -10,7 +10,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
-import { useImageSrc } from "@cobblr/platform-web";
+import { useImageSrc, OverlayFlag } from "@cobblr/platform-web";
 import { api } from "../lib/api";
 
 type Rendered =
@@ -70,6 +70,7 @@ export function ReceiptSourceViewer({
       aria-modal="true"
       aria-label="Original receipt"
     >
+      <OverlayFlag />
       <button
         onClick={onClose}
         className="absolute z-10 top-3 right-3 p-2 rounded-full bg-black/50 text-white/90 hover:bg-black/70 hover:text-white transition"

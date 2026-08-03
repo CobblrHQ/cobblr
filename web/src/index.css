@@ -35,6 +35,21 @@
     --c-accent: 189 159 119;  /* cobble-300 #BD9F77 — links read on dark */
   }
 
+  /* A subtree that ALWAYS sits on a dark surface (the camera's capture
+     sheet over the live viewfinder), whatever theme the app is in. Pair it
+     with the `dark` class on the same element: `dark` switches on the
+     `dark:` variants (the class strategy matches any ancestor), and these
+     vars flip the semantic TEXT tokens the way html.dark does — which a
+     light-theme session never sets, so bare text-content/muted/faint
+     inside would otherwise render dark-on-dark. */
+  .force-dark {
+    --c-content: 244 239 229;
+    --c-muted: 180 186 194;
+    --c-faint: 156 162 172;
+    --c-accent: 189 159 119;
+    color-scheme: dark;
+  }
+
   /* color-scheme makes the browser render *native* controls —
      <select> chrome, checkboxes, scrollbars, date pickers — in the
      matching light/dark variant. Without this, native selects stay

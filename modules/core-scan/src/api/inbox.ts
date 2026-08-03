@@ -62,6 +62,7 @@ import { resolvePaintCodeViaWeb } from "../services/paint-code-websearch.js";
 import { parseReceipt } from "../services/receipt.js";
 import { cleanOrderRef, receiptDedupKey, receiptSessionLabel, vendorFromLabel, type ParsedReceipt, type ParseMethod } from "../services/receipt-shared.js";
 import { reportBarcodeCorrection, meaningfullyChanged } from "../services/barcode-corrections.js";
+import { normalizeBarcode, barcodeFromHint } from "../services/barcode-correction.js";
 import { findBinContents, findTracked } from "../services/entity-match.js";
 import { cropRegion, detectSplitItems, rotateImage } from "../services/image-ops.js";
 import { extractLocation, type LocationLite } from "../services/note-location.js";
@@ -126,19 +127,32 @@ inboxRouter.get(
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member", "guest")) return;
     const db = tenantDb(req);
+    // The order/invoice number lives on the BATCH (it is editable there via
+    // "+ PO#"), not in the item's metadata snapshot — so join it in. Without it
+    // three receipts from one vendor read "KC Tool (16) · KC Tool (7) · KC Tool
+    // (1)": a count is not an identity (the author, 2026-08-03). The batch's vendor is
+    // likewise the authoritative one; the item's `receipt_vendor` is the
+    // import-time snapshot and only answers for rows with no batch.
     const rows = await db
-      .selectFrom("core_scan_inbox_items")
+      .selectFrom("core_scan_inbox_items as i")
+      .leftJoin("core_scan_batches as b", "b.id", "i.scan_batch_id")
       .select((eb) => [
-        sql<string>`suggested_metadata->>'receipt_group_id'`.as("group_id"),
-        sql<string | null>`max(suggested_metadata->>'receipt_vendor')`.as("vendor"),
+        sql<string>`i.suggested_metadata->>'receipt_group_id'`.as("group_id"),
+        sql<string | null>`max(coalesce(b.vendor, i.suggested_metadata->>'receipt_vendor'))`.as("vendor"),
+        sql<string | null>`max(b.order_ref)`.as("order_ref"),
         eb.fn.countAll<number>().as("count"),
       ])
-      .where("source_kind", "=", "receipt")
-      .where("status", "in", ["pending", "enriching"])
-      .where(sql<boolean>`suggested_metadata->>'receipt_group_id' is not null`)
-      .groupBy(sql`suggested_metadata->>'receipt_group_id'`)
+      .where("i.source_kind", "=", "receipt")
+      .where("i.status", "in", ["pending", "enriching"])
+      .where(sql<boolean>`i.suggested_metadata->>'receipt_group_id' is not null`)
+      .groupBy(sql`i.suggested_metadata->>'receipt_group_id'`)
       .execute();
-    const groups = rows.map((r) => ({ groupId: String(r.group_id), vendor: r.vendor, count: Number(r.count) }));
+    const groups = rows.map((r) => ({
+      groupId: String(r.group_id),
+      vendor: r.vendor,
+      orderRef: r.order_ref,
+      count: Number(r.count),
+    }));
     res.json({ groups, total_items: groups.reduce((s, g) => s + g.count, 0) });
   }),
 );
@@ -2219,7 +2233,7 @@ async function appendScanHistory(
   db: ReturnType<typeof tenantDb>,
   id: string,
   entry: {
-    action: "rerun" | "replay" | "rerun-hint" | "wrong" | "enrich" | "confirm" | "combine" | "attached" | "split" | "unconfirm" | "undo-rerun";
+    action: "rerun" | "replay" | "rerun-hint" | "wrong" | "enrich" | "confirm" | "combine" | "attached" | "split" | "unconfirm" | "undo-rerun" | "barcode";
     note?: string | null;
   },
 ): Promise<void> {
@@ -2273,6 +2287,11 @@ const RerunBody = z.object({
    *  phone's "Not it — photograph it": a junk/non-product barcode that no source
    *  can fix gets identified from the package instead. */
   image_file_id: z.string().uuid().optional(),
+  /** The CORRECTED barcode - typed into the barcode editor, or read off the
+   *  label after the camera/vision got a digit wrong. Replaces `barcode_text`
+   *  and the lookup re-runs on the corrected code. Spaces/dashes tolerated;
+   *  rejected unless it normalizes to a real barcode length. */
+  barcode: z.string().trim().max(40).optional(),
   /** REPLAY: re-run the pipeline without spending a token. Every AI stage is
    *  served from the cache, and a stage with no cached reply is SKIPPED (it
    *  degrades exactly as it would with no provider — the matchmaker falls back to
@@ -2346,6 +2365,42 @@ inboxRouter.post(
       // says so, instead of reading as a plain re-run that ignored it.
       note: effectiveHint,
     });
+    // ── the barcode is a FACT the user can correct ─────────────────────────
+    // Two doors, one landing spot: the explicit `barcode` field (the editor),
+    // or a hint that carries one ("correct barcode X" - which used to ride into
+    // the prompts as prose while barcode_text stayed wrong, so every re-run
+    // faithfully re-resolved the misread code). Either way the code itself is
+    // replaced and the lookup below re-runs against it.
+    if (rerun?.barcode !== undefined && normalizeBarcode(rerun.barcode) === null) {
+      res.status(400).json({
+        error: {
+          code: "invalid_barcode",
+          message: "That doesn't look like a barcode - expected 8, 12, 13 or 14 digits.",
+        },
+      });
+      return;
+    }
+    const correctedBarcode =
+      normalizeBarcode(rerun?.barcode) ?? barcodeFromHint(effectiveHint, row.barcode_text);
+    if (correctedBarcode && correctedBarcode !== row.barcode_text) {
+      await db
+        .updateTable("core_scan_inbox_items")
+        .set({
+          barcode_text: correctedBarcode,
+          // A user-typed code is authoritative - clear the "ai-photo" distrust an
+          // OCR'd one carries, and keep the old code for the paper trail.
+          suggested_metadata: mergeMeta({
+            barcode_source: "user",
+            barcode_corrected: { from: row.barcode_text, at: new Date().toISOString() },
+          }) as never,
+          updated_at: new Date(),
+        })
+        .where("id", "=", id)
+        .execute();
+      await appendScanHistory(db, id, { action: "barcode", note: correctedBarcode });
+      row.barcode_text = correctedBarcode;
+    }
+
     // The user photographed the product to re-identify it (phone "Not it —
     // photograph it"). Attach the new photo and force the vision path below, even
     // if a (wrong) barcode is sitting on the item — vision off the package beats a
@@ -2360,7 +2415,7 @@ inboxRouter.post(
       row.image_file_id = attachedPhoto;
     }
 
-    if (!row.barcode_text || attachedPhoto) {
+    if ((!row.barcode_text || attachedPhoto) && !correctedBarcode) {
       // Photo-only path → re-run the vision identify. The vision+match pass runs
       // tens of seconds over the edge relay, so we DON'T hold the request for it
       // (holding past ~100s 524s behind cobblr.me's Cloudflare tunnel). Instead we
@@ -2583,7 +2638,9 @@ inboxRouter.post(
       orgSlug: ctx.org.slug,
       bearer: token,
       baseUrl,
-      upc: row.barcode_text,
+      // Non-null here: this branch runs only when the row HAD a barcode, or a
+      // corrected one was just written onto it above.
+      upc: row.barcode_text ?? correctedBarcode!,
       // Rerun means RE-ASK: skip the tenant AND shared caches (deleting
       // only the tenant row left the shared cache answering with the
       // stale result — the box resolver was never consulted again).

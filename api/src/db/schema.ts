@@ -228,6 +228,10 @@ export interface ApiTokensTable {
   created_at: Generated<Date>;
   /** Capability scopes; NULL/empty = unrestricted (legacy full-access). */
   scopes: string[] | null;
+  /** Surface that minted the token (e.g. "api-recipes"); NULL = hand-minted. */
+  source: string | null;
+  /** Provenance payload ({ kind, action, org }); NULL = none. */
+  meta: unknown | null;
 }
 
 /** A personal (user-scoped) credential — a BYO AI provider config a user sets

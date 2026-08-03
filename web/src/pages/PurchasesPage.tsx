@@ -6,7 +6,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, FileText, Plus, Receipt, Search, Store, Trash2 } from "lucide-react";
+import { ChevronRight, Plus, Receipt, Search, Store, Trash2 } from "lucide-react";
 import { ApiError, api, type Order, type OrderItem, type VendorSummary } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
@@ -16,6 +16,8 @@ import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
 import { ModulePurposeHint } from "../components/ModulePurposeHint";
 import { usePublishChatContext } from "../lib/chat-context";
 import { BulkActionBar, EntityActionsBar, EntityThumb, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { receiptGroupSummary } from "./receiptLabel";
+import { ReceiptAddressChip } from "../components/ReceiptAddressChip";
 
 function fmtOrderDate(d: string | null): string | null {
   if (!d) return null;
@@ -305,66 +307,54 @@ export function PurchasesPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3 flex-wrap">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
+      {/* ONE row, and it yields rather than wraps - the same order of sacrifice
+          the scan header uses (interface-principles #6): the search field is the
+          elastic member, button labels drop to icons, then the count goes. */}
+      <div className="flex items-center gap-2 sm:gap-3 border-b border-line dark:border-slate-700 pb-3 flex-nowrap">
+        <h1 className="font-display text-lg sm:text-2xl font-extrabold text-content dark:text-mortar-100 page-title shrink-0">
           purchases
         </h1>
-        <span className="text-[10px] font-mono text-faint dark:text-slate-500">
+        <span className="hidden sm:inline text-[10px] font-mono text-faint dark:text-slate-500 shrink-0">
           {filtered.length} of {allRows.length}
         </span>
-        <div className="flex-1" />
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as Order["status"] | "")}
-          className="input !py-1 !text-xs !w-32"
+          className="input !py-1 !text-xs !w-24 lg:!w-32 shrink-0"
         >
           <option value="">All statuses</option>
           {STATUSES.map((s) => (
             <option key={s} value={s}>{s}</option>
           ))}
         </select>
-        <div className="relative">
-          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-faint" />
+        {/* The elastic member: it absorbs the squeeze so the row never wraps. */}
+        <div className="relative flex-1 min-w-[5rem]">
+          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-faint pointer-events-none" />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="vendor / order# / notes…"
-            className="input !py-1 !pl-7 !text-xs !w-56"
+            className="input !py-1 !pl-7 !text-xs !w-full"
           />
         </div>
+        {/* Receipt intake belongs WITH the other header controls, not on a line
+            of its own: the address was a permanent wall of text under the title,
+            and the same chip already carries it on the scan header. Same
+            component, so the two cannot drift. */}
+        {receiptAddress && <ReceiptAddressChip address={receiptAddress} />}
         <button
           onClick={() => setVendorsOpen(true)}
-          className="rounded-md border border-line dark:border-slate-600 hover:bg-subtle dark:hover:bg-slate-800 text-content dark:text-mortar-100 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
+          className="rounded-md border border-line dark:border-slate-600 hover:bg-subtle dark:hover:bg-slate-800 text-content dark:text-mortar-100 text-sm font-medium px-2.5 lg:px-3 py-2 transition flex items-center gap-1.5 shrink-0"
         >
-          <Store size={14} /> Vendors
+          <Store size={14} /> <span className="hidden lg:inline">Vendors</span>
         </button>
         <button
           onClick={() => setNewOpen(true)}
-          className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
+          className="rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-2.5 lg:px-3 py-2 transition flex items-center gap-1.5 shrink-0"
         >
-          <Plus size={14} /> New order
+          <Plus size={14} /> <span className="hidden lg:inline">New order</span>
         </button>
       </div>
-
-      {receiptAddress && (
-        <div className="flex items-center gap-1.5 text-xs text-muted dark:text-slate-400">
-          <FileText size={13} className="text-faint shrink-0" />
-          <span className="shrink-0">Email receipts to</span>
-          <code className="block max-w-[9rem] sm:max-w-[16rem] overflow-x-auto whitespace-nowrap rounded bg-mortar-100 dark:bg-slate-800 px-1.5 py-0.5 text-content dark:text-mortar-100 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {receiptAddress}
-          </code>
-          <button
-            type="button"
-            className="shrink-0 text-accent hover:underline"
-            onClick={() => {
-              void navigator.clipboard?.writeText(receiptAddress);
-              toastP.success("Address copied");
-            }}
-          >
-            Copy
-          </button>
-        </div>
-      )}
 
       {pendingReceipts.length > 0 && (
         <button
@@ -378,11 +368,7 @@ export function PurchasesPage() {
               {pendingReceipts.length} receipt{pendingReceipts.length === 1 ? "" : "s"} pending confirmation
             </span>
             <span className="block text-xs text-muted dark:text-slate-400 truncate">
-              {pendingReceipts
-                .map((g) => `${g.vendor ?? "Receipt"} (${g.count})`)
-                .slice(0, 4)
-                .join(" · ")}
-              {pendingReceipts.length > 4 ? " · …" : ""}  - not yet purchase orders
+              {receiptGroupSummary(pendingReceipts)}  - not yet purchase orders
             </span>
           </span>
           <span className="text-xs font-medium text-accent whitespace-nowrap shrink-0">Review in scan inbox →</span>

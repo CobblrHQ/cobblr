@@ -10,6 +10,7 @@ import { ArrowLeft, ArrowRight, Moon, Sun } from "lucide-react";
 import { useNavMode } from "../lib/nav-mode";
 import { useTheme } from "../theme/ThemeContext";
 import { LAYOUT_OPTIONS, type TourStep } from "./tour.config";
+import { OverlayFlag } from "@cobblr/platform-web";
 
 const PAD = 8; // breathing room around the spotlit element
 const GAP = 14; // spotlight-to-card gap
@@ -130,6 +131,7 @@ export function GuidedTour({ steps, onClose }: { steps: TourStep[]; onClose: () 
 
   return createPortal(
     <div className="fixed inset-0 z-[200]" role="dialog" aria-modal data-tour-card>
+      <OverlayFlag />
       {step.kind !== "spotlight" && (
         <div className="absolute inset-0" style={{ background: step.kind === "chooseLayout" ? "rgba(6,10,20,0.4)" : SCRIM }} />
       )}

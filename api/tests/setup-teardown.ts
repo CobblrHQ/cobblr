@@ -15,6 +15,7 @@
 // cleanly between files.
 
 import { afterAll } from "vitest";
+import { fetchTransient } from "./fetch-transient.js";
 
 const BASE = process.env.COBBLR_TEST_API ?? "http://localhost:4000";
 
@@ -37,7 +38,7 @@ afterAll(async () => {
   const targets: Array<{ token: string; slug: string }> = [];
   for (const token of items) {
     try {
-      const res = await fetch(`${BASE}/api/v1/me`, {
+      const res = await fetchTransient(`${BASE}/api/v1/me`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) continue;
@@ -64,7 +65,10 @@ afterAll(async () => {
     while (cursor < targets.length) {
       const item = targets[cursor++]!;
       try {
-        const res = await fetch(`${BASE}/api/v1/orgs/${item.slug}`, {
+        // Retry a transient DELETE blip so the DROP-DATABASE teardown storm
+        // doesn't leak orphan tenant DBs (which pile up and eventually exhaust
+        // Postgres connection slots — the very thing that causes the storm).
+        const res = await fetchTransient(`${BASE}/api/v1/orgs/${item.slug}`, {
           method: "DELETE",
           headers: { Authorization: `Bearer ${item.token}` },
         });

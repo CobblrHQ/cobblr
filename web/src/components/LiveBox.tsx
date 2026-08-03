@@ -11,6 +11,18 @@
 //   • mode="floating" — a single outlined pill (the icons that are ON) fixed
 //     bottom-right; tapping it morphs into a panel whose collapse strip is at the
 //     BOTTOM, the same corner you tapped to open.
+//
+// LAYERING (the author, 2026-08-03: "it's on top of so much stuff that it shouldn't be…
+// why don't we only have it on top of the base pages"): the floating pill sits at
+// LIVE_Z, which is deliberately BELOW every overlay in the app — modals (50), side
+// panels (60), the full-screen scanner (40). It is page furniture, so anything that
+// goes on top of the page covers it BY CONSTRUCTION.
+//
+// It used to sit at z-900 and rely on each overlay raising `data-overlay-open` to
+// hide it. That is opt-in, so it only worked for overlays that remembered: the
+// camera scanner never raised the flag and the pill floated over the viewfinder.
+// The hide-flag is kept as a second line of defence (it also covers an overlay that
+// shares this stacking context), but the z-index is what actually makes it true.
 
 import { useState, useEffect, useRef, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
@@ -27,6 +39,7 @@ import {
 import { iconForName } from "../lib/panel-icons";
 import { useDrive } from "./DriveContext";
 import { tabBrowserId, type DriveState } from "../hooks/useBrowserDrive";
+import { LIVE_Z } from "../lib/live-layering";
 import type { LiveControlPublic } from "@cobblr/platform-contract";
 
 type ControlState = Record<string, unknown> | null;
@@ -183,7 +196,7 @@ function OfferPrompt({
       </div>
     </div>
   );
-  if (mode === "floating") return <div className={"fixed bottom-4 right-4 z-[900] " + HIDE_WHEN_SIDE_PANEL_OPEN}>{card}</div>;
+  if (mode === "floating") return <div data-testid="live-floating" className={`fixed bottom-4 right-4 ${LIVE_Z} ` + HIDE_WHEN_SIDE_PANEL_OPEN}>{card}</div>;
   return (
     <div className="relative">
       <div className="absolute left-full bottom-1 ml-1.5 z-[60]">{card}</div>
@@ -609,7 +622,7 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
         </div>
         {open && flyoutPos &&
           createPortal(
-            <div className="fixed z-[900]" style={{ left: flyoutPos.left, bottom: flyoutPos.bottom }}>
+            <div className={`fixed ${LIVE_Z} ${HIDE_WHEN_SIDE_PANEL_OPEN}`} style={{ left: flyoutPos.left, bottom: flyoutPos.bottom }}>
               <Panel controls={controls} states={states} onToggle={fire} segmentState={segmentState} badgeFor={badgeFor} detailFor={detailFor} onClose={() => setOpen(false)} />
             </div>,
             document.body,
@@ -621,7 +634,7 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
   // floating (mobile + top-bar mode): a single outlined pill that morphs to a panel
   // whose collapse strip is at the bottom (same corner).
   return (
-    <div className={"fixed bottom-4 right-4 z-[900] flex flex-col items-end " + HIDE_WHEN_SIDE_PANEL_OPEN}>
+    <div data-testid="live-floating" className={`fixed bottom-4 right-4 ${LIVE_Z} flex flex-col items-end ` + HIDE_WHEN_SIDE_PANEL_OPEN}>
       {open ? (
         <Panel controls={controls} states={states} onToggle={fire} segmentState={segmentState} badgeFor={badgeFor} detailFor={detailFor} footerAtBottom onClose={() => setOpen(false)} />
       ) : (

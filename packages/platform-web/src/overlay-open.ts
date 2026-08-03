@@ -20,6 +20,16 @@ export const HIDE_WHEN_OVERLAY_OPEN = "[[data-overlay-open]_&]:hidden";
 
 let openOverlays = 0;
 
+/** Declarative form: drop `<OverlayFlag />` INSIDE the overlay's own layer.
+ *  Mounting is then the condition — no `open &&` to thread through, no hook
+ *  ordering to get wrong in a component that early-returns null when closed,
+ *  and it sits next to the markup it describes. Preferred over calling the
+ *  hook by hand unless the overlay is a whole page (the scanner). */
+export function OverlayFlag(): null {
+  useOverlayOpenFlag();
+  return null;
+}
+
 /** Call from any overlay while it is mounted/open. */
 export function useOverlayOpenFlag(active = true): void {
   useLayoutEffect(() => {

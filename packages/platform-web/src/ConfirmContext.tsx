@@ -18,6 +18,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { OverlayFlag } from "./overlay-open";
 
 interface ConfirmOptions {
   title?: string;
@@ -90,6 +91,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
           role="dialog"
           aria-modal="true"
         >
+          <OverlayFlag />
           <div
             className="bg-surface dark:bg-slate-900 rounded-xl shadow-2xl border border-line dark:border-slate-700 max-w-sm w-full p-5"
             onClick={(e) => e.stopPropagation()}

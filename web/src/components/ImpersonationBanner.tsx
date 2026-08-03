@@ -15,6 +15,7 @@ import { createPortal } from "react-dom";
 import { ShieldAlert, Eye, Pencil, X } from "lucide-react";
 import { api } from "../lib/api";
 import { useImpersonation, setImpersonationMode, clearImpersonation } from "../lib/impersonation";
+import { OverlayFlag } from "@cobblr/platform-web";
 
 const BAR_H = 36;
 
@@ -134,6 +135,7 @@ export function ImpersonationBanner() {
           className="fixed inset-0 z-[2002] flex items-center justify-center bg-black/50 p-4"
           onClick={() => setConfirmWrite(false)}
         >
+          <OverlayFlag />
           <div
             className="w-full max-w-sm rounded-xl bg-white dark:bg-slate-900 p-5 shadow-xl"
             onClick={(e) => e.stopPropagation()}
