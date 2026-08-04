@@ -3,7 +3,8 @@
 One file per change. **This directory IS the archive** — entries land here in the
 same feature PR that ships the change, and stay. The `/changelog` page reads them
 live (`GET /api/v1/changelog`), and the **8pm EST digest** posts that day's new
-`feature` entries to Discord. Nothing consolidates or clears this dir, and the
+`feature` entries — plus any `fix`/`improvement` flagged `announce: true` — to
+Discord. Nothing consolidates or clears this dir, and the
 digest is **read-only** — it has no repo write, no PR, no merge, no API token.
 (Pre-cutover history lives frozen in `CHANGELOG.md`; the page reads both.)
 
@@ -18,12 +19,17 @@ changelog.d/<short-slug>.md
 type: feature        # feature | improvement | fix
 scope: bundles       # optional — the area
 date: 2026-06-17     # the day it shipped (used to group it on the /changelog page)
+announce: true       # optional — send a MAJOR fix/improvement to the digest too
 ---
 One user-facing line. Past tense, plain language, what changed for the user.
 ```
 
 - `type: feature` → the **Discord digest** + the changelog page.
-- `type: improvement` / `fix` → changelog page only (no Discord spam).
+- `type: improvement` / `fix` → changelog page only (no Discord spam)...
+- ...**unless** you add **`announce: true`** — that opts a *major* fix/improvement (a
+  real one users would care about, e.g. a whole-flow rebuild, not a one-line bugfix)
+  into the digest as a bullet alongside the features. The shipper judges "major"; leave
+  it off and it stays page-only.
 - `date:` → groups the entry on the page. Use the day you ship it. Missing → the
   entry shows under "Unreleased" until corrected.
 

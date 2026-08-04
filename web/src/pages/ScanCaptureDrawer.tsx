@@ -312,13 +312,21 @@ export function ScanCaptureDrawer({
     it!.scan_area ??
     (containerLabel ? `Into ${containerLabel}` : null);
   // Local frame beats everything for a PHOTO item (never swap away from the
-  // user's own shot); a barcode item may show its catalog image.
+  // user's own shot). A barcode item falls through its file-backed sources:
+  // display photo (which the + shutter may have just written - the thumb went
+  // BLANK after a + snap because only catalog_image_url was consulted), then
+  // provider art, then the scan-moment frame.
+  const fileThumb = (id: string) => `/api/v1/orgs/${slug}/modules/core-files/files/${id}/raw?variant=thumb`;
   const thumbUrl =
     localFrameItemId === it!.id && localFrameUrl
       ? localFrameUrl
-      : !isPhoto && it!.catalog_image_url
-        ? it!.catalog_image_url
-        : null;
+      : !isPhoto && it!.catalog_image_file_id
+        ? fileThumb(it!.catalog_image_file_id)
+        : !isPhoto && it!.catalog_image_url
+          ? it!.catalog_image_url
+          : it!.image_file_id
+            ? fileThumb(it!.image_file_id)
+            : null;
 
   return (
     <div
@@ -493,10 +501,13 @@ export function ScanCaptureDrawer({
 }
 
 function Thumb({ url, name }: { url: string | null; name: string }) {
+  // File-served sources need the auth token; object URLs and external catalog
+  // art load plain.
+  const resolved = useImageSrc(url && url.startsWith("/api/") ? url : null) ?? (url && !url.startsWith("/api/") ? url : null);
   return (
     <div className="w-[52px] h-[52px] rounded-lg border border-white/20 bg-white/5 overflow-hidden grid place-items-center shrink-0">
-      {url ? (
-        <img src={url} alt={name} className="w-full h-full object-cover" />
+      {resolved ? (
+        <img src={resolved} alt={name} className="w-full h-full object-cover" />
       ) : (
         <Camera size={18} className="text-white/40" />
       )}

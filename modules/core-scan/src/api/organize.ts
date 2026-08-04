@@ -218,6 +218,12 @@ organizeRouter.post(
     // 422 when there's truly nothing to show.
     const hasReady = rows.some((r) => alreadyFiled.includes(r.id) && r.target_location_id);
     if (plannable.length === 0 && !hasReady) {
+      // The pile is real (it counts toward the "unfiled" banner + the toggle),
+      // it's just entirely UNIDENTIFIED — so the Sorting-plan lens has nothing
+      // to place. Carry the count so the client can point back to those items
+      // ("Review N") instead of dead-ending on a bare error string. This is the
+      // exact case Grace hit: one scanned skein sat in the inbox, findable in
+      // "By session", yet "Sorting plan" said "nothing identified" with no path.
       res.status(422).json({
         error: {
           code: "nothing_to_plan",
@@ -225,6 +231,7 @@ organizeRouter.post(
             alreadyFiled.length > 0
               ? "Everything selected already has a location."
               : "Nothing identified to organize yet — identify items first.",
+          details: { needs_review_count: needsReview.length },
         },
       });
       return;

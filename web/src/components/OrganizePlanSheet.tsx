@@ -27,12 +27,14 @@ import { CheckCircle2, ChevronDown, FolderPlus, MapPin, Pencil, RotateCcw, Spark
 import { Modal, useImageSrc, useToast } from "@cobblr/platform-web";
 import {
   api,
+  ApiError,
   type OrganizeGroup,
   type OrganizePlanResponse,
   type ScanInboxItem,
 } from "../lib/api";
 import { LocationTreePicker } from "./LocationTreePicker";
 import { useAiStatus, AiOffNotice } from "./AiStatusNotice";
+import { planErrorView } from "./organizePlanError";
 
 // Unaccepted tweaks per plan (splits, renames, overrides, the typed hint),
 // keyed by plan_id — the server's draft cache returns the SAME plan on
@@ -152,6 +154,7 @@ export function SortingPlanView({
   onClose,
   onApplied,
   onStartWalk,
+  onReviewItems,
   scope,
   refs,
   renderItemCard,
@@ -167,6 +170,11 @@ export function SortingPlanView({
   onApplied: (filedItemIds: string[]) => void;
   /** Phase 2: open the put-away walk over the just-applied groups. */
   onStartWalk?: () => void;
+  /** Leave the Sorting-plan lens and go review the unidentified items — the
+   *  only path out of the "everything still needs a name" empty state (and the
+   *  "N need identifying first" note). The page owns where that lands (the
+   *  inline surface flips to "By session" + the review-only filter). */
+  onReviewItems?: () => void;
   /** Phase 3: "unplaced" plans over committed entities with no location
    *  (itemIds is ignored; names come from the plan payload). "refs" plans a
    *  specific set of committed entity refs passed in `refs` (the door an action
@@ -192,6 +200,12 @@ export function SortingPlanView({
   const [plan, setPlan] = useState<OrganizePlanResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // When the plan comes back 422 "nothing_to_plan" because every pending item is
+  // still unidentified, we render a navigable empty state (not a dead-end error
+  // string). errorCode distinguishes that case; reviewNeeded is the count the
+  // API carries so the "Review N" button reads true.
+  const [errorCode, setErrorCode] = useState<string | null>(null);
+  const [reviewNeeded, setReviewNeeded] = useState(0);
   const [applied, setApplied] = useState<Set<string>>(new Set());
   const [overrides, setOverrides] = useState<Map<string, string>>(new Map()); // group → location_id
   const [pickerFor, setPickerFor] = useState<string | null>(null); // existing/ready re-route
@@ -234,6 +248,7 @@ export function SortingPlanView({
   const runPlan = (withHint?: string, opts?: { fresh?: boolean; clearHint?: boolean }) => {
     const initial = plan === null;
     setError(null);
+    setErrorCode(null);
     if (initial) setLoading(true);
     else setReplanning(true); // keep the old plan rendered, dimmed
     api
@@ -267,7 +282,16 @@ export function SortingPlanView({
         // IS the plan, and the plan line carries the provenance.
         setHint("");
       })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Planning failed"))
+      .catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : "Planning failed");
+        if (e instanceof ApiError) {
+          setErrorCode(e.code);
+          const n = (e.details as { needs_review_count?: unknown } | undefined)?.needs_review_count;
+          setReviewNeeded(typeof n === "number" ? n : 0);
+        } else {
+          setErrorCode(null);
+        }
+      })
       .finally(() => {
         setLoading(false);
         setReplanning(false);
@@ -500,7 +524,38 @@ export function SortingPlanView({
           Planning where everything should go…
         </div>
       )}
-      {error && <div className="py-6 text-center text-sm text-bad">{error}</div>}
+      {/* "Everything here still needs a name" is not an error — it's a step. The
+          items ARE in the box (they count toward the banner + toggle), they just
+          can't be placed until they're identified. Point back to them instead of
+          dead-ending on the red string Grace couldn't act on. */}
+      {error &&
+        (() => {
+          const view = planErrorView(errorCode, reviewNeeded, error, !!onReviewItems);
+          if (view.kind === "error") {
+            return <div className="py-6 text-center text-sm text-bad">{view.message}</div>;
+          }
+          const n = view.count;
+          return (
+            <div className="py-8 px-4 text-center space-y-3">
+              <div className="text-sm font-medium text-content dark:text-mortar-100">
+                {n > 0
+                  ? `${n} scanned item${n === 1 ? "" : "s"} need${n === 1 ? "s" : ""} a name first`
+                  : "Nothing to sort yet"}
+              </div>
+              <div className="text-xs text-muted dark:text-slate-400">
+                The Sorting plan can only place items it can identify. Give{" "}
+                {n === 1 ? "it" : "them"} a name, then come back to sort.
+              </div>
+              <button
+                type="button"
+                onClick={onReviewItems}
+                className="inline-flex items-center gap-1 rounded-md bg-cobble-600 hover:bg-cobble-500 text-white text-xs font-medium px-3 py-1.5"
+              >
+                Review {n > 0 ? `${n} item${n === 1 ? "" : "s"}` : "items"} ›
+              </button>
+            </div>
+          );
+        })()}
 
       {plan && replanning && (
         <div className="mb-2 flex items-center gap-2 rounded-lg border border-accent/40 bg-cobble-50/60 dark:bg-cobble-900/20 px-3 py-2 text-xs text-accent">
@@ -537,11 +592,20 @@ export function SortingPlanView({
             {plan.already_filed_item_ids.length > 0 && !plan.groups.some((g) => g.ready) && (
               <span>{plan.already_filed_item_ids.length} already filed (untouched)</span>
             )}
-            {plan.needs_review_item_ids.length > 0 && (
-              <span className="text-amber-600 dark:text-amber-400">
-                {plan.needs_review_item_ids.length} need identifying first - excluded
-              </span>
-            )}
+            {plan.needs_review_item_ids.length > 0 &&
+              (onReviewItems ? (
+                <button
+                  type="button"
+                  onClick={onReviewItems}
+                  className="text-amber-600 dark:text-amber-400 underline decoration-dotted hover:text-amber-700 dark:hover:text-amber-300"
+                >
+                  {plan.needs_review_item_ids.length} need identifying first - review
+                </button>
+              ) : (
+                <span className="text-amber-600 dark:text-amber-400">
+                  {plan.needs_review_item_ids.length} need identifying first - excluded
+                </span>
+              ))}
             {plan.census_truncated && <span>Large workspace: planned against the busiest bins.</span>}
           </div>
 

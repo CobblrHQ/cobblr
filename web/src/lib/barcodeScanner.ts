@@ -149,7 +149,17 @@ export function enableContinuousAutofocus(track: MediaStreamTrack | null): void 
     .applyConstraints({
       advanced: [{ focusMode: "continuous" }],
     } as unknown as MediaTrackConstraints)
-    .catch(() => {});
+    // A swallowed rejection here is a LIE the scanner tells about itself: on a
+    // browser that refuses the focusMode constraint the app believes it has
+    // continuous autofocus while the user hunts for focus distance by hand, and
+    // nothing anywhere says otherwise. Warn — cheap, and it turns a silent
+    // capability gap into a visible one. (?diag=1 reports it properly.)
+    .catch((e: unknown) => {
+      console.warn(
+        "[scan] continuous autofocus refused by this browser:",
+        (e as Error)?.name ?? e,
+      );
+    });
 }
 
 /** Longest-side cap for uploaded viewfinder captures. Vision pipelines resize

@@ -10,8 +10,10 @@
 //   ---
 //   type: feature        # feature | fix | improvement
 //   scope: bundles       # optional
+//   announce: true       # optional — opt a MAJOR fix/improvement into the digest too
 //   ---
-//   One user-facing line. (type: feature → goes in the Discord digest; fix → page only.)
+//   One user-facing line. (type: feature → Discord digest; fix/improvement → page only,
+//   UNLESS announce: true, which sends the major ones to the digest as well.)
 //
 // A PR is a "feature" if: a `feat:` commit, a NEW modules/<name>/ dir, or a module
 // MINOR-or-MAJOR bump. It SATISFIES the requirement by adding a changelog.d/*.md
@@ -67,11 +69,48 @@ for (const f of touchedEntries) {
   const fm = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
   if (!/^type:\s*(feature|improvement|fix)\s*$/m.test(fm)) malformed.push(`${f}: missing/invalid type:`);
   if (!/^date:\s*\d{4}-\d{2}-\d{2}\s*$/m.test(fm)) malformed.push(`${f}: missing/invalid date: YYYY-MM-DD`);
+  // `announce: true` opts a major improvement/fix INTO the Discord digest (features
+  // always go). Must be a clean boolean — the digest reads /^true$/i, so `announce: yes`
+  // would silently NOT announce. Reject it here rather than let intent evaporate.
+  const ann = fm.match(/^announce:\s*(.+)$/m)?.[1]?.trim();
+  if (ann !== undefined && !/^(true|false)$/i.test(ann)) malformed.push(`${f}: announce: must be true or false (got "${ann}")`);
 }
 if (malformed.length) {
   console.error(
     "[lint:changelog] ✗ changelog entries need frontmatter with type: AND date: (else they sit under 'Unreleased' and never reach the digest):\n  " +
       malformed.join("\n  "),
+  );
+  process.exit(1);
+}
+
+// ── no maintainer/infra identifier in a PUBLIC changelog entry ──
+// changelog.d is served to users (the /changelog page) AND posted to the public Discord
+// digest, but it is EXCLUDED from the git export — so the export's forbidden gate never
+// checks it. A "companion app" mention leaked to #new-features 2026-08-04 for exactly this
+// reason. Reuse the publish manifest's forbidden list as the single source of truth.
+let forbidden: RegExp[] = [];
+try {
+  const mani = JSON.parse(readFileSync("scripts/publish/manifests/core.json", "utf8")) as { forbidden?: string[] };
+  forbidden = (mani.forbidden ?? []).map((p) => new RegExp(p, "g"));
+} catch {
+  /* no manifest → skip (the digest scrub is still the runtime backstop) */
+}
+const idLeaks: string[] = [];
+for (const f of touchedEntries) {
+  const raw = readFileSync(f, "utf8");
+  for (const re of forbidden) {
+    re.lastIndex = 0;
+    const m = re.exec(raw);
+    if (m) {
+      idLeaks.push(`${f}: contains "${m[0]}" — an identifier that must not reach the public /changelog + Discord digest`);
+      break;
+    }
+  }
+}
+if (idLeaks.length) {
+  console.error(
+    "[lint:changelog] ✗ maintainer/infra identifier in a public changelog entry — reword it (e.g. companion app → companion app):\n  " +
+      idLeaks.join("\n  "),
   );
   process.exit(1);
 }
@@ -227,7 +266,7 @@ if (hasChangeset || bundleBumped) {
 console.error(
   `[lint:changelog] ✗ this PR is a feature (${reasons.join("; ")}) but adds no changelog entry.\n` +
     "  Add a user-facing one-liner so it reaches /changelog + the daily digest:\n" +
-    "    changelog.d/<slug>.md  (see changelog.d/README.md). type: feature → digest; fix → page only.\n" +
+    "    changelog.d/<slug>.md  (see changelog.d/README.md). type: feature → digest; fix/improvement → page only (add announce: true to send a major one to the digest too).\n" +
     "  (A bundle feature is covered by its manifest `changelog` bump instead.)",
 );
 process.exit(1);

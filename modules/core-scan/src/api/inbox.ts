@@ -29,6 +29,7 @@ import { resolveNativeIdentity } from "../native-identity.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { downloadCatalogImage, enrichBarcodeItem, isJunkName } from "../services/enrich.js";
 import { committedImagePath } from "../services/committed-image.js";
+import { clampEntityName } from "../services/item-name.js";
 import {
   crossCheckScanPhoto,
   enrichPhotoItem,
@@ -1342,8 +1343,12 @@ const ConfirmBody = z.object({
    *  inventory:part. Both must be given together to override. */
   target_module: z.string().min(1).max(80).optional(),
   target_kind: z.string().min(1).max(80).optional(),
-  /** Name override. Falls back to suggested_name if absent. */
-  name: z.string().min(1).max(160).optional(),
+  /** Name override. Falls back to suggested_name if absent. Accepts catalog
+   *  length: provider titles are marketing copy (a real dimmer's is 206 chars)
+   *  and the commit CLAMPS to the entity-name limit below - rejecting the
+   *  whole commit because a catalog title is long turned "Add" into
+   *  "bad request body" (the author, 2026-08-03). */
+  name: z.string().min(1).max(2000).optional(),
   location_id: z.string().uuid().optional(),
   /** Quantity override. Falls back to the inbox row's quantity. */
   quantity: z.number().nonnegative().optional(),
@@ -1554,7 +1559,9 @@ inboxRouter.post(
       candidateFields,
     );
     const body: Record<string, unknown> = {
-      name: parsed.data.name ?? row.suggested_name ?? "Untitled",
+      // Entity names cap at 160 (the modules' own create schemas); a catalog
+      // title just gets cut there - a long name must never fail the commit.
+      name: clampEntityName(parsed.data.name ?? row.suggested_name ?? "Untitled"),
       manufacturer: row.suggested_manufacturer ?? undefined,
       // A serial/service tag (vision-read) OR a decoder-mapped value (a VIN) →
       // the destination table's NATIVE serial_number field (inventory/assets/

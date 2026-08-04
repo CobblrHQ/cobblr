@@ -222,7 +222,7 @@ function PutAwayCard({ slug }: { slug: string }) {
     // in a half-width column while the button sat in space. Below sm the copy
     // gets the full width and the button goes underneath it.
     <section
-      className="md:flex-1 md:min-w-0 rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-4 py-3 flex flex-col items-start gap-3 sm:flex-row sm:items-center"
+      className="md:flex-1 md:min-w-0 rounded-lg border border-cobble-400 dark:border-cobble-600 border-l-4 border-l-cobble-500 dark:border-l-cobble-400 bg-cobble-100 dark:bg-cobble-900 shadow-sm px-4 py-3 flex flex-col items-start gap-3 sm:flex-row sm:items-center"
       data-testid="putaway-card"
     >
       <div className="flex min-w-0 flex-1 items-start gap-3">

@@ -79,3 +79,14 @@ export function tidyTruncatedName(name: string | null | undefined): string {
   // A cut can also leave a dangling separator ("… T-Shirt," / "… T-Shirt -").
   return n.replace(/[\s,;:\-–—/&+]+$/u, "").trim();
 }
+
+/** Entity create schemas cap names at 160; cut at a word boundary when one is
+ *  near, so a marketing-length catalog title commits instead of 400ing (a real
+ *  dimmer's title is 206 characters - the author hit "bad request body" on Add). */
+export function clampEntityName(name: string): string {
+  const trimmed = name.trim();
+  if (trimmed.length <= 160) return trimmed;
+  const cut = trimmed.slice(0, 160);
+  const lastSpace = cut.lastIndexOf(" ");
+  return (lastSpace > 120 ? cut.slice(0, lastSpace) : cut).trimEnd();
+}

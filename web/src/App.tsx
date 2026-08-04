@@ -30,6 +30,7 @@ import { PairsWellWith } from "./components/PairsWellWith";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { useTheme } from "./theme/ThemeContext";
 import { ActiveOrgProvider, useActiveOrg, pickDefaultOrg, urlHandleFor } from "./auth/ActiveOrgContext";
+import { deepPathAfterWorkspace } from "./lib/deep-path";
 import { AuthPage, MagicConsumePage } from "./pages/AuthPage";
 import { PairPage } from "./pages/PairPage";
 import { StartAppPage } from "./pages/StartAppPage";
@@ -311,8 +312,7 @@ function LandingRedirect() {
     );
   }
   const { pathname, search, hash } = window.location;
-  const rest = pathname === "/" ? "/" : pathname; // preserve a deep-linked path
-  window.location.replace(`/w/${urlHandleFor(org, orgs)}${rest}${search}${hash}`);
+  window.location.replace(`/w/${urlHandleFor(org, orgs)}${deepPathAfterWorkspace(pathname)}${search}${hash}`);
   return <BootScrim />;
 }
 

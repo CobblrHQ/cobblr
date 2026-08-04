@@ -18,6 +18,7 @@ import {
   type ReactNode,
 } from "react";
 import { useAuth } from "./AuthContext";
+import { deepPathAfterWorkspace } from "../lib/deep-path";
 import { displaySlug } from "../lib/workspaceSlug";
 import { useImpersonation } from "../lib/impersonation";
 import type { OrgMembership } from "../lib/api";
@@ -97,12 +98,17 @@ export function ActiveOrgProvider({
   }, [urlHandle, orgs, imp]);
 
   // If the URL handle doesn't resolve to a membership (revoked, wrong account,
-  // typo), bounce to the user's default workspace — but NEVER while impersonating
-  // (the operator legitimately isn't a member of the workspace they're viewing).
+  // typo, or a shared/placeholder slug like a docs link), bounce to the user's
+  // own workspace — PRESERVING the deep path so the link still lands on the right
+  // page. Never while impersonating (the operator legitimately isn't a member of
+  // the workspace they're viewing).
   useEffect(() => {
     if (orgs.length === 0 || org || imp) return;
     const fallback = pickDefaultOrg(orgs);
-    if (fallback) window.location.replace(`/w/${urlHandleFor(fallback, orgs)}/`);
+    if (fallback) {
+      const { pathname, search, hash } = window.location;
+      window.location.replace(`/w/${urlHandleFor(fallback, orgs)}${deepPathAfterWorkspace(pathname)}${search}${hash}`);
+    }
   }, [orgs, org, imp]);
 
   // Remember the last-active workspace (by full slug) for bare-URL landings.

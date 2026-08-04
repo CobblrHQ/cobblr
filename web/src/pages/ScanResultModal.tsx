@@ -8,9 +8,9 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Camera, Check, CheckCircle, MapPin, ScanLine, Sparkles, Trash2 } from "lucide-react";
-import { useToast } from "@cobblr/platform-web";
-import { ApiError, api, type ScanCandidate, type ScanInboxItem, type TrackedMatch } from "../lib/api";
+import { Camera, Check, CheckCircle, MapPin, Plus, ScanLine, Trash2 } from "lucide-react";
+import { useImageSrc, useToast } from "@cobblr/platform-web";
+import { ApiError, api, type ScanInboxItem, type TrackedMatch } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useScanQuantity } from "../lib/scanQuantity";
 import { CaptureSheetShell, QtyStepper } from "./ScanCaptureDrawer";
@@ -24,10 +24,6 @@ export interface CameraScanTarget {
   label: string | null;
 }
 
-function candidateKind(c: ScanCandidate): string {
-  return c.module === "assets" ? "asset" : c.module === "machines" ? "machine" : "part";
-}
-
 export function ScanResultModal({
   barcode,
   item: itemProp,
@@ -38,6 +34,7 @@ export function ScanResultModal({
   scanTarget,
   onClose,
   onRetake,
+  onAddPhoto,
   onEarly,
   moveMode,
   onAttached,
@@ -72,6 +69,9 @@ export function ScanResultModal({
   /** "Not it" — arm the shutter to RETAKE this item's photo, then close so
    *  the viewfinder is yours. The camera owns the arm. */
   onRetake?: (item: ScanInboxItem) => void;
+  /** The photo strip's + tile: arm the shutter to add a shot to this item
+   *  (same behaviour as the + shutter) and hand the viewfinder back. */
+  onAddPhoto?: (item: ScanInboxItem) => void;
   /** An action taken BEFORE the row exists (the author: "if I'm moving fast… I
    *  should be able to do that"). The page closes the sheet immediately and
    *  runs the intent the moment its ingest lands. */
@@ -155,14 +155,6 @@ export function ScanResultModal({
     if (fresh.updated_at !== item.updated_at) setItem(fresh);
   }, [live.data, item]);
 
-  // Once identified, ask the matchmaker which table(s) fit — shown as tap chips.
-  const match = useQuery({
-    queryKey: ["scan-match", activeSlug, item?.id],
-    queryFn: () => api.matchScanItem(activeSlug, item!.id),
-    enabled: !!item?.id && !!item?.suggested_name,
-    staleTime: 60_000,
-  });
-  const candidates = (match.data?.candidates ?? []).slice(0, 3);
 
   // Re-arm. The row already exists and the stepper already wrote the count —
   // flush covers a tap made inside the debounce window.
@@ -226,6 +218,18 @@ export function ScanResultModal({
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
+  // Tap a strip tile → that shot becomes the item's display photo. The same
+  // photo-roles write the + shutter's catalog mode does; identification is
+  // untouched.
+  const makeDisplay = useMutation({
+    mutationFn: (fileId: string) => api.setScanCatalogFile(activeSlug, item!.id, fileId),
+    onSuccess: (fresh) => {
+      setItem(fresh);
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+
   const discard = useMutation({
     mutationFn: () => api.discardScanItem(activeSlug, item!.id),
     onSuccess: () => {
@@ -259,8 +263,7 @@ export function ScanResultModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const looking =
-    (!!pending && !item) || (!!item && !item.suggested_name && !match.isFetched);
+  const looking = !!pending && !item;
   // Catalog image first; the user's own photo as the fallback (photo scans
   // and barcode items that resolved without catalog art still get a face) —
   // EXCEPT while the catalog result is unverified against the user's photo
@@ -314,7 +317,16 @@ export function ScanResultModal({
             {pending && !item ? (
               <div className="text-sm text-muted animate-pulse">Looking up…</div>
             ) : (
-              <div className="font-medium text-content dark:text-mortar-100">
+              // CLAMPED, because it is the only unbounded thing in the sheet and
+              // the sheet is not allowed to scroll (the author, 2026-08-03). Catalog
+              // titles are marketing copy: the Kasa dimmer's is 180 characters
+              // and rendered THIRTEEN lines, pushing "Save & next" off the
+              // bottom. Three lines is enough to recognise what you're holding;
+              // the full name is on the row and shows in the inbox. Bounding
+              // this bounds the whole sheet's height by construction, which is
+              // what makes "no scroll" a property of the layout instead of a
+              // property of whichever product you happened to scan.
+              <div className="font-medium text-content dark:text-mortar-100 line-clamp-3" title={item?.suggested_name ?? undefined}>
                 {item?.suggested_name ?? (
                   stillEnriching ? (
                     <span className="text-faint italic animate-pulse">Identifying…</span>
@@ -349,6 +361,55 @@ export function ScanResultModal({
           </div>
         </div>
 
+        {/* The photo STRIP (the mock's gallery row): every picture this item
+            has - the resolved catalog art, the scan-moment frame, any shots
+            added with the + shutter - in one place, so a photo you just took
+            never disappears into a different surface (the author, 2026-08-03). Tap an
+            own shot to make it the display photo; ＋ arms the shutter. */}
+        {item && (
+          <div className="flex items-center gap-1.5">
+            {item.catalog_image_file_id && (
+              <StripTile
+                src={`/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.catalog_image_file_id}/raw?variant=thumb`}
+                active
+                label="Display photo"
+              />
+            )}
+            {!item.catalog_image_file_id && item.catalog_image_url && (
+              <StripTile src={item.catalog_image_url} active label="Catalog photo" />
+            )}
+            {item.image_file_id && (
+              <StripTile
+                src={`/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.image_file_id}/raw?variant=thumb`}
+                label="Your scan photo - tap to make it the display photo"
+                onTap={() => makeDisplay.mutate(item.image_file_id!)}
+                busy={makeDisplay.isPending}
+              />
+            )}
+            {((item.suggested_metadata as { extra_photos?: string[] } | null)?.extra_photos ?? []).map((f) => (
+              <StripTile
+                key={f}
+                src={`/api/v1/orgs/${activeSlug}/modules/core-files/files/${f}/raw?variant=thumb`}
+                label="Added photo - tap to make it the display photo"
+                onTap={() => makeDisplay.mutate(f)}
+                busy={makeDisplay.isPending}
+              />
+            ))}
+            {onAddPhoto && (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => { onAddPhoto(item); onClose("dismissed", item); }}
+                aria-label="Add a photo - the shutter arms"
+                title="Add a photo - the shutter arms and your next shot attaches"
+                className="w-11 h-11 shrink-0 rounded-lg border border-dashed border-line dark:border-slate-600 text-faint grid place-items-center disabled:opacity-40"
+              >
+                <Plus size={16} />
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Quantity — the LOCKED stepper (shared with the drawer), not a
             circles-and-input variant of its own. */}
         <div className="flex items-center justify-between">
@@ -376,7 +437,12 @@ export function ScanResultModal({
           />
         )}
 
-        {/* One-tap routing: the ?into= target first, else matchmaker chips. */}
+        {/* The ?into= deep link is the ONE commit this sheet still offers: the
+            user pre-chose the destination table before opening the camera, so
+            adding there is finishing THEIR decision. The matchmaker "add to"
+            chips are gone - the scanner never files (the author, 2026-08-03: "we are
+            filing into scan inbox for this category to get figured out
+            later"); routing is the inbox's job, on the surface built for it. */}
         {scanTarget.into ? (
           <button
             type="button"
@@ -392,41 +458,11 @@ export function ScanResultModal({
           >
             <CheckCircle size={15} /> Add to {scanTarget.label ?? scanTarget.into}
           </button>
-        ) : candidates.length > 0 ? (
-          <div>
-            <div className="text-[10px] font-mono uppercase tracking-widest text-muted mb-1.5">
-              add to
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {candidates.map((c, i) => (
-                <button
-                  key={`${c.module}:${c.instance ?? ""}:${i}`}
-                  type="button"
-                  disabled={!item || busy}
-                  onClick={() =>
-                    commit.mutate({
-                      module: c.module,
-                      kind: candidateKind(c),
-                      instance: c.instance ?? undefined,
-                      fields: c.fields,
-                    })
-                  }
-                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition border disabled:opacity-50 ${
-                    i === 0
-                      ? "bg-cobble-600 hover:bg-cobble-700 text-white border-cobble-600"
-                      : "bg-subtle dark:bg-slate-800 hover:bg-line dark:hover:bg-slate-700 text-content border-line dark:border-slate-700"
-                  }`}
-                >
-                  <Sparkles size={11} /> {c.label}
-                </button>
-              ))}
-            </div>
-          </div>
         ) : (
           !looking &&
           item && (
             <div className="text-[11px] text-faint italic">
-              {match.isFetching ? "finding the best table…" : "Saved to the inbox — triage it there."}
+              Saved to the inbox - file it from there.
             </div>
           )
         )}
@@ -490,5 +526,39 @@ export function ScanResultModal({
         </button>
       </div>
     </CaptureSheetShell>
+  );
+}
+
+/** One tile of the photo strip. File-served sources need the auth token, so
+ *  api paths resolve through useImageSrc; external catalog URLs load plain. */
+function StripTile({
+  src,
+  active,
+  label,
+  onTap,
+  busy,
+}: {
+  src: string;
+  active?: boolean;
+  label: string;
+  onTap?: () => void;
+  busy?: boolean;
+}) {
+  const resolved = useImageSrc(src.startsWith("/api/") ? src : null) ?? (src.startsWith("/api/") ? null : src);
+  return (
+    <button
+      type="button"
+      disabled={!onTap || busy}
+      onClick={onTap}
+      aria-label={label}
+      title={label}
+      className={
+        "w-11 h-11 shrink-0 rounded-lg overflow-hidden border bg-subtle dark:bg-slate-800 grid place-items-center " +
+        (active ? "border-cobble-400 ring-1 ring-cobble-400" : "border-line dark:border-slate-600") +
+        (onTap ? " cursor-pointer" : "")
+      }
+    >
+      {resolved ? <img src={resolved} alt="" className="w-full h-full object-cover" /> : <Camera size={14} className="text-faint" />}
+    </button>
   );
 }

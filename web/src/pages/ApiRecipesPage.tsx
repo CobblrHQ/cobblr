@@ -1,13 +1,12 @@
-// /configuration/api-recipes — "Use from a script". The human companion to the
-// OpenAPI spec: ready-to-run curl / Python / Node / TypeScript for creating and
-// reading records in THIS workspace, generated from the workspace's own entity
-// kinds + fields. The auto-scoping wizard mints a record-scoped token
-// (records:<instance>:<action> + provenance) via the existing token surface.
-//
-// UI is deliberately functional-first (per plan: build it, then tweak).
+// /configuration/api-recipes — "Scripting". The human companion to the OpenAPI
+// spec: ready-to-run curl / Python / Node / TypeScript for creating and reading
+// records in THIS workspace, generated from the workspace's own entity kinds +
+// fields. You tap-select one or more record types; that selection drives BOTH
+// the code shown below and the scope of the token it mints (records:<target>:
+// <action> + provenance) via the existing token surface.
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Copy, Check, KeyRound, Info } from "lucide-react";
+import { Copy, Check, KeyRound, Info, Boxes, Terminal, Download } from "lucide-react";
 import { QueryError } from "../components/QueryError";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
@@ -16,8 +15,7 @@ import { moduleIcon } from "../lib/module-icon";
 
 type Lang = "curl" | "python" | "node" | "ts";
 type Action = "create" | "write" | "readwrite";
-type KindsScope = "this" | "pick" | "all";
-type Expiry = "90d" | "1y" | "never";
+type Expiry = "90d" | "1y" | "never" | "custom";
 
 const LANGS: { id: Lang; label: string }[] = [
   { id: "curl", label: "curl" },
@@ -66,7 +64,6 @@ function routeHint(k: PlatformEntityKind): string {
   const ep = k.endpoints?.create ?? k.endpoints?.list ?? "";
   return k.instance_name ? `instances/${k.instance_name}${ep}` : `modules/${k.module_name}${ep}`;
 }
-/** Is this an instance-backed ("category") kind or a module kind? */
 function isInstanceKind(k: PlatformEntityKind): boolean {
   return !!k.instance_name;
 }
@@ -75,8 +72,92 @@ function isScriptable(k: PlatformEntityKind): boolean {
   return !!(k.endpoints?.create || k.endpoints?.list);
 }
 
+function nativeFieldsOf(k: PlatformEntityKind) {
+  return (k.fields ?? []).filter((f) => f.role !== "system").slice(0, 8);
+}
+
+// The env-loading preamble for a language (imports + a comment showing where the
+// token goes). Emitted once per on-screen snippet, and once at the top of a
+// downloaded file — so the token is loaded, never inlined.
+function langPreamble(lang: Lang, envToken: string): string[] {
+  if (lang === "curl") return [`# Load your token from the env, never inline it:`, `#   export COBBLR_TOKEN="${envToken}"`];
+  if (lang === "python") return [`# pip install requests python-dotenv  ·  .env: COBBLR_TOKEN=${envToken}`, "import os, requests", "from dotenv import load_dotenv", "load_dotenv()"];
+  return [`// npm i dotenv  ·  .env (never commit it): COBBLR_TOKEN=${envToken}`, 'import "dotenv/config";'];
+}
+/** The create CALL only (no preamble/imports) — shared by the on-screen snippet
+ *  and the combined download (which loads the token once at the top). */
+function createCall(k: PlatformEntityKind, lang: Lang, url: string): string {
+  const fields = nativeFieldsOf(k);
+  const body: Record<string, unknown> = {};
+  for (const f of fields) body[f.name] = egValue(f);
+  const j = JSON.stringify(body, null, 2);
+  if (lang === "curl") {
+    return [`curl -X POST ${url} \\`, `  -H "Authorization: Bearer $COBBLR_TOKEN" \\`, `  -H "Content-Type: application/json" \\`, `  -d '${JSON.stringify(body)}'`].join("\n");
+  }
+  if (lang === "python") {
+    return ["requests.post(", `    "${url}",`, `    headers={"Authorization": f"Bearer {os.environ['COBBLR_TOKEN']}"},`, `    json=${j.replace(/\n/g, "\n    ")},`, ").raise_for_status()"].join("\n");
+  }
+  const fetchCall = [`await fetch("${url}", {`, `  method: "POST",`, `  headers: {`, "    Authorization: `Bearer ${process.env.COBBLR_TOKEN}`,", `    "Content-Type": "application/json",`, `  },`, `  body: JSON.stringify(BODY),`, `});`];
+  if (lang === "ts") {
+    const iface = [`interface ${typeName(k.display_name)}Create {`, ...fields.map((f) => `  ${f.name}${f.role === "title" ? "" : "?"}: ${tsType(f.type)};`), `}`].join("\n");
+    return [iface, "", `const body: ${typeName(k.display_name)}Create = ${j};`, "", ...fetchCall.map((l) => l.replace("BODY", "body"))].join("\n");
+  }
+  return fetchCall.map((l) => l.replace("BODY", j)).join("\n");
+}
+/** The find/list CALL only (no preamble). */
+function listCall(lang: Lang, url: string): string {
+  const u = `${url}?limit=20`;
+  if (lang === "curl") return [`curl "${u}" \\`, `  -H "Authorization: Bearer $COBBLR_TOKEN"`].join("\n");
+  if (lang === "python") return ["r = requests.get(", `    "${u}",`, `    headers={"Authorization": f"Bearer {os.environ['COBBLR_TOKEN']}"},`, ").json()"].join("\n");
+  return [`const r = await fetch("${u}", {`, "  headers: { Authorization: `Bearer ${process.env.COBBLR_TOKEN}` },", "}).then((r) => r.json());"].join("\n");
+}
+function buildCreate(k: PlatformEntityKind, lang: Lang, url: string, envToken: string): string {
+  return [...langPreamble(lang, envToken), "", createCall(k, lang, url)].join("\n");
+}
+function buildList(lang: Lang, url: string, envToken: string): string {
+  return [...langPreamble(lang, envToken), "", listCall(lang, url)].join("\n");
+}
+/** The update CALL only — PATCH a partial body to one record ({id} placeholder). */
+function updateCall(k: PlatformEntityKind, lang: Lang, url: string): string {
+  const body: Record<string, unknown> = {};
+  for (const f of nativeFieldsOf(k).slice(0, 3)) body[f.name] = egValue(f);
+  const j = JSON.stringify(body, null, 2);
+  if (lang === "curl") {
+    return [`curl -X PATCH ${url} \\`, `  -H "Authorization: Bearer $COBBLR_TOKEN" \\`, `  -H "Content-Type: application/json" \\`, `  -d '${JSON.stringify(body)}'`].join("\n");
+  }
+  if (lang === "python") {
+    return ["requests.patch(", `    "${url}",`, `    headers={"Authorization": f"Bearer {os.environ['COBBLR_TOKEN']}"},`, `    json=${j.replace(/\n/g, "\n    ")},`, ").raise_for_status()"].join("\n");
+  }
+  return [`await fetch("${url}", {`, `  method: "PATCH",`, `  headers: {`, "    Authorization: `Bearer ${process.env.COBBLR_TOKEN}`,", `    "Content-Type": "application/json",`, `  },`, `  body: JSON.stringify(${j}),`, `});`].join("\n");
+}
+function buildUpdate(k: PlatformEntityKind, lang: Lang, url: string, envToken: string): string {
+  return [...langPreamble(lang, envToken), "", updateCall(k, lang, url)].join("\n");
+}
+/** All selected kinds as ONE file: token loaded once, then a labelled section per
+ *  kind (fields as a comment reference, then its create + list calls). */
+function buildFile(
+  lang: Lang,
+  items: { k: PlatformEntityKind; label: string; createUrl: string; listUrl: string; updateUrl: string }[],
+): string {
+  const cp = lang === "node" || lang === "ts" ? "//" : "#";
+  // Never write a real token into a downloaded file — always the placeholder.
+  const head = [`${cp} Cobblr API examples. One token, one env var.`, ...langPreamble(lang, "cblr_...your token here...")];
+  const sections = items.map(({ k, label, createUrl, listUrl, updateUrl }) => {
+    const fields = nativeFieldsOf(k).map((f) => `${f.name}${f.role === "title" ? "*" : ""}`).join(", ");
+    const lines = ["", `${cp} ── ${label}  (${routeHint(k)})`];
+    if (fields) lines.push(`${cp} Fields: ${fields}   (* required; custom fields go under metadata)`);
+    if (createUrl) lines.push("", createCall(k, lang, createUrl));
+    if (listUrl) lines.push("", listCall(lang, listUrl));
+    if (updateUrl) lines.push("", updateCall(k, lang, updateUrl));
+    return lines.join("\n");
+  });
+  return [head.join("\n"), ...sections].join("\n") + "\n";
+}
+
+const SECTION = "rounded-lg border border-line dark:border-slate-600 p-4";
+
 export function ApiRecipesPage() {
-  usePageTitle("Use from a script");
+  usePageTitle("Scripting");
   const { activeSlug } = useActiveOrg();
   const toast = useToast();
 
@@ -98,128 +179,78 @@ export function ApiRecipesPage() {
     [kindsQ.data],
   );
 
-  const [kindId, setKindId] = useState<string | null>(null);
+  // Module display names (what the sidebar shows: inventory → "Inventory",
+  // core-locations → "Locations"). A module kind's own display_name is the ITEM
+  // noun ("Part"), which a user hunting for their sidebar entry won't recognise.
+  const modulesQ = useQuery({
+    queryKey: ["modules-registry"],
+    queryFn: () => api.modules(),
+    staleTime: 5 * 60_000,
+  });
+  const moduleName = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const mod of modulesQ.data?.items ?? []) m.set(mod.name, mod.displayName);
+    return m;
+  }, [modulesQ.data]);
+  /** The label a user recognises. Instance kinds keep their name (they match the
+   *  sidebar). Module kinds are ALWAYS "Module · Kind" — uniform, so the grid
+   *  never mixes bare "Inventory" with "Projects · Project" (confusing). */
+  const kindLabel = (k: PlatformEntityKind): string => {
+    if (isInstanceKind(k)) return k.display_name;
+    const mod = moduleName.get(k.module_name) ?? k.module_name;
+    return `${mod} · ${k.display_name}`;
+  };
+  /** The SHORT label for a token name: the module / instance the user recognises,
+   *  without the "· Kind" suffix (so a default name reads "Locations script", not
+   *  "Locations · Location script"). */
+  const shortLabel = (k: PlatformEntityKind): string =>
+    isInstanceKind(k) ? k.display_name : (moduleName.get(k.module_name) ?? k.module_name);
+
+  // Nothing selected by default — you pick what your script touches.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [kindFilter, setKindFilter] = useState("");
   const [lang, setLang] = useState<Lang>("curl");
   const [wizDo, setWizDo] = useState<Action>("create");
-  const [wizKinds, setWizKinds] = useState<KindsScope>("this");
-  const [pickedIds, setPickedIds] = useState<Set<string>>(new Set());
+  const [wizAllKinds, setWizAllKinds] = useState(false);
   const [wizExp, setWizExp] = useState<Expiry>("90d");
+  const [customDays, setCustomDays] = useState("30");
   const [tokenName, setTokenName] = useState("");
   const [token, setToken] = useState("");
   const [copied, setCopied] = useState<string | null>(null);
   const [minting, setMinting] = useState(false);
 
-  const kind = kinds.find((k) => k.id === kindId) ?? kinds[0] ?? null;
-  const target = kind ? scopeTarget(kind) : "";
-  const nativeFields = (kind?.fields ?? []).filter((f) => f.role !== "system");
+  const selectedKinds = useMemo(() => kinds.filter((k) => selectedIds.has(k.id)), [kinds, selectedIds]);
+  const toggle = (id: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const origin = typeof window !== "undefined" ? window.location.origin : "https://your-cobblr";
-  // The kind's OWN create/list routes, from the registry — module or instance.
-  const createEp = kind?.endpoints?.create;
-  const listEp = kind?.endpoints?.list;
-  const createUrl = kind && createEp ? `${origin}${mountBase(activeSlug!, kind)}${createEp}` : "";
-  const listUrl = kind && listEp ? `${origin}${mountBase(activeSlug!, kind)}${listEp}` : "";
-
-  const bodyObj = useMemo(() => {
-    const o: Record<string, unknown> = {};
-    for (const f of nativeFields.slice(0, 8)) o[f.name] = egValue(f);
-    return o;
-  }, [nativeFields]);
-
   const envToken = token || "cblr_...your token here...";
+  const urlFor = (k: PlatformEntityKind, ep?: string) => (ep ? `${origin}${mountBase(activeSlug!, k)}${ep}` : "");
 
-  const createSnippet = useMemo(() => {
-    if (!kind) return "";
-    const j = JSON.stringify(bodyObj, null, 2);
-    if (lang === "curl") {
-      return [
-        "# Load your token from the shell env — never paste it into the script.",
-        "# Add to ~/.zshrc, or a .env you source before running:",
-        `#   export COBBLR_TOKEN="${envToken}"`,
-        "",
-        `curl -X POST ${createUrl} \\`,
-        `  -H "Authorization: Bearer $COBBLR_TOKEN" \\`,
-        `  -H "Content-Type: application/json" \\`,
-        `  -d '${JSON.stringify(bodyObj)}'`,
-      ].join("\n");
-    }
-    if (lang === "python") {
-      return [
-        "# pip install requests python-dotenv",
-        "# .env beside this script (add it to .gitignore):",
-        `#   COBBLR_TOKEN=${envToken}`,
-        "import os, requests",
-        "from dotenv import load_dotenv",
-        "load_dotenv()",
-        "",
-        "requests.post(",
-        `    "${createUrl}",`,
-        `    headers={"Authorization": f"Bearer {os.environ['COBBLR_TOKEN']}"},`,
-        `    json=${j.replace(/\n/g, "\n    ")},`,
-        ").raise_for_status()",
-      ].join("\n");
-    }
-    const preamble = [
-      "// npm i dotenv  —  load COBBLR_TOKEN from a .env you never commit:",
-      `//   COBBLR_TOKEN=${envToken}`,
-      'import "dotenv/config";',
-      "",
-    ];
-    const fetchCall = [
-      `await fetch("${createUrl}", {`,
-      `  method: "POST",`,
-      `  headers: {`,
-      "    Authorization: `Bearer ${process.env.COBBLR_TOKEN}`,",
-      `    "Content-Type": "application/json",`,
-      `  },`,
-      `  body: JSON.stringify(BODY),`,
-      `});`,
-    ];
-    if (lang === "ts") {
-      const iface = [
-        `interface ${typeName(kind.display_name)}Create {`,
-        ...nativeFields.slice(0, 8).map((f) => `  ${f.name}${f.role === "title" ? "" : "?"}: ${tsType(f.type)};`),
-        `}`,
-      ].join("\n");
-      return [
-        ...preamble,
-        `// Generated from your ${kind.display_name} schema — typo a field and it won't compile.`,
-        iface,
-        "",
-        `const body: ${typeName(kind.display_name)}Create = ${j};`,
-        "",
-        ...fetchCall.map((l) => l.replace("BODY", "body")),
-      ].join("\n");
-    }
-    return [...preamble, ...fetchCall.map((l) => l.replace("BODY", j))].join("\n");
-  }, [kind, lang, bodyObj, createUrl, envToken, nativeFields]);
-
-  const listSnippet = useMemo(() => {
-    if (!kind || !listUrl) return "";
-    const u = `${listUrl}?limit=20`;
-    if (lang === "curl") {
-      return [`# Token from the env — export COBBLR_TOKEN="${envToken}"`, `curl "${u}" \\`, `  -H "Authorization: Bearer $COBBLR_TOKEN"`].join("\n");
-    }
-    if (lang === "python") {
-      return ["import os, requests", "from dotenv import load_dotenv", "load_dotenv()", "", "r = requests.get(", `    "${u}",`, `    headers={"Authorization": f"Bearer {os.environ['COBBLR_TOKEN']}"},`, ").json()"].join("\n");
-    }
-    return ["// Node 18+ / TypeScript (global fetch)", `const r = await fetch("${u}", {`, "  headers: { Authorization: `Bearer ${process.env.COBBLR_TOKEN}` },", "}).then((r) => r.json());"].join("\n");
-  }, [kind, lang, listUrl, envToken]);
-
-  // The kinds this token will cover: just the shown one, a hand-picked set, or
-  // everything (*). One token often needs several kinds (a script that logs
-  // computers AND updates locations), so "pick" mints a scope per kind.
-  const pickedTargets = useMemo(() => {
-    if (wizKinds === "all") return ["*"];
-    if (wizKinds === "this") return target ? [target] : [];
-    return [...new Set(kinds.filter((k) => pickedIds.has(k.id)).map(scopeTarget))];
-  }, [wizKinds, target, kinds, pickedIds]);
-
+  // Selection (or the all-kinds escape hatch) IS "which kinds it can touch".
+  const targets = useMemo(
+    () => (wizAllKinds ? ["*"] : [...new Set(selectedKinds.map(scopeTarget))]),
+    [wizAllKinds, selectedKinds],
+  );
   const scopes = useMemo(() => {
     const actions = wizDo === "create" ? ["create"] : wizDo === "write" ? ["write"] : ["read", "write"];
-    return pickedTargets.flatMap((t) => actions.map((a) => `records:${t}:${a}`));
-  }, [pickedTargets, wizDo]);
+    return targets.flatMap((t) => actions.map((a) => `records:${t}:${a}`));
+  }, [targets, wizDo]);
+
+  const expDays =
+    wizExp === "never" ? null
+    : wizExp === "90d" ? 90
+    : wizExp === "1y" ? 365
+    : Number(customDays) > 0 ? Math.floor(Number(customDays)) : null;
+  const expLabel = expDays === null ? "never expires" : expDays === 365 ? "expires in 1 year" : `expires in ${expDays} days`;
+  // Which operations the CURRENT token scope authorizes (the examples always show
+  // all of them; this note ties the scope selection to the code).
+  const coveredOps = wizDo === "create" ? "create only" : wizDo === "write" ? "create and update" : "read, create, and update";
 
   const copy = (id: string, text: string) => {
     void navigator.clipboard?.writeText(text);
@@ -227,19 +258,43 @@ export function ApiRecipesPage() {
     setTimeout(() => setCopied((c) => (c === id ? null : c)), 1400);
   };
 
+  const downloadAll = () => {
+    const items = selectedKinds.map((k) => ({
+      k,
+      label: kindLabel(k),
+      createUrl: urlFor(k, k.endpoints?.create),
+      listUrl: urlFor(k, k.endpoints?.list),
+      updateUrl: urlFor(k, k.endpoints?.update),
+    }));
+    const ext = lang === "python" ? "py" : lang === "curl" ? "sh" : lang === "ts" ? "ts" : "mjs";
+    const blob = new Blob([buildFile(lang, items)], { type: "text/plain" });
+    const href = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = href;
+    a.download = `cobblr-examples.${ext}`;
+    a.click();
+    URL.revokeObjectURL(href);
+  };
+
+  const defaultName = () => {
+    if (wizAllKinds) return "All-records script";
+    if (selectedKinds.length === 0) return "API script";
+    const first = shortLabel(selectedKinds[0]!);
+    return selectedKinds.length > 1 ? `${first} +${selectedKinds.length - 1} script` : `${first} script`;
+  };
+
   const mint = async () => {
-    if (!kind || scopes.length === 0) return;
+    if (scopes.length === 0) return;
     setMinting(true);
     try {
-      const name = (tokenName || `${kind.display_name} script`).trim();
-      const expires_at =
-        wizExp === "never" ? undefined : new Date(Date.now() + (wizExp === "90d" ? 90 : 365) * 864e5).toISOString();
+      const name = (tokenName || defaultName()).trim();
+      const expires_at = expDays ? new Date(Date.now() + expDays * 864e5).toISOString() : undefined;
       const res = await api.createApiToken({
         name,
         scopes,
         expires_at,
         source: "script-page",
-        meta: { kind: kind.id, targets: pickedTargets, action: wizDo, org: activeSlug },
+        meta: { targets, action: wizDo, org: activeSlug },
       });
       setToken(res.token);
       toast.success(`Scoped token "${name}" created — copy it now, it won't be shown again.`);
@@ -254,102 +309,114 @@ export function ApiRecipesPage() {
     "rounded-md border px-3 py-1.5 text-sm transition " +
     (on
       ? "border-cobble-600 bg-cobble-600 text-white"
-      : "border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 text-muted dark:text-slate-300 hover:text-content");
+      : "border-line dark:border-slate-600 bg-subtle dark:bg-slate-800 text-muted dark:text-slate-300 hover:text-content");
+
+  // One selectable card; tap toggles membership (works on touch + desktop).
+  const kindCard = (k: PlatformEntityKind) => {
+    const Icon = moduleIcon(k.icon);
+    const fam = isInstanceKind(k) ? "category" : "module";
+    const on = selectedIds.has(k.id);
+    return (
+      <button
+        key={k.id}
+        type="button"
+        onClick={() => toggle(k.id)}
+        aria-pressed={on}
+        className={
+          "flex w-full items-start gap-2.5 rounded-lg border p-3 text-left transition " +
+          (on
+            ? "border-cobble-500 bg-cobble-500/10 ring-1 ring-inset ring-cobble-500"
+            : "border-line dark:border-slate-600 bg-subtle dark:bg-slate-800 hover:border-cobble-400")
+        }
+      >
+        <span className={"mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-md " + (on ? "bg-cobble-600 text-white" : "bg-panel dark:bg-slate-900 text-cobble-500")}>
+          {on ? <Check size={14} /> : <Icon size={14} />}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-1.5">
+            <span className="truncate text-sm font-semibold text-content dark:text-slate-100">{kindLabel(k)}</span>
+            <span className={"shrink-0 rounded-full px-1.5 py-0.5 text-[10px] " + (fam === "category" ? "bg-cobble-500/15 text-cobble-500" : "bg-amber-500/15 text-amber-500")}>{fam}</span>
+          </span>
+          <span className="mt-0.5 block truncate font-mono text-[11px] text-faint dark:text-slate-500">{routeHint(k)}</span>
+        </span>
+      </button>
+    );
+  };
+
+  const codeBlock = (id: string, title: string, code: string, resp: string) => (
+    <div key={id}>
+      <div className="mb-1.5 text-sm font-medium text-content dark:text-slate-200">{title}</div>
+      <div className="relative">
+        <button onClick={() => copy(id, code)} className="absolute right-2 top-2 z-10 rounded border border-line dark:border-slate-600 bg-panel/80 dark:bg-slate-900/80 px-2 py-1 text-xs text-muted hover:text-content">
+          {copied === id ? "Copied" : "Copy"}
+        </button>
+        <pre className="overflow-x-auto rounded-md border border-line dark:border-slate-700 bg-slate-950 p-4 text-xs leading-relaxed text-slate-200"><code>{code}</code></pre>
+      </div>
+      <div className="mt-1 text-xs text-muted dark:text-slate-400">→ {resp}</div>
+    </div>
+  );
 
   return (
     <div className="space-y-4">
       {kindsQ.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {kindsQ.isError && <QueryError what="your entity kinds" onRetry={() => kindsQ.refetch()} />}
       {!kindsQ.isLoading && kinds.length === 0 && (
-        <div className="rounded-md border border-line dark:border-slate-700 p-4 text-sm text-muted dark:text-slate-400">
+        <div className={SECTION + " text-sm text-muted dark:text-slate-400"}>
           {/* vocab-lint-ok: generic scripting empty state, not a per-kind surface */}
           Nothing to script against yet. Create a category (a named table) and it shows up here.
         </div>
       )}
 
-      {kind && (
+      {kinds.length > 0 && (
         <>
-          {/* 1 · pick the kind (card grid, grouped by family) + language */}
-          <section className="rounded-lg border border-line dark:border-slate-700 p-4 space-y-3">
+          {/* 1 · pick one or more record types (tap toggles) */}
+          <section className={SECTION + " space-y-3"}>
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <span className="text-xs uppercase tracking-wide text-faint dark:text-slate-500">Entity kind</span>
-              <div className="inline-flex rounded-md border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 p-0.5">
-                {LANGS.map((l) => (
-                  <button
-                    key={l.id}
-                    onClick={() => setLang(l.id)}
-                    className={"rounded px-3 py-1.5 text-sm transition " + (lang === l.id ? "bg-cobble-600 text-white" : "text-muted dark:text-slate-300 hover:text-content")}
-                  >
-                    {l.label}
-                  </button>
-                ))}
+              <div className="flex items-center gap-2 text-sm font-medium text-content dark:text-slate-100">
+                <Boxes size={15} className="text-cobble-500" /> Pick what it applies to
               </div>
+              {selectedIds.size > 0 && (
+                <button onClick={() => setSelectedIds(new Set())} className="text-xs text-muted hover:text-content">
+                  {selectedIds.size} selected · Clear
+                </button>
+              )}
             </div>
+            <p className="text-xs text-muted dark:text-slate-400">Tap the record types your script reads or writes. Pick as many as you need.</p>
 
             {kinds.length > 8 && (
               <input
                 value={kindFilter}
                 onChange={(e) => setKindFilter(e.target.value)}
-                placeholder="Filter kinds…"
-                className="w-full rounded-md border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 px-3 py-2 text-sm text-content dark:text-slate-100"
+                placeholder="Filter…"
+                className="w-full rounded-md border border-line dark:border-slate-600 bg-subtle dark:bg-slate-800 px-3 py-2 text-sm text-content dark:text-slate-100"
               />
             )}
-
-            {([["category", "Categories", (k: PlatformEntityKind) => isInstanceKind(k)], ["module", "Modules", (k: PlatformEntityKind) => !isInstanceKind(k)]] as const).map(([famKey, famLabel, pred]) => {
-              const group = kinds.filter((k) => pred(k) && k.display_name.toLowerCase().includes(kindFilter.trim().toLowerCase()));
-              if (group.length === 0) return null;
-              return (
-                <div key={famKey}>
-                  <div className="mb-2 text-[11px] uppercase tracking-wide text-faint dark:text-slate-500">{famLabel}</div>
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                    {group.map((k) => {
-                      const Icon = moduleIcon(k.icon);
-                      const on = k.id === kind.id;
-                      return (
-                        <button
-                          key={k.id}
-                          type="button"
-                          onClick={() => setKindId(k.id)}
-                          className={
-                            "flex items-start gap-2.5 rounded-lg border p-3 text-left transition " +
-                            (on
-                              ? "border-cobble-500 bg-cobble-500/10 ring-1 ring-inset ring-cobble-500"
-                              : "border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 hover:border-cobble-400")
-                          }
-                        >
-                          <span className={"mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-md " + (on ? "bg-cobble-600 text-white" : "bg-panel dark:bg-slate-900 text-cobble-500")}>
-                            <Icon size={14} />
-                          </span>
-                          <span className="min-w-0">
-                            <span className="flex items-center gap-1.5">
-                              <span className="truncate text-sm font-semibold text-content dark:text-slate-100">{k.display_name}</span>
-                              <span className={"shrink-0 rounded-full px-1.5 py-0.5 text-[10px] " + (famKey === "category" ? "bg-cobble-500/15 text-cobble-500" : "bg-amber-500/15 text-amber-500")}>{famKey}</span>
-                            </span>
-                            <span className="mt-0.5 block truncate font-mono text-[11px] text-faint dark:text-slate-500">{routeHint(k)}</span>
-                          </span>
-                        </button>
-                      );
-                    })}
+            <div className="max-h-80 space-y-3 overflow-y-auto pr-1">
+              {([["category", "Categories", (k: PlatformEntityKind) => isInstanceKind(k)], ["module", "Modules", (k: PlatformEntityKind) => !isInstanceKind(k)]] as const).map(([famKey, famLabel, pred]) => {
+                const q = kindFilter.trim().toLowerCase();
+                const group = kinds.filter((k) => pred(k) && `${kindLabel(k)} ${k.display_name}`.toLowerCase().includes(q));
+                if (group.length === 0) return null;
+                return (
+                  <div key={famKey}>
+                    <div className="mb-2 text-[11px] uppercase tracking-wide text-faint dark:text-slate-500">{famLabel}</div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                      {group.map((k) => kindCard(k))}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </section>
 
-          {/* 2 · auto-scope wizard */}
-          <section className="rounded-lg border border-line dark:border-slate-700 p-4 space-y-3">
+          {/* 2 · authorize it (scope derives from the selection) */}
+          <section className={SECTION + " space-y-3"}>
             <div className="flex items-center gap-2 text-sm font-medium text-content dark:text-slate-100">
-              <KeyRound size={15} className="text-cobble-500" /> Authorize the script
+              <KeyRound size={15} className="text-cobble-500" /> Authorize it
             </div>
-            <p className="text-xs text-muted dark:text-slate-400">Answer a few questions and the token is scoped to the minimum it needs.</p>
+            <p className="text-xs text-muted dark:text-slate-400">The token is scoped to exactly the record types you picked, and nothing more.</p>
             {[
               { q: "What will the script do?", opts: [["create", "Create records"], ["write", "Create + update"], ["readwrite", "Full read + write"]] as const, val: wizDo, set: (v: string) => setWizDo(v as Action) },
-              { q: "Which kinds can it touch?", opts: [["this", `Just ${kind.display_name}`], ["pick", "Pick kinds…"], ["all", "All kinds"]] as const, val: wizKinds, set: (v: string) => {
-                const nv = v as KindsScope;
-                setWizKinds(nv);
-                if (nv === "pick" && pickedIds.size === 0) setPickedIds(new Set([kind.id]));
-              } },
-              { q: "Expire the token?", opts: [["90d", "90 days"], ["1y", "1 year"], ["never", "Never"]] as const, val: wizExp, set: (v: string) => setWizExp(v as Expiry) },
+              { q: "Which records?", opts: [["picked", "The ones I picked"], ["all", "All record types"]] as const, val: wizAllKinds ? "all" : "picked", set: (v: string) => setWizAllKinds(v === "all") },
             ].map((row) => (
               <div key={row.q} className="flex flex-wrap items-center gap-3">
                 <span className="w-44 text-sm text-muted dark:text-slate-400">{row.q}</span>
@@ -360,58 +427,51 @@ export function ApiRecipesPage() {
                 </div>
               </div>
             ))}
-
-            {wizKinds === "pick" && (
-              <div className="ml-0 sm:ml-44 max-h-56 overflow-y-auto rounded-md border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 p-2">
-                {kinds.map((k) => {
-                  const on = pickedIds.has(k.id);
-                  return (
-                    <label key={k.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm text-content dark:text-slate-200 hover:bg-panel dark:hover:bg-slate-900">
-                      <input
-                        type="checkbox"
-                        checked={on}
-                        onChange={() =>
-                          setPickedIds((prev) => {
-                            const next = new Set(prev);
-                            if (on) next.delete(k.id);
-                            else next.add(k.id);
-                            return next;
-                          })
-                        }
-                        className="accent-cobble-600"
-                      />
-                      <span>{k.display_name}</span>
-                      <span className="ml-auto font-mono text-[11px] text-faint dark:text-slate-500">{scopeTarget(k)}</span>
-                    </label>
-                  );
-                })}
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="w-44 text-sm text-muted dark:text-slate-400">Expire the token?</span>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {([["90d", "90 days"], ["1y", "1 year"], ["never", "Never"], ["custom", "Custom"]] as const).map(([v, label]) => (
+                  <button key={v} onClick={() => setWizExp(v)} className={optBtn(wizExp === v)}>{label}</button>
+                ))}
+                {wizExp === "custom" && (
+                  <span className="inline-flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      min="1"
+                      value={customDays}
+                      onChange={(e) => setCustomDays(e.target.value)}
+                      className="w-20 rounded-md border border-line dark:border-slate-600 bg-subtle dark:bg-slate-800 px-2 py-1.5 text-sm text-content dark:text-slate-100"
+                    />
+                    <span className="text-sm text-muted dark:text-slate-400">days</span>
+                  </span>
+                )}
               </div>
-            )}
+            </div>
             <div className="flex flex-wrap items-center gap-3">
               <span className="w-44 text-sm text-muted dark:text-slate-400">Name / purpose</span>
               <input
                 value={tokenName}
                 onChange={(e) => setTokenName(e.target.value)}
-                placeholder={`${kind.display_name} script`}
-                className="flex-1 min-w-[240px] rounded-md border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 px-3 py-2 text-sm text-content dark:text-slate-100"
+                placeholder={defaultName()}
+                className="flex-1 min-w-[240px] rounded-md border border-line dark:border-slate-600 bg-subtle dark:bg-slate-800 px-3 py-2 text-sm text-content dark:text-slate-100"
               />
             </div>
 
-            <div className="rounded-md border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 p-3">
+            <div className="rounded-md border border-line dark:border-slate-600 bg-subtle dark:bg-slate-800 p-3">
               <div className="mb-2 text-[11px] uppercase tracking-wide text-faint dark:text-slate-500">
                 This token will be limited to{scopes.length ? ` (${scopes.length})` : ""}
               </div>
               {scopes.length === 0 ? (
-                <div className="mb-2 text-xs text-amber-500">Pick at least one kind above.</div>
+                <div className="mb-2 text-xs text-amber-500">Pick at least one record type above.</div>
               ) : (
                 <div className="mb-2 flex flex-wrap gap-1.5">
                   {scopes.map((s) => (
-                    <span key={s} className="rounded border border-line dark:border-slate-700 bg-panel dark:bg-slate-900 px-2 py-0.5 font-mono text-xs text-cobble-500">{s}</span>
+                    <span key={s} className="rounded border border-line dark:border-slate-600 bg-panel dark:bg-slate-900 px-2 py-0.5 font-mono text-xs text-cobble-500">{s}</span>
                   ))}
                 </div>
               )}
               <div className="text-xs text-faint dark:text-slate-500">
-                Recorded on the token: source = <span className="font-mono">script-page</span> · kinds = <span className="font-mono">{wizKinds === "all" ? "all" : pickedTargets.join(", ") || "none"}</span> · {wizExp === "never" ? "never expires" : `expires in ${wizExp === "90d" ? "90 days" : "1 year"}`}
+                Recorded on the token: source = <span className="font-mono">script-page</span> · kinds = <span className="font-mono">{targets.join(", ") || "none"}</span> · {expLabel}
               </div>
             </div>
 
@@ -420,13 +480,13 @@ export function ApiRecipesPage() {
                 readOnly
                 value={token}
                 placeholder="Your scoped token appears here (shown once)"
-                className="flex-1 min-w-[280px] rounded-md border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 px-3 py-2 font-mono text-sm text-content dark:text-slate-100"
+                className="flex-1 min-w-[280px] rounded-md border border-line dark:border-slate-600 bg-subtle dark:bg-slate-800 px-3 py-2 font-mono text-sm text-content dark:text-slate-100"
               />
               <button onClick={() => void mint()} disabled={minting || scopes.length === 0} className="rounded-md bg-cobble-600 px-4 py-2 text-sm font-medium text-white hover:bg-cobble-700 disabled:opacity-60">
                 {minting ? "Minting…" : "Generate scoped token"}
               </button>
               {token && (
-                <button onClick={() => copy("tok", token)} className="rounded-md border border-line dark:border-slate-700 px-3 py-2 text-sm text-muted hover:text-content">
+                <button onClick={() => copy("tok", token)} className="rounded-md border border-line dark:border-slate-600 px-3 py-2 text-sm text-muted hover:text-content">
                   {copied === "tok" ? <Check size={14} /> : <Copy size={14} />}
                 </button>
               )}
@@ -437,48 +497,65 @@ export function ApiRecipesPage() {
             </p>
           </section>
 
-          {/* 3 · both snippets */}
-          <section className="rounded-lg border border-line dark:border-slate-700 p-4 space-y-4">
-            <div className="text-sm font-medium text-content dark:text-slate-100">Copy into your script</div>
-            {[
-              createUrl && { id: "snip-create", title: "Create a record", code: createSnippet, resp: "201 Created — returns the new record with its id." },
-              listUrl && { id: "snip-list", title: "Find / list records", code: listSnippet, resp: "200 OK — { items: [ … ] }, newest first." },
-            ].filter((b): b is { id: string; title: string; code: string; resp: string } => !!b).map((b) => (
-              <div key={b.id}>
-                <div className="mb-1.5 text-sm font-medium text-content dark:text-slate-200">{b.title}</div>
-                <div className="relative">
-                  <button onClick={() => copy(b.id, b.code)} className="absolute right-2 top-2 z-10 rounded border border-line dark:border-slate-700 bg-panel/80 dark:bg-slate-900/80 px-2 py-1 text-xs text-muted hover:text-content">
-                    {copied === b.id ? "Copied" : "Copy"}
-                  </button>
-                  <pre className="overflow-x-auto rounded-md border border-line dark:border-slate-700 bg-slate-950 p-4 text-xs leading-relaxed text-slate-200"><code>{b.code}</code></pre>
-                </div>
-                <div className="mt-1 text-xs text-muted dark:text-slate-400">→ {b.resp}</div>
+          {/* 3 · use it — a snippet group per selected kind; language lives here */}
+          <section className={SECTION + " space-y-4"}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-sm font-medium text-content dark:text-slate-100">
+                <Terminal size={15} className="text-cobble-500" /> Use it
               </div>
-            ))}
-          </section>
+              <div className="flex items-center gap-2">
+                {selectedKinds.length > 0 && (
+                  <button
+                    onClick={downloadAll}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-line dark:border-slate-600 px-2.5 py-1.5 text-xs text-muted hover:text-content"
+                  >
+                    <Download size={13} /> Download all
+                  </button>
+                )}
+                <div className="inline-flex rounded-md border border-line dark:border-slate-600 bg-subtle dark:bg-slate-800 p-0.5">
+                  {LANGS.map((l) => (
+                    <button
+                      key={l.id}
+                      onClick={() => setLang(l.id)}
+                      className={"rounded px-3 py-1.5 text-sm transition " + (lang === l.id ? "bg-cobble-600 text-white" : "text-muted dark:text-slate-300 hover:text-content")}
+                    >
+                      {l.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
 
-          {/* 4 · field reference */}
-          <section className="rounded-lg border border-line dark:border-slate-700 p-4">
-            <div className="mb-1 text-sm font-medium text-content dark:text-slate-100">Fields for {kind.display_name}</div>
-            <p className="mb-2 text-xs text-muted dark:text-slate-400">
-              These native field names come straight from your workspace. Your custom fields go under a <span className="font-mono">metadata</span> object.
-            </p>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-[11px] uppercase tracking-wide text-faint dark:text-slate-500">
-                  <th className="py-1.5 pr-3">Field</th><th className="py-1.5 pr-3">Type</th><th className="py-1.5">Role</th>
-                </tr>
-              </thead>
-              <tbody>
-                {nativeFields.map((f) => (
-                  <tr key={f.name} className="border-t border-line dark:border-slate-800">
-                    <td className="py-1.5 pr-3 font-mono text-content dark:text-slate-200">{f.name}</td>
-                    <td className="py-1.5 pr-3 text-muted dark:text-slate-400">{f.type}</td>
-                    <td className="py-1.5 text-muted dark:text-slate-400">{f.role ?? ""}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            {selectedKinds.length === 0 ? (
+              <div className="flex flex-col items-center justify-center gap-2 rounded-md border border-dashed border-line dark:border-slate-600 bg-subtle dark:bg-slate-950/50 px-6 py-12 text-center">
+                <Terminal size={22} className="text-faint dark:text-slate-600" />
+                <p className="text-sm font-medium text-muted dark:text-slate-300">Your code example will appear here</p>
+                <p className="text-xs text-faint dark:text-slate-400">Pick one or more record types above, and a ready-to-run snippet shows up for each.</p>
+              </div>
+            ) : (
+              <>
+                <p className="text-xs text-muted dark:text-slate-400">
+                  Each record type shows the operations it supports (create, read, update). Your token allows <span className="font-medium text-content dark:text-slate-200">{coveredOps}</span>
+                  {wizDo === "readwrite" ? "." : `. Widen "What will the script do?" above to authorize the rest.`}
+                </p>
+                {selectedKinds.map((k) => {
+                  const createUrl = urlFor(k, k.endpoints?.create);
+                  const listUrl = urlFor(k, k.endpoints?.list);
+                  const updateUrl = urlFor(k, k.endpoints?.update);
+                  return (
+                    <div key={k.id} className="space-y-3 border-t border-line dark:border-slate-700 pt-4 first:border-0 first:pt-0">
+                      <div className="flex items-center gap-2 text-sm font-semibold text-content dark:text-slate-100">
+                        {kindLabel(k)}
+                        <span className="font-mono text-[11px] font-normal text-faint dark:text-slate-500">{routeHint(k)}</span>
+                      </div>
+                      {createUrl && codeBlock(`create:${k.id}`, "Create a record", buildCreate(k, lang, createUrl, envToken), "201 Created — returns the new record with its id.")}
+                      {listUrl && codeBlock(`list:${k.id}`, "Find / list records", buildList(lang, listUrl, envToken), "200 OK — { items: [ … ] }, newest first.")}
+                      {updateUrl && codeBlock(`update:${k.id}`, "Update a record", buildUpdate(k, lang, updateUrl, envToken), "200 OK — the updated record. Replace {id} with a real record id.")}
+                    </div>
+                  );
+                })}
+              </>
+            )}
           </section>
         </>
       )}

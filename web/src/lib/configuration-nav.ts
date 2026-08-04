@@ -498,7 +498,7 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
   {
     section: "system",
     icon: Terminal,
-    label: "Use from a script",
+    label: "Scripting",
     description:
       "Ready-to-run curl / Python / Node / TypeScript for creating and reading records from a script, using your own kinds and fields. Mints a scoped token for you.",
     to: "/configuration/api-recipes",

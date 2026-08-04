@@ -53,6 +53,8 @@ import {
 import { armScanAudio, scanBeep } from "../lib/scanFeedback";
 import { ScanResultModal } from "./ScanResultModal";
 import { ScanCaptureDrawer } from "./ScanCaptureDrawer";
+import { ScanDiagPanel } from "./ScanDiagPanel";
+import { recordDecode, scanDiagEnabled } from "../lib/scanDiag";
 import { BinAdjustModal } from "../components/BinAdjustModal";
 import { ScanAmbiguityModal } from "../components/ScanAmbiguityModal";
 
@@ -166,6 +168,8 @@ export function ScanCameraPage() {
     filingNoteTimerRef.current = window.setTimeout(() => setFilingNote(null), 2200);
   }, []);
 
+  // ?diag=1 — measure this device instead of guessing at it (bug-queue 3/4/5).
+  const [diagOpen, setDiagOpen] = useState(scanDiagEnabled);
   const [supported, setSupported] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [manual, setManual] = useState("");
@@ -174,6 +178,8 @@ export function ScanCameraPage() {
   // you're photographing usually HAS a barcode on it, and a detection would
   // create a separate item mid-append (the orphan case).
   const armedRef = useRef(false);
+  const diagRef = useRef(false);
+  const zxingMarkRef = useRef<number | null>(null);
   // The viewfinder frame captured at the instant of the last barcode hit.
   // A PROMISE: canvas.toBlob is async, and the result modal fires its scan
   // within milliseconds of the hit — reading a plain ref lost the race and
@@ -232,6 +238,7 @@ export function ScanCameraPage() {
   const armRef = useRef<{ id: string; name: string; mode: ArmMode } | null>(null);
   armRef.current = arm;
   armedRef.current = !!arm;
+  diagRef.current = diagOpen;
   // An arm taken FROM a sheet must also surface the mini drawer: the armed
   // strip ("taking another photo…") lives there, and the sheet is about to
   // close without restoring it.
@@ -1175,7 +1182,16 @@ export function ScanCameraPage() {
             stream,
             videoRef.current!,
             (result) => {
-              if (cancelled || !result) return;
+              if (cancelled) return;
+              // ZXing invokes this per ATTEMPT (result on success, err on
+              // not-found), which is exactly the cadence we want to measure.
+              if (diagRef.current) {
+                const now = performance.now();
+                const prev = zxingMarkRef.current;
+                zxingMarkRef.current = now;
+                if (prev !== null) recordDecode(now - prev, !!result);
+              }
+              if (!result) return;
               const picked = collect(result.getText(), Date.now());
               if (picked) onDetectRef.current(picked);
             },
@@ -1195,9 +1211,11 @@ export function ScanCameraPage() {
         raf = requestAnimationFrame(loop);
         return;
       }
+      const t0 = performance.now();
       detector
         .detect(video)
         .then((results) => {
+          if (diagRef.current) recordDecode(performance.now() - t0, results.length > 0);
           if (cancelled || results.length === 0) return;
           // A frame can hold several symbols (a book's main code + its price
           // supplement). Taking results[0] made detection ORDER pick the
@@ -1907,6 +1925,7 @@ export function ScanCameraPage() {
               label: params.get("label"),
             }}
             onRetake={(it) => armFromSheet(it, "retake")}
+            onAddPhoto={(it) => armFromSheet(it, it.source_kind === "photo" ? "append" : "catalog")}
             onEarly={handleEarly}
             onClose={(_outcome, _current) => {
               // Save & next / Discard / an arm are the only exits, and none of
@@ -1943,6 +1962,7 @@ export function ScanCameraPage() {
               label: params.get("label"),
             }}
             onRetake={(it) => armFromSheet(it, "retake")}
+            onAddPhoto={(it) => armFromSheet(it, it.source_kind === "photo" ? "append" : "catalog")}
             onClose={(outcome, current) => {
               setReviewItem(null);
               if (outcome === "handled") {
@@ -1961,6 +1981,12 @@ export function ScanCameraPage() {
                 ]);
               }
             }}
+          />
+        )}
+        {diagOpen && (
+          <ScanDiagPanel
+            getTrack={() => streamRef.current?.getVideoTracks()[0] ?? null}
+            onClose={() => setDiagOpen(false)}
           />
         )}
         {drawerVisible && (

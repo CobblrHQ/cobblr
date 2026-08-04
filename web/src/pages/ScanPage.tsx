@@ -2654,10 +2654,10 @@ export function ScanPage() {
         // sentence wrapped in a half-width column while the button sat in space.
         // Below sm the text gets the full width and the button goes underneath.
         <div
-          className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3 rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-3 py-2 text-sm"
+          className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3 rounded-lg border border-cobble-400 dark:border-cobble-600 border-l-4 border-l-cobble-500 dark:border-l-cobble-400 bg-cobble-100 dark:bg-cobble-900 shadow-sm px-3 py-2.5 text-sm"
           data-testid="putaway-strip"
         >
-          <span className="min-w-0 flex-1 text-content dark:text-mortar-100">
+          <span className="min-w-0 flex-1 font-semibold text-content dark:text-mortar-100">
             <span className="mr-1.5">📦</span>
             {[
               (scanStatsQ.data!.unfiled ?? 0) > 0
@@ -2667,12 +2667,12 @@ export function ScanPage() {
             ]
               .filter(Boolean)
               .join(", and ")}
-            <span className="text-muted dark:text-slate-400"> · preview first, nothing moves until you confirm</span>
+            <span className="font-normal text-muted dark:text-slate-400"> · preview first, nothing moves until you confirm</span>
           </span>
           <button
             type="button"
             onClick={() => setViewMode("plan")}
-            className="rounded bg-cobble-600 hover:bg-cobble-700 text-white text-xs font-medium px-2.5 py-1.5 transition shrink-0"
+            className="rounded bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-1.5 transition shrink-0"
           >
             Put them away
           </button>
@@ -3009,6 +3009,16 @@ export function ScanPage() {
               void qc.invalidateQueries({ queryKey: ["organize-plan-latest", activeSlug] });
             }}
             onStartWalk={() => void startWalk()}
+            onReviewItems={() => {
+              // Land the user ON the unidentified items: back to the By-session
+              // lens with the review-only filter armed, so a scan that "won't
+              // sort" is one tap from being named. Only arm the filter when the
+              // page can see review items — otherwise it'd hide everything with
+              // no visible toggle to clear (that toggle only shows when
+              // reviewCount > 0), stranding the user on an empty list.
+              setReviewOnly(reviewCount > 0);
+              setViewMode("sessions");
+            }}
             renderItemCard={renderPlanItemCard}
           />
           </>
@@ -3160,7 +3170,11 @@ export function ScanPage() {
                   <button
                     type="button"
                     onClick={() => toggleSession(g.key)}
-                    className="flex flex-1 min-w-0 items-center gap-2 text-left"
+                    // overflow-hidden: at phone width the filing trio squeezes
+                    // this button below its content size, and its shrink-0
+                    // children were PAINTING OVER the End control ("1 itemEnd",
+                    // the author 2026-08-03). Clipping inside beats bleeding out.
+                    className="flex flex-1 min-w-0 items-center gap-2 overflow-hidden text-left"
                   >
                     <ChevronDown size={13} className={`shrink-0 transition ${collapsed ? "-rotate-90" : ""}`} />
                     {/* The NAME wins the row. Every span after it either fits
@@ -3188,7 +3202,7 @@ export function ScanPage() {
                         title="The live scanning session - new scans keep grouping here until 30 min idle"
                       >
                         <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                        active
+                        <span className="hidden sm:inline">active</span>
                       </span>
                     )}
                     {g.lastTouched - g.latest > 6 * 3600_000 && (
@@ -3203,7 +3217,7 @@ export function ScanPage() {
                     {g.area && (
                       <span className="hidden lg:inline shrink-0 whitespace-nowrap text-muted">· {g.area}</span>
                     )}
-                    <span className="ml-auto shrink-0 whitespace-nowrap text-faint">
+                    <span className="ml-auto hidden sm:inline shrink-0 whitespace-nowrap text-faint">
                       {g.items.length} item{g.items.length === 1 ? "" : "s"}
                     </span>
                   </button>
