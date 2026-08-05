@@ -20,6 +20,7 @@
 // blank one" / "name a new category". Build-it-yourself is a CTA, not a lane.
 
 import { useEffect, useMemo, useState } from "react";
+import { photoOrder } from "../lib/scanPhoto";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@cobblr/platform-web";
@@ -31,6 +32,7 @@ import { BundleDetailModal } from "./BundleDetailModal";
 import { PairPhoneButton } from "./PairPhoneButton";
 import { BundleSection, BundleTile, splitCatalog } from "./BundleBrowse";
 import { AiOffNotice, useAiStatus } from "./AiStatusNotice";
+import { useIsTouch } from "../lib/useIsTouch";
 
 function firstSentence(s: string): string {
   const m = s.match(/^.*?[.!?](\s|$)/);
@@ -92,18 +94,19 @@ function NameIt({ slug, itemId }: { slug: string; itemId: string }) {
  *  scans. LADDERS through candidate sources on failure (catalog file →
  *  catalog URL → own scan photo → initials) — the ScanPage lesson: a cached
  *  catalog file or hotlink-blocked URL must fall through, not go blank. */
-function CaptureTile({ slug, it }: { slug: string; it: { catalog_image_file_id: string | null; catalog_image_url: string | null; image_file_id: string | null; suggested_name: string | null; suggested_candidates: Array<{ name: string }> } }) {
-  const candidates = useMemo(
-    () =>
-      [
-        it.catalog_image_file_id
-          ? `/api/v1/orgs/${slug}/modules/core-files/files/${it.catalog_image_file_id}/raw?variant=thumb`
-          : null,
-        it.catalog_image_url,
-        it.image_file_id ? `/api/v1/orgs/${slug}/modules/core-files/files/${it.image_file_id}/raw?variant=thumb` : null,
-      ].filter((u): u is string => !!u),
-    [slug, it.catalog_image_file_id, it.catalog_image_url, it.image_file_id],
-  );
+function CaptureTile({ slug, it }: { slug: string; it: { catalog_image_file_id: string | null; catalog_image_url: string | null; image_file_id: string | null; suggested_name: string | null; suggested_candidates: Array<{ name: string }>; suggested_metadata?: unknown } }) {
+  // Order comes from the shared rule (unverified catalog art must not lead);
+  // the fallback WALK past broken URLs stays here, since this tile advances an
+  // index on each onError rather than keeping a broken-set.
+  const candidates = useMemo(() => {
+    const file = (id: string) => `/api/v1/orgs/${slug}/modules/core-files/files/${id}/raw?variant=thumb`;
+    const byRole = {
+      catalog: [it.catalog_image_file_id ? file(it.catalog_image_file_id) : null, it.catalog_image_url],
+      yours: [it.image_file_id ? file(it.image_file_id) : null],
+      frame: [],
+    };
+    return photoOrder(it).flatMap((r) => byRole[r]).filter((u): u is string => !!u);
+  }, [slug, it]);
   const [idx, setIdx] = useState(0);
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => {
@@ -216,7 +219,7 @@ export function WhatToDoPanel({
   // A no-camera desktop scans by pairing a phone (QR → phone signs in to THIS
   // workspace → its camera scans land in the inbox below); touch devices use
   // their own camera. Decide once on mount.
-  const [isTouch] = useState(() => typeof window !== "undefined" && !!window.matchMedia?.("(pointer: coarse)").matches);
+  const isTouch = useIsTouch();
   // The funnel selection: a tile pick on the browse surface primes the hero
   // (the captive "add your first one" step). A recipe and a kind are mutually
   // exclusive - whichever you picked last is what the hero acts on.

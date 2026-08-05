@@ -103,6 +103,13 @@ export function freshDedupState(): DedupState {
  *
  * @param repeatGapMs how long a code must be ABSENT before it counts as new.
  */
+/** How many consecutive identical sightings a code needs before it fires.
+ *  Short NUMERIC codes (under UPC-A's 12 digits: EAN-8, UPC-E, and — the case
+ *  that matters — partial-slice misreads of longer codes) need a longer streak. */
+export function requiredSightings(code: string): number {
+  return /^\d{4,11}$/.test(code) ? 4 : 2;
+}
+
 export function shouldFireScan(
   state: DedupState,
   raw: string,
@@ -123,7 +130,16 @@ export function shouldFireScan(
     }
   }
 
-  // Agreement gate: two consecutive identical sightings.
+  // Agreement gate: consecutive identical sightings — MORE of them for a
+  // short numeric code. A diagonal scan line through part of a UPC-A can
+  // decode as a DIFFERENT, checksum-valid EAN-8 (it produced "33720272" from
+  // 859337002726 at ~45° — the author, 2026-08-05), and the checksum can't save you
+  // because the misread's checksum is genuinely valid. But such slices are
+  // unstable frame to frame, while a real EAN-8 held in view repeats
+  // identically — so demanding a longer streak filters the phantom and costs a
+  // genuine short code only ~100ms. enrich.ts has flagged short codes as
+  // collision-prone ("lowTrust") for months; this brings that knowledge to
+  // the gate that actually admits scans.
   const cand = state.candidate;
   if (cand && cand.value === code) {
     cand.count += 1;
@@ -131,7 +147,7 @@ export function shouldFireScan(
     state.candidate = { value: code, count: 1 };
     return false;
   }
-  if (cand.count < 2) return false;
+  if (cand.count < requiredSightings(code)) return false;
 
   state.candidate = null;
   state.seen = { value: code, at: now, acted: true };

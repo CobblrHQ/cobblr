@@ -11,6 +11,7 @@
 
 import { meta } from "../db/meta.js";
 import { read as readFile } from "./files.js";
+import { announceWebhookUrl } from "./announce-url.js";
 
 /** Known announcement categories + their human labels (for the config UI).
  *  Adding a category here makes it appear in the super-admin toggle list;
@@ -35,6 +36,12 @@ export interface AnnouncePayload {
   body?: string;
   /** Discord embed fields (small key/value pairs, e.g. workspace, page). */
   fields?: Array<{ name: string; value: string; inline?: boolean }>;
+  /** Post INSIDE an existing thread instead of at channel top level. Discord
+   *  webhooks take `?thread_id=`, and a thread STARTED FROM A MESSAGE carries
+   *  that message's own id — so the public feedback post's `announce_message_id`
+   *  doubles as its thread id once the bot has opened one. Falls back to a
+   *  top-level post if the thread doesn't exist (see deliver). */
+  threadId?: string | null;
   /** Screenshots to render inline — uploaded to the webhook as file attachments
    *  (bytes read server-side via platform files; no public URL needed). */
   images?: Array<{ orgId: string; fileId: string; name?: string }>;
@@ -83,7 +90,7 @@ async function deliver(category: string, payload: AnnouncePayload, opts?: { wait
     return MISS;
   }
   if (!cfg.enabled || !cfg.webhook) return MISS;
-  const url = opts?.wait ? `${cfg.webhook}${cfg.webhook.includes("?") ? "&" : "?"}wait=true` : cfg.webhook;
+  const url = announceWebhookUrl(cfg.webhook, { wait: opts?.wait, threadId: payload.threadId });
   const embed = {
     title: payload.title.slice(0, 256),
     description: payload.body ? payload.body.slice(0, 4000) : undefined,
@@ -116,11 +123,21 @@ async function deliver(category: string, payload: AnnouncePayload, opts?: { wait
     }
   }
 
-  return postToWebhook(
-    url,
-    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ embeds: [embed] }) },
-    category,
-  );
+  const init: RequestInit = {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ embeds: [embed] }),
+  };
+  const sent = await postToWebhook(url, init, category);
+  // A thread that was never opened (or was deleted) makes Discord reject the
+  // post outright. Losing a resolution card is strictly worse than the channel
+  // noise it was meant to avoid, so fall back to a top-level post rather than
+  // letting it vanish.
+  if (!sent.delivered && payload.threadId) {
+    console.warn(`[announce] ${category}: thread ${payload.threadId} unusable - posting at top level`);
+    return postToWebhook(announceWebhookUrl(cfg.webhook, { wait: opts?.wait }), init, category);
+  }
+  return sent;
 }
 
 /** Post a categorized announcement to Discord. Never throws. Returns whether it

@@ -124,7 +124,16 @@ export function MobileNav() {
               className="absolute inset-0 bg-surface dark:bg-slate-900 shadow-lg flex flex-col"
               aria-label="Main navigation"
             >
-              <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-line dark:border-slate-800">
+              {/* paddingTop: the iOS status-bar safe area, the same inset the
+                  page header carries. This panel is `fixed inset-0`, so it
+                  covers the whole screen INCLUDING the status bar — without it
+                  the wordmark renders under the clock. Only visible in a
+                  full-bleed shell (the native app, or standalone home-screen
+                  mode); env() is 0 in a normal browser tab. */}
+              <div
+                className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-line dark:border-slate-800"
+                style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top))" }}
+              >
                 <span className="font-display font-extrabold text-content dark:text-mortar-100 lowercase">
                   cobblr
                 </span>

@@ -28,24 +28,61 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
-    <!-- Staging/dev get a PURPLE app icon + manifest + tab so the PWA and the
+    <!-- Per-environment app icon + manifest + tab title, so the PWA and the
          browser tab are unmistakably NOT public prod (Grace: tell staging apart
-         from cobblr.me at a glance). Prod = cobblr.me + its subdomains; every
-         other host (the staging .ts.net URL, localhost) flips to the purple set. -->
+         from cobblr.me at a glance).
+
+           canary.cobblr.me  → YELLOW-DOT set (stock mark + a yellow dot)
+           any *.cobblr.me   → prod set (the default markup below)
+           anything else     → PURPLE staging set (the .ts.net URL, localhost)
+
+         ORDER MATTERS. Canary is checked BEFORE the cobblr.me bail-out: canary
+         is a cobblr.me subdomain, so a plain "is it cobblr.me?" test hands it the
+         PRODUCTION icon — which is the precise confusion this block exists to
+         prevent. `lint:env-icons` fails if a variant loses its branch here.
+
+         Canary keeps the stock mark rather than recolouring it like staging,
+         because canary runs REAL production data and should still read as
+         Cobblr; the dot says "newer code", not "different app". -->
     <script>
       (function () {
         try {
-          if (/(^|\.)cobblr\.me$/i.test(location.hostname)) return;
           var set = function (sel, attr, val) {
             var el = document.querySelector(sel);
             if (el) el.setAttribute(attr, val);
           };
+          if (/^canary\./i.test(location.hostname)) {
+            set('meta[name="theme-color"]', "content", "#FACC15");
+            set('link[rel="icon"]', "href", "/favicon-canary.svg");
+            set('link[rel="apple-touch-icon"]', "href", "/apple-touch-icon-canary.png");
+            set('link[rel="manifest"]', "href", "/manifest-canary.webmanifest");
+            set('meta[name="apple-mobile-web-app-title"]', "content", "Cobblr · canary");
+            set('meta[name="application-name"]', "content", "Cobblr · canary");
+            return;
+          }
+          if (/(^|\.)cobblr\.me$/i.test(location.hostname)) return;
           set('meta[name="theme-color"]', "content", "#6D28D9");
           set('link[rel="icon"]', "href", "/favicon-staging.svg");
           set('link[rel="apple-touch-icon"]', "href", "/apple-touch-icon-staging.png");
           set('link[rel="manifest"]', "href", "/manifest-staging.webmanifest");
           set('meta[name="apple-mobile-web-app-title"]', "content", "Cobblr · staging");
           set('meta[name="application-name"]', "content", "Cobblr · staging");
+        } catch (e) {}
+      })();
+    </script>
+    <!-- Running inside the Cobblr desktop app?
+         The app extends its webview under the macOS title bar so the page's own
+         colours reach the top edge, which means the window controls float over
+         the top-left corner. Only the SIDEBAR has to get out of their way; the
+         content column is happier full-bleed.
+         Set before first paint, so the layout is never briefly wrong. A normal
+         browser never matches the UA, so this is inert on the web. -->
+    <script>
+      (function () {
+        try {
+          if (/CobblrDesktop\//.test(navigator.userAgent)) {
+            document.documentElement.classList.add("desktop-app");
+          }
         } catch (e) {}
       })();
     </script>

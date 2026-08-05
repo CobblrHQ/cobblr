@@ -14,7 +14,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePlatformWeb } from "./context";
 import type { PlatformFieldDef } from "./types";
 import { fieldControl } from "./fieldControl";
-import { FieldRenderer, boolLabel } from "./FieldRenderer";
+import { FieldRenderer, boolLabel, boolTruthy } from "./FieldRenderer";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { relativeTime } from "./relativeTime";
 import { useUnits } from "./useUnits";
@@ -483,7 +483,7 @@ function BoolRow({
   value: unknown;
   onCommit: (v: unknown) => void;
 }) {
-  const checked = value === true || value === "true";
+  const checked = boolTruthy(value, def.choices);
   return (
     <label className="flex items-center gap-2 cursor-pointer select-none pt-5">
       <input

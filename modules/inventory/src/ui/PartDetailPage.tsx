@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, Copy, Library, Minus, Plus, Printer, ShieldCheck, Trash2 } from "lucide-react";
 import { ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, EntityThumb, Modal, UnitInput, useConfirm, usePageTitle, useToast, useUnits } from "@cobblr/platform-web";
 import { useInventory } from "./context";
+import { QtyStepper } from "./QtyStepper";
 import { NewPartDialog } from "./NewPartDialog";
 import { ParentPicker } from "./ParentPicker";
 import { useMatchedCatalogEntry } from "./useMatchedCatalogEntry";
@@ -841,56 +842,6 @@ function Field({
       </span>
       {children}
     </label>
-  );
-}
-
-// Inline qty stepper — the +/- that adjusts stock right on the detail (no modal
-// hop). Matches the copies stepper in the labels queue. Each tap writes a signed
-// delta through the same stock-adjust ledger the old "Adjust" modal used, so
-// history is preserved; it just skips the dialog for the common ±1 case.
-function QtyStepper({ partId, qty }: { partId: string; qty: number }) {
-  const { api } = useInventory();
-  const qc = useQueryClient();
-  const adjust = useMutation({
-    mutationFn: (delta: number) => api.stockAdjust(partId, delta),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["inventory-part", partId] });
-      void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
-    },
-  });
-  const step = (delta: number) => {
-    if (adjust.isPending) return;
-    adjust.mutate(delta);
-  };
-  const display = Number.isFinite(qty)
-    ? Number.isInteger(qty)
-      ? String(qty)
-      : String(parseFloat(qty.toFixed(3)))
-    : "—";
-  return (
-    <div className="inline-flex items-center gap-1" title="Adjust stock">
-      <button
-        type="button"
-        onClick={() => step(-1)}
-        disabled={qty <= 0 || adjust.isPending}
-        className="w-7 h-7 grid place-items-center rounded-md border border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100 disabled:opacity-30 disabled:cursor-not-allowed transition"
-        aria-label="Decrease quantity"
-      >
-        <Minus size={13} />
-      </button>
-      <span className="font-mono text-lg text-content dark:text-mortar-100 w-10 text-center tabular-nums">
-        {display}
-      </span>
-      <button
-        type="button"
-        onClick={() => step(1)}
-        disabled={adjust.isPending}
-        className="w-7 h-7 grid place-items-center rounded-md border border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100 disabled:opacity-30 disabled:cursor-not-allowed transition"
-        aria-label="Increase quantity"
-      >
-        <Plus size={13} />
-      </button>
-    </div>
   );
 }
 

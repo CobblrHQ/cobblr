@@ -248,9 +248,10 @@ export function ApiRecipesPage() {
     : wizExp === "1y" ? 365
     : Number(customDays) > 0 ? Math.floor(Number(customDays)) : null;
   const expLabel = expDays === null ? "never expires" : expDays === 365 ? "expires in 1 year" : `expires in ${expDays} days`;
-  // Which operations the CURRENT token scope authorizes (the examples always show
-  // all of them; this note ties the scope selection to the code).
-  const coveredOps = wizDo === "create" ? "create only" : wizDo === "write" ? "create and update" : "read, create, and update";
+  // Which operations the CURRENT token scope authorizes vs. the ones shown but not
+  // yet allowed (the examples always show all; this note ties scope to code).
+  const coveredOps = wizDo === "create" ? "create" : wizDo === "write" ? "create and update" : "read, create, and update";
+  const uncoveredOps = wizDo === "create" ? "read and update" : wizDo === "write" ? "read" : "";
 
   const copy = (id: string, text: string) => {
     void navigator.clipboard?.writeText(text);
@@ -535,8 +536,13 @@ export function ApiRecipesPage() {
             ) : (
               <>
                 <p className="text-xs text-muted dark:text-slate-400">
-                  Each record type shows the operations it supports (create, read, update). Your token allows <span className="font-medium text-content dark:text-slate-200">{coveredOps}</span>
-                  {wizDo === "readwrite" ? "." : `. Widen "What will the script do?" above to authorize the rest.`}
+                  {wizDo === "readwrite" ? (
+                    <>Every operation is shown below, and your token will allow all of them.</>
+                  ) : (
+                    <>
+                      Every operation is shown below. Your token will allow <span className="font-medium text-content dark:text-slate-200">{coveredOps}</span>; to run the {uncoveredOps} example{uncoveredOps.includes("and") ? "s" : ""}, give it a wider scope above.
+                    </>
+                  )}
                 </p>
                 {selectedKinds.map((k) => {
                   const createUrl = urlFor(k, k.endpoints?.create);

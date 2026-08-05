@@ -50,6 +50,92 @@ export function occupiesDevice(status: string): boolean {
   return !TERMINAL.has(status) && status !== "queued";
 }
 
+/**
+ * Does ending this job leave something on the bed a human must clear?
+ *
+ * DERIVED from occupiesDevice for the same reason it is: if the job was on the
+ * machine, whatever it produced (a finished plate, a failed blob, half a print
+ * abandoned mid-layer) is still sitting there. The REASON it ended does not
+ * change the physics — which is exactly what the first version of this rule got
+ * wrong. It lived inline in pollJob, so it covered prints that finished on
+ * their own and missed every other way a job can end: a user cancelling a
+ * RUNNING print (the API 409s only if the job is already terminal, so cancel
+ * mid-print is a supported, ordinary act) got no bed-clear row at all, and the
+ * next queued plate could be dripped straight onto the abandoned one. An
+ * aborted print leaves MORE debris than a completed one, so that was the worst
+ * case wearing the thinnest guard.
+ *
+ * A job that never left the queue never touched a bed — hence occupiesDevice
+ * on the PRIOR status, not merely "it has a target_device".
+ */
+export function needsBedClear(prev: {
+  status: string;
+  connection_id: string | null;
+  target_device: string | null;
+}): boolean {
+  return occupiesDevice(prev.status) && !!prev.connection_id && !!prev.target_device;
+}
+
+/** What the fleet UI says on the device card. */
+export function bedClearReason(status: string): string {
+  if (status === "completed") return "print-completed";
+  if (status === "cancelled") return "print-cancelled";
+  return "print-failed";
+}
+
+/**
+ * END A JOB. The only way a digifab job may reach a terminal status.
+ *
+ * F-1 ATOMIC: the status flip and the bed-clear (needs_attention) row commit
+ * TOGETHER. Otherwise an assign pass can observe the device as "no longer
+ * printing" in the gap BEFORE the attention row exists and drip the next queued
+ * job straight onto the uncleared bed.
+ *
+ * It is a shared helper rather than a transaction copied into each caller
+ * because copying is how the rule got holes: the original lived inline in
+ * pollJob, so it protected the one path someone was thinking about and left
+ * user-cancel, connection-removal and assignment-failure writing a bare status
+ * with no bed-clear row. lint:digifab-terminal-jobs keeps it that way.
+ */
+export async function markJobTerminal(
+  db: Kysely<DigifabDB>,
+  prev: { id: string; status: string; connection_id: string | null; target_device: string | null },
+  status: "completed" | "failed" | "cancelled",
+  extra: Record<string, unknown> = {},
+): Promise<void> {
+  const bedClear = needsBedClear(prev);
+  const write = async (trx: Kysely<DigifabDB>) => {
+    await trx
+      .updateTable("digifab_jobs")
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .set({ status, updated_at: new Date(), ...extra } as any)
+      .where("id", "=", prev.id)
+      .execute();
+    if (!bedClear) return;
+    await trx
+      .insertInto("digifab_device_attention")
+      .values({
+        connection_id: prev.connection_id!,
+        remote_device_id: prev.target_device!,
+        job_id: prev.id,
+        reason: bedClearReason(status),
+      })
+      .onConflict((oc) =>
+        oc.columns(["connection_id", "remote_device_id"]).doUpdateSet({
+          job_id: prev.id,
+          reason: bedClearReason(status),
+          created_at: new Date(),
+        }),
+      )
+      .execute();
+  };
+  // Callers inside an existing transaction pass it straight in — opening a
+  // nested one on a second connection would sit behind the outer transaction's
+  // own locks on these rows.
+  if ((db as unknown as { isTransaction?: boolean }).isTransaction) return write(db);
+  await db.transaction().execute(write);
+}
+
 /** Consecutive poll errors before a live job is declared `failed` (F-12) — so a
  *  transient network blip doesn't kill a healthy print. Driver-aware: the mock
  *  fails fast for tests/demos; a REAL farm gets a much longer grace window — a
@@ -360,39 +446,17 @@ export async function pollJob(
   }
 
   const terminal = TERMINAL.has(status);
-  // F-1 ATOMIC: a terminal job's status flip and its bed-clear (needs_attention)
-  // row must commit TOGETHER. Otherwise an assign pass can observe the device as
-  // "no longer printing" (gone from the busy set, mock back to idle) in the gap
-  // BEFORE the attention row exists, and drip the next queued job straight onto
-  // the uncleared bed — the digifab-pools flake (3rd job not held; ≤2 cap blipped).
-  // One transaction closes that window: any pass reads both-after or both-before.
-  // (The early local-terminal guard above means this is always a fresh transition.)
-  const markAttention = terminal && !!job.connection_id && !!job.target_device;
-  await db.transaction().execute(async (trx) => {
-    await trx
+  const fields = { progress, error, eta_sec: etaSec != null ? Math.round(etaSec) : null, poll_errors: 0, last_polled_at: new Date() };
+  if (terminal) {
+    // Status flip + bed-clear row, one transaction — see markJobTerminal.
+    await markJobTerminal(db, job as never, status as "completed" | "failed" | "cancelled", fields);
+  } else {
+    await db
       .updateTable("digifab_jobs")
-      .set({ status, progress, error, eta_sec: etaSec != null ? Math.round(etaSec) : null, poll_errors: 0, last_polled_at: new Date(), updated_at: new Date() })
+      .set({ status, ...fields, updated_at: new Date() })
       .where("id", "=", jobId)
       .execute();
-    if (markAttention) {
-      await trx
-        .insertInto("digifab_device_attention")
-        .values({
-          connection_id: job.connection_id!,
-          remote_device_id: job.target_device!,
-          job_id: jobId,
-          reason: status === "completed" ? "print-completed" : "print-failed",
-        })
-        .onConflict((oc) =>
-          oc.columns(["connection_id", "remote_device_id"]).doUpdateSet({
-            job_id: jobId,
-            reason: status === "completed" ? "print-completed" : "print-failed",
-            created_at: new Date(),
-          }),
-        )
-        .execute();
-    }
-  });
+  }
 
   // ── Print-lifecycle notifications (the "post updates to Discord" flow) ──
   // A 25/50/75% milestone fires once as it's crossed (the stored progress is the

@@ -14,7 +14,7 @@ import { fetchTransient } from "./fetch-transient.js";
 
 export { registerOrgForTeardown };
 
-const BASE = process.env.COBBLR_TEST_API ?? "http://localhost:4000";
+export const BASE = process.env.COBBLR_TEST_API ?? "http://localhost:4000";
 
 /** Host the API uses to call back to a test-spawned receiver (webhooks /
  *  notification channels). Dev: the api runs in Docker, so it reaches the

@@ -11,7 +11,7 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { pollJob, sendJob, assignJob, buildDriverById, reverseBuildIfCommitted, TERMINAL } from "../jobs-core.js";
+import { pollJob, sendJob, assignJob, buildDriverById, reverseBuildIfCommitted, TERMINAL, markJobTerminal } from "../jobs-core.js";
 import { enqueuePoll, reconcilePolls } from "../poll-worker.js";
 
 export const jobsRouter = Router({ mergeParams: true });
@@ -396,7 +396,7 @@ jobsRouter.post(
     if (!requireRole(req, res, "owner", "admin")) return;
     const ctx = tenantContext(req);
     const db = tenantDb(req);
-    const job = await db.selectFrom("digifab_jobs").select(["id", "status", "connection_id", "remote_job_id"]).where("id", "=", req.params.id!).executeTakeFirst();
+    const job = await db.selectFrom("digifab_jobs").select(["id", "status", "connection_id", "remote_job_id", "target_device"]).where("id", "=", req.params.id!).executeTakeFirst();
     if (!job) return void res.status(404).json({ error: { code: "not_found", message: "no such job" } });
     if (TERMINAL.has(job.status)) return void res.status(409).json({ error: { code: "already_terminal", message: `job is ${job.status}` } });
 
@@ -413,7 +413,11 @@ jobsRouter.post(
         /* best-effort — the local cancel below is the source of truth */
       }
     }
-    await db.updateTable("digifab_jobs").set({ status: "cancelled", updated_at: new Date() }).where("id", "=", job.id).execute();
+    // Cancelling a RUNNING print leaves the most debris of any ending — half a
+    // part welded to the plate — so it takes the same bed-clear gate a normal
+    // finish does. It used to write a bare status, and the next queued plate
+    // could be dripped onto the abandoned one.
+    await markJobTerminal(db, job, "cancelled");
     // A cancelled job never produces its build — undo the send-time commit
     // (idempotent no-op when nothing was committed).
     await reverseBuildIfCommitted(db, ctx.org.id, job.id, "print cancelled");

@@ -16,16 +16,7 @@ import QRCode from "qrcode";
 import { Modal } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-
-/** True on phones/tablets (coarse pointer = touch-primary). Such devices have
- *  the direct camera scanner, so we hide the pair affordance there. */
-function isTouchPrimary(): boolean {
-  try {
-    return window.matchMedia("(pointer: coarse)").matches;
-  } catch {
-    return false;
-  }
-}
+import { isTouchPrimary } from "../lib/useIsTouch";
 
 export function PairPhoneButton({
   className,

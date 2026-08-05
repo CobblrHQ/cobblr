@@ -22,6 +22,7 @@ import { api } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { usePageTitle, useToast } from "@cobblr/platform-web";
 import { EdgeBridgeInstall } from "../components/EdgeBridgeInstall";
+import { DesktopAppCard, useDesktopApp } from "../components/DesktopAppCard";
 
 export function EdgeBridgesPage({ embedded = false }: { embedded?: boolean } = {}) {
   usePageTitle("Edge bridges");
@@ -61,6 +62,7 @@ export function EdgeBridgesPage({ embedded = false }: { embedded?: boolean } = {
 
   const agents = status.data?.agents ?? [];
   const direct = directQ.data?.direct ?? [];
+  const hasDesktopApp = !!useDesktopApp().data;
   const personal = status.data?.personal?.connected ?? false;
   const personalBacks = status.data?.personal?.backs ?? [];
   const staleMs = status.data?.stale_after_ms ?? 60_000;
@@ -86,7 +88,7 @@ export function EdgeBridgesPage({ embedded = false }: { embedded?: boolean } = {
           <h2 className="text-sm font-semibold text-content dark:text-mortar-100 flex-1">Connected right now</h2>
           <span className="text-[11px] text-faint dark:text-slate-500">auto-refreshes</span>
         </div>
-        {agents.length === 0 && direct.length === 0 ? (
+        {agents.length === 0 && direct.length === 0 && !hasDesktopApp ? (
           <p className="text-sm text-faint dark:text-slate-400">
             No bridge is connected in this workspace. Set one up below - the moment it dials in, it appears here.
           </p>
@@ -140,6 +142,7 @@ export function EdgeBridgesPage({ embedded = false }: { embedded?: boolean } = {
                 </li>
               );
             })}
+            <DesktopAppCard />
           </ul>
         )}
         {/* The caller's personal AI connection is NOT a workspace bridge — it

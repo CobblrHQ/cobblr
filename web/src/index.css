@@ -212,3 +212,37 @@ html[data-nav-fullside] #cobblr-toasts {
           drop-shadow(0 0 1.3px rgba(246, 242, 234, 0.92))
           drop-shadow(0 0 1.3px rgba(246, 242, 234, 0.55));
 }
+
+/* ── Inside the desktop app: clear the window controls ──────────────
+   The app runs its webview under the macOS title bar (titleBarStyle
+   Overlay) so Cobblr's own background reaches the top edge instead of
+   a system-coloured strip sitting above it. The cost is that the close
+   / minimise / zoom buttons float over the top-left corner, which is
+   exactly where the sidebar's wordmark lives.
+
+   So the SIDEBAR HEAD alone gains the height of those buttons. The
+   content column is deliberately left full-bleed — it has nothing at
+   that corner to collide with, and pushing it down would recreate the
+   strip this exists to remove.
+
+   28px = the traffic lights (~16px) plus the breathing room they sit
+   in. Applied as extra padding rather than a margin so the sidebar's
+   own background keeps painting all the way up. */
+html.desktop-app .desktop-titlebar-pad {
+  padding-top: calc(0.625rem + 28px);
+}
+
+/* Same problem, the other nav layout. When the nav is a TOP BAR rather than a
+   sidebar, that bar is what the close / minimise / zoom buttons land on, and it
+   sits at the very top of the window — so the wordmark and the nav flip button
+   render UNDERNEATH them.
+
+   The sidebar head reserves their height; this reserves it on the header row
+   instead. It has to be a class on the ROW, not the <header>: the header carries
+   an inline paddingTop for the iOS safe area, and an inline style beats a rule.
+
+   Applies at every width, because a narrow desktop-app window hides the sidebar
+   and falls back to this same bar, where the buttons overlap it just the same. */
+html.desktop-app .desktop-topnav-pad {
+  padding-top: calc(0.5rem + 28px);
+}

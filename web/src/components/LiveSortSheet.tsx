@@ -27,6 +27,7 @@ import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
 import { isLocationQrTarget } from "../lib/scanFiling";
 import { LocationTreePicker } from "./LocationTreePicker";
+import { useIsTouch } from "../lib/useIsTouch";
 
 type Phase = "starting" | "ready" | "routing" | "directive" | "ended";
 
@@ -51,6 +52,7 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
   const [current, setCurrent] = useState<LiveSortEntry | null>(null);
   const [tape, setTape] = useState<LiveSortEntry[]>([]);
   const [lastConfirmed, setLastConfirmed] = useState<LiveSortEntry | null>(null);
+  const isTouch = useIsTouch();
   const [summary, setSummary] = useState<Summary | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [manual, setManual] = useState("");
@@ -345,13 +347,18 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
     >
       <OverlayFlag />
       {/* Header */}
-      <div className="flex items-center gap-3 border-b border-line dark:border-slate-800 px-4 py-3">
+      {/* The heading and the actions competed for a phone's width and the
+          heading lost, wrapping to roughly one word per line (the author, 2026-08-05).
+          A full-screen sheet has vertical room to spare, so below `sm` the
+          actions take their own line and the heading gets the full width. */}
+      <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 border-b border-line dark:border-slate-800 px-4 py-3">
         <div className="min-w-0 flex-1">
           <div className="text-sm text-muted">Live Sort · {sortedCount} sorted this session</div>
-          <div className="text-lg font-semibold text-content">
+          <div className="text-base sm:text-lg font-semibold text-content text-balance">
             Scan a thing - we'll tell you where it goes.
           </div>
         </div>
+        <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
         {lastConfirmed && (
           <button
             type="button"
@@ -385,6 +392,7 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
         >
           <X className="h-5 w-5" />
         </button>
+        </div>
       </div>
 
       {/* Bins setup — the zero-hardware on-ramp: numbered bins now, QR later. */}
@@ -477,9 +485,25 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
               <>
                 <div className="text-5xl">📦</div>
                 <div className="text-2xl font-semibold text-content">Ready - scan the next item.</div>
+                {/* Name the affordance the DEVICE actually has. A phone was
+                    being told to "hit space" - there is no space bar, and the
+                    real control is the "Done, next" button right there. This is
+                    not a synonym for one action (principles #7); the control
+                    genuinely differs by device (#1). */}
                 <p className="text-sm text-muted max-w-md">
-                  Hardware scanner, or type a code below. When the directive shows, put the item
-                  there and hit <kbd className="rounded border border-line dark:border-slate-700 px-1.5 py-0.5 text-xs">space</kbd> (or the button) to confirm.
+                  {isTouch ? (
+                    <>
+                      Scan with a hardware scanner, or type a code below. When the directive
+                      shows, put the item there and tap <b className="text-content">Done, next</b>.
+                    </>
+                  ) : (
+                    <>
+                      Hardware scanner, or type a code below. When the directive shows, put the
+                      item there and hit{" "}
+                      <kbd className="rounded border border-line dark:border-slate-700 px-1.5 py-0.5 text-xs">space</kbd>{" "}
+                      (or <b className="text-content">Done, next</b>) to confirm.
+                    </>
+                  )}{" "}
                   Already-scanned things work too: re-scan one and it gets routed, not duplicated.
                 </p>
                 <form

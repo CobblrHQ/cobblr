@@ -11,6 +11,13 @@ const Schema = z.object({
   // is "production" on BOTH staging and prod. Compose passes ${COBBLR_ENV:-},
   // i.e. an empty string when unset — callers must treat "" as unset (use ||).
   COBBLR_ENV: z.string().optional(),
+  // Name of another deployment that SHARES this database and deliberately
+  // tracks a newer build (the canary channel). Set only on the stack that is
+  // pinned BEHIND one; it turns the downgrade detector's alarm into an expected
+  // info line so the real alarm stays meaningful. Compose passes ${VAR:-} as an
+  // empty string, so readers must treat "" as unset.
+  // See docs/design-decisions/canary-channel.md.
+  COBBLR_SHARED_DB_PEER: z.string().optional(),
   API_PORT: z.coerce.number().int().positive().default(4000),
 
   // Postgres connections. SUPERUSER is only used for tenant

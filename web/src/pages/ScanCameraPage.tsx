@@ -43,6 +43,9 @@ import { freshDedupState, shouldFireScan, pickDetection, makeDetectionCollector,
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { LocationChipPicker } from "../components/LocationChipPicker";
 import {
+  SCAN_ATTEMPT_DELAY_MS,
+  numericOverride,
+  decodeCanvasSmart,
   NATIVE_FORMATS,
   acquireScannerStream,
   cameraHasTorch,
@@ -51,10 +54,18 @@ import {
   setTorch,
 } from "../lib/barcodeScanner";
 import { armScanAudio, scanBeep } from "../lib/scanFeedback";
+import {
+  sampleVideoLuma,
+  torchAutoInitial,
+  torchAutoRelease,
+  torchAutoSample,
+} from "../lib/torchAuto";
+import { frameClockInitial, noteFrame, noteResume, shouldReacquire } from "../lib/videoLiveness";
+import { zoomInitial, zoomPlan, zoomRange } from "../lib/scanZoom";
 import { ScanResultModal } from "./ScanResultModal";
 import { ScanCaptureDrawer } from "./ScanCaptureDrawer";
 import { ScanDiagPanel } from "./ScanDiagPanel";
-import { recordDecode, scanDiagEnabled } from "../lib/scanDiag";
+import { recordDecode, recordOrientation, recordStreamRecovery, recordTorchEvent, recordTorchSample, recordZoom, scanDiagEnabled } from "../lib/scanDiag";
 import { BinAdjustModal } from "../components/BinAdjustModal";
 import { ScanAmbiguityModal } from "../components/ScanAmbiguityModal";
 
@@ -187,6 +198,41 @@ export function ScanCameraPage() {
   const frameBlobRef = useRef<Promise<Blob | null> | null>(null);
   const [hasTorch, setHasTorch] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
+  // Auto-flash: "you're trying to scan and it's dark, so let me help." The
+  // top-left button is the MODE switch (auto on/off, default on); the small
+  // button by the shutter is the manual override. All the strobe-avoidance
+  // lives in the pure torchAuto machine; this page only applies its intents
+  // and turns the torch off on lifecycle events (sheet up, close).
+  const [autoTorch, setAutoTorch] = useState(true);
+  const autoTorchRef = useRef(true);
+  const torchAutoRef = useRef(torchAutoInitial());
+  /** Who lit the torch. Lifecycle offs only touch "auto"; a manual torch
+   *  stays lit until the user (or the stream dying) says otherwise. */
+  const torchOwnerRef = useRef<"auto" | "manual" | null>(null);
+  /** The user turned an auto-lit torch OFF by hand — don't fight them again
+   *  this session (flipping the mode switch clears it). */
+  const autoSuppressedRef = useRef(false);
+  const hasTorchRef = useRef(false);
+  const lumaCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const lastLumaAtRef = useRef(0);
+  const prevLumaFrameRef = useRef<Uint8ClampedArray | null>(null);
+  /** The estimator's verdict from the LAST decode attempt — the "was there
+   *  anything code-like" evidence the fruitless-burn rule feeds on. */
+  const lastStructureRef = useRef<boolean | undefined>(undefined);
+  // Frame-liveness watchdog. iOS hands back a track that CLAIMS live+unmuted
+  // after backgrounding while delivering no frames, so every track-state
+  // check passes on a dead stream and the old recovery never fired (the
+  // long-standing frozen-viewfinder-after-app-switch bug). The only honest
+  // signal is frames actually rendering — requestVideoFrameCallback feeds
+  // this clock, the decode loops ask it, and a stall bumps streamEpoch.
+  const frameClockRef = useRef(frameClockInitial(Date.now()));
+  const rvfcArmedRef = useRef(false);
+  // Auto-zoom: the estimator locates the code on every missed frame, so "it is
+  // too small to read" is a free measurement. A manual ?zoom=N turns this off —
+  // an experiment you set by hand must not be steered from underneath.
+  const zoomRef = useRef(zoomInitial());
+  const zoomRangeRef = useRef<{ min: number; max: number } | null>(null);
+  const autoZoomOffRef = useRef(false);
 
   // Scan area — stamped as `scan_area` (free text, the location's name) on
   // every item saved this session, barcode and photo alike. Picked via the
@@ -219,7 +265,6 @@ export function ScanCameraPage() {
   } | null>(null);
   const [retryBusy, setRetryBusy] = useState(false);
   const [undoBusy, setUndoBusy] = useState(false);
-  const [confirmBusy, setConfirmBusy] = useState(false);
   // ＋Photo: the next shutter press APPENDS to this item instead of creating a
   // new one (the label shot then the display shot, on one record). Held in a
   // ref too because the shutter reads it from a callback.
@@ -1111,6 +1156,10 @@ export function ScanCameraPage() {
   useEffect(() => {
     function onVisible() {
       if (document.visibilityState !== "visible" || phaseRef.current === "idle") return;
+      // Returning to the tab: no frames arrived while hidden, so the liveness
+      // clock is stale by construction — grace-reset it and let the watchdog
+      // judge the stream on what it delivers from HERE.
+      frameClockRef.current = noteResume(frameClockRef.current, Date.now());
       const track = streamRef.current?.getVideoTracks()[0] ?? null;
       if (!track || track.readyState === "ended") {
         setStreamEpoch((e) => e + 1);
@@ -1144,7 +1193,11 @@ export function ScanCameraPage() {
     function afterStream(stream: MediaStream) {
       streamRef.current = stream;
       const track = stream.getVideoTracks()[0] ?? null;
-      setHasTorch(cameraHasTorch(track));
+      hasTorchRef.current = cameraHasTorch(track);
+      setHasTorch(hasTorchRef.current);
+      zoomRangeRef.current = zoomRange(track);
+      autoZoomOffRef.current = numericOverride("zoom", 0, 10) > 0;
+      zoomRef.current = zoomInitial();
     }
 
     async function start() {
@@ -1160,6 +1213,7 @@ export function ScanCameraPage() {
         if (useNative) {
           if (videoRef.current) {
             videoRef.current.srcObject = stream;
+            armFrameClock(videoRef.current);
             await videoRef.current.play();
             // Re-acquired mid-modal (visibility recovery): keep the preview
             // frozen — the freeze effect only reacts to phase CHANGES.
@@ -1172,30 +1226,85 @@ export function ScanCameraPage() {
           detectorRef.current = new Detector({ formats: NATIVE_FORMATS });
           loop();
         } else {
+          // OUR OWN decode loop, not reader.decodeFromStream.
+          //
+          // ZXing's built-in loop retries rotated when TRY_HARDER is set, and
+          // that retry is broken: HTMLCanvasElementLuminanceSource.rotate()
+          // swaps the pixels but never updates its width/height, so the
+          // rotated buffer is read with the original stride and can never
+          // decode on a non-square frame. Perpendicular barcodes therefore
+          // NEVER scanned, whatever the light or attempt rate (the author,
+          // 2026-08-05). Owning the loop lets us rotate into our own correctly
+          // sized canvas — and costs nothing else, since the loop is a few
+          // lines and we already control cadence, pausing and instrumentation.
           const reader = createBarcodeReader();
-          // ZXing emits one result per callback — a two-symbol cover alternates
-          // values and starves the agreement gate. The collector windows recent
-          // reads and forwards the stable pickDetection winner (the native
-          // multi-result path does the same per frame).
+          zxingMarkRef.current = null;
           const collect = makeDetectionCollector(400);
-          zxingControls = await reader.decodeFromStream(
-            stream,
-            videoRef.current!,
-            (result) => {
-              if (cancelled) return;
-              // ZXing invokes this per ATTEMPT (result on success, err on
-              // not-found), which is exactly the cadence we want to measure.
-              if (diagRef.current) {
-                const now = performance.now();
-                const prev = zxingMarkRef.current;
-                zxingMarkRef.current = now;
-                if (prev !== null) recordDecode(now - prev, !!result);
+          const frame = document.createElement("canvas");
+          const rotated = document.createElement("canvas");
+          const video = videoRef.current!;
+          video.srcObject = stream; // decodeFromStream used to do this for us
+          armFrameClock(video);
+          await video.play().catch(() => {});
+          if (phaseRef.current === "result" || phaseRef.current === "resolving") video.pause();
+
+          const attempt = (): { text: string | null; rotatedHit: boolean; didRotate: boolean; regionWidth: number | null } => {
+            if (video.readyState < 2 || !video.videoWidth) {
+              return { text: null, rotatedHit: false, didRotate: false, regionWidth: null };
+            }
+            frame.width = video.videoWidth;
+            frame.height = video.videoHeight;
+            const fctx = frame.getContext("2d", { willReadFrequently: true });
+            if (!fctx) return { text: null, rotatedHit: false, didRotate: false, regionWidth: null };
+            fctx.drawImage(video, 0, 0);
+            // Upright, then ONE aimed rotate by the MEASURED axis (see
+            // decodeCanvasSmart) — never a blind guess.
+            const r = decodeCanvasSmart(reader, frame, rotated);
+            if (diagRef.current) recordOrientation(r.angle);
+            return {
+              text: r.text,
+              rotatedHit: !!r.text && r.via === "aimed",
+              didRotate: r.via === "aimed",
+              regionWidth: r.regionWidth,
+            };
+          };
+
+          let timer: number | null = null;
+          const tick = () => {
+            if (cancelled) return;
+            checkStreamAlive(video);
+            // Same gating the native loop uses: never decode behind a sheet,
+            // while armed, or once a result is up.
+            const idle =
+              phaseRef.current !== "scanning" || armedRef.current || sheetOpenRef.current || reviewItemRef.current;
+            if (!idle) {
+              autoTorchTick(video);
+              const t0 = performance.now();
+              const { text, rotatedHit, didRotate, regionWidth } = attempt();
+              // A decoded frame trivially contained a code; otherwise the
+              // estimator's located-region verdict stands in.
+              lastStructureRef.current = !!text || regionWidth !== null;
+              autoZoomTick(regionWidth, !!text);
+              if (diagRef.current) recordDecode(performance.now() - t0, !!text, didRotate);
+              if (text) {
+                const picked = collect(text, Date.now());
+                if (picked) onDetectRef.current(picked);
               }
-              if (!result) return;
-              const picked = collect(result.getText(), Date.now());
-              if (picked) onDetectRef.current(picked);
+              if (rotatedHit) {
+                // Worth knowing in the field: a read that only came back after
+                // the quarter turn is the case that used to be impossible.
+                console.debug("[scan] decoded a rotated barcode");
+              }
+            }
+            timer = window.setTimeout(tick, SCAN_ATTEMPT_DELAY_MS);
+          };
+          tick();
+          zxingControls = {
+            stop: () => {
+              if (timer !== null) window.clearTimeout(timer);
+              timer = null;
             },
-          );
+          };
         }
       } catch (err) {
         setError((err as Error).message);
@@ -1207,10 +1316,12 @@ export function ScanCameraPage() {
       if (cancelled) return;
       const video = videoRef.current;
       const detector = detectorRef.current;
+      if (video) checkStreamAlive(video);
       if (!video || !detector || video.readyState < 2 || phaseRef.current !== "scanning" || armedRef.current || sheetOpenRef.current || reviewItemRef.current) {
         raf = requestAnimationFrame(loop);
         return;
       }
+      autoTorchTick(video);
       const t0 = performance.now();
       detector
         .detect(video)
@@ -1243,6 +1354,9 @@ export function ScanCameraPage() {
       zxingControls?.stop();
       setTorchOn(false);
       setHasTorch(false);
+      hasTorchRef.current = false;
+      torchOwnerRef.current = null;
+      torchAutoRef.current = torchAutoInitial();
     };
     // Acquire once per session (running 0→1), plus once per streamEpoch bump
     // (visibility recovery of a dead stream). Phase flips within a session
@@ -1253,11 +1367,144 @@ export function ScanCameraPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, streamEpoch]);
 
+  /** Count rendered frames into the liveness clock. Registered ONCE per video
+   *  element (rVFC survives srcObject swaps; re-registering would stack
+   *  callbacks). Browsers without rVFC fall back to the currentTime check in
+   *  checkStreamAlive. */
+  const armFrameClock = useCallback((video: HTMLVideoElement) => {
+    frameClockRef.current = frameClockInitial(Date.now());
+    if (rvfcArmedRef.current) return;
+    const v = video as HTMLVideoElement & {
+      requestVideoFrameCallback?: (cb: () => void) => number;
+    };
+    if (!v.requestVideoFrameCallback) return;
+    rvfcArmedRef.current = true;
+    const onFrame = () => {
+      frameClockRef.current = noteFrame(frameClockRef.current, Date.now());
+      v.requestVideoFrameCallback!(onFrame);
+    };
+    v.requestVideoFrameCallback(onFrame);
+  }, []);
+
+  const lastVideoTimeRef = useRef(-1);
+  /** Feed the auto-zoom planner one frame's outcome and apply what it asks
+   *  for. Off entirely when the URL carries a manual ?zoom, or when the camera
+   *  reports no zoom capability. */
+  const autoZoomTick = useCallback((regionWidth: number | null, decoded: boolean) => {
+    const range = zoomRangeRef.current;
+    if (autoZoomOffRef.current || !range) return;
+    const now = Date.now();
+    const { state, target } = zoomPlan(zoomRef.current, { regionWidth, decoded }, now);
+    zoomRef.current = state;
+    if (target === null) return;
+    const clamped = Math.min(range.max, Math.max(range.min, target));
+    const track = streamRef.current?.getVideoTracks()[0] ?? null;
+    void track
+      ?.applyConstraints({ advanced: [{ zoom: clamped }] } as unknown as MediaTrackConstraints)
+      .then(() => recordZoom(clamped))
+      .catch(() => {
+        // Refused → stop trying, and SAY so in ?diag=1 rather than silently
+        // pretending the lens moved (the swallow class that has bitten this
+        // file three times).
+        autoZoomOffRef.current = true;
+        recordZoom(null);
+      });
+  }, []);
+
+  /** The watchdog. Called from both decode loops every tick; only judges while
+   *  the video is SUPPOSED to be rendering (visible, playing, ready). A stall
+   *  re-acquires the stream via streamEpoch — same path the visibility handler
+   *  uses, but driven by frames, which cannot lie. */
+  const checkStreamAlive = useCallback((video: HTMLVideoElement) => {
+    if (document.visibilityState !== "visible") return;
+    // Skip only DELIBERATE freezes (result/review sheet pauses the video on
+    // purpose). Gating on video.paused instead would blind the watchdog: a
+    // dying stream can flip the element to paused/ended all by itself.
+    if (phaseRef.current !== "scanning" || sheetOpenRef.current || reviewItemRef.current) return;
+    const v = video as HTMLVideoElement & { requestVideoFrameCallback?: unknown };
+    if (!v.requestVideoFrameCallback && video.currentTime !== lastVideoTimeRef.current) {
+      // No rVFC on this browser: advancing currentTime is the frame signal.
+      lastVideoTimeRef.current = video.currentTime;
+      frameClockRef.current = noteFrame(frameClockRef.current, Date.now());
+    }
+    const { fire, clock } = shouldReacquire(frameClockRef.current, Date.now());
+    frameClockRef.current = clock;
+    if (fire) {
+      console.warn("[scan] camera stream frozen (no frames) — re-acquiring");
+      recordStreamRecovery();
+      setStreamEpoch((e) => e + 1);
+    }
+  }, []);
+
+  /** One throttled luma sample + whatever the machine says to do. Called from
+   *  inside both decode loops, only while actively scanning. */
+  const autoTorchTick = useCallback((video: HTMLVideoElement) => {
+    if (!autoTorchRef.current || autoSuppressedRef.current || !hasTorchRef.current) return;
+    if (torchOwnerRef.current === "manual") return;
+    const now = Date.now();
+    if (now - lastLumaAtRef.current < 500) return;
+    lastLumaAtRef.current = now;
+    lumaCanvasRef.current ??= document.createElement("canvas");
+    const sample = sampleVideoLuma(video, lumaCanvasRef.current, prevLumaFrameRef.current);
+    if (sample === null) return;
+    prevLumaFrameRef.current = sample.raw;
+    recordTorchSample(sample.mean, sample.falloff);
+    const { state, turn } = torchAutoSample(
+      torchAutoRef.current,
+      { ...sample, structure: lastStructureRef.current },
+      now,
+    );
+    torchAutoRef.current = state;
+    if (!turn) return;
+    const track = streamRef.current?.getVideoTracks()[0] ?? null;
+    void setTorch(track, turn === "on").then((ok) => {
+      if (!ok) {
+        // Never swallow the failure silently — and stop retrying every tick.
+        recordTorchEvent("apply-failed");
+        autoSuppressedRef.current = true;
+        torchAutoRef.current = torchAutoInitial();
+        return;
+      }
+      recordTorchEvent(turn === "on" ? "auto-on" : "auto-off");
+      torchOwnerRef.current = turn === "on" ? "auto" : null;
+      setTorchOn(turn === "on");
+    });
+  }, []);
+
+  /** The top-left mode switch: auto-flash on/off. Turning it off also puts
+   *  out an auto-lit torch; turning it on forgives a manual override. */
+  const toggleAutoTorch = useCallback(() => {
+    setAutoTorch((prev) => {
+      const next = !prev;
+      autoTorchRef.current = next;
+      autoSuppressedRef.current = false;
+      torchAutoRef.current = torchAutoInitial();
+      if (!next && torchOwnerRef.current === "auto") {
+        const track = streamRef.current?.getVideoTracks()[0] ?? null;
+        void setTorch(track, false);
+        torchOwnerRef.current = null;
+        setTorchOn(false);
+      }
+      return next;
+    });
+  }, []);
+
+  /** The manual button by the shutter: a plain torch toggle. Turning OFF a
+   *  torch that auto lit means "not now" — auto stays quiet for the session. */
   const toggleTorch = useCallback(async () => {
     const track = streamRef.current?.getVideoTracks()[0] ?? null;
     const next = !torchOn;
     const ok = await setTorch(track, next);
-    if (ok) setTorchOn(next);
+    if (!ok) return;
+    recordTorchEvent(next ? "manual-on" : "manual-off");
+    if (next) {
+      torchOwnerRef.current = "manual";
+    } else {
+      if (torchOwnerRef.current === "auto") autoSuppressedRef.current = true;
+      torchOwnerRef.current = null;
+      torchAutoRef.current = torchAutoRelease(torchAutoRef.current, Date.now());
+    }
+    setTorchOn(next);
   }, [torchOn]);
 
   // FREEZE the viewfinder while the result modal is up or a QR label is being
@@ -1270,6 +1517,17 @@ export function ScanCameraPage() {
   // review sheet and the expanded photo sheet used to leave the video running
   // behind themselves, which is the flicker the author saw while resizing the drawer.
   const sheetBlocking = sheetOpen || !!reviewItem || phase === "result" || phase === "resolving";
+  // A sheet means the scan landed (or review is up) — an AUTO torch has done
+  // its job and goes out. A manual torch is the user's call and stays.
+  useEffect(() => {
+    if (!sheetBlocking || torchOwnerRef.current !== "auto") return;
+    torchAutoRef.current = torchAutoRelease(torchAutoRef.current, Date.now());
+    const track = streamRef.current?.getVideoTracks()[0] ?? null;
+    void setTorch(track, false);
+    recordTorchEvent("auto-off");
+    torchOwnerRef.current = null;
+    setTorchOn(false);
+  }, [sheetBlocking]);
   // The + repurpose applies only when an actual SHEET holds the slot — a QR
   // label being resolved ("Reading label…") also freezes, but it is a sub-
   // second wait with no item, so the shutter stays a disabled camera there.
@@ -1280,6 +1538,9 @@ export function ScanCameraPage() {
     if (sheetBlocking) {
       v.pause();
     } else if (phase === "scanning" && v.paused && v.srcObject) {
+      // Grace-reset the liveness clock: it went stale while DELIBERATELY
+      // paused, and must not instantly restart a healthy stream on resume.
+      frameClockRef.current = noteResume(frameClockRef.current, Date.now());
       void v.play().catch(() => {
         // Autoplay refusal here is transient; the stream effect owns recovery.
       });
@@ -1629,12 +1890,29 @@ export function ScanCameraPage() {
         {running && hasTorch ? (
           <button
             type="button"
-            onClick={toggleTorch}
-            aria-label="Torch"
-            title="Torch"
-            className={`rounded-full p-2.5 shrink-0 ${torchOn ? "bg-amber-400 text-slate-900" : "bg-black/50 text-white hover:bg-black/70"}`}
+            onClick={toggleAutoTorch}
+            aria-label="Automatic flash"
+            title={
+              autoTorch
+                ? "Auto flash is ON - the light comes on by itself when the scene is dark. Tap to turn auto off."
+                : "Auto flash is OFF. Tap to let the light come on by itself when it's dark."
+            }
+            className={`relative rounded-full p-2.5 shrink-0 ${
+              torchOn && autoTorch
+                ? "bg-amber-400 text-slate-900"
+                : autoTorch
+                  ? "bg-black/50 text-white hover:bg-black/70"
+                  : "bg-black/50 text-white/35 hover:bg-black/70"
+            }`}
           >
             <Flashlight size={18} />
+            <span
+              className={`absolute -bottom-0.5 -right-0.5 rounded-full px-1 text-[8px] font-bold leading-[13px] ${
+                autoTorch ? "bg-cobble-500 text-white" : "bg-white/25 text-white/60"
+              }`}
+            >
+              A
+            </span>
           </button>
         ) : (
           <span className="w-10 shrink-0" />
@@ -2003,7 +2281,6 @@ export function ScanCameraPage() {
                 : null
             }
             undoBusy={undoBusy}
-            confirmBusy={confirmBusy}
             armed={arm?.mode ?? null}
             onCancelArm={() => setArm(null)}
             onAddPhoto={(it) => armFor(it, "append")}
@@ -2015,25 +2292,19 @@ export function ScanCameraPage() {
             onExpandedChange={handleSheetExpanded}
             collapseNonce={collapseNonce}
             onExpandBarcode={(it) => setReviewItem(it)}
-            onConfirm={(it) => {
-              // The candidate's own destination when it has one; an empty body
-              // lets the backend pick its generic home (same fallback the
-              // capture panel uses for an unidentified item).
-              const c = it.suggested_candidates?.[0];
-              const body = c?.module
-                ? { target_module: c.module, target_kind: c.kind, ...(c.instance ? { instance: c.instance } : {}) }
-                : {};
-              setConfirmBusy(true);
-              void api
-                .confirmScanItem(activeSlug, it.id, body)
-                .then(() => {
-                  void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-                  toast.success(`Filed to ${c?.label ?? "your inbox's default"}.`);
-                  setDrawerItem(null);
-                  setDrawerDismissed(true);
-                })
-                .catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)))
-                .finally(() => setConfirmBusy(false));
+            onConfirm={() => {
+              // THE SCANNER NEVER FILES (the author, ruling 2026-08-05, restating
+              // 2026-08-03). This used to POST confirmScanItem with the
+              // matchmaker's first candidate — the same act as the ADD TO chips
+              // that were removed for exactly this reason, just wearing a
+              // different label. Filing is a decision made in the inbox, where
+              // you can see everything at once; the camera's job ends at
+              // capture. So this is an affirmative dismiss: the edits
+              // (quantity, name, location) already saved as they were made, and
+              // the item stays in the inbox.
+              setDrawerItem(null);
+              setDrawerDismissed(true);
+              toast.success("Kept in your scan inbox.");
             }}
             onUndo={(it) => {
               setUndoBusy(true);
@@ -2094,6 +2365,19 @@ export function ScanCameraPage() {
           >
             <MapPin size={15} /> Assign
           </button>
+          {running && hasTorch && (
+            <button
+              type="button"
+              onClick={() => void toggleTorch()}
+              aria-label="Flashlight"
+              title="Flashlight"
+              className={`rounded-full p-2 shrink-0 ${
+                torchOn ? "bg-amber-400 text-slate-900" : "bg-black/55 text-white hover:bg-black/70"
+              }`}
+            >
+              <Flashlight size={16} />
+            </button>
+          )}
           {/* Three shutter states, and never a dead one:
                 camera — photograph a NEW item;
                 +      — a sheet is blocking the viewfinder, so a real capture
@@ -2138,6 +2422,7 @@ export function ScanCameraPage() {
               )}
             </span>
           </button>
+          {running && hasTorch && <span className="w-8 shrink-0" />}
           <button
             type="button"
             onClick={() => {

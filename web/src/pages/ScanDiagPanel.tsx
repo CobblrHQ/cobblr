@@ -11,6 +11,9 @@ import {
   decodeStats,
   factsToText,
   resetDecodeStats,
+  streamRecoveryCount,
+  zoomDiag,
+  torchDiag,
   type CameraFacts,
   type DecodeStats,
 } from "../lib/scanDiag";
@@ -108,9 +111,14 @@ export function ScanDiagPanel({
           {row("zoom", facts.zoom)}
           {row("torch", facts.torch)}
           {row("caps", Object.keys(facts.capabilities).join(", ") || "(none)")}
+          {row("tuning", facts.tuning)}
           <div className="pt-1.5 mt-1 border-t border-white/15">
+            {row("torch auto", `${torchDiag().event} · luma ${torchDiag().luma ?? "?"} · falloff ${torchDiag().falloff ?? "?"} · fired ${torchDiag().autoOns}x`)}
+            {row("stream", `re-acquired ${streamRecoveryCount()}x`)}
+            {row("auto zoom", zoomDiag())}
             {row("decode", `${stats.attempts} tries, ${stats.hits} hits, ${stats.perSec}/s`)}
             {row("decode ms", `p50 ${stats.p50} · p95 ${stats.p95} · worst ${stats.worst}`)}
+            {row("aimed", `${stats.rotAttempts} tries, ${stats.rotHits} hits${stats.lastAngle !== null ? ` · axis ${Math.round(stats.lastAngle)}°` : ""}`)}
           </div>
           <div className="pt-1 text-white/40 leading-snug">
             aim at the barcode for ~10s, then tap copy and paste it back.

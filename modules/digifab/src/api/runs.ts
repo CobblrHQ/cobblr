@@ -6,6 +6,7 @@
 // completed_qty is operator-editable with reopen/close guardrails.
 
 import { Router } from "express";
+import { markJobTerminal } from "../jobs-core.js";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext } from "../db.js";
@@ -174,12 +175,17 @@ runsRouter.patch(
     // resume kicks the worker so paused jobs dispatch again.
     const finalStatus = (set.status as string | undefined) ?? run.status;
     if (finalStatus === "cancelled" || finalStatus === "completed") {
-      await db
-        .updateTable("digifab_jobs")
-        .set({ status: "cancelled", error: `production run ${finalStatus}`, updated_at: new Date() })
+      // Queued-only, so nothing is on a bed — but it still goes through the
+      // one gate, so this stays correct if the filter ever widens.
+      const sweep = await db
+        .selectFrom("digifab_jobs")
+        .select(["id", "status", "connection_id", "target_device"])
         .where("run_id", "=", run.id)
         .where("status", "=", "queued")
         .execute();
+      for (const j of sweep) {
+        await markJobTerminal(db, j, "cancelled", { error: `production run ${finalStatus}` });
+      }
     }
     if (finalStatus === "active") await kickAssign(orgId);
     res.json({ id: run.id, status: finalStatus, completed_qty: set.completed_qty ?? run.completed_qty });

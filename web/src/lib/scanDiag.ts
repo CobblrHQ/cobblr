@@ -11,6 +11,8 @@
 // Off unless asked for: `?diag=1` on the camera URL. It never renders, times,
 // or enumerates anything for a normal user.
 
+import { numericOverride } from "./barcodeScanner";
+
 const DIAG_KEY = "cobblr.scan-diag";
 
 /** On when the URL says ?diag=1, and sticky after that so a re-arm (which
@@ -42,9 +44,25 @@ let attempts = 0;
 let hits = 0;
 let firstAt: number | null = null;
 
-export function recordDecode(ms: number, found: boolean): void {
+let rotAttempts = 0;
+let rotHits = 0;
+let lastAngle: number | null = null;
+
+/** The most recent measured barcode axis (null = nothing stripe-like seen). */
+export function recordOrientation(angle: number | null): void {
+  if (angle !== null) lastAngle = angle;
+}
+
+/** `rotated` marks the second, quarter-turned pass. Counted separately so a
+ *  report can say whether perpendicular codes are actually being read, rather
+ *  than leaving it to be inferred. */
+export function recordDecode(ms: number, found: boolean, rotated = false): void {
   attempts += 1;
   if (found) hits += 1;
+  if (rotated) {
+    rotAttempts += 1;
+    if (found) rotHits += 1;
+  }
   if (firstAt === null) firstAt = Date.now();
   times.push(ms);
   if (times.length > RING) times.shift();
@@ -59,6 +77,9 @@ function pct(sorted: number[], p: number): number {
 export interface DecodeStats {
   attempts: number;
   hits: number;
+  rotAttempts: number;
+  rotHits: number;
+  lastAngle: number | null;
   p50: number;
   p95: number;
   worst: number;
@@ -71,6 +92,9 @@ export function decodeStats(): DecodeStats {
   return {
     attempts,
     hits,
+    rotAttempts,
+    rotHits,
+    lastAngle,
     p50: pct(sorted, 50),
     p95: pct(sorted, 95),
     worst: sorted.length ? Math.round(sorted[sorted.length - 1]!) : 0,
@@ -82,7 +106,73 @@ export function resetDecodeStats(): void {
   times.length = 0;
   attempts = 0;
   hits = 0;
+  rotAttempts = 0;
+  rotHits = 0;
+  lastAngle = null;
   firstAt = null;
+}
+
+// ── torch (auto-flash) ────────────────────────────────────────────
+// What the auto-torch saw and did — a wrong threshold is invisible without
+// the measured luma next to the on/off decisions.
+
+let torchLastLuma: number | null = null;
+let torchLastFalloff: number | null = null;
+let torchLastEvent = "idle";
+let torchAutoOns = 0;
+
+export function recordTorchSample(luma: number, falloff?: number): void {
+  torchLastLuma = Math.round(luma);
+  // The signal that actually survives auto-exposure — worth seeing on the
+  // glass, since a brightness reading alone proved misleading in the field.
+  if (typeof falloff === "number") torchLastFalloff = Math.round(falloff * 100) / 100;
+}
+
+export type TorchEvent = "auto-on" | "auto-off" | "manual-on" | "manual-off" | "apply-failed";
+
+export function recordTorchEvent(e: TorchEvent): void {
+  torchLastEvent = e;
+  if (e === "auto-on") torchAutoOns += 1;
+}
+
+export function torchDiag(): {
+  event: string;
+  luma: number | null;
+  falloff: number | null;
+  autoOns: number;
+} {
+  return { event: torchLastEvent, luma: torchLastLuma, falloff: torchLastFalloff, autoOns: torchAutoOns };
+}
+
+// ── auto-zoom ─────────────────────────────────────────────────────
+
+let zoomNow: number | null = null;
+let zoomRefused = false;
+
+/** null = the camera refused the constraint (recorded, never swallowed). */
+export function recordZoom(z: number | null): void {
+  if (z === null) zoomRefused = true;
+  else zoomNow = z;
+}
+
+export function zoomDiag(): string {
+  if (zoomRefused) return "REFUSED by the camera";
+  return zoomNow === null ? "auto (not stepped yet)" : `auto ${zoomNow}x`;
+}
+
+// ── stream recovery ───────────────────────────────────────────────
+// How often the frame-liveness watchdog had to restart a dead camera stream.
+// Nonzero after an app-switch is the fix WORKING; nonzero during plain
+// scanning means the stream is unstable and worth a look.
+
+let streamRecoveries = 0;
+
+export function recordStreamRecovery(): void {
+  streamRecoveries += 1;
+}
+
+export function streamRecoveryCount(): number {
+  return streamRecoveries;
 }
 
 // ── device facts ──────────────────────────────────────────────────
@@ -97,6 +187,10 @@ export interface CameraFacts {
   focus: string;
   zoom: string;
   torch: string;
+  /** The tuning knobs in force for THIS run, so a copied report says which
+   *  configuration produced its numbers. Two A/B runs that silently used the
+   *  same settings would otherwise look like a real difference. */
+  tuning: string;
 }
 
 /** A capability value, flattened for display: ranges become "min-max". */
@@ -165,7 +259,22 @@ export async function collectCameraFacts(track: MediaStreamTrack | null): Promis
   const zoom = "zoom" in rawCaps ? `available (${String(brief(rawCaps.zoom))})` : "UNSUPPORTED";
   const torch = "torch" in rawCaps ? "available" : "UNSUPPORTED";
 
+  const q = (k: string) => {
+    try { return new URLSearchParams(window.location.search).get(k); } catch { return null; }
+  };
+  // EFFECTIVE values, parsed by the same helper the reader uses — not the raw
+  // URL. ?scandelay=abc falls back to 40 in the reader; a report that printed
+  // "delay=abc" would misdescribe the very run it documents (review 2026-08-05).
+  const delayMs = numericOverride("scandelay", 40, 2000);
+  const zoomVal = numericOverride("zoom", 0, 10);
+  const tuning = [
+    `delay=${delayMs}${q("scandelay") === null ? " (default)" : ""}`,
+    `lens=${q("lens") ?? "auto"}`,
+    `zoom=${zoomVal || "off"}`,
+  ].join("  ");
+
   return {
+    tuning,
     engine: nativeCtor ? "native BarcodeDetector" : "ZXing (fallback)",
     nativeFormats,
     lenses,
@@ -192,7 +301,12 @@ export function factsToText(f: CameraFacts, s: DecodeStats): string {
     `zoom         : ${f.zoom}`,
     `torch        : ${f.torch}`,
     `capabilities : ${Object.keys(f.capabilities).join(", ") || "(none reported)"}`,
+    `tuning       : ${f.tuning}`,
+    `torch auto   : ${torchDiag().event} · luma ${torchDiag().luma ?? "?"} · falloff ${torchDiag().falloff ?? "?"} · fired ${torchDiag().autoOns}x`,
+    `stream       : re-acquired ${streamRecoveryCount()}x (frozen-frame watchdog)`,
+    `auto zoom    : ${zoomDiag()}`,
     `decode       : ${s.attempts} attempts, ${s.hits} hits, ${s.perSec}/s`,
+    `aimed rotate : ${s.rotAttempts} attempts, ${s.rotHits} hits${s.lastAngle !== null ? `, last axis ${Math.round(s.lastAngle)}°` : ""}`,
     `decode ms    : p50 ${s.p50}, p95 ${s.p95}, worst ${s.worst}`,
     `ua           : ${navigator.userAgent}`,
   ].join("\n");

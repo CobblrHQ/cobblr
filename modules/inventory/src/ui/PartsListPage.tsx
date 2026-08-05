@@ -20,9 +20,9 @@ import {
 } from "lucide-react";
 import {
   BulkActionBar,
+  EditableCell,
   EntityThumb,
   EntityTile,
-  FieldRenderer,
   Modal,
   ViewModeToggle,
   useToast,
@@ -33,9 +33,10 @@ import {
   usePublishChatContext,
   makeAreaResolver,
   LOCATION_GROUP_KEY,
-  type FieldRendererId,
+  type EditableCellDef,
 } from "@cobblr/platform-web";
 import { useInventory } from "./context";
+import { QtyStepper } from "./QtyStepper";
 import { useFieldPresentation } from "./useFieldPresentation";
 import { useDisclosure } from "./useDisclosure";
 import { NewPartDialog } from "./NewPartDialog";
@@ -806,6 +807,92 @@ function PartsBulkTagModal({
   );
 }
 
+/** A native (non-field-def) column described the way EditableCell wants it, so
+ *  the stock columns edit through the exact same control as a bundle's custom
+ *  fields — one behaviour, not two that drift. */
+const nativeDef = (
+  name: string,
+  label: string,
+  type: EditableCellDef["type"],
+  required = false,
+): EditableCellDef => ({ name, display_label: label, type, required });
+
+/** The native columns a cell may patch directly. The closed union is a
+ *  guardrail, not bookkeeping: an unknown top-level key on PATCH /:id is
+ *  treated as a CUSTOM FIELD NAME (the server hoists it into metadata), so a
+ *  custom field sent through `patch` would be a metadata write down the wrong
+ *  path — this makes that a compile error instead of a runtime surprise. */
+type NativePartCol = "name" | "category_id" | "location_id" | "min_qty" | "supplier_url";
+
+/** One infinite-query page of the parts list, as cached. */
+type PartsPage = { items: PartListItem[]; next_cursor?: string | null };
+type PartsCache = { pages: PartsPage[]; pageParams: unknown[] };
+
+/** Commit a single cell edit on a part. A native column patches its own column;
+ *  a custom field merges its one key into the metadata bag server-side (never a
+ *  read-spread-write from a list row, which would revert a concurrent writer). */
+function useCellCommit() {
+  const { api } = useInventory();
+  const qc = useQueryClient();
+  const toast = useToast();
+  return useMutation({
+    mutationFn: ({
+      id,
+      patch,
+      meta,
+    }: {
+      id: string;
+      patch?: Partial<Record<NativePartCol, unknown>>;
+      meta?: Record<string, unknown>;
+    }) => (meta ? api.patchPartMetadata(id, meta) : api.updatePart(id, patch ?? {})),
+    onSuccess: (_r, { id, patch, meta }) => {
+      // Patch the edited row in place across every cached list variant. The
+      // list is an INFINITE query: invalidating it refetches every loaded page
+      // (10 pages deep = 10 requests) per keystroke-commit, so the row edit we
+      // already know is applied locally and the list is only marked stale —
+      // the next natural refetch (focus, filter change) converges any derived
+      // fields (low_stock etc.) with the server.
+      qc.setQueriesData<PartsCache>({ queryKey: ["inventory-parts"] }, (data) => {
+        if (!data?.pages) return data;
+        return {
+          ...data,
+          pages: data.pages.map((pg) => ({
+            ...pg,
+            items: pg.items.map((it) => {
+              if (it.id !== id) return it;
+              const next = { ...it, ...(patch ?? {}) } as PartListItem;
+              if (meta) {
+                const md = { ...((it.metadata as Record<string, unknown> | null) ?? {}) };
+                for (const [k, v] of Object.entries(meta)) {
+                  // Mirror the server's merge: null CLEARS (removes) the key.
+                  if (v == null) delete md[k];
+                  else md[k] = v;
+                }
+                next.metadata = md;
+              }
+              return next;
+            }),
+          })),
+        };
+      });
+      void qc.invalidateQueries({ queryKey: ["inventory-parts"], refetchType: "none" });
+      void qc.invalidateQueries({ queryKey: ["inventory-part", id] });
+    },
+    // A cell edit has no Save button to leave in a failed state, so a silent
+    // reject would look like a save that stuck until the next refetch proved
+    // otherwise. Say so — leading with what FAILED, because the server detail
+    // alone can mislead (a bare "Not found" reads as the part missing when it's
+    // an api that predates the metadata route) — and refetch to put the true
+    // value back on screen.
+    onError: (e: unknown, { id }) => {
+      const detail = e instanceof Error && e.message ? ` (${e.message})` : "";
+      toast.error(`Couldn't save that change${detail}`);
+      void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
+      void qc.invalidateQueries({ queryKey: ["inventory-part", id] });
+    },
+  });
+}
+
 function PartsTable({
   items,
   basePath,
@@ -824,6 +911,27 @@ function PartsTable({
   onSelectAll: (checked: boolean) => void;
 }) {
   const navigate = useNavigate();
+  const { api } = useInventory();
+  const commit = useCellCommit();
+  // Candidate lists for the two native FK columns. Same query keys the page
+  // already uses, so this is the cache, not a second fetch.
+  const cats = useQuery({ queryKey: ["inventory-categories"], queryFn: () => api.listCategories() });
+  const locs = useQuery({ queryKey: ["inventory-locations"], queryFn: () => api.listLocations() });
+  const catOptions = useMemo(
+    () => (cats.data?.items ?? []).map((c) => ({ id: c.id, label: c.name })),
+    [cats.data],
+  );
+  const locOptions = useMemo(
+    () => (locs.data?.items ?? []).map((l) => ({ id: l.id, label: l.name })),
+    [locs.data],
+  );
+  const setCol = (p: PartListItem, col: NativePartCol, v: unknown) =>
+    commit.mutate({ id: p.id, patch: { [col]: v } });
+  // Send only the edited key: the server merges it into the metadata bag. A
+  // list row can be minutes stale, so spreading the row's cached metadata here
+  // would write those stale siblings back over anything changed since.
+  const setMeta = (p: PartListItem, name: string, v: unknown) =>
+    commit.mutate({ id: p.id, meta: { [name]: v } });
   // Honor the workspace's native-field overrides the way the create/detail
   // modals already do — a yarn instance that hides Category/Location/Min
   // shouldn't see them as table columns either. Overrides are scoped to the
@@ -877,7 +985,7 @@ function PartsTable({
             <tr
               key={p.id}
               onClick={() => navigate(`${basePath}/parts/${p.id}`)}
-              className="border-t border-line dark:border-slate-700 hover:bg-subtle dark:hover:bg-slate-800/70 transition cursor-pointer"
+              className="group/row border-t border-line dark:border-slate-700 hover:bg-subtle dark:hover:bg-slate-800/70 transition cursor-pointer"
             >
               <td className="px-3 py-2 w-8" onClick={(e) => e.stopPropagation()}>
                 <input
@@ -900,10 +1008,21 @@ function PartsTable({
                     color={(p.metadata as Record<string, unknown> | null)?.color as string | undefined}
                     values={p.metadata as Record<string, unknown> | null}
                   />
-                  <div className="min-w-0">
-                    <Link to={`${basePath}/parts/${p.id}`} className="font-medium text-content dark:text-mortar-100 hover:text-accent">
-                      {p.name}
-                    </Link>
+                  <div className="min-w-0 flex-1">
+                    {/* The name is both the way into the record and an editable
+                        cell, so the link keeps the click and the pencil edits. */}
+                    <EditableCell
+                      def={nativeDef("name", "Name", "text", true)}
+                      value={p.name}
+                      onCommit={(v) => setCol(p, "name", v)}
+                    >
+                      <Link
+                        to={`${basePath}/parts/${p.id}`}
+                        className="font-medium text-content dark:text-mortar-100 hover:text-accent truncate"
+                      >
+                        {p.name}
+                      </Link>
+                    </EditableCell>
                     {p.manufacturer && (
                       <span className="ml-2 text-[11px] text-faint dark:text-slate-500">{p.manufacturer}</span>
                     )}
@@ -918,47 +1037,92 @@ function PartsTable({
                   </div>
                 </div>
               </td>
+              {/* fallbackLabel = the row's server-joined name, so the cell
+                  shows the real value while the options list loads (or fails)
+                  instead of a lying "—". */}
               {showCategory && (
-                <td className="px-3 py-2 text-muted dark:text-slate-400">{p.category_name ?? "—"}</td>
+                <td className="px-3 py-2 text-muted dark:text-slate-400">
+                  <EditableCell
+                    def={nativeDef("category_id", fp.label("category", "Category"), "text")}
+                    value={p.category_id}
+                    options={catOptions}
+                    fallbackLabel={p.category_name}
+                    onCommit={(v) => setCol(p, "category_id", v)}
+                  />
+                </td>
               )}
               {showLocation && (
-                <td className="px-3 py-2 text-muted dark:text-slate-400">{p.location_name ?? "—"}</td>
+                <td className="px-3 py-2 text-muted dark:text-slate-400">
+                  <EditableCell
+                    def={nativeDef("location_id", fp.label("location", "Location"), "text")}
+                    value={p.location_id}
+                    options={locOptions}
+                    fallbackLabel={p.location_name}
+                    onCommit={(v) => setCol(p, "location_id", v)}
+                  />
+                </td>
               )}
               {customCols.map((c) => (
                 <td key={c.id} className="px-3 py-2 text-muted dark:text-slate-400">
-                  <FieldRenderer
+                  <EditableCell
+                    def={c}
                     value={(p.metadata as Record<string, unknown> | null)?.[c.name]}
-                    renderer={(c.renderer ?? null) as FieldRendererId | null}
-                    type={c.type}
-                    choices={c.choices}
-                    unit={c.unit}
-                    fieldName={c.display_label}
+                    onCommit={(v) => setMeta(p, c.name, v)}
                   />
                 </td>
               ))}
-              {showQty && <td className="px-3 py-2 text-right font-mono">{fmt(p.qty)} {p.unit}</td>}
-              {showQty && <td className="px-3 py-2 text-right font-mono">{fmt(p.available_qty)}</td>}
+              {/* Qty is a ledger, not a cell — the stepper writes an audited
+                  signed delta. See QtyStepper for why it isn't editable text. */}
+              {showQty && (
+                <td className="px-3 py-2 text-right font-mono">
+                  <span className="inline-flex items-center gap-1.5">
+                    <QtyStepper partId={p.id} qty={Number(p.qty)} size="sm" />
+                    <span className="text-faint dark:text-slate-500">{p.unit}</span>
+                  </span>
+                </td>
+              )}
+              {showQty && (
+                <td
+                  className="px-3 py-2 text-right font-mono"
+                  title="Derived from qty minus what's allocated"
+                >
+                  {fmt(p.available_qty)}
+                </td>
+              )}
               {showMin && (
                 <td className="px-3 py-2 text-right font-mono text-faint dark:text-slate-500">
-                  {p.min_qty == null ? "—" : fmt(p.min_qty)}
+                  <EditableCell
+                    def={nativeDef("min_qty", fp.label("min_qty", "Min"), "number")}
+                    value={p.min_qty}
+                    align="right"
+                    onCommit={(v) => setCol(p, "min_qty", v)}
+                  />
                 </td>
               )}
               {anySupplier && (
                 <td className="px-3 py-2">
-                  {p.supplier_url ? (
-                    <a
-                      href={/^https?:\/\//i.test(p.supplier_url) ? p.supplier_url : undefined}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      className="inline-flex items-center gap-1 text-accent hover:underline text-xs"
-                      title="Open supplier page"
-                    >
-                      <ExternalLink size={13} /> visit
-                    </a>
-                  ) : (
-                    <span className="text-faint dark:text-slate-600">—</span>
-                  )}
+                  {/* "visit" opens the page, the pencil edits the address —
+                      one control can't do both jobs. */}
+                  <EditableCell
+                    def={nativeDef("supplier_url", "Supplier", "url")}
+                    value={p.supplier_url}
+                    onCommit={(v) => setCol(p, "supplier_url", v)}
+                  >
+                    {p.supplier_url ? (
+                      <a
+                        href={/^https?:\/\//i.test(p.supplier_url) ? p.supplier_url : undefined}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="inline-flex items-center gap-1 text-accent hover:underline text-xs"
+                        title="Open supplier page"
+                      >
+                        <ExternalLink size={13} /> visit
+                      </a>
+                    ) : (
+                      <span className="text-faint dark:text-slate-600">—</span>
+                    )}
+                  </EditableCell>
                 </td>
               )}
               <td className="px-3 py-2">
@@ -1003,7 +1167,7 @@ function PartsTable({
           <div
             key={p.id}
             onClick={() => navigate(`${basePath}/parts/${p.id}`)}
-            className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 cursor-pointer hover:border-cobble-300 dark:hover:border-cobble-700 transition"
+            className="group/row rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 cursor-pointer hover:border-cobble-300 dark:hover:border-cobble-700 transition"
           >
             <div className="flex items-start gap-3">
               <input
@@ -1022,27 +1186,68 @@ function PartsTable({
                 values={p.metadata as Record<string, unknown> | null}
               />
               <div className="flex-1 min-w-0">
-                <Link
-                  to={`${basePath}/parts/${p.id}`}
-                  className="font-medium text-content dark:text-mortar-100 hover:text-accent"
+                <EditableCell
+                  def={nativeDef("name", "Name", "text", true)}
+                  value={p.name}
+                  onCommit={(v) => setCol(p, "name", v)}
                 >
-                  {p.name}
-                </Link>
+                  <Link
+                    to={`${basePath}/parts/${p.id}`}
+                    className="font-medium text-content dark:text-mortar-100 hover:text-accent truncate"
+                  >
+                    {p.name}
+                  </Link>
+                </EditableCell>
                 {p.manufacturer && !hide("manufacturer") && (
                   <span className="ml-2 text-[11px] text-faint dark:text-slate-500">
                     {p.manufacturer}
                   </span>
                 )}
-                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] font-mono text-muted dark:text-slate-400">
+                {/* Same edits as the desktop table — a phone is where "just
+                    change the number" matters most, so the card isn't a
+                    read-only summary you have to open the record to act on. */}
+                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-mono text-muted dark:text-slate-400">
                   {showQty && (
-                    <span>
-                      qty {fmt(p.qty)} {p.unit}
+                    <span className="inline-flex items-center gap-1">
+                      qty <QtyStepper partId={p.id} qty={Number(p.qty)} size="sm" /> {p.unit}
                     </span>
                   )}
-                  {showQty && <span>avail {fmt(p.available_qty)}</span>}
-                  {showMin && p.min_qty != null && <span>min {fmt(p.min_qty)}</span>}
-                  {showCategory && p.category_name && <span>{p.category_name}</span>}
-                  {showLocation && p.location_name && <span>@ {p.location_name}</span>}
+                  {showQty && <span title="Derived from qty minus what's allocated">avail {fmt(p.available_qty)}</span>}
+                  {showMin && (
+                    <span className="inline-flex items-center gap-1">
+                      min
+                      <span className="w-14">
+                        <EditableCell
+                          def={nativeDef("min_qty", fp.label("min_qty", "Min"), "number")}
+                          value={p.min_qty}
+                          onCommit={(v) => setCol(p, "min_qty", v)}
+                        />
+                      </span>
+                    </span>
+                  )}
+                  {showCategory && (
+                    <span className="min-w-[5rem]">
+                      <EditableCell
+                        def={nativeDef("category_id", fp.label("category", "Category"), "text")}
+                        value={p.category_id}
+                        options={catOptions}
+                        fallbackLabel={p.category_name}
+                        onCommit={(v) => setCol(p, "category_id", v)}
+                      />
+                    </span>
+                  )}
+                  {showLocation && (
+                    <span className="inline-flex items-center gap-1 min-w-[5rem]">
+                      @
+                      <EditableCell
+                        def={nativeDef("location_id", fp.label("location", "Location"), "text")}
+                        value={p.location_id}
+                        options={locOptions}
+                        fallbackLabel={p.location_name}
+                        onCommit={(v) => setCol(p, "location_id", v)}
+                      />
+                    </span>
+                  )}
                 </div>
                 <div className="mt-1 flex flex-wrap gap-1">
                   {p.low_stock && (

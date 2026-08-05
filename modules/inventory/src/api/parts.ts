@@ -7,7 +7,7 @@
 
 import { Router, type Request } from "express";
 import { z } from "zod";
-import { sql } from "kysely";
+import { sql, type RawBuilder } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { instanceOf, instanceQtyUnit, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireCapability, requireRole } from "./util.js";
@@ -95,8 +95,11 @@ const PartCreate = z.object({
   location_id: z.string().uuid().nullable().optional(),
   qty: z.number().nonnegative().optional(),
   unit: z.string().max(40).optional(),
-  cost: z.number().nonnegative().optional(),
-  min_qty: z.number().nonnegative().optional(),
+  // Nullable: clearing a cost / reorder point is a legitimate edit (the columns
+  // are nullable and the write path handles null); without it an inline cell
+  // blanking Min gets a 400 and the value can never be unset from a list.
+  cost: z.number().nonnegative().nullable().optional(),
+  min_qty: z.number().nonnegative().nullable().optional(),
   manufacturer: z.string().max(120).nullable().optional(),
   supplier_url: z.string().url().max(500).nullable().optional(),
   image_path: z.string().max(500).nullable().optional(),
@@ -115,6 +118,47 @@ const PartCreate = z.object({
 });
 
 const PartUpdate = PartCreate.partial();
+
+/** The body of PATCH /:id/metadata — a partial custom-field bag to MERGE.
+ *  Every key is a field name (same convention as the top-level hoisting on
+ *  PATCH /:id), so there are no reserved words to collide with. */
+const MetadataMerge = z.record(z.unknown());
+
+/** DB-side merge of a partial custom-field bag: set the non-null keys, REMOVE
+ *  the null'd ones. The removal matters — jsonb `||` keeps an explicit null
+ *  under the key forever (a tombstone the whole-bag path would never produce,
+ *  and one that shadows same-named computed-field provider namespaces via `in`
+ *  checks); `- key` actually deletes. */
+function metadataMergeExpr(fields: Record<string, unknown>): RawBuilder<Record<string, unknown>> {
+  const sets: Record<string, unknown> = {};
+  const dels: string[] = [];
+  for (const [k, v] of Object.entries(fields)) {
+    if (v === null || v === undefined) dels.push(k);
+    else sets[k] = v;
+  }
+  let expr = sql<Record<string, unknown>>`coalesce(metadata, '{}'::jsonb)`;
+  if (Object.keys(sets).length > 0) {
+    expr = sql<Record<string, unknown>>`${expr} || ${JSON.stringify(sets)}::jsonb`;
+  }
+  for (const k of dels) {
+    expr = sql<Record<string, unknown>>`${expr} - ${k}::text`;
+  }
+  return expr;
+}
+
+/** The same merge applied in memory — for the event's after-image (the DB write
+ *  is a SQL expression, not a value we hold). */
+function applyMetadataMerge(
+  before: Record<string, unknown>,
+  fields: Record<string, unknown>,
+): Record<string, unknown> {
+  const next = { ...before };
+  for (const [k, v] of Object.entries(fields)) {
+    if (v === null || v === undefined) delete next[k];
+    else next[k] = v;
+  }
+  return next;
+}
 
 const StockAdjust = z.object({
   delta: z.number(),
@@ -906,6 +950,100 @@ partsRouter.post(
   }),
 );
 
+// Change SOME custom fields, leaving the rest of the bag alone.
+//
+// An explicit `metadata` on PATCH /:id REPLACES the bag, so a caller changing
+// one field that way must read the row, spread it, and write it back — and that
+// read-spread-write drops anything another writer committed in between. The bag
+// has many writers (wires, the scan pipeline, another tab, another person), and
+// a LIST row can be minutes stale. Same class as scripts/lint-jsonb-merge.ts,
+// which enforces the merge DB-side; it just can't see a CLIENT-side spread.
+// This route is the merge surface: send only the fields to change, null to
+// clear one, and the merge happens in Postgres with no snapshot to go stale.
+//
+// Why a sub-resource and not a `metadata_patch` field on PATCH /:id: unknown
+// top-level keys on that route are hoisted into metadata as CUSTOM FIELD NAMES
+// (routeUnknownToMetadata), so a new top-level parameter is indistinguishable
+// from a user's field of the same name — an API that predates the parameter
+// stores it as data instead of honouring it. A separate ROUTE fails safe in
+// that deploy skew: an api without it 404s, the client shows "couldn't save",
+// and nothing is destroyed.
+//
+// AI-REACH: crud — a partial update of the inventory:part kind's custom fields
+// (a merge variant of the PATCH /:id update); Cobb changes part fields through
+// the part kind's update surface, not this transport-level sub-resource.
+partsRouter.patch(
+  "/:id/metadata",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "inventory:update-part"))) return;
+    const parsed = MetadataMerge.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const id = req.params.id;
+    if (!id) {
+      res.status(400).json({ error: { code: "missing_id", message: "id required" } });
+      return;
+    }
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const session = sessionUser(req);
+
+    const before = await db
+      .selectFrom("inventory_parts")
+      .selectAll()
+      .where("id", "=", id)
+      .where("instance", "=", instanceOf(req))
+      .executeTakeFirst();
+    if (!before) {
+      res.status(404).json({ error: { code: "not_found", message: "part not found" } });
+      return;
+    }
+
+    // Server-managed keys are dropped rather than merged: the client never owns
+    // those, and merging one would be a write the server has to undo.
+    const smNames = await platform().entities.serverManagedFields(ctx.org.id, "inventory:part");
+    const own = Object.fromEntries(
+      Object.entries(parsed.data).filter(([k]) => !smNames.includes(k)),
+    );
+
+    const updated = await db
+      .updateTable("inventory_parts")
+      .set({
+        // Merge in Postgres, so a concurrent writer's key survives. There is no
+        // in-memory snapshot here to go stale.
+        metadata: metadataMergeExpr(own),
+        updated_at: new Date(),
+      })
+      .where("id", "=", id)
+      .where("instance", "=", instanceOf(req))
+      .returning(["id", "name", "qty", "state", "updated_at"])
+      .executeTakeFirst();
+    if (!updated) {
+      res.status(404).json({ error: { code: "not_found", message: "part not found" } });
+      return;
+    }
+
+    await platform().activity.log({
+      orgId: ctx.org.id,
+      userId: session.id,
+      action: "part_updated",
+      ref: { module: "inventory", entityType: "part", entityId: updated.id },
+      diff: { metadata: own },
+    });
+    // Same event shape as PATCH /:id — a wire comparing {{event.before.x}} vs
+    // {{event.after.x}} must fire for a custom-field edit too. The after-bag is
+    // recomputed (the write is a SQL expression, not a value we hold).
+    const beforeMeta = coerceMetadata((before as { metadata?: unknown }).metadata);
+    await platform().events.emit("inventory.part.updated", {
+      orgId: ctx.org.id,
+      partId: updated.id,
+      before: { ...before, ...beforeMeta },
+      after: { ...before, ...applyMetadataMerge(beforeMeta, own) },
+    });
+
+    res.json(updated);
+  }),
+);
+
 partsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -938,12 +1076,33 @@ partsRouter.patch(
     }
 
     const smNames = await platform().entities.serverManagedFields(ctx.org.id, "inventory:part");
+    // Two metadata intents, split by whether the CALLER sent `metadata`:
+    // - explicit `metadata` REPLACES the bag (the documented contract; keys are
+    //   removed by omission), with server-managed values preserved from the row.
+    // - keys that only arrived via the top-level HOIST are single-field writes
+    //   ("set colorway") — those MERGE DB-side, same as PATCH /:id/metadata.
+    //   Replacing here would let one bare field name wipe every other custom
+    //   field on the part, from any API caller.
+    const hadExplicitMetadata =
+      !!req.body &&
+      typeof req.body === "object" &&
+      (req.body as Record<string, unknown>).metadata !== undefined;
+    let hoistedMerge: Record<string, unknown> | null = null;
     if (parsed.data.metadata !== undefined) {
-      parsed.data.metadata = preserveServerManaged(
-        parsed.data.metadata as Record<string, unknown>,
-        coerceMetadata((before as { metadata?: unknown }).metadata),
-        smNames,
-      );
+      if (hadExplicitMetadata) {
+        parsed.data.metadata = preserveServerManaged(
+          parsed.data.metadata as Record<string, unknown>,
+          coerceMetadata((before as { metadata?: unknown }).metadata),
+          smNames,
+        );
+      } else {
+        hoistedMerge = Object.fromEntries(
+          Object.entries(parsed.data.metadata as Record<string, unknown>).filter(
+            ([k]) => !smNames.includes(k),
+          ),
+        );
+        delete (parsed.data as Record<string, unknown>).metadata;
+      }
     }
 
     const patch: Record<string, unknown> = {};
@@ -956,6 +1115,9 @@ partsRouter.patch(
       } else {
         patch[k] = v;
       }
+    }
+    if (hoistedMerge && Object.keys(hoistedMerge).length > 0) {
+      patch.metadata = metadataMergeExpr(hoistedMerge);
     }
     patch.updated_at = new Date();
 
@@ -988,7 +1150,11 @@ partsRouter.patch(
       if (k !== "metadata" && k !== "updated_at") nativeChanges[k] = v;
     }
     const afterMeta =
-      parsed.data.metadata !== undefined ? (patch.metadata as Record<string, unknown>) ?? {} : beforeMeta;
+      parsed.data.metadata !== undefined
+        ? ((patch.metadata as Record<string, unknown>) ?? {})
+        : hoistedMerge
+          ? applyMetadataMerge(beforeMeta, hoistedMerge)
+          : beforeMeta;
     // AWAIT: a transition wire (e.g. core-mobility's recompute-away) runs on
     // this event and writes back to the same part; the client re-reads right
     // after, so the wire must finish before we respond or the read races it.

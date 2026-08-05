@@ -14,6 +14,7 @@ import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { Search } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CobblestoneMark } from "../CobblestoneMark";
+import { DesktopDragStrip } from "./DesktopDragStrip";
 import { NotificationsBell } from "./NotificationsBell";
 import { DriveProvider } from "./DriveContext";
 import { LiveBox } from "./LiveBox";
@@ -75,6 +76,21 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
   // reads — SidePanel's mobile sheet above all. Header height moves with the
   // env chip, banners and the safe-area inset, so measuring beats guessing.
   const trackHideTop = navMode === "side" && navAutoHide;
+
+  // MOBILE: the top bar is the only navigation there — workspace switcher, scan,
+  // Ask Cobb and the menu — and it used to scroll away, so on a long list all
+  // four were unreachable without scrolling back to the top. It is now fixed and
+  // hides on the way DOWN, returning on any upward flick: the standard phone
+  // pattern, and the reason it is not simply pinned is that ~56px of permanent
+  // chrome is a lot of a phone screen on the list views this app is mostly made
+  // of.
+  //
+  // `fixed`, not `sticky`: this header sits in the grid's auto row, whose box is
+  // only as tall as the header itself, so a sticky element would have no room to
+  // stick within and would scroll away regardless.
+  const [barHidden, setBarHidden] = useState(false);
+  const barHiddenRef = useRef(false);
+  const [barH, setBarH] = useState(56);
   useEffect(() => {
     const el = headerRef.current;
     if (!el) return;
@@ -82,6 +98,10 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
     const measure = () => {
       queued = 0;
       const bottom = Math.max(0, el.getBoundingClientRect().bottom);
+      // Height, not bottom: the spacer that holds the fixed bar's place. Set
+      // from here (rAF-coalesced, and only on a real change) rather than on
+      // every scroll frame, which would re-render the whole app tree.
+      setBarH((h) => (Math.abs(h - el.offsetHeight) > 1 ? el.offsetHeight : h));
       // A CSS var costs no render, so it updates for everyone. React state is
       // only for the auto-hide panel — setting it on every scroll frame would
       // re-render the whole app tree.
@@ -89,6 +109,30 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
       if (trackHideTop) setHideTop(bottom);
     };
     const update = () => { if (!queued) queued = requestAnimationFrame(measure); };
+    // Direction, with a dead zone so a jittery finger does not flap the bar.
+    let lastY = window.scrollY;
+    const onScroll = () => {
+      // PHONE ONLY. Above md the bar is simply pinned, and this must not run at
+      // all there: it re-rendered the whole app tree on every scroll direction
+      // change, and a transform on a fixed, backdrop-blurred, composited bar made
+      // it visibly ride the page instead of sitting still. Desktop now carries no
+      // transform and no transition (max-md: on both), so there is nothing left
+      // to animate or to repaint.
+      if (window.innerWidth >= 768) {
+        if (barHiddenRef.current) { barHiddenRef.current = false; setBarHidden(false); }
+        return;
+      }
+      const y = window.scrollY;
+      const dy = y - lastY;
+      if (Math.abs(dy) < 6) return;
+      lastY = y;
+      // Always present at the top of a page, and never hidden when there is not
+      // enough scrolled past it to hide behind.
+      const next = y > barH + 8 && dy > 0;
+      // Only re-render on a real change: this fires on every scroll frame.
+      if (next !== barHiddenRef.current) { barHiddenRef.current = next; setBarHidden(next); }
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
     measure();
     const ro = new ResizeObserver(update);
     ro.observe(el);
@@ -97,6 +141,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
       if (queued) cancelAnimationFrame(queued);
       ro.disconnect();
       window.removeEventListener("scroll", update);
+      window.removeEventListener("scroll", onScroll);
       document.documentElement.style.removeProperty("--app-header-bottom");
     };
   }, [trackHideTop]);
@@ -253,7 +298,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
     </div>
   );
   const sidebarHead = fullSide ? (
-    <div className="shrink-0 border-b border-line dark:border-slate-800 px-3 py-2.5 space-y-2 overflow-hidden">
+    <div className="desktop-titlebar-pad shrink-0 border-b border-line dark:border-slate-800 px-3 py-2.5 space-y-2 overflow-hidden">
       <div className="flex items-center gap-2 min-w-0">
         {/* The brand row is the wordmark + controls ONLY. The env chip lives on
             the workspace row below, so no badge (Staging/Dev/Test, any label
@@ -379,6 +424,11 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
     // viewport, that's a layout bug to fix locally rather than mask
     // here.
     <DriveProvider>
+    {/* Only renders inside the desktop app, where the window has no title bar
+        left to grab. A PINNED sidebar is sticky, so the band over it stays live
+        while scrolled; everywhere else the band must yield once content can
+        pass beneath it. */}
+    <DesktopDragStrip pinned={navMode === "side" && !navAutoHide} topBar={!fullSide} />
     {tour.open && <GuidedTour steps={DASHBOARD_TOUR} onClose={tour.close} />}
     <div className="min-h-screen grid grid-rows-[auto_1fr] grid-cols-1">
       {fontFace && <style dangerouslySetInnerHTML={{ __html: fontFace }} />}
@@ -392,7 +442,9 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           readable) functional header; the Cobblr mark stays. */}
       <header
         ref={headerRef}
-        className={`${fullSide ? "md:hidden " : ""}relative z-30 border-b backdrop-blur overflow-x-clip ${envBadge ? envBadge.header : DEFAULT_HEADER}`}
+        className={`${fullSide ? "md:hidden md:static " : ""}fixed inset-x-0 top-0 z-30 border-b backdrop-blur overflow-x-clip max-md:transition-transform max-md:duration-200 motion-reduce:transition-none ${
+          barHidden ? "max-md:-translate-y-full" : ""
+        } ${envBadge ? envBadge.header : DEFAULT_HEADER}`}
         // paddingTop: the iOS status-bar safe area. In standalone (home-screen)
         // mode the webview is full-bleed, and without this the workspace name
         // renders UNDER the status-bar clock. env() is 0 in a normal browser
@@ -404,7 +456,19 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
       >
         {/* Header chrome spans the FULL window (no max-width cap) so the module
             nav gets the whole row; page content below stays centred at max-w-6xl. */}
-        <div className="px-5 py-3 flex items-center gap-2 sm:gap-3 min-w-0">
+        {/* py-2 on a phone, py-3 from md up.
+            On a phone this row IS the whole navigation bar, and every point it
+            spends comes out of the list underneath it. 8px around a ~28px row
+            lands on ~44px — the height iOS uses for a toolbar — and still leaves
+            the wordmark clear of the status bar.
+
+            It reads the same in all three shells, which is the point. In the PWA
+            and in a notched browser the webview is edge-to-edge, so
+            `env(safe-area-inset-top)` on the header supplies the inset; in the
+            native app iOS insets the WEBVIEW and env() is 0. Different routes,
+            same final position, so this padding is the only knob and turning it
+            moves all three together. */}
+        <div className="desktop-topnav-pad px-5 py-2 md:py-3 flex items-center gap-2 sm:gap-3 min-w-0">
           {/* Nav-placement flip (desktop): top bar ⇄ left sidebar. Sits LEFT
               of the wordmark, à la Vivaldi's panel toggle. Icon shows the
               layout you'd switch TO. */}
@@ -522,6 +586,14 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           </div>
         </div>
       </header>
+      {/* Holds the fixed bar's place on mobile, so the banners and the page do
+          not start underneath it. Its height is MEASURED rather than assumed —
+          the bar grows with the env chip, a skin's accent edge and the status-bar
+          inset. Desktop needs none: the header is `md:static` and still in flow.
+          It keeps its height while the bar is hidden, on purpose — reserving the
+          space means an upward flick reveals the bar over the page instead of
+          shoving the content down under your thumb. */}
+      <div className={fullSide ? "md:hidden" : ""} aria-hidden style={{ height: barH }} />
       {/* THE chat panel — one mount for however many launchers the chrome has.
           It portals to <body>, so where it sits here is bookkeeping, but that it
           appears exactly once is not: a second mount is a second conversation

@@ -8,11 +8,12 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Camera, Check, CheckCircle, MapPin, Plus, ScanLine, Trash2 } from "lucide-react";
+import { Camera, Check, CheckCircle, Loader2, MapPin, Plus, ScanLine, Trash2 } from "lucide-react";
 import { useImageSrc, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type ScanInboxItem, type TrackedMatch } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useScanQuantity } from "../lib/scanQuantity";
+import { leadPhoto } from "../lib/scanPhoto";
 import { CaptureSheetShell, QtyStepper } from "./ScanCaptureDrawer";
 import { TrackedMatchBanner } from "../components/TrackedMatchBanner";
 import { AiOffMissHint, useAiStatus } from "./ScanPage";
@@ -281,11 +282,14 @@ export function ScanResultModal({
       : null,
     item?.catalog_image_url ?? null,
   ];
-  const catalogImg =
-    (photoCheckPending || photoMismatch
-      ? [ownPhotoUrl, frameUrl, ...catalogRungs]
-      : [...catalogRungs, ownPhotoUrl, frameUrl]
-    ).find((u): u is string => !!u && !brokenSrcs.has(u)) ?? null;
+  // ONE answer to "which photo leads", shared with the strip below (and every
+  // other surface) — see lib/scanPhoto.ts. The strip used to decide separately
+  // and announced the catalog art as the display photo while this image was
+  // deliberately showing the user's own.
+  const lead = leadPhoto(item, { catalog: catalogRungs, yours: ownPhotoUrl, frame: frameUrl }, (s) =>
+    brokenSrcs.has(s),
+  );
+  const catalogImg = lead.src;
   const areaLabel = item?.scan_area ?? scanArea ?? null;
   const busy = commit.isPending || discard.isPending || intoBin.isPending;
 
@@ -371,17 +375,32 @@ export function ScanResultModal({
             {item.catalog_image_file_id && (
               <StripTile
                 src={`/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.catalog_image_file_id}/raw?variant=thumb`}
-                active
-                label="Display photo"
+                active={lead.role === "catalog"}
+                checking={lead.pending}
+                label={
+                  lead.pending
+                    ? "Catalog photo - being checked against your photo"
+                    : "Display photo"
+                }
               />
             )}
             {!item.catalog_image_file_id && item.catalog_image_url && (
-              <StripTile src={item.catalog_image_url} active label="Catalog photo" />
+              <StripTile
+                src={item.catalog_image_url}
+                active={lead.role === "catalog"}
+                checking={lead.pending}
+                label={lead.pending ? "Catalog photo - being checked against your photo" : "Catalog photo"}
+              />
             )}
             {item.image_file_id && (
               <StripTile
                 src={`/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.image_file_id}/raw?variant=thumb`}
-                label="Your scan photo - tap to make it the display photo"
+                active={lead.role === "yours"}
+                label={
+                  lead.role === "yours"
+                    ? "Your scan photo - showing now"
+                    : "Your scan photo - tap to make it the display photo"
+                }
                 onTap={() => makeDisplay.mutate(item.image_file_id!)}
                 busy={makeDisplay.isPending}
               />
@@ -534,12 +553,17 @@ export function ScanResultModal({
 function StripTile({
   src,
   active,
+  checking,
   label,
   onTap,
   busy,
 }: {
   src: string;
+  /** This tile is the one the big image is showing. */
   active?: boolean;
+  /** Catalog art still being cross-checked — a THIRD state, because "not
+   *  active" and "not yet trusted" are different things to say. */
+  checking?: boolean;
   label: string;
   onTap?: () => void;
   busy?: boolean;
@@ -553,12 +577,27 @@ function StripTile({
       aria-label={label}
       title={label}
       className={
-        "w-11 h-11 shrink-0 rounded-lg overflow-hidden border bg-subtle dark:bg-slate-800 grid place-items-center " +
-        (active ? "border-cobble-400 ring-1 ring-cobble-400" : "border-line dark:border-slate-600") +
+        "relative w-11 h-11 shrink-0 rounded-lg overflow-hidden border bg-subtle dark:bg-slate-800 grid place-items-center " +
+        (active
+          ? "border-cobble-400 ring-1 ring-cobble-400"
+          : checking
+            ? "border-amber-400/70 ring-1 ring-amber-400/70"
+            : "border-line dark:border-slate-600") +
         (onTap ? " cursor-pointer" : "")
       }
     >
       {resolved ? <img src={resolved} alt="" className="w-full h-full object-cover" /> : <Camera size={14} className="text-faint" />}
+      {checking && !active && (
+        // Inset, never protruding: the tile clips its overflow.
+        <span className="absolute inset-x-0 bottom-0 bg-black/65 text-[8px] leading-[11px] text-amber-200 text-center">
+          checking
+        </span>
+      )}
+      {busy && (
+        <span className="absolute inset-0 grid place-items-center bg-black/40">
+          <Loader2 size={13} className="animate-spin text-white" />
+        </span>
+      )}
     </button>
   );
 }

@@ -1,0 +1,14 @@
+{
+  "name": "Cobblr (canary)",
+  "short_name": "Cobblr · canary",
+  "description": "Cobble together the app you need. (canary)",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#FEF9C3",
+  "theme_color": "#FACC15",
+  "icons": [
+    { "src": "/icon-192-canary.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512-canary.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

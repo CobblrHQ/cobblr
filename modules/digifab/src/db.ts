@@ -143,7 +143,7 @@ export interface DigifabDeviceAttentionTable {
   connection_id: string;
   remote_device_id: string;
   job_id: string | null;
-  reason: string; // print-completed | print-failed
+  reason: string; // print-completed | print-failed | print-cancelled
   note: string | null;
   created_at: Generated<Date>;
 }

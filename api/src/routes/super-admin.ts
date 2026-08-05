@@ -2044,6 +2044,14 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
         body: fixed ? `**Reported:** ${reported}\n\n**Fixed:** ${fixed.slice(0, 2400)}` : reported,
         color: 0x2e7d32,
         fields: cardFields,
+        // Under the report it belongs to, not a fresh top-level card. The
+        // channel already carries the report and (once triaged) its thread, so a
+        // third message restating the same item is pure stream noise (the author,
+        // 2026-08-05: "could we fix the Feedback resolved to now be nested in
+        // that same thread... less stream noise better"). A thread started from
+        // a message shares that message's id, so the stored announce_message_id
+        // IS the thread id.
+        threadId: row.announce_message_id,
       });
     }
 
@@ -2098,7 +2106,7 @@ superAdminRouter.post("/feedback/batch-resolve", async (req, res, next) => {
 
     const rows = await meta
       .selectFrom("feedback")
-      .select(["id", "status", "user_id", "org_id", "message", "context", "origin", "origin_ref"])
+      .select(["id", "status", "user_id", "org_id", "message", "context", "origin", "origin_ref", "announce_message_id", "announce_channel_id"])
       .where("id", "in", order)
       .execute();
     const found = new Set(rows.map((r) => r.id));
@@ -2141,6 +2149,16 @@ superAdminRouter.post("/feedback/batch-resolve", async (req, res, next) => {
         }
       }
       if (freshlyResolved) {
+        // ✅ on the report itself. The single-item PATCH has always poked the
+        // stage; this path never did, so a BATCH close left every one of its
+        // items without the emoji — the exact status trail the author reads the
+        // channel for, missing precisely when several things shipped at once.
+        pokeDiscordFeedbackStage({
+          feedback_id: row.id,
+          stage: "shipped",
+          message_id: row.announce_message_id,
+          channel_id: row.announce_channel_id,
+        });
         const ctx = (row.context ?? {}) as { route?: string };
         const fixed = (summaryById.get(row.id) || reply_message || "").trim();
         const reported = (row.message ?? "").slice(0, 1200);
@@ -2150,6 +2168,10 @@ superAdminRouter.post("/feedback/batch-resolve", async (req, res, next) => {
           body: fixed ? `**Reported:** ${reported}\n\n**Fixed:** ${fixed.slice(0, 2400)}` : reported,
           color: 0x2e7d32,
           fields: cardFields,
+          // Same rule as the single resolve: under its own report. A batch is
+          // where top-level cards hurt most - closing five items used to bury
+          // the channel in five restatements.
+          threadId: row.announce_message_id,
         });
       }
     }

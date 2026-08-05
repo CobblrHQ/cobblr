@@ -20,6 +20,7 @@
 // replaces it automatically — no separate retry bookkeeping.
 
 import { platform } from "@cobblr/platform-contract";
+import { markJobTerminal } from "./jobs-core.js";
 import type { Kysely } from "kysely";
 import type { DigifabDB } from "./db.js";
 
@@ -194,12 +195,17 @@ export async function recordRunVerdict(
     if (done) {
       // Cancel plates that never left the queue — in-flight ones finish normally
       // (their good verdicts may overshoot completed_qty past target; honest ledger).
-      await trx
-        .updateTable("digifab_jobs")
-        .set({ status: "cancelled", error: "production run reached its target", updated_at: new Date() })
+      // Inside the outer transaction — markJobTerminal takes it directly rather
+      // than opening a nested one behind its locks.
+      const sweep = await trx
+        .selectFrom("digifab_jobs")
+        .select(["id", "status", "connection_id", "target_device"])
         .where("run_id", "=", run.id)
         .where("status", "=", "queued")
         .execute();
+      for (const j of sweep) {
+        await markJobTerminal(trx, j, "cancelled", { error: "production run reached its target" });
+      }
     }
     return { run, newCompleted, done };
   });

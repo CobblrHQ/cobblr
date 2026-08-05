@@ -45,16 +45,26 @@ interface Props {
   size?: "inline" | "block";
 }
 
+/** Whether a boolean field's stored value reads as TRUE. Beyond real booleans
+ *  and "true"-ish strings, the field's own trueLabel (choices[1]) counts: a
+ *  choice dropdown once wrote label strings into boolean keys, and reading
+ *  those as false would show the OPPOSITE label. Recognizing the label heals
+ *  that data at read time; the next toggle stores a real boolean. */
+export function boolTruthy(value: unknown, choices?: string[] | null): boolean {
+  if (value === true || value === 1) return true;
+  if (typeof value !== "string") return false;
+  if (/^(true|yes|y|1)$/i.test(value)) return true;
+  const trueLabel = choices?.[1]?.trim();
+  return !!trueLabel && value.trim() === trueLabel;
+}
+
 /** A boolean field's display labels, from its `choices` ([falseLabel,
  *  trueLabel]); falls back to no/yes. Exported so non-renderer surfaces (a
  *  template, an export) can express a boolean the same way. */
 export function boolLabel(value: unknown, choices?: string[] | null): string {
-  const truthy =
-    value === true || value === 1 ||
-    (typeof value === "string" && /^(true|yes|y|1)$/i.test(value));
   const t = choices?.[1]?.trim() || "Yes";
   const f = choices?.[0]?.trim() || "No";
-  return truthy ? t : f;
+  return boolTruthy(value, choices) ? t : f;
 }
 
 export function FieldRenderer({

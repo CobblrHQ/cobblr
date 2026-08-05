@@ -6,19 +6,25 @@
 // mounted at /api/v1/orgs/:slug/modules/inventory/... — the platform
 // pre-applies auth + tenant resolution on every request.
 
+import type { FieldRendererId, FieldType } from "@cobblr/platform-web";
+
 export type AllocationStatus = "reserved" | "consumed" | "released";
 
 /** Subset of a platform field-def the parts table needs to render custom
- *  columns (label + value renderer). Mirrors @cobblr/platform-web's
- *  PlatformFieldDef without taking a cross-package dep. */
+ *  columns (label + value renderer). A structural subset of @cobblr/platform-web's
+ *  PlatformFieldDef, and `type`/`renderer` borrow ITS unions rather than
+ *  restating them as `string`: the shared field components switch exhaustively
+ *  over those unions (see fieldControl), so a def typed loosely here could carry
+ *  a type they don't handle and throw at render. Narrow types make that a
+ *  compile error instead. */
 export interface InvFieldDef {
   id: string;
   name: string;
   display_label: string;
-  type: string;
+  type: FieldType;
   position: number;
   choices?: string[] | null;
-  renderer?: string | null;
+  renderer?: FieldRendererId | null;
   /** Plain-language one-line hint shown under the input. */
   help?: string | null;
   /** Declared unit for type='number' values ("mm", "g") — rendered as a
@@ -485,6 +491,12 @@ export class InventoryApi {
     this.partsRequest<Part>("POST", "", b);
   updatePart = (id: string, b: Record<string, unknown>) =>
     this.partsRequest<Part>("PATCH", `/${id}`, b);
+  /** Change SOME custom fields, leaving the rest of the bag alone. Prefer this
+   *  over `updatePart({ metadata })` for a single-field edit: that one replaces
+   *  the whole bag, so it needs a local copy of every other field, and any copy
+   *  taken from a list row is stale enough to revert a concurrent writer. */
+  patchPartMetadata = (id: string, fields: Record<string, unknown>) =>
+    this.partsRequest<Part>("PATCH", `/${id}/metadata`, fields);
   deletePart = (id: string) => this.partsRequest<void>("DELETE", `/${id}`);
   /** The units (serials) filed under this model. Each is a part in its own
    *  right — it links to its own detail. */

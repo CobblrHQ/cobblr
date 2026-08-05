@@ -2,7 +2,7 @@
   "name": "cobblr",
   "version": "0.0.1",
   "private": true,
-  "description": "Cobblr — modular workflow platform for niche workflows.",
+  "description": "Cobblr \u2014 modular workflow platform for niche workflows.",
   "workspaces": [
     "api",
     "web",
@@ -64,6 +64,8 @@
     "lint:detector-registry": "pnpm --filter @cobblr/digifab gen:check",
     "lint:deprecated-fks": "tsx scripts/lint-deprecated-table-fks.ts",
     "lint:self-heal": "tsx scripts/lint-self-heal.ts",
+    "lint:migration-additive": "tsx scripts/lint-migration-additive.ts",
+    "lint:env-icons": "node scripts/build-env-icons.mjs --check",
     "lint:hook-timeouts": "tsx scripts/lint-hook-timeouts.ts",
     "lint:no-emdash": "tsx scripts/lint-no-emdash.ts",
     "lint:scan-row-title": "tsx scripts/lint-scan-row-title.ts",
@@ -96,6 +98,10 @@
     "lint:unit-conversion": "tsx scripts/lint-unit-conversion.ts",
     "lint:component-kinds": "tsx scripts/lint-generic-component-kinds.ts",
     "lint:consume-params": "tsx scripts/lint-consume-once-params.ts",
+    "lint:scan-photo-lead": "tsx scripts/lint-scan-photo-lead.ts",
+    "lint:scanner-never-files": "tsx scripts/lint-scanner-never-files.ts",
+    "lint:import-no-silent-write": "tsx scripts/lint-import-no-silent-write.ts",
+    "lint:digifab-terminal-jobs": "tsx scripts/lint-digifab-terminal-jobs.ts",
     "lint:ui-jargon": "tsx scripts/lint-ui-jargon.ts",
     "lint:empty-state-actions": "tsx scripts/lint-empty-state-actions.ts",
     "lint:browser-driver-pairs": "tsx scripts/lint-browser-driver-pairs.ts",
@@ -120,7 +126,9 @@
     "lint:generated-artifact-paths": "tsx scripts/lint-generated-artifact-paths.ts",
     "lint:cobb-art": "node scripts/build-cobb-art.mjs --check",
     "lint:dead-exports": "tsx scripts/lint-dead-exports.ts",
-    "lint:auth-rate-limits": "tsx scripts/lint-auth-rate-limits.ts"
+    "lint:auth-rate-limits": "tsx scripts/lint-auth-rate-limits.ts",
+    "e2e:scan-header": "node e2e/scan-header-margin.mjs",
+    "e2e:live-sort": "node e2e/live-sort-mobile.mjs"
   },
   "devDependencies": {
     "playwright": "^1.60.0",

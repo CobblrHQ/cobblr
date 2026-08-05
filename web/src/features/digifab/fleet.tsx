@@ -1329,12 +1329,14 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
   // available is NOT a needs reason — it never enters deviceBucket.)
   const needsReason =
     att?.reason === "print-failed" ? "print failed — check the bed"
+    : att?.reason === "print-cancelled" ? "print cancelled — clear the bed"
     : att ? "print done — clear the bed"
     : d.klass === "complete" ? "print finished — clear the bed"
     : d.klass === "error" ? "error — see the manager"
     : null;
   const needsShort =
     att?.reason === "print-failed" ? "failed"
+    : att?.reason === "print-cancelled" ? "cancelled"
     : (att || d.klass === "complete") ? "clear bed"
     : d.klass === "error" ? "error"
     : null;
@@ -1555,9 +1557,16 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
         // new work until a human confirms the bed is clear.
         <div className="mt-1.5 rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-1.5 py-1">
           <div className="text-[10px] text-amber-700 dark:text-amber-400 leading-tight">
-            {att.reason === "print-failed" ? "Print failed — check the bed" : "Print done — clear the bed. Come out good?"}
+            {att.reason === "print-failed"
+              ? "Print failed — check the bed"
+              : att.reason === "print-cancelled"
+                ? "Print cancelled — clear the bed"
+                : "Print done — clear the bed. Come out good?"}
           </div>
-          {att.reason === "print-failed" ? (
+          {/* No verdict for a failed or CANCELLED print: there is no finished
+              part to judge, and "came out good" would credit the production run
+              for a plate that was abandoned mid-layer. */}
+          {att.reason === "print-failed" || att.reason === "print-cancelled" ? (
             <button
               onClick={() => ready.mutate("good")}
               disabled={ready.isPending}

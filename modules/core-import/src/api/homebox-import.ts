@@ -41,6 +41,8 @@ async function api<T = unknown>(method: string, path: string, token: string, bod
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  // import-swallow-ok: a non-JSON body is a legitimate outcome (the STATUS is
+  // what callers branch on); this parses, it does not write.
   const json = (await res.json().catch(() => null)) as T;
   return { status: res.status, json };
 }
@@ -172,6 +174,7 @@ homeboxRouter.post("/homebox", (req, res, next) => {
 
     // 2. Items → inventory parts.
     const errors: { row: number; message: string }[] = [];
+    let tagsFailed = 0;
     const results = await mapLimit(p.items, PART_CONCURRENCY, async (it: HomeboxItem) => {
       const locationId = it.location_path ? loc.map.get(locationPathKey(it.location_path)) ?? null : null;
       const meta = homeboxMetadata(it);
@@ -198,13 +201,39 @@ homeboxRouter.post("/homebox", (req, res, next) => {
         return null;
       }
       // 3. Labels → tags (attach-by-name; core-tags creates the tag).
+      //
+      // A failed attach used to be SWALLOWED (`.catch(() => undefined)`), so an
+      // import could report items_imported: 2, items_failed: 0 while the tags
+      // were simply gone — the drill came back tagged ['power'] instead of
+      // ['tools','power'] and nothing said a word. Items are imported
+      // concurrently, so two rows racing to create the same tag is normal and
+      // the loser gets a non-2xx: retried once here, and whatever still fails
+      // is COUNTED and reported rather than discarded. An importer that hides a
+      // write failure is lying about the number it prints.
       for (const label of it.labels) {
-        await api("POST", `/api/v1/orgs/${slug}/modules/core-tags/attachments`, token, {
-          tag_name: label,
-          source_module: "inventory",
-          source_type: "part",
-          source_id: r.json.id,
-        }).catch(() => undefined);
+        const attach = () =>
+          api("POST", `/api/v1/orgs/${slug}/modules/core-tags/attachments`, token, {
+            tag_name: label,
+            source_module: "inventory",
+            source_type: "part",
+            source_id: r.json!.id,
+          });
+        let ok = await attach().then(
+          (a) => a.status < 300,
+          () => false,
+        );
+        if (!ok) {
+          // The create race: the winner has committed the tag by now, so the
+          // same call succeeds on the second try.
+          ok = await attach().then(
+            (a) => a.status < 300,
+            () => false,
+          );
+        }
+        if (!ok) {
+          tagsFailed += 1;
+          errors.push({ row: it.row, message: `tag "${label}" could not be attached` });
+        }
       }
       return r.json.id;
     });
@@ -215,6 +244,7 @@ homeboxRouter.post("/homebox", (req, res, next) => {
       items_failed: p.items.length - createdIds.length,
       locations_created: loc.created,
       labels_seen: p.labels.length,
+      tags_failed: tagsFailed,
       created_ids: createdIds,
       errors: [...p.warnings, ...errors].slice(0, 100),
     });

@@ -72,6 +72,7 @@ import { classifyOmni, omniPlaceholder } from "./omniIntake";
 import { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 export { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 import { decideLocationScan, filingLabel } from "../lib/scanFiling";
+import { leadPhoto, photoOrder, photoUnverified } from "../lib/scanPhoto";
 import { findCombineClusters } from "../lib/scanCombine";
 import { entryKey, withRoutedInstances, pickDestinationKey } from "../lib/scanDestination";
 import {
@@ -2047,7 +2048,15 @@ export function ScanPage() {
 
         {/* The backlog as ONE sentence. Facets of the same items, each a
             filter, never a verb (principle #3 - there is no bulk confirm). */}
-        <div className="flex items-baseline gap-0 shrink-0 whitespace-nowrap text-[13px] text-muted dark:text-slate-400">
+        {/* The counts YIELD too. They were `shrink-0`, so with a real backlog
+            (81 pending · 46 ready · 4 review · 49 waiting) four two-digit facets
+            came to 145px and pushed the row 14-32px past every phone width -
+            the location chip was the only shrinkable member and its 96px floor
+            could not absorb it (the author, 2026-08-05, reporting it a second time).
+            `min-w-0` + overflow-x makes an overflow structurally impossible at
+            ANY count; dropping the separators on a phone (the glyphs already
+            say which facet is which) means it never actually has to scroll. */}
+        <div className="flex items-baseline gap-0 shrink min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden whitespace-nowrap text-[13px] text-muted dark:text-slate-400">
           <span className="text-sm font-semibold text-content dark:text-mortar-100">
             {totalPending}
           </span>
@@ -2056,10 +2065,14 @@ export function ScanPage() {
               wearing a dead class. The word costs ~50px that a phone row spends
               better on the location; an EMPTY inbox keeps it, because a lone
               "0" is a riddle. */}
-          <span className={totalPending === 0 ? "" : "hidden sm:inline"}>&nbsp;pending</span>
+          {/* The word is a DESKTOP luxury: on a tablet it cost ~55px and the
+              counts were compressed to pay for it. The number leading a row of
+              facets is unambiguous without it. An EMPTY inbox keeps it, since a
+              lone "0" is a riddle. */}
+          <span className={totalPending === 0 ? "" : "hidden lg:inline"}>&nbsp;pending</span>
           {confidentCount > 0 && confidentCount < totalPending && (
             <>
-              <span className="px-0.5 sm:px-1 text-faint">·</span>
+              <span className="hidden sm:inline px-1 text-faint">·</span>
               <button
                 type="button"
                 onClick={() => {
@@ -2067,7 +2080,7 @@ export function ScanPage() {
                   setStaleOnly(false);
                 }}
                 title="A confident name and destination, nothing flagged - these are what File all commits"
-                className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate-800 transition"
+className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate-800 transition"
               >
                 <b className="font-semibold text-emerald-600 dark:text-emerald-400">
                   {confidentCount}
@@ -2079,7 +2092,7 @@ export function ScanPage() {
           )}
           {reviewCount > 0 && (
             <>
-              <span className="px-0.5 sm:px-1 text-faint">·</span>
+              <span className="hidden sm:inline px-1 text-faint">·</span>
               <button
                 type="button"
                 onClick={() => {
@@ -2089,7 +2102,7 @@ export function ScanPage() {
                 aria-pressed={reviewOnly}
                 title="No clean name, low confidence, or the lookup was rate-limited - these need a human"
                 className={
-                  "rounded px-1 py-0.5 text-[12.5px] transition " +
+                  "ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] transition " +
                   (reviewOnly
                     ? "bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200"
                     : "hover:bg-subtle dark:hover:bg-slate-800")
@@ -2103,9 +2116,14 @@ export function ScanPage() {
           )}
           {/* A facet covering the WHOLE set states one fact twice ("69 pending ·
               69 waiting 2d+"), so it earns its space only as a subset. */}
+          {/* Desktop only. Of the four, this is the one that is NOT a disjoint
+              slice - a waiting item is also ready or needing review - so it is
+              the first to give up its spot when the row is tight. It stays
+              reachable in the ... menu on a phone. */}
           {staleCount > 0 && staleCount < totalPending && (
+            <span className="hidden sm:contents">
             <>
-              <span className="px-0.5 sm:px-1 text-faint">·</span>
+              <span className="hidden sm:inline px-1 text-faint">·</span>
               <button
                 type="button"
                 onClick={() => {
@@ -2115,17 +2133,19 @@ export function ScanPage() {
                 aria-pressed={staleOnly}
                 title="Waiting more than two days"
                 className={
-                  "rounded px-1 py-0.5 text-[12.5px] transition " +
+                  "ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] transition " +
                   (staleOnly
                     ? "bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200"
                     : "hover:bg-subtle dark:hover:bg-slate-800")
                 }
               >
-                <b className="font-semibold">{staleCount}</b>
-                <span className="hidden lg:inline">&nbsp;waiting 2d+</span>
-                <span className="lg:hidden">&nbsp;⏱</span>
+                {/* Glyph at EVERY width: "waiting 2d+" is the longest label on
+                    the row and belongs to the facet that earns it least. The
+                    words live in the tooltip. */}
+                <b className="font-semibold">{staleCount}</b>&nbsp;⏱
               </button>
             </>
+            </span>
           )}
         </div>
 
@@ -2160,6 +2180,11 @@ export function ScanPage() {
             // row is allowed to overflow, and never below a legible floor.
             shrinkable
             minWidth={104}
+            // A FLOOR without a CEILING is half a yield rule: the chip could
+            // shrink, but a long location name ("Guest Bedroom Closet Shelf 3")
+            // grew it to 177px and squeezed the counts instead. It truncates
+            // rather than expands; the full name is in its tooltip and its menu.
+            className="max-w-[7rem] sm:max-w-[10rem]"
             trigger={({ open, toggle }) => (
               <button
                 type="button"
@@ -2520,6 +2545,21 @@ export function ScanPage() {
               )}
               <MenuSep />
               <MenuHead>Elsewhere</MenuHead>
+              {staleCount > 0 && staleCount < totalPending && (
+                <span className="sm:hidden">
+                  <MenuItem
+                    icon={<span className="text-[13px]">⏱</span>}
+                    label={`${staleCount} waiting 2d+`}
+                    hint="Scanned more than two days ago"
+                    state={staleOnly ? "on" : undefined}
+                    onClick={() => {
+                      setReviewOnly(false);
+                      setStaleOnly((v) => !v);
+                      close();
+                    }}
+                  />
+                </span>
+              )}
               <MenuItem
                 icon={<Wand2 size={14} />}
                 label="Things with no location"
@@ -4182,10 +4222,13 @@ function InboxCard({
   // lookup-site screenshot) whose race-fetched image reads as "the scan failed";
   // your own photo is never wrong. Once the check confirms, the catalog image
   // (a clean product shot) leads again.
-  const photoUnverified = !!(
-    item.suggested_metadata as { photo_check_pending?: boolean; photo_mismatch?: unknown } | null
-  )?.photo_check_pending || !!(item.suggested_metadata as { photo_mismatch?: unknown } | null)?.photo_mismatch;
-  const thumb = photoUnverified ? (yoursImg ?? catalogImg) : (catalogImg ?? yoursImg);
+  // The shared rule (lib/scanPhoto.ts) decides; this surface only maps roles to
+  // the images it already resolved. Seven surfaces used to answer separately.
+  const unverified = photoUnverified(item);
+  const thumbRole = photoOrder(item).find((r) =>
+    r === "catalog" ? !!catalogImg : r === "yours" ? !!yoursImg : false,
+  );
+  const thumb = thumbRole === "yours" ? yoursImg : thumbRole === "catalog" ? catalogImg : null;
 
   // Image viewer: click to zoom (the shared ImageLightbox — same viewer as the
   // web-photo "view full size"), revert the catalog image to the original
@@ -4952,7 +4995,10 @@ function InboxCard({
           )}
           <div className="grid lg:grid-cols-2 gap-3 items-start">
           <div className="space-y-2 min-w-0">
-          {/* Catalog vs YOUR photo, side by side (whichever exist). */}
+          {/* Catalog vs YOUR photo, side by side (whichever exist). The catalog
+              caption says when it is still being checked — it used to read a
+              confident "✦ catalog" during the exact window the thumbnail above
+              deliberately refuses to show it. */}
           {(catalogImg || yoursImg) && (
             <div className="flex gap-2">
               {catalogImg && (
@@ -4965,8 +5011,13 @@ function InboxCard({
                   >
                     <img src={catalogImg} alt="catalog" className="w-full h-full object-contain" onError={() => markBroken(catalogUrl)} />
                   </button>
-                  <figcaption className="text-[10px] font-mono uppercase tracking-widest text-accent mt-1">
-                    ✦ catalog
+                  <figcaption
+                    className={
+                      "text-[10px] font-mono uppercase tracking-widest mt-1 " +
+                      (unverified ? "text-amber-600 dark:text-amber-400" : "text-accent")
+                    }
+                  >
+                    {unverified ? "✦ catalog - checking" : "✦ catalog"}
                   </figcaption>
                 </figure>
               )}
@@ -5446,13 +5497,17 @@ function GalleryTile({
   slug: string;
   onOpen: () => void;
 }) {
-  const raw =
-    item.catalog_image_file_id
-      ? `/api/v1/orgs/${slug}/modules/core-files/files/${item.catalog_image_file_id}/raw?variant=med`
-      : (item.catalog_image_url ??
-        (item.image_file_id
-          ? `/api/v1/orgs/${slug}/modules/core-files/files/${item.image_file_id}/raw?variant=med`
-          : null));
+  const raw = leadPhoto(item, {
+    catalog: [
+      item.catalog_image_file_id
+        ? `/api/v1/orgs/${slug}/modules/core-files/files/${item.catalog_image_file_id}/raw?variant=med`
+        : null,
+      item.catalog_image_url ?? null,
+    ],
+    yours: item.image_file_id
+      ? `/api/v1/orgs/${slug}/modules/core-files/files/${item.image_file_id}/raw?variant=med`
+      : null,
+  }).src;
   const src = useImageSrc(raw);
   const meta = (item.suggested_metadata ?? {}) as { low_trust?: boolean; rate_limited?: boolean };
   const flagged = !item.suggested_name || meta.low_trust || meta.rate_limited;

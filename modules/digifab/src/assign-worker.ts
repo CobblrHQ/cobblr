@@ -11,7 +11,7 @@
 import { platform } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { DigifabDB } from "./db.js";
-import { buildDriverById, occupiesDevice, sendJob } from "./jobs-core.js";
+import { buildDriverById, occupiesDevice, sendJob, markJobTerminal } from "./jobs-core.js";
 import { mintRunJobs, runStatuses } from "./runs-core.js";
 import { enqueuePoll } from "./poll-worker.js";
 import { classify } from "./state.js";
@@ -94,8 +94,19 @@ export async function assignPoolJobs(db: Kysely<DigifabDB>, orgId: string): Prom
   const owned = await ownedDeviceRefs(db);
 
   // F-3: surface an assignment send-failure instead of swallowing it.
-  const failJob = (id: string, msg: string) =>
-    db.updateTable("digifab_jobs").set({ status: "failed", error: msg.slice(0, 300), updated_at: new Date() }).where("id", "=", id).execute();
+  // A send that failed may still have left the job mid-`assigning`/`sent` on a
+  // real machine (an upload that half-landed), so it goes through the same gate
+  // rather than writing a bare status. needsBedClear decides from the job's
+  // PRIOR status, so a job that never left the queue costs nothing.
+  const failJob = async (id: string, msg: string) => {
+    const prev = await db
+      .selectFrom("digifab_jobs")
+      .select(["id", "status", "connection_id", "target_device"])
+      .where("id", "=", id)
+      .executeTakeFirst();
+    if (!prev) return;
+    await markJobTerminal(db, prev, "failed", { error: msg.slice(0, 300) });
+  };
 
   // Cache listDevices per connection for the pass (null = unreachable).
   const deviceCache = new Map<string, RemoteDevice[] | null>();

@@ -15,7 +15,7 @@ import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { resolveDriver, availableDriverKeys } from "../drivers/registry.js";
-import { buildEdgeRelay, reverseBuildIfCommitted } from "../jobs-core.js";
+import { buildEdgeRelay, reverseBuildIfCommitted, markJobTerminal } from "../jobs-core.js";
 import { assertSafeMachineUrl } from "../drivers/ssrf.js";
 import type { Kysely } from "kysely";
 import type { DigifabDB } from "../db.js";
@@ -190,16 +190,15 @@ connectionsRouter.delete(
     // pass build-and-fail a driver forever.
     const live = await db
       .selectFrom("digifab_jobs")
-      .select(["id", "status"])
+      .select(["id", "status", "connection_id", "target_device"])
       .where("connection_id", "=", id)
       .where("status", "not in", ["completed", "failed", "cancelled"])
       .execute();
     for (const j of live) {
-      await db
-        .updateTable("digifab_jobs")
-        .set({ status: "cancelled", error: "connection removed", updated_at: new Date() })
-        .where("id", "=", j.id)
-        .execute();
+      // Same gate: if the job was on a machine, something is still on that bed.
+      // (The links are deleted below, so this mostly matters when a connection
+      // is re-added to the same hardware — the bed does not forget.)
+      await markJobTerminal(db, j, "cancelled", { error: "connection removed" });
       await reverseBuildIfCommitted(db, ctx.org.id, j.id, "connection removed");
     }
     await db.deleteFrom("digifab_device_links").where("connection_id", "=", id).execute();

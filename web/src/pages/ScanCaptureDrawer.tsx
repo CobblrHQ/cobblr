@@ -27,6 +27,7 @@ import { Camera, Check, ChevronDown, Loader2, MapPin, Minus, Plus, RefreshCw, Tr
 import { useImageSrc } from "@cobblr/platform-web";
 import { api, type ScanInboxItem } from "../lib/api";
 import { useScanQuantity } from "../lib/scanQuantity";
+import { leadPhoto } from "../lib/scanPhoto";
 import { useAnimatedHeight } from "../lib/useAnimatedHeight";
 
 /** How long a photo item may sit un-named before we stop saying "identifying…"
@@ -126,7 +127,6 @@ export function ScanCaptureDrawer({
   onUndo,
   undoBusy,
   onConfirm,
-  confirmBusy,
   onDismiss,
   onAddPhoto,
   onRetake,
@@ -155,7 +155,6 @@ export function ScanCaptureDrawer({
   /** CONFIRM — the platform's verb for filing an inbox item into its
    *  destination (api.confirmScanItem). Files, then hides the drawer. */
   onConfirm: (item: ScanInboxItem) => void;
-  confirmBusy: boolean;
   /** Hide WITHOUT filing — the item stays pending in the inbox. */
   onDismiss: () => void;
   /** Arm the shutter to APPEND its next frame to this item (label shot, then
@@ -317,16 +316,18 @@ export function ScanCaptureDrawer({
   // BLANK after a + snap because only catalog_image_url was consulted), then
   // provider art, then the scan-moment frame.
   const fileThumb = (id: string) => `/api/v1/orgs/${slug}/modules/core-files/files/${id}/raw?variant=thumb`;
+  // The local frame still wins outright (it is THIS capture, already on screen,
+  // and needs no round trip). Past that, the shared rule decides — including
+  // holding back catalog art that is still being cross-checked.
   const thumbUrl =
     localFrameItemId === it!.id && localFrameUrl
       ? localFrameUrl
-      : !isPhoto && it!.catalog_image_file_id
-        ? fileThumb(it!.catalog_image_file_id)
-        : !isPhoto && it!.catalog_image_url
-          ? it!.catalog_image_url
-          : it!.image_file_id
-            ? fileThumb(it!.image_file_id)
-            : null;
+      : leadPhoto(it!, {
+          catalog: isPhoto
+            ? []
+            : [it!.catalog_image_file_id ? fileThumb(it!.catalog_image_file_id) : null, it!.catalog_image_url ?? null],
+          yours: it!.image_file_id ? fileThumb(it!.image_file_id) : null,
+        }).src;
 
   return (
     <div
@@ -354,7 +355,6 @@ export function ScanCaptureDrawer({
           sessionLocationLabel={sessionLocationLabel}
           containerLabel={containerLabel}
           onConfirm={() => onConfirm(it!)}
-          confirmBusy={confirmBusy}
           onDelete={() => onUndo(it!)}
           deleteBusy={undoBusy}
         />
@@ -410,7 +410,9 @@ export function ScanCaptureDrawer({
             ) : identifyFailed ? (
               <span className="text-amber-300">swipe up to name it</span>
             ) : dest ? (
-              <>→ {dest}</>
+              // A hint about where it will probably end up, not a claim that
+              // the camera put it there — everything here is in the inbox.
+              <>in your scan inbox · looks like {dest}</>
             ) : (
               "in your scan inbox"
             )}
@@ -440,18 +442,18 @@ export function ScanCaptureDrawer({
         <QtyStepper value={shownQty} onBump={bump} testId="capture-drawer-qty" />
         <div className="flex-1" />
         {/* The right slot is where the thumb lands, so it belongs to the action
-            you take every time. CONFIRM is the platform's verb for filing an
-            inbox item (api.confirmScanItem) — deliberately NOT "Done", because
-            the shutter row's ✓ Done (which exits to the inbox) sits ~40px
-            below this and two Dones that deep in muscle memory is a mis-tap. */}
+            you take every time. It is an affirmative "I looked, it's right" that
+            clears the drawer — it does NOT file (the scanner never files; that
+            happens in the inbox). Not "Done" either: the shutter row's ✓ Done
+            (which exits to the inbox) sits ~40px below, and two Dones that deep
+            in muscle memory is a mis-tap. */}
         <button
           type="button"
-          disabled={confirmBusy}
           onClick={() => onConfirm(it!)}
           data-testid="capture-drawer-confirm"
           className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-cobble-600 hover:bg-cobble-700 text-white text-[13px] font-semibold px-4 py-2 shrink-0 disabled:opacity-50"
         >
-          {confirmBusy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Confirm
+          <Check size={14} /> Looks right
         </button>
       </div>
       )}
@@ -526,7 +528,7 @@ function Thumb({ url, name }: { url: string | null; name: string }) {
 function ExpandedSheet({
   slug, it, name, shownQty, bump, onCollapse, onRename, onPhoto, photoBusy,
   onAddPhoto, onPickLocation, sessionLocationLabel, containerLabel,
-  onConfirm, confirmBusy, onDelete, deleteBusy,
+  onConfirm, onDelete, deleteBusy,
 }: {
   slug: string;
   it: ScanInboxItem;
@@ -542,14 +544,20 @@ function ExpandedSheet({
   sessionLocationLabel: string | null;
   containerLabel: string | null;
   onConfirm: () => void;
-  confirmBusy: boolean;
   onDelete: () => void;
   deleteBusy: boolean;
 }) {
   const meta = (it.suggested_metadata ?? {}) as { extra_photos?: string[] };
   const extras = Array.isArray(meta.extra_photos) ? meta.extra_photos : [];
   const fileUrl = (id: string) => `/api/v1/orgs/${slug}/modules/core-files/files/${id}/raw?variant=thumb`;
-  const cover = useImageSrc(it.image_file_id ? fileUrl(it.image_file_id) : it.catalog_image_url ?? null);
+  // Same rule as the thumbnail above — these two used to disagree with each
+  // other (the cover never consulted catalog_image_file_id at all).
+  const cover = useImageSrc(
+    leadPhoto(it, {
+      catalog: [it.catalog_image_file_id ? fileUrl(it.catalog_image_file_id) : null, it.catalog_image_url ?? null],
+      yours: it.image_file_id ? fileUrl(it.image_file_id) : null,
+    }).src,
+  );
   const dest = it.suggested_candidates?.[0]?.label ?? null;
   const where = containerLabel ?? it.scan_area ?? sessionLocationLabel;
 
@@ -645,9 +653,9 @@ function ExpandedSheet({
           picker that would write the wrong field. */}
       <div className="px-3 mt-1 text-[10.5px] text-white/40">
         {containerLabel
-          ? `filing into ${containerLabel} - clear the bin to choose a location`
+          ? `going into ${containerLabel} - clear the bin to choose a location`
           : dest
-            ? `files into ${dest}`
+            ? `looks like ${dest} - route it from the inbox`
             : "from where you're standing - tap to override just this one"}
       </div>
 
@@ -664,11 +672,10 @@ function ExpandedSheet({
         <button
           type="button"
           onClick={onConfirm}
-          disabled={confirmBusy}
           data-testid="capture-sheet-confirm"
-          className="inline-flex items-center gap-1.5 rounded-lg bg-cobble-600 hover:bg-cobble-700 text-white text-[13px] font-semibold px-4 py-2 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-lg bg-cobble-600 hover:bg-cobble-700 text-white text-[13px] font-semibold px-4 py-2"
         >
-          {confirmBusy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Confirm
+          <Check size={13} /> Looks right
         </button>
       </div>
     </div>

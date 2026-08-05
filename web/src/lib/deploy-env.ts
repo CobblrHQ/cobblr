@@ -23,6 +23,16 @@ export const ENV_BADGES: Record<string, EnvBadge> = {
       "bg-violet-100 border-violet-300 dark:bg-violet-900/85 dark:border-violet-700",
     chip: "bg-violet-600 text-white",
   },
+  // Canary runs main against REAL production data, so its cue says "newer code",
+  // not "fake data" — hence the stock mark plus a dot rather than staging's full
+  // recolour. `yellow`, not `amber`: amber is already the dev/test look below,
+  // and a hosted canary must not read as somebody's localhost.
+  canary: {
+    label: "Canary",
+    header:
+      "bg-yellow-100 border-yellow-300 dark:bg-yellow-900/85 dark:border-yellow-700",
+    chip: "bg-yellow-400 text-yellow-950",
+  },
   development: {
     label: "Dev",
     header:

@@ -32,8 +32,8 @@ function assertNever(x: never): never {
 
 /** Decide the editing control for a field-def. Precedence: computed (locked) →
  *  server-managed (locked — the server owns the value; an input here would be a
- *  lying control that silently reverts) → an explicit colour renderer → a
- *  `choices` dropdown → then the storage type.
+ *  lying control that silently reverts) → boolean (checkbox) → an explicit
+ *  colour renderer → a `choices` dropdown → then the storage type.
  *  Callers render the matching control; nobody re-derives this from `type`. */
 export function fieldControl(def: {
   type: FieldType;
@@ -44,11 +44,15 @@ export function fieldControl(def: {
   if (def.type === "computed") return "computed";
   if (def.server_managed) return "server-managed";
   if (def.type === "relation") return "relation";
+  // Boolean outranks `choices`: on a boolean def, choices are the two DISPLAY
+  // labels ([falseLabel, trueLabel] — what boolLabel renders), not selectable
+  // values. A choice dropdown here would commit the label STRING into a boolean
+  // key, which every boolean reader parses as false — the edit inverts itself
+  // and corrupts the stored type.
+  if (def.type === "boolean") return "checkbox";
   if (def.renderer === "color-hex") return "color";
   if (def.choices && def.choices.length > 0) return "choice";
   switch (def.type) {
-    case "boolean":
-      return "checkbox";
     case "number":
       return "number";
     case "date":
@@ -59,9 +63,9 @@ export function fieldControl(def: {
       return "markdown";
     case "text":
       return "text";
-    // `computed` / `relation` are handled by the early returns above (TS narrows
-    // them out here). A NEW FieldType added to the union lands in `default` and
-    // fails to compile against `never` — the durable "unhandled type" guard.
+    // `computed` / `relation` / `boolean` are handled by the early returns above
+    // (TS narrows them out here). A NEW FieldType added to the union lands in
+    // `default` and fails to compile against `never` — the durable guard.
     default:
       return assertNever(def.type);
   }
