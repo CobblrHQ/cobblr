@@ -18,6 +18,8 @@ import { applyBlueprint, BlueprintManifest } from "./blueprint.js";
 import { provisionTenantDb } from "../db/provision.js";
 import { hashPassword, verifyPassword } from "../auth/password.js";
 import { TRIAL_MODE, TRIAL_TTL_DAYS } from "../platform/trial.js";
+import { verifyCaptcha, captchaEnabled } from "../platform/captcha.js";
+import { blockDisposableEnabled, isDisposableEmail } from "../platform/disposable-emails.js";
 
 // A throwaway hash, computed once, so the "no such user / inactive" login
 // path spends the same ~bcrypt time as a real password check — otherwise the
@@ -47,10 +49,18 @@ export const authRouter = Router();
 
 // ─────────────────────────── helpers ────────────────────────────
 
+// When "true", a new account can't get a working session until its email is
+// verified: signup withholds the auto-login token and login is denied while
+// unverified. Needs a real auth-email sender configured, else nobody can verify.
+const requireEmailVerify = () => (process.env.COBBLR_REQUIRE_EMAIL_VERIFY ?? "").trim() === "true";
+
 const SignupBody = z.object({
   email: z.string().email().max(255),
   password: z.string().min(8).max(128),
   display_name: z.string().min(1).max(120),
+  // Captcha token (e.g. Cloudflare Turnstile). Verified server-side only when a
+  // captcha provider is configured (the trial tier); ignored otherwise.
+  captcha_token: z.string().max(4096).optional(),
   // Optional when `app` is set — a managed-app signup names the workspace
   // after the app (the consumer never picks a workspace name).
   org_name: z.string().min(1).max(120).optional(),
@@ -311,6 +321,14 @@ authRouter.get("/config", (_req, res) => {
   res.json({
     signup_enabled: publicSignupEnabled(),
     self_serve_invites: selfServeInvitesEnabled(),
+    // Captcha for the signup form. Null unless a provider + secret are configured
+    // server-side (the trial tier). The site key is public; the secret never is.
+    captcha: captchaEnabled()
+      ? {
+          provider: process.env.COBBLR_CAPTCHA_PROVIDER,
+          site_key: (process.env.COBBLR_CAPTCHA_SITE_KEY ?? "").trim() || null,
+        }
+      : null,
     // Hosted (cobblr.me / managed) vs self-hosted. Self-hosted by default; the
     // managed/public-prod deployment sets COBBLR_HOSTED=true. Drives client hints
     // such as "a hosted Cobblr can't reach your LAN device directly".
@@ -331,6 +349,19 @@ authRouter.post("/signup", async (req, res, next) => {
     if (overLimit(signupLimiter, req)) return res.status(429).json(RATE_LIMITED);
     const body = SignupBody.parse(req.body);
     const email = body.email.toLowerCase().trim();
+
+    // ── abuse guards ── both no-op unless configured (the trial box turns them
+    // on); run before any DB work so a bot never touches the invite/user path.
+    if (!(await verifyCaptcha(body.captcha_token, req.ip))) {
+      return res.status(400).json({
+        error: { code: "captcha_failed", message: "Captcha verification failed. Please try again." },
+      });
+    }
+    if (blockDisposableEnabled() && isDisposableEmail(email)) {
+      return res.status(400).json({
+        error: { code: "email_not_allowed", message: "Please sign up with a permanent email address." },
+      });
+    }
 
     // Authorisation: open if public signup is on, OR this is a managed-app
     // signup on a deployment that's opened the funnel (the consumer product can
@@ -501,6 +532,13 @@ authRouter.post("/signup", async (req, res, next) => {
       console.error("[signup] user_created log failed:", err);
     }
 
+    // Email-verification gate: when required, do NOT auto-login. The verify link
+    // was sent above; the user must click it before they can sign in. This is
+    // what stops a bot from getting a working session at signup time.
+    if (requireEmailVerify()) {
+      return res.status(201).json({ needs_verification: true, email });
+    }
+
     const out = await buildAuthResponse(userId);
     return res.status(201).json({ ...out, ...(blueprintApplied ? { blueprint_applied: blueprintApplied } : {}) });
   } catch (err) {
@@ -564,7 +602,7 @@ authRouter.post("/login", async (req, res, next) => {
 
     const user = await meta
       .selectFrom("users")
-      .select(["id", "password_hash", "active"])
+      .select(["id", "email", "password_hash", "active", "email_verified_at"])
       .where("email", "=", email)
       .executeTakeFirst();
 
@@ -583,6 +621,17 @@ authRouter.post("/login", async (req, res, next) => {
     }
     const ok = await verifyPassword(body.password, user.password_hash);
     if (!ok) return denied();
+
+    // Email-verification gate (trial): deny login until verified, and resend the
+    // link so the user has a fresh one. No-op unless COBBLR_REQUIRE_EMAIL_VERIFY.
+    if (requireEmailVerify() && !user.email_verified_at) {
+      void issueAndSendVerifyEmail(user.id, email, req).catch((e) =>
+        console.error("[login] verify-email resend failed:", e),
+      );
+      return res.status(403).json({
+        error: { code: "email_unverified", message: "Please verify your email first. We just sent you a fresh link." },
+      });
+    }
 
     await meta
       .updateTable("users")

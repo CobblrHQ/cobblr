@@ -2,6 +2,18 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-08-06
+
+### Features
+- Self-hosted instances can now turn a feedback note into a ready-made bug report for the public issue tracker, with the version, browser and enabled modules already filled in.
+
+### Improvements
+- Your sidebar-or-top-bar choice follows your account now, so signing in on another desktop keeps the layout you set instead of starting over on the top bar. Phones are unaffected and keep their own menu.
+- Signup gains opt-in anti-abuse controls, all off by default so nothing changes for an existing instance: a captcha on the signup form (Cloudflare Turnstile), a block on known disposable/throwaway email providers, and an option to require a verified email before an account can sign in. The trial tier also gains a humane reaper that emails an expiring workspace a heads-up, waits out a grace period, and never removes a workspace it could not warn first.
+
+### Fixes
+- Self-hosted images now know which commit they were built from, so Health and a bug report show a real version instead of a blank one.
+
 ## 2026-08-05
 
 ### Features

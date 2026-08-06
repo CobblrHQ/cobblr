@@ -28,12 +28,12 @@ docker compose -f docker-compose.yml -f deploy/selfhost/docker-compose.selfhost.
 
 The camera-based scanner needs HTTPS, so most setups want a real hostname. The
 full walkthrough, including free ways to get one with DuckDNS, Cloudflare, or
-Tailscale, is in [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md). Start there.
+Tailscale, is in [SELF_HOSTING.md](SELF_HOSTING.md). Start there.
 
 ## License
 
 Cobblr is source-available under the Functional Source License
-([FSL-1.1-MIT](LICENSE.md)). In short: you can read it, run it, change it, and
+([FSL-1.1-ALv2](LICENSE.md)). In short: you can read it, run it, change it, and
 build on it for any purpose except making a competing product. Two years after
-each release, that version becomes plain MIT. See [LICENSE.md](LICENSE.md) for
+each release, that version becomes Apache 2.0. See [LICENSE.md](LICENSE.md) for
 the exact terms.

@@ -12,12 +12,27 @@ export interface EnvBadge {
   header: string;
   /** The chip (solid, high-contrast). */
   chip: string;
+  /**
+   * How loud the cue is.
+   *
+   *  `banner` — tinted header + chip. Right for environments holding FAKE data,
+   *             where mistaking it for prod means trusting made-up numbers.
+   *  `mark`   — neutral header, no chip, a coloured dot on the logo instead.
+   *             Right for canary, which holds REAL production data and should
+   *             read as the product. A banner there is a permanent interruption
+   *             on the surface you use most (the author, 2026-08-06).
+   */
+  chrome: "banner" | "mark";
+  /** Dot colour for `chrome: "mark"`. Required there — without it the
+   *  environment renders EXACTLY like production. `lint:env-icons` enforces it. */
+  markDot?: string;
 }
 
 // Only non-prod environments get a badge. Anything not listed here
 // (production, or an unknown value) renders no badge at all.
 export const ENV_BADGES: Record<string, EnvBadge> = {
   staging: {
+    chrome: "banner",
     label: "Staging",
     header:
       "bg-violet-100 border-violet-300 dark:bg-violet-900/85 dark:border-violet-700",
@@ -29,11 +44,15 @@ export const ENV_BADGES: Record<string, EnvBadge> = {
   // and a hosted canary must not read as somebody's localhost.
   canary: {
     label: "Canary",
+    // Unused while chrome is `mark`; kept so switching back is a one-word edit.
     header:
       "bg-yellow-100 border-yellow-300 dark:bg-yellow-900/85 dark:border-yellow-700",
     chip: "bg-yellow-400 text-yellow-950",
+    chrome: "mark",
+    markDot: "#FACC15",
   },
   development: {
+    chrome: "banner",
     label: "Dev",
     header:
       "bg-amber-100 border-amber-300 dark:bg-amber-900/85 dark:border-amber-700",
@@ -41,6 +60,7 @@ export const ENV_BADGES: Record<string, EnvBadge> = {
   },
   // `test` reuses the dev look — same "not real" signal.
   test: {
+    chrome: "banner",
     label: "Test",
     header:
       "bg-amber-100 border-amber-300 dark:bg-amber-900/85 dark:border-amber-700",

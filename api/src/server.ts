@@ -35,6 +35,7 @@ import { backupRouter, backupGoogleCallbackRouter } from "./routes/backup.js";
 import { membersRouter, invitesRootRouter } from "./routes/members.js";
 import { pairingsRouter } from "./routes/pairings.js";
 import { portalRouter } from "./routes/portal.js";
+import { diagnosticsRouter } from "./routes/diagnostics.js";
 import { dashboardRouter } from "./routes/dashboard.js";
 import { adminUsersRouter } from "./routes/admin-users.js";
 import { superAdminRouter } from "./routes/super-admin.js";
@@ -218,6 +219,7 @@ export function createApp(): AppHandles {
   v1.use("/orgs", receiptAddressRouter);
   // Member portal config + per-action capability grants.
   v1.use("/orgs", portalRouter);
+  v1.use("/orgs", diagnosticsRouter);
   // Generic hosted settings panels — empty in open core; the overlay registers
   // billing/Slack. The web app renders them with one generic renderer.
   v1.use("/orgs", hostedPanelsRouter);

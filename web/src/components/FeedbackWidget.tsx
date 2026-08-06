@@ -2,13 +2,18 @@
 // confusing, or suggest an idea from anywhere in the app. Auto-attaches the page
 // + browser, and lets them attach screenshot(s) of the issue, so triage
 // (super-admin → Feedback) has context. POSTs to /feedback.
+//
+// SELF-HOSTED: that row never leaves the operator's own box, so the widget also
+// offers a copy-paste report for the public issue tracker — the only route by
+// which a Cobblr bug found on a self-hosted instance reaches the project.
 
 import { useState, useRef, useEffect } from "react";
 import { HIDE_WHEN_OVERLAY_OPEN } from "@cobblr/platform-web";
 import { createPortal } from "react-dom";
 import { Modal, useToast } from "@cobblr/platform-web";
-import { MessageSquare, ImagePlus, X } from "lucide-react";
+import { MessageSquare, ImagePlus, X, Copy, ExternalLink } from "lucide-react";
 import { api } from "../lib/api";
+import { newIssueUrl, reportBody, type ReportInput, type ServerDiagnostics } from "../lib/bug-report";
 import { useAuth } from "../auth/AuthContext";
 import { resolveHandle } from "../auth/ActiveOrgContext";
 
@@ -39,6 +44,13 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Self-hosted feedback never leaves the box: the row lands in this operator's
+  // own cobblr_meta and only their own super-admin reads it. So on self-hosted
+  // the widget ALSO produces a report for the public tracker, which is the only
+  // way a Cobblr bug found here can reach the Cobblr project.
+  const [hosted, setHosted] = useState<boolean | null>(null);
+  const [diag, setDiag] = useState<ServerDiagnostics | null>(null);
+  const [copied, setCopied] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const toast = useToast();
   const { orgs, user } = useAuth();
@@ -76,6 +88,35 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
   // Best-effort breadcrumb: the slug the URL claimed, when it no longer matches
   // a live workspace (so the report still records where the user thought it was).
   const attemptedSlug = urlHandle && !resolveHandle(urlHandle, orgs) ? urlHandle : undefined;
+
+  // Fetch the deployment flag + environment once the modal is opened, not on
+  // mount: every signed-in page renders this widget, and a closed widget has no
+  // reason to cost two requests.
+  useEffect(() => {
+    if (!open || hosted !== null) return;
+    let live = true;
+    void (async () => {
+      try {
+        const cfg = await api.authConfig();
+        if (!live) return;
+        setHosted(cfg.hosted === true);
+        if (cfg.hosted !== true && slug) {
+          try {
+            setDiag(await api.diagnostics(slug));
+          } catch {
+            // A report without the environment block still beats no report.
+          }
+        }
+      } catch {
+        // Unknown deployment: fall back to the hosted behaviour, which always
+        // works (the row is stored either way).
+        if (live) setHosted(true);
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, [open, hosted, slug]);
 
   function addFiles(list: FileList | null) {
     if (!list) return;
@@ -145,6 +186,27 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
     setOpen(false);
   }
 
+  function currentReport(): ReportInput {
+    return {
+      type,
+      message,
+      route: window.location.pathname,
+      userAgent: navigator.userAgent,
+      viewport: { w: window.innerWidth, h: window.innerHeight },
+      server: diag,
+    };
+  }
+
+  async function copyReport() {
+    try {
+      await navigator.clipboard.writeText(reportBody(currentReport()));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      setError("Couldn't reach the clipboard. Select the text below and copy it.");
+    }
+  }
+
   async function submit() {
     const text = message.trim();
     if (!text) return;
@@ -182,10 +244,12 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
           ...(attemptedSlug ? { attempted_slug: attemptedSlug } : {}),
         },
       });
+      // On self-hosted, "sent" would be a lie: the row never leaves this box.
+      const sent = hosted === false ? "saved to this instance" : "sent";
       toast.info(
         droppedShots
-          ? `Thanks — your feedback was sent (couldn't attach ${droppedShots} screenshot${droppedShots === 1 ? "" : "s"}).`
-          : "Thanks — your feedback was sent.",
+          ? `Thanks — your feedback was ${sent} (couldn't attach ${droppedShots} screenshot${droppedShots === 1 ? "" : "s"}).`
+          : `Thanks — your feedback was ${sent}.`,
       );
       close();
     } catch {
@@ -314,7 +378,9 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
           )}
 
           <div className="text-[10px] text-faint dark:text-slate-500">
-            We attach the page you're on + your browser so we can track it down.
+            {hosted === false
+              ? "This stays on your own instance. To report it to the Cobblr project, copy the report below - it includes your version, browser and enabled modules."
+              : "We attach the page you're on + your browser so we can track it down."}
           </div>
           {error && <div className="text-xs text-ember-500">{error}</div>}
           <button
@@ -323,8 +389,34 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
             disabled={busy || !message.trim()}
             className="w-full rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-2 transition disabled:opacity-50"
           >
-            {busy ? (stage ?? "Sending…") : "Send feedback"}
+            {busy ? (stage ?? "Sending…") : hosted === false ? "Save to this instance" : "Send feedback"}
           </button>
+          {hosted === false && (
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => void copyReport()}
+                disabled={!message.trim()}
+                className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-md border border-line dark:border-slate-600 text-sm text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 px-3 py-2 transition disabled:opacity-50"
+              >
+                <Copy size={14} /> {copied ? "Copied" : "Copy report"}
+              </button>
+              <a
+                href={message.trim() ? newIssueUrl(currentReport()) : undefined}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-disabled={!message.trim()}
+                className={
+                  "flex-1 inline-flex items-center justify-center gap-1.5 rounded-md border border-line dark:border-slate-600 text-sm px-3 py-2 transition " +
+                  (message.trim()
+                    ? "text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800"
+                    : "opacity-50 pointer-events-none text-faint")
+                }
+              >
+                <ExternalLink size={14} /> Open an issue
+              </a>
+            </div>
+          )}
           {/* Community channel — for questions/chat that aren't a tracked report. */}
           {user?.discord_invite_url && (
             <div className="text-center text-xs text-muted">

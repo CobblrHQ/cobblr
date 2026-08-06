@@ -28,7 +28,10 @@ interface AuthCtx extends AuthState {
     invite_token?: string;
     app?: string;
     manifest?: unknown;
-  }) => Promise<AuthResponse>;
+    captcha_token?: string;
+  }) => Promise<
+    { needsVerification: true } | ({ needsVerification: false } & Pick<AuthResponse, "user" | "orgs">)
+  >;
   /** Create a NEW account that joins an existing workspace via a
    *  workspace-invite token (no own workspace provisioned). */
   joinViaInvite: (
@@ -100,11 +103,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       org_name?: string;
       app?: string;
       manifest?: unknown;
+      captcha_token?: string;
     }) => {
       const res = await api.signup(input);
+      // Trial email-verify gate: the server withholds the session and asks the
+      // user to verify. Don't log in; tell the caller to show "check your email".
+      if ("needs_verification" in res) return { needsVerification: true as const };
       setToken(res.token);
       setState({ user: res.user, orgs: res.orgs, loading: false });
-      return res;
+      return { needsVerification: false as const, user: res.user, orgs: res.orgs };
     },
     [],
   );

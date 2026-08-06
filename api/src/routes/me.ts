@@ -4,6 +4,7 @@
 import { Router } from "express";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
+import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { requireAuth } from "../auth/middleware.js";
 import { mintTokenString } from "../auth/api-tokens.js";
@@ -41,7 +42,7 @@ meRouter.get("/me", requireAuth, async (req, res) => {
   const [user, orgs] = await Promise.all([
     meta
       .selectFrom("users")
-      .select(["id", "email", "display_name", "must_reset_password", "email_verified_at", "theme_pref"])
+      .select(["id", "email", "display_name", "must_reset_password", "email_verified_at", "theme_pref", "nav_pref"])
       .where("id", "=", userId)
       .executeTakeFirstOrThrow(),
     listMembershipsForUser(userId),
@@ -183,6 +184,18 @@ const MeUpdate = z.object({
   display_name: z.string().min(1).max(160).optional(),
   // Per-user theme; null clears back to device/OS default.
   theme_pref: z.enum(["light", "dark"]).nullable().optional(),
+  // Per-user nav layout (desktop only — a phone keeps its own menu whatever
+  // this says). null clears back to the device default. Strict so a stray key
+  // can't be smuggled into the blob and read back out as trusted state.
+  nav_pref: z
+    .object({
+      mode: z.enum(["top", "side"]),
+      autohide: z.boolean(),
+      topbar: z.boolean(),
+    })
+    .strict()
+    .nullable()
+    .optional(),
 });
 meRouter.patch("/me", requireAuth, async (req, res, next) => {
   try {
@@ -204,9 +217,15 @@ meRouter.patch("/me", requireAuth, async (req, res, next) => {
           display_name: parsed.data.display_name.trim(),
         }),
         ...(parsed.data.theme_pref !== undefined && { theme_pref: parsed.data.theme_pref }),
+        ...(parsed.data.nav_pref !== undefined && {
+          // jsonb-replace-ok: nav_pref is one small document this endpoint owns
+          nav_pref: (parsed.data.nav_pref === null
+            ? null
+            : sql`${JSON.stringify(parsed.data.nav_pref)}::jsonb`) as never,
+        }),
       })
       .where("id", "=", req.session!.id)
-      .returning(["id", "email", "display_name", "theme_pref"])
+      .returning(["id", "email", "display_name", "theme_pref", "nav_pref"])
       .executeTakeFirstOrThrow();
     res.json({ user: updated });
   } catch (err) {

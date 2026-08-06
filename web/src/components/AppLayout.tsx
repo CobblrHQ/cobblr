@@ -200,6 +200,11 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
   const navSuffix = appMode ? appMeta?.navSuffix ?? (appMode.label ?? "").replace(/^cobblr\s+/i, "") : "";
   const wsLogo = config.data?.config.logo_path ?? null;
   const { badge: envBadge } = useDeployEnv();
+  // Canary uses chrome: "mark" — real prod data, so it should READ as the
+  // product: no tinted header, no chip, just a dot on the logo. Only banner
+  // environments (fake data) get the loud treatment.
+  const envBanner = envBadge?.chrome === "banner" ? envBadge : null;
+  const envDot = envBadge?.chrome === "mark" ? envBadge.markDot : undefined;
   const fontFace = fontFaceCss(skin);
 
   // Publish the theme on <html> so the semantic tokens resolve to the
@@ -304,7 +309,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             the workspace row below, so no badge (Staging/Dev/Test, any label
             length) can crowd "cobblr" down to "co..." — the author, 2026-07-29. */}
         <Link to="/" className="flex items-center gap-1.5 min-w-0 shrink-0 hover:opacity-80 transition">
-          <CobblestoneMark size={20} />
+          <CobblestoneMark size={20} dot={envDot} />
           <span className="font-display font-extrabold text-content dark:text-mortar-100 lowercase text-[15px]">cobblr</span>
         </Link>
         <span className="flex-1" />
@@ -324,14 +329,14 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             the vertical middle when the list expands. It sits to the right of the
             collapsed trigger; the full-width dropdown covers it when open. the author,
             2026-07-29 (a flex-sibling chip narrowed the dropdown + floated it). */}
-        {envBadge && (
+        {envBanner && (
           <button
             type="button"
             onClick={demoToast}
             title="Fire a sample toast (dev chip tradition)"
-            className={`absolute right-0 top-2 z-0 rounded px-1 py-0.5 text-[9px] font-mono font-bold uppercase tracking-widest ${envBadge.chip}`}
+            className={`absolute right-0 top-2 z-0 rounded px-1 py-0.5 text-[9px] font-mono font-bold uppercase tracking-widest ${envBanner.chip}`}
           >
-            {envBadge.label}
+            {envBanner.label}
           </button>
         )}
       </div>
@@ -444,7 +449,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
         ref={headerRef}
         className={`${fullSide ? "md:hidden md:static " : ""}fixed inset-x-0 top-0 z-30 border-b backdrop-blur overflow-x-clip max-md:transition-transform max-md:duration-200 motion-reduce:transition-none ${
           barHidden ? "max-md:-translate-y-full" : ""
-        } ${envBadge ? envBadge.header : DEFAULT_HEADER}`}
+        } ${envBanner ? envBanner.header : DEFAULT_HEADER}`}
         // paddingTop: the iOS status-bar safe area. In standalone (home-screen)
         // mode the webview is full-bleed, and without this the workspace name
         // renders UNDER the status-bar clock. env() is 0 in a normal browser
@@ -462,13 +467,18 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             lands on ~44px — the height iOS uses for a toolbar — and still leaves
             the wordmark clear of the status bar.
 
+            Deliberately UNEVEN on a phone (pt-1 pb-2): the row rides high in
+            the bar so it sits as close to the top of the screen as it can, which
+            is the whole point of the bar there. Evening it out is the obvious
+            tidy-up and would undo this.
+
             It reads the same in all three shells, which is the point. In the PWA
             and in a notched browser the webview is edge-to-edge, so
             `env(safe-area-inset-top)` on the header supplies the inset; in the
             native app iOS insets the WEBVIEW and env() is 0. Different routes,
             same final position, so this padding is the only knob and turning it
             moves all three together. */}
-        <div className="desktop-topnav-pad px-5 py-2 md:py-3 flex items-center gap-2 sm:gap-3 min-w-0">
+        <div className="desktop-topnav-pad px-5 pt-1 pb-2 md:py-3 flex items-center gap-2 sm:gap-3 min-w-0">
           {/* Nav-placement flip (desktop): top bar ⇄ left sidebar. Sits LEFT
               of the wordmark, à la Vivaldi's panel toggle. Icon shows the
               layout you'd switch TO. */}
@@ -489,7 +499,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             to="/"
             className="relative flex items-center gap-2 shrink-0 hover:opacity-80 transition"
           >
-            <CobblestoneMark size={26} />
+            <CobblestoneMark size={26} dot={envDot} />
             <span className="hidden sm:inline font-display font-extrabold text-content dark:text-mortar-100 lowercase">
               cobblr
             </span>
@@ -503,23 +513,23 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             {/* Mobile: overlay the env chip ON the wordmark (right-aligned) so
                 it adds ZERO width — the navbar fits exactly as it does in prod,
                 the chip can't push the right menu off-screen. */}
-            {envBadge && (
+            {envBanner && (
               <span
-                className={`sm:hidden absolute right-0 top-1/2 -translate-y-1/2 rounded px-1 py-0.5 text-[9px] font-mono font-bold uppercase tracking-widest ${envBadge.chip}`}
+                className={`sm:hidden absolute right-0 top-1/2 -translate-y-1/2 rounded px-1 py-0.5 text-[9px] font-mono font-bold uppercase tracking-widest ${envBanner.chip}`}
               >
-                {envBadge.label}
+                {envBanner.label}
               </span>
             )}
           </Link>
           {/* Desktop: the chip sits inline beside the wordmark (room to spare). */}
-          {envBadge && (
+          {envBanner && (
             <button
               type="button"
               onClick={demoToast}
-              className={`hidden sm:inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-mono font-bold uppercase tracking-widest ${envBadge.chip}`}
-              title={`You are on the ${envBadge.label} environment — not production. Click: fire a sample toast.`}
+              className={`hidden sm:inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-mono font-bold uppercase tracking-widest ${envBanner.chip}`}
+              title={`You are on the ${envBanner.label} environment — not production. Click: fire a sample toast.`}
             >
-              {envBadge.label}
+              {envBanner.label}
             </button>
           )}
           {/* Platform workspace: a "/" divider + the workspace logo + switcher.

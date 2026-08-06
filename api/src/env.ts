@@ -69,7 +69,7 @@ const Schema = z.object({
   BACKUP_BROKER_SHARED_SECRET: z.string().optional(),
 
   // Comma-separated allowlist of CORS origins, e.g.
-  //   "https://cobblr.example.com,https://workshop.example.com"
+  //   "https://cobblr.example.com,https://cobblr.example.org"
   // Default in dev is "*" (any origin) — the previous behavior. In
   // production this MUST be set to the workspace's public hostname(s)
   // or CORS rejects every browser request. See docs/operations/PRODUCTION_DEPLOY.md.
@@ -111,6 +111,12 @@ const Schema = z.object({
   // Days until a trial workspace's expiry stamp. Reaping itself is DEFERRED —
   // the stamp is set at signup, but nothing sweeps until the reaper is added.
   TRY_TTL_DAYS: z.coerce.number().int().positive().default(30),
+  // How many days before a trial's expiry to send the humane heads-up warning
+  // email (the reaper's warn -> grace -> delete lifecycle). Only consulted when
+  // COBBLR_TRIAL_REAP=dry|live; a workspace is never deleted until it was warned
+  // at least (COBBLR_TRIAL_REAP_GRACE_DAYS) days ago. Default 7. Read via the
+  // reaper's own fail-safe helper (platform/reap-trials.ts reapWarnDays).
+  COBBLR_TRIAL_REAP_WARN_DAYS: z.coerce.number().int().positive().default(7),
   // Comma-separated module names withheld on the trial tier (only read when
   // COBBLR_TIER=trial). This is INSTANCE POLICY, not kernel code — the kernel
   // never hardcodes a module name (module-isolation lint). The `try` box sets:
@@ -118,6 +124,18 @@ const Schema = z.object({
   // Belt-and-suspenders: COBBLR_AI_ENABLED=false + COBBLR_HOSTED=true mean a
   // missing entry still can't turn AI or SSRF on. See platform/trial.ts.
   COBBLR_TRIAL_DENY_MODULES: z.string().optional(),
+  // ── signup abuse guards (no-op unless set; the try box turns them on) ──
+  // Captcha: provider + secret enable server-side verify (platform/captcha.ts).
+  // The SITE key is public and delivered to the web at runtime via /auth/config
+  // (so the shared web image carries no baked-in key). Secret stays server-side.
+  COBBLR_CAPTCHA_PROVIDER: z.enum(["turnstile"]).optional(),
+  COBBLR_CAPTCHA_SECRET: z.string().optional(),
+  COBBLR_CAPTCHA_SITE_KEY: z.string().optional(),
+  // "true" rejects signups from known disposable-email providers.
+  COBBLR_BLOCK_DISPOSABLE_EMAILS: z.string().optional(),
+  // "true" requires a verified email before login succeeds (needs a real SMTP
+  // sender configured, COBBLR_AUTH_EMAIL_PROVIDER). The try box sets it.
+  COBBLR_REQUIRE_EMAIL_VERIFY: z.string().optional(),
 
   // Central identity federation (Slice 3). ALL optional — unset = this surface
   // owns its own accounts as before (no central identity, no behaviour change).

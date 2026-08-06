@@ -48,6 +48,11 @@ export function StartAppPage() {
       // The app workspace is fully provisioned (bundle + app_mode) server-side,
       // so landing in it is safe — the app-mode route guard sends the user to
       // the app home. It's the user's only workspace.
+      if (res.needsVerification) {
+        setError("Please verify your email to continue.");
+        setBusy(false);
+        return;
+      }
       const slug = res.orgs[0]?.slug;
       window.location.assign(slug ? `/w/${slug}/` : "/");
     } catch (err) {

@@ -3,14 +3,21 @@
 // imperfection, visible gaps." This is the v0 sketch; an actual
 // designer's mark would replace it.
 
-export function CobblestoneMark({ size = 64 }: { size?: number }) {
+/**
+ * `dot` tints a disc in the middle of the mark — the CANARY cue. It is the whole
+ * environment signal for that channel: canary runs real production data and is
+ * meant to look like production, so it gets no header tint and no chip, only
+ * this. Keep it in step with web/public/favicon-canary.svg (same #FACC15, same
+ * r=19 at this viewBox), or the tab and the nav disagree about where you are.
+ */
+export function CobblestoneMark({ size = 64, dot }: { size?: number; dot?: string }) {
   return (
     <svg
       width={size}
       height={size}
       viewBox="0 0 100 100"
       xmlns="http://www.w3.org/2000/svg"
-      aria-label="cobblr logo"
+      aria-label={dot ? "cobblr logo (canary)" : "cobblr logo"}
     >
       {/* top-left — slate */}
       <polygon
@@ -32,6 +39,7 @@ export function CobblestoneMark({ size = 64 }: { size?: number }) {
         points="46,56 78,52 92,72 84,90 54,86"
         fill="#A48663"
       />
+      {dot && <circle cx="49" cy="49" r="19" fill={dot} />}
     </svg>
   );
 }

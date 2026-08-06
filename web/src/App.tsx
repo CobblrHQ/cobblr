@@ -132,6 +132,7 @@ import { api, getToken } from "./lib/api";
 import { useNavMode, useNavTopBar } from "./lib/nav-mode";
 import { useQuery } from "@tanstack/react-query";
 import { InstancePage } from "./pages/InstancePage";
+import { hydrateNavPref } from "./lib/nav-mode";
 
 // First-party flow registry: id → overlay the shell can open from anywhere
 // (an action's `ui` directive, a view bulk-action, a nav entry). See
@@ -161,12 +162,24 @@ function ThemeSync() {
   return null;
 }
 
+/** Same for the desktop nav layout: a fresh desktop adopts the sidebar you set
+ *  on another one, instead of silently starting on the top bar. Desktop-only by
+ *  construction — the sidebar is `hidden md:block`, so a phone ignores it. */
+function NavPrefSync() {
+  const { user } = useAuth();
+  useEffect(() => {
+    hydrateNavPref(user?.nav_pref ?? null);
+  }, [user?.nav_pref]);
+  return null;
+}
+
 export function App() {
   return (
     <ErrorBoundary scope="app">
       <ConnectivityBanner />
       <AuthProvider>
         <ThemeSync />
+      <NavPrefSync />
         <ToastProvider>
           <ConfirmProvider>
             <Shell />

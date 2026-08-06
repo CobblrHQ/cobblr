@@ -155,6 +155,9 @@ export interface SessionUser {
   /** Per-user theme preference — follows you across devices + workspaces.
    *  null/absent = follow the device/OS. */
   theme_pref?: "light" | "dark" | null;
+  /** Desktop nav layout, follows you across devices. null/absent = this device's
+   *  own default stands. Phones ignore it (the sidebar is `hidden md:block`). */
+  nav_pref?: { mode: "top" | "side"; autohide: boolean; topbar: boolean } | null;
   /** True when an admin minted this account with a temp password. UI
    *  redirects to /me/force-password-reset until cleared. PATCH
    *  /me/password clears it. */
@@ -582,7 +585,12 @@ export const api = {
   healthz: () => request<Healthz>("GET", "/healthz"),
   changelog: () => request<{ sections: ChangelogDay[] }>("GET", "/changelog"),
   authConfig: () =>
-    request<{ signup_enabled: boolean; self_serve_invites?: boolean; hosted?: boolean }>("GET", "/auth/config"),
+    request<{
+      signup_enabled: boolean;
+      self_serve_invites?: boolean;
+      hosted?: boolean;
+      captcha?: { provider: string; site_key: string | null } | null;
+    }>("GET", "/auth/config"),
   // Mint an API token (plaintext returned ONCE). Used by the edge-bridge setup to
   // generate a least-privilege devices:edge token in-flow, and by the API Recipes
   // auto-scoper (records:* scopes + source/meta provenance) — no trip to the tokens page.
@@ -603,7 +611,11 @@ export const api = {
     /** Managed-app signup: provision the first workspace as this app. */
     app?: string;
     manifest?: unknown;
-  }) => request<AuthResponse>("POST", "/auth/signup", body),
+    /** Captcha token (e.g. Turnstile), required only when the server has a
+     *  captcha provider configured (the trial tier). */
+    captcha_token?: string;
+  }) =>
+    request<AuthResponse | { needs_verification: true; email: string }>("POST", "/auth/signup", body),
   // Public preview of a single-use signup invite (the /join/:token page).
   previewSignupInvite: (token: string) =>
     request<{ status: string; invited_email: string | null; note: string | null; blueprint_name?: string | null }>(
@@ -651,6 +663,17 @@ export const api = {
   revokeMySignupInvite: (id: string) =>
     request<void>("POST", `/me/signup-invites/${id}/revoke`),
   // Feedback: any authed user submits; super-admin lists / triages.
+  /** Environment facts for a public bug report. See api/src/routes/diagnostics.ts
+   *  for what is deliberately absent — this payload becomes public. */
+  diagnostics: (slug: string) =>
+    request<{
+      build_sha: string | null;
+      hosted: boolean;
+      node: string;
+      platform: string;
+      postgres: string;
+      modules: string[];
+    }>("GET", `/orgs/${slug}/diagnostics`),
   submitFeedback: (body: {
     type: "bug" | "confusing" | "idea" | "other";
     message: string;
@@ -782,6 +805,9 @@ export const api = {
    *  workspaces). null = follow the device/OS. */
   setThemePref: (theme_pref: "light" | "dark" | null) =>
     request<{ user: { theme_pref: "light" | "dark" | null } }>("PATCH", "/me", { theme_pref }),
+  /** Persist the per-user desktop nav layout (follows you across devices). */
+  setNavPref: (nav_pref: { mode: "top" | "side"; autohide: boolean; topbar: boolean } | null) =>
+    request<{ user: { nav_pref: unknown } }>("PATCH", "/me", { nav_pref }),
   /** Owner-only rename. `name` = display name (safe). `slug` = the URL handle
    *  (risky — breaks existing links). Returns the new name + slug. */
   renameOrg: (slug: string, body: { name?: string; slug?: string }) =>

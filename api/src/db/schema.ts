@@ -18,6 +18,9 @@ export interface UsersTable {
    *  Follows the user across devices + workspaces; never touches a workspace's
    *  own skin or another member's view. */
   theme_pref: "light" | "dark" | null;
+  /** Desktop nav layout that follows the user across devices. null = the device
+   *  default stands. A phone ignores it: the sidebar renders `hidden md:block`. */
+  nav_pref: { mode: "top" | "side"; autohide: boolean; topbar: boolean } | null;
   /** True when an admin minted this account with a temp password.
    *  Login succeeds; the response carries the flag and the web
    *  client redirects to /me/force-password-reset until the user
@@ -93,6 +96,12 @@ export interface OrgsTable {
    *  yet. NULL = a normal workspace (every non-`try` instance). See
    *  docs/design-decisions/try-instance.md. */
   trial_expires_at: Generated<Date | null>;
+  /** try/trial tier: when the humane reaper sent this workspace its "trial ends
+   *  soon" warning email. NULL = never warned. The reaper's warn -> grace ->
+   *  delete lifecycle only deletes a workspace warned at least `grace` days ago,
+   *  so an un-warned trial can never be silently reaped. See
+   *  platform/reap-trials.ts. */
+  trial_expiry_warned_at: Generated<Date | null>;
   /** Slice 4 (demo workspaces): per-workspace entitlement overrides — an allow-list of
    *  feature keys ("files.upload", "workspaces.create") and module names ("core-ai") the
    *  trial guard + module-enable gate honour for THIS workspace, so an operator-provisioned

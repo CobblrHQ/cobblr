@@ -1,7 +1,7 @@
 // Combined signup / login screen. Toggle at the bottom flips mode —
 // keeps the splash → auth → dashboard journey one screen.
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { api, ApiError, setToken } from "../lib/api";
@@ -9,6 +9,41 @@ import { usePageTitle } from "@cobblr/platform-web";
 import { useDeployEnv } from "../lib/deploy-env";
 
 type Mode = "login" | "signup";
+
+// Renders a Cloudflare Turnstile widget and hands the solved token upward. Only
+// mounted when the server reports a captcha site key (the trial tier); a normal
+// deployment never sees it. No npm dependency - the script is loaded on demand.
+function TurnstileWidget({ siteKey, onToken }: { siteKey: string; onToken: (t: string) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const SRC = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+    const render = () => {
+      const ts = (window as unknown as { turnstile?: { render: (el: HTMLElement, o: unknown) => void } }).turnstile;
+      if (ts && ref.current && !ref.current.hasChildNodes()) {
+        ts.render(ref.current, {
+          sitekey: siteKey,
+          callback: (t: string) => onToken(t),
+          "error-callback": () => onToken(""),
+          "expired-callback": () => onToken(""),
+        });
+      }
+    };
+    if ((window as unknown as { turnstile?: unknown }).turnstile) {
+      render();
+      return;
+    }
+    let s = document.querySelector<HTMLScriptElement>(`script[src="${SRC}"]`);
+    if (!s) {
+      s = document.createElement("script");
+      s.src = SRC;
+      s.async = true;
+      document.head.appendChild(s);
+    }
+    s.addEventListener("load", render);
+    return () => s?.removeEventListener("load", render);
+  }, [siteKey, onToken]);
+  return <div ref={ref} className="mt-2 flex justify-center" />;
+}
 
 export function AuthPage() {
   usePageTitle("Sign in");
@@ -25,6 +60,7 @@ export function AuthPage() {
       .authConfig()
       .then((cfg) => {
         setSignupEnabled(cfg.signup_enabled);
+        setCaptchaCfg(cfg.captcha ?? null);
         if (!cfg.signup_enabled) setMode("login");
       })
       .catch(() => {
@@ -38,6 +74,11 @@ export function AuthPage() {
   const [orgName, setOrgName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [captchaCfg, setCaptchaCfg] = useState<{ provider: string; site_key: string | null } | null>(null);
+  const [captchaToken, setCaptchaToken] = useState("");
+  // Set to the email after a signup that requires verification (trial tier);
+  // shows a "check your email" screen instead of entering the app.
+  const [verifySent, setVerifySent] = useState<string | null>(null);
 
   // Signup spins up a whole tenant database + enables the starter
   // modules — several seconds of real work. Acknowledge the click
@@ -62,20 +103,51 @@ export function AuthPage() {
       if (mode === "login") {
         await login(cleanEmail, cleanPassword);
       } else {
-        await signup({
+        const r = await signup({
           email: cleanEmail,
           password: cleanPassword,
           display_name: displayName.trim(),
           // Optional — blank → the API names it "<your name>'s workspace". Send
           // undefined (not ""), which the server's `?? default` relies on.
           org_name: orgName.trim() || undefined,
+          captcha_token: captchaToken || undefined,
         });
+        // Trial tier: the account exists but must verify its email before it can
+        // sign in. Show the "check your email" screen instead of entering the app.
+        if (r.needsVerification) {
+          setVerifySent(cleanEmail);
+          return;
+        }
       }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong.");
     } finally {
       setBusy(false);
     }
+  }
+
+  if (verifySent) {
+    return (
+      <div className="min-h-full flex flex-col items-center justify-center p-6">
+        <div className="w-full max-w-sm text-center flex flex-col items-center gap-4">
+          <CobblestoneMark size={64} />
+          <h1 className="font-display text-2xl font-bold text-content dark:text-mortar-100">Check your email</h1>
+          <p className="text-content-muted dark:text-mortar-300">
+            We sent a verification link to <span className="font-medium">{verifySent}</span>. Click it to activate your
+            account, then sign in.
+          </p>
+          <button
+            onClick={() => {
+              setVerifySent(null);
+              setMode("login");
+            }}
+            className="mt-2 text-sm text-accent hover:underline"
+          >
+            Back to sign in
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -203,6 +275,10 @@ export function AuthPage() {
 
           {mode === "login" && <ForgotPasswordRow email={email} />}
 
+          {mode === "signup" && captchaCfg?.site_key && (
+            <TurnstileWidget siteKey={captchaCfg.site_key} onToken={setCaptchaToken} />
+          )}
+
           {error && (
             <div className="text-xs text-ember-500 bg-ember-50 rounded-md px-3 py-2">
               {error}
@@ -211,7 +287,7 @@ export function AuthPage() {
 
           <button
             type="submit"
-            disabled={busy}
+            disabled={busy || (mode === "signup" && !!captchaCfg?.site_key && !captchaToken)}
             className="w-full rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium px-3 py-2 transition disabled:opacity-50"
           >
             {busy ? "…" : mode === "login" ? "Sign in" : "Create account"}
