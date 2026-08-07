@@ -3,6 +3,7 @@ type: feature
 scope: inventory
 date: 2026-07-17
 docs_target: docs/USER_GUIDE.md#3.1 Inventory
+docs_published: 2026-08-07
 ---
 Edit a table straight from the list: click any cell to change it, without opening the record.
 

@@ -2,10 +2,11 @@
 
 One file per change. **This directory IS the archive** — entries land here in the
 same feature PR that ships the change, and stay. The `/changelog` page reads them
-live (`GET /api/v1/changelog`), and the **8pm EST digest** posts that day's new
-`feature` entries — plus any `fix`/`improvement` flagged `announce: true` — to
-Discord. Nothing consolidates or clears this dir, and the
-digest is **read-only** — it has no repo write, no PR, no merge, no API token.
+live (`GET /api/v1/changelog`), and the **daily changelog publisher** announces
+whatever shipped in each nightly — every user-facing entry, not just features —
+as ONE post per surface (Discord + the community forum), the morning after.
+Nothing consolidates or clears this dir, and the publisher is **read-only** — it
+has no repo write, no PR, no merge.
 (Pre-cutover history lives frozen in `CHANGELOG.md`; the page reads both.)
 
 **Why files, not a shared `CHANGELOG.md`:** one file per PR = no merge conflicts
@@ -19,17 +20,20 @@ changelog.d/<short-slug>.md
 type: feature        # feature | improvement | fix
 scope: bundles       # optional — the area
 date: 2026-06-17     # the day it shipped (used to group it on the /changelog page)
-announce: true       # optional — send a MAJOR fix/improvement to the digest too
 ---
 One user-facing line. Past tense, plain language, what changed for the user.
 ```
 
-- `type: feature` → the **Discord digest** + the changelog page.
-- `type: improvement` / `fix` → changelog page only (no Discord spam)...
-- ...**unless** you add **`announce: true`** — that opts a *major* fix/improvement (a
-  real one users would care about, e.g. a whole-flow rebuild, not a one-line bugfix)
-  into the digest as a bullet alongside the features. The shipper judges "major"; leave
-  it off and it stays page-only.
+- **Every type is announced.** `feature`, `improvement` and `fix` all appear in
+  the daily post (Discord + forum) and on the changelog page, grouped by type.
+  Discord used to carry features only, which meant it said nothing at all on the
+  ~30% of days that shipped no feature while the forum published a full day's
+  work. Same entries, same day, both surfaces.
+- **Internal pipeline noise is dropped automatically** by
+  `scripts/publish/changelog-filter.mjs` (the canary channel, the release job,
+  a new lint). Write for a user and you never think about it.
+- `announce:` is **obsolete** and ignored — it existed to opt a major fix into a
+  features-only Discord feed. Harmless if present; stop adding it.
 - `date:` → groups the entry on the page. Use the day you ship it. Missing → the
   entry shows under "Unreleased" until corrected.
 

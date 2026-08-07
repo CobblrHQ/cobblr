@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-07-30
 docs_target: docs/USER_GUIDE.md#3.22 AI providers & the AI kill-switch (operator)
+docs_published: 2026-08-07
 ---
 The switch for letting AI pick your catalog photos automatically now also lives on the AI settings page, next to the connections that pay for it, instead of only as a chip in the scan header. With it on, re-running AI on an item re-picks its photo when your correction actually changed the question, so fixing a colour gets you a new photo instead of the old one.
 

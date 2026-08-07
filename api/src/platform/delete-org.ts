@@ -4,8 +4,10 @@
 // DELETE /super-admin/workspaces/:id (cleaning up e2e/test detritus is an
 // operator chore — console audit 2026-06-11). AUTHZ IS THE CALLER'S JOB.
 
+import { Client } from "pg";
 import { meta } from "../db/meta.js";
 import { metaPool } from "../db/meta.js";
+import { env } from "../env.js";
 import { evictTenantPool } from "../db/tenant.js";
 import { getSandboxedModuleInfo } from "../sandbox/sandboxed-module-info.js";
 import { dropModuleRole } from "../sandbox/module-role.js";
@@ -58,6 +60,26 @@ export async function hardDeleteOrg(orgId: string): Promise<void> {
   // above removed their grant dependencies so DROP ROLE is clean).
   for (const moduleName of sandboxedModules) {
     await dropModuleRole(orgId, moduleName);
+  }
+
+  // Drop the TENANT'S OWN role too. Roles are cluster-global, so the DROP
+  // DATABASE above did not remove it — for a long time this function dropped
+  // the database and left `tenant_<id>_user` behind forever (14 orphans on
+  // staging by 2026-08-07). It needs the SUPERUSER connection: the app's own
+  // user cannot DROP ROLE, which is why the original code could not do it here.
+  // Best-effort — the workspace is already gone either way, and
+  // reconcileOrphanTenantRoles() sweeps anything missed on the next boot.
+  if (env.SUPERUSER_DATABASE_URL && /^tenant_[a-z0-9_]+$/.test(dbName.db_name)) {
+    const roleName = `${dbName.db_name}_user`;
+    const su = new Client({ connectionString: env.SUPERUSER_DATABASE_URL });
+    try {
+      await su.connect();
+      await su.query(`DROP ROLE IF EXISTS "${roleName}"`);
+    } catch (err) {
+      console.error(`[delete-org] failed to drop tenant role ${roleName}:`, (err as Error).message);
+    } finally {
+      await su.end().catch(() => {});
+    }
   }
 
   // FKs with ON DELETE CASCADE handle most child rows

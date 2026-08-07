@@ -12,6 +12,9 @@
 // returns at least one occurrence" — restart-safe.
 
 // rrule is published as CJS; named-export via default-package import.
+// sweep-pools: deferred-release ok — the background tick enumerates only
+// ACTIVE orgs (created <5min ago or carrying recurrence state), a small
+// bounded set; the 15s deferred pool close in tenant.ts covers it.
 import rrulePkg from "rrule";
 import { platform } from "@cobblr/platform-contract";
 const { rrulestr } = rrulePkg;

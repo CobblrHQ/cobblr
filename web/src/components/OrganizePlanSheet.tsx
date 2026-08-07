@@ -531,7 +531,7 @@ export function SortingPlanView({
       {/* "Everything here still needs a name" is not an error — it's a step. The
           items ARE in the box (they count toward the banner + toggle), they just
           can't be placed until they're identified. Point back to them instead of
-          dead-ending on the red string Grace couldn't act on. */}
+          dead-ending on the red string a beta tester couldn't act on. */}
       {error &&
         (() => {
           const view = planErrorView(errorCode, reviewNeeded, error, !!onReviewItems);

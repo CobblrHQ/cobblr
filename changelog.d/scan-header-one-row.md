@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-08-01
 docs_target: docs/USER_GUIDE.md#Triage → commit
+docs_published: 2026-08-07
 ---
 The scan inbox header is one row that never wraps: the counts read as a single sentence you can filter by, one box does both search and paste-to-add, and the rare actions moved into a menu.
 

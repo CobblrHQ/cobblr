@@ -28,6 +28,7 @@ const FILE = "api/src/routes/diagnostics.ts";
 /** Keys the payload may contain. Extend deliberately; read the header first. */
 const ALLOWED_KEYS = new Set([
   "build_sha",
+  "version",
   "hosted",
   "node",
   "platform",
@@ -35,8 +36,8 @@ const ALLOWED_KEYS = new Set([
   "modules",
 ]);
 
-/** Env vars the route may read. Both are deployment facts, not secrets. */
-const ALLOWED_ENV = new Set(["COBBLR_BUILD_SHA", "COBBLR_HOSTED"]);
+/** Env vars the route may read. All are deployment facts, not secrets. */
+const ALLOWED_ENV = new Set(["COBBLR_BUILD_SHA", "COBBLR_VERSION", "COBBLR_HOSTED"]);
 
 /** Tables that would mean the payload is describing people, not the machine. */
 const FORBIDDEN_TABLES = /selectFrom\(\s*["'](users|orgs|org_memberships|api_tokens|activity_log|feedback|workspace_[a-z_]+)["']/;

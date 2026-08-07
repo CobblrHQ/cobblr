@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-07-30
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-08-07
 ---
 Corrections now build on each other instead of replacing each other. Tell Cobblr "color: black" and later "it's the loose fit" and it keeps both. Tell it two different colours and the newer one wins. The AI is shown everything you have said about the item, in order, and told that the most recent correction is the strongest.
 

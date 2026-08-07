@@ -3,6 +3,7 @@ type: feature
 scope: printing
 date: 2026-07-28
 docs_target: docs/USER_GUIDE.md#Print labels over Bluetooth
+docs_published: 2026-08-07
 ---
 Print to a label printer attached to an edge bridge on your own computer, straight from the browser, with no relay token and no pairing to the cloud.
 

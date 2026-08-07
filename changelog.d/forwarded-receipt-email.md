@@ -3,6 +3,7 @@ type: feature
 scope: core-scan
 date: 2026-07-24
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-08-07
 ---
 **Forwarding a store receipt email now works, and the reply talks back to you.** Most receipts arrive as an email you forward, with the receipt in the message body or its html, not as a file. That used to come back empty because the receipt content was being stripped before we ever read it. Now the full forwarded body and its html are read, so a forwarded receipt turns into inbox items like an attached one. The reply you get quotes what you sent and comes with Reply-To set to your receipts address, so if we could not find a receipt you can just reply with it attached and it lands straight in your inbox.
 

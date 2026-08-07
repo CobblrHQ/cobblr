@@ -337,7 +337,7 @@ function FilesSection({
       );
       if (!res.ok) throw new Error(`attach failed ${res.status}`);
       // The FIRST photo on an entity auto-becomes its cover — uploading a photo
-      // should "just show" without a separate Set-as-cover tap (feedback: Grace,
+      // should "just show" without a separate Set-as-cover tap (beta feedback,
       // "uploaded a yarn photo, it did not retain"). Best-effort: a failure here
       // never fails the upload, and we only claim the cover when there isn't one.
       if (file.type.startsWith("image/") && !hadImage) {

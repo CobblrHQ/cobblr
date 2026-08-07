@@ -3,6 +3,7 @@ type: feature
 scope: core-ai
 date: 2026-07-10
 docs_target: docs/USER_GUIDE.md#3.22 AI providers & the AI kill-switch (operator)
+docs_published: 2026-08-07
 ---
 **Cobb gets an autopilot, because every change he makes is now tracked and undoable.** The "Propose changes" toggle grows into a three-way mode, Claude-Code style: **Ask** (every change needs your Confirm; the default), **Auto** (record creates, edits, and deletes apply immediately), and **Off**. Auto is safe to hand him because of the new **AI change ledger**: every write Cobb performs, confirmed or automatic, is recorded with a full before-image, and gets an **↩ Undo** button right in the chat. Undo a create and it's deleted; undo an edit and the old values come back; undo a delete and the record is recreated. Actions (print a label, adjust stock) still always ask; they can't be un-done in the real world. And the classic record kinds (parts, machines, assets, projects, tasks, lists) are now fully editable/deletable through Cobb too, not just createable.
 

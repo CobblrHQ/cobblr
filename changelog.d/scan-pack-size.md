@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-07-14
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-08-07
 ---
 Scanning a multipack now records the pack you're actually holding. Household Supplies' "Usual pack" field is now "Pack size": it captures the package you scanned (a single, a 10-pack), read off the box, instead of guessing what you usually buy. Pack size is a platform dimension now (alongside quantity and unit), so any tracker can carry it and the scan fills it the same way.
 

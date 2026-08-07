@@ -3,6 +3,7 @@ type: feature
 scope: platform
 date: 2026-07-14
 docs_target: docs/USER_GUIDE.md#4.5 Custom fields
+docs_published: 2026-08-07
 ---
 **A custom field can now target any class of things you can describe, not just two canned ones.** Yesterday's release let a field apply to "all physical items" or "all digital items". Those were the only two choices, which quietly implied the rest of the vocabulary did not exist. It does: every entity kind in Cobblr declares what it fundamentally *is* along six axes (is it physical or digital, tracked one by one or by quantity, does it hold other things, does it have a schedule, can it be finished, does it stick around). On the `/fields` page, picking **A class of things** now gives you the full grid. Tick the traits you mean and the page shows you, live, exactly which kinds the field will land on. Ticks in the same row are OR'd, and across rows they are AND'd, so "physical + tracked one by one" means assets, machines, and vehicles but **not** parts (a part is physical, but you track it by quantity). Four one-click presets sit above the grid for the common cases. It is the same control the Actions page uses to decide which entities an action appears on, so the two now behave identically.
 

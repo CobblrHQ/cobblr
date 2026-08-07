@@ -90,6 +90,7 @@ import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
 import { matchParentType, readField } from "../lib/parent-type-match";
 import { isRerunInFlight, itemEnriching } from "./scan-status";
 import { baseKind, confirmBodyFor, isReadyToFile } from "./scanFileAll";
+import { looksLikeContainer, nextBinName } from "./scanContainer";
 import {
   sessionCategory,
   sessionFilingReadiness,
@@ -1128,7 +1129,7 @@ export function ScanPage() {
   //
   // Reconciliation is cross-item, so a card cannot work it out alone: nine jugs
   // identified independently rendered "Figurines" and "Figurine" side by side
-  // (the author, 2026-08-02). Computed once here and handed to every InboxCard, so the
+  // (reported 2026-08-02). Computed once here and handed to every InboxCard, so the
   // list, the sorting-plan card and the gallery modal cannot disagree - three
   // call sites, one answer.
   const sessionCategoryByItem = useMemo(() => {
@@ -1289,7 +1290,7 @@ export function ScanPage() {
   const [showCommitted, setShowCommitted] = useState(false);
   // Recently-committed grouped by the SESSION they were committed from, so a whole
   // receipt/scan session committed at once (e.g. "Confirm all") can be sent back in
-  // ONE click — not 20 (the author, 2026-07-24). Loose items (no batch) stay as singletons.
+  // ONE click — not 20 (reported 2026-07-24). Loose items (no batch) stay as singletons.
   const committedGroups = useMemo(() => {
     const byBatch = new Map<string, ScanInboxItem[]>();
     const groups: Array<{ key: string; batchId: string | null; items: ScanInboxItem[] }> = [];
@@ -1352,7 +1353,7 @@ export function ScanPage() {
       if (batchId) {
         // The recently-committed list is a capped window; fetch the batch's FULL
         // resolved set so "Send all back" reverts the WHOLE session, not just the
-        // rows that happen to be visible (the author, 2026-07-25).
+        // rows that happen to be visible (reported 2026-07-25).
         try {
           const full = await api.listScanInbox(activeSlug, {
             status: "resolved",
@@ -1580,7 +1581,7 @@ export function ScanPage() {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
   // Multiple pending receipts → one collapsible banner instead of a stack of
-  // "Confirm as purchase order" rows (the author, 2026-07-24). "Confirm all" turns each
+  // "Confirm as purchase order" rows (reported 2026-07-24). "Confirm all" turns each
   // receipt into its OWN purchase order (they're separate orders), with one
   // summary toast instead of N.
   const [poExpanded, setPoExpanded] = useState(false);
@@ -1603,7 +1604,7 @@ export function ScanPage() {
       await qc.invalidateQueries({ queryKey: ["scan-inbox-resolved", activeSlug] });
       const itemsN = committedIds.length;
       // Undo the WHOLE bulk commit — one tap sends every line from every receipt
-      // back to the inbox, unsorted, if "Confirm all" was premature (the author, 2026-07-24).
+      // back to the inbox, unsorted, if "Confirm all" was premature (reported 2026-07-24).
       toast.action(
         orders
           ? `Created ${orders} purchase order${orders === 1 ? "" : "s"} (${itemsN} item${itemsN === 1 ? "" : "s"})`
@@ -1724,7 +1725,7 @@ export function ScanPage() {
   // Deep-link params (?view=plan / ?organize=pending, ?livesort=1) are
   // consume-once: they seed the state above, then we strip them from the URL.
   // Otherwise the param persisted, so leaving the view/modal left it in the URL
-  // and every refresh re-forced it against the user's wish (the author, 2026-07-10).
+  // and every refresh re-forced it against the user's wish (reported 2026-07-10).
   // Mount-only: the useState defaults already captured the arrival value; after
   // that nothing reads these params, and the toggle/buttons are pure state.
   useEffect(() => {
@@ -2052,7 +2053,7 @@ export function ScanPage() {
             (81 pending · 46 ready · 4 review · 49 waiting) four two-digit facets
             came to 145px and pushed the row 14-32px past every phone width -
             the location chip was the only shrinkable member and its 96px floor
-            could not absorb it (the author, 2026-08-05, reporting it a second time).
+            could not absorb it (reported 2026-08-05, reporting it a second time).
             `min-w-0` + overflow-x makes an overflow structurally impossible at
             ANY count; dropping the separators on a phone (the glyphs already
             say which facet is which) means it never actually has to scroll. */}
@@ -2172,7 +2173,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
         {/* Where the NEXT scan files. The label is the ACTION at every width -
             "Set location" reads the same on a phone and a desktop, so there is
             one term to learn rather than a per-breakpoint synonym
-            (the author, 2026-08-01). The MENU carries the scope the label cannot. */}
+            (reported 2026-08-01). The MENU carries the scope the label cannot. */}
         {locsEnabled && (
           <HeaderMenu
             width={300}
@@ -3105,6 +3106,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                   selected={selected.has(item.id)}
                   onToggleSelect={() => toggleSelected(item.id)}
                   rateLimitGaveUp={rlGaveUp.has(item.id)}
+                  onArmBin={setFileBin}
                 />
               </div>
             );
@@ -3160,7 +3162,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                 // one. A Bookshelf table whose fields are isbn/genre/author has
                 // no category axis, so `extrasWithCategory` writes the category
                 // nowhere - while the button still promised "file all 1 into
-                // Book" (the author, 2026-08-01). Silence beats a filing that will not
+                // Book" (reported 2026-08-01). Silence beats a filing that will not
                 // happen; the items still file, just without the clause.
                 const sessionHasCategoryAxis = readyItems.some((it) => !!categoryAxisKey(it, menu));
                 const sessionCat = {
@@ -3213,7 +3215,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                     // overflow-hidden: at phone width the filing trio squeezes
                     // this button below its content size, and its shrink-0
                     // children were PAINTING OVER the End control ("1 itemEnd",
-                    // the author 2026-08-03). Clipping inside beats bleeding out.
+                    // reported 2026-08-03). Clipping inside beats bleeding out.
                     className="flex flex-1 min-w-0 items-center gap-2 overflow-hidden text-left"
                   >
                     <ChevronDown size={13} className={`shrink-0 transition ${collapsed ? "-rotate-90" : ""}`} />
@@ -3222,7 +3224,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         `truncate` on the trimmings spends the same width to say
                         "edited ..." as to say "edited 3h ago", while squeezing
                         the one string that identifies the session down to
-                        "Receipt · KC To..." (the author, 2026-07-30). The full label is
+                        "Receipt · KC To..." (reported 2026-07-30). The full label is
                         always on the tooltip. */}
                     <span
                       className="font-medium text-content dark:text-mortar-100 truncate"
@@ -3282,7 +3284,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                   {/* PER-SESSION UTILITIES sit LEFT of the filing trio.
                       The rightmost three controls are always location · file ·
                       open, whatever kind of session this is, so the eye lands on
-                      the same place every row (the author, 2026-07-30). These extras are
+                      the same place every row (reported 2026-07-30). These extras are
                       receipt-only, so leaving them on the right made the trio
                       shift column depending on whether a session came from a
                       receipt or a scan. */}
@@ -3360,7 +3362,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       discovered by pressing File. Filing needs a category and a
                       location; the category was already visible here while the
                       location only surfaced as a surprise question after the tap
-                      (the author, 2026-07-30). Now the missing half says so, and is one
+                      (reported 2026-07-30). Now the missing half says so, and is one
                       tap from being set - set the location, then file. */}
                   {busy === 0 && readyIds.length > 0 && !fileBin && (
                     <button
@@ -3396,7 +3398,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         // PARTIAL. Naming the one location that IS set reads as
                         // the whole session's home, when most of it has nowhere
                         // to go - a session where 1 of 3 was placed showed a
-                        // confident "White Bookshelf" (the author, 2026-08-01). Lead
+                        // confident "White Bookshelf" (reported 2026-08-01). Lead
                         // with what is missing, because that is the thing left
                         // to do; `sessionLocation` has always returned the count
                         // and this is the render that finally reads it.
@@ -3407,7 +3409,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       ) : (
                         // It's a button: say the action, not the absence. Also
                         // the shortest honest label, which this row needs
-                        // (the author, 2026-08-01).
+                        // (reported 2026-08-01).
                         "Set location"
                       )}
                     </button>
@@ -3452,7 +3454,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       {/* Say what the tap will DO. It used to read "File all 3
                           into Clothing" even when nothing had a location yet, so
                           it promised to file and then asked instead - the label
-                          has to admit the question is coming (the author, 2026-07-30). */}
+                          has to admit the question is coming (reported 2026-07-30). */}
                       {filing.reason === "location" ? (
                         <>
                           <MapPin size={11} /> Place<span className="hidden sm:inline">&nbsp;&amp; file all</span> {readyIds.length}
@@ -3595,6 +3597,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                 hasLocations={hasLocations}
                 rateLimitGaveUp={rlGaveUp.has(focus.id)}
                 defaultExpanded
+                onArmBin={setFileBin}
               />
             </Modal>
           );
@@ -3767,6 +3770,118 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
 // Expanded: catalog vs YOUR photo, the AI's reasoning + confidence,
 // sanity-check links, and the inline confirm form. A matchmaker chip
 // expands straight into that table's form, fields pre-filled.
+// ── "Turn into a bin": scan → location, one shot ─────────────────────
+// The scanned product IS a container (a storage tote). One action: create a
+// core-locations bin (kind "container"), write the scan's product identity +
+// photo onto it (the existing confirm-into-location seam), and optionally arm
+// it as the standing file-bin so the very next scans land inside it. The bin
+// NAME is the user's label ("Bin 17" auto-suggested from what exists); the
+// product name rides underneath as its identity, never as its name.
+function MakeBinSheet({
+  item,
+  onClose,
+  onArmBin,
+}: {
+  item: ScanInboxItem;
+  onClose: () => void;
+  onArmBin?: (locId: string) => void;
+}) {
+  const { activeSlug } = useActiveOrg();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const locs = useQuery({
+    queryKey: ["core-locations", activeSlug],
+    queryFn: () => api.listLocations(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 60_000,
+  });
+  const suggested = useMemo(
+    () => nextBinName((locs.data?.items ?? []).map((l) => l.name)),
+    [locs.data],
+  );
+  const [name, setName] = useState("");
+  const [parent, setParent] = useState<string | null>(item.target_location_id ?? null);
+  // Seed the name once the locations land — not on every refetch, or typing races.
+  const seeded = useRef(false);
+  useEffect(() => {
+    if (!seeded.current && locs.data) {
+      setName(suggested);
+      seeded.current = true;
+    }
+  }, [locs.data, suggested]);
+  const create = useMutation({
+    mutationFn: async (arm: boolean) => {
+      const loc = await api.createLocation(activeSlug, {
+        name: name.trim(),
+        kind: "container",
+        ...(parent ? { parent_id: parent } : {}),
+      });
+      await api.confirmScanIntoLocation(activeSlug, item.id, loc.id);
+      return { loc, arm };
+    },
+    onSuccess: ({ loc, arm }) => {
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      void qc.invalidateQueries({ queryKey: ["core-locations", activeSlug] });
+      if (arm) onArmBin?.(loc.id);
+      toast.success(
+        arm ? `${loc.name} created - new scans file into it` : `${loc.name} created`,
+      );
+      onClose();
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+  const busy = create.isPending;
+  return (
+    <Modal open onClose={onClose} title="Turn this into a bin" size="sm">
+      <div className="space-y-3">
+        <p className="text-xs text-muted dark:text-slate-400">
+          Creates a location from this scan in one step: the product photo, barcode
+          and brand land on the bin&rsquo;s record and the inbox item is done. The
+          bin&rsquo;s name is yours; the product identity rides underneath.
+        </p>
+        <label className="block">
+          <span className="text-xs font-medium text-content dark:text-mortar-100">Bin name</span>
+          <input
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && name.trim() && !busy) create.mutate(true);
+            }}
+            className="mt-1 w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-800 px-2 py-1.5 text-sm text-content dark:text-mortar-100"
+          />
+        </label>
+        <div>
+          <div className="text-xs font-medium text-content dark:text-mortar-100 mb-1">
+            Where does the bin live? <span className="font-normal text-faint">(optional)</span>
+          </div>
+          <div className="max-h-44 overflow-y-auto">
+            <LocationChipPicker value={parent} onChange={setParent} />
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+          <button
+            type="button"
+            disabled={busy || !name.trim()}
+            onClick={() => create.mutate(false)}
+            className="rounded border border-line dark:border-slate-600 px-3 py-1.5 text-sm text-muted dark:text-slate-300 hover:bg-mortar-50 dark:hover:bg-slate-800 transition disabled:opacity-50"
+          >
+            Create bin
+          </button>
+          <button
+            type="button"
+            disabled={busy || !name.trim()}
+            onClick={() => create.mutate(true)}
+            className="rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm font-medium transition disabled:opacity-50"
+          >
+            {busy ? "Creating…" : "Create & scan into it"}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function InboxCard({
   item,
   pageTarget,
@@ -3779,6 +3894,7 @@ function InboxCard({
   defaultExpanded,
   planContext,
   onCollapse,
+  onArmBin,
 }: {
   item: ScanInboxItem;
   pageTarget: ScanTarget | null;
@@ -3802,6 +3918,9 @@ function InboxCard({
    *  there, so the ▲ chevron delegates here instead of toggling its own body,
    *  which would leave the outer "Done fixing" box behind). */
   onCollapse?: () => void;
+  /** "Turn into a bin" armed the new bin as the standing file-bin — the page
+   *  owns that state (localStorage + header chip), so it passes the setter. */
+  onArmBin?: (locId: string) => void;
 }) {
   const { activeSlug, activeOrg } = useActiveOrg();
   const qc = useQueryClient();
@@ -3830,6 +3949,16 @@ function InboxCard({
     selKey: pageTarget ? entryKey(pageTarget.module, pageTarget.instance) : null,
     prefill: {},
   });
+  // The commit form is SUMMONED, not ambient (scan-inbox-ux-review.md F1): a
+  // plain expand shows the triage surface only, and the form renders once a
+  // destination is picked — a chip tap, the "Add to …" summon row, or the
+  // gallery-focus modal. Rendering every field of the top table on every
+  // expand is what buried a tote under six empty vehicle boxes.
+  const [formOpen, setFormOpen] = useState(false);
+
+  function expandOnly() {
+    setExpanded(true);
+  }
 
   function openForm(cand?: ScanCandidate) {
     // No explicit chip and no ?into= target → default to the matchmaker's
@@ -3849,6 +3978,7 @@ function InboxCard({
             prefill: {},
           },
     );
+    setFormOpen(true);
     setExpanded(true);
   }
 
@@ -3881,7 +4011,7 @@ function InboxCard({
   // ADD TO + the pre-filled fields) is only set by openForm() on a CLICK, so a
   // re-run updated the header chips and the Source panel while the form below kept
   // the previous run's route + category until the user closed and reopened the
-  // card (the author, 2026-07-17: re-identified a miter-saw misread as a tool tote, but
+  // card (reported 2026-07-17: re-identified a miter-saw misread as a tool tote, but
   // ADD TO still said Machines / Power tool). A re-run is an explicit "identify
   // this again", so adopting its result into the open form is what's expected.
   // Keyed on the top candidate's signature (route + fields), the same shape the
@@ -3892,7 +4022,9 @@ function InboxCard({
   useEffect(() => {
     if (lastAnswerSig.current === answerSig) return;
     lastAnswerSig.current = answerSig;
-    if (expanded && !planContext) openForm(topCand ?? undefined);
+    // Only re-arm a form that is actually on screen — a re-run must not summon
+    // the form onto a card the user expanded for triage only.
+    if (formOpen && expanded && !planContext) openForm(topCand ?? undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [answerSig]);
   // Stuck-nameless: enrichment finished (ai_suggested_at) but produced no name
@@ -4036,10 +4168,23 @@ function InboxCard({
     (item.suggested_metadata as Record<string, unknown> | null) ?? {}
   ).tracked_match as { title?: string } | null | undefined;
   const alreadyTracked = !!trackedMatch?.title;
+  // A keyword-basis route is a no-AI guess held up only by corroborating
+  // keyword hits — the tier that filed a storage tote into Vehicles. It renders
+  // tentative (outline + "?") and gets no one-tap Add; isReadyToFile applies
+  // the same bar to File all, so the card and the bulk sweep agree.
+  const tentativeRoute = topCand?.basis === "keywords";
+  const cardAiStatus = useAiStatus();
+  // The matchmaker fell to the keyword floor although this workspace HAS
+  // working AI — the model call failed and the code silently downgraded. Say
+  // so, with a one-tap retry, instead of letting a lexical guess sit there
+  // looking settled (scan-inbox-ux-review.md F4).
+  const aiDowngraded =
+    !!topCand?.heuristic && !!cardAiStatus?.available && item.status === "pending";
   const quickConfirmReady =
     !!topCand &&
     !!item.suggested_name &&
     !alreadyTracked &&
+    !tentativeRoute &&
     (!topCand.bundle_external_id || !!topBundle);
   const quickConfirm = useMutation({
     mutationFn: async () => {
@@ -4236,7 +4381,7 @@ function InboxCard({
   // the catalog image. ONE filmstrip regardless of which image you click: the
   // item's own shots (catalog + yours, already-resolved blob urls above) followed
   // by the web photo candidates — so opening from the catalog shows the same
-  // options as opening from a web tile (the author, 2026-07-24). The candidates are
+  // options as opening from a web tile (reported 2026-07-24). The candidates are
   // fetched by the PhotoOptions strip below and reported up via onItems.
   const [zoomIdx, setZoomIdx] = useState<number | null>(null);
   const [photoCandidates, setPhotoCandidates] = useState<ImageOption[]>([]);
@@ -4380,17 +4525,27 @@ function InboxCard({
   const extraPhotos = Array.isArray((item.suggested_metadata as { extra_photos?: unknown })?.extra_photos)
     ? ((item.suggested_metadata as { extra_photos: string[] }).extra_photos)
     : [];
-  // Box-state: unset → empty-box → item-in-box → unset.
+  // Box-state: explicit set/clear (menu grammar — tapping the active state
+  // clears it; the old cycle button hid the next state behind a blind tap).
   const boxState =
     (item.suggested_metadata as { box_state?: "item-in-box" | "empty-box" } | null)?.box_state ?? null;
-  const cycleBoxState = useMutation({
-    mutationFn: () =>
-      api.updateScanItem(activeSlug, item.id, {
-        box_state: boxState === null ? "empty-box" : boxState === "empty-box" ? "item-in-box" : null,
-      }),
+  const setBoxState = useMutation({
+    mutationFn: (v: "item-in-box" | "empty-box" | null) =>
+      api.updateScanItem(activeSlug, item.id, { box_state: v }),
     onSuccess: invalidateInbox,
     onError: onErr,
   });
+  // The "this scan IS a container" one-shot (a scanned storage tote becomes a
+  // core-locations bin, identity + photo riding onto the bin's record).
+  const [makeBinOpen, setMakeBinOpen] = useState(false);
+  const containerish =
+    !planContext &&
+    item.status === "pending" &&
+    hasLocations &&
+    looksLikeContainer(
+      item.suggested_name,
+      (item.suggested_metadata as { category?: string } | null)?.category ?? null,
+    );
   // "Looks fine" — human eyeballed a flagged item; drop it from needs-review.
   const alreadyReviewed = !!(item.suggested_metadata as { reviewed?: boolean } | null)?.reviewed;
   const flaggedForReview =
@@ -4426,7 +4581,7 @@ function InboxCard({
       {/* ── collapsed header row (click = expand) ───────────────────── */}
       <div
         className="flex items-stretch cursor-pointer"
-        onClick={() => (planContext && onCollapse ? onCollapse() : expanded ? setExpanded(false) : openForm())}
+        onClick={() => (planContext && onCollapse ? onCollapse() : expanded ? setExpanded(false) : expandOnly())}
       >
         {/* Photo column: a CONSISTENT WIDTH (so every card's text starts at the
             same x), stretched to the row's full height — a book cover / product
@@ -4732,7 +4887,7 @@ function InboxCard({
             ))}
           {/* "You already have one of these" — its OWN line, because the answer
               has to NAME the record. As an action segment on the route chip it
-              read "Vehicles | Same one?", which can't say same as WHAT (the author,
+              read "Vehicles | Same one?", which can't say same as WHAT (reported
               2026-07-16). Sits above the chips so it's read before the routing,
               which is the right order: whether this is a duplicate decides
               whether the routing matters at all. Opens the card rather than
@@ -4787,7 +4942,14 @@ function InboxCard({
                   // a phone (the author). Attached to its destination, labeled.
                   <span
                     key={`${c.module}:${c.instance ?? ""}:${i}`}
-                    className="inline-flex max-w-full items-stretch rounded-full overflow-hidden border border-cobble-600 bg-cobble-600 text-white text-xs font-medium"
+                    className={
+                      // A keyword-basis guess must not wear a confident chip's
+                      // face: outline + "?" instead of the solid fill, and the
+                      // one-tap Add segment below is withheld for it.
+                      tentativeRoute
+                        ? "inline-flex max-w-full items-stretch rounded-full overflow-hidden border border-dashed border-cobble-500 text-content dark:text-mortar-100 text-xs font-medium"
+                        : "inline-flex max-w-full items-stretch rounded-full overflow-hidden border border-cobble-600 bg-cobble-600 text-white text-xs font-medium"
+                    }
                   >
                     <button
                       type="button"
@@ -4796,14 +4958,22 @@ function InboxCard({
                         openForm(c);
                       }}
                       title={
-                        Object.keys(c.fields).length
-                          ? `Review & edit — fills: ${Object.entries(c.fields).map(([k, v]) => `${k}=${v}`).join(", ")}`
-                          : `Review & add to ${c.label}`
+                        tentativeRoute
+                          ? `A keyword guess (no AI) — open to review before filing into ${c.label}`
+                          : Object.keys(c.fields).length
+                            ? `Review & edit — fills: ${Object.entries(c.fields).map(([k, v]) => `${k}=${v}`).join(", ")}`
+                            : `Review & add to ${c.label}`
                       }
-                      className="inline-flex min-w-0 items-center gap-1 pl-2.5 pr-2 py-1 hover:bg-cobble-700 transition"
+                      className={
+                        "inline-flex min-w-0 items-center gap-1 pl-2.5 pr-2 py-1 transition " +
+                        (tentativeRoute ? "hover:bg-cobble-600/10" : "hover:bg-cobble-700")
+                      }
                     >
                       <Sparkles size={11} className="shrink-0" />
-                      <span className="truncate">{c.label}</span>
+                      <span className="truncate">
+                        {c.label}
+                        {tentativeRoute ? "?" : ""}
+                      </span>
                     </button>
                     {quickConfirmReady && !topBundle && (
                       <button
@@ -4821,7 +4991,7 @@ function InboxCard({
                       </button>
                     )}
                     {/* A match doesn't get an action segment here: "Same one?"
-                        next to a TABLE name can't say same as WHAT (the author,
+                        next to a TABLE name can't say same as WHAT (reported
                         2026-07-16). It gets its own line above, which can name
                         the record. The chip stays a plain route, and the
                         duplicate-making one-tap Add simply isn't offered. */}
@@ -4873,7 +5043,7 @@ function InboxCard({
                   if (entries.length === 0) return null;
                   // The row wraps, so let it breathe: cap only a genuinely long
                   // tail, and never render "+1" — that summary chip costs as
-                  // much width as the field chip it hides (the author, 2026-07-18).
+                  // much width as the field chip it hides (reported 2026-07-18).
                   const MAX = 6;
                   const shown = entries.length <= MAX + 1 ? entries : entries.slice(0, MAX);
                   const extra = entries.length - shown.length;
@@ -4910,6 +5080,44 @@ function InboxCard({
                     </>
                   );
                 })()}
+            </div>
+          )}
+          {/* The workspace has AI but this match came from the keyword floor —
+              the model call failed and the code fell back. Silent downgrade is
+              how a lexical guess ends up looking settled; say it, offer the
+              retry (scan-inbox-ux-review.md F4). */}
+          {aiDowngraded && !planContext && (
+            <div
+              className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-amber-700 dark:text-amber-400"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Sparkles size={11} className="shrink-0" />
+              <span>Matched by keywords: the AI didn’t answer.</span>
+              <button
+                type="button"
+                onClick={() => rerun.mutate(undefined)}
+                disabled={aiWorking || !canRerunLookup(item)}
+                className="underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-200 disabled:opacity-50"
+              >
+                Retry with AI
+              </button>
+            </div>
+          )}
+          {/* A scanned storage tote is usually about to BECOME a bin — offer the
+              one-shot right on the closed card (buried in a menu it may as well
+              not exist for the flow it exists for). */}
+          {containerish && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs" onClick={(e) => e.stopPropagation()}>
+              <span className="inline-flex items-center gap-1.5 text-muted dark:text-slate-400">
+                📦 Looks like a storage container.
+              </span>
+              <button
+                type="button"
+                onClick={() => setMakeBinOpen(true)}
+                className="inline-flex items-center gap-1 rounded-full border border-cobble-400 dark:border-cobble-600 px-2.5 py-1 text-[11px] font-medium text-accent hover:bg-cobble-50 dark:hover:bg-cobble-900/30 transition"
+              >
+                Turn into a bin
+              </button>
             </div>
           )}
           {candidates.length === 0 && serverMatching && (
@@ -4972,7 +5180,7 @@ function InboxCard({
           )}
           <button
             type="button"
-            onClick={() => (planContext && onCollapse ? onCollapse() : expanded ? setExpanded(false) : openForm())}
+            onClick={() => (planContext && onCollapse ? onCollapse() : expanded ? setExpanded(false) : expandOnly())}
             aria-label={expanded ? "Collapse" : "Expand"}
             aria-expanded={expanded}
             className="text-faint hover:text-accent p-1.5"
@@ -4985,6 +5193,13 @@ function InboxCard({
         </div>
       </div>
 
+      {makeBinOpen && (
+        <MakeBinSheet
+          item={item}
+          onClose={() => setMakeBinOpen(false)}
+          onArmBin={onArmBin}
+        />
+      )}
       {/* ── expanded triage surface — photos left, intel right (lg+) ── */}
       {expanded && (
         <div className="border-t border-line dark:border-slate-800 p-3 space-y-3 bg-subtle/40 dark:bg-slate-950/40">
@@ -5011,13 +5226,29 @@ function InboxCard({
                   >
                     <img src={catalogImg} alt="catalog" className="w-full h-full object-contain" onError={() => markBroken(catalogUrl)} />
                   </button>
+                  {/* A photo's controls live ON the photo (its caption), not in
+                      a standing ambient row — see scan-inbox-ux-review.md F2. */}
                   <figcaption
                     className={
-                      "text-[10px] font-mono uppercase tracking-widest mt-1 " +
+                      "text-[10px] font-mono uppercase tracking-widest mt-1 flex items-center gap-2 " +
                       (unverified ? "text-amber-600 dark:text-amber-400" : "text-accent")
                     }
                   >
-                    {unverified ? "✦ catalog - checking" : "✦ catalog"}
+                    <span>{unverified ? "✦ catalog - checking" : "✦ catalog"}</span>
+                    {hasOrigCatalog && (
+                      <button
+                        type="button"
+                        disabled={catalogAction.isPending}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          catalogAction.mutate("revert");
+                        }}
+                        title="Put back the original catalog photo"
+                        className="normal-case tracking-normal font-sans text-muted hover:text-content underline decoration-dotted underline-offset-2 transition disabled:opacity-50"
+                      >
+                        ↺ original
+                      </button>
+                    )}
                   </figcaption>
                 </figure>
               )}
@@ -5031,111 +5262,170 @@ function InboxCard({
                   >
                     <img src={yoursImg} alt="your photo" className="w-full h-full object-contain" onError={() => markBroken(yoursRawUrl)} />
                   </button>
-                  <figcaption className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mt-1">
-                    yours
+                  <figcaption className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mt-1 flex items-center gap-2">
+                    <span>yours</span>
+                    {item.image_file_id && (
+                      <button
+                        type="button"
+                        disabled={rotate.isPending}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          rotate.mutate();
+                        }}
+                        title="Rotate your photo 90°"
+                        className="normal-case tracking-normal font-sans hover:text-content underline decoration-dotted underline-offset-2 transition disabled:opacity-50"
+                      >
+                        {rotate.isPending ? "rotating…" : "⟳ rotate"}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      disabled={catalogAction.isPending}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        catalogAction.mutate("use_own_photo");
+                      }}
+                      title="Use this photo as the catalog/display image"
+                      className="normal-case tracking-normal font-sans hover:text-content underline decoration-dotted underline-offset-2 transition disabled:opacity-50"
+                    >
+                      use as catalog
+                    </button>
                   </figcaption>
                 </figure>
               )}
             </div>
           )}
-          {/* Extra photos (multi-photo gallery): tap → make primary; × → remove. */}
-          {extraPhotos.length > 0 && (
-            <div className="flex flex-wrap gap-1.5" onClick={(e) => e.stopPropagation()}>
-              {extraPhotos.map((pid) => (
-                <ExtraPhotoThumb
-                  key={pid}
-                  slug={activeSlug}
-                  fileId={pid}
-                  onMakePrimary={() => setPrimaryPhoto.mutate(pid)}
-                  onRemove={() => removeExtraPhoto.mutate(pid)}
-                  // "I added this pic to give you more info - get it right."
-                  // Re-identifies from THIS photo; without it an added photo was
-                  // inert for identification (the author, 2026-08-03).
-                  onReidentify={
-                    item.status === "pending" ? () => rerun.mutate({ imageFileId: pid }) : undefined
-                  }
-                  busy={setPrimaryPhoto.isPending || removeExtraPhoto.isPending || rerun.isPending}
-                />
-              ))}
-            </div>
-          )}
-          {/* Image tools: rotate / split / retake / add — plus catalog revert. */}
+          {/* Extra photos (multi-photo gallery): tap → make primary; × → remove.
+              The add-photo affordance is the dashed tile at the end of this
+              strip — a capture control placed where the photos it adds to live,
+              instead of a standing button in an ambient row. */}
           <div className="flex flex-wrap gap-1.5" onClick={(e) => e.stopPropagation()}>
-            {hasOrigCatalog && (
-              <button
-                type="button"
-                disabled={catalogAction.isPending}
-                onClick={() => catalogAction.mutate("revert")}
-                className="text-[11px] rounded border border-line dark:border-slate-700 px-2 py-0.5 text-muted hover:text-content hover:border-accent transition disabled:opacity-50"
-              >
-                ↺ Revert to original
-              </button>
-            )}
-            {yoursImg && yoursImg !== catalogImg && (
-              <button
-                type="button"
-                disabled={catalogAction.isPending}
-                onClick={() => catalogAction.mutate("use_own_photo")}
-                className="text-[11px] rounded border border-line dark:border-slate-700 px-2 py-0.5 text-muted hover:text-content hover:border-accent transition disabled:opacity-50"
-              >
-                Use my photo
-              </button>
-            )}
-            {item.image_file_id && (
-              <button
-                type="button"
-                disabled={rotate.isPending}
-                onClick={() => rotate.mutate()}
-                title="Rotate your photo 90°"
-                className="text-[11px] rounded border border-line dark:border-slate-700 px-2 py-0.5 text-muted hover:text-content hover:border-accent transition disabled:opacity-50"
-              >
-                {rotate.isPending ? "Rotating…" : "⟳ Rotate"}
-              </button>
-            )}
-            {item.image_file_id && item.status === "pending" && (
-              <button
-                type="button"
-                disabled={split.isPending}
-                onClick={() => split.mutate()}
-                title="Several different things in one photo? Split them into separate items"
-                className="text-[11px] rounded border border-line dark:border-slate-700 px-2 py-0.5 text-muted hover:text-content hover:border-accent transition disabled:opacity-50"
-              >
-                {split.isPending ? "AI is splitting…" : "✂ Split into items"}
-              </button>
-            )}
-            <button
-              type="button"
-              disabled={retakeCatalog.isPending}
-              onClick={() => setCaptureSheet("retake")}
-              title="Take a nice picture - it becomes the catalog/display photo"
-              className="text-[11px] rounded border border-line dark:border-slate-700 px-2 py-0.5 text-muted hover:text-content hover:border-accent transition disabled:opacity-50"
-            >
-              {retakeCatalog.isPending ? "Uploading…" : "📷 Retake for catalog"}
-            </button>
+            {extraPhotos.map((pid) => (
+              <ExtraPhotoThumb
+                key={pid}
+                slug={activeSlug}
+                fileId={pid}
+                onMakePrimary={() => setPrimaryPhoto.mutate(pid)}
+                onRemove={() => removeExtraPhoto.mutate(pid)}
+                // "I added this pic to give you more info - get it right."
+                // Re-identifies from THIS photo; without it an added photo was
+                // inert for identification (reported 2026-08-03).
+                onReidentify={
+                  item.status === "pending" ? () => rerun.mutate({ imageFileId: pid }) : undefined
+                }
+                busy={setPrimaryPhoto.isPending || removeExtraPhoto.isPending || rerun.isPending}
+              />
+            ))}
             <button
               type="button"
               disabled={addPhoto.isPending}
               onClick={() => setCaptureSheet("add")}
               title="Add another photo to this item"
-              className="text-[11px] rounded border border-line dark:border-slate-700 px-2 py-0.5 text-muted hover:text-content hover:border-accent transition disabled:opacity-50"
+              className="w-14 h-14 rounded-md border border-dashed border-line dark:border-slate-700 flex flex-col items-center justify-center gap-0.5 text-faint hover:text-accent hover:border-accent transition disabled:opacity-50"
             >
-              {addPhoto.isPending ? "Uploading…" : "+ Add photo"}
+              {addPhoto.isPending ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <>
+                  <Camera size={14} />
+                  <span className="text-[9px] leading-none">add</span>
+                </>
+              )}
             </button>
-            {item.status === "pending" && (
-              <button
-                type="button"
-                disabled={cycleBoxState.isPending}
-                onClick={() => cycleBoxState.mutate()}
-                title="Is this the item, or an empty box you keep? (tap to cycle)"
-                className={`text-[11px] rounded border px-2 py-0.5 transition disabled:opacity-50 ${
-                  boxState
-                    ? "border-accent text-accent"
-                    : "border-line dark:border-slate-700 text-muted hover:text-content hover:border-accent"
-                }`}
-              >
-                📦 {boxState === "empty-box" ? "empty box" : boxState === "item-in-box" ? "item in box" : "box state"}
-              </button>
-            )}
+          </div>
+          {/* The rare item-level tools fold into ONE ⋯ More menu (split /
+              retake / box state — the author's pick, 2026-08-08). Per-photo
+              controls (rotate / use-as-catalog / revert) moved onto their
+              photos' captions above; add-photo is the tile on the strip.
+              "Looks fine" stays standalone: it's a review verdict, not a tool,
+              and it only appears when the card is flagged. */}
+          <div className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+            <HeaderMenu
+              width={252}
+              trigger={({ open, toggle }) => (
+                <button
+                  type="button"
+                  onClick={toggle}
+                  aria-expanded={open}
+                  aria-label="More item tools"
+                  className="text-[11px] rounded border border-line dark:border-slate-700 px-2 py-0.5 text-muted hover:text-content hover:border-accent transition inline-flex items-center gap-1"
+                >
+                  <MoreHorizontal size={12} />
+                  More
+                  {boxState && (
+                    <span className="text-accent">
+                      · 📦 {boxState === "empty-box" ? "empty box" : "item in box"}
+                    </span>
+                  )}
+                </button>
+              )}
+            >
+              {({ close }) => (
+                <>
+                  {item.image_file_id && item.status === "pending" && (
+                    <MenuItem
+                      icon={<Scissors size={14} />}
+                      label={split.isPending ? "AI is splitting…" : "Split into items"}
+                      hint="Several different things in one photo"
+                      disabled={split.isPending}
+                      onClick={() => {
+                        close();
+                        split.mutate();
+                      }}
+                    />
+                  )}
+                  <MenuItem
+                    icon={<Camera size={14} />}
+                    label={retakeCatalog.isPending ? "Uploading…" : "Retake for catalog"}
+                    hint="A nice shot becomes the display photo"
+                    disabled={retakeCatalog.isPending}
+                    onClick={() => {
+                      close();
+                      setCaptureSheet("retake");
+                    }}
+                  />
+                  {item.status === "pending" && hasLocations && (
+                    <MenuItem
+                      icon={<MapPin size={14} />}
+                      label="Turn into a bin…"
+                      hint="This IS a container: make it a location you can scan into"
+                      onClick={() => {
+                        close();
+                        setMakeBinOpen(true);
+                      }}
+                    />
+                  )}
+                  {item.status === "pending" && (
+                    <>
+                      <MenuSep />
+                      <MenuHead>Box state</MenuHead>
+                      <MenuItem
+                        icon={<span className="text-[13px]">📦</span>}
+                        label="Empty box"
+                        hint="The box is here; the item isn't"
+                        state={boxState === "empty-box" ? "on" : undefined}
+                        disabled={setBoxState.isPending}
+                        onClick={() => {
+                          close();
+                          setBoxState.mutate(boxState === "empty-box" ? null : "empty-box");
+                        }}
+                      />
+                      <MenuItem
+                        icon={<span className="text-[13px]">📦</span>}
+                        label="Item in box"
+                        hint="Still packaged — the box rides along"
+                        state={boxState === "item-in-box" ? "on" : undefined}
+                        disabled={setBoxState.isPending}
+                        onClick={() => {
+                          close();
+                          setBoxState.mutate(boxState === "item-in-box" ? null : "item-in-box");
+                        }}
+                      />
+                    </>
+                  )}
+                </>
+              )}
+            </HeaderMenu>
             {flaggedForReview && (
               <button
                 type="button"
@@ -5219,7 +5509,7 @@ function InboxCard({
               {/* A re-run is a gamble you can LOSE: vision re-read a dark photo of
                   a tool tote as a "Portable Bluetooth Speaker" and the good name
                   was gone, recoverable only by hand-reading the raw AI call log
-                  (the author, 2026-07-17). The run snapshots what it's about to
+                  (reported 2026-07-17). The run snapshots what it's about to
                   overwrite, so the way back is one tap. Shown only while a
                   snapshot exists — the next run replaces it, and undoing clears it. */}
               {(() => {
@@ -5332,6 +5622,33 @@ function InboxCard({
                   ))}
                 </div>
               )}
+              {/* Audit links live with the provenance they audit — they were an
+                  everyday-looking row of the identity strip (review F6). */}
+              {(item.barcode_text || item.suggested_name) && (
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+                  <span className="text-faint">Sanity-check on the web:</span>
+                  {item.barcode_text && (
+                    <a
+                      href={ddg(item.barcode_text)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-accent hover:underline inline-flex items-center gap-0.5"
+                    >
+                      barcode <ExternalLink size={10} />
+                    </a>
+                  )}
+                  {item.suggested_name && (
+                    <a
+                      href={`${ddg(item.suggested_name)}&iax=images&ia=images`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-accent hover:underline inline-flex items-center gap-0.5"
+                    >
+                      name (images) <ExternalLink size={10} />
+                    </a>
+                  )}
+                </div>
+              )}
               </>)}
             </div>
           )}
@@ -5342,7 +5659,7 @@ function InboxCard({
                 a digit wrong, and before this the row was display-only: the one
                 field a "correct barcode X" correction was about was the one
                 field it couldn't reach, so every re-run faithfully re-resolved
-                the misread code (the author, 2026-08-03). Saving re-runs the lookup on
+                the misread code (reported 2026-08-03). Saving re-runs the lookup on
                 the corrected code. */}
             {editingBarcode ? (
               <span className="inline-flex items-center gap-1 font-mono" onClick={(e) => e.stopPropagation()}>
@@ -5429,27 +5746,6 @@ function InboxCard({
                 </button>
               </span>
             )}
-            <span className="text-faint">Sanity-check on the web:</span>
-            {item.barcode_text && (
-              <a
-                href={ddg(item.barcode_text)}
-                target="_blank"
-                rel="noreferrer"
-                className="text-accent hover:underline inline-flex items-center gap-0.5"
-              >
-                barcode <ExternalLink size={10} />
-              </a>
-            )}
-            {item.suggested_name && (
-              <a
-                href={`${ddg(item.suggested_name)}&iax=images&ia=images`}
-                target="_blank"
-                rel="noreferrer"
-                className="text-accent hover:underline inline-flex items-center gap-0.5"
-              >
-                name (images) <ExternalLink size={10} />
-              </a>
-            )}
           </div>
 
           {/* Research hint — re-run, confirm it's GOOD (lock into the barcode
@@ -5469,8 +5765,35 @@ function InboxCard({
           {/* The inline confirm form — full width below (the right-rail
               attempt collided labels at every width; reverted per the author).
               NEVER in plan context: committing mid-plan removes the item from
-              the plan — fixing identity is the only job here. */}
-          {!planContext && <ConfirmForm
+              the plan — fixing identity is the only job here.
+              SUMMONED, not ambient (review F1): a plain expand shows the summon
+              row; the form renders once a destination is picked. */}
+          {!planContext && !formOpen && (
+            <div className="flex flex-wrap items-center gap-2 border-t border-line dark:border-slate-800 pt-3">
+              <button
+                type="button"
+                onClick={() => openForm(topCand ?? undefined)}
+                className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-xs font-semibold transition"
+              >
+                {topCand && !isUnidentified(item.suggested_name)
+                  ? `Add to ${topCand.label}…`
+                  : "Add to a table…"}
+              </button>
+              {topCand && !isUnidentified(item.suggested_name) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFormCtx({ selKey: null, prefill: {} });
+                    setFormOpen(true);
+                  }}
+                  className="text-[11px] text-muted hover:text-accent underline underline-offset-2"
+                >
+                  somewhere else…
+                </button>
+              )}
+            </div>
+          )}
+          {!planContext && formOpen && <ConfirmForm
             key={`${item.id}:${formCtx.selKey ?? "auto"}:${item.suggested_name ?? ""}:${item.suggested_manufacturer ?? ""}:${item.ai_suggested_at ?? ""}:${topCand ? topCand.label + JSON.stringify(topCand.fields) + (topCand.quantity ?? "") : "none"}`}
             item={item}
             menu={menu}
@@ -5478,8 +5801,14 @@ function InboxCard({
             hasLocations={hasLocations}
             initialKey={formCtx.selKey}
             prefill={formCtx.prefill}
-            onDone={() => setExpanded(false)}
-            onCancel={() => setExpanded(false)}
+            onDone={() => {
+              setFormOpen(false);
+              setExpanded(false);
+            }}
+            onCancel={() => {
+              setFormOpen(false);
+              setExpanded(false);
+            }}
           />}
         </div>
       )}
@@ -5621,7 +5950,7 @@ function PhotoOptions({
     // the resolved COLOUR, which changes the search phrase — but the old key was
     // just (item, term) with a 5 minute staleTime, so the strip kept serving the
     // photos from BEFORE the re-run. Hinting "color: blue" then looked like it
-    // did nothing (the author, 2026-07-30).
+    // did nothing (reported 2026-07-30).
     queryKey: ["scan-photo-options", activeSlug, item.id, applied, item.ai_suggested_at ?? ""],
     queryFn: () => api.scanPhotoOptions(activeSlug, item.id, applied || undefined),
     // Only when there's a REAL name to search by — an unidentified item ("Unknown
@@ -5690,7 +6019,7 @@ function PhotoOptions({
       }}
       onPick={(url) => pick.mutate(url)}
       onPreview={onView}
-      label={applied ? `results for "${applied}"` : "other photo options"}
+      label={applied ? `results for "${applied}"` : "find a better catalog photo"}
       onPickBest={() => pickBest.mutate()}
       pickingBest={pickBest.isPending}
       bestUrl={bestUrl}
@@ -5774,7 +6103,7 @@ function HintBox({
             type="button"
             disabled={busy}
             onClick={() => fire({ noAi: true })}
-            title="Replay the cached AI reply through the current code - no model call, no tokens. Tests our parsers/heuristics/routing, NOT a prompt change."
+            title="Free and instant: reuses the AI's previous answer and re-applies Cobblr's own processing (routing, fields, pack size). It won't produce a NEW identification - use Re-run AI for that."
             className="rounded border border-line dark:border-slate-600 px-2.5 py-1.5 text-sm text-muted dark:text-slate-300 hover:bg-mortar-50 dark:hover:bg-slate-800 disabled:opacity-50 shrink-0 inline-flex items-center gap-1.5"
           >
             <RefreshCw size={13} className={busyKind === "replay" ? "animate-spin" : ""} /> Replay (no AI)
@@ -5995,7 +6324,7 @@ function SeriesBanner({ slug, items }: { slug: string; items: ScanInboxItem[] })
   // Series the user has ACCEPTED this session (tapped "Tag series"). We keep
   // auto-applying them to late-arriving members instead of re-surfacing the
   // banner — incremental vision identify means a book can join the group AFTER
-  // the tap (that's the "1 of 9 isn't tagged yet" straggler the author hit: he tagged
+  // the tap (that's the "1 of 9 isn't tagged yet" straggler the author hit: they tagged
   // the 8, "The Long Winter" identified two days later and was never swept in).
   // Sticky = tag the straggler and stay quiet.
   const [accepted, setAccepted] = useState<Set<string>>(new Set());

@@ -1,189 +1,188 @@
 {
- "manifest": {
-  "id": "cobblr.flagship.vehicle-maintenance",
-  "name": "Vehicles",
-  "version": "0.4.0",
-  "description": "Your vehicles as their own table — make/model/year, VIN, mileage, plate — with service logs (oil, tires, brakes) and next-due dates on your calendar. Replaces a glovebox folder of receipts and a sticky note on the windshield.",
-  "author": "Cobblr",
-  "released_at": "2026-07-13",
-  "changelog": "Renamed to Vehicles and given its OWN table (an assets instance), not generic Assets with extra columns — its own nav entry, a “New vehicle” button, and only the fields a vehicle needs (VIN, make, model, year, trim, mileage, fuel, color). Service logs come from core-maintenance; scan a VIN and it fills the whole record.",
-  "requires": [
-   {
-    "module": "assets"
-   },
-   {
-    "module": "core-maintenance"
-   }
-  ],
-  "provides_instances": [
-   {
-    "module": "assets",
-    "instance_name": "vehicles",
-    "display_name": "Vehicles",
-    "glyph": "🚗",
-    "item_noun": "vehicle",
-    "scan_keywords": [
-     "vin",
-     "vehicle",
-     "car",
-     "truck",
-     "suv",
-     "van",
-     "minivan",
-     "sedan",
-     "coupe",
-     "hatchback",
-     "motorcycle",
-     "automobile",
-     "odometer",
-     "mileage",
-     "license plate",
-     "make",
-     "model",
-     "engine"
-    ],
-    "field_defs": [
-     {
-      "entity_kind": "assets:asset",
-      "name": "year",
-      "display_label": "Year",
-      "type": "number",
-      "position": 1,
-      "decode_role": "decode:year"
-     },
-     {
-      "entity_kind": "assets:asset",
-      "name": "trim",
-      "display_label": "Trim",
-      "type": "text",
-      "position": 2,
-      "help": "The trim level — e.g. EX, Sport, Limited. Filled from a VIN decode when available.",
-      "decode_role": "decode:trim"
-     },
-     {
-      "entity_kind": "assets:asset",
-      "name": "license_plate",
-      "display_label": "License plate",
-      "type": "text",
-      "position": 3
-     },
-     {
-      "entity_kind": "assets:asset",
-      "name": "mileage",
-      "display_label": "Mileage",
-      "type": "number",
-      "position": 4,
-      "help": "Current odometer reading — service schedules count from this."
-     },
-     {
-      "entity_kind": "assets:asset",
-      "name": "fuel_type",
-      "display_label": "Fuel",
-      "type": "text",
-      "position": 5,
-      "choices": [
-       "Gas",
-       "Diesel",
-       "Hybrid",
-       "Electric"
-      ],
-      "decode_role": "decode:fuel_type"
-     },
-     {
-      "entity_kind": "assets:asset",
-      "name": "color",
-      "display_label": "Color",
-      "type": "text",
-      "position": 6
-     }
-    ],
-    "field_overrides": [
-     {
-      "entity_kind": "assets:asset",
-      "name": "manufacturer",
-      "display_label": "Make",
-      "decode_role": "decode:make"
-     },
-     {
-      "entity_kind": "assets:asset",
-      "name": "model",
-      "display_label": "Model",
-      "decode_role": "decode:model"
-     },
-     {
-      "entity_kind": "assets:asset",
-      "name": "serial_number",
-      "display_label": "VIN",
-      "decode_role": "identifier:vin"
-     },
-     {
-      "entity_kind": "assets:asset",
-      "name": "short_name",
-      "hidden": true
-     },
-     {
-      "entity_kind": "assets:asset",
-      "name": "type",
-      "hidden": true
-     },
-     {
-      "entity_kind": "assets:asset",
-      "name": "quantity",
-      "hidden": true
-     },
-     {
-      "entity_kind": "assets:asset",
-      "name": "excitement",
-      "hidden": true
-     },
-     {
-      "entity_kind": "assets:asset",
-      "name": "last_service_at",
-      "hidden": true
-     }
-    ],
-    "saved_views": [
-     {
-      "entity_kind": "assets:asset",
-      "name": "By make",
-      "view_type": "table",
-      "pinned": true,
-      "config": {
-       "group_by": "manufacturer",
-       "visible_fields": [
-        "title",
-        "year",
-        "model",
-        "mileage",
-        "fuel_type"
-       ]
+  "manifest": {
+    "id": "cobblr.flagship.vehicle-maintenance",
+    "name": "Vehicles",
+    "version": "0.4.1",
+    "description": "Your vehicles as their own table - make/model/year, VIN, mileage, plate - with service logs (oil, tires, brakes) and next-due dates on your calendar. Replaces a glovebox folder of receipts and a sticky note on the windshield.",
+    "author": "Cobblr",
+    "released_at": "2026-07-13",
+    "changelog": "Renamed to Vehicles and given its OWN table (an assets instance), not generic Assets with extra columns - its own nav entry, a “New vehicle” button, and only the fields a vehicle needs (VIN, make, model, year, trim, mileage, fuel, color). Service logs come from core-maintenance; scan a VIN and it fills the whole record.",
+    "requires": [
+      {
+        "module": "assets"
+      },
+      {
+        "module": "core-maintenance"
       }
-     }
-    ]
-   }
-  ],
-  "features": [
-   {
-    "key": "connected-car",
-    "name": "Connected car (auto-mileage)",
-    "question": "Does a device report your mileage?",
-    "description": "Let the car update its own odometer. Point anything that can POST JSON — an OBD reader via a phone app, a WiFi OBD device through Home Assistant, or a telematics service webhook — at a Cobblr inbound webhook (Configuration → Integrations → Inbound tokens) with a body like {\"vehicle\": \"Honda Civic\", \"odometer\": 48650}. The shipped wire matches the vehicle by name and writes the mileage; service schedules and the calendar react to the new reading. Add more keys to the payload and the wire to sync other fields (fuel level, battery health, …).",
-    "default": false,
-    "wires": [
-     {
-      "source_kind": "assets:asset",
-      "action_id": "assets:update-fields",
-      "trigger_type": "event",
-      "trigger_event": "core-integrations.inbound.received",
-      "target": "none",
-      "args": {
-       "asset": "{{event.body.vehicle}}",
-       "mileage": "{{event.body.odometer}}"
+    ],
+    "provides_instances": [
+      {
+        "module": "assets",
+        "instance_name": "vehicles",
+        "display_name": "Vehicles",
+        "glyph": "🚗",
+        "item_noun": "vehicle",
+        "scan_keywords": [
+          "vin",
+          "vehicle",
+          "car",
+          "truck",
+          "suv",
+          "van",
+          "minivan",
+          "sedan",
+          "coupe",
+          "hatchback",
+          "motorcycle",
+          "automobile",
+          "odometer",
+          "mileage",
+          "license plate",
+          "make",
+          "model",
+          "engine"
+        ],
+        "field_defs": [
+          {
+            "entity_kind": "assets:asset",
+            "name": "year",
+            "display_label": "Year",
+            "type": "number",
+            "position": 1,
+            "decode_role": "decode:year"
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "trim",
+            "display_label": "Trim",
+            "type": "text",
+            "position": 2,
+            "help": "The trim level - e.g. EX, Sport, Limited. Filled from a VIN decode when available.",
+            "decode_role": "decode:trim"
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "license_plate",
+            "display_label": "License plate",
+            "type": "text",
+            "position": 3
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "mileage",
+            "display_label": "Mileage",
+            "type": "number",
+            "position": 4,
+            "help": "Current odometer reading - service schedules count from this."
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "fuel_type",
+            "display_label": "Fuel",
+            "type": "text",
+            "position": 5,
+            "choices": [
+              "Gas",
+              "Diesel",
+              "Hybrid",
+              "Electric"
+            ],
+            "decode_role": "decode:fuel_type"
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "color",
+            "display_label": "Color",
+            "type": "text",
+            "position": 6
+          }
+        ],
+        "field_overrides": [
+          {
+            "entity_kind": "assets:asset",
+            "name": "manufacturer",
+            "display_label": "Make",
+            "decode_role": "decode:make"
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "model",
+            "display_label": "Model",
+            "decode_role": "decode:model"
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "serial_number",
+            "display_label": "VIN",
+            "decode_role": "identifier:vin"
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "short_name",
+            "hidden": true
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "type",
+            "hidden": true
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "quantity",
+            "hidden": true
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "excitement",
+            "hidden": true
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "last_service_at",
+            "hidden": true
+          }
+        ],
+        "saved_views": [
+          {
+            "entity_kind": "assets:asset",
+            "name": "By make",
+            "view_type": "table",
+            "pinned": true,
+            "config": {
+              "group_by": "manufacturer",
+              "visible_fields": [
+                "title",
+                "year",
+                "model",
+                "mileage",
+                "fuel_type"
+              ]
+            }
+          }
+        ]
       }
-     }
+    ],
+    "features": [
+      {
+        "key": "connected-car",
+        "name": "Connected car (auto-mileage)",
+        "question": "Does a device report your mileage?",
+        "description": "Let the car update its own odometer. Point anything that can POST JSON - an OBD reader via a phone app, a WiFi OBD device through Home Assistant, or a telematics service webhook - at a Cobblr inbound webhook (Configuration → Integrations → Inbound tokens) with a body like {\"vehicle\": \"Honda Civic\", \"odometer\": 48650}. The shipped wire matches the vehicle by name and writes the mileage; service schedules and the calendar react to the new reading. Add more keys to the payload and the wire to sync other fields (fuel level, battery health, …).",
+        "default": false,
+        "wires": [
+          {
+            "source_kind": "assets:asset",
+            "action_id": "assets:update-fields",
+            "trigger_type": "event",
+            "trigger_event": "core-integrations.inbound.received",
+            "target": "none",
+            "args": {
+              "asset": "{{event.body.vehicle}}",
+              "mileage": "{{event.body.odometer}}"
+            }
+          }
+        ]
+      }
     ]
-   }
-  ]
- },
- "confirm": true
+  }
 }

@@ -3,6 +3,7 @@ type: feature
 scope: print
 date: 2026-07-26
 docs_target: docs/USER_GUIDE.md#Print labels over Bluetooth
+docs_published: 2026-08-07
 ---
 Connecting a serial label printer now detects the loaded roll size automatically, so there is nothing to fill in.
 

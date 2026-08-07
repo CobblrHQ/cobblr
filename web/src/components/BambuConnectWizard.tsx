@@ -116,7 +116,7 @@ export function BambuConnectWizard({
               <BambuPrinterPicker devices={devices} />
             )}
           </div>
-          <p className="text-[11px] text-faint">Cloud mode gives live status & temps. Remote start/pause isn't possible over the cloud (Bambu blocks third-party control) - that needs LAN + Developer Mode, coming soon.</p>
+          <p className="text-[11px] text-faint">Cloud mode gives live status & temps. Remote start/pause isn't possible over the cloud - Bambu blocks third-party control there; it requires a LAN connection with Developer Mode.</p>
           <label className="block">
             <span className={lbl}>Label (optional)</span>
             <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder={`Bambu (${email || "account"})`} className={field} />

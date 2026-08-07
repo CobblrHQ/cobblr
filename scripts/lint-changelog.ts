@@ -68,7 +68,24 @@ for (const f of touchedEntries) {
   const raw = readFileSync(f, "utf8");
   const fm = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
   if (!/^type:\s*(feature|improvement|fix)\s*$/m.test(fm)) malformed.push(`${f}: missing/invalid type:`);
-  if (!/^date:\s*\d{4}-\d{2}-\d{2}\s*$/m.test(fm)) malformed.push(`${f}: missing/invalid date: YYYY-MM-DD`);
+  const dateStr = fm.match(/^date:\s*(\d{4}-\d{2}-\d{2})\s*$/m)?.[1];
+  if (!dateStr) {
+    malformed.push(`${f}: missing/invalid date: YYYY-MM-DD`);
+  } else {
+    // A FUTURE date breaks both changelog consumers. The forum poster
+    // publishes one post per day and holds a day until it closes, so a
+    // mistyped 2026-08-11 on work that shipped today sits unpublished for
+    // days; the /changelog page meanwhile sorts it above everything real.
+    // Two entries shipped with future dates on 2026-08-07, before this
+    // check existed. One day of slack absorbs the genuine timezone case: an
+    // author west of UTC writing "today" after CI's clock has rolled over.
+    const limit = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+    if (dateStr > limit) {
+      malformed.push(
+        `${f}: date: ${dateStr} is in the future (today is ${new Date().toISOString().slice(0, 10)}) — date an entry the day it ships`,
+      );
+    }
+  }
   // `announce: true` opts a major improvement/fix INTO the Discord digest (features
   // always go). Must be a clean boolean — the digest reads /^true$/i, so `announce: yes`
   // would silently NOT announce. Reject it here rather than let intent evaporate.
@@ -86,8 +103,8 @@ if (malformed.length) {
 // ── no maintainer/infra identifier in a PUBLIC changelog entry ──
 // changelog.d is served to users (the /changelog page) AND posted to the public Discord
 // digest, but it is EXCLUDED from the git export — so the export's forbidden gate never
-// checks it. A "companion app" mention leaked to #new-features 2026-08-04 for exactly this
-// reason. Reuse the publish manifest's forbidden list as the single source of truth.
+// checks it. An internal product name leaked to #new-features 2026-08-04 for exactly
+// this reason. Reuse the publish manifest's forbidden list as the single source of truth.
 let forbidden: RegExp[] = [];
 try {
   const mani = JSON.parse(readFileSync("scripts/publish/manifests/core.json", "utf8")) as { forbidden?: string[] };
@@ -109,7 +126,7 @@ for (const f of touchedEntries) {
 }
 if (idLeaks.length) {
   console.error(
-    "[lint:changelog] ✗ maintainer/infra identifier in a public changelog entry — reword it (e.g. companion app → companion app):\n  " +
+    "[lint:changelog] ✗ maintainer/infra identifier in a public changelog entry — reword it (an internal product name becomes its public equivalent, e.g. 'companion app'):\n  " +
       idLeaks.join("\n  "),
   );
   process.exit(1);

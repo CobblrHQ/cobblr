@@ -3,6 +3,7 @@ type: feature
 scope: print
 date: 2026-07-26
 docs_target: docs/USER_GUIDE.md#Print labels over Bluetooth
+docs_published: 2026-08-07
 ---
 Two printers of the same model are now told apart, so a job cannot print on the wrong machine, and network label prints get the same edge protection against paper drift as Bluetooth ones.
 

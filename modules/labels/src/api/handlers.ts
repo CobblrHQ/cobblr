@@ -7,6 +7,8 @@ import { platform, requireActionEntity } from "@cobblr/platform-contract";
 import type { LabelsDB } from "../db.js";
 import { evaluateAutoflush } from "./autoflush.js";
 import { renameCodeGroup, setGroupOverlay } from "../services/codes.js";
+import { getQrLabelBaseUrl, getQrTokenStyle, qrScanUrl } from "./qr-db.js";
+import { ensureNavToken } from "../services/entity-qr.js";
 
 let registered = false;
 
@@ -37,12 +39,40 @@ export function registerLabelsHandlers(): void {
     const description = ctx.rendered && ctx.rendered.trim() !== ""
       ? ctx.rendered
       : ent.title;
-    // QR payload: the entity's detail URL, joined to the host's
-    // origin (where the QR is scanned from). For now we just put
-    // the path; the printer-side renderer can add the origin if
-    // needed. (Phase 1b used window.location.origin client-side;
-    // server-side we'd need PUBLIC_BASE_URL from env.)
-    const qr_payload = ent.detailUrl ?? `/entities/${ent.kind}/${ent.id}`;
+    // QR payload: the SAME token URL layer every manual print uses. A label
+    // is a physical artifact — a QR encoding a bare path reads as text on any
+    // phone and can never be fixed after printing, so this path REFUSES to
+    // queue without a workspace label base URL rather than print a dud. The
+    // error surfaces in the wire run log with the fix spelled out.
+    const qrDb = db as unknown as Parameters<typeof getQrLabelBaseUrl>[0];
+    // Base resolution mirrors the manual print path: the workspace's custom
+    // label base wins; else the instance's configured public origin (manual
+    // prints use the request origin — a wire has no request, and this env is
+    // the same origin the instance hands out in emails/DMs). Only when BOTH
+    // are absent do we refuse: that instance genuinely has no address a
+    // phone could open, and a printed dud can't be recalled.
+    const base =
+      (await getQrLabelBaseUrl(qrDb)) ||
+      (process.env.PUBLIC_BASE_URL || process.env.COBBLR_PUBLIC_URL || "").replace(/\/+$/, "") ||
+      // Dev/test instances have a truthful origin even with nothing
+      // configured: the box itself. Production does not get this crutch —
+      // a printed localhost QR would be a permanent dud.
+      (process.env.NODE_ENV !== "production"
+        ? `http://localhost:${process.env.API_PORT || 4000}`
+        : null);
+    if (!base) {
+      throw new Error(
+        "labels:print: no label base URL is set and this instance has no public URL configured, so an automation-printed QR would not scan. Set one under Configuration → Labels → QR codes (or set PUBLIC_BASE_URL), then re-run.",
+      );
+    }
+    const style = await getQrTokenStyle(qrDb);
+    const token = await ensureNavToken(
+      ctx.orgId,
+      ent.kind,
+      ent.id,
+      style === "descriptive" ? "descriptive" : "opaque",
+    );
+    const qr_payload = qrScanUrl(base, token);
 
     const inserted = await db
       .insertInto("labels_queue")

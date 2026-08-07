@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-08-03
 docs_target: docs/USER_GUIDE.md#Fixing a wrong identification
+docs_published: 2026-08-07
 ---
 The barcode on a pending scan is now editable, a hint that names the correct barcode actually fixes it, and an added photo can drive a re-identify.
 

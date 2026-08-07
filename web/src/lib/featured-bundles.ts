@@ -422,6 +422,9 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "3D printer parts: track voltage, datasheet URL, footprint, and a print-label template tuned for narrow bin labels. Uses the native `manufacturer` field.",
     manifest: {
       id: "cobblr.community.printer-parts",
+      released_at: "2026-06-20",
+      changelog: "First catalogued release: the printer-parts drawer skin on inventory.",
+      catalog: "extended",
       version: "0.2.0",
       name: "3D Printer Parts",
       description:
@@ -458,6 +461,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Garden tracker: plants as assets with species, sun exposure, planted date, and a repeating watering schedule that the recurrence scanner picks up automatically.",
     manifest: {
       id: "cobblr.community.garden",
+      released_at: "2026-07-02",
+      changelog: "First catalogued release: plants as assets with species, sun exposure, and a repeating watering schedule.",
       catalog: "extended",
       version: "0.1.1",
       name: "Garden",
@@ -480,6 +485,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Personal library: author, ISBN, year, read-status, on its own shelf that opens as a cover wall. Print spine labels with one wire.",
     manifest: {
       id: "cobblr.community.bookshelf",
+      released_at: "2026-06-28",
+      changelog: "First catalogued release: books as their own shelf with author, ISBN scan-in, and read status.",
       version: "0.2.0",
       name: "Bookshelf",
       description:
@@ -549,6 +556,9 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Lending library: the shelf you lend FROM: count copies, see who has one and when it's due back.",
     manifest: {
       id: "cobblr.community.lending-library",
+      released_at: "2026-06-28",
+      changelog: "First catalogued release: track who borrowed what, with due-back dates.",
+      catalog: "extended",
       version: "0.1.0",
       name: "Lending Library",
       description:
@@ -1618,6 +1628,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     item_example: "a bag of M3×8 socket head screws",
     manifest: {
       id: "cobblr.flagship.fasteners",
+      changelog: "First catalogued release: the fastener drawer skin (length, diameter, thread, head) on inventory.",
       version: "0.1.1",
       name: "Fasteners",
       description:
@@ -2123,6 +2134,362 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           ],
         },
       ],
+    },
+  },
+  {
+    glyph: "🚗",
+    blurb:
+      "Vehicles as their own table - make/model/year, VIN, mileage, plate - with service logs and next-due dates on your calendar.",
+    item_example: "your car (scan the VIN)",
+    manifest: {
+      "id": "cobblr.flagship.vehicle-maintenance",
+      "name": "Vehicles",
+      "version": "0.4.0",
+      "description": "Your vehicles as their own table - make/model/year, VIN, mileage, plate - with service logs (oil, tires, brakes) and next-due dates on your calendar. Replaces a glovebox folder of receipts and a sticky note on the windshield.",
+      "author": "Cobblr",
+      "released_at": "2026-07-13",
+      "changelog": "Renamed to Vehicles and given its OWN table (an assets instance), not generic Assets with extra columns - its own nav entry, a “New vehicle” button, and only the fields a vehicle needs (VIN, make, model, year, trim, mileage, fuel, color). Service logs come from core-maintenance; scan a VIN and it fills the whole record.",
+      "requires": [
+        {
+          "module": "assets"
+        },
+        {
+          "module": "core-maintenance"
+        }
+      ],
+      "provides_instances": [
+        {
+          "module": "assets",
+          "instance_name": "vehicles",
+          "display_name": "Vehicles",
+          "glyph": "🚗",
+          "item_noun": "vehicle",
+          "scan_keywords": [
+            "vin",
+            "vehicle",
+            "car",
+            "truck",
+            "suv",
+            "van",
+            "minivan",
+            "sedan",
+            "coupe",
+            "hatchback",
+            "motorcycle",
+            "automobile",
+            "odometer",
+            "mileage",
+            "license plate",
+            "make",
+            "model",
+            "engine"
+          ],
+          "field_defs": [
+            {
+              "entity_kind": "assets:asset",
+              "name": "year",
+              "display_label": "Year",
+              "type": "number",
+              "position": 1,
+              "decode_role": "decode:year"
+            },
+            {
+              "entity_kind": "assets:asset",
+              "name": "trim",
+              "display_label": "Trim",
+              "type": "text",
+              "position": 2,
+              "help": "The trim level - e.g. EX, Sport, Limited. Filled from a VIN decode when available.",
+              "decode_role": "decode:trim"
+            },
+            {
+              "entity_kind": "assets:asset",
+              "name": "license_plate",
+              "display_label": "License plate",
+              "type": "text",
+              "position": 3
+            },
+            {
+              "entity_kind": "assets:asset",
+              "name": "mileage",
+              "display_label": "Mileage",
+              "type": "number",
+              "position": 4,
+              "help": "Current odometer reading - service schedules count from this."
+            },
+            {
+              "entity_kind": "assets:asset",
+              "name": "fuel_type",
+              "display_label": "Fuel",
+              "type": "text",
+              "position": 5,
+              "choices": [
+                "Gas",
+                "Diesel",
+                "Hybrid",
+                "Electric"
+              ],
+              "decode_role": "decode:fuel_type"
+            },
+            {
+              "entity_kind": "assets:asset",
+              "name": "color",
+              "display_label": "Color",
+              "type": "text",
+              "position": 6
+            }
+          ],
+          "field_overrides": [
+            {
+              "entity_kind": "assets:asset",
+              "name": "manufacturer",
+              "display_label": "Make",
+              "decode_role": "decode:make"
+            },
+            {
+              "entity_kind": "assets:asset",
+              "name": "model",
+              "display_label": "Model",
+              "decode_role": "decode:model"
+            },
+            {
+              "entity_kind": "assets:asset",
+              "name": "serial_number",
+              "display_label": "VIN",
+              "decode_role": "identifier:vin"
+            },
+            {
+              "entity_kind": "assets:asset",
+              "name": "short_name",
+              "hidden": true
+            },
+            {
+              "entity_kind": "assets:asset",
+              "name": "type",
+              "hidden": true
+            },
+            {
+              "entity_kind": "assets:asset",
+              "name": "quantity",
+              "hidden": true
+            },
+            {
+              "entity_kind": "assets:asset",
+              "name": "excitement",
+              "hidden": true
+            },
+            {
+              "entity_kind": "assets:asset",
+              "name": "last_service_at",
+              "hidden": true
+            }
+          ],
+          "saved_views": [
+            {
+              "entity_kind": "assets:asset",
+              "name": "By make",
+              "view_type": "table",
+              "pinned": true,
+              "config": {
+                "group_by": "manufacturer",
+                "visible_fields": [
+                  "title",
+                  "year",
+                  "model",
+                  "mileage",
+                  "fuel_type"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "features": [
+        {
+          "key": "connected-car",
+          "name": "Connected car (auto-mileage)",
+          "question": "Does a device report your mileage?",
+          "description": "Let the car update its own odometer. Point anything that can POST JSON - an OBD reader via a phone app, a WiFi OBD device through Home Assistant, or a telematics service webhook - at a Cobblr inbound webhook (Configuration → Integrations → Inbound tokens) with a body like {\"vehicle\": \"Honda Civic\", \"odometer\": 48650}. The shipped wire matches the vehicle by name and writes the mileage; service schedules and the calendar react to the new reading. Add more keys to the payload and the wire to sync other fields (fuel level, battery health, …).",
+          "default": false,
+          "wires": [
+            {
+              "source_kind": "assets:asset",
+              "action_id": "assets:update-fields",
+              "trigger_type": "event",
+              "trigger_event": "core-integrations.inbound.received",
+              "target": "none",
+              "args": {
+                "asset": "{{event.body.vehicle}}",
+                "mileage": "{{event.body.odometer}}"
+              }
+            }
+          ]
+        }
+      ]
+    },
+  },
+  {
+    glyph: "🧱",
+    blurb:
+      "The six Rebrickable reference catalogs (themes, colors, parts, sets, minifigs, part categories) with the right renderer per field - schema config; load rows via the CSV importer.",
+    manifest: {
+      "id": "cobblr.community.rebrickable-catalogs",
+      "released_at": "2026-07-13",
+      "changelog": "First catalogued release: the six Rebrickable reference catalogs with per-field renderers (schema config; rows load via the CSV importer).",
+      "version": "0.5.0",
+      "name": "Rebrickable catalogs",
+      "description": "Installs the six Rebrickable reference catalogs (themes, part categories, colors, parts, sets, minifigs) with pre-configured renderers: color swatches for the colors palette, image thumbs for sets + minifigs, year columns formatted as years. Row data is loaded separately via the CSV importer or scripts/seed-rebrickable.mjs.",
+      "author": "Cobblr community",
+      "readme_md": "# Rebrickable catalogs\n\nSix reference catalogs sourced from [Rebrickable's public CSV dumps](https://rebrickable.com/downloads/). The bundle ships the **schema config only** - id columns, title columns, image columns, hero swatch for the colors palette, and the right renderer per field.\n\n## Catalogs installed\n\n| Catalog | Rows | Notes |\n|---|---|---|\n| Themes | ~500 | Bionicle, Star Wars, City, etc. |\n| Part categories | ~75 | Bricks, plates, slopes, tiles, … |\n| Colors | ~280 | Big swatch on every card via `hero_field=rgb` + `hero_renderer=color-hex`. |\n| Parts | ~62,000 | Individual LEGO elements. Image enrichment via `inventory_parts.csv.gz` (see seeder). |\n| Sets | ~27,000 | Has `img_url` from Rebrickable's CDN. |\n| Minifigs | ~17,000 | Has `img_url`; broken URLs fall back to a placeholder. |\n\n## Loading the data\n\nThis bundle is the *configuration*, not the rows. To load rows:\n\n```bash\nnode scripts/seed-rebrickable.mjs\n```\n\nThe seeder logs in as the demo user, finds the workspace with this bundle installed, and CSV-imports each catalog from Rebrickable's CDN. It runs idempotently - re-running refreshes the rows.",
+      "requires": [],
+      "catalogs": [
+        {
+          "external_id": "rebrickable-themes",
+          "name": "Rebrickable themes",
+          "description": "LEGO themes - Bionicle, Star Wars, City, Town, Castle, etc. Reference taxonomy; not directly bindable to inventory items (sets reference themes).",
+          "source_url": "https://cdn.rebrickable.com/media/downloads/themes.csv.gz",
+          "schema": {
+            "id_column": "id",
+            "title_column": "name",
+            "bindable_to_kinds": [],
+            "semantic_type": "lego.theme"
+          }
+        },
+        {
+          "external_id": "rebrickable-part-categories",
+          "name": "Rebrickable part categories",
+          "description": "Part categories - bricks, plates, slopes, tiles, minifig parts, etc. Reference taxonomy; not directly bindable.",
+          "source_url": "https://cdn.rebrickable.com/media/downloads/part_categories.csv.gz",
+          "schema": {
+            "id_column": "id",
+            "title_column": "name",
+            "bindable_to_kinds": [],
+            "semantic_type": "lego.part-category"
+          }
+        },
+        {
+          "external_id": "rebrickable-colors",
+          "name": "Rebrickable colors",
+          "description": "Every LEGO color Rebrickable tracks. The card renders a big swatch in the image slot via hero_field=rgb + hero_renderer=color-hex.",
+          "source_url": "https://cdn.rebrickable.com/media/downloads/colors.csv.gz",
+          "schema": {
+            "id_column": "id",
+            "title_column": "name",
+            "hero_field": "rgb",
+            "hero_renderer": "color-hex",
+            "field_renderers": {
+              "is_trans": "boolean"
+            },
+            "field_labels": {
+              "is_trans": "Transparent",
+              "num_parts": "Used in parts",
+              "num_sets": "Used in sets",
+              "y1": "First seen",
+              "y2": "Last seen"
+            },
+            "bindable_to_kinds": [],
+            "semantic_type": "lego.color"
+          }
+        },
+        {
+          "external_id": "rebrickable-parts",
+          "name": "Rebrickable parts",
+          "description": "Individual LEGO parts (~62k rows). image_column points at img_url, populated by the seeder from inventory_parts.csv.gz.",
+          "source_url": "https://cdn.rebrickable.com/media/downloads/parts.csv.gz",
+          "schema": {
+            "id_column": "part_num",
+            "title_column": "name",
+            "image_column": "img_url",
+            "field_labels": {
+              "part_num": "Part number",
+              "part_cat_id": "Category",
+              "part_material": "Material",
+              "img_url": "Image"
+            },
+            "bindable_to_kinds": [
+              "inventory:part"
+            ],
+            "semantic_type": "lego.part"
+          }
+        },
+        {
+          "external_id": "rebrickable-sets",
+          "name": "Rebrickable sets",
+          "description": "LEGO sets (~27k rows). Each has an img_url on Rebrickable's CDN.",
+          "source_url": "https://cdn.rebrickable.com/media/downloads/sets.csv.gz",
+          "schema": {
+            "id_column": "set_num",
+            "title_column": "name",
+            "image_column": "img_url",
+            "field_renderers": {
+              "year": "year",
+              "img_url": "url-link"
+            },
+            "field_labels": {
+              "set_num": "Set number",
+              "theme_id": "Theme",
+              "num_parts": "Pieces",
+              "year": "Year",
+              "img_url": "Image"
+            },
+            "bindable_to_kinds": [
+              "inventory:part"
+            ],
+            "semantic_type": "lego.set"
+          }
+        },
+        {
+          "external_id": "rebrickable-minifigs",
+          "name": "Rebrickable minifigs",
+          "description": "Minifigure catalog (~17k rows). Some img_urls 404 on the CDN - those degrade to a placeholder.",
+          "source_url": "https://cdn.rebrickable.com/media/downloads/minifigs.csv.gz",
+          "schema": {
+            "id_column": "fig_num",
+            "title_column": "name",
+            "image_column": "img_url",
+            "field_renderers": {
+              "img_url": "url-link"
+            },
+            "field_labels": {
+              "fig_num": "Figure number",
+              "num_parts": "Pieces",
+              "img_url": "Image"
+            },
+            "bindable_to_kinds": [
+              "inventory:part"
+            ],
+            "semantic_type": "lego.minifig"
+          }
+        },
+        {
+          "external_id": "rebrickable-inventory-parts",
+          "name": "Rebrickable set inventories",
+          "description": "The set BOM: every (set_inventory, part_num, color_id) tuple with quantity + img_url. ~5M rows. Powers the 'what parts does set X contain' lookup and the 'what am I still missing' restoration workflow. Excluded from the global quick-add typeahead because the row count would drown out the real catalogs. The seeder synthesises a row_id = '<inventory_id>-<part_num>-<color_id>-<is_spare>' column on import so each tuple gets its own external_id.",
+          "source_url": "https://cdn.rebrickable.com/media/downloads/inventory_parts.csv.gz",
+          "schema": {
+            "id_column": "row_id",
+            "title_column": "part_num",
+            "image_column": "img_url",
+            "field_renderers": {
+              "img_url": "url-link",
+              "is_spare": "boolean"
+            },
+            "field_labels": {
+              "row_id": "Row ID",
+              "inventory_id": "Set inventory",
+              "set_num": "Set number",
+              "part_num": "Part number",
+              "color_id": "Color",
+              "is_spare": "Spare",
+              "img_url": "Image"
+            },
+            "exclude_from_global_search": true,
+            "bindable_to_kinds": [],
+            "semantic_type": "lego.bom"
+          }
+        }
+      ],
+      "catalog": "extended"
     },
   },
 ];

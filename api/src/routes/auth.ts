@@ -88,7 +88,7 @@ function slugifyBase(name: string): string {
     name
       .toLowerCase()
       // Strip a possessive "'s" entirely (not just the apostrophe), so
-      // "a beta tester's Workspace" → "andrew-workspace". A trailing word boundary
+      // "Alex's Workspace" → "alex-workspace". A trailing word boundary
       // means only the possessive goes — "Tools Workshop" keeps its s.
       .replace(/['’]s\b/g, "")
       // …then drop any remaining apostrophes ("O'Brien" → "obrien").

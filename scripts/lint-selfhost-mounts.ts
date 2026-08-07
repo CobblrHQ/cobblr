@@ -112,6 +112,20 @@ for (const file of composeFiles("deploy")) {
   }
 }
 
+// Second guard, same file because it reads the same stack: the standalone
+// compose must pass COBBLR_VERSION through to the api service. /healthz's
+// `version` field reads it at runtime — it can never be baked into the image,
+// since a stable cut re-tags a nightly digest bit-for-bit. Losing the
+// passthrough silently blanks version reporting on every self-host install,
+// which is exactly the kind of quiet regression this lint exists to stop.
+const standalonePath = "deploy/selfhost/standalone/docker-compose.yml";
+const standalone = readFileSync(standalonePath, "utf8");
+if (!/^ {6}COBBLR_VERSION:\s*\$\{COBBLR_VERSION[:}]/m.test(standalone)) {
+  failures.push(
+    `${standalonePath} does not pass COBBLR_VERSION through to the api service environment — /healthz version reporting goes blank for every self-hoster`,
+  );
+}
+
 if (failures.length) {
   console.error("✗ lint-selfhost-mounts: dead bind mounts in shipped stacks:");
   for (const f of failures) console.error(`  ${f}`);

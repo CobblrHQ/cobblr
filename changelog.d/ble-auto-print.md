@@ -3,6 +3,7 @@ type: feature
 scope: labels
 date: 2026-07-21
 docs_target: docs/USER_GUIDE.md#Print labels over Bluetooth
+docs_published: 2026-08-07
 ---
 Auto-print now works with a Bluetooth label printer: pick it under Auto-print and each scan (or every N labels) prints itself from your open Labels tab.
 

@@ -35,7 +35,25 @@ const cache = new Map<string, Promise<CachedTenant>>();
 // window before eviction — standard idle-*timeout* behaviour, not evict-on-sight
 // — closes that gap (callers query within ms of getTenantDb).
 const lastAccess = new Map<string, number>();
-const RELEASE_GRACE_MS = 15_000;
+const RELEASE_GRACE_MS = Number(process.env.COBBLR_POOL_RELEASE_GRACE_MS) || 15_000;
+
+// Monotonic per-org access counter. `lastAccess` (wall time) can collide within
+// a millisecond, so identity questions — "has anyone touched this pool since MY
+// access?" — use this instead. That question is what lets a cross-tenant sweep
+// release the pool it just used IMMEDIATELY: the grace window exists to protect
+// a caller who holds a fresh Kysely ref but hasn't checked out a connection
+// yet, and any such caller would have bumped the seq.
+const accessSeq = new Map<string, number>();
+let seqCounter = 0;
+
+// One pending deferred-release timer per org. Without this, a release attempt
+// that lands inside the grace window was a SILENT NO-OP — and since a sweep's
+// own getTenantDb is what stamps lastAccess, every sweep's release call fell in
+// the window and released nothing. 251 tenants × an hourly sweep = hourly
+// connection-slot exhaustion (found on staging, 2026-08-07). Deferring the
+// release past the window keeps the guarantee: touched pools stay, quiet pools
+// close.
+const pendingRelease = new Map<string, NodeJS.Timeout>();
 
 // Upper bound on cached tenant pools. Each pool holds up to `max` connections
 // (5), so total tenant connections stay ≈ MAX_TENANT_POOLS × 5. WITHOUT this the
@@ -127,6 +145,7 @@ export async function getTenantDb(orgId: string): Promise<Kysely<TenantDB>> {
   // Stamp BEFORE the await: the grace window must cover from the moment we
   // commit to handing out this pool, not from when the promise resolves.
   lastAccess.set(orgId, Date.now());
+  accessSeq.set(orgId, ++seqCounter);
   let entry = cache.get(orgId);
   if (!entry) {
     entry = openTenant(orgId);
@@ -161,7 +180,7 @@ export async function getTenantPool(orgId: string): Promise<Pool> {
  *  is serving traffic — hence the idle guard. The guard and the cache delete
  *  run with no `await` between them, so no checkout can sneak in for the
  *  pool we're about to end. */
-export async function releaseIdleTenantPool(orgId: string): Promise<void> {
+export async function releaseIdleTenantPool(orgId: string, ifSeqIs?: number): Promise<void> {
   const entry = cache.get(orgId);
   if (!entry) return;
   let pool: Pool;
@@ -174,16 +193,56 @@ export async function releaseIdleTenantPool(orgId: string): Promise<void> {
   if (cache.get(orgId) !== entry) return; // someone else churned it
   if (pool.totalCount !== pool.idleCount || pool.waitingCount > 0) return;
   // Recently handed out? A request may hold the Kysely ref but not have checked
-  // out a connection yet (so the counts above look idle). Leave it; the next
-  // sweep will reclaim it once it's been quiet for the grace window.
-  if (Date.now() - (lastAccess.get(orgId) ?? 0) < RELEASE_GRACE_MS) return;
+  // out a connection yet (so the counts above look idle). The one caller who
+  // may skip this wait is the access's OWN owner: when `ifSeqIs` matches the
+  // current access seq, nobody else has been handed the pool since that access,
+  // and the owner calling release means it is done — safe to close now. That is
+  // what lets a cross-tenant sweep run at ~one open pool instead of one per org.
+  const untouchedByOthers = ifSeqIs !== undefined && accessSeq.get(orgId) === ifSeqIs;
+  if (!untouchedByOthers && Date.now() - (lastAccess.get(orgId) ?? 0) < RELEASE_GRACE_MS) {
+    // In the window → NOT a no-op (that silent no-op is how sweeps exhausted
+    // Postgres): retry once the window has passed. Quiet pools then close;
+    // a pool real traffic keeps touching re-defers, which is correct.
+    if (!pendingRelease.has(orgId)) {
+      const t = setTimeout(() => {
+        pendingRelease.delete(orgId);
+        void releaseIdleTenantPool(orgId);
+      }, RELEASE_GRACE_MS + 250);
+      t.unref?.();
+      pendingRelease.set(orgId, t);
+    }
+    return;
+  }
   cache.delete(orgId);
   lastAccess.delete(orgId);
+  accessSeq.delete(orgId);
+  const pending = pendingRelease.get(orgId);
+  if (pending) {
+    clearTimeout(pending);
+    pendingRelease.delete(orgId);
+  }
   try {
     await pool.end();
   } catch {
     // Already ending, or a client raced the end — harmless; the cache entry
     // is gone, so the next access opens a fresh pool.
+  }
+}
+
+/** Scoped tenant-DB access for cross-tenant background sweeps: hands `fn` the
+ *  db, then releases the pool — immediately when nothing else touched it since
+ *  this access (the common sweep case), otherwise via the grace-deferred path.
+ *  This is what keeps a sweep across N tenants at ~one open pool. */
+export async function withTenantDbForSweep<T>(
+  orgId: string,
+  fn: (db: Kysely<TenantDB>) => Promise<T>,
+): Promise<T> {
+  const db = await getTenantDb(orgId);
+  const mySeq = accessSeq.get(orgId);
+  try {
+    return await fn(db);
+  } finally {
+    await releaseIdleTenantPool(orgId, mySeq);
   }
 }
 
@@ -194,6 +253,12 @@ export async function evictTenantPool(orgId: string): Promise<void> {
   if (!entry) return;
   cache.delete(orgId);
   lastAccess.delete(orgId);
+  accessSeq.delete(orgId);
+  const pending = pendingRelease.get(orgId);
+  if (pending) {
+    clearTimeout(pending);
+    pendingRelease.delete(orgId);
+  }
   try {
     const { pool } = await entry;
     await pool.end();

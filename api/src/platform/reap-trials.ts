@@ -48,7 +48,7 @@ export function reapMode(env: NodeJS.ProcessEnv = process.env): ReapMode {
   return v === "live" ? "live" : v === "dry" ? "dry" : "off";
 }
 
-/** Grace days from env, fail-safe: a non-numeric value falls back to 3 (never NaN, which
+/** Days of grace from env, fail-safe: a non-numeric value falls back to 3 (never NaN, which
  *  would make the reap cutoff NaN and silently reap nothing). Pure. */
 export function reapGraceDays(env: NodeJS.ProcessEnv = process.env): number {
   const g = Number(env.COBBLR_TRIAL_REAP_GRACE_DAYS);

@@ -3,6 +3,7 @@ type: feature
 scope: devices
 date: 2026-07-30
 docs_target: docs/architecture/edge-bridge-relay.md#The desktop app's own surface (port 8079)
+docs_published: 2026-08-07
 ---
 If the Cobblr desktop app is running on your computer, it now appears under Configuration, Connections, Devices with its Bluetooth printers and a connection test.
 

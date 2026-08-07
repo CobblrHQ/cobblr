@@ -3,6 +3,7 @@ type: feature
 scope: labels
 date: 2026-07-29
 docs_target: docs/USER_GUIDE.md#Printers
+docs_published: 2026-08-07
 ---
 The Live box now shows the printers your edge bridge is holding, from any page: whether each is connected, idle or printing, its loaded roll and battery, and buttons to connect, disconnect or check it.
 

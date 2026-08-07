@@ -5,7 +5,7 @@
 // The one case that must NEVER be a bare dead-end: a 422 `nothing_to_plan` when
 // the pile is simply all-unidentified — the items ARE in the box (they drive the
 // banner + toggle), they just can't be placed until named, so we point back to
-// them ("review") rather than stranding the user on a red string (the bug Grace
+// them ("review") rather than stranding the user on a red string (the bug a beta tester
 // hit — feedback ca6b762e). A plain error is anything else.
 export type PlanErrorView =
   | { kind: "review"; count: number }

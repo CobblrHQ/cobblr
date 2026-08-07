@@ -3,6 +3,7 @@ type: feature
 scope: onboarding
 date: 2026-08-01
 docs_target: docs/USER_GUIDE.md#Guided tour
+docs_published: 2026-08-07
 ---
 New workspaces get a short guided tour on first load, once per user and only while the workspace is still empty. It welcomes you, asks whether you want the navigation across the top or down a sidebar (and switches the whole app live as you try each), then spotlights the key parts of the dashboard one at a time. Skippable, and replayable any time from the account menu.
 

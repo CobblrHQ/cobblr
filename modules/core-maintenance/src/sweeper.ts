@@ -106,14 +106,14 @@ export async function tick(opts: { orgId?: string } = {}): Promise<{
   let notified = 0;
 
   for (const org of orgs) {
-    let tdb: Kysely<unknown>;
     try {
-      tdb = (await platform().tenants.getDb(org.id)) as Kysely<unknown>;
-    } catch {
-      continue; // Tenant DB might be gone or unprovisioned.
-    }
-
-    try {
+      // withDb releases the org's pool as soon as this closure returns. A
+      // bare getDb + releaseIdleDb pair could never release its own pool
+      // (the sweep's access sat inside the release grace window), so this
+      // sweep held one pool per tenant and exhausted Postgres on boxes
+      // with many tenants.
+      await platform().tenants.withDb(org.id, async (raw) => {
+    const tdb = raw as Kysely<unknown>;
     let due: DueRow[];
     try {
       const compiled = sql<DueRow>`
@@ -135,13 +135,13 @@ export async function tick(opts: { orgId?: string } = {}): Promise<{
         msg.includes("does not exist") ||
         msg.includes("last_notified_at")
       ) {
-        continue;
+        return;
       }
       throw err;
     }
 
     scanned += due.length;
-    if (due.length === 0) continue;
+    if (due.length === 0) return;
 
     const memberIds = await platform().notifications.orgMemberIds(org.id);
 
@@ -209,11 +209,14 @@ export async function tick(opts: { orgId?: string } = {}): Promise<{
       }
       notified += 1;
     }
-    } finally {
-      // Release this tenant's pool unless a live request is using it, so a
-      // sweep across every tenant doesn't hold one connection per org and
-      // exhaust Postgres. Reopens lazily on next access.
-      await platform().tenants.releaseIdleDb(org.id);
+      });
+    } catch (err) {
+      // Per-org isolation: a gone/unprovisioned tenant or one bad org must
+      // not abort the sweep for everyone else (CLAUDE.md §8.1).
+      console.warn(
+        `[core-maintenance] sweep skipped org ${org.id}:`,
+        (err as Error).message,
+      );
     }
   }
 

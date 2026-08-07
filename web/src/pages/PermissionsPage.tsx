@@ -8,7 +8,7 @@
 //  2. Field visibility (H2): mark any field of any kind sensitive and
 //     bind it to a capability, per workspace. The field is hidden in the
 //     portal / views / app SDK for anyone who lacks the capability
-//     (admins/owners always see it). This is a beta tester defining his own
+//     (admins/owners always see it). This is a workspace owner defining their own
 //     tiers — e.g. gate `notes` behind `inventory:view-notes` — on top
 //     of whatever the module manifest already gates. Setting a scope
 //     auto-registers the capability, so it appears as a new column in

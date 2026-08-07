@@ -5,6 +5,21 @@ No account, no cloud, no subscription. This guide gets you to a working
 instance you can open from your phone - **including the camera**, which is the
 one part that needs a little care.
 
+## Two install paths
+
+- **Image-based (two files, no build)** -
+  [`deploy/selfhost/standalone/`](./deploy/selfhost/standalone/README.md): a
+  compose file + a `.env`, pulling prebuilt multi-arch images (amd64 + arm64,
+  so a Raspberry Pi runs the same file). Updates are `docker compose pull`,
+  including across PostgreSQL majors. **This becomes the recommended path when
+  the public images open** alongside the first public release; the README
+  there says whether they are live yet.
+- **Clone-and-build** - the rest of this guide. Build the images from this
+  repository yourself; always available, and what the image path falls back
+  to today.
+
+Everything below (HTTPS modes, privacy knobs, backups) applies to both paths.
+
 ## Why HTTPS is not optional (the camera)
 
 Browsers only allow a web app to use the **camera or microphone** in a *secure
@@ -163,7 +178,27 @@ Prefer DuckDNS or Cloudflare if you can - they skip this entirely.
 git pull
 docker compose -f docker-compose.yml -f deploy/selfhost/docker-compose.selfhost.yml up -d --build
 ```
-Database migrations run automatically on api start.
+Database migrations run automatically on api start — including across
+PostgreSQL major versions (the db image upgrades its own data directory in
+place, leaving the old cluster untouched as the rollback).
+
+**Updates are a one-way door.** Migrations are forward-only: moving to a newer
+build is always supported, but going *back* to an older one can meet a database
+the older code does not understand. If you track a bleeding-edge build, keep
+backups (below) — rolling back means restoring one.
+
+### Experimental modules
+
+Modules marked `experimental` are rough, narrow, and may change or be removed.
+They load by default so nothing ever vanishes from an existing install; set
+
+```
+COBBLR_DISABLE_EXPERIMENTAL_MODULES=true
+```
+
+in your `.env` to keep them out entirely (not loaded, not mounted, no
+background workers). They show an amber "Experimental" badge in the module
+picker either way.
 
 ## Backups
 
@@ -222,7 +257,9 @@ and if BIdb is unreachable the scan falls back to them.
 | `COBBLR_BIDB_URL` | - | Set to `https://bidb.cobblr.xyz` to consult the shared database. Unset keeps the tier inert. |
 | `COBBLR_BIDB_KEY` | - | Your per-install key (generated from a Cobblr account), sent as a bearer token. |
 
-See [`design-decisions/barcode-intelligence-db.md`](./design-decisions/barcode-intelligence-db.md) for the full model (why self-host queries but doesn't get another provider's data, and the give-to-receive opt-in).
+The full model (why a self-host install queries but never receives another
+provider's licensed data, and the give-to-receive correction opt-in) is
+documented on [docs.cobblr.xyz](https://docs.cobblr.xyz).
 
 ### Full air-gap
 

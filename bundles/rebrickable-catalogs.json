@@ -1,17 +1,19 @@
 {
   "manifest": {
     "id": "cobblr.community.rebrickable-catalogs",
-    "version": "0.5.0",
+    "released_at": "2026-07-13",
+    "changelog": "First catalogued release: the six Rebrickable reference catalogs with per-field renderers (schema config; rows load via the CSV importer).",
+    "version": "0.5.1",
     "name": "Rebrickable catalogs",
     "description": "Installs the six Rebrickable reference catalogs (themes, part categories, colors, parts, sets, minifigs) with pre-configured renderers: color swatches for the colors palette, image thumbs for sets + minifigs, year columns formatted as years. Row data is loaded separately via the CSV importer or scripts/seed-rebrickable.mjs.",
     "author": "Cobblr community",
-    "readme_md": "# Rebrickable catalogs\n\nSix reference catalogs sourced from [Rebrickable's public CSV dumps](https://rebrickable.com/downloads/). The bundle ships the **schema config only** \u2014 id columns, title columns, image columns, hero swatch for the colors palette, and the right renderer per field.\n\n## Catalogs installed\n\n| Catalog | Rows | Notes |\n|---|---|---|\n| Themes | ~500 | Bionicle, Star Wars, City, etc. |\n| Part categories | ~75 | Bricks, plates, slopes, tiles, \u2026 |\n| Colors | ~280 | Big swatch on every card via `hero_field=rgb` + `hero_renderer=color-hex`. |\n| Parts | ~62,000 | Individual LEGO elements. Image enrichment via `inventory_parts.csv.gz` (see seeder). |\n| Sets | ~27,000 | Has `img_url` from Rebrickable's CDN. |\n| Minifigs | ~17,000 | Has `img_url`; broken URLs fall back to a placeholder. |\n\n## Loading the data\n\nThis bundle is the *configuration*, not the rows. To load rows:\n\n```bash\nnode scripts/seed-rebrickable.mjs\n```\n\nThe seeder logs in as the demo user, finds the workspace with this bundle installed, and CSV-imports each catalog from Rebrickable's CDN. It runs idempotently \u2014 re-running refreshes the rows.",
+    "readme_md": "# Rebrickable catalogs\n\nSix reference catalogs sourced from [Rebrickable's public CSV dumps](https://rebrickable.com/downloads/). The bundle ships the **schema config only** - id columns, title columns, image columns, hero swatch for the colors palette, and the right renderer per field.\n\n## Catalogs installed\n\n| Catalog | Rows | Notes |\n|---|---|---|\n| Themes | ~500 | Bionicle, Star Wars, City, etc. |\n| Part categories | ~75 | Bricks, plates, slopes, tiles, … |\n| Colors | ~280 | Big swatch on every card via `hero_field=rgb` + `hero_renderer=color-hex`. |\n| Parts | ~62,000 | Individual LEGO elements. Image enrichment via `inventory_parts.csv.gz` (see seeder). |\n| Sets | ~27,000 | Has `img_url` from Rebrickable's CDN. |\n| Minifigs | ~17,000 | Has `img_url`; broken URLs fall back to a placeholder. |\n\n## Loading the data\n\nThis bundle is the *configuration*, not the rows. To load rows:\n\n```bash\nnode scripts/seed-rebrickable.mjs\n```\n\nThe seeder logs in as the demo user, finds the workspace with this bundle installed, and CSV-imports each catalog from Rebrickable's CDN. It runs idempotently - re-running refreshes the rows.",
     "requires": [],
     "catalogs": [
       {
         "external_id": "rebrickable-themes",
         "name": "Rebrickable themes",
-        "description": "LEGO themes \u2014 Bionicle, Star Wars, City, Town, Castle, etc. Reference taxonomy; not directly bindable to inventory items (sets reference themes).",
+        "description": "LEGO themes - Bionicle, Star Wars, City, Town, Castle, etc. Reference taxonomy; not directly bindable to inventory items (sets reference themes).",
         "source_url": "https://cdn.rebrickable.com/media/downloads/themes.csv.gz",
         "schema": {
           "id_column": "id",
@@ -23,7 +25,7 @@
       {
         "external_id": "rebrickable-part-categories",
         "name": "Rebrickable part categories",
-        "description": "Part categories \u2014 bricks, plates, slopes, tiles, minifig parts, etc. Reference taxonomy; not directly bindable.",
+        "description": "Part categories - bricks, plates, slopes, tiles, minifig parts, etc. Reference taxonomy; not directly bindable.",
         "source_url": "https://cdn.rebrickable.com/media/downloads/part_categories.csv.gz",
         "schema": {
           "id_column": "id",
@@ -106,7 +108,7 @@
       {
         "external_id": "rebrickable-minifigs",
         "name": "Rebrickable minifigs",
-        "description": "Minifigure catalog (~17k rows). Some img_urls 404 on the CDN \u2014 those degrade to a placeholder.",
+        "description": "Minifigure catalog (~17k rows). Some img_urls 404 on the CDN - those degrade to a placeholder.",
         "source_url": "https://cdn.rebrickable.com/media/downloads/minifigs.csv.gz",
         "schema": {
           "id_column": "fig_num",
@@ -153,6 +155,7 @@
           "semantic_type": "lego.bom"
         }
       }
-    ]
+    ],
+    "catalog": "extended"
   }
 }

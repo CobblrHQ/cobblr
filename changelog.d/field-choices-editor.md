@@ -3,6 +3,7 @@ type: feature
 scope: platform
 date: 2026-07-14
 docs_target: docs/USER_GUIDE.md#4.5 Custom fields
+docs_published: 2026-08-07
 ---
 **A custom field can now be a dropdown, and you can set the options when you make it.** Records have always been able to render a text field as a dropdown with a **+ add new** option, so anyone can pick from your list or add their own on the spot and have it stick. The catch was that there was no way to *set* that list unless you hand wrote a bundle manifest. Now there is: on the `/fields` page, a text field gets a **Choices** box where you type the options (Enter or comma to add, paste a comma separated list to add several at once). Leave it empty and you get a plain text box, exactly as before. You can also add, remove and reorder the options later by clicking the field, which is safe: values already saved on your records are kept either way, because the options are suggestions rather than a rulebook. The form also stops asking you to invent a snake_case key. Type the label you want, like **Acquired from**, and the key `acquired_from` fills itself in.
 

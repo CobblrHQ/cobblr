@@ -57,7 +57,7 @@ interface Props {
   /** CLAIM the available height: the panel grows to (nearly) the full viewport
    *  and its body scrolls within, instead of shrinking to its content and
    *  leaving a dead band above/below. For content-heavy working surfaces where
-   *  "no use wasting screen space" (the author). Off by default so a small confirm
+   *  "no use wasting screen space" (the operator). Off by default so a small confirm
    *  dialog still sizes to its content. */
   fillHeight?: boolean;
   /** A contextual **Ask Cobb** button in the header. `prompt` is a ready-to-go
@@ -136,13 +136,13 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
       <div
         className={
           // Height-constrained + column layout so a tall form scrolls WITHIN the
-          // modal (header pinned) instead of running off the page (the bug Grace
+          // modal (header pinned) instead of running off the page (the bug a beta tester
           // hit). my-8 = 4rem of vertical margin (was 6rem — a content-heavy
           // modal like the put-away plan was wasting a band of screen top and
-          // bottom, the author 2026-07-11), so cap at 100vh − 4rem to match.
+          // bottom, the operator 2026-07-11), so cap at 100vh − 4rem to match.
           // On a PHONE a modal is the whole screen: no margin, no radius, no
           // wasted band — a floating card with 1rem gutters wastes the little
-          // room there is and pushed action rows under the Live pill (the author,
+          // room there is and pushed action rows under the Live pill (the operator,
           // 2026-08-01). From sm up it's the familiar centred card again.
           "bg-surface dark:bg-slate-900 shadow-2xl border w-full flex flex-col " +
           modalPanelLayout(overLive, fillHeight) +

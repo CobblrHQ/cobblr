@@ -1,6 +1,8 @@
 {
   "manifest": {
     "id": "cobblr.community.bookshelf",
+    "released_at": "2026-06-28",
+    "changelog": "First catalogued release: books as their own shelf with author, ISBN scan-in, and read status.",
     "version": "0.2.0",
     "name": "Bookshelf",
     "description": "Your books as their own shelf: author + ISBN + year + read status, on a lean catalog that opens as a cover wall. Spine-label wire bundled.",

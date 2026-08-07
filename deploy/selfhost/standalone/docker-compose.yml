@@ -20,7 +20,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-cobblr_meta}
     volumes:
-      - ${COBBLR_DATA_ROOT:-./data}/db:/var/lib/postgresql/data
+      # One level up: PG18+ stores the cluster in a versioned subdirectory,
+      # and the image upgrades an older one in place on boot, so a plain
+      # `docker compose pull` carries you across major versions.
+      - ${COBBLR_DATA_ROOT:-./data}/db:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cobblr} -d ${POSTGRES_DB:-cobblr_meta}"]
       interval: 5s
@@ -46,6 +49,10 @@ services:
       # enforces it in CI.
       COBBLR_FILES_ROOT: /var/cobblr/files
       COBBLR_RUNTIME_MODULES_DIR: /var/cobblr/sandboxed-modules
+      # The tag this stack runs, passed through so /healthz and Health can
+      # report it. Runtime-only on purpose: a stable cut re-tags a nightly
+      # digest bit-for-bit, so a version can never be baked into the image.
+      COBBLR_VERSION: ${COBBLR_VERSION:-}
     depends_on:
       db:
         condition: service_healthy

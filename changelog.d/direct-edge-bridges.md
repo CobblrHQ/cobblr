@@ -3,6 +3,7 @@ type: feature
 scope: edge
 date: 2026-07-29
 docs_target: docs/USER_GUIDE.md#3.19½ Edge bridges (Configuration → Edge bridges)
+docs_published: 2026-08-07
 ---
 Edge bridges now lists the bridges Cobblr reaches directly, such as one on your own computer or a Pi on your network, alongside the ones that dial in.
 

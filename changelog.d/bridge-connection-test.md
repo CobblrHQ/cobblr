@@ -3,6 +3,7 @@ type: feature
 scope: printing
 date: 2026-07-28
 docs_target: docs/USER_GUIDE.md#Print labels over Bluetooth
+docs_published: 2026-08-07
 ---
 Test a bridge-connected printer from Cobblr and see the roll it has loaded and its battery level.
 

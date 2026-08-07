@@ -6,7 +6,7 @@
 // while it loads the form fell back to a hardcoded generic menu with only the
 // base tables. A yarn-routed scan therefore flashed "Inventory part" as the
 // default, and a user who confirmed in that window filed the yarn into the
-// generic inventory table (reported twice: the author + Grace). The fix seeds the
+// generic inventory table (reported twice in beta). The fix seeds the
 // routed live instance into the menu immediately from the candidate itself, so
 // the default is correct on the FIRST render — no dependence on the network
 // round-trip. These helpers are pure so the routing is asserted in tests.

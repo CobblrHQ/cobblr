@@ -102,7 +102,7 @@ export default defineModule({
         // H2 — per-field read-scope: `cost` is the commercial figure.
         // Exposable (above) so it CAN reach the portal/views, but gated
         // so only viewers granted `inventory:view-costs` actually see
-        // it. This is a beta tester's "Tier 1 sees parts, Tier 2 also sees
+        // it. This is the club scenario's "Tier 1 sees parts, Tier 2 also sees
         // prices": admins/owners see everything; a member sees cost
         // only once granted the capability (via a role or direct grant).
         fieldReadScopes: {

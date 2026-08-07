@@ -100,13 +100,12 @@ async function burnTick(orgId?: string): Promise<{ scanned: number; warned: numb
   const cutoff = new Date(now.getTime() - WINDOW_DAYS * DAY);
 
   for (const org of orgs) {
-    let db: Kysely<InventoryDB>;
     try {
-      db = (await platform().tenants.getDb(org.id)) as Kysely<InventoryDB>;
-    } catch {
-      continue;
-    }
-    try {
+      // withDb releases the org's pool the moment this closure returns — a
+      // getDb + releaseIdleDb pair can't release its own pool inside the
+      // grace window, which held one pool per tenant and exhausted Postgres.
+      await platform().tenants.withDb(org.id, async (raw) => {
+      const db = raw as Kysely<InventoryDB>;
       // One aggregate query: consume totals per part over the window.
       const aggs = await db
         .selectFrom("inventory_consumption")
@@ -120,7 +119,7 @@ async function burnTick(orgId?: string): Promise<{ scanned: number; warned: numb
         .where(sql<boolean>`delta::numeric < 0`)
         .groupBy("part_id")
         .execute();
-      if (aggs.length === 0) continue;
+      if (aggs.length === 0) return;
 
       const parts = await db
         .selectFrom("inventory_parts")
@@ -184,10 +183,9 @@ async function burnTick(orgId?: string): Promise<{ scanned: number; warned: numb
           .where("id", "=", a.part_id)
           .execute();
       }
+      });
     } catch (err) {
       console.error(`[inventory] burn sweep for org ${org.id} failed:`, (err as Error).message);
-    } finally {
-      await platform().tenants.releaseIdleDb?.(org.id);
     }
   }
   return { scanned, warned };

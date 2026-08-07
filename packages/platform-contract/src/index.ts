@@ -1544,6 +1544,13 @@ export interface PlatformTenants {
    *  makes it safe against concurrent request traffic — a pool a live
    *  request is mid-flight on is left untouched. */
   releaseIdleDb(orgId: string): Promise<void>;
+  /** PREFER THIS for cross-tenant sweeps: runs `fn` with the tenant db, then
+   *  releases the pool — immediately when nothing else touched it during the
+   *  sweep (the common case), else once it has been quiet for the grace
+   *  window. A bare getDb + releaseIdleDb pair could never release its own
+   *  pool inside the grace window, so a sweep across N tenants held N pools
+   *  and exhausted Postgres (staging, 2026-08-07). */
+  withDb<T>(orgId: string, fn: (db: unknown) => Promise<T>): Promise<T>;
 }
 
 /** Cross-tenant DB access for the (small set of) modules that need

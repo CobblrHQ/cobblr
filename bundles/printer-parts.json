@@ -1,6 +1,9 @@
 {
   "manifest": {
     "id": "cobblr.community.printer-parts",
+    "released_at": "2026-06-20",
+    "changelog": "First catalogued release: the printer-parts drawer skin on inventory.",
+    "catalog": "extended",
     "version": "0.2.1",
     "name": "3D Printer Parts",
     "description": "Datasheet-aware part fields + a narrow-bin label template. Manufacturer is a native inventory:part field; this bundle adds the electronics-specific extras.",

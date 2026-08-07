@@ -3,6 +3,7 @@ type: feature
 scope: print
 date: 2026-07-25
 docs_target: docs/USER_GUIDE.md#Print labels over Bluetooth
+docs_published: 2026-08-07
 ---
 Pairing a Bluetooth label printer now lists printers instead of every Bluetooth device in range, with a fallback for printers that do not announce themselves.
 

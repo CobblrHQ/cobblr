@@ -13,7 +13,7 @@ export const DM_REPLY_WINDOW_MS = 2 * 24 * 60 * 60 * 1000;
 // A person often files ONE report across two or three quick DMs — a first line,
 // then a terse addition ("...and it needs to be clearer", a screenshot). Those
 // belong on ONE item: split apart, the short continuation lands as its own
-// near-unactionable report and the first message's context is lost (Grace,
+// near-unactionable report and the first message's context is lost (beta feedback,
 // 2026-07-15 — two DMs ~2 min apart became two items, the vague second one
 // stranded). So a DM within a few MINUTES of the user's own last activity on
 // their most-recent OPEN item is a CONTINUATION → append, whoever spoke last.
@@ -51,7 +51,7 @@ export interface DmRoutingItem {
  *  Why the OPEN gate: a team RESOLUTION reply makes an item "team-spoke-last", so
  *  without it a fresh DM sent after we resolve (or, worse, after a BATCH resolve)
  *  reopened the most-recent resolved ticket and buried the new topic as a
- *  follow-up — it never hit the feedback channel or the autopilot (the author,
+ *  follow-up — it never hit the feedback channel or the autopilot (the operator,
  *  2026-07-11). The gate also stops the continuation window from reopening a
  *  just-resolved item. A closed item's reply becomes its own visible item. */
 export function isDmReply(latest: DmRoutingItem | undefined | null, nowMs: number): boolean {

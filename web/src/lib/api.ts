@@ -4416,6 +4416,12 @@ export interface ScanCandidate {
   /** Capture-first: set when this routes to a not-yet-installed flagship
    *  bundle — the bundle to materialize. */
   bundle_external_id?: string;
+  /** Produced without a model call (the keyword floor) — rendered honestly. */
+  heuristic?: true;
+  /** How a non-AI candidate earned its route: "noun" (names what the item is),
+   *  "keywords" (corroborating hits only — tentative, no one-tap Add, skipped
+   *  by File all), "fallback" (the honest catch-all + category). */
+  basis?: "noun" | "keywords" | "fallback";
 }
 
 /** One field on a scan-menu table (a trimmed field def). */
@@ -6066,6 +6072,9 @@ export interface PlatformBundleManifest {
     template?: string;
     filter?: Record<string, unknown>;
     args?: Record<string, unknown>;
+    /** Where the action lands: "self" (default), "none", or a routed target —
+     *  the server stores it verbatim (see the bundle-install contract). */
+    target?: unknown;
   }[];
   field_defs?: {
     entity_kind: string;
@@ -6089,6 +6098,10 @@ export interface PlatformBundleManifest {
     /** Semantic RECORD role: `category` (this table's grouping axis) or `pack`
      *  (the packaging-count field, filled from the scanned package). */
     field_role?: "category" | "pack";
+    /** Scan-decode role: `identifier:<kind>` (this field carries the scanned
+     *  identifier, e.g. a VIN) or `decode:<key>` (fill from the decoder's
+     *  output). Mirrors the server contract's FieldDefEntry. */
+    decode_role?: string;
   }[];
   /** Presentation overrides for a kind's native fields (relabel / hide). */
   field_overrides?: {
@@ -6097,6 +6110,8 @@ export interface PlatformBundleManifest {
     display_label?: string;
     hidden?: boolean;
     position?: number;
+    /** Override-layer decode role — wins over the field-def's own. */
+    decode_role?: string;
   }[];
   /** Saved views the bundle installs (optionally pinned to the dashboard). */
   saved_views?: {

@@ -146,7 +146,16 @@ desktopUpdatesRouter.get("/bridge/:os/:arch", async (req, res, next) => {
     if (!OS_OK.has(os) || !ARCH_OK.has(arch)) return void res.status(404).json({ error: { code: "bad_platform", message: "os ∈ linux|darwin|windows, arch ∈ x64|arm64" } });
     const repoApi = process.env.EDGE_BRIDGE_REPO_API;
     const token = process.env.EDGE_BRIDGE_REPO_TOKEN;
-    if (!repoApi || !token) return void res.status(503).json({ error: { code: "not_configured", message: "bridge binary hosting not configured" } });
+    if (!repoApi || !token)
+      return void res.status(503).json({
+        error: {
+          code: "not_configured",
+          // The install scripts surface this message verbatim, so it must
+          // carry the actual fix, not just name the failure.
+          message:
+            "This instance does not host bridge downloads (EDGE_BRIDGE_REPO_API / EDGE_BRIDGE_REPO_TOKEN are unset). Download the bridge from your bridge distribution instead, or set those env vars to a release repo and restart.",
+        },
+      });
 
     const assetName = `cobblr-bridge-${os}-${arch}${os === "windows" ? ".exe" : ""}`;
     const map = await latestAssetUrls(repoApi, token);

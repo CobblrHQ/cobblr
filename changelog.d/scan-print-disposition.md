@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-07-21
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-08-07
 ---
 The Scan page has a new Print mode: scan an item's QR label and its label goes straight to the print buffer instead of opening the item, so you can reprint a run of labels as you walk the shelves.
 

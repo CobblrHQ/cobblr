@@ -3,6 +3,7 @@ type: feature
 scope: core-scan
 date: 2026-07-14
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-08-07
 ---
 **A category that outgrows its table can be promoted into a table of its own, and folded back if you change your mind.** You should not have to decide your table structure before you have scanned anything. So: scan things, let categories emerge from what you actually own, and when one of them earns its own table (enough items, or it wants fields the others do not), promote it. The items keep their ids, their history and their QR labels, so a bin's printed label still resolves to the same item afterwards. The fields the parent table defined come across with them. And the reverse works too, because a decision you cannot undo is not really a decision: demote the table and its items fold back into the parent as a category, with that category stamped onto them and added to the parent's list. Promote, demote and promote again leaves you exactly where you started.
 

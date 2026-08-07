@@ -1,6 +1,9 @@
 {
   "manifest": {
     "id": "cobblr.community.lending-library",
+    "released_at": "2026-06-28",
+    "changelog": "First catalogued release: track who borrowed what, with due-back dates.",
+    "catalog": "extended",
     "version": "0.1.1",
     "name": "Lending Library",
     "description": "A shelf you lend from: each title carries its copies, and lending one out reserves it against a borrower until it comes back.",

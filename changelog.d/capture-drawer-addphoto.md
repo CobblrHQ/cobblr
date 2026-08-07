@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-08-02
 docs_target: docs/USER_GUIDE.md#3.19
+docs_published: 2026-08-07
 ---
 Add a second photo to something you just captured, without it becoming a second record: ＋ Photo in the capture drawer arms the shutter so your next shot joins the same item. Take the informative shot first (the label, the writing on the box), then the nice one. Retake replaces the photo and reads it again.
 

@@ -50,6 +50,11 @@ export function PairsWellWith({ module, orgSlug }: { module: string; orgSlug: st
     if ((b.manifest.catalog ?? "core") !== "core") return false;
     const reqs = (b.manifest.requires ?? []).map((r) => r.module);
     if (!reqs.includes(module)) return false; // must reference THIS module
+    // Only genuine BRIDGES (two+ modules being connected). A single-module
+    // bundle here is just a field skin — after the 2026-07 catalog curation
+    // those were the only recommendations left, which is the opposite of what
+    // this strip is for ("connect the things you already have").
+    if (reqs.length < 2) return false;
     if (installed.has(b.manifest.id)) return false; // not already installed
     // Recommend only when every required module is already enabled — i.e. the
     // user genuinely has both sides and just hasn't connected them yet.

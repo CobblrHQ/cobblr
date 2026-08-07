@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-07-29
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-08-07
 ---
 The scan inbox can now pick your catalog photo with AI. Tap "Pick best (AI)" on an item's photo options and a vision model looks at every candidate and chooses the cleanest one: the product by itself, in the right colour, with no people in the shot. The free photo ranking also got better at colour, so an item you know is black stops surfacing a red one.
 

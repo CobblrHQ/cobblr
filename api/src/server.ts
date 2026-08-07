@@ -160,6 +160,11 @@ export function createApp(): AppHandles {
       // Runtime build sha (set by the deploy env, not baked in the image) —
       // the web polls this to offer "new version — refresh" to open tabs.
       build_sha: process.env.COBBLR_BUILD_SHA || null,
+      // The image tag this instance runs (self-host compose passes its
+      // COBBLR_VERSION through). Runtime env, never baked: a stable cut
+      // re-tags a nightly digest bit-for-bit, so the bytes cannot know
+      // their own CalVer. null on internal deployments.
+      version: process.env.COBBLR_VERSION || null,
       time: new Date().toISOString(),
     });
   });

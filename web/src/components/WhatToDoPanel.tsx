@@ -252,7 +252,7 @@ export function WhatToDoPanel({
   // CATEGORY of it (multi-instance kinds only — a pantry next to your parts
   // bin). Without the category half this section decayed into a remainder list:
   // the more of Cobblr you used, the more it looked like four random leftovers
-  // (the author, 2026-07-31).
+  // (the operator, 2026-07-31).
   const blankSlates = useMemo(() => {
     const domains = (modulesQ.data?.items ?? []).filter(
       (m) =>
@@ -523,7 +523,7 @@ export function WhatToDoPanel({
   // A recipe that declares optional capabilities (e.g. Lego: Bricks / Rebrickable
   // / Disassemble / Labels / Scan) routes its captive "Set up" through the detail
   // modal so the user SEES and picks what it does — a silent install would drop
-  // them on an empty page never knowing those capabilities exist (a beta tester's
+  // them on an empty page never knowing those capabilities exist (beta report:
   // "installed Lego, empty Sets page, no walkthrough"). A featureless recipe keeps
   // the one-tap "set it up & drop me straight in".
   const recipeHasFeatures = !!selectedRecipe?.manifest.features?.length;
@@ -877,7 +877,7 @@ export function WhatToDoPanel({
 
       {/* More/Fewer ways to start - a full-width toggle right under the two-column
           top row. Expanding opens the building-blocks/trackers columns BELOW, so
-          the top row keeps its width instead of snapping to full (the author, 2026-07-31). */}
+          the top row keeps its width instead of snapping to full (the operator, 2026-07-31). */}
       <button
         type="button"
         data-tour="more-ways"

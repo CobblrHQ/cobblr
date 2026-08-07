@@ -3,6 +3,7 @@ type: feature
 scope: core-scan
 date: 2026-07-14
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-08-07
 ---
 **Re-running the AI on a photo now finishes when it says it finishes.** Reading a photo used to take three model calls in a row, and the card went quiet after the first one. The name would update, the spinner would stop, everything looked done, and then several seconds later a "2 different items, split?" offer appeared out of nowhere. It read like a bug. Now the pass that identifies the photo answers all three questions in a single read, so the name, what it saw, and the split offer all land together, and the spinner keeps going until the whole chain is actually finished. That is also one fewer vision call per photo. A re-run has stopped **erasing** things, too: it used to wipe the split offer and then pay to rediscover it, and if you had answered "keep as one", it threw your answer away and asked again. There is also a new **Replay (no AI)** button that re-runs everything except the model calls, which is free, instant, and useful when the identification was fine but Cobblr's handling of it was not.
 

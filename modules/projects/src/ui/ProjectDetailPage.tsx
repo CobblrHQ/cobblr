@@ -164,7 +164,7 @@ export function ProjectDetailPage() {
           )}
           {/* Dates commit on CHANGE, not blur: a mobile date picker doesn't
               reliably fire blur when you confirm a date, so an onBlur-only save
-              silently dropped the value ("no option to save progress" — Grace).
+              silently dropped the value (beta report: "no option to save progress").
               Change fires the moment a full date is picked, like the selects. */}
           {!fp.hidden("target_date") && (
             <Labelled label={fp.label("target_date", "target date")}>
@@ -292,7 +292,7 @@ function Labelled({
 // Every field on this page auto-saves (on change/blur) — there is no Save
 // button. This tiny status pill makes that visible so a user who's used to
 // clicking "save" can see their edits are being persisted ("no option to save
-// progress" — Grace). Idle before the first edit → renders nothing.
+// progress", beta report). Idle before the first edit → renders nothing.
 function SaveStatus({
   saving,
   saved,

@@ -2,6 +2,23 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-08-07
+
+### Features
+- Scan a storage tote, turn it into a bin - one step. When a scan looks like a storage container, its inbox card offers Turn into a bin (always available in the card's More menu too). One action creates a container location - named for you as the next free "Bin N", editable - with the product's photo, barcode and brand kept on the bin's record as its identity. Create & scan into it also makes the new bin the standing file-location, so the next things you scan land inside it. Your bin's name is never overwritten by the product name.
+
+### Improvements
+- Cobblr now upgrades its own database across major PostgreSQL versions. Previously a new major refused to start on an existing data directory, so someone had to stop the stack, export everything, wipe it and import again, which is not something a self-hosted instance should ever be asked to do. The database image now carries the previous version too and migrates the data itself on first start, keeping the old copy untouched as a fallback, so pulling a new image is all an instance has to do. This release moves to PostgreSQL 18.
+- An automatic update can no longer leave an instance with a database that will not start. The database image now upgrades clusters left at the pre-18 mount layout in place (no compose edit needed), and when a major upgrade cannot proceed safely it keeps serving the previous Postgres version from the untouched data and alerts the admin (log plus superadmin email) instead of failing. Operators who want to schedule major upgrades themselves can set COBBLR_DB_MAJOR_UPGRADE=hold.
+- The public source tree grew its release paperwork: a LICENSE and a security policy (how to report a vulnerability privately) now live in the repository itself, the published changelog ships with the source so a clone builds without stubs, and the experimental-modules switch is validated at boot and documented in the self-hosting guide.
+- Self-host releases grew their machinery: every nightly now also gets a frozen `nightly-YYYY-MM-DD` tag you can pin or cite in a bug report, a stable release is cut by re-tagging the exact nightly that soaked (no rebuild, bit-identical), and `/healthz` plus the admin Health page now report which version tag your instance runs.
+- A calmer scan review card that is honest about its guesses. Expanding an inbox item now shows just the review surface; the full add-to-a-table form (with every field of the destination) appears when you actually pick a destination, so a wrong suggestion no longer buries you under the wrong table's empty boxes. Rarely used tools (Split into items, Retake for catalog, Add a photo, Box state) moved into one ⋯ menu on the card's action rail, where re-run and discard already live, so they no longer cost a row under the photos and you can reach them without expanding the card at all. Photo controls now live on the photos themselves: rotate and "use as catalog" on your photo's caption, "back to original" on the catalog's. Extra photos appear as a strip directly under the big images once an item has any, so the catalog-photo picker sits right where you're looking instead of below two near-empty rows. The card also stops dressing keyword guesses up as AI matches: a route based only on incidental keyword hits renders as an outlined tentative chip with no one-tap Add, File all skips it, and when your workspace has AI but the model failed to answer, the card says so and offers a one-tap retry.
+
+### Fixes
+- Hourly background sweeps (maintenance due-soon, expiry, stock burn-rate) on instances with many workspaces no longer exhaust the database's connection slots: each sweep now closes a workspace's connection pool the moment it finishes with it, instead of quietly holding one pool per workspace until the next hour.
+- Deleting a workspace now removes its database user as well as its database. Postgres users are cluster-wide, so they were left behind on every delete, and instances that reap expired trials accumulated one per reaped workspace forever. Existing leftovers are swept automatically on the next start.
+- Labels printed by an automation (a wire firing labels:print) now carry the same full, phone-scannable QR URL as labels you print by hand, reusing the item's existing code where one was already printed. Previously they encoded a bare path that a phone camera read as plain text. If neither a label base URL nor a public instance address is configured, the automation now refuses with a clear message instead of printing a label that can never scan.
+
 ## 2026-08-06
 
 ### Features

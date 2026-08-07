@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-07-30
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-08-07
 ---
 A correction you type now sticks to the item. Tell Cobblr "color: black" once and every later re-run still knows it, instead of forgetting and re-answering with the thing you already corrected. Corrections given before this are recovered from the item's history, so you never have to type one twice.
 

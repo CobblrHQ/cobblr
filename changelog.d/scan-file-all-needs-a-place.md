@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-07-30
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-08-07
 ---
 Filing a whole scan session now asks where the things go instead of quietly saving them with no location. If every item already has a spot, or you have an active bin set, it files straight away as before. Otherwise it shows the rooms and bins, and filing without a location is still one tap if that is what you want.
 

@@ -217,7 +217,7 @@ async function getExposableFields(kind: string): Promise<string[] | null> {
 /** Per-field read-scope map for a kind (H2): { field: capability }, or
  *  null when the kind gates no fields. The MANIFEST-declared scopes are
  *  cached by kind; per-WORKSPACE admin overrides (workspace_field_scopes)
- *  are merged on top when an orgId is given — "a beta tester defines his own
+ *  are merged on top when an orgId is given — "a workspace owner defines their own
  *  tiers." Per-org entries win. The per-org read is one small indexed
  *  query per resolver call (not per row), so it's cheap; not cached, so
  *  admin edits take effect immediately. */

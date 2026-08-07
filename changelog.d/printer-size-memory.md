@@ -3,6 +3,7 @@ type: feature
 scope: print
 date: 2026-07-25
 docs_target: docs/USER_GUIDE.md#Print labels over Bluetooth
+docs_published: 2026-08-07
 ---
 Each printer now remembers the label size loaded in it, saved with your workspace, so it is right when you come back or print from another computer.
 

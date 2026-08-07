@@ -3,6 +3,7 @@ type: feature
 scope: labels
 date: 2026-07-20
 docs_target: docs/USER_GUIDE.md#3.2 Labels
+docs_published: 2026-08-07
 ---
 **1½ inch square labels, two ways.** If you already stock 4 × 6 shipping labels, you can now tile 1½″ squares onto one, eight up, and cut them apart: near-zero marginal cost for a sheet of bin labels, paid for in guillotine time. If you would rather not cut anything, there are now die-cut square rolls too (1½ × 1½″ and 2 × 2″) that feed straight through a roll printer's adjustable guide, one label per feed. Both show up in the label picker like any other size, in the preview, the print sheet, and the direct-to-printer PDF.
 

@@ -23,6 +23,8 @@ export interface ScanCandidateLike {
   quantity?: number | null;
   /** The grouping-axis value the matchmaker resolved (folded into `fields`). */
   category?: string;
+  /** How a non-AI candidate earned its route (see ScanCandidate.basis). */
+  basis?: "noun" | "keywords" | "fallback";
 }
 export interface ScanItemLike {
   id: string;
@@ -41,9 +43,17 @@ export function baseKind(module: string): string {
 
 /** A pending item is "ready to file" when it has a name AND a confident
  *  destination (a top candidate). Items still needing a manual look are
- *  excluded so "File all" never guesses; resolved items are already filed. */
+ *  excluded so "File all" never guesses; resolved items are already filed.
+ *
+ *  A keyword-basis route is NOT confident: it is a no-AI guess held up only by
+ *  corroborating keyword hits — the tier that once filed a storage tote into
+ *  Vehicles because a marketing description grazed "car(ds)"/"mak(ing)e". The
+ *  card renders those tentative, and File all must match what the card offers:
+ *  a route the card won't one-tap is not one a bulk sweep may commit. Noun and
+ *  fallback bases stay filable (a no-AI workspace still files cleanly). */
 export function isReadyToFile(it: ScanItemLike): boolean {
-  return it.status === "pending" && !!it.suggested_name && !!it.suggested_candidates?.[0];
+  const top = it.suggested_candidates?.[0];
+  return it.status === "pending" && !!it.suggested_name && !!top && top.basis !== "keywords";
 }
 
 /** Ids of the items "File all" will commit, in order. */

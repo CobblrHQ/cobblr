@@ -3,6 +3,7 @@ type: feature
 scope: core-scan
 date: 2026-07-14
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-08-07
 ---
 **Photograph a pile of different things and the inbox now asks what you want done with them.** Snap two humidifiers, or a shelf of mixed gear, and the card says "2 different items in this photo", names them, and offers a choice right there on the closed card: keep them together as one record, or split into individuals. Splitting gives each one its own entry, cropped out of your photo where possible, and each goes and finds its own product image by name, so you get real records rather than fragments of a group shot. This costs no extra AI: the pass that reads every scanned photo was already counting the units it could see, and now it names them too. A pile of the **same** thing still counts as a quantity, so a sealed ten pack of screws will not ask you to split anything. There is still a manual **Split into items** button in the expanded card for the times you disagree with it.
 

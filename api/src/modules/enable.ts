@@ -583,7 +583,16 @@ export async function reconcileDefaultModules(): Promise<{ orgsHealed: number; m
     .map((e) => e.manifest.name);
   if (wanted.length === 0) return { orgsHealed: 0, modulesAdded: 0 };
 
-  const orgs = await meta.selectFrom("orgs").select("id").execute();
+  // Skip orgs that were never provisioned (no tenant credentials): enabling
+  // anything on them can only throw "has not been provisioned yet" — which one
+  // half-provisioned org did, 17 modules' worth, on EVERY staging boot. Signup
+  // provisioning owns finishing (or cleaning up) those rows; the reconcile's
+  // job is healing orgs that CAN be healed.
+  const orgs = await meta
+    .selectFrom("orgs")
+    .select("id")
+    .where("db_credentials_encrypted", "is not", null)
+    .execute();
   const rows = await meta.selectFrom("org_modules").select(["org_id", "module_name"]).execute();
   const byOrg = new Map<string, Set<string>>();
   for (const r of rows) {

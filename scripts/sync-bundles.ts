@@ -67,14 +67,16 @@ for (const fb of FEATURED_BUNDLES) {
   const id = String(manifest.id ?? "");
   if (!id.startsWith("cobblr.")) continue;
   const file = path.join(OUT, `${slugOf(id)}.json`);
-  const existing = fs.existsSync(file)
-    ? ((JSON.parse(fs.readFileSync(file, "utf8")) as { manifest?: Record<string, unknown> }).manifest ?? null)
+  const raw = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+  const existing = raw
+    ? ((JSON.parse(raw) as { manifest?: Record<string, unknown> }).manifest ?? null)
     : null;
-  if (existing && sig(existing) === sig(manifest)) { unchanged++; continue; }
-  // Out of sync: the generated json's content doesn't match the source. Either
-  // someone hand-edited the GENERATED bundles/*.json (it's an artifact, not a
-  // source — edit featured-bundles.ts) or edited the source and didn't re-sync.
-  if (CHECK) { drifted.push(`${slugOf(id)}.json${existing ? "" : " (missing)"}`); continue; }
+  // Version continuity FIRST, then compare the byte-exact expected output.
+  // Comparing sig() alone missed two real cases (found 2026-08-07): a
+  // metadata-only edit (released_at/changelog, which sig excludes) never
+  // reached the generated file, and a malformed wrapper (a stray top-level
+  // key beside "manifest") was never cleaned because the inner manifests
+  // matched.
   if (existing) {
     if (bumpSig(existing) !== bumpSig(manifest)) {
       // Real content changed → the emitted version must move past the existing
@@ -83,11 +85,17 @@ for (const fb of FEATURED_BUNDLES) {
       const webVer = String(manifest.version ?? "0.0.0");
       if (cmpVer(webVer, exVer) <= 0) manifest.version = bumpPatch(exVer);
     } else {
-      // Only the offer tier moved — keep the installed version untouched.
+      // Offer tier / release metadata only — keep the installed version untouched.
       manifest.version = String(existing.version ?? manifest.version ?? "0.0.0");
     }
   }
-  fs.writeFileSync(file, JSON.stringify({ manifest }, null, 2) + "\n");
+  const out = JSON.stringify({ manifest }, null, 2) + "\n";
+  if (raw === out) { unchanged++; continue; }
+  // Out of sync: the generated json doesn't match the source. Either someone
+  // hand-edited the GENERATED bundles/*.json (it's an artifact, not a source —
+  // edit featured-bundles.ts) or edited the source and didn't re-sync.
+  if (CHECK) { drifted.push(`${slugOf(id)}.json${existing ? "" : " (missing)"}`); continue; }
+  fs.writeFileSync(file, out);
   console.log(`wrote ${path.basename(file)}  v${manifest.version}${existing ? ` (was ${existing.version})` : " (new)"}`);
   wrote++;
 }

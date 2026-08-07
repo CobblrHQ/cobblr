@@ -67,6 +67,7 @@ diagnosticsRouter.get(
 
       res.json({
         build_sha: process.env.COBBLR_BUILD_SHA || null,
+        version: process.env.COBBLR_VERSION || null,
         hosted: process.env.COBBLR_HOSTED === "true",
         node: process.version,
         platform: `${process.platform}/${process.arch}`,

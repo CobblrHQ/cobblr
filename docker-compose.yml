@@ -23,7 +23,11 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cobblr}
       POSTGRES_DB: ${POSTGRES_DB:-cobblr_meta}
     volumes:
-      - ./data/postgres:/var/lib/postgresql/data
+      # PG18+ keeps its cluster in a versioned subdirectory
+      # (/var/lib/postgresql/<major>/docker), so the mount is one level up.
+      # That is also what lets the image pg_upgrade an older data dir in
+      # place on boot — see docker/db-auto-upgrade.sh.
+      - ./data/postgres:/var/lib/postgresql
     ports:
       # Exposed on the host so you can connect with psql / a GUI.
       - "5432:5432"

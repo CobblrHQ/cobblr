@@ -3,6 +3,7 @@ type: feature
 scope: labels
 date: 2026-07-26
 docs_target: docs/USER_GUIDE.md#Printers
+docs_published: 2026-08-07
 ---
 Label printers now report the roll they have loaded and how much battery is left, so you can check before starting a run instead of after wasting labels. Printers connected through an edge bridge are asked automatically, and the Labels page sets the media to the roll they report.
 

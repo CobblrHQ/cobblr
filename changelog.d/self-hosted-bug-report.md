@@ -3,6 +3,7 @@ type: feature
 scope: feedback
 date: 2026-08-06
 docs_target: docs/USER_GUIDE.md#4.7 Notifications
+docs_published: 2026-08-07
 ---
 
 Self-hosted instances can now turn a feedback note into a ready-made bug report

@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-07-17
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-08-07
 ---
 Re-running the lookup on a scan can now be undone. A re-run sometimes comes back worse than what it replaced (a dark photo of a tool tote re-read as a Bluetooth speaker), and until now the better answer was simply gone. The card keeps what it had before the run and offers **Put it back**.
 

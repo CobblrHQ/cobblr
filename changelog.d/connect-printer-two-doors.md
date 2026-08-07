@@ -3,6 +3,7 @@ type: feature
 scope: printing
 date: 2026-07-28
 docs_target: docs/USER_GUIDE.md#Print labels over Bluetooth
+docs_published: 2026-08-07
 ---
 Connecting a printer now asks one question, whether you want to install a helper app, and finds printers on a bridge for you instead of asking for an address.
 

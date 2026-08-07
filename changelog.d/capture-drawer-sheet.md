@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-08-02
 docs_target: docs/USER_GUIDE.md#3.19
+docs_published: 2026-08-07
 ---
 Tap the capture drawer to open it: the shot full-size, every photo on that item with a tap to pick which one is the cover, plus its name, quantity and location. The location starts from where you are standing and can be changed for just that one item.
 

@@ -3,6 +3,7 @@ type: feature
 scope: printing
 date: 2026-07-23
 docs_target: docs/USER_GUIDE.md#Printing labels
+docs_published: 2026-08-07
 ---
 Common thermal label sizes like 50x30 mm are now built in, and you can pick them (and print two-up) even when no printer is connected to Cobblr, by choosing what you are printing on. Every size picker now groups into Label rolls and Sheets and shows only what fits your printer.
 

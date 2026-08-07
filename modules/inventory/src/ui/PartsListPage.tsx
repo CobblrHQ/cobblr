@@ -163,7 +163,7 @@ export function PartsListPage() {
     // entityKind (`<instance>:item`, or `inventory:part` for the default) MUST
     // be in the key — yarn + hooks are both inventory instances and the API is
     // instance-scoped, so without it they collide on one cache entry and show
-    // each other's items / blank on re-click (Grace's "weird all over").
+    // each other's items / blank on re-click (beta report: "weird all over").
     queryKey: [
       "inventory-parts",
       entityKind,
@@ -561,7 +561,7 @@ export function PartsListPage() {
         <div className="text-sm text-ember-500">{(parts.error as Error).message}</div>
       )}
       {parts.data && partItems.length === 0 && (() => {
-        // A first-time user on an empty instance (Grace's empty "Yarn"/"Hooks")
+        // A first-time user on an empty instance (a beta tester's empty "Yarn"/"Hooks")
         // needs the add action right here, not a grey note pointing at a button
         // lost in the toolbar. Show a real "New <item>" button — unless the
         // emptiness is just a filter/search hiding rows (then guide to widen it).
@@ -573,7 +573,7 @@ export function PartsListPage() {
         const plural = itemNounPlural.toLowerCase();
         const noun = itemNoun.toLowerCase();
         // A locked managed app's first screen — give a warm welcome + a clear
-        // "what to do", not a bare table (Grace's "no call to action").
+        // "what to do", not a bare table (beta report: "no call to action").
         const welcome = appMode && !hasFilters && !activeView;
         return (
           <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-10 text-center space-y-3">

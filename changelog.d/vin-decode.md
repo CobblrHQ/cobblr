@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-07-13
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-08-07
 ---
 Enter a vehicle's VIN and the form fills in the year, make, model, and body for you, pulled from the free NHTSA lookup. It only fills fields you left blank, tags each one "filled from VIN, double-check", and one tap undoes the lot.
 

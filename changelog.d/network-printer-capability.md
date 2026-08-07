@@ -3,6 +3,7 @@ type: feature
 scope: printing
 date: 2026-07-22
 docs_target: docs/USER_GUIDE.md#Printers
+docs_published: 2026-08-07
 ---
 Network printers now declare their type (inkjet/laser or thermal) and widest media, so the label size pickers only offer sizes that printer can actually run.
 

@@ -21,7 +21,7 @@ import { sql, type Kysely } from "kysely";
 import { env } from "./env.js";
 import { meta, metaPool, pingMeta } from "./db/meta.js";
 import { runMigrations } from "./db/migrate.js";
-import { getTenantDb, releaseIdleTenantPool } from "./db/tenant.js";
+import { getTenantDb, releaseIdleTenantPool, withTenantDbForSweep } from "./db/tenant.js";
 import { bakeTestOrgPool, poolEnabled } from "./db/test-org-pool.js";
 import { signAppToken, signSession } from "./auth/jwt.js";
 import { loadAllModules } from "./modules/loader.js";
@@ -69,6 +69,8 @@ import { backfillPlacements } from "./platform/migrate-location-to-placement.js"
 import { backfillDefaultBindings } from "./platform/seed-bindings.js";
 import { backfillIdentityLinks } from "./platform/backfill-identity.js";
 import { startTrialReaper } from "./platform/reap-trials.js";
+import { startDbUpgradeHoldWatch } from "./platform/db-upgrade-status.js";
+import { reconcileOrphanTenantRoles } from "./platform/reconcile-tenant-roles.js";
 import { reconcileScanCategoryFields } from "./platform/reconcile-scan-category.js";
 import { backfillBundleClaims } from "./platform/backfill-bundle-claims.js";
 import {
@@ -137,6 +139,7 @@ async function boot() {
     tenants: {
       getDb: (orgId) => getTenantDb(orgId),
       releaseIdleDb: (orgId) => releaseIdleTenantPool(orgId),
+      withDb: (orgId, fn) => withTenantDbForSweep(orgId, fn),
     },
     resolvables: {
       register: registerResolvable,
@@ -925,6 +928,16 @@ async function boot() {
   const seeded = await T("backfillDefaultBindings", backfillDefaultBindings());
   console.log(`[cobblr-api] default bindings backfilled: ${seeded} added`);
 
+  // Sweep per-tenant Postgres roles left behind by deleted workspaces (roles are
+  // cluster-global, so DROP DATABASE never removed them). One query on a healthy
+  // instance; opens no tenant pools. See platform/reconcile-tenant-roles.ts.
+  const roleSweep = await T("reconcileOrphanTenantRoles", reconcileOrphanTenantRoles());
+  if (roleSweep.dropped > 0 || roleSweep.skippedBroken > 0) {
+    console.log(
+      `[cobblr-api] orphaned tenant roles: ${roleSweep.dropped} dropped, ${roleSweep.skippedBroken} left for investigation`,
+    );
+  }
+
   // Give every workspace's scan FALLBACK table a category axis. Without one, the
   // matchmaker's only way to say "this is electrical, that is plumbing" is to
   // route them to different TABLES — which is how five electrical parts ended up
@@ -975,6 +988,11 @@ async function boot() {
   // No-op unless COBBLR_TRIAL_REAP=dry|live; only ever touches trial_expires_at-stamped
   // orgs, so prod/staging/self-host are untouchable. See platform/reap-trials.ts.
   startTrialReaper();
+
+  // Alert the operator when the database image held back a major Postgres
+  // upgrade (it serves the old major instead of dying — see
+  // docker/db-auto-upgrade.sh). Silent on a healthy instance.
+  startDbUpgradeHoldWatch();
 
   // (The date-custom-field calendar source is now registered per-owning-module
   // via platform().calendar.registerDateFieldSource — inventory/assets/projects

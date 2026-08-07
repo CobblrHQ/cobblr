@@ -222,7 +222,7 @@ organizeRouter.post(
       // it's just entirely UNIDENTIFIED — so the Sorting-plan lens has nothing
       // to place. Carry the count so the client can point back to those items
       // ("Review N") instead of dead-ending on a bare error string. This is the
-      // exact case Grace hit: one scanned skein sat in the inbox, findable in
+      // exact case a beta tester hit: one scanned skein sat in the inbox, findable in
       // "By session", yet "Sorting plan" said "nothing identified" with no path.
       res.status(422).json({
         error: {

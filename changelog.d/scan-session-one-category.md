@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-07-30
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-08-07
 ---
 Scan a batch of similar things and they now land in ONE section instead of two near-identical ones. The session header reads "File all 3 into Clothing", and filing files them all under that. Cobblr also shows the identify which categories your workspace already uses, so it reuses "Clothing" instead of inventing "apparel" in the first place.
 

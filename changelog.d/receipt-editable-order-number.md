@@ -3,6 +3,7 @@ type: feature
 scope: core-scan
 date: 2026-07-24
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-08-07
 ---
 **You can now set or fix the order number on a receipt session.** The parser reads an order or invoice number when the receipt states one, but sometimes it is missing or wrong. A receipt session header now has an editable PO number: add one so two receipts from the same store are distinct, or correct the parsed one, and the session title updates to match.
 

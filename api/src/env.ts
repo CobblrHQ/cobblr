@@ -79,7 +79,7 @@ const Schema = z.object({
   // privileges (the "super-admin" role). These users see the
   // /super-admin/* surface — cross-workspace dashboards for the
   // person hosting Cobblr (e.g. the author running the workshop server +
-  // hosting a beta tester's club). Per-workspace owners + admins are
+  // hosting a friend's club). Per-workspace owners + admins are
   // unchanged; this is a SEPARATE tier above them.
   // Empty / unset → no super-admins (single-tenant deploy where the
   // workspace owner is also the host operator).
@@ -97,6 +97,17 @@ const Schema = z.object({
   COBBLR_AI_ENABLED: z
     .enum(["true", "false"])
     .default("true")
+    .transform((v) => v === "true"),
+
+  // Drop `maturity: "experimental"` modules at load (public / trial deploys
+  // set this; self-host default is off so an install is never surprised by a
+  // module vanishing). Validated here because the loader used to read it raw
+  // from process.env — a typo ("True", "1", a misspelled name) silently meant
+  // "experimental modules ON", the exact miss this schema exists to stop.
+  // Preprocess: compose passes ${VAR:-} as an EMPTY STRING when unset, which
+  // must read as "unset", not as an enum violation that crashes boot.
+  COBBLR_DISABLE_EXPERIMENTAL_MODULES: z
+    .preprocess((v) => (v === "" ? undefined : v), z.enum(["true", "false"]).default("false"))
     .transform((v) => v === "true"),
 
   // ── try / trial tier ─────────────────────────────────────────────────────

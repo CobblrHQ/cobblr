@@ -77,14 +77,12 @@ export async function expiryTick(opts: { orgId?: string } = {}): Promise<{ scann
   let alerted = 0;
 
   for (const org of orgs) {
-    let tdb: Kysely<unknown>;
     try {
-      tdb = (await platform().tenants.getDb(org.id)) as Kysely<unknown>;
-    } catch {
-      continue;
-    }
-
-    try {
+      // withDb releases the org's pool the moment this closure returns —
+      // a getDb + releaseIdleDb pair can't release its own pool inside the
+      // grace window, which held one pool per tenant and exhausted Postgres.
+      await platform().tenants.withDb(org.id, async (raw) => {
+    const tdb = raw as Kysely<unknown>;
     // Parts expiring within the window, via the kernel date-field query — no raw
     // inventory_parts read, no inventory table name here. queryDateField no-ops
     // (returns []) when inventory/expires_on is absent.
@@ -124,7 +122,7 @@ export async function expiryTick(opts: { orgId?: string } = {}): Promise<{ scann
     }
 
     scanned += due.length;
-    if (due.length === 0) continue;
+    if (due.length === 0) return;
 
     const memberIds = await platform().notifications.orgMemberIds(org.id);
 
@@ -173,10 +171,11 @@ export async function expiryTick(opts: { orgId?: string } = {}): Promise<{ scann
       }
       alerted += 1;
     }
-    } finally {
-      // Release this tenant's pool unless a live request holds it, so a
-      // sweep across every tenant doesn't exhaust Postgres connections.
-      await platform().tenants.releaseIdleDb(org.id);
+      });
+    } catch (err) {
+      // Per-org isolation: one gone/unprovisioned tenant must not abort the
+      // sweep for everyone else (CLAUDE.md §8.1).
+      console.warn(`[lists] expiry sweep skipped org ${org.id}:`, (err as Error).message);
     }
   }
 

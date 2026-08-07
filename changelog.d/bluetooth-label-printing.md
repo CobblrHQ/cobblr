@@ -3,6 +3,7 @@ type: feature
 scope: printing
 date: 2026-07-20
 docs_target: docs/USER_GUIDE.md#3.2 Labels
+docs_published: 2026-08-07
 ---
 **Print your labels straight to a Bluetooth thermal label printer**, with no print server and no cables. Add one under Configuration → Printers with the driver **"Bluetooth label printer"**, set the command dialect (most label printers speak TSPL; Phomemo M-series use ESC/POS raster), the media width and the label geometry, then use **Print test** to check it. From then on, the labels queue's **Send to printer** prints the queued rows to it: your real QR codes and descriptions, respecting each row's quantity. Your browser asks which printer to use once per session, not once per label. Because the dialect, width and calibration live on the printer connection, supporting a new model is a settings change rather than a code change, and if labels drift off the edge or come out upside down the gap and orientation fields fix it. Note that iOS has no Web Bluetooth, so iPhones and iPads cannot drive these printers from a web page. For iOS, or for printing without a browser open, use a CUPS printer or an edge bridge.
 

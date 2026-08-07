@@ -3,6 +3,7 @@ type: feature
 scope: bundles
 date: 2026-07-12
 docs_target: docs/USER_GUIDE.md#4.4 Bundles (publishable presets)
+docs_published: 2026-08-07
 ---
 Bundle updates now apply by their version number instead of nagging you for every change. Small fixes (patch releases) apply themselves quietly in the background. Feature releases (minor versions) apply themselves too and show a toast telling you what was added. Big releases (major versions) still ask first, so you review and confirm exactly as before. Anything that would collide with a field you customised keeps prompting, so nothing you changed is overwritten silently.
 

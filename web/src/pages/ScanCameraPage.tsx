@@ -100,7 +100,7 @@ const REPEAT_GAP_MS = 1300;
 // A GENERIC web link (a product's marketing QR, not a Cobblr label) is held this
 // long before it fires, so a real product barcode beside it — a shoebox's UPC
 // next to its qr.nike.com code — gets a chance to be read and win. A non-link
-// code seen during the hold fires immediately and cancels it (the author, 2026-07-24).
+// code seen during the hold fires immediately and cancels it (the operator, 2026-07-24).
 const LINK_HOLD_MS = 700;
 
 // Scan-session persistence — localStorage (NOT sessionStorage: phones kill
@@ -134,7 +134,7 @@ export function ScanCameraPage() {
   // whole app — so it raises the same flag every Modal and SidePanel raises.
   // Without it, floating chrome that yields to overlays (the Live pill, Quick
   // access, the feedback bubble) had no idea the scanner was up and floated
-  // over the viewfinder (the author: "it def does not belong anywhere in the camera
+  // over the viewfinder (the operator: "it def does not belong anywhere in the camera
   // scanner").
   useOverlayOpenFlag();
   // Preserve the instance-scan target (?into=…) so the modal + return keep it.
@@ -325,7 +325,7 @@ export function ScanCameraPage() {
   // The live Scanned sheet's row. The PAGE owns the barcode ingest (below) so
   // the sheet can close the instant an action is taken — an intent pressed
   // before the row lands is queued in earlyIntentRef and runs on arrival
-  // (the author: "if I'm moving fast… I should be able to do that").
+  // (the operator: "if I'm moving fast… I should be able to do that").
   const [resultItem, setResultItem] = useState<ScanInboxItem | null>(null);
   const [ingestBusy, setIngestBusy] = useState(false);
   const ingestKeyRef = useRef<string | null>(null);
@@ -554,7 +554,7 @@ export function ScanCameraPage() {
   // Consume-once: ?sort=1 armed Sort mode above (into state + localStorage), so
   // strip it from the URL. Otherwise it persisted and re-armed Sort mode on every
   // refresh, overriding the user later toggling it OFF (the same class of bug as
-  // scan?organize=pending; the author, 2026-07-10).
+  // scan?organize=pending; the operator, 2026-07-10).
   useEffect(() => {
     if (!params.has("sort")) return;
     const next = new URLSearchParams(params);
@@ -764,7 +764,7 @@ export function ScanCameraPage() {
   //   anything else → open its detail page
   //
   // Foreign labels used to skip all of this and navigate straight to
-  // detail_path, so scanning a linked companion app room label opened the room's
+  // detail_path, so scanning a linked companion-app room label opened the room's
   // page instead of pointing the scanner at that room.
   type ResolvedQr = {
     entity_kind: string;
@@ -973,7 +973,7 @@ export function ScanCameraPage() {
       // already ranks a link below every barcode WITHIN a frame, but the native
       // iOS detector reads a 2D QR every frame while the 1D UPC lands only
       // intermittently, so the link cleared the 2-sighting gate before the barcode
-      // was ever co-seen — it "grabbed the QR every time, ignoring the UPC" (the author,
+      // was ever co-seen — it "grabbed the QR every time, ignoring the UPC" (the operator,
       // 2026-07-24). Give the barcode a window: hold the link, and a non-link code
       // seen meanwhile fires and cancels the hold; only a link still alone after
       // LINK_HOLD_MS falls through to fire.
@@ -1233,7 +1233,7 @@ export function ScanCameraPage() {
           // swaps the pixels but never updates its width/height, so the
           // rotated buffer is read with the original stride and can never
           // decode on a non-square frame. Perpendicular barcodes therefore
-          // NEVER scanned, whatever the light or attempt rate (the author,
+          // NEVER scanned, whatever the light or attempt rate (the operator,
           // 2026-08-05). Owning the loop lets us rotate into our own correctly
           // sized canvas — and costs nothing else, since the loop is a few
           // lines and we already control cadence, pausing and instrumentation.
@@ -1513,9 +1513,9 @@ export function ScanCameraPage() {
   // live feed wiggling behind the modal read as "it's still scanning"; the
   // freeze says "got it".
   // "The camera should still be active, but the background frame should be
-  // frozen" (the author) — for EVERY blocking sheet, not just the result phase. The
+  // frozen" (the operator) — for EVERY blocking sheet, not just the result phase. The
   // review sheet and the expanded photo sheet used to leave the video running
-  // behind themselves, which is the flicker the author saw while resizing the drawer.
+  // behind themselves, which is the flicker the operator saw while resizing the drawer.
   const sheetBlocking = sheetOpen || !!reviewItem || phase === "result" || phase === "resolving";
   // A sheet means the scan landed (or review is up) — an AUTO torch has done
   // its job and goes out. A manual torch is the user's call and stays.
@@ -1538,7 +1538,7 @@ export function ScanCameraPage() {
     if (sheetBlocking) {
       v.pause();
     } else if (phase === "scanning" && v.paused && v.srcObject) {
-      // Grace-reset the liveness clock: it went stale while DELIBERATELY
+      // Reset the liveness clock's grace window: it went stale while DELIBERATELY
       // paused, and must not instantly restart a healthy stream on resume.
       frameClockRef.current = noteResume(frameClockRef.current, Date.now());
       void v.play().catch(() => {
@@ -1687,7 +1687,7 @@ export function ScanCameraPage() {
   // photograph anything, so it becomes "add a photo to THIS item" — it puts
   // the sheet away (the mini drawer's armed strip takes over as the "still on
   // this scan" indicator), unfreezes the camera, and arms the next shot to
-  // attach (the author's design, 2026-08-03).
+  // attach (the operator's design, 2026-08-03).
   const addPhotoFromSheet = useCallback(() => {
     const it = reviewItemRef.current ?? resultItemRef.current ?? drawerItem;
     if (!it) {
@@ -1808,7 +1808,7 @@ export function ScanCameraPage() {
   // What the DRAWER is showing. Deliberately NOT recent[0]: a barcode result is
   // owned by ScanResultModal, which calls the same onSaved, so the drawer used
   // to re-present an item you had just dealt with in the modal - a blocking
-  // modal followed by a redundant drawer (the author, on a real shelf, 2026-08-02).
+  // modal followed by a redundant drawer (the operator, on a real shelf, 2026-08-02).
   // The drawer owns the SHUTTER path only; the modal clears it so a stale photo
   // can't linger behind a barcode either. recent/savedCount still count both.
   const lastSaved = drawerItem;
@@ -2185,7 +2185,7 @@ export function ScanCameraPage() {
             there) and behind the result modal. */}
         {/* A barcode result renders HERE, in the same slot as the capture
             drawer, so the camera has ONE surface whatever you pointed it at
-            (the author, 2026-08-03). It is the same content as before - all the
+            (the operator, 2026-08-03). It is the same content as before - all the
             enrichment, tracked-match and destination behaviour is untouched -
             just no longer inside a centred dialog over the viewfinder. */}
         {phase === "result" && pendingBarcode && (
@@ -2209,7 +2209,7 @@ export function ScanCameraPage() {
               // Save & next / Discard / an arm are the only exits, and none of
               // them warrants a mini-drawer echo: the item is in the inbox
               // (the sheet says so) and "I don't see the point of a small
-              // drawer" for a barcode (the author). The drawer still appears for the
+              // drawer" for a barcode (the operator). The drawer still appears for the
               // + flow, where it is the armed working surface.
               rearm();
             }}
@@ -2293,7 +2293,7 @@ export function ScanCameraPage() {
             collapseNonce={collapseNonce}
             onExpandBarcode={(it) => setReviewItem(it)}
             onConfirm={() => {
-              // THE SCANNER NEVER FILES (the author, ruling 2026-08-05, restating
+              // THE SCANNER NEVER FILES (the operator, ruling 2026-08-05, restating
               // 2026-08-03). This used to POST confirmScanItem with the
               // matchmaker's first candidate — the same act as the ADD TO chips
               // that were removed for exactly this reason, just wearing a
@@ -2383,7 +2383,7 @@ export function ScanCameraPage() {
                 +      — a sheet is blocking the viewfinder, so a real capture
                          is impossible; the press puts the sheet away, unfreezes
                          the camera and arms the next shot to ATTACH to that
-                         sheet's item (the author's design, 2026-08-03);
+                         sheet's item (the operator's design, 2026-08-03);
                 armed  — gold ring, camera icon: the next press attaches. The
                          words live in the drawer's strip — the paperclip icon
                          is gone ("I have literally no idea what the paperclip

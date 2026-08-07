@@ -54,7 +54,12 @@ export async function loadAllModules(): Promise<{ count: number; names: string[]
   // "experimental") modules out entirely — not loaded, not mounted, no
   // boot-time workers (e.g. digifab's Bambu cloud pump). Self-host default is
   // off, so an existing install is never surprised by a module vanishing.
-  const disableExperimental = process.env.COBBLR_DISABLE_EXPERIMENTAL_MODULES === "true";
+  // Read through the validated env schema so a typo'd value fails boot loudly
+  // instead of silently meaning "experimental modules on". Imported lazily:
+  // a top-level import would run env validation the moment any test touches
+  // this file's pure helpers, and the bare test env has no DATABASE_URL.
+  const { env } = await import("../env.js");
+  const disableExperimental = env.COBBLR_DISABLE_EXPERIMENTAL_MODULES;
 
   // Pass 1: read all manifests without registering. Lets us
   // dependency-order them before they take effect.

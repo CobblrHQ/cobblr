@@ -15,6 +15,8 @@
 // subscribe + the one pushall request. Cross-tenant pool discipline: the message
 // handler writes through the cached tenant pool; a closed client releases it.
 
+// sweep-pools: deferred-release ok — polls only orgs with live Bambu
+// connections (a handful); the 15s deferred pool close in tenant.ts covers it.
 import mqtt, { type MqttClient } from "mqtt";
 import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";

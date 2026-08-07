@@ -3,6 +3,7 @@ type: feature
 scope: labels
 date: 2026-07-20
 docs_target: docs/USER_GUIDE.md#3.2 Labels
+docs_published: 2026-08-07
 ---
 **Print a label where you are standing.** With a Bluetooth label printer set as your default, hitting **Print label** on any record now prints it immediately instead of only adding it to the queue. Add a bin at the shelf and the label is in your hand, so you can label a whole room in one pass without walking back to a desk. The printer stays connected between labels, so your browser asks which printer to use once rather than once per label. If nothing prints (no Bluetooth printer, or an iPhone, which cannot drive one) the label simply waits in the queue as before.
 

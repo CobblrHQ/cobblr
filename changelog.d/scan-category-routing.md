@@ -3,6 +3,7 @@ type: feature
 scope: core-scan
 date: 2026-07-14
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-08-07
 ---
 **Things of the same kind stop scattering across your tables.** Scan five electrical parts and they used to land in four different places: one in Home Inventory, one in Household Supplies, one in Inventory, one in Maker Workshop. That was not really the AI being dim. It was being asked which table an item belonged in, when the only tables on offer all meant roughly "stuff", and it was asked separately for each item, so identical things went to different homes. Tables now carry a **Category** field, and a difference in *kind* is recorded there rather than by picking a different table. A vehicle is still not a part, so those stay separate tables. But an electrical part and a plumbing part are the same kind of record, so they live in one table and are told apart by their category. Anything the scanner cannot confidently place lands in a table you nominate as your catch-all, tagged with its category. The categories are yours: the list starts empty, grows only from values you actually confirm, and near-misses snap onto the value you already use rather than quietly creating a second spelling of it. This works with the AI switched off, too, since the identification step already worked out a category and it was previously being thrown away.
 

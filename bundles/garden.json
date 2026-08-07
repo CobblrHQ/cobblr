@@ -1,6 +1,8 @@
 {
   "manifest": {
     "id": "cobblr.community.garden",
+    "released_at": "2026-07-02",
+    "changelog": "First catalogued release: plants as assets with species, sun exposure, and a repeating watering schedule.",
     "catalog": "extended",
     "version": "0.1.2",
     "name": "Garden",

@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-07-29
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-08-07
 ---
 You can now have Cobblr pick catalog photos with AI on every scan instead of pressing the button each time. Turn on "Auto-pick photos" in the scan header and each newly identified item gets the cleanest product shot chosen for it. It stays off until you turn it on, never replaces a photo you chose yourself, and never pays twice for the same item.
 

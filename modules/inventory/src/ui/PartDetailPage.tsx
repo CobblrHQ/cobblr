@@ -1242,7 +1242,7 @@ function FlatConsumptionPanel({
 
 // ── Per-unit (per-skein) consumption face ─────────────────────────────────────
 //
-// The simple Grace face (consumption-ledger.md §4.1): a by-state COUNT
+// The simple by-state face (consumption-ledger.md §4.1): a by-state COUNT
 // ("3 skeins · 2 new · 1 open") with the open unit's remaining shown subtly —
 // never a total across units. Each opened unit is a child part under the model
 // (linked by an instance-of pairing, kept out of lists via `archived`), so it

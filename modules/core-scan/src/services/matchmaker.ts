@@ -144,6 +144,14 @@ export interface MatchCandidate {
   /** Capture-first: copied from the chosen menu entry when this candidate routes
    *  to a not-yet-installed flagship bundle — the bundle to materialize. */
   bundle_external_id?: string;
+  /** Set on candidates produced WITHOUT a model call (the keyword floor), so the
+   *  UI can say so — a lexical guess must not wear an AI match's face. */
+  heuristic?: true;
+  /** How a heuristic candidate earned its route: "noun" = real what-the-item-IS
+   *  evidence (table noun / head-noun / phrase-in-name), "keywords" = only
+   *  corroborating keyword hits (weaker — rendered tentative and excluded from
+   *  one-tap Add + File all), "fallback" = the honest catch-all + category. */
+  basis?: "noun" | "keywords" | "fallback";
 }
 
 function clamp01(n: number): number {
@@ -239,7 +247,7 @@ export async function assembleScanMenu(
   // item lands in ONE place, told apart by category, and the table un-hides the
   // moment it holds anything. Without this, a workspace with named instances and a
   // hidden default got NO fallback, so its unmatched items scattered across the
-  // named tables by name-similarity — exactly the example-user bug.)
+  // named tables by name-similarity — exactly the scatter bug this fixed.)
   const fallbackByModule = new Map<string, string>();
   const fallbackInstance = new Set<string>(); // "<module>::<instance>"
   for (const [moduleName, insts] of byModule) {
@@ -522,7 +530,7 @@ export function filterMenuForItem(item: PerceivedItem, menu: ScanMenuEntry[]): S
  *  value was computed and then dropped, and the raw per-item string is what
  *  landed on the entity. That is why three shirts identified as "apparel",
  *  "apparel" and "clothing" became two different categories on the destination
- *  table (the author, 2026-07-30) even though the snapping had already agreed.
+ *  table (reported 2026-07-30) even though the snapping had already agreed.
  *
  *  Writing it into `fields[axis.name]` puts it where the confirm already looks,
  *  and where growCategoryChoices reads it to grow the vocabulary - so the value
@@ -610,6 +618,11 @@ export interface LexicalEvidence {
   score: number;
   plausible: boolean;
   keywordHits: number;
+  /** Real "this item IS that thing" evidence: the table's noun matched the
+   *  name, a keyword/choice hit the head noun, or a phrase keyword appeared in
+   *  the name. Distinguishes a named route from one held up only by ≥2
+   *  corroborating keyword grazes. */
+  strong: boolean;
   fields: Record<string, string | number | boolean>;
 }
 
@@ -639,10 +652,24 @@ export function makeLexicalScorer(item: PerceivedItem): {
     return w;
   };
   const tokens = new Set(hay.split(/[^a-z0-9]+/).filter((t) => t.length >= 3).map(stem));
+  // Single words match TOKENS, never raw substrings: `hay.includes("car")` hit
+  // "old CARds", "make" hit "MAKing it easy", "vin" hit "without haVINg" — and
+  // two such grazes in one marketing description made a storage tote "plausible"
+  // for a Vehicles table (keywords car/make/vin). A compound token still counts
+  // when the keyword is a whole morpheme of it ("screw" in "screwdriver", "van"
+  // in "minivan"): prefix/suffix with ≥3 chars of remainder, so "car|ds" can
+  // never ride again. Multi-word phrases keep the verbatim substring match
+  // ("license plate" appearing as-is is real evidence).
+  const tokenList = [...tokens];
+  const wordHit = (w: string): boolean => {
+    const sw = stem(w);
+    if (tokens.has(sw)) return true;
+    return tokenList.some((t) => (t.startsWith(sw) || t.endsWith(sw)) && t.length - sw.length >= 3);
+  };
   const hasWord = (phrase: string): boolean => {
     const p = phrase.toLowerCase();
-    if (p.length >= 3 && hay.includes(p)) return true;
-    return p.split(/[^a-z0-9]+/).some((w) => w.length >= 3 && tokens.has(stem(w)));
+    if (/\s/.test(p.trim())) return p.length >= 3 && hay.includes(p);
+    return p.split(/[^a-z0-9]+/).some((w) => w.length >= 3 && wordHit(w));
   };
   // The capture's HEAD NOUN — the last content token of the NAME after
   // stripping trailing size/pack tails ("Fieldcrest Bath Towels 4 Pack" →
@@ -759,7 +786,7 @@ export function makeLexicalScorer(item: PerceivedItem): {
         }
       }
     }
-    return { score, keywordHits, fields, plausible: strong || keywordHits >= 2 };
+    return { score, keywordHits, fields, strong, plausible: strong || keywordHits >= 2 };
   };
   return { hay, scoreEntry };
 }
@@ -803,6 +830,8 @@ export function heuristicMatch(item: PerceivedItem, menuIn: ScanMenuEntry[]): Ma
         confidence: 0.3,
         name,
         fields: fallbackFields,
+        heuristic: true,
+        basis: "fallback",
         ...(Number.isInteger(quantity) && quantity! > 0 && quantity! <= 10_000 ? { quantity } : {}),
         ...(cat ? { category: cat.value, ...(cat.isNew ? { category_is_new: true } : {}) } : {}),
         ...(fallback.bundle_external_id ? { bundle_external_id: fallback.bundle_external_id } : {}),
@@ -813,7 +842,7 @@ export function heuristicMatch(item: PerceivedItem, menuIn: ScanMenuEntry[]): Ma
     ];
   }
 
-  return scored.map(({ entry, score, fields }, i) => {
+  return scored.map(({ entry, score, strong, fields }, i) => {
     // Same deterministic pack-fill as the AI path (no-AI workspaces get it too).
     seedPackSize(entry, item, fields);
     // The identify already named a category — reuse it rather than paying anyone
@@ -827,6 +856,10 @@ export function heuristicMatch(item: PerceivedItem, menuIn: ScanMenuEntry[]): Ma
       confidence: Math.min(0.6, 0.3 + score * 0.04),
       name,
       fields,
+      heuristic: true as const,
+      // "noun" = the route names what the item IS; "keywords" = held up only by
+      // corroborating hits — the UI renders that tentative, and File all skips it.
+      basis: (strong ? "noun" : "keywords") as "noun" | "keywords",
       ...(Number.isInteger(quantity) && quantity! > 0 && quantity! <= 10_000 ? { quantity } : {}),
       ...(cat ? { category: cat.value, ...(cat.isNew ? { category_is_new: true } : {}) } : {}),
       ...(entry.bundle_external_id ? { bundle_external_id: entry.bundle_external_id } : {}),
@@ -1216,6 +1249,7 @@ export function applyCorroborationGate(
     confidence: Math.max(0.55, primary.confidence + 0.03),
     name: primary.name,
     fields,
+    basis: "fallback",
     ...(cat ? { category: cat.value, ...(cat.isNew ? { category_is_new: true } : {}) } : {}),
     notes: cat
       ? `Filed under ${fallback.label} as “${cat.value}” — nothing in the item text ties it to ${primary.label}.`

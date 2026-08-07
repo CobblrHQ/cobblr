@@ -826,8 +826,14 @@ function FailureDetectionPanel({ slug }: { slug: string }) {
                   <div className="flex items-center gap-2">
                     <span className={lbl}>Detector</span>
                     <select value={c.backend} onChange={(e) => save.mutate({ backend: e.target.value as DigifabFailureConfig["backend"] })} className="input !py-0.5 !text-xs !w-auto">
-                      <option value="auto">Auto - local model, else vision AI</option>
-                      <option value="edge">Local model only (no AI cost)</option>
+                      <option value="auto">Auto - local model when available, else vision AI</option>
+                      {/* "Local model only" is not offered until a bridge-side
+                          model actually ships - edge-only mode would sit and
+                          detect nothing. A workspace already set to it still
+                          sees its setting, labeled honestly. */}
+                      {c.backend === "edge" && (
+                        <option value="edge">Local model only (no bridge model yet - detects nothing)</option>
+                      )}
                       <option value="llm">Vision AI only</option>
                       <option value="detector">External detector (self-hosted)</option>
                     </select>

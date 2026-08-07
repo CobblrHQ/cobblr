@@ -3,7 +3,7 @@
 // auth/middleware.ts → isPlatformAdmin). Workspace owners/admins
 // CANNOT reach these routes; this is a separate tier above them.
 //
-// Use case: the author hosts cobblr on the workshop server. a beta tester's
+// Use case: the author hosts cobblr on the workshop server. A friend's
 // LEGO club + the author's own workshop + others are tenants. The author needs to
 // see which workspaces exist, who's enabled what, disk usage, recent
 // errors. SSH-ing into postgres is the alternative.
@@ -147,6 +147,7 @@ superAdminRouter.get("/overview", async (_req, res, next) => {
       waitlist_pending: Number(waitlistPending?.c ?? 0),
       barcode_cache_upcs: Number(barcodeUpcs?.c ?? 0),
       build_sha: process.env.COBBLR_BUILD_SHA || null,
+      version: process.env.COBBLR_VERSION || null,
     });
   } catch (err) {
     next(err);
@@ -335,6 +336,7 @@ superAdminRouter.get("/instance-config", async (_req, res, next) => {
     res.json({
       node_env: process.env.NODE_ENV || "development",
       build_sha: process.env.COBBLR_BUILD_SHA || null,
+      version: process.env.COBBLR_VERSION || null,
       public_signup: publicSignupEnabled(),
       self_serve_invites: selfServeInvitesEnabled(),
       ai_enabled: (process.env.COBBLR_AI_ENABLED ?? "true").toLowerCase() !== "false",
@@ -1623,7 +1625,7 @@ superAdminRouter.post("/feedback/append", async (req, res, next) => {
 // "always append" buried a brand-new DM as a follow-up on a week-old unrelated
 // ticket; over-correcting to "only append to an answered team question" then split
 // two back-to-back user DMs into two items and stranded the terse second one
-// (Grace, 2026-07-15). Either way the DM is never dropped — not-a-reply just opens
+// (beta feedback, 2026-07-15). Either way the DM is never dropped — not-a-reply just opens
 // its own item. Images ride along too. Same feedback:ingest scope as /append.
 const DmImages = z
   .array(z.object({ url: z.string().url().max(2000), name: z.string().max(255).optional() }))
@@ -1637,7 +1639,7 @@ const AppendDm = z.object({
   // Filed ON BEHALF of a user (an out-of-band report we're about to resolve
   // ourselves), NOT organic feedback. Forces a distinct new item, and does NOT
   // poke the triage daemon or post a "new feedback" card, so the autopilot never
-  // burns tokens investigating a ticket that's already handled (it did, on Grace's
+  // burns tokens investigating a ticket that's already handled (it did, on a real user's
   // yarn ticket 2026-07-15). Pre-claimed in admin_notes so the daemon's hourly
   // sweep skips it too. See reference_cobblr_feedback_ingest_token.
   skip_triage: z.boolean().optional().default(false),
@@ -2045,12 +2047,11 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
         color: 0x2e7d32,
         fields: cardFields,
         // Under the report it belongs to, not a fresh top-level card. The
-        // channel already carries the report and (once triaged) its thread, so a
-        // third message restating the same item is pure stream noise (the author,
-        // 2026-08-05: "could we fix the Feedback resolved to now be nested in
-        // that same thread... less stream noise better"). A thread started from
-        // a message shares that message's id, so the stored announce_message_id
-        // IS the thread id.
+        // channel already carries the report and (once triaged) its thread, so
+        // a third message restating the same item is pure stream noise
+        // (operator request, 2026-08-05: nest "resolved" in the same thread).
+        // A thread started from a message shares that message's id, so the
+        // stored announce_message_id IS the thread id.
         threadId: row.announce_message_id,
       });
     }
@@ -2151,8 +2152,9 @@ superAdminRouter.post("/feedback/batch-resolve", async (req, res, next) => {
       if (freshlyResolved) {
         // ✅ on the report itself. The single-item PATCH has always poked the
         // stage; this path never did, so a BATCH close left every one of its
-        // items without the emoji — the exact status trail the author reads the
-        // channel for, missing precisely when several things shipped at once.
+        // items without the emoji — the exact status trail the operator reads
+        // the channel for, missing precisely when several things shipped at
+        // once.
         pokeDiscordFeedbackStage({
           feedback_id: row.id,
           stage: "shipped",

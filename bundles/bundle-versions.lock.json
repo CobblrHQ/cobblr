@@ -31,6 +31,10 @@
     "version": "0.2.0",
     "hash": "387652c72eb85e0a17c891e7990a24ed795944ed066730d0c6e02ac6a1748cd1"
   },
+  "cobblr.community.rebrickable-catalogs": {
+    "version": "0.5.0",
+    "hash": "2857059aafd62b27d042e09ed9ed6b153c1850fa0df05b5b1e1f5131b471a19b"
+  },
   "cobblr.community.tool-library": {
     "version": "0.1.0",
     "hash": "c26b6118ddfd23d5dd2a00d0dc5f7b7ed7298d942b79e37bf2aa4612e0bca09a"
@@ -102,6 +106,10 @@
   "cobblr.flagship.subscriptions": {
     "version": "0.2.2",
     "hash": "89fffdc138d6a3c9ac6caa93a55726884e82d1176ae53e87232e6b9dc7028ea7"
+  },
+  "cobblr.flagship.vehicle-maintenance": {
+    "version": "0.4.0",
+    "hash": "cc581d5adab778e8cc24864de9872748fee17082e3d73ab5ab4c1bc255f6ccd7"
   },
   "cobblr.flagship.wardrobe": {
     "version": "0.1.2",

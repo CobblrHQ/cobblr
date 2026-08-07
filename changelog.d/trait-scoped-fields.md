@@ -3,6 +3,7 @@ type: feature
 scope: platform
 date: 2026-07-13
 docs_target: docs/USER_GUIDE.md#4.5 Custom fields
+docs_published: 2026-08-07
 ---
 **A custom field can now apply to *all physical items*, not just one kind.** Say you want to track where something came from: FB Marketplace, a gift, bought new. That question is the same for a part, a machine, a vehicle, a whole room. Until now you had to create the same "Origin" field once per kind, and create it again by hand every time you started tracking a new kind of thing. On the `/fields` page, the destination picker now offers **All physical items** (and All digital items) above the list of individual kinds. Pick it, and the field lands on everything physical you track: parts, assets, machines, vehicles, locations. Anything physical you add later gets it automatically, with nothing to redo. If you want it worded differently on just one kind, add a field with the same name to that kind and the more specific one wins.
 

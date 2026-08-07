@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-07-16
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-08-07
 ---
 Scan something you already track and Cobblr now asks "is this the same one?" and offers to merge what the scan learned into the existing record, instead of only offering to add a duplicate. Snap a license-plate photo of a car you first added by its VIN and it fills in the plate and color on that car. Only fields the record is missing get filled, so nothing you already had is overwritten. (This also fixes the match that powers it: a scan named "Honda Civic Hatchback" now finds your "2019 Honda Civic", where before the two names had to overlap almost word-for-word.)
 

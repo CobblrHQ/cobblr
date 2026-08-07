@@ -3,6 +3,7 @@ type: feature
 scope: configuration
 date: 2026-07-30
 docs_target: docs/USER_GUIDE.md#Top nav
+docs_published: 2026-08-07
 ---
 
 Configuration is five sections instead of 34 tiles. The hub opens to a card per
