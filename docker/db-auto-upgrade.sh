@@ -146,8 +146,19 @@ signal_status_row() {
                     updated_at = now()" \
           >/dev/null 2>&1 && break
       else
+        # Guarded on the table existing. A plain DELETE is the overwhelmingly
+        # common path — no held-back upgrade, so the table was never created —
+        # and Postgres logs the miss as `ERROR: relation "cobblr_db_status"
+        # does not exist`. The shell redirect hides it from the script but not
+        # from the server log, so the FIRST thing anyone saw in the db log of a
+        # brand new self-host install was an error. Nothing was wrong; there was
+        # simply nothing to clear.
         gosu postgres psql -U "$u" -d postgres -q \
-          -c "delete from cobblr_db_status where key = 'major_upgrade'" \
+          -c "do \$do\$ begin
+                if to_regclass('public.cobblr_db_status') is not null then
+                  delete from cobblr_db_status where key = 'major_upgrade';
+                end if;
+              end \$do\$" \
           >/dev/null 2>&1 && break
       fi
     done

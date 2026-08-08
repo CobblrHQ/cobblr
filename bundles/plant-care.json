@@ -1,8 +1,8 @@
 {
   "manifest": {
     "id": "cobblr.flagship.plant-care",
-    "version": "0.3.2",
-    "name": "Plant Care",
+    "version": "0.3.4",
+    "name": "Plants",
     "description": "Your houseplants as their own table: species, light, watering interval + pot size, grouped by light.",
     "author": "Cobblr",
     "released_at": "2026-06-10",
@@ -16,7 +16,7 @@
       {
         "module": "assets",
         "instance_name": "plants",
-        "display_name": "Plant Care",
+        "display_name": "Plants",
         "glyph": "🪴",
         "item_noun": "plant",
         "scan_keywords": [
@@ -151,7 +151,7 @@
           {
             "module": "assets",
             "instance_name": "plants",
-            "display_name": "Plant Care",
+            "display_name": "Plants",
             "field_defs": [
               {
                 "entity_kind": "assets:asset",

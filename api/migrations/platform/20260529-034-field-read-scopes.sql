@@ -7,7 +7,7 @@
 -- reads see everything; the member-facing views/portal read path passes
 -- the viewer's effective capabilities, so members never over-see.
 --
--- Enables tiered member access — a beta tester's "Tier 1 sees parts but not
+-- Enables tiered member access — Bjørn's "Tier 1 sees parts but not
 -- prices; Tier 2 (granted inventory:view-costs) sees prices too." The
 -- gating capability is a normal grantable action, so the admin assigns
 -- it via the existing roles / permission matrix.
@@ -18,7 +18,7 @@
 -- override layer is a planned follow-up.
 --
 -- See docs/architecture/entity-resolver.md (the trust boundary) and
--- docs/walkthroughs/brandon-lego-user-flow.md (H2).
+-- docs/walkthroughs/bjorn-lego-user-flow.md (H2).
 --
 -- manual recovery if this fails partway:
 --   ALTER TABLE entity_kinds DROP COLUMN field_read_scopes;

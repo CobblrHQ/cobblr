@@ -11,6 +11,7 @@ import { usePageTitle } from "@cobblr/platform-web";
 import { api, type Location } from "../lib/api";
 import {
   planOwnerOf,
+  collidingIds,
   readBound,
   readRect,
   wallSegments,
@@ -18,6 +19,12 @@ import {
 } from "../lib/floorplanGeometry";
 
 const pct = (v: number, total: number) => `${(v / total) * 100}%`;
+
+/** Printable content width, in mm — the plan is `width: 100%` of the page's
+ *  content column (Letter/A4 portrait less the default margins). Used to work
+ *  out how wide a cell ACTUALLY prints, which is what decides whether its label
+ *  still fits horizontally. */
+const PAGE_CONTENT_MM = 180;
 
 export function PlanPrintPage() {
   const { slug, id } = useParams<{ slug: string; id: string }>();
@@ -100,6 +107,10 @@ export function PrintPlan({
   const rooms = placed.filter((p) => p.loc.kind === "area" && readBound(p.loc.metadata));
   const zones = placed.filter((p) => p.loc.kind === "area" && !readBound(p.loc.metadata));
   const boxes = placed.filter((p) => p.loc.kind !== "area");
+  // Paper has no hover and no selection outline, so an overlapped rect just
+  // disappears under whatever paints after it (the sliver A1 printed as). Mark
+  // collisions so a wrong plan reads as wrong rather than as a rendering flaw.
+  const collides = collidingIds(boxes.map(({ loc, rect }) => ({ id: loc.id, rect })));
   return (
     <div style={{ breakInside: "avoid", marginTop: multi ? 28 : 16 }}>
       {multi && <h2 style={{ fontSize: 15, margin: "0 0 8px" }}>{owner.name}</h2>}
@@ -166,7 +177,16 @@ export function PrintPlan({
           </div>
         ))}
         {boxes.map(({ loc, rect }) => {
-          const narrow = rect.d_mm > rect.w_mm * 1.4;
+          // Rotate a label only when the cell is BOTH tall AND genuinely too
+          // narrow to letter across — the same two-part rule the screen uses
+          // (FloorPlan's "street-name rule"). Print has no pixel box to measure,
+          // so derive the printed width from the page. The aspect-only test this
+          // replaces rotated EVERY label on a 36 in rack face, where each cell
+          // prints ~22 mm wide with room to spare — and paper is the one surface
+          // where you cannot click to disambiguate.
+          const printedWmm = (rect.w_mm / bound.w_mm) * PAGE_CONTENT_MM;
+          const narrow =
+            rect.d_mm > rect.w_mm * 1.4 && printedWmm < (rect.wall_mounted ? 8.5 : 12);
           return (
             <div
               key={loc.id}
@@ -176,7 +196,7 @@ export function PrintPlan({
                 top: pct(rect.y_mm, bound.d_mm),
                 width: pct(rect.w_mm, bound.w_mm),
                 height: pct(rect.d_mm, bound.d_mm),
-                border: "1px solid #333",
+                border: collides.has(loc.id) ? "1.5px dashed #b45309" : "1px solid #333",
                 borderRadius: 2,
                 background: rect.wall_mounted ? "#eee" : "#f8f8f8",
                 overflow: "hidden",

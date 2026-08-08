@@ -369,19 +369,12 @@ function useScanDrive(slug: string | undefined, batchId: string | undefined): Sc
  *  it only grows into a status pill once you actually turn it on. */
 function ScanDrivePanel({ drive }: { drive: ScanDrive }) {
   const active = drive.active;
-  if (!drive.on) {
-    return (
-      <button
-        type="button"
-        onClick={drive.toggle}
-        title="Turn this tab into a second screen that follows scans from another device - scan a bin's QR on your phone and this screen opens that bin. Not needed for normal scanning: a USB/Bluetooth scanner or a photo already lands items in the inbox below."
-        className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400 hover:text-accent dark:hover:text-cobble-300 transition"
-      >
-        <MonitorSmartphone size={14} className="shrink-0" />
-        Drive this screen with scans
-      </button>
-    );
-  }
+  // OFF renders NOTHING: an un-taken offer sat on its own line under the header
+  // forever, which is a whole row spent on a feature most sessions never turn on
+  // (reported 2026-08-08). The offer lives in the header's ⋯ menu now, under
+  // Capture setup with the other setup toggles. Once ON this is live STATUS, and
+  // status earns its row.
+  if (!drive.on) return null;
   const printing = drive.mode === "print";
   return (
     <div className="inline-flex items-center gap-2 rounded-md border border-cobble-400 dark:border-cobble-600 bg-cobble-50 dark:bg-cobble-900/30 px-2.5 py-1 text-xs">
@@ -2043,9 +2036,6 @@ export function ScanPage() {
       <div className="flex items-center gap-2 flex-nowrap border-b border-line dark:border-slate-700 pb-2.5">
         {/* The nav bar above already names this page, so on a phone the word
             "Inbox" is row width spent repeating the shell (principle #4). */}
-        <h1 className="hidden sm:block text-lg font-semibold text-content dark:text-mortar-100 shrink-0">
-          Inbox
-        </h1>
 
         {/* The backlog as ONE sentence. Facets of the same items, each a
             filter, never a verb (principle #3 - there is no bulk confirm). */}
@@ -2057,6 +2047,14 @@ export function ScanPage() {
             `min-w-0` + overflow-x makes an overflow structurally impossible at
             ANY count; dropping the separators on a phone (the glyphs already
             say which facet is which) means it never actually has to scroll. */}
+        {/* Title + counts share ONE baseline group. Left as siblings of the row
+            (items-center) their different font sizes centred independently, so
+            "Inbox" and "81 pending" sat on visibly different lines of type
+            (reported 2026-08-08). The group still centres within the row. */}
+        <div className="flex items-baseline gap-2 shrink min-w-0">
+        <h1 className="hidden sm:block text-lg font-semibold text-content dark:text-mortar-100 shrink-0">
+          Inbox
+        </h1>
         <div className="flex items-baseline gap-0 shrink min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden whitespace-nowrap text-[13px] text-muted dark:text-slate-400">
           <span className="text-sm font-semibold text-content dark:text-mortar-100">
             {totalPending}
@@ -2148,6 +2146,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
             </>
             </span>
           )}
+        </div>
         </div>
 
         {/* Reviewing one session (?batch). Was a chip at the end of a wrapping
@@ -2572,6 +2571,16 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
               />
               <MenuSep />
               <MenuHead>Capture setup</MenuHead>
+              <MenuItem
+                icon={<MonitorSmartphone size={14} />}
+                label="Drive this screen with scans"
+                hint="Scan a bin's QR on your phone; this screen opens it"
+                state={scanDrive.on ? "on" : "off"}
+                onClick={() => {
+                  scanDrive.toggle();
+                  close();
+                }}
+              />
               <PairPhoneButton asMenuItem onPaired={close} />
               {canSetPhotoRank && photoRank.data && (
                 <MenuItem
@@ -4779,12 +4788,11 @@ function InboxCard({
               ));
             })()}
           </div>
-          {!expanded && item.ai_notes && (
-            <div
-              className={`text-[11px] mt-0.5 line-clamp-1 ${
-                rateLimited || lowTrust ? "text-amber-600 dark:text-amber-400" : "text-muted"
-              }`}
-            >
+          {/* Routine provenance ("Identified via go-upc.") no longer costs the
+              closed card a line - it lives in the expanded Source data box. The
+              line renders only when it is a WARNING a triager must see. */}
+          {!expanded && item.ai_notes && (rateLimited || lowTrust) && (
+            <div className="text-[11px] mt-0.5 line-clamp-1 text-amber-600 dark:text-amber-400">
               {item.ai_notes}
             </div>
           )}
@@ -4860,31 +4868,31 @@ function InboxCard({
           {/* One-tap correction: a barcode whose name looks wrong (always
               available, nudged for low-trust short codes). Renaming reports the
               fix to the shared Barcode Intelligence DB so the next scan is right. */}
-          {barcodeIdentified &&
-            !expanded &&
-            (correcting ? (
-              <CorrectNameInline
-                slug={activeSlug}
-                itemId={item.id}
-                initial={item.suggested_name ?? ""}
-                onDone={() => setCorrecting(false)}
-              />
-            ) : (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setCorrecting(true);
-                }}
-                className={`mt-0.5 text-[11px] underline decoration-dotted underline-offset-2 ${
-                  lowTrust
-                    ? "text-amber-600 dark:text-amber-400"
-                    : "text-faint hover:text-amber-600 dark:hover:text-amber-400"
-                }`}
-              >
-                {lowTrust ? "Double-check — fix the name" : "Not right? Fix the name"}
-              </button>
-            ))}
+          {/* The standing "Not right? Fix the name" offer moved to the card's ⋯
+              menu - a closed card's height should be its IMAGE's height, and an
+              offer nobody has taken is not worth a line (same rule as the drive
+              offer). Only the LOW-TRUST warning variant keeps its line, and the
+              inline editor still appears right here once summoned. */}
+          {barcodeIdentified && correcting && (
+            <CorrectNameInline
+              slug={activeSlug}
+              itemId={item.id}
+              initial={item.suggested_name ?? ""}
+              onDone={() => setCorrecting(false)}
+            />
+          )}
+          {barcodeIdentified && !correcting && !expanded && lowTrust && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setCorrecting(true);
+              }}
+              className="mt-0.5 text-[11px] underline decoration-dotted underline-offset-2 text-amber-600 dark:text-amber-400"
+            >
+              Double-check: fix the name
+            </button>
+          )}
           {/* "You already have one of these" — its OWN line, because the answer
               has to NAME the record. As an action segment on the route chip it
               read "Vehicles | Same one?", which can't say same as WHAT (reported
@@ -5154,6 +5162,116 @@ function InboxCard({
             the card's full height: rerun at the top, discard centered, the
             expand chevron pinned near the bottom (rather than a tight top cluster). */}
         <div className="flex flex-col items-center justify-between shrink-0 self-stretch py-2 pr-0.5" onClick={(e) => e.stopPropagation()}>
+          {/* The item's rare tools. They lived under the photos, where the row
+              they needed cost more vertical space than the controls were worth
+              (reported 2026-08-11). The rail is where this card's other verbs
+              already are, and putting them here makes them reachable without
+              expanding at all. */}
+          <HeaderMenu
+            width={252}
+            align="right"
+            trigger={({ open, toggle }) => (
+              <button
+                type="button"
+                onClick={toggle}
+                aria-expanded={open}
+                aria-label="More item tools"
+                title="Split, retake, box state, turn into a bin"
+                className="text-faint hover:text-accent p-1.5"
+              >
+                <MoreHorizontal size={14} />
+              </button>
+            )}
+          >
+              {({ close }) => (
+                <>
+                  {item.image_file_id && item.status === "pending" && (
+                    <MenuItem
+                      icon={<Scissors size={14} />}
+                      label={split.isPending ? "AI is splitting…" : "Split into items"}
+                      hint="Several different things in one photo"
+                      disabled={split.isPending}
+                      onClick={() => {
+                        close();
+                        split.mutate();
+                      }}
+                    />
+                  )}
+                  <MenuItem
+                    icon={<Camera size={14} />}
+                    label={retakeCatalog.isPending ? "Uploading…" : "Retake for catalog"}
+                    hint="A nice shot becomes the display photo"
+                    disabled={retakeCatalog.isPending}
+                    onClick={() => {
+                      close();
+                      setCaptureSheet("retake");
+                    }}
+                  />
+                  {/* The strip's add-tile only exists once there ARE extras, so
+                      the first photo has to be addable from here. */}
+                  <MenuItem
+                    icon={<ImageIcon size={14} />}
+                    label={addPhoto.isPending ? "Uploading…" : "Add a photo"}
+                    hint="Another angle or the label, for a better read"
+                    disabled={addPhoto.isPending}
+                    onClick={() => {
+                      close();
+                      setCaptureSheet("add");
+                    }}
+                  />
+                  {barcodeIdentified && item.status === "pending" && (
+                    <MenuItem
+                      icon={<Pencil size={14} />}
+                      label="Fix the name…"
+                      hint="Wrong product? Renaming also teaches the barcode database"
+                      onClick={() => {
+                        close();
+                        setCorrecting(true);
+                      }}
+                    />
+                  )}
+                  {item.status === "pending" && hasLocations && (
+                    <MenuItem
+                      icon={<MapPin size={14} />}
+                      label="Turn into a bin…"
+                      hint="This IS a container: make it a location you can scan into"
+                      onClick={() => {
+                        close();
+                        setMakeBinOpen(true);
+                      }}
+                    />
+                  )}
+                  {item.status === "pending" && (
+                    <>
+                      <MenuSep />
+                      <MenuHead>Box state</MenuHead>
+                      <MenuItem
+                        icon={<span className="text-[13px]">📦</span>}
+                        label="Empty box"
+                        hint="The box is here; the item isn't"
+                        state={boxState === "empty-box" ? "on" : undefined}
+                        disabled={setBoxState.isPending}
+                        onClick={() => {
+                          close();
+                          setBoxState.mutate(boxState === "empty-box" ? null : "empty-box");
+                        }}
+                      />
+                      <MenuItem
+                        icon={<span className="text-[13px]">📦</span>}
+                        label="Item in box"
+                        hint="Still packaged — the box rides along"
+                        state={boxState === "item-in-box" ? "on" : undefined}
+                        disabled={setBoxState.isPending}
+                        onClick={() => {
+                          close();
+                          setBoxState.mutate(boxState === "item-in-box" ? null : "item-in-box");
+                        }}
+                      />
+                    </>
+                  )}
+                </>
+              )}
+          </HeaderMenu>
           <button
             type="button"
             onClick={() => rerun.mutate(undefined)}
@@ -5193,6 +5311,13 @@ function InboxCard({
         </div>
       </div>
 
+      <CameraCaptureSheet
+        open={captureSheet !== null}
+        title={captureSheet === "retake" ? "Retake catalog photo" : "Add a photo"}
+        busy={retakeCatalog.isPending || addPhoto.isPending}
+        onCapture={(blob) => (captureSheet === "retake" ? retakeCatalog.mutate(blob) : addPhoto.mutate(blob))}
+        onClose={() => setCaptureSheet(null)}
+      />
       {makeBinOpen && (
         <MakeBinSheet
           item={item}
@@ -5296,9 +5421,11 @@ function InboxCard({
             </div>
           )}
           {/* Extra photos (multi-photo gallery): tap → make primary; × → remove.
-              The add-photo affordance is the dashed tile at the end of this
-              strip — a capture control placed where the photos it adds to live,
-              instead of a standing button in an ambient row. */}
+              Renders ONLY when there are extras, so the photo-options strip sits
+              directly under the big images: a strip holding nothing but its own
+              add-tile spent a whole row saying nothing (reported 2026-08-11).
+              Adding a photo lives in the ⋯ menu when the strip is absent. */}
+          {extraPhotos.length > 0 && (
           <div className="flex flex-wrap gap-1.5" onClick={(e) => e.stopPropagation()}>
             {extraPhotos.map((pid) => (
               <ExtraPhotoThumb
@@ -5333,118 +5460,7 @@ function InboxCard({
               )}
             </button>
           </div>
-          {/* The rare item-level tools fold into ONE ⋯ More menu (split /
-              retake / box state — the author's pick, 2026-08-08). Per-photo
-              controls (rotate / use-as-catalog / revert) moved onto their
-              photos' captions above; add-photo is the tile on the strip.
-              "Looks fine" stays standalone: it's a review verdict, not a tool,
-              and it only appears when the card is flagged. */}
-          <div className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-            <HeaderMenu
-              width={252}
-              trigger={({ open, toggle }) => (
-                <button
-                  type="button"
-                  onClick={toggle}
-                  aria-expanded={open}
-                  aria-label="More item tools"
-                  className="text-[11px] rounded border border-line dark:border-slate-700 px-2 py-0.5 text-muted hover:text-content hover:border-accent transition inline-flex items-center gap-1"
-                >
-                  <MoreHorizontal size={12} />
-                  More
-                  {boxState && (
-                    <span className="text-accent">
-                      · 📦 {boxState === "empty-box" ? "empty box" : "item in box"}
-                    </span>
-                  )}
-                </button>
-              )}
-            >
-              {({ close }) => (
-                <>
-                  {item.image_file_id && item.status === "pending" && (
-                    <MenuItem
-                      icon={<Scissors size={14} />}
-                      label={split.isPending ? "AI is splitting…" : "Split into items"}
-                      hint="Several different things in one photo"
-                      disabled={split.isPending}
-                      onClick={() => {
-                        close();
-                        split.mutate();
-                      }}
-                    />
-                  )}
-                  <MenuItem
-                    icon={<Camera size={14} />}
-                    label={retakeCatalog.isPending ? "Uploading…" : "Retake for catalog"}
-                    hint="A nice shot becomes the display photo"
-                    disabled={retakeCatalog.isPending}
-                    onClick={() => {
-                      close();
-                      setCaptureSheet("retake");
-                    }}
-                  />
-                  {item.status === "pending" && hasLocations && (
-                    <MenuItem
-                      icon={<MapPin size={14} />}
-                      label="Turn into a bin…"
-                      hint="This IS a container: make it a location you can scan into"
-                      onClick={() => {
-                        close();
-                        setMakeBinOpen(true);
-                      }}
-                    />
-                  )}
-                  {item.status === "pending" && (
-                    <>
-                      <MenuSep />
-                      <MenuHead>Box state</MenuHead>
-                      <MenuItem
-                        icon={<span className="text-[13px]">📦</span>}
-                        label="Empty box"
-                        hint="The box is here; the item isn't"
-                        state={boxState === "empty-box" ? "on" : undefined}
-                        disabled={setBoxState.isPending}
-                        onClick={() => {
-                          close();
-                          setBoxState.mutate(boxState === "empty-box" ? null : "empty-box");
-                        }}
-                      />
-                      <MenuItem
-                        icon={<span className="text-[13px]">📦</span>}
-                        label="Item in box"
-                        hint="Still packaged — the box rides along"
-                        state={boxState === "item-in-box" ? "on" : undefined}
-                        disabled={setBoxState.isPending}
-                        onClick={() => {
-                          close();
-                          setBoxState.mutate(boxState === "item-in-box" ? null : "item-in-box");
-                        }}
-                      />
-                    </>
-                  )}
-                </>
-              )}
-            </HeaderMenu>
-            {flaggedForReview && (
-              <button
-                type="button"
-                disabled={markReviewed.isPending}
-                onClick={() => markReviewed.mutate()}
-                title="A human looked - this one's fine; stop flagging it"
-                className="text-[11px] rounded border border-emerald-400/60 px-2 py-0.5 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition disabled:opacity-50"
-              >
-                ✓ Looks fine
-              </button>
-            )}
-            <CameraCaptureSheet
-              open={captureSheet !== null}
-              title={captureSheet === "retake" ? "Retake catalog photo" : "Add a photo"}
-              busy={retakeCatalog.isPending || addPhoto.isPending}
-              onCapture={(blob) => (captureSheet === "retake" ? retakeCatalog.mutate(blob) : addPhoto.mutate(blob))}
-              onClose={() => setCaptureSheet(null)}
-            />
-          </div>
+          )}
           {zoomIdx !== null && zoomItems[zoomIdx] && (
             <ImageLightbox
               items={zoomItems}
@@ -5759,17 +5775,23 @@ function InboxCard({
             onConfirm={() => confirmBarcode.mutate()}
             confirming={confirmBarcode.isPending}
           />
-          </div>
-          </div>
-
-          {/* The inline confirm form — full width below (the right-rail
-              attempt collided labels at every width; reverted per the author).
-              NEVER in plan context: committing mid-plan removes the item from
-              the plan — fixing identity is the only job here.
-              SUMMONED, not ambient (review F1): a plain expand shows the summon
-              row; the form renders once a destination is picked. */}
+          {/* The commit summon sits at the BOTTOM of the intel column, not on a
+              full-width row under the grid: the photo column always runs taller,
+              so that row was buying nothing but height (reported 2026-08-08).
+              Below `lg` the grid is one column, so this still lands last. */}
           {!planContext && !formOpen && (
-            <div className="flex flex-wrap items-center gap-2 border-t border-line dark:border-slate-800 pt-3">
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {flaggedForReview && (
+                <button
+                  type="button"
+                  disabled={markReviewed.isPending}
+                  onClick={() => markReviewed.mutate()}
+                  title="A human looked - this one's fine; stop flagging it"
+                  className="mr-auto text-[11px] rounded border border-emerald-400/60 px-2 py-1 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition disabled:opacity-50"
+                >
+                  ✓ Looks fine
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => openForm(topCand ?? undefined)}
@@ -5788,11 +5810,32 @@ function InboxCard({
                   }}
                   className="text-[11px] text-muted hover:text-accent underline underline-offset-2"
                 >
-                  somewhere else…
+                  add somewhere else…
                 </button>
               )}
+              {/* Close from where you FINISHED reading. The only collapse used to
+                  be the chevron in the top rail, so getting out of a long card
+                  meant scrolling back up past everything you had just read. */}
+              <button
+                type="button"
+                onClick={() => setExpanded(false)}
+                aria-label="Collapse this item"
+                title="Collapse"
+                className="shrink-0 rounded-md border border-line dark:border-slate-700 p-1.5 text-faint hover:text-accent hover:border-accent transition"
+              >
+                <ChevronDown size={14} className="rotate-180" />
+              </button>
             </div>
           )}
+          </div>
+          </div>
+
+          {/* The inline confirm form — full width below (the right-rail
+              attempt collided labels at every width; reverted per the author).
+              NEVER in plan context: committing mid-plan removes the item from
+              the plan — fixing identity is the only job here.
+              SUMMONED, not ambient (review F1): a plain expand shows the summon
+              row; the form renders once a destination is picked. */}
           {!planContext && formOpen && <ConfirmForm
             key={`${item.id}:${formCtx.selKey ?? "auto"}:${item.suggested_name ?? ""}:${item.suggested_manufacturer ?? ""}:${item.ai_suggested_at ?? ""}:${topCand ? topCand.label + JSON.stringify(topCand.fields) + (topCand.quantity ?? "") : "none"}`}
             item={item}

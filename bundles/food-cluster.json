@@ -1,10 +1,10 @@
 {
   "manifest": {
     "id": "cobblr.flagship.food-cluster",
-    "version": "0.2.1",
+    "version": "0.2.2",
     "released_at": "2026-07-17",
     "changelog": "Back in the catalog as a core (suggested) bundle. The groceries story (pantry stock with expiry + storage, an auto-built shopping list on low-stock/expiry, restock on check-off) had no live offer after the catalog curation pass, and it is a flagship use case (one app for inventory AND groceries). Its axis has no competing suggestion, so returning it adds no scan ambiguity.",
-    "name": "Kitchen & Groceries",
+    "name": "Groceries",
     "description": "Turn inventory + lists into a kitchen system: expiry + storage fields, auto shopping list on low-stock/expiry, restock on check-off.",
     "author": "Cobblr",
     "requires": [

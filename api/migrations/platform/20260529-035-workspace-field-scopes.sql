@@ -1,4 +1,4 @@
--- Admin-configurable field read-scope (H2 extension) — "a beta tester defines
+-- Admin-configurable field read-scope (H2 extension) — "Bjørn defines
 -- his own tiers." The manifest-declared entity_kinds.field_read_scopes
 -- (e.g. the lego bundle gating `cost`) is the default; this table lets a
 -- workspace ADMIN mark ANY field of ANY kind sensitive and bind it to a

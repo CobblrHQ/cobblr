@@ -18,6 +18,7 @@ import { totalUsage, useLocationUsage } from "../lib/useLocationUsage";
 import {
   SNAP_MM,
   clampRect,
+  collidingIds,
   planOwnerOf,
   readBound,
   readRect,
@@ -304,6 +305,18 @@ function PlanFor({
     () => occupants.filter((e) => !readRect(e.metadata)),
     [occupants],
   );
+  // Two things in one place is a mistake the plan should SHOW rather than
+  // silently accept — a floor plan that quietly stacks records misrepresents
+  // the space it exists to describe. Containers and the things placed in them
+  // are checked together (an item genuinely held by a bin is containment, not a
+  // collision — see collidingIds).
+  const colliding = useMemo(() => {
+    const items = [
+      ...placed.filter((p) => p.loc.kind !== "area").map((p) => ({ id: p.loc.id, rect: p.rect })),
+      ...placedOccupants.map((p) => ({ id: `${p.ent.kind}:${p.ent.id}`, rect: p.rect })),
+    ];
+    return collidingIds(items);
+  }, [placed, placedOccupants]);
   // Peek drill-in: a placed child that owns its own plan opens zoomed in a
   // modal (kept as an id so edits inside the peek see live data).
   const [peekId, setPeekId] = useState<string | null>(null);
@@ -906,10 +919,12 @@ function PlanFor({
                   } else navigate(`/locations/${loc.id}`);
                 }}
                 title={loc.name}
+                data-collides={colliding.has(loc.id) ? "true" : undefined}
                 className={`absolute rounded border overflow-hidden text-[11px] leading-tight px-1 py-0.5
                   ${r.wall_mounted ? "bg-slate-200/80 dark:bg-slate-700/70" : "bg-white dark:bg-slate-800"}
                   border-slate-400 dark:border-slate-500 text-content dark:text-slate-200
                   ${edit ? "cursor-move" : "cursor-pointer hover:border-accent hover:text-accent"}
+                  ${colliding.has(loc.id) ? "border-dashed !border-ember-500 ring-1 ring-ember-500/60" : ""}
                   ${selected ? "ring-1 ring-accent border-accent" : ""}`}
                 style={{
                   left: pct(r.x_mm, bound.w_mm),
@@ -960,8 +975,10 @@ function PlanFor({
                 }
               }}
               title={ent.name}
+              data-collides={colliding.has(key) ? "true" : undefined}
               className={`absolute rounded-md border border-cobble-500/70 dark:border-cobble-400/60 bg-cobble-50/60 dark:bg-cobble-900/30 overflow-hidden text-[10px] leading-tight px-1 py-0.5 text-content dark:text-slate-200
                 ${edit ? "cursor-move" : "cursor-pointer hover:border-accent"}
+                ${colliding.has(key) ? "border-dashed !border-ember-500 ring-1 ring-ember-500/60" : ""}
                 ${selected ? "ring-1 ring-accent border-accent" : ""}`}
               style={{
                 left: pct(r.x_mm, bound.w_mm),
@@ -1761,8 +1778,12 @@ function GridFillModal({
         </div>
         {rects ? (
           <p className="text-xs text-muted dark:text-slate-400">
-            {rects.length} bins: {preview.slice(0, 3).join(", ")} … {preview[preview.length - 1]}
-             - placed at true scale, added to what's already on the layout.
+            {/* Keep the separator on the SAME line as the name it follows. JSX
+                collapses the newline to nothing, so a leading "-" on the next
+                line rendered as "C8- placed at true scale" — reading as a bin
+                named "C8-". */}
+            {rects.length} bins: {preview.slice(0, 3).join(", ")} … {preview[preview.length - 1]} -{" "}
+            placed at true scale, added to what's already on the layout.
           </p>
         ) : (
           <p className="text-xs text-ember-500">That grid doesn't fit this face - fewer rows or columns.</p>

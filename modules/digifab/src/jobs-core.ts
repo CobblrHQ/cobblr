@@ -50,6 +50,13 @@ export function occupiesDevice(status: string): boolean {
   return !TERMINAL.has(status) && status !== "queued";
 }
 
+/** The same rule as occupiesDevice, as a LIST for SQL — a device is free only
+ *  when every job pointing at it is in one of these statuses. Derived from
+ *  TERMINAL rather than written out, so a status added to one and not the other
+ *  cannot make the SQL and the JS predicate disagree (the exact drift that put
+ *  `assigning` outside the old hardcoded `["sent","printing"]`). */
+export const NOT_OCCUPYING_STATUSES: readonly string[] = ["queued", ...TERMINAL];
+
 /**
  * Does ending this job leave something on the bed a human must clear?
  *

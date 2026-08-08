@@ -18,7 +18,7 @@ create table signup_invites (
   created_by        uuid not null references users(id),
   -- optional email-lock: when set, only this address may redeem the invite
   invited_email     text,
-  -- optional free-text label ("for a beta tester")
+  -- optional free-text label ("for Bjørn")
   note              text,
   expires_at        timestamptz,
   consumed_at       timestamptz,

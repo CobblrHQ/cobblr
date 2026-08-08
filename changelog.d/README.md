@@ -63,6 +63,15 @@ surface, then stamps `docs_published:`.
   the prose at the end of that heading's section (creates it if missing).
 - Contributor-facing / internal features opt out explicitly:
   `docs_target: none (<reason>)`.
+- **`## docs` and a real `docs_target` belong to `type: feature` only.** The
+  flush walks features and nothing else, so the same section on an
+  `improvement` or a `fix` is never read: it looks staged and is dead. Five of
+  them were found sitting like that (2026-08-08), each naming a real
+  `USER_GUIDE` section, none of the prose ever having reached the manual, and
+  `docs-flush --dry-run` reporting "nothing to publish" the whole time. For a
+  non-feature, write the docs **in the same commit** and say so:
+  `docs_target: none (documented directly in USER_GUIDE.md <section>)`.
+  `lint:staged-docs-reachable` enforces it.
 - **Updating an unshipped feature? Edit its staged entry's `## docs` in the
   same PR** — that's the point: the docs stay fresh because they live in the
   diff. (The lint prints a nudge when your PR shares a scope with staged

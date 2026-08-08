@@ -16,6 +16,7 @@ import { z } from "zod";
 import { meta, metaPool } from "../db/meta.js";
 import { applyBlueprint, BlueprintManifest } from "./blueprint.js";
 import { provisionTenantDb } from "../db/provision.js";
+import { slugifyBase } from "../lib/slugify.js";
 import { hashPassword, verifyPassword } from "../auth/password.js";
 import { TRIAL_MODE, TRIAL_TTL_DAYS } from "../platform/trial.js";
 import { verifyCaptcha, captchaEnabled } from "../platform/captcha.js";
@@ -79,25 +80,6 @@ const LoginBody = z.object({
   email: z.string().email().max(255),
   password: z.string().min(1).max(128),
 });
-
-/** URL-safe slug from a human name. Adds a short random suffix for
- *  collision resistance — we'd rather have `lego-hoard-7k2` than
- *  retry-on-conflict logic on every signup. */
-function slugifyBase(name: string): string {
-  return (
-    name
-      .toLowerCase()
-      // Strip a possessive "'s" entirely (not just the apostrophe), so
-      // "Alex's Workspace" → "alex-workspace". A trailing word boundary
-      // means only the possessive goes — "Tools Workshop" keeps its s.
-      .replace(/['’]s\b/g, "")
-      // …then drop any remaining apostrophes ("O'Brien" → "obrien").
-      .replace(/['’`]/g, "")
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 40) || "org"
-  );
-}
 
 /** Candidate slugs in preference order: the bare name, then `-2`, `-3`, … on
  *  collision, and finally a random suffix as an (astronomically unlikely)

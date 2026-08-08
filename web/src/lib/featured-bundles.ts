@@ -160,7 +160,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       released_at: "2026-07-17",
       changelog:
         "Back in the catalog as a core (suggested) bundle. The groceries story (pantry stock with expiry + storage, an auto-built shopping list on low-stock/expiry, restock on check-off) had no live offer after the catalog curation pass, and it is a flagship use case (one app for inventory AND groceries). Its axis has no competing suggestion, so returning it adds no scan ambiguity.",
-      name: "Kitchen & Groceries",
+      name: "Groceries",
       description:
         "Turn inventory + lists into a kitchen system: expiry + storage fields, auto shopping list on low-stock/expiry, restock on check-off.",
       author: "Cobblr",
@@ -1322,7 +1322,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       id: "cobblr.flagship.warranties-receipts",
       catalog: "extended",
       version: "0.2.1",
-      name: "Warranties & Receipts",
+      name: "Warranties",
       description: "Your appliances/electronics as their own table: where/when you bought it + warranty and return-by dates, grouped by category.",
       author: "Cobblr",
       released_at: "2026-06-08",
@@ -1333,7 +1333,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         {
           module: "inventory",
           instance_name: "warranties",
-          display_name: "Warranties & Receipts",
+          display_name: "Warranties",
           glyph: "🧾",
           item_noun: "item",
           qty_unit: "each",
@@ -1371,7 +1371,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       id: "cobblr.flagship.medications",
       catalog: "extended",
       version: "0.3.1",
-      name: "Medications & Refills",
+      name: "Medications",
       description: "Your medications as their own table: dose, schedule, instructions, prescriber/pharmacy, refills left + a refill-by date. Caregiver-friendly.",
       author: "Cobblr",
       released_at: "2026-06-08",
@@ -1428,7 +1428,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.plant-care",
       version: "0.3.1",
-      name: "Plant Care",
+      name: "Plants",
       description: "Your houseplants as their own table: species, light, watering interval + pot size, grouped by light.",
       author: "Cobblr",
       released_at: "2026-06-10",
@@ -1439,7 +1439,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         {
           module: "assets",
           instance_name: "plants",
-          display_name: "Plant Care",
+          display_name: "Plants",
           glyph: "🪴",
           item_noun: "plant",
           scan_keywords: ["fertilizer", "potting soil", "planter", "seeds", "watering can"],
@@ -1485,7 +1485,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             {
               module: "assets",
               instance_name: "plants",
-              display_name: "Plant Care",
+              display_name: "Plants",
               field_defs: [
                 { entity_kind: "assets:asset", name: "zone", display_label: "Irrigation zone", type: "text", position: 7, help: "Which valve/zone waters this plant, passed to the controller (e.g. “3”)." },
                 { entity_kind: "assets:asset", name: "water_seconds", display_label: "Water (seconds)", type: "number", position: 8, help: "How long to run the zone each watering, in seconds." },
@@ -1525,7 +1525,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       id: "cobblr.flagship.subscriptions",
       catalog: "extended",
       version: "0.2.2",
-      name: "Subscriptions & Recurring Bills",
+      name: "Subscriptions",
       description: "Every recurring charge as its own table: cost/cycle, renewal date, payment method, grouped by category.",
       author: "Cobblr",
       released_at: "2026-06-08",
@@ -1704,7 +1704,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       id: "cobblr.flagship.documents-renewals",
       catalog: "extended",
       version: "0.2.2",
-      name: "Important Documents & Renewals",
+      name: "Documents",
       description: "Every document that expires as its own table: number/issuer/expiry, grouped by type, with expiry dates on your calendar.",
       author: "Cobblr",
       released_at: "2026-06-08",
@@ -1715,7 +1715,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         {
           module: "assets",
           instance_name: "documents",
-          display_name: "Important Documents",
+          display_name: "Documents",
           glyph: "🪪",
           item_noun: "document",
           field_defs: [
@@ -1750,7 +1750,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       id: "cobblr.flagship.pet-care",
       catalog: "extended",
       version: "0.2.1",
-      name: "Pet Care",
+      name: "Pets",
       description: "Your pets as their own table: vitals + vet/vaccination dates (calendar-reminded), grouped by species.",
       author: "Cobblr",
       released_at: "2026-06-08",
@@ -1761,7 +1761,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         {
           module: "assets",
           instance_name: "pets",
-          display_name: "Pet Care",
+          display_name: "Pets",
           glyph: "🐾",
           item_noun: "pet",
           scan_keywords: ["leash", "collar", "litter", "kibble", "dog food", "cat food", "treats", "aquarium", "pet bed"],
@@ -2337,7 +2337,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "released_at": "2026-07-13",
       "changelog": "First catalogued release: the six Rebrickable reference catalogs with per-field renderers (schema config; rows load via the CSV importer).",
       "version": "0.5.0",
-      "name": "Rebrickable catalogs",
+      "name": "Rebrickable Catalogs",
       "description": "Installs the six Rebrickable reference catalogs (themes, part categories, colors, parts, sets, minifigs) with pre-configured renderers: color swatches for the colors palette, image thumbs for sets + minifigs, year columns formatted as years. Row data is loaded separately via the CSV importer or scripts/seed-rebrickable.mjs.",
       "author": "Cobblr community",
       "readme_md": "# Rebrickable catalogs\n\nSix reference catalogs sourced from [Rebrickable's public CSV dumps](https://rebrickable.com/downloads/). The bundle ships the **schema config only** - id columns, title columns, image columns, hero swatch for the colors palette, and the right renderer per field.\n\n## Catalogs installed\n\n| Catalog | Rows | Notes |\n|---|---|---|\n| Themes | ~500 | Bionicle, Star Wars, City, etc. |\n| Part categories | ~75 | Bricks, plates, slopes, tiles, … |\n| Colors | ~280 | Big swatch on every card via `hero_field=rgb` + `hero_renderer=color-hex`. |\n| Parts | ~62,000 | Individual LEGO elements. Image enrichment via `inventory_parts.csv.gz` (see seeder). |\n| Sets | ~27,000 | Has `img_url` from Rebrickable's CDN. |\n| Minifigs | ~17,000 | Has `img_url`; broken URLs fall back to a placeholder. |\n\n## Loading the data\n\nThis bundle is the *configuration*, not the rows. To load rows:\n\n```bash\nnode scripts/seed-rebrickable.mjs\n```\n\nThe seeder logs in as the demo user, finds the workspace with this bundle installed, and CSV-imports each catalog from Rebrickable's CDN. It runs idempotently - re-running refreshes the rows.",

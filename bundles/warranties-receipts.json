@@ -2,8 +2,8 @@
   "manifest": {
     "id": "cobblr.flagship.warranties-receipts",
     "catalog": "extended",
-    "version": "0.2.1",
-    "name": "Warranties & Receipts",
+    "version": "0.2.2",
+    "name": "Warranties",
     "description": "Your appliances/electronics as their own table: where/when you bought it + warranty and return-by dates, grouped by category.",
     "author": "Cobblr",
     "released_at": "2026-06-08",
@@ -17,7 +17,7 @@
       {
         "module": "inventory",
         "instance_name": "warranties",
-        "display_name": "Warranties & Receipts",
+        "display_name": "Warranties",
         "glyph": "🧾",
         "item_noun": "item",
         "qty_unit": "each",

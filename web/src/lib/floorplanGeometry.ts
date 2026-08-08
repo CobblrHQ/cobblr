@@ -188,3 +188,55 @@ export function rebaseRect(rect: FpRect, region: FpRect, targetBound: FpBound): 
     targetBound,
   );
 }
+
+// ── collision ────────────────────────────────────────────────────────────────
+// A floor plan's whole job is representing physical space, so two things in the
+// same place is a mistake worth SHOWING. It is not worth BLOCKING: an item
+// genuinely sits inside a bin, and a drag that snapped a hair over a neighbour
+// is easier to see and drag back than to be silently refused.
+//
+// Containment is therefore not a collision — but only real containment. Two
+// identical rects each "contain" the other by a naive bounds test, and that is
+// the worst case there is (one record perfectly hiding another), so the inner
+// rect must also be meaningfully SMALLER to count as being held.
+
+/** Do two rects share any area? Touching edges do not count. */
+export function rectsOverlap(a: FpRect, b: FpRect): boolean {
+  return (
+    a.x_mm < b.x_mm + b.w_mm &&
+    b.x_mm < a.x_mm + a.w_mm &&
+    a.y_mm < b.y_mm + b.d_mm &&
+    b.y_mm < a.y_mm + a.d_mm
+  );
+}
+
+/** Is `inner` held by `outer` — inside its bounds AND appreciably smaller?
+ *  The size test is what stops two identical rects reading as containment. */
+export function rectContains(outer: FpRect, inner: FpRect): boolean {
+  const within =
+    inner.x_mm >= outer.x_mm &&
+    inner.y_mm >= outer.y_mm &&
+    inner.x_mm + inner.w_mm <= outer.x_mm + outer.w_mm &&
+    inner.y_mm + inner.d_mm <= outer.y_mm + outer.d_mm;
+  if (!within) return false;
+  const outerArea = outer.w_mm * outer.d_mm;
+  const innerArea = inner.w_mm * inner.d_mm;
+  return outerArea > 0 && innerArea <= outerArea * 0.9;
+}
+
+/** Ids of every rect that collides with another: they overlap, and neither is
+ *  simply holding the other. O(n²), and a plan holds tens of rects. */
+export function collidingIds(items: Array<{ id: string; rect: FpRect }>): Set<string> {
+  const hit = new Set<string>();
+  for (let i = 0; i < items.length; i++) {
+    for (let j = i + 1; j < items.length; j++) {
+      const a = items[i]!;
+      const b = items[j]!;
+      if (!rectsOverlap(a.rect, b.rect)) continue;
+      if (rectContains(a.rect, b.rect) || rectContains(b.rect, a.rect)) continue;
+      hit.add(a.id);
+      hit.add(b.id);
+    }
+  }
+  return hit;
+}

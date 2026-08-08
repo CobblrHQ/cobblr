@@ -53,6 +53,8 @@
     "lint:image-search": "tsx scripts/lint-image-search-single-surface.ts",
     "lint:instance-kinds": "tsx scripts/lint-instance-kind-registry.ts",
     "lint:workspace-types": "tsx scripts/lint-workspace-types-entry.ts",
+    "lint:sigpipe": "tsx scripts/lint-sigpipe-substitution.ts",
+    "lint:staged-docs-reachable": "tsx scripts/lint-staged-docs-reachable.ts",
     "eval:image-rank": "tsx e2e/image-rank-eval.mjs",
     "lint:versions": "tsx scripts/lint-versions.ts",
     "lint:docs": "tsx scripts/lint-docs.ts",
@@ -136,7 +138,8 @@
     "lint:dead-exports": "tsx scripts/lint-dead-exports.ts",
     "lint:auth-rate-limits": "tsx scripts/lint-auth-rate-limits.ts",
     "e2e:scan-header": "node e2e/scan-header-margin.mjs",
-    "e2e:live-sort": "node e2e/live-sort-mobile.mjs"
+    "e2e:live-sort": "node e2e/live-sort-mobile.mjs",
+    "e2e:scan-card": "node e2e/scan-card-photo-column.mjs"
   },
   "devDependencies": {
     "playwright": "^1.60.0",

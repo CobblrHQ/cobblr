@@ -72,6 +72,21 @@ async function bakeOneOrg(index: number): Promise<void> {
     .returning("id")
     .executeTakeFirstOrThrow();
   const { orgId, slug } = await provisionOrgForUser(userRow.id, `pool ${suffix}`);
+  // Signup RETURNS SUCCESSFULLY even when tenant provisioning failed — the org
+  // row is deliberately kept so an operator can re-provision (see the 503 in
+  // middleware/tenant.ts). So a bare "it didn't throw" is not proof the org is
+  // usable, and trusting it is how a dead org entered the pool, got baked into
+  // the reusable artifact, and 503'd `tenant_unprovisioned` on every run that
+  // checked it out afterwards — reddening main and every PR branch alike
+  // (2026-08-08). Verify the thing that actually matters before advertising it.
+  const provisioned = await meta
+    .selectFrom("orgs")
+    .select("db_credentials_encrypted")
+    .where("id", "=", orgId)
+    .executeTakeFirst();
+  if (!provisioned?.db_credentials_encrypted) {
+    throw new Error(`pool org ${slug} provisioned without tenant credentials — not pooling it`);
+  }
   await enableAllModulesInternal(orgId);
   await meta
     .insertInto("test_org_pool")
@@ -84,8 +99,27 @@ async function bakeOneOrg(index: number): Promise<void> {
  *  fills the gap to `target`. */
 export async function bakeTestOrgPool(target: number): Promise<{ baked: number; total: number }> {
   if (!poolEnabled()) return { baked: 0, total: 0 };
+  // Retire any pooled org whose tenant DB never landed BEFORE counting, so the
+  // top-up below actually replaces them rather than counting corpses as stock.
+  const quarantined = await sql<{ org_id: string }>`
+    update test_org_pool set status = 'broken'
+    where status <> 'broken'
+      and org_id in (select id from orgs where db_credentials_encrypted is null)
+    returning org_id
+  `.execute(meta);
+  if (quarantined.rows.length) {
+    console.warn(
+      `[test-org-pool] quarantined ${quarantined.rows.length} unprovisioned org(s) — they will be re-baked`,
+    );
+  }
   const have = Number(
-    (await meta.selectFrom("test_org_pool").select(meta.fn.countAll().as("n")).executeTakeFirstOrThrow()).n,
+    (
+      await meta
+        .selectFrom("test_org_pool")
+        .select(meta.fn.countAll().as("n"))
+        .where("status", "<>", "broken")
+        .executeTakeFirstOrThrow()
+    ).n,
   );
   const need = Math.max(0, target - have);
   if (need === 0) return { baked: 0, total: have };
@@ -122,11 +156,18 @@ export interface CheckoutResult {
  *  falls back to real provisioning. */
 export async function checkoutTestOrg(): Promise<CheckoutResult | null> {
   if (!poolEnabled()) return null;
+  // The join is the SELF-HEAL: a pool baked before the guard above can still
+  // hold orgs whose tenant DB never landed, and that artifact is reused across
+  // runs. Skipping them here means an already-poisoned pool degrades to "fewer
+  // pooled orgs" (the caller falls back to real provisioning) instead of
+  // 503ing whichever test happened to draw one.
   const claimed = await sql<{ org_id: string; slug: string; owner_user_id: string }>`
     update test_org_pool set status = 'taken'
     where org_id = (
-      select org_id from test_org_pool where status = 'available'
-      order by baked_at limit 1 for update skip locked
+      select p.org_id from test_org_pool p
+      join orgs o on o.id = p.org_id
+      where p.status = 'available' and o.db_credentials_encrypted is not null
+      order by p.baked_at limit 1 for update of p skip locked
     )
     returning org_id, slug, owner_user_id
   `.execute(meta);

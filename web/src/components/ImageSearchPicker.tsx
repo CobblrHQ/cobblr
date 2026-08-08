@@ -10,7 +10,7 @@
 //      returns farm scenery. Callers should not hand-build phrases.
 //   2. The term is PRE-FILLED with what was actually searched, not left blank
 //      behind a placeholder — a blank box hides the one piece of information
-//      you need in order to improve the search (the author, 2026-07-18).
+//      you need in order to improve the search (reported 2026-07-18).
 //   3. A FULL-SCREEN viewer, the same one the scan inbox has: the image big on
 //      a dark backdrop with the options strip still under it, so you flip
 //      between candidates at full size and pick without leaving.
@@ -184,11 +184,11 @@ export function ImageSearchPicker({
               </button>
             )}
           </div>
-          <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
+          <div className="flex gap-1.5 overflow-x-auto overflow-y-hidden no-scrollbar pb-1">
             {/* Two gestures for two intentions. The BIG target does the common
                 thing — you are picking a photo, so tapping the photo picks it.
                 Zooming is the rarer "let me check this one first", so it gets
-                the small corner button (the author, 2026-07-20: "you should click image
+                the small corner button (reported 2026-07-20: "you should click image
                 to select, and press small button to zoom it"). */}
             {opts.map((o) => {
               const isBest = !!bestUrl && o.url === bestUrl;

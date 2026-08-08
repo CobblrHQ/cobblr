@@ -907,7 +907,28 @@ export async function resolvedKindForEntity(orgId: string, kind: string, id: str
  *  registry consumer (search detail routes, MCP kind listing, generic
  *  surfaces). */
 export async function listKindsForOrg(orgId: string): Promise<EntityKindRecord[]> {
-  const base = await listKinds();
+  const all = await listKinds();
+  // ONLY the kinds this workspace enabled. The registry is process-global —
+  // every loaded module registers its kinds — while enablement is per-org, so
+  // an unfiltered list hands every consumer kinds whose tables do not exist in
+  // that tenant. The identifier-field resolvable provider probes each kind it
+  // is given, so Postgres answered `relation "records_records" does not exist`
+  // 69 times in a week on prod, entirely from workspaces that simply never
+  // enabled records/machines/assets (2026-08-08). Presence of an `org_modules`
+  // row is the enabled signal: there is no enabled flag, disable deletes it.
+  let base = all;
+  try {
+    const enabled = new Set(
+      (
+        await meta.selectFrom("org_modules").select("module_name").where("org_id", "=", orgId).execute()
+      ).map((r) => r.module_name),
+    );
+    base = all.filter((k) => enabled.has(k.module_name));
+  } catch (err) {
+    // Meta unreachable is different from "nothing enabled": fall back to the
+    // whole registry rather than telling a caller the workspace has no kinds.
+    console.error("[entities] enabled-module filter failed, using all kinds:", (err as Error).message);
+  }
   let instances: Array<{ module_name: string; instance_name: string; display_name: string }> = [];
   try {
     instances = await meta

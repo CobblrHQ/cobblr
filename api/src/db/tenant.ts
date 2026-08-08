@@ -12,6 +12,7 @@ import { env } from "../env.js";
 import { meta } from "./meta.js";
 import { decryptCreds } from "./crypto.js";
 import type { TenantDB } from "./tenant-schema.js";
+import { mayFastClose } from "./pool-release-rule.js";
 
 interface CachedTenant {
   pool: Pool;
@@ -54,6 +55,17 @@ let seqCounter = 0;
 // release past the window keeps the guarantee: touched pools stay, quiet pools
 // close.
 const pendingRelease = new Map<string, NodeJS.Timeout>();
+
+// How many times THIS pool generation has been handed out (reset when the pool
+// is opened). The seq answers "did anyone access after me?"; it cannot answer
+// "was anyone already using it before me?" — and that second question is the
+// one that matters, because a caller handed the Kysely BEFORE a sweep has not
+// checked out a connection yet and so looks perfectly idle to every guard here.
+// A sweep that opened the pool itself is the only caller that can prove nobody
+// else is mid-flight on it.
+const handouts = new Map<string, number>();
+
+// The fast-close rule lives in pool-release-rule.ts (pure + unit-tested).
 
 // Upper bound on cached tenant pools. Each pool holds up to `max` connections
 // (5), so total tenant connections stay ≈ MAX_TENANT_POOLS × 5. WITHOUT this the
@@ -137,7 +149,29 @@ async function openTenant(orgId: string): Promise<CachedTenant> {
       (err as Error).message,
     );
   });
-  const db = new Kysely<TenantDB>({ dialect: new PostgresDialect({ pool }) });
+  // The Kysely handed to callers talks to the pool through this shim rather than
+  // holding the Pool directly. If the pool it was built on has been ended (an
+  // evictor, the LRU cap, or a sweep racing this caller), the shim transparently
+  // re-acquires the org's LIVE pool instead of throwing "Cannot use a pool after
+  // calling end on the pool" at whoever happened to be mid-flight. The guards
+  // above make that race rare; this makes it harmless, which is the difference
+  // between a narrower window and a closed one. Re-acquire goes through
+  // getTenantDb, so the reopened pool is the CACHED one — no orphaned pools.
+  const shim = {
+    connect: async () => {
+      const dead = pool as unknown as { ended?: boolean; ending?: boolean };
+      if (!dead.ended && !dead.ending) return pool.connect();
+      await getTenantDb(orgId);
+      const live = await cache.get(orgId);
+      return (live?.pool ?? pool).connect();
+    },
+    end: () => pool.end(),
+  };
+  const db = new Kysely<TenantDB>({
+    // Kysely's postgres driver only calls connect() and end(); the shim covers
+    // both. Cast because it is not a full pg.Pool.
+    dialect: new PostgresDialect({ pool: shim as unknown as Pool }),
+  });
   return { pool, db };
 }
 
@@ -148,6 +182,7 @@ export async function getTenantDb(orgId: string): Promise<Kysely<TenantDB>> {
   accessSeq.set(orgId, ++seqCounter);
   let entry = cache.get(orgId);
   if (!entry) {
+    handouts.set(orgId, 0); // new pool generation — this caller will be #1
     entry = openTenant(orgId);
     cache.set(orgId, entry);
     // A failed open must not poison the cache forever — let the next
@@ -158,6 +193,7 @@ export async function getTenantDb(orgId: string): Promise<Kysely<TenantDB>> {
     // Bound the cache so total connections can't exhaust Postgres.
     enforceTenantPoolCap();
   }
+  handouts.set(orgId, (handouts.get(orgId) ?? 0) + 1);
   return (await entry).db;
 }
 
@@ -198,7 +234,11 @@ export async function releaseIdleTenantPool(orgId: string, ifSeqIs?: number): Pr
   // current access seq, nobody else has been handed the pool since that access,
   // and the owner calling release means it is done — safe to close now. That is
   // what lets a cross-tenant sweep run at ~one open pool instead of one per org.
-  const untouchedByOthers = ifSeqIs !== undefined && accessSeq.get(orgId) === ifSeqIs;
+  const untouchedByOthers = mayFastClose({
+    handoutsSinceOpen: handouts.get(orgId) ?? 0,
+    currentSeq: accessSeq.get(orgId),
+    mySeq: ifSeqIs,
+  });
   if (!untouchedByOthers && Date.now() - (lastAccess.get(orgId) ?? 0) < RELEASE_GRACE_MS) {
     // In the window → NOT a no-op (that silent no-op is how sweeps exhausted
     // Postgres): retry once the window has passed. Quiet pools then close;
@@ -216,6 +256,7 @@ export async function releaseIdleTenantPool(orgId: string, ifSeqIs?: number): Pr
   cache.delete(orgId);
   lastAccess.delete(orgId);
   accessSeq.delete(orgId);
+  handouts.delete(orgId);
   const pending = pendingRelease.get(orgId);
   if (pending) {
     clearTimeout(pending);
@@ -254,6 +295,7 @@ export async function evictTenantPool(orgId: string): Promise<void> {
   cache.delete(orgId);
   lastAccess.delete(orgId);
   accessSeq.delete(orgId);
+  handouts.delete(orgId);
   const pending = pendingRelease.get(orgId);
   if (pending) {
     clearTimeout(pending);

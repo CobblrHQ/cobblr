@@ -2,8 +2,8 @@
   "manifest": {
     "id": "cobblr.flagship.pet-care",
     "catalog": "extended",
-    "version": "0.2.2",
-    "name": "Pet Care",
+    "version": "0.2.3",
+    "name": "Pets",
     "description": "Your pets as their own table: vitals + vet/vaccination dates (calendar-reminded), grouped by species.",
     "author": "Cobblr",
     "released_at": "2026-06-08",
@@ -17,7 +17,7 @@
       {
         "module": "assets",
         "instance_name": "pets",
-        "display_name": "Pet Care",
+        "display_name": "Pets",
         "glyph": "🐾",
         "item_noun": "pet",
         "scan_keywords": [

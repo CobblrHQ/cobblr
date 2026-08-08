@@ -95,7 +95,7 @@ export function AssetsPage({
     enabled: !!activeSlug,
     staleTime: 60_000,
   });
-  // Assets instances (Plant Care / Documents / Warranties…). With no base-table
+  // Assets instances (Plants / Documents / Warranties…). With no base-table
   // assets, show these as a chooser instead of a bare "nothing here" — the
   // aggregate dashboard tile lands here.
   const assetInstances = useQuery({
@@ -104,7 +104,7 @@ export function AssetsPage({
     enabled: !!activeSlug,
     staleTime: 30_000,
   });
-  // Saved views for assets — bundles (Plant Care, Pet Care, …) ship pinned
+  // Saved views for assets — bundles (Plants, Pets, …) ship pinned
   // ones; the wizard lands here via ?view=. A chip bar switches between them
   // and "All assets". An active view drives the columns (its visible_fields)
   // and grouping (its group_by).

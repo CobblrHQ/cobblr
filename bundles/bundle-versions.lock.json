@@ -33,7 +33,7 @@
   },
   "cobblr.community.rebrickable-catalogs": {
     "version": "0.5.0",
-    "hash": "2857059aafd62b27d042e09ed9ed6b153c1850fa0df05b5b1e1f5131b471a19b"
+    "hash": "30df889298fb232c50b7f166b25b565ac24e1fd4416f25f519ae0c2fb91d97cb"
   },
   "cobblr.community.tool-library": {
     "version": "0.1.0",
@@ -53,7 +53,7 @@
   },
   "cobblr.flagship.documents-renewals": {
     "version": "0.2.2",
-    "hash": "b9a82b5e05064f158e4136529dd7ad02552fba8edbc6fafdb1230533d48fef9d"
+    "hash": "ddd775c54b4c52602e4bc575adf688293261efe99449fd22ec70137e611efecb"
   },
   "cobblr.flagship.fasteners": {
     "version": "0.1.1",
@@ -65,7 +65,7 @@
   },
   "cobblr.flagship.food-cluster": {
     "version": "0.2.1",
-    "hash": "084fc6e5229047eede9d7ac06e2903c3d21aac2f91f8e8e6af69957ec8b97f00"
+    "hash": "6bf9f62e1860e1481b10b9124b9f05fa80192b09ae8a487dd0cac77e80c08809"
   },
   "cobblr.flagship.gifts-occasions": {
     "version": "0.2.1",
@@ -93,19 +93,19 @@
   },
   "cobblr.flagship.medications": {
     "version": "0.3.1",
-    "hash": "e5f29d9be8f19ca50e81c4985a437668843d548ca8c3d1a07618c7c34f1a1c5f"
+    "hash": "70a502154810c2e79e6fea3f4516400b1a342672d817a790239301f35e497b16"
   },
   "cobblr.flagship.pet-care": {
     "version": "0.2.1",
-    "hash": "3bd03e356c8448ca31c2b70ed72fc5d3e563da387d6f27e477f5962279ba9390"
+    "hash": "4ac00ba328cd2e64f33610cb6f593357596da55b96ef114de6579351a58a621b"
   },
   "cobblr.flagship.plant-care": {
     "version": "0.3.1",
-    "hash": "d4e93b5497b96149da600cb9c88aaeeda6d19848141d030423e7beed43912c28"
+    "hash": "8df88d5f1693ec51cc481271f56ca2bda2141e12c5e8f91a4159cfbed981d364"
   },
   "cobblr.flagship.subscriptions": {
     "version": "0.2.2",
-    "hash": "89fffdc138d6a3c9ac6caa93a55726884e82d1176ae53e87232e6b9dc7028ea7"
+    "hash": "c21efaf08112977c62408d2e330a7bca1f9715f73d6943351c317978492c58b2"
   },
   "cobblr.flagship.vehicle-maintenance": {
     "version": "0.4.0",
@@ -117,7 +117,7 @@
   },
   "cobblr.flagship.warranties-receipts": {
     "version": "0.2.1",
-    "hash": "cd8a22d5474e22123c3d12ac31b337ec2ae5e3277a1f70307c1a759dbc2c41d3"
+    "hash": "2780dcb2b241d6b5494c4c24af3138d73c1c44c697b86d8a3251fcedf139cdfc"
   },
   "cobblr.flagship.yarn": {
     "version": "0.6.2",

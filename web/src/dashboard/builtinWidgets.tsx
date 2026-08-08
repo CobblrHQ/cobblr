@@ -78,7 +78,7 @@ function MachinesWidget({ slug }: { slug: string }) {
 }
 
 function AssetsWidget({ slug }: { slug: string }) {
-  // Base assets + every assets INSTANCE (Plant Care, Documents, Warranties…),
+  // Base assets + every assets INSTANCE (Plants, Documents, Warranties…),
   // whose items live under /instances/<name>/items — counting only the base
   // list showed "0" on those workspaces.
   const q = useQuery({

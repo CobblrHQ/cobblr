@@ -11,7 +11,7 @@
 import { platform } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { DigifabDB } from "./db.js";
-import { buildDriverById, occupiesDevice, sendJob, markJobTerminal } from "./jobs-core.js";
+import { buildDriverById, occupiesDevice, sendJob, markJobTerminal, NOT_OCCUPYING_STATUSES } from "./jobs-core.js";
 import { mintRunJobs, runStatuses } from "./runs-core.js";
 import { enqueuePoll } from "./poll-worker.js";
 import { classify } from "./state.js";
@@ -73,7 +73,7 @@ export async function assignPoolJobs(db: Kysely<DigifabDB>, orgId: string): Prom
   const active = await db
     .selectFrom("digifab_jobs")
     .select(["connection_id", "target_device", "status"])
-    .where("status", "not in", ["queued", "completed", "failed", "cancelled"])
+    .where("status", "not in", [...NOT_OCCUPYING_STATUSES])
     .execute();
   const busy = new Set(
     active
@@ -158,10 +158,50 @@ export async function assignPoolJobs(db: Kysely<DigifabDB>, orgId: string): Prom
         .set({ connection_id: m.connection_id, target_device: m.remote_device_id, status: "assigning", updated_at: new Date() })
         .where("id", "=", job.id)
         .where("status", "=", "queued")
+        // The DEVICE must still be free at the instant of the claim, checked in
+        // the same statement. `busy` and `attention` above are per-pass in-memory
+        // snapshots, so two overlapping passes (kickAssign on create racing the
+        // 15s re-tick) each read a printer as free and dispatched DIFFERENT jobs
+        // to it — the status guard only stopped one JOB reaching two printers,
+        // never two jobs reaching one bed. Postgres evaluates these against the
+        // committed row, so the loser's UPDATE simply matches nothing.
+        .where(({ not, exists, selectFrom }) =>
+          not(
+            exists(
+              selectFrom("digifab_jobs as o")
+                .select("o.id")
+                .where("o.connection_id", "=", m.connection_id)
+                .where("o.target_device", "=", m.remote_device_id)
+                .where("o.status", "not in", [...NOT_OCCUPYING_STATUSES]),
+            ),
+          ),
+        )
+        // F-1, same instant: never claim onto a bed still awaiting a human ack.
+        .where(({ not, exists, selectFrom }) =>
+          not(
+            exists(
+              selectFrom("digifab_device_attention as a")
+                .select("a.connection_id")
+                .where("a.connection_id", "=", m.connection_id)
+                .where("a.remote_device_id", "=", m.remote_device_id),
+            ),
+          ),
+        )
         .executeTakeFirst();
       if (Number(claim.numUpdatedRows ?? 0n) === 0) {
-        resolved = true; // another pass owns it
-        break;
+        // Two different reasons, two different answers: the JOB was taken by
+        // another pass (done with it), or the DEVICE was taken between the
+        // snapshot and the claim (try this job's next member).
+        const still = await db
+          .selectFrom("digifab_jobs")
+          .select("status")
+          .where("id", "=", job.id)
+          .executeTakeFirst();
+        if (still?.status !== "queued") {
+          resolved = true; // another pass owns the job
+          break;
+        }
+        continue; // the device went busy under us — next member
       }
       // The job rides through sendJob as `assigning` (not terminal, so sendJob
       // accepts it; not `queued`, so no concurrent pass can re-claim it). sendJob
