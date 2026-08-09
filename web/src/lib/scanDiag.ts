@@ -1,7 +1,7 @@
 // Scan diagnostics — the facts you cannot get by reading the code.
 //
 // Four separate scan investigations (bug-queue items 3, 4, 5) all dead-ended on
-// the same wall: what the CODE does is knowable, what the author's iPhone does is not.
+// the same wall: what the CODE does is knowable, what the reference iPhone does is not.
 // Which decode engine is live, whether the focus constraint was accepted, which
 // lenses Safari exposes, how long a decode actually takes — every one of those
 // is a device fact, and guessing at them would mean changing decode logic on a

@@ -611,7 +611,7 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
                   ) : (
                     // The last line must match the write-mode chip: "I'll check
                     // with you" is only true in ASK mode — in AUTO, changes apply
-                    // as we go; in OFF, nothing changes (the author, 2026-07-11).
+                    // as we go; in OFF, nothing changes (reported 2026-07-11).
                     <>Ask about your workspace, or tell me to do something - "add a part called Widget", "what's low on
                     stock?".{" "}{{
                       ask: "I'll check with you before I change anything.",

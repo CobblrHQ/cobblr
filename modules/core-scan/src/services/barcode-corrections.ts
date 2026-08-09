@@ -7,7 +7,7 @@
 //
 // The token's TYPE decides trust (resolver-side): a write-token → verified=true
 // (instant override, the author's instances); a propose-token → verified=false (review
-// queue, cobblr.me public). Both flow through COBBLR_BARCODE_RESOLVER_CORRECTION_TOKEN
+// queue, the hosted service public). Both flow through COBBLR_BARCODE_RESOLVER_CORRECTION_TOKEN
 // here — this side doesn't need to know which. See
 // CobblrHQ/barcode-intelligence/docs/correction-feedback.md.
 

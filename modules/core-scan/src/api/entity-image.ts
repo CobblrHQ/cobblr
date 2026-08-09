@@ -187,7 +187,7 @@ entityImageRouter.post(
     // Distinguish WHY a record was skipped. Collapsing these into one count
     // produced a message that blamed the data ("these need a name first") for
     // what was actually a missing resolver registration — the wrong thing to
-    // tell someone whose records plainly had names (the author, 2026-07-18).
+    // tell someone whose records plainly had names (reported 2026-07-18).
     let started = 0;
     let unresolved = 0; // entities.lookup returned null (a module wiring gap)
     let unnamed = 0; // resolved, but nothing searchable to derive from

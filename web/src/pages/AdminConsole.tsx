@@ -762,6 +762,8 @@ function HealthTab() {
               ["Self-serve invites", cfg.data.self_serve_invites ? "on" : "off", cfg.data.self_serve_invites],
               ["AI (instance switch)", cfg.data.ai_enabled ? "enabled" : "KILLED", cfg.data.ai_enabled],
               ["Barcode resolver", cfg.data.barcode_resolver_configured ? "configured" : "not configured", cfg.data.barcode_resolver_configured],
+              ["Operator contact", cfg.data.operator_contact_configured ? "set" : "MISSING - vendor lookups skipped", cfg.data.operator_contact_configured],
+              ["Shared barcode DB", cfg.data.bidb, cfg.data.bidb === "configured" ? true : cfg.data.bidb === "off" ? null : false],
             ] as Array<[string, string, boolean | null]>).map(([k, v, on]) => (
               <div key={k} className="flex items-baseline justify-between gap-2 min-w-0">
                 <span className="text-[10px] font-mono uppercase tracking-wider text-faint shrink-0">{k}</span>

@@ -7,8 +7,11 @@
 // for PRIVATE repos** — it just 404s. You must use the GitHub *contents API*
 // (api.github.com/repos/.../contents/<path>) with
 // `Accept: application/vnd.github.raw+json`, which returns the raw file body
-// AND authenticates via Bearer. When a registry repo goes public, a raw URL
-// works too — both shapes are handled here.
+// AND authenticates via Bearer. Both shapes are handled here.
+//
+// Cobblr's own module registry is PUBLIC and therefore reached by raw URL with
+// no token at all. The contents-API path is what an operator needs when they
+// point COBBLR_REGISTRY_URL at a private index of their own.
 //
 // NOTE: scripts/install-registry-modules.mjs carries its own copy of the
 // header logic on purpose — it runs standalone at image-build time (plain

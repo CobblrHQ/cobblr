@@ -4,7 +4,7 @@
 // category with nothing anchoring it to its siblings. Three Under Armour
 // t-shirts scanned together came back "apparel", "apparel" and "clothing", shown
 // as "Clothing" and "clothing" - three items, three labels, when the user wanted
-// one section holding all three (the author, 2026-07-30).
+// one section holding all three (reported 2026-07-30).
 //
 // Reconciliation is inherently CROSS-ITEM, so it cannot live in the per-item
 // identify: it belongs after, over the session. This is the free heuristic floor
@@ -12,7 +12,7 @@
 // clusters. Only a session the heuristic genuinely cannot settle is worth asking
 // a model about.
 //
-// The rule when labels differ is BROADEST THAT FITS (the author's call): three t-shirts
+// The rule when labels differ is BROADEST THAT FITS (a deliberate call): three t-shirts
 // become "Clothing", not "T-Shirts". Fewer, bigger sections, and the category
 // field's own hint already says a category that outgrows its table can be
 // promoted into one of its own later - so broad now is not a trap.
@@ -84,7 +84,7 @@ export function displayCategory(canonical: string): string {
  * routing note.
  *
  * The same category reached the screen three ways in one session: "Clothing" on
- * one card, "clothing" on the next, and “apparel” in the note under both (the author,
+ * one card, "clothing" on the next, and “apparel” in the note under both (reported
  * 2026-07-30: "your cases are not matching up suggesting a larger issue"). One
  * fact rendered by three call sites is the drift; one function is the fix.
  *
@@ -123,7 +123,7 @@ export interface CategoryConsensus {
  * Canonicalisation exists so "Book" and "Books" can AGREE with each other. It is
  * a matching device, and it used to leak into naming: a workspace whose category
  * is "Books" was shown "Book", a word that appears nowhere in their data
- * (the author, 2026-08-01: "why does this say file into book").
+ * (reported 2026-08-01: "why does this say file into book").
  *
  * So an OBSERVED label wins whenever one of them is the canonical word itself,
  * plural and casing intact. The invented broad term is reserved for the case it

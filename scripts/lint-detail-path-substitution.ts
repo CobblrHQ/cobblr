@@ -16,7 +16,7 @@
 // (api/src/platform/resolvable-providers.ts), and the scan-rule resolver
 // (modules/core-scan/src/services/qr-resolver.ts). Each hand-substituted `{id}`
 // and each was blind to instances. A user scanned a Vehicle's label and landed
-// on "asset not found" (the author, 2026-07). This lint stops copy #4.
+// on "asset not found" (reported 2026-07). This lint stops copy #4.
 //
 // The rule, mechanically: in api/src/** and modules/<name>/src/**, no
 // `.replace("{id}", …)` — except the canonical home instance-detail.ts, and

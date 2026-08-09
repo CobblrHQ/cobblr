@@ -1,7 +1,7 @@
 // The scan item's quantity: one place that owns BOTH the optimistic value and
 // the write, so a stepper that doesn't save can't be built.
 //
-// The bug this exists to make impossible (the author, 2026-08-03): the Scanned sheet
+// The bug this exists to make impossible (reported 2026-08-03): the Scanned sheet
 // kept the count in local state and PATCHed it only from "Save & next". Step
 // 2 → 1, swipe the sheet away, and the edit was silently gone — the row still
 // said 2. The mini drawer's stepper, meanwhile, wrote on every tap. Same

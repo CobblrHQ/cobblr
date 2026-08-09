@@ -1,4 +1,4 @@
-// A modal shows up on the PAGE IT WAS INVOKED FROM (the author's house rule).
+// A modal shows up on the PAGE IT WAS INVOKED FROM (a house rule).
 //
 // The recurring violation: "show me that bundle" answered by navigating to
 // /bundles?open=<id>. That is a different page behind a dialog, and it throws

@@ -34,6 +34,35 @@ platform().instances.registerItemCounter("assets", async (orgId, instance) => {
   return r.rows[0]?.c ?? 0;
 });
 
+// Same one-column move as inventory. See the note there and
+// docs/design-decisions/move-between-instances.md.
+platform().instances.registerMover("assets", {
+  kindFor: (instance) => (instance === "assets" ? "assets:asset" : `${instance}:item`),
+  async metadataFor(orgId, ids) {
+    const db = (await platform().tenants.getDb(orgId)) as Kysely<unknown>;
+    const r = await sql<{ metadata: Record<string, unknown> | null }>`
+      select metadata from assets_assets where id::text in (${sql.join(ids.map((i) => sql`${i}`))})
+    `.execute(db);
+    return r.rows.map((x) => x.metadata ?? {});
+  },
+  async move(_orgId, ids, from, to, db) {
+    const trx = db as Kysely<unknown>;
+    // `in (from, to)` rather than `= from`, so this is IDEMPOTENT. If the
+    // platform's second (meta) transaction failed after this one committed,
+    // the records are already in `to` and a re-run must still return them:
+    // otherwise it reports nothing to do and the meta-side references stay on
+    // the old kind forever. Rows already in `to` update to themselves.
+    const r = await sql<{ id: string }>`
+      update assets_assets set instance = ${to},
+             updated_at = case when instance = ${to} then updated_at else now() end
+       where instance in (${from}, ${to})
+         and id::text in (${sql.join(ids.map((i) => sql`${i}`))})
+       returning id
+    `.execute(trx);
+    return r.rows.map((x) => x.id);
+  },
+});
+
 const router = Router({ mergeParams: true });
 router.use("/assets", assetsRouter);
 

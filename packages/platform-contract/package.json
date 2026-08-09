@@ -10,7 +10,8 @@
     "./category-reconcile": "./src/category-reconcile.ts",
     "./resolvables": "./src/resolvables.ts",
     "./label-geometry": "./src/label-geometry.ts",
-    "./edge-bridge-client": "./src/edge-bridge-client.ts"
+    "./edge-bridge-client": "./src/edge-bridge-client.ts",
+    "./outbound-identity": "./src/outbound-identity.ts"
   },
   "types": "src/index.ts",
   "scripts": {

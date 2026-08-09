@@ -148,8 +148,7 @@ function FieldsCard() {
       {/* Say what CAN be done here. The old copy promised only "edit the
           dropdown options" while the heading read "fields & options", so a
           field with no options showed "text field - no dropdown options" and
-          no way to act on it: "how do I actually edit it in here?" (the author,
-          2026-08-01). Renaming works inline now; the rest is one link away. */}
+          no way to act on it: "how do I actually edit it in here?" (reported 2026-08-01). Renaming works inline now; the rest is one link away. */}
       <p className="text-[11px] text-faint dark:text-slate-500 mb-3 leading-snug">
         What each {itemNoun} records. Click a name to rename it, and manage its
         dropdown options below. To add or remove fields, change a type, or
@@ -159,8 +158,7 @@ function FieldsCard() {
       <ul className="space-y-3">
         {/* Categories sit IN this list, not in a card of their own: they are the
             Category field's options as far as anyone using this page is
-            concerned, and two panels for one idea read as two ideas (the author,
-            2026-08-01). They keep their own API + slugs underneath. */}
+            concerned, and two panels for one idea read as two ideas (reported 2026-08-01). They keep their own API + slugs underneath. */}
         <CategoryRow />
         {fields.map((f) => (
           <FieldRow key={f.id} def={f} />

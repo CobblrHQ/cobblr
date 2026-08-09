@@ -4,7 +4,7 @@
 // access and the feedback bubble know to get out of the way. It is opt-in, so it
 // only protects overlays that remember to raise it — and the camera scanner never
 // did. It is a body-portaled `fixed inset-0 z-40` surface covering the entire app,
-// and the Live pill sat on top of the viewfinder for months (the author, 2026-08-03:
+// and the Live pill sat on top of the viewfinder for months (reported 2026-08-03:
 // "it def does not belong anywhere in the camera scanner").
 //
 // The z-index fix (Live now sits BELOW every overlay) is the structural half. This

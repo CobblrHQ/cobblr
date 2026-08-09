@@ -1,5 +1,5 @@
 // No em dashes in USER-FACING text. The em dash reads as machine-written prose
-// (the author's standing "plain human voice" rule), so it must not reach the UI. This
+// (the standing "plain human voice" rule), so it must not reach the UI. This
 // is scoped on purpose:
 //   - CODE COMMENTS are exempt — users never see them, and the house comment
 //     style leans on em dashes heavily; the AST simply never visits comments.

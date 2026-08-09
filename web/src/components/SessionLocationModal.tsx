@@ -4,7 +4,7 @@
 // tapping the header's location chip inserted a full-height list of every room
 // and bin BELOW every card in that session: the answer opened far from the
 // control that asked, and read as more page content instead of as a question
-// (the author, 2026-07-30: "wtf the picker opens all the way down there, it needs to
+// (reported 2026-07-30: "wtf the picker opens all the way down there, it needs to
 // be a proper overlay").
 //
 // It lives in its own component so the inline version cannot come back by

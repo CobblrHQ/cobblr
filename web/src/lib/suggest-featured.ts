@@ -48,7 +48,7 @@ function bundleVocab(fb: FeaturedBundle): Map<string, number> {
  *  field tweak ("add a warranty date to parts") was never answered with
  *  "install a bundle". That gate silently swallowed the most natural input
  *  there is - a bare noun. Typing "yarn" matched nothing in either Build mode,
- *  even though a Yarn bundle ships (the author, 2026-08-01).
+ *  even though a Yarn bundle ships (reported 2026-08-01).
  *
  *  The tweak-vs-new question is now answered by the CALLER, and answered
  *  better: it asks suggest-kinds.ts whether the sentence lands on kinds the

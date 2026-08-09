@@ -47,7 +47,7 @@ export function DirectManagerConnect({
     queryFn: () => api.getDigifabDriverCatalog(activeSlug),
     enabled: !!activeSlug,
   });
-  // Whether THIS Cobblr is hosted (cobblr.me / managed) vs self-hosted — a hosted
+  // Whether THIS Cobblr is hosted (the managed service) vs self-hosted — a hosted
   // instance generally can't reach a LAN device, a self-hosted one (same network)
   // can. Drives whether we warn about a LAN address at all.
   const authCfg = useQuery({ queryKey: ["auth-config"], queryFn: () => api.authConfig(), staleTime: 5 * 60_000 });

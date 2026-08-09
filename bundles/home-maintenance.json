@@ -2,12 +2,12 @@
   "manifest": {
     "id": "cobblr.flagship.home-maintenance",
     "catalog": "disabled",
-    "version": "0.3.1",
-    "name": "Home Maintenance Schedule",
+    "version": "0.3.2",
+    "name": "Home Maintenance",
     "description": "Your home's systems as their own table (furnace, water heater, HVAC filters, detectors) with service logs + next-due dates on your calendar.",
     "author": "Cobblr",
     "released_at": "2026-07-15",
-    "changelog": "The “Location” of each system is now a real Location, not a separate text field: systems file into your Location tree (rooms/zones) like everything else, so a thing has one place, not two. Your existing location values move over automatically on this update: each becomes a Location and its systems are filed into it, nothing lost. Earlier: Home Maintenance became its OWN table (an assets instance) with only the fields a maintenance schedule needs, plain-language hints, and a pinned “By system” view.",
+    "changelog": "Named for the thing, not the artefact: “Home Maintenance Schedule” is now just “Home Maintenance” (a bundle title is the noun; the schedule is one of the things inside it). Earlier: each system's “Location” became a real Location so a thing has one place not two, with existing values moved over automatically; before that, Home Maintenance became its OWN table with only the fields a maintenance schedule needs.",
     "requires": [
       {
         "module": "assets"

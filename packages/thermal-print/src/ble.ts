@@ -57,7 +57,7 @@ export interface Connection {
  *  FILTERED by default: the chooser lists devices advertising a known printer
  *  service, or whose name matches a known model. `acceptAllDevices` listed every
  *  BLE object in range — headphones, phones, a neighbour's TV — and the user had
- *  to identify their printer out of that pile (the author, 2026-07, comparing us
+ *  to identify their printer out of that pile (reported 2026-07, comparing us
  *  unfavourably with niim.blue, which filters).
  *
  *  ESCAPE HATCH, and it matters: a filter can only match what a device puts in its

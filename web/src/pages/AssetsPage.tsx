@@ -8,8 +8,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Loader2, Plus, Printer, Search, Sprout, Tag as TagIcon, Trash2, Undo2, Wand2 } from "lucide-react";
-import { ApiError, api, type Asset, type OrgModuleListItem, type PlatformFieldDef } from "../lib/api";
+import { ArrowRightLeft, ChevronRight, Loader2, Plus, Printer, Search, Sprout, Tag as TagIcon, Trash2, Undo2, Wand2 } from "lucide-react";
+import { ApiError, api, getToken, type Asset, type OrgModuleListItem, type PlatformFieldDef } from "../lib/api";
 import { isShapeValidVin, planVinFill, type VinFill, type VinFillTarget } from "../lib/vin";
 import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
 import { queueLabelsBulk } from "../lib/queue-label";
@@ -22,6 +22,7 @@ import { CustomFieldsPanel,
   useConfirm, usePageTitle } from "@cobblr/platform-web";
 import {
   BulkActionBar,
+  MoveToInstanceModal,
   EntityThumb,
   EntityTile,
   ViewModeToggle,
@@ -169,6 +170,7 @@ export function AssetsPage({
   // click-to-open semantics). Tracks the IDs as a Set so toggle is
   // O(1) and selectAll is one Set replacement.
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
@@ -335,6 +337,22 @@ export function AssetsPage({
         instance={instance}
       />
       <NewAssetModal open={newOpen} onClose={() => setNewOpen(false)} instance={instance} noun={noun} />
+      <MoveToInstanceModal
+        open={bulkMoveOpen}
+        onClose={() => setBulkMoveOpen(false)}
+        slug={activeSlug ?? ""}
+        getToken={getToken}
+        moduleName="assets"
+        fromInstance={instance ?? "assets"}
+        ids={Array.from(selected)}
+        noun={noun}
+        onMoved={(n, where) => {
+          toast.success(`Moved ${n} ${n === 1 ? noun : `${noun}s`} to ${where}`);
+          setSelected(new Set());
+          void qc.invalidateQueries({ queryKey: ["assets"] });
+        }}
+      />
+
       <BulkActionBar
         count={selected.size}
         onClear={() => setSelected(new Set())}
@@ -346,6 +364,13 @@ export function AssetsPage({
               className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-accent hover:text-accent"
             >
               <TagIcon size={12} /> Tag
+            </button>
+            <button
+              type="button"
+              onClick={() => setBulkMoveOpen(true)}
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-accent hover:text-accent"
+            >
+              <ArrowRightLeft size={12} /> Move to…
             </button>
             <button
               type="button"
@@ -630,6 +655,7 @@ function AssetDetailModal({
   // assets:asset — reading/writing without the instance 404s (the modal then
   // hangs on "loading…"). Thread it through every asset call + the field kind.
   const kind = instance ? `${instance}:item` : ENTITY_KIND;
+  const [moveOpen, setMoveOpen] = useState(false);
   const fp = useFieldPresentation(kind);
   const asset = useQuery({
     queryKey: ["asset", activeSlug, instance ?? null, assetId],
@@ -760,12 +786,34 @@ function AssetDetailModal({
             </div>
           </div>
           <div className="pt-3 border-t border-line dark:border-slate-700 flex items-center justify-between">
-            <button
-              onClick={handleDelete}
-              className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1"
-            >
-              <Trash2 size={11} /> delete asset
-            </button>
+            <div className="flex items-center gap-4">
+              <button
+                onClick={handleDelete}
+                className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1"
+              >
+                <Trash2 size={11} /> delete asset
+              </button>
+              <button
+                onClick={() => setMoveOpen(true)}
+                className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-accent transition flex items-center gap-1"
+              >
+                <ArrowRightLeft size={11} /> move to…
+              </button>
+            </div>
+            <MoveToInstanceModal
+              open={moveOpen}
+              onClose={() => setMoveOpen(false)}
+              slug={activeSlug ?? ""}
+              getToken={getToken}
+              moduleName="assets"
+              fromInstance={instance ?? "assets"}
+              ids={assetId ? [assetId] : []}
+              onMoved={(_n, where) => {
+                toast.success(`Moved to ${where}`);
+                void qc.invalidateQueries({ queryKey: ["assets"] });
+                onClose();
+              }}
+            />
             <button
               onClick={onClose}
               className="px-3 py-1.5 rounded-md text-sm font-medium text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800 transition"

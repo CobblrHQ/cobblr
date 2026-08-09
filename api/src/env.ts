@@ -158,7 +158,7 @@ const Schema = z.object({
   //  • IDENTITY_ADMIN_TOKEN — the identity service's admin token (gates
   //    POST /admin/backfill); required for the backfill pass to run.
   //  • COBBLR_DEPLOYMENT — this surface's stable id in the identity map
-  //    (deployment_links), e.g. "try" or "cobblr.me". Defaults to COBBLR_ENV.
+  //    (deployment_links), e.g. "try" or the hosted deployment. Defaults to COBBLR_ENV.
   IDENTITY_URL: z.string().optional(),
   IDENTITY_ISSUER: z.string().default("cobblr-identity"),
   IDENTITY_AUDIENCE: z.string().default("cobblr"),

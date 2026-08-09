@@ -157,7 +157,7 @@ function KindCard({
   pending: boolean;
 }) {
   // How many items are coded, kept as a hover on the name rather than a label —
-  // it's metadata, not what the row IS (the author, 2026-07-22: "what does '1 code' mean").
+  // it's metadata, not what the row IS (reported 2026-07-22: "what does '1 code' mean").
   const coded = (g: CodeGroup) =>
     g.suggested
       ? "Suggested code, not saved yet. Save to lock it in, change it, or clear the box to skip a code for this list."

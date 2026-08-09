@@ -3,7 +3,7 @@
 // of vanishing into the sender's mailbox. The token is a STATELESS HMAC of the
 // feedback id (no table). The whole feature is OFF unless BOTH env are set:
 //
-//   COBBLR_FEEDBACK_REPLY_DOMAIN  e.g. "cobblr.me" — where Cloudflare Email
+//   COBBLR_FEEDBACK_REPLY_DOMAIN  e.g. "cobblr.example.com" — where Cloudflare Email
 //                                 Routing catches reply+*@<domain> and hands it
 //                                 to the Email Worker.
 //   COBBLR_INBOUND_EMAIL_SECRET   HMAC secret. The SAME value must be set on the

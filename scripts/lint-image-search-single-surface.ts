@@ -4,7 +4,7 @@
 // each copy drifted. The scan inbox grew a full-screen viewer and a phrase built
 // from the item's own fields; the record page got a bare grid, a blank search
 // box and a bare-title query. Same feature, three behaviours, and the user hit
-// the worst one on the page where it mattered (the author, 2026-07-18: "this needs to
+// the worst one on the page where it mattered (reported 2026-07-18: "this needs to
 // be a global platform standard").
 //
 // Mechanically: only ImageSearchPicker.tsx may call the image-options endpoint.

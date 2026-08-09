@@ -1,6 +1,6 @@
 // One bridged printer's state, with the controls that match it.
 //
-// The shape and wording come from the mockup the author approved: the ring carries the
+// The shape and wording come from the mockup approved: the ring carries the
 // state as colour, the facts sit under it, and the buttons offered are only the
 // ones that mean something in the state shown. A Connect button on an instance
 // that opens per job would be a button that could never stay pressed.

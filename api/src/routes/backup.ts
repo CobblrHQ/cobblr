@@ -660,7 +660,7 @@ backupRouter.get("/destinations/:id/backups", requireAuth, withTenant, async (re
 //    the whole OAuth itself.
 //  • BROKER — this instance has BACKUP_OAUTH_BROKER_URL + SHARED_SECRET and no
 //    Google app; it borrows a broker (an instance that HAS a Google app, e.g.
-//    cobblr.me). The refresh token comes back server-to-server (one-time
+//    the hosted service). The refresh token comes back server-to-server (one-time
 //    link code), never through a browser URL. This instance can ALSO be a
 //    broker for others when brokerServerEnabled().
 //

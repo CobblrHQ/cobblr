@@ -1,6 +1,6 @@
 // The barcode is a FACT the user can correct.
 //
-// Two real failures made this module exist (the author, 2026-08-03):
+// Two real failures made this module exist (reported 2026-08-03):
 //
 //   1. A label whose code the camera couldn't read was photographed instead, and
 //      the vision OCR got one digit wrong. There was no way to edit the barcode:

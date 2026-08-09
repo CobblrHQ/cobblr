@@ -1,5 +1,5 @@
 // ONE image instead of ten: the candidate photos composed into a numbered
-// contact sheet (the author, 2026-07-30 — "a single gallery of 9 images so it was only
+// contact sheet (reported 2026-07-30 — "a single gallery of 9 images so it was only
 // sending a single image to the AI").
 //
 // The first cut sent the reference photo + 9 candidates as 10 separate

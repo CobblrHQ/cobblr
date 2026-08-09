@@ -6,7 +6,7 @@
 // work - NINE passes write `suggested_name`, two of them detached after the
 // response, so a composed title was silently dropped by whichever finished last.
 // That bug was "fixed" three times by patching write sites before the derivation
-// landed (the author, 2026-07-30: "at the end of the AI run the title lost blue").
+// landed (reported 2026-07-30: "at the end of the AI run the title lost blue").
 //
 // The derivation only holds if every response applies it. A new endpoint that
 // returns a row raw would reintroduce the exact symptom - a card whose title is

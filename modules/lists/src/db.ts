@@ -21,6 +21,9 @@ export interface ItemsTable {
   qty: string | null;
   checked: Generated<boolean>;
   checked_at: Date | null;
+  claimed_by: string | null;
+  claimed_by_name: string | null;
+  claimed_at: Date | null;
   metadata: Generated<unknown>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;

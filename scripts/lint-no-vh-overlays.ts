@@ -7,7 +7,7 @@
 //
 // This shipped twice from one copy-paste: ChatWidget's "Ask Cobb" panel and
 // NotificationsBell's sidebar were the same `fixed top-0 right-0 h-screen`
-// string, and Ask Cobb's message box was unreachable on a phone (the author reported
+// string, and Ask Cobb's message box was unreachable on a phone (reported
 // it more than once). Both now render through web/src/components/SidePanel.tsx.
 //
 // The fix in every case: pin `top` AND `bottom` (inset-y-0, or
@@ -30,7 +30,7 @@ const FIXED = /(^|\s)fixed(\s|$)/;
 // A height utility carrying 100vh ANYWHERE - the panel inside a fixed
 // overlay is not itself `fixed`, which is how the shared Modal kept
 // max-h-[calc(100vh-4rem)] straight past the first version of this lint
-// and cut its own action row off on iOS (the author, 2026-08-01). dvh is strictly
+// and cut its own action row off on iOS (reported 2026-08-01). dvh is strictly
 // better wherever a viewport height is wanted, so flag the unit itself.
 const VH_HEIGHT = /\b(?:max-h|min-h|h)-\[[^\]]*100vh[^\]]*\]/;
 

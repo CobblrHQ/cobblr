@@ -1,4 +1,4 @@
-// The platform's public origin (e.g. https://cobblr.me), for building absolute
+// The platform's public origin (e.g. https://cobblr.example.com), for building absolute
 // links in contexts with no inbound `req` — Discord DMs, OAuth redirect default.
 // `||` not `??` for the env default (core CLAUDE.md §14.6). Unset → links stay
 // relative (still useful in-app; just not clickable from a DM).

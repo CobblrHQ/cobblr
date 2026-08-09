@@ -529,7 +529,7 @@ importRouter.post(
     // leaves an inbox nobody can reason about: some items new, some updated,
     // some untouched, and no way to tell which without reading them all. Any
     // failure here rolls the whole thing back and the caller gets an error
-    // instead of a partial success (the author, 2026-07-31: "if it fails it fails
+    // instead of a partial success (reported 2026-07-31: "if it fails it fails
     // completely, no half of the items as fragments making it through").
     const createdIds: string[] = [];
     const createdBatchIds: string[] = [];
@@ -670,7 +670,7 @@ importRouter.post(
 // A bulk import is the one scan operation a person cannot unpick by hand, and
 // with duplicate_policy=replace it overwrites rows that were already there. So
 // every run records what it created and the prior contents of what it replaced,
-// and this reverses it in one call (the author, 2026-07-31: "1 click reversible in the
+// and this reverses it in one call (reported 2026-07-31: "1 click reversible in the
 // event of an issue").
 
 importRouter.get(

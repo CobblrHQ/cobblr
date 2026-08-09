@@ -8,7 +8,7 @@
 //
 // So: derive the scope from the intent text. Signals are each kind's OWN
 // declared vocabulary — display name, instance name, module, and its FIELD
-// names — never a hand-kept keyword table (the author's derive-from-fields rule).
+// names — never a hand-kept keyword table (the derive-from-fields rule).
 // Same shape as suggest-featured.ts, which already matches this exact textarea
 // against the featured catalog.
 

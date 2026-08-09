@@ -179,5 +179,6 @@ export {
 export { BridgePrinterCard } from "./BridgePrinterCard";
 export { BatteryGauge, PrinterReadout, batteryTone } from "./BatteryGauge";
 export { ConnectPrinterModal, type ConnectPrinterModalProps, type ConnectPrinterInput } from "./ConnectPrinterModal";
+export { MoveToInstanceModal, type MoveToInstanceModalProps } from "./MoveToInstanceModal";
 export { HIDE_WHEN_OVERLAY_OPEN, OverlayFlag, useOverlayOpenFlag } from "./overlay-open";
 export { LiveSurfaceProvider, useOverLiveSurface } from "./live-surface";

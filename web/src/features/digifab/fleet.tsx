@@ -1322,7 +1322,7 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
   // WHY this machine is in the "Needs you" bucket — always named on the tile,
   // never a bare amber ring. The deviceBucket() rule is: needs_attention (the
   // Cobblr bed-clear gate), OR klass "error", OR klass "complete". The last one
-  // is the silent case the author hit: a print that finished OUTSIDE a Cobblr job (a
+  // is the silent case one install hit: a print that finished OUTSIDE a Cobblr job (a
   // Bambu started from its own slicer) reads "complete" with no attention row —
   // it still needs the bed cleared, there's just no verdict flow to offer, so
   // it clears itself once the printer reports idle again. (Firmware-update-

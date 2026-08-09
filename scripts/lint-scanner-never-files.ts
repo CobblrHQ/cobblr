@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 // The scanner never files. It only ever reaches the scan inbox.
 //
-// the author has had to restate this three times (2026-08-03, 2026-08-04, and the
+// This has had to be restated three times (2026-08-03, 2026-08-04, and the
 // ruling on 2026-08-05) because the act kept coming back wearing a new label:
 // first the matchmaker "ADD TO" chips on the barcode sheet, then — after those
 // were removed — the capture drawer's "Confirm", which quietly POSTed

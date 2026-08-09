@@ -1,6 +1,6 @@
 // AI multi-image re-rank of the catalog-photo candidates. Shown the SAME pool
 // the heuristic (rankImageOptions) already ranked, a vision model picks the best
-// CATALOG shot by the author's priorities: product ALONE (no people/tags), correct
+// CATALOG shot by the stated priorities: product ALONE (no people/tags), correct
 // COLOUR, clean studio look. The heuristic is still the instant, free floor and
 // the ORDER we send the candidates in; this only re-picks among the top few by
 // LOOKING at the pixels — the only way to enforce "no human in frame" and the
@@ -53,7 +53,7 @@ export interface AutoRankRow {
  *  re-running with a new hint ("color: black") changes the query and DOES earn a
  *  fresh pick even though the name is identical, while a re-run that changes
  *  nothing is free. Keying on the name alone got that backwards: the exact case
- *  a person re-runs FOR (correcting the colour) was the one it skipped (the author,
+ *  a person re-runs FOR (correcting the colour) was the one it skipped (reported
  *  2026-07-30).
  *
  *  The workspace toggle and the AI kill-switch / credit gate are checked

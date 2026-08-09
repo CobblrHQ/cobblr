@@ -24,7 +24,7 @@ const MODE_KEY = "cobblr.notif.mode";
 
 /** Notifications whose MESSAGE is the whole point — clicking marks them read
  *  and stays put. A reply to your feedback reads like a conversation, not a
- *  link (the author, 2026-08-01). */
+ *  link (reported 2026-08-01). */
 const NO_NAVIGATE = new Set(["platform.feedback.replied"]);
 
 export function NotificationsBell({ panelOnly = false, asRow = false }: { panelOnly?: boolean; asRow?: boolean } = {}) {
@@ -112,10 +112,10 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
 
   /** A stored link_url as something React Router can route.
    *
-   *  `navigate()` takes a PATH. An ABSOLUTE url ("https://cobblr.me/w/x/scan")
+   *  `navigate()` takes a PATH. An ABSOLUTE url ("https://cobblr.example.com/w/x/scan")
    *  matches no route, so it fell through to the catch-all and dumped you on
    *  the dashboard — which is what every emailed-receipt notification did
-   *  (the author, 2026-08-01). Producers now store relative paths, but notification
+   *  (reported 2026-08-01). Producers now store relative paths, but notification
    *  rows are IMMUTABLE (only read_at / delivered_via are ever updated), so
    *  every row written before that fix still carries an absolute url forever.
    *  Hence: strip our own origin here rather than only fixing it upstream.

@@ -2,7 +2,7 @@
 //
 // `acceptAllDevices: true` lists every Bluetooth object in range — headphones,
 // phones, a neighbour's TV — and makes the user find their printer in that pile
-// (the author, 2026-07, comparing us unfavourably with niim.blue). It is a one-word
+// (reported 2026-07, comparing us unfavourably with niim.blue). It is a one-word
 // change that silently undoes the filtering, and nothing else would catch it.
 //
 // requestPrinter() in packages/thermal-print/src/ble.ts is the ONE place allowed

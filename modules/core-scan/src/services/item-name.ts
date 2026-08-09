@@ -2,7 +2,7 @@
 //
 // A colour reached the photo search and the ranking, but not the title, so a
 // corrected item still READ as colourless: "Under Armour Icon Charged Cotton SS
-// T-Shirt" with no hint that it is the black one (the author, 2026-07-30 - he expected
+// T-Shirt" with no hint that it is the black one (reported 2026-07-30 - he expected
 // the hint to "add to the title and or image search term"). For a garment or a
 // tool the colour is part of which one it IS, so it belongs in the name.
 //
@@ -59,7 +59,7 @@ export function nameWithColor(
  * the token limit still carries a usable answer, and losing it entirely is
  * worse. But the rescued string can END MID-THOUGHT, and that lands in the row
  * as the item's name: "Under Armour Icon Charged Cotton SS T-Shirt (Men's" -
- * an unclosed bracket, visible on the card (the author, 2026-07-30: "in fact mangled
+ * an unclosed bracket, visible on the card (reported 2026-07-30: "in fact mangled
  * the first one"). Composing a colour onto it only compounds it (", Black"
  * after a dangling paren).
  *
@@ -82,7 +82,7 @@ export function tidyTruncatedName(name: string | null | undefined): string {
 
 /** Entity create schemas cap names at 160; cut at a word boundary when one is
  *  near, so a marketing-length catalog title commits instead of 400ing (a real
- *  dimmer's title is 206 characters - the author hit "bad request body" on Add). */
+ *  dimmer's title is 206 characters - one install hit "bad request body" on Add). */
 export function clampEntityName(name: string): string {
   const trimmed = name.trim();
   if (trimmed.length <= 160) return trimmed;

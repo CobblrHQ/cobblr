@@ -69,7 +69,7 @@ const COLLECTION_WORDS = [
 
 // Colours the item is KNOWN to be — from the DECLARED colour field, passed
 // explicitly by the caller. "Correct colour" is the single most important thing
-// a catalog photo must get right (the author, 2026-07-29), and it's legible in most
+// a catalog photo must get right (reported 2026-07-29), and it's legible in most
 // retail titles ("… T-Shirt, Black"). Reward a result naming the SAME colour,
 // penalise one naming ONLY a DIFFERENT one — a conflicting colour is a
 // different SKU, the exact miss the token overlap scores as a near-match.
@@ -103,7 +103,7 @@ export function colorFromText(text: string | null | undefined): string | null {
 const colorsIn = (tokens: string[]): Set<string> =>
   new Set(tokens.filter((t) => COLOR_WORDS.has(t)).map((t) => COLOR_SYNONYM[t] ?? t));
 
-// A person WEARING or USING the thing, not the product alone. the author wants the
+// A person WEARING or USING the thing, not the product alone. we want the
 // product itself with no human in frame; a lifestyle / on-model title is a weak
 // but real signal of exactly that. Deliberately a SMALL nudge — the AI vision
 // pass is the real "no people" filter — and pointedly NOT the category words
@@ -162,7 +162,7 @@ export function catalogScore(
     if (ident.length) s += ident.some((t) => tl.includes(t)) ? 4 : -6;
   }
 
-  // Correct COLOUR — the author's top visual priority. Only when the caller passes the
+  // Correct COLOUR — the top visual priority. Only when the caller passes the
   // item's DECLARED colour (never scraped from the query — see COLOR_WORDS):
   // a result naming the SAME colour is very likely the right variant; one
   // naming ONLY a DIFFERENT colour is the wrong variant the token overlap
@@ -251,7 +251,7 @@ export function mediaSearchExtras(
  *  derivation every surface uses, so a book gets the same query whether you're
  *  looking at it in the scan inbox or on its record page. (They diverged once:
  *  the inbox produced "Farmer Boy Laura Ingalls Wilder book" while a record
- *  page searched a bare "Farmer Boy" and got farm scenery. the author, 2026-07-18.)
+ *  page searched a bare "Farmer Boy" and got farm scenery. reported 2026-07-18.)
  *
  *  `fields` is any field bag — a scan candidate's `fields`, or a resolved
  *  entity's. Everything is derived from DECLARED FIELDS (a creator key, a
@@ -310,7 +310,7 @@ function imageDedupeKey(url: string): string {
  *  near-identical shots, then HARD-DROP the clearly-bad (net-negative score:
  *  social/cluttered domain, wrong-colour title, banner, placeholder) — but only
  *  while enough clearly-good remain. A thin pool keeps everything rather than
- *  starving the ranker of choices. The point (the author's, 2026-07-29): the AI should
+ *  starving the ranker of choices. The point (stated 2026-07-29): the AI should
  *  be selecting the best of N GOOD candidates, not rescuing a strip of junk —
  *  the heuristic does as much filtering as titles/domains/dimensions allow, and
  *  the AI does the pixel calls (a person in frame, the true colour) the

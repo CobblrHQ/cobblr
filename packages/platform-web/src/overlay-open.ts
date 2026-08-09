@@ -4,7 +4,7 @@
 // The Live pill sits at z-900 and Quick access at z-80, both far above a modal
 // (z-50) and the side panels (z-60), so they floated ON TOP of whatever overlay
 // was open: over Ask Cobb's message box, and over the bottom of every modal on
-// a phone (the author, 2026-08-01). Fixed first for the side panels, then reported
+// a phone (reported 2026-08-01). Fixed first for the side panels, then reported
 // again for modals — so the flag lives here, in the package that owns Modal,
 // and every overlay sets it.
 //

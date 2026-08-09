@@ -1,5 +1,5 @@
 // The capture drawer — the camera's ONE "what just happened" surface
-// (docs mock: _tmp/scan-capture-drawer.html; the author, 2026-08-02).
+// (docs mock: _tmp/scan-capture-drawer.html; reported 2026-08-02).
 //
 // Rapid capture works because nothing asks anything: shoot → keep walking. But
 // four needs kept pulling people out of it (check the shot was good, label
@@ -71,7 +71,7 @@ function useSheetSwipe(onUp?: () => void, onDown?: () => void) {
 /** The locked quantity stepper (the mock's wire shape): one bordered group,
  *  [−  N  +], thumb-sized buttons, no free-text input. SHARED by the drawer,
  *  the expanded sheet and the barcode result so the shape can't drift again
- *  (the author, 2026-08-03: the result card had grown its own circles-and-input
+ *  (reported 2026-08-03: the result card had grown its own circles-and-input
  *  variant). `big` pads the buttons up for the primary sheets. */
 export function QtyStepper({
   value,
@@ -181,7 +181,7 @@ export function ScanCaptureDrawer({
   collapseNonce?: number;
   /** A BARCODE item expands into the same "Scanned" sheet it was born in
    *  (review mode - no re-scan), never the photo sheet. One item, one sheet:
-   *  the author counted three different drawers for one scanned item (2026-08-03). */
+   *  one install counted three different drawers for one scanned item (2026-08-03). */
   onExpandBarcode?: (item: ScanInboxItem) => void;
 }) {
   const qc = useQueryClient();
@@ -301,7 +301,7 @@ export function ScanCaptureDrawer({
     Date.now() - new Date(it!.created_at).getTime() < IDENTIFY_WINDOW_MS;
   // Identify FINISHED (or timed out) with no name. Saying so is the whole
   // point of the drawer — "identifying…" that silently becomes "Captured
-  // item" reads as the resolution having been eaten (the author, 2026-08-03). The
+  // item" reads as the resolution having been eaten (reported 2026-08-03). The
   // sheet's name field is one swipe away.
   const identifyFailed = isPhoto && !name && !identifying;
   // Interplay rule from the mock: with a container bin armed the line reads
@@ -724,7 +724,7 @@ function GalleryTile({
 
 /** The capture surface's SHELL — the rounded panel that sits above the shutter.
  *  Exported so the barcode result renders in the same place, shape AND surface
- *  as a photo capture: one surface, whatever you pointed the camera at (the author,
+ *  as a photo capture: one surface, whatever you pointed the camera at (reported
  *  2026-08-03: "aren't you making it always be JUST a drawer?").
  *
  *  It is deliberately not the Modal primitive. A centred dialog over a live
@@ -739,7 +739,7 @@ function GalleryTile({
  *
  *  Height: the whole viewport above the shutter is available, and content is
  *  meant to FIT — the max-h + overflow is a short-phone backstop, not a design
- *  surface (the author: no scroll / cut-off elements inside the sheet). */
+ *  surface (feedback: no scroll / cut-off elements inside the sheet). */
 export function CaptureSheetShell({
   title,
   onClose,
@@ -763,7 +763,7 @@ export function CaptureSheetShell({
       <div ref={slide.innerRef}>
       {/* No ✕. It did exactly what the grip, a swipe-down and "Save & next"
           already do — three controls, one action, and "what does the X
-          actually do? does it save? or discard?" (the author) is the cost of the
+          actually do? does it save? or discard?" (feedback) is the cost of the
           redundancy. The grip is the dismiss affordance; the button row below
           carries the labeled exits. */}
       {onClose && <Grip onTap={onClose} label="Dismiss, it stays in the inbox" />}

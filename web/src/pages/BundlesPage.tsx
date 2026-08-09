@@ -309,7 +309,17 @@ export function BundlesPage() {
           <li className="flex items-center gap-2 text-sm text-muted dark:text-slate-300">
             <span className="text-moss-600 shrink-0" title="official source">●</span>
             <span className="text-content dark:text-mortar-100">official</span>
-            <span className="text-faint font-mono text-xs truncate">CobblrHQ/cobblr-extensions</span>
+            {/* Where the official catalog comes FROM — and it now comes from this
+                instance, built in-process from the bundles baked into the image.
+                This read "CobblrHQ/cobblr-extensions" long after that repo stopped
+                being fetched: a name a curious user could look up and find nothing
+                at, because it is private. */}
+            <span
+              className="text-faint font-mono text-xs truncate"
+              title="Built from the bundles that ship with this instance, so nothing is fetched"
+            >
+              built in
+            </span>
             {officialOk === false && (
               <span className="text-[10px] font-mono uppercase tracking-widest text-ember-500 shrink-0" title="The official index couldn't be reached - showing the built-in list.">offline</span>
             )}

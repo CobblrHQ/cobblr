@@ -178,7 +178,7 @@ export function WorkspaceSwitcher({ inline = false }: { inline?: boolean } = {})
         // click-outside handler from eating clicks INSIDE the accordion
         // (mousedown-close would fire before a row's onClick and swallow it).
         // -mr-3 cancels the sidebar header's right px-3 so the list's scrollbar
-        // reaches the sidebar edge instead of floating a padding-width in (the author,
+        // reaches the sidebar edge instead of floating a padding-width in (reported
         // 2026-07-29). Left stays padded so rows keep aligning with the trigger.
         <div ref={menuRef} className="-mr-3 border-b border-line dark:border-slate-800 max-h-[50vh] overflow-y-auto">
           <ul className="max-h-80 overflow-y-auto">

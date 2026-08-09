@@ -16,7 +16,7 @@ import { ApiError, api, type OrgModuleListItem } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
 // ONE screen: name it, say what it's like, create. It used to be three steps,
-// and the first two were both broken (the author, 2026-07-18):
+// and the first two were both broken (reported 2026-07-18):
 //   1. "What kind of thing do you want to add?" offered a choice between two
 //      shapes, explained the difference, and then rendered exactly ONE button —
 //      the second option (a lens) had been deleted long ago and the question

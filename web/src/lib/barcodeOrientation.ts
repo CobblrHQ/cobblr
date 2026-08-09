@@ -4,7 +4,7 @@
 // by guessing rotations: a blind 90° retry covers exactly one extra orientation,
 // and every blind attempt is another chance for a diagonal slice through the
 // bars to decode as a DIFFERENT, checksum-valid code (a UPC-A yielded a valid
-// EAN-8 "33720272" at ~45° — the author, 2026-08-05). Silently wrong beats not-read as
+// EAN-8 "33720272" at ~45° — reported 2026-08-05). Silently wrong beats not-read as
 // the worst outcome, so more guessing was the wrong direction.
 //
 // The correct technique — what commercial scanners do — is to MEASURE the

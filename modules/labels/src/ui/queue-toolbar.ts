@@ -15,7 +15,7 @@ export interface QueueToolbarMode {
    *  the pickers belong in the toolbar for every printer — a Bluetooth roll included
    *  (funnelled to the rolls it can feed). Burying a Bluetooth printer's media in a
    *  separate modal, while the toolbar pickers we built sat hidden, was the
-   *  disjointedness the author called out. */
+   *  disjointedness called out in feedback. */
   sheetControls: boolean;
   /** The browser/system "Print" button (opens the OS print dialog for a sheet).
    *  Everything except a Bluetooth printer, which prints over Bluetooth, not ⌘P. */
@@ -35,7 +35,7 @@ export interface QueueToolbarMode {
  *                                     forgotten (never a dangling ref / crash).
  *  System is therefore ALWAYS reachable — a disconnected or deleted printer is never
  *  a dead end. (The trap this fixes: media was funnelled to a Bluetooth printer's
- *  width with no way off it but "forget forever" — the author, 2026-07.) */
+ *  width with no way off it but "forget forever" — reported 2026-07.) */
 export function resolvePrintTarget<T extends { id: string; is_default?: boolean }>(
   picked: string | null,
   printers: T[],
@@ -51,7 +51,7 @@ export function resolvePrintTarget<T extends { id: string; is_default?: boolean 
  *  name AND the caption has diverged from it. The revert target is ALWAYS the stock
  *  name — never the last-saved caption. (The bug this pins: the revert button reset
  *  to the saved value, so a caption trimmed from "2002 Honda Odyssey Minivan EX" to
- *  "2002 Honda Odyssey" and saved could never get the full name back — the author, 2026-07.
+ *  "2002 Honda Odyssey" and saved could never get the full name back — reported 2026-07.
  *  Escape already restores the last-saved value; revert means revert to STOCK.) */
 export function canRevertToStock(current: string, stockName?: string | null): boolean {
   return !!stockName && current !== stockName;

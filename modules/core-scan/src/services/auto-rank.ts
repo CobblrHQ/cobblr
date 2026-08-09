@@ -23,7 +23,7 @@ import { mergeMeta, standingHints } from "./metadata.js";
 import { nameWithColor, tidyTruncatedName } from "./item-name.js";
 import { rankPhotoWithAi, isRankFailure, shouldAutoRank, type AutoRankRow } from "./rank-photo.js";
 
-/** Candidate images sent to the model per call (the author's "grid of 9"); the user's
+/** Candidate images sent to the model per call (the "grid of 9"); the user's
  *  own reference photo rides on top of these. */
 export const IMAGE_BUDGET = 9;
 
@@ -67,7 +67,7 @@ export function candidateFieldValue(candidates: unknown, field: string): string 
  *  table. Most tables have no such field, so a colour was simply unknowable —
  *  a user who typed the hint "color: blue" watched it change nothing, because
  *  the hint steered the identify TEXT and was never turned into a colour fact
- *  (the author, 2026-07-30: "I manually hinted the colors and it did not help").
+ *  (reported 2026-07-30: "I manually hinted the colors and it did not help").
  *
  *  Precedence, most authoritative first:
  *    1. the user's research HINT — they are telling us, and the identify prompt
@@ -182,7 +182,7 @@ export async function deriveRankContext(
  *  A replay of a BARCODE item deliberately skips enrichment entirely (the
  *  identity stays as stored), so the rename that lives inside the enrich paths
  *  never ran there. That left the one free way to try a naming change unable to
- *  try this naming change (the author, 2026-07-30: "should replay handle this too?"). */
+ *  try this naming change (reported 2026-07-30: "should replay handle this too?"). */
 export function colouredTitleFor(row: {
   suggested_name: string | null;
   suggested_manufacturer?: string | null;

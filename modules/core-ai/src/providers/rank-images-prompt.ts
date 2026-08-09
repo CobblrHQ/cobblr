@@ -14,7 +14,7 @@
 // comparison, and a tile is a position in one picture, so there is no
 // attachment-offset to get wrong. Composed in core-scan's contact-sheet.ts.
 //
-// Priorities, in order (the author, 2026-07-29): (1) the product ALONE — no people, no
+// Priorities, in order (reported 2026-07-29): (1) the product ALONE — no people, no
 // tag/packaging-only shots; (2) correct COLOUR, the top visual match; (3) a
 // clean studio/catalog look.
 //

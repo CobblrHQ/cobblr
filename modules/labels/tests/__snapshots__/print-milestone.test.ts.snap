@@ -32,7 +32,7 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
   /* Cut guide: a dark line ONLY on a seam BETWEEN two filled cells (drawn once, by
      the upper/left cell), so you cut on it. No full per-cell border — a blanket
      border doubled at every abutment and framed a partial sheet's empty half with a
-     stark box (the author, 2026-07). The seam prints black. */
+     stark box (2026-07). The seam prints black. */
   .label.seam-r { border-right: 1px solid #1a1a1a; }
   .label.seam-b { border-bottom: 1px solid #1a1a1a; }
   .label .qr { flex-shrink: 0; position: relative; }
@@ -58,7 +58,7 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
     border-radius: 999px; white-space: nowrap;
   }
   /* .desc is a flex box that CENTRES the caption span vertically + horizontally in
-     its strip (so the name sits in the middle of the whitespace above the QR — the author,
+     its strip (so the name sits in the middle of the whitespace above the QR,
      2026-07); the inner span carries the -webkit-box line-clamp. */
   .label .desc {
     font-weight: 600;
@@ -153,7 +153,7 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
   /* Cut guide: a dark line ONLY on a seam BETWEEN two filled cells (drawn once, by
      the upper/left cell), so you cut on it. No full per-cell border — a blanket
      border doubled at every abutment and framed a partial sheet's empty half with a
-     stark box (the author, 2026-07). The seam prints black. */
+     stark box (2026-07). The seam prints black. */
   .label.seam-r { border-right: 1px solid #1a1a1a; }
   .label.seam-b { border-bottom: 1px solid #1a1a1a; }
   .label .qr { flex-shrink: 0; position: relative; }
@@ -179,7 +179,7 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
     border-radius: 999px; white-space: nowrap;
   }
   /* .desc is a flex box that CENTRES the caption span vertically + horizontally in
-     its strip (so the name sits in the middle of the whitespace above the QR — the author,
+     its strip (so the name sits in the middle of the whitespace above the QR,
      2026-07); the inner span carries the -webkit-box line-clamp. */
   .label .desc {
     font-weight: 600;
@@ -274,7 +274,7 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
   /* Cut guide: a dark line ONLY on a seam BETWEEN two filled cells (drawn once, by
      the upper/left cell), so you cut on it. No full per-cell border — a blanket
      border doubled at every abutment and framed a partial sheet's empty half with a
-     stark box (the author, 2026-07). The seam prints black. */
+     stark box (2026-07). The seam prints black. */
   .label.seam-r { border-right: 1px solid #1a1a1a; }
   .label.seam-b { border-bottom: 1px solid #1a1a1a; }
   .label .qr { flex-shrink: 0; position: relative; }
@@ -300,7 +300,7 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
     border-radius: 999px; white-space: nowrap;
   }
   /* .desc is a flex box that CENTRES the caption span vertically + horizontally in
-     its strip (so the name sits in the middle of the whitespace above the QR — the author,
+     its strip (so the name sits in the middle of the whitespace above the QR,
      2026-07); the inner span carries the -webkit-box line-clamp. */
   .label .desc {
     font-weight: 600;
@@ -395,7 +395,7 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
   /* Cut guide: a dark line ONLY on a seam BETWEEN two filled cells (drawn once, by
      the upper/left cell), so you cut on it. No full per-cell border — a blanket
      border doubled at every abutment and framed a partial sheet's empty half with a
-     stark box (the author, 2026-07). The seam prints black. */
+     stark box (2026-07). The seam prints black. */
   .label.seam-r { border-right: 1px solid #1a1a1a; }
   .label.seam-b { border-bottom: 1px solid #1a1a1a; }
   .label .qr { flex-shrink: 0; position: relative; }
@@ -421,7 +421,7 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
     border-radius: 999px; white-space: nowrap;
   }
   /* .desc is a flex box that CENTRES the caption span vertically + horizontally in
-     its strip (so the name sits in the middle of the whitespace above the QR — the author,
+     its strip (so the name sits in the middle of the whitespace above the QR,
      2026-07); the inner span carries the -webkit-box line-clamp. */
   .label .desc {
     font-weight: 600;
@@ -516,7 +516,7 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
   /* Cut guide: a dark line ONLY on a seam BETWEEN two filled cells (drawn once, by
      the upper/left cell), so you cut on it. No full per-cell border — a blanket
      border doubled at every abutment and framed a partial sheet's empty half with a
-     stark box (the author, 2026-07). The seam prints black. */
+     stark box (2026-07). The seam prints black. */
   .label.seam-r { border-right: 1px solid #1a1a1a; }
   .label.seam-b { border-bottom: 1px solid #1a1a1a; }
   .label .qr { flex-shrink: 0; position: relative; }
@@ -542,7 +542,7 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
     border-radius: 999px; white-space: nowrap;
   }
   /* .desc is a flex box that CENTRES the caption span vertically + horizontally in
-     its strip (so the name sits in the middle of the whitespace above the QR — the author,
+     its strip (so the name sits in the middle of the whitespace above the QR,
      2026-07); the inner span carries the -webkit-box line-clamp. */
   .label .desc {
     font-weight: 600;
@@ -637,7 +637,7 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
   /* Cut guide: a dark line ONLY on a seam BETWEEN two filled cells (drawn once, by
      the upper/left cell), so you cut on it. No full per-cell border — a blanket
      border doubled at every abutment and framed a partial sheet's empty half with a
-     stark box (the author, 2026-07). The seam prints black. */
+     stark box (2026-07). The seam prints black. */
   .label.seam-r { border-right: 1px solid #1a1a1a; }
   .label.seam-b { border-bottom: 1px solid #1a1a1a; }
   .label .qr { flex-shrink: 0; position: relative; }
@@ -663,7 +663,7 @@ exports[`renderPrintSheetHtml (golden — current output is the floor) > renders
     border-radius: 999px; white-space: nowrap;
   }
   /* .desc is a flex box that CENTRES the caption span vertically + horizontally in
-     its strip (so the name sits in the middle of the whitespace above the QR — the author,
+     its strip (so the name sits in the middle of the whitespace above the QR,
      2026-07); the inner span carries the -webkit-box line-clamp. */
   .label .desc {
     font-weight: 600;
@@ -764,7 +764,7 @@ exports[`renderPrintSheetHtml (rotate — opt-in 90° content turn) > on ⇒ ren
   /* Cut guide: a dark line ONLY on a seam BETWEEN two filled cells (drawn once, by
      the upper/left cell), so you cut on it. No full per-cell border — a blanket
      border doubled at every abutment and framed a partial sheet's empty half with a
-     stark box (the author, 2026-07). The seam prints black. */
+     stark box (2026-07). The seam prints black. */
   .label.seam-r { border-right: 1px solid #1a1a1a; }
   .label.seam-b { border-bottom: 1px solid #1a1a1a; }
   .label .qr { flex-shrink: 0; position: relative; }
@@ -790,7 +790,7 @@ exports[`renderPrintSheetHtml (rotate — opt-in 90° content turn) > on ⇒ ren
     border-radius: 999px; white-space: nowrap;
   }
   /* .desc is a flex box that CENTRES the caption span vertically + horizontally in
-     its strip (so the name sits in the middle of the whitespace above the QR — the author,
+     its strip (so the name sits in the middle of the whitespace above the QR,
      2026-07); the inner span carries the -webkit-box line-clamp. */
   .label .desc {
     font-weight: 600;

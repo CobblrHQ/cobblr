@@ -8,7 +8,7 @@
 //   DELETE /lists/:id             delete a list (cascades items)
 //   POST   /lists/:id/clear-done  remove all checked items (the "clear done" sweep)
 //   POST   /items                 add an item (body.list_id)
-//   PATCH  /items/:id             toggle checked / edit
+//   PATCH  /items/:id             toggle checked / claimed / edit
 //   DELETE /items/:id             remove an item
 
 import { Router } from "express";
@@ -148,6 +148,10 @@ const ItemUpdate = z.object({
   note: z.string().max(2000).optional(),
   qty: z.string().max(64).optional(),
   checked: z.boolean().optional(),
+  /** "I'm getting this" / "never mind". The claimer is always the caller — a
+   *  claim is a statement about yourself, never an assignment handed to someone
+   *  else, so there is no user id in the body to spoof. */
+  claimed: z.boolean().optional(),
   metadata: z.record(z.unknown()).optional(),
 });
 
@@ -194,6 +198,20 @@ listsRouter.patch(
     if (parsed.data.checked !== undefined) {
       patch.checked = parsed.data.checked;
       patch.checked_at = parsed.data.checked ? new Date() : null;
+      // Buying it settles the question of who was getting it. Leaving the claim
+      // on a checked line would show "Sam is getting this" next to a line Sam
+      // already got.
+      if (parsed.data.checked) {
+        patch.claimed_by = null;
+        patch.claimed_by_name = null;
+        patch.claimed_at = null;
+      }
+    }
+    if (parsed.data.claimed !== undefined) {
+      const who = sessionUser(req);
+      patch.claimed_by = parsed.data.claimed ? (who?.id ?? null) : null;
+      patch.claimed_by_name = parsed.data.claimed ? (who?.display_name || who?.email || null) : null;
+      patch.claimed_at = parsed.data.claimed ? new Date() : null;
     }
     const row = await db.updateTable("lists_items").set(patch).where("id", "=", req.params.id!).returningAll().executeTakeFirst();
     if (!row) return void res.status(404).json({ error: { code: "not_found", message: "Item not found." } });
@@ -222,6 +240,16 @@ listsRouter.patch(
         itemId: row.id,
         checked: parsed.data.checked,
         ...(sourceKey ? { [sourceKey]: ref!.id, sourceRef: ref } : {}),
+      });
+    }
+    if (parsed.data.claimed !== undefined) {
+      void platform().events.emit("lists.item.claimed", {
+        orgId: ctx.org.id,
+        listId: row.list_id,
+        itemId: row.id,
+        claimed: parsed.data.claimed,
+        claimedBy: row.claimed_by,
+        claimedByName: row.claimed_by_name,
       });
     }
     res.json(row);

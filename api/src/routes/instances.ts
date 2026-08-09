@@ -9,6 +9,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
+import { getMover } from "../platform/move-records.js";
 import {
   createInstance,
   getInstance,
@@ -67,6 +68,11 @@ instancesRouter.get(
         items.map(async (it) => ({
           ...it,
           item_count: await countInstanceItems(orgId, it.module_name, it.instance_name),
+          // Whether records here can be moved to a sibling instance. A module
+          // opts in by registering a mover, so the UI can hide "Move to..."
+          // rather than offering an action that would 400. Modules that have
+          // not considered their instance-scoped foreign keys stay out.
+          movable: getMover(it.module_name) !== undefined,
         })),
       );
       res.json({ items: enriched });

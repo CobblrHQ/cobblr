@@ -77,7 +77,7 @@ function Header({ title }: { title: string }) {
   // The list tab is named after WHAT IT HOLDS. The noun is already in context
   // (every instance declares it) and the tabs used to throw it away: a base
   // inventory hardcoded "Parts" and a skinned instance fell back to the generic
-  // "List", so Yarn's tab read "List" instead of "Skeins" (the author, 2026-08-01).
+  // "List", so Yarn's tab read "List" instead of "Skeins" (reported 2026-08-01).
   const { itemNounPlural } = useInventory();
   const listLabel = itemNounPlural
     ? itemNounPlural.charAt(0).toUpperCase() + itemNounPlural.slice(1)

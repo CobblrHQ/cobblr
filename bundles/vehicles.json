@@ -1,6 +1,6 @@
 {
   "manifest": {
-    "id": "cobblr.flagship.vehicle-maintenance",
+    "id": "cobblr.flagship.vehicles",
     "name": "Vehicles",
     "version": "0.4.1",
     "description": "Your vehicles as their own table - make/model/year, VIN, mileage, plate - with service logs (oil, tires, brakes) and next-due dates on your calendar. Replaces a glovebox folder of receipts and a sticky note on the windshield.",

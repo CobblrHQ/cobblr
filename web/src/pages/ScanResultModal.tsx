@@ -73,7 +73,7 @@ export function ScanResultModal({
   /** The photo strip's + tile: arm the shutter to add a shot to this item
    *  (same behaviour as the + shutter) and hand the viewfinder back. */
   onAddPhoto?: (item: ScanInboxItem) => void;
-  /** An action taken BEFORE the row exists (the author: "if I'm moving fast… I
+  /** An action taken BEFORE the row exists (feedback: "if I'm moving fast… I
    *  should be able to do that"). The page closes the sheet immediately and
    *  runs the intent the moment its ingest lands. */
   onEarly?: (intent: "discard" | "retake") => void;
@@ -95,7 +95,7 @@ export function ScanResultModal({
   const [item, setItem] = useState<ScanInboxItem | null>(itemProp ?? null);
   // Quantity + its write, together: this sheet used to hold the count in local
   // state and PATCH it only from "Save & next", so closing any other way threw
-  // the edit away (the author, 2026-08-03). See lib/scanQuantity.
+  // the edit away (reported 2026-08-03). See lib/scanQuantity.
   const { value: qty, bump: bumpQty, flush: flushQty } = useScanQuantity(activeSlug, item);
   // URLs that 404'd/hotlink-blocked — each candidate gets one try, then we
   // fall to the next rung (a URL that failed once will fail again).
@@ -297,7 +297,7 @@ export function ScanResultModal({
     // Deliberately NO onClose: no grip-dismiss, no swipe-down, no ✕. A barcode
     // result wants a decision — confirm it's right and move on (Save & next),
     // reject it (Discard), or hand the camera an arm. A gesture that silently
-    // does one of those is how "what did the X do?" happens (the author, 2026-08-03:
+    // does one of those is how "what did the X do?" happens (reported 2026-08-03:
     // "user needs to confirm or reject the result or at least move on").
     <CaptureSheetShell title="Scanned">
       <div className="space-y-4">
@@ -322,7 +322,7 @@ export function ScanResultModal({
               <div className="text-sm text-muted animate-pulse">Looking up…</div>
             ) : (
               // CLAMPED, because it is the only unbounded thing in the sheet and
-              // the sheet is not allowed to scroll (the author, 2026-08-03). Catalog
+              // the sheet is not allowed to scroll (reported 2026-08-03). Catalog
               // titles are marketing copy: the Kasa dimmer's is 180 characters
               // and rendered THIRTEEN lines, pushing "Save & next" off the
               // bottom. Three lines is enough to recognise what you're holding;
@@ -368,7 +368,7 @@ export function ScanResultModal({
         {/* The photo STRIP (the mock's gallery row): every picture this item
             has - the resolved catalog art, the scan-moment frame, any shots
             added with the + shutter - in one place, so a photo you just took
-            never disappears into a different surface (the author, 2026-08-03). Tap an
+            never disappears into a different surface (reported 2026-08-03). Tap an
             own shot to make it the display photo; ＋ arms the shutter. */}
         {item && (
           <div className="flex items-center gap-1.5">
@@ -459,7 +459,7 @@ export function ScanResultModal({
         {/* The ?into= deep link is the ONE commit this sheet still offers: the
             user pre-chose the destination table before opening the camera, so
             adding there is finishing THEIR decision. The matchmaker "add to"
-            chips are gone - the scanner never files (the author, 2026-08-03: "we are
+            chips are gone - the scanner never files (reported 2026-08-03: "we are
             filing into scan inbox for this category to get figured out
             later"); routing is the inbox's job, on the surface built for it. */}
         {scanTarget.into ? (
@@ -502,7 +502,7 @@ export function ScanResultModal({
         )}
 
         {/* One camera action, one destructive action, one way out — and NONE
-            of them wait for the lookup (the author: "if I'm moving fast and I want to
+            of them wait for the lookup (feedback: "if I'm moving fast and I want to
             take a nice pic instantly after scanning a barcode, I should be
             able to do that. same for discard."). Before the row lands the
             press goes through onEarly: the page closes the sheet NOW and runs

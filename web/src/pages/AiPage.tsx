@@ -87,7 +87,7 @@ export function AiPage() {
   }, [capDefaultsQ.data]);
   // Is there any workspace-owned provider you could actually pin a job to? When
   // there isn't (e.g. AI is provided only by the plan), the pencil would open a
-  // dead-end modal - so the row shows an inline hint instead (the author, 2026-07-31).
+  // dead-end modal - so the row shows an inline hint instead (reported 2026-07-31).
   const canPin = (cap: string): boolean =>
     (providersQ.data?.items ?? []).some(
       (p) => p.enabled && defByPid.get(p.provider_id)?.capabilities[cap as never] !== undefined,
@@ -1304,7 +1304,7 @@ function WorkspaceBridgeHint() {
 //
 // It also lives as a chip in the scan inbox header, which is where you are when
 // you think about photos — but a chip in a busy toolbar is not where anyone
-// LOOKS for "the global AI switch" (the author went hunting for it and had to ask). A
+// LOOKS for "the global AI switch" (someone went hunting for it and had to ask). A
 // setting that spends AI belongs on the AI page too, next to the connections
 // that pay for it.
 function AutoPickPhotosSection({ slug, canEdit }: { slug: string; canEdit: boolean }) {

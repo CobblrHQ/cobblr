@@ -1,11 +1,11 @@
-# changelog.d — the live changelog archive
+# changelog.d: the live changelog archive
 
-One file per change. **This directory IS the archive** — entries land here in the
+One file per change. **This directory IS the archive**. Entries land here in the
 same feature PR that ships the change, and stay. The `/changelog` page reads them
 live (`GET /api/v1/changelog`), and the **daily changelog publisher** announces
-whatever shipped in each nightly — every user-facing entry, not just features —
+whatever shipped in each nightly (every user-facing entry, not only features)
 as ONE post per surface (Discord + the community forum), the morning after.
-Nothing consolidates or clears this dir, and the publisher is **read-only** — it
+Nothing consolidates or clears this dir, and the publisher is **read-only**: it
 has no repo write, no PR, no merge.
 (Pre-cutover history lives frozen in `CHANGELOG.md`; the page reads both.)
 
@@ -17,27 +17,47 @@ when multiple agents/people land changes in parallel. (The `changesets` model.)
 ```
 changelog.d/<short-slug>.md
 ---
-type: feature        # feature | improvement | fix
-scope: bundles       # optional — the area
+type: feature        # pick by AUDIENCE, see the table below
+scope: bundles       # optional, the area
 date: 2026-06-17     # the day it shipped (used to group it on the /changelog page)
 ---
 One user-facing line. Past tense, plain language, what changed for the user.
 ```
 
-- **Every type is announced.** `feature`, `improvement` and `fix` all appear in
-  the daily post (Discord + forum) and on the changelog page, grouped by type.
-  Discord used to carry features only, which meant it said nothing at all on the
-  ~30% of days that shipped no feature while the forum published a full day's
-  work. Same entries, same day, both surfaces.
-- **Internal pipeline noise is dropped automatically** by
-  `scripts/publish/changelog-filter.mjs` (the canary channel, the release job,
-  a new lint). Write for a user and you never think about it.
-- `announce:` is **obsolete** and ignored — it existed to opt a major fix into a
+### Who is it for? Pick `type:` by audience, not by size of change
+
+| `type:` | Who it is for | Where it goes |
+|---|---|---|
+| `feature` `improvement` `fix` `security` `performance` | everyone who uses Cobblr | the daily post (Discord + forum) and the changelog page |
+| `selfhost` | people running their OWN instance: image provenance, upgrade behaviour, compose/env changes, backup and restore | the same post, under its own **Self-hosting** heading |
+| `internal` | nobody outside this repo: the release job, CI, dev tooling, lints, worktrees | **announced nowhere.** Kept only so the repo's history records it |
+
+The test is who benefits, not how big it was. "The container images now carry a
+link to their source" is real news to a self-hoster and noise to everyone on the
+hosted service, so it is `selfhost`, not a `feature`. "The nightly release works
+when it runs on the deploy box" helps nobody but us, so it is `internal`.
+
+Both of those shipped as user-facing entries on 2026-08-09, one of them under
+"Features". `lint:changelog` now asks the question at PR time: an entry that reads
+like maintainer plumbing but is typed for users fails with the choice above. And
+since bugfixes never needed an entry at all, the cheapest answer for pure plumbing
+is to write none.
+
+- **Every user-facing type is announced.** `feature`, `improvement` and `fix` all
+  appear in the daily post and on the changelog page, grouped by type. Discord
+  used to carry features only, which meant it said nothing at all on the ~30% of
+  days that shipped no feature while the forum published a full day's work. Same
+  entries, same day, both surfaces.
+- **Pipeline noise is caught automatically too** by
+  `scripts/publish/changelog-filter.mjs` (the canary channel, the release job, a
+  new lint), the net for entries that did not declare an audience. An explicit
+  `type:` always wins over the net.
+- `announce:` is **obsolete** and ignored. It existed to opt a major fix into a
   features-only Discord feed. Harmless if present; stop adding it.
 - `date:` → groups the entry on the page. Use the day you ship it. Missing → the
   entry shows under "Unreleased" until corrected.
 
-## Staged docs (features only — write at merge, publish at release)
+## Staged docs (features only: write at merge, publish at release)
 
 A `type: feature` entry ALSO carries the feature's user documentation, written
 in the same PR while the feature is fresh
@@ -59,7 +79,7 @@ the target section once this entry's last commit is LIVE on the release
 surface, then stamps `docs_published:`.
 ```
 
-- `docs_target: <path.md>#<heading>` — the path must exist; the flush appends
+- `docs_target: <path.md>#<heading>`: the path must exist, and the flush appends
   the prose at the end of that heading's section (creates it if missing).
 - Contributor-facing / internal features opt out explicitly:
   `docs_target: none (<reason>)`.
@@ -73,20 +93,20 @@ surface, then stamps `docs_published:`.
   `docs_target: none (documented directly in USER_GUIDE.md <section>)`.
   `lint:staged-docs-reachable` enforces it.
 - **Updating an unshipped feature? Edit its staged entry's `## docs` in the
-  same PR** — that's the point: the docs stay fresh because they live in the
+  same PR**. That is the point, because the docs stay fresh when they live in the
   diff. (The lint prints a nudge when your PR shares a scope with staged
   blurbs.)
-- `docs_published:` is stamped by the flush — never write it by hand. After
+- `docs_published:` is stamped by the flush, so never write it by hand. After
   publish, doc corrections go straight to the target file.
 
 ## The PUBLIC docs site is tracked separately
 
 `docs_target` and the flush only touch **this repo's** `USER_GUIDE.md`. The public
-Docusaurus site (`CobblrHQ/docs`) has **no automatic wire to the changelog** — a
+Docusaurus site (`CobblrHQ/docs`) has **no automatic wire to the changelog**, so a
 feature here does not update a public page on its own. That site reconciles
 against the changelog with its own report (`npm run docs:debt` there, which reads
 `changelog.d/` and routes each user-facing entry to the pages it should update,
-**keyed by `scope:`** — which is why `lint:changelog` now requires a scope on
+**keyed by `scope:`**, which is why `lint:changelog` now requires a scope on
 every feature). So a good `scope:` on your entry is what keeps the public docs
 from going stale, not just this repo's manual.
 
@@ -98,15 +118,15 @@ the public docs at release. Write like a person explaining their own product
 plainly. The mechanical rules live in ONE place, `scripts/prose-rules.mjs`
 (shared with the docs site's lint), and the gate applies them to every entry a
 push touches. The short version: no em dashes; no candor-performance
-("honestly", "the honest truth", "genuinely" as an intensifier); no signposting
-("worth noting", "the key thing is"); no "not just X" reframes; no
-AI-marketing words (seamless, leverage, empower). A genuine false positive can
+(performed candour, or an intensifier standing in for evidence); no signposting
+(announcing a point instead of making it); no rhetorical reframes; no
+AI-marketing vocabulary. A false positive that survives review can
 end its line with `<!-- prose-ok -->`.
 
 ## When (enforced by `lint:changelog`)
 
-A **feature** — a `feat:` commit, a new `modules/<name>/`, or a module
-minor/major bump — must add an entry here. A **bundle** feature is exempt: its
+A **feature**, meaning a `feat:` commit, a new `modules/<name>/`, or a module
+minor/major bump, must add an entry here. A **bundle** feature is exempt: its
 manifest `changelog` bump *is* its entry (the digest reads bundle bumps too).
 Bugfixes / chores / docs-only changes are exempt.
 

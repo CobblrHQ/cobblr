@@ -1,6 +1,6 @@
 {
   "manifest": {
-    "id": "cobblr.flagship.documents-renewals",
+    "id": "cobblr.flagship.documents",
     "catalog": "extended",
     "version": "0.2.3",
     "name": "Documents",

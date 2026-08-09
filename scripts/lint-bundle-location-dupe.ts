@@ -1,7 +1,7 @@
 // Guard: a bundle must NOT declare a custom FIELD that duplicates the platform's
 // native Location. A home item's room / a supply's area IS its Location (an area
 // in the workspace tree) — a bespoke "room"/"area"/"location" text field is a
-// SECOND, drifting "where" (the author, VG245: one scanned item showed a "Room" field
+// SECOND, drifting "where" (reported (VG245): one scanned item showed a "Room" field
 // AND the Location). This flags any field_def whose name is an unambiguous
 // location word so a new bundle can't re-introduce the dupe.
 //

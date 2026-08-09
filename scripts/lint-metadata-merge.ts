@@ -14,7 +14,7 @@
 //   - appendScanHistory read the bag, appended an entry, and wrote it all back -
 //     destroying the `pre_rerun` snapshot the replay had just written. The
 //     "Put it back" button never appeared and a hand-picked catalog photo was
-//     unrecoverable (the author, 2026-08-01).
+//     unrecoverable (reported 2026-08-01).
 //
 // Allowed: mergeMeta / identityMeta / dropMeta, or a raw sql`` expression that
 // evaluates against the LIVE row. Banned: a JS object or a JSON.stringify of one.

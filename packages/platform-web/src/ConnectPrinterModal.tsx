@@ -89,7 +89,11 @@ const INSTALL_CMD = [
   "      transport: macrfcomm",
   "      mac: \"YOUR-PRINTER-ADDRESS\"",
   "      protocol: tspl' \\",
-  "  git.example.com/cobblrhq/edge-bridge:latest",
+  // NOTE: this image is not published yet. It pointed at a private registry
+  // on a tailnet, which only ever resolved for its maintainer; a public
+  // address at least fails with a clear "not found" and becomes correct the
+  // moment the image is pushed. Publish it before offering this door publicly.
+  "  ghcr.io/cobblrhq/edge-bridge:latest",
 ].join("\n");
 
 export function ConnectPrinterModal(props: ConnectPrinterModalProps) {

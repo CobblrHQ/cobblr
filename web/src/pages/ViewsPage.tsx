@@ -316,7 +316,10 @@ export function SavedViewBody({
       {items.length > 0 && view.view_type === "heatmap" && (
         <HeatmapRenderer items={items} cfg={cfg} />
       )}
-      {items.length > 0 && view.view_type !== "kanban" && view.view_type !== "table" && view.view_type !== "trend" && view.view_type !== "calendar" && view.view_type !== "gantt" && view.view_type !== "gallery" && view.view_type !== "heatmap" && (
+      {items.length > 0 && view.view_type === "vending" && (
+        <VendingRenderer items={items} cfg={cfg} />
+      )}
+      {items.length > 0 && view.view_type !== "kanban" && view.view_type !== "table" && view.view_type !== "trend" && view.view_type !== "calendar" && view.view_type !== "gantt" && view.view_type !== "gallery" && view.view_type !== "heatmap" && view.view_type !== "vending" && (
         <ListRenderer items={items} />
       )}
     </div>
@@ -606,6 +609,101 @@ function EntityTitleLink({ row, className }: { row: ViewRow; className?: string 
     <Link to={href} className={`${className ?? ""} hover:text-accent hover:underline`}>
       {row.title}
     </Link>
+  );
+}
+
+// Vending-machine renderer — the pantry as a wall of slots you read at a glance.
+//
+// Glanceability over density: quantity as a badge, freshness as one coloured
+// dot, and an empty slot that LOOKS empty. Someone standing in the kitchen
+// should answer "do we have any?" without parsing a table.
+//
+// Generic on purpose: the quantity / expiry / reorder-level fields are read by
+// name from cfg (defaults suit the Groceries bundle), so the same renderer
+// serves a filament shelf or a medicine cabinet. Nothing here knows about food.
+function VendingRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
+  const c = cfg as unknown as { qty_field?: string; expiry_field?: string; min_qty_field?: string };
+  const qtyField = c.qty_field ?? "qty";
+  const expiryField = c.expiry_field ?? "expires_on";
+  const minQtyField = c.min_qty_field ?? "min_qty";
+
+  const dayDiff = (iso: unknown): number | null => {
+    if (typeof iso !== "string" || !iso) return null;
+    const t = Date.parse(iso);
+    if (Number.isNaN(t)) return null;
+    const midnight = new Date();
+    midnight.setHours(0, 0, 0, 0);
+    return Math.round((t - midnight.getTime()) / 86_400_000);
+  };
+  const num = (v: unknown): number | null => {
+    if (v === null || v === undefined || v === "") return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  return (
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+      {items.map((row) => {
+        const f = row.fields ?? {};
+        const qty = num(f[qtyField]);
+        const minQty = num(f[minQtyField]);
+        const days = dayDiff(f[expiryField]);
+        const out = qty !== null && qty <= 0;
+        const expired = !out && days !== null && days < 0;
+        const expiring = !out && days !== null && days >= 0 && days <= 2;
+        const low = !out && qty !== null && minQty !== null && qty <= minQty;
+
+        // One dot carries the whole status, so the grid reads as a wall of
+        // lights instead of rows to scan.
+        const dot = out
+          ? "bg-slate-400 dark:bg-slate-600"
+          : expired
+            ? "bg-red-500"
+            : expiring
+              ? "bg-amber-500"
+              : low
+                ? "bg-cobble-500"
+                : "bg-emerald-500";
+
+        const meta = out
+          ? "out of stock"
+          : expired
+            ? `expired ${-(days as number)}d ago`
+            : days !== null
+              ? days === 0
+                ? "expires today"
+                : `expires in ${days}d`
+              : low
+                ? "running low"
+                : "in stock";
+
+        return (
+          <div
+            key={`${row.kind}:${row.id}`}
+            className={
+              "relative rounded-lg border p-3 transition " +
+              (out
+                ? "border-line dark:border-slate-700 bg-subtle/50 dark:bg-slate-900/50 opacity-70"
+                : "border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 hover:border-cobble-400")
+            }
+          >
+            <span className={`absolute right-2 top-2 h-2 w-2 rounded-full ${dot}`} aria-hidden />
+            {qty !== null && !out && (
+              <span className="absolute bottom-2 right-2 rounded-full border border-line dark:border-slate-600 bg-panel dark:bg-slate-900 px-1.5 text-[11px] font-bold text-content dark:text-slate-100">
+                ×{qty}
+              </span>
+            )}
+            <EntityTitleLink row={row} className="block pr-4 text-sm font-semibold" />
+            <div className="mt-0.5 text-[11px] text-muted dark:text-slate-400">{meta}</div>
+            {out && (
+              <div className="mt-2 inline-block rounded bg-red-500/90 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white">
+                Sold out
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -1013,7 +1111,7 @@ function CreateViewModal({
 }) {
   const [entityKind, setEntityKind] = useState("inventory:part");
   const [name, setName] = useState("");
-  const [viewType, setViewType] = useState<"list" | "table" | "kanban" | "trend" | "calendar" | "gantt" | "gallery" | "heatmap">("list");
+  const [viewType, setViewType] = useState<"list" | "table" | "kanban" | "trend" | "calendar" | "gantt" | "gallery" | "heatmap" | "vending">("list");
   const [groupBy, setGroupBy] = useState("subtitle");
   const [columns, setColumns] = useState<string[]>(["title", "subtitle"]);
   const [dateField, setDateField] = useState("due_date");
@@ -1154,7 +1252,7 @@ function CreateViewModal({
         <label className="block">
           <div className="text-xs text-muted mb-1">Layout</div>
           <div className="flex gap-1">
-            {(["list", "table", "kanban", "trend", "calendar", "gantt", "gallery", "heatmap"] as const).map((t) => (
+            {(["list", "table", "kanban", "trend", "calendar", "gantt", "gallery", "heatmap", "vending"] as const).map((t) => (
               <button
                 key={t}
                 type="button"
@@ -1330,8 +1428,8 @@ function EditViewModal({
   // changing it would invalidate the config's filter / where /
   // sort which are kind-specific.
   const [name, setName] = useState(view.name);
-  const [viewType, setViewType] = useState<"list" | "table" | "kanban" | "trend" | "calendar" | "gantt" | "gallery" | "heatmap">(
-    (view.view_type as "list" | "table" | "kanban" | "trend" | "calendar" | "gantt" | "gallery" | "heatmap") ?? "list",
+  const [viewType, setViewType] = useState<"list" | "table" | "kanban" | "trend" | "calendar" | "gantt" | "gallery" | "heatmap" | "vending">(
+    (view.view_type as "list" | "table" | "kanban" | "trend" | "calendar" | "gantt" | "gallery" | "heatmap" | "vending") ?? "list",
   );
   const cfg = (view.config ?? {}) as ViewConfig;
   const fields = useKindFields(slug, view.entity_kind);
@@ -1469,7 +1567,7 @@ function EditViewModal({
         <label className="block">
           <div className="text-xs text-muted mb-1">Layout</div>
           <div className="flex gap-1">
-            {(["list", "table", "kanban", "trend", "calendar", "gantt", "gallery", "heatmap"] as const).map((t) => (
+            {(["list", "table", "kanban", "trend", "calendar", "gantt", "gallery", "heatmap", "vending"] as const).map((t) => (
               <button
                 key={t}
                 type="button"

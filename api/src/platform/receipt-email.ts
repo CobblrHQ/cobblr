@@ -1,7 +1,7 @@
 // Per-(user, workspace) receipt forwarding address — STATELESS + signed.
 //
 // A user gets a personal address PER workspace, e.g.
-//   receipts+<token>@cobblr.me
+//   receipts+<token>@cobblr.example.com
 // where <token> = base64url(userId16 ++ orgId16) + "." + base64url(hmac6). The
 // token both NAMES the target (which user, which workspace — solving the
 // multi-workspace ambiguity Ramp sidesteps by being one-org-per-user) and PROVES

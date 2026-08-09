@@ -1,6 +1,6 @@
 {
   "manifest": {
-    "id": "cobblr.flagship.warranties-receipts",
+    "id": "cobblr.flagship.warranties",
     "catalog": "extended",
     "version": "0.2.2",
     "name": "Warranties",

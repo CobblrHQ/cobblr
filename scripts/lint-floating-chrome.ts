@@ -1,6 +1,6 @@
 // Floating chrome (fixed, bottom-anchored pills/FABs) whose z-index BEATS the
 // right-side panel's z-[60] floats OVER an open Ask Cobb / Notifications sheet
-// — the Live pill (z-900) sat on top of Cobb's send button on mobile (the author,
+// — the Live pill (z-900) sat on top of Cobb's send button on mobile (reported
 // 2026-08-01), and Quick access (z-80) had the same latent bug. Anything that
 // out-stacks the panel must carry HIDE_WHEN_SIDE_PANEL_OPEN (SidePanel.tsx) so
 // it yields while a panel is open. Chrome BELOW z-60 is fine: the panel simply
@@ -21,7 +21,7 @@ const ROOTS = ["web/src", "packages", "modules"];
 // A MODAL is z-50 — the lowest overlay, and the most common one — so
 // anything above that can cover an overlay. The first version used the
 // side panel's 60 and let the z-55 feedback bubble float over every modal
-// on a phone (the author, 2026-08-01).
+// on a phone (reported 2026-08-01).
 const PANEL_Z = 50;
 // Either spelling: the flag moved into platform-web as HIDE_WHEN_OVERLAY_OPEN
 // (modals set it too now); SidePanel re-exports the old name.

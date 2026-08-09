@@ -8,7 +8,7 @@
 //
 // Before this there were three lookalikes — the scan catalog zoom, the image
 // search "view full size", and a one-off attachment lightbox — each drifting.
-// This is the single one they all now use (the author, 2026-07-24).
+// This is the single one they all now use (reported 2026-07-24).
 //
 // Sources are either an authed core-files reference ({ slug, fileId }, routed
 // through useImageSrc for the Bearer token) or a plain url (an already-resolved

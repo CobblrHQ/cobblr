@@ -6,7 +6,7 @@
 // A DRAWER, NOT A MODAL, on purpose. A modal is right for one decision you
 // finish and dismiss; this is a list you browse, opening several fields in a
 // row to compare or tidy them. An overlay blanked the list behind it and threw
-// away your scroll position on every open/close (the author, 2026-07-18). See
+// away your scroll position on every open/close (reported 2026-07-18). See
 // docs/architecture/ui-conventions.md — "overlay or in place".
 
 import { useEffect, useState } from "react";

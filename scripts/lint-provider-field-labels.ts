@@ -2,7 +2,7 @@
 // credential-field copy must describe the generic CAPABILITY, not a specific
 // hosted AI product. (prevent-recurrence guardrail: shipped alongside the fix for
 // an `mcp_relay` field that read "Is this a Claude-subscription bridge?" — naming
-// the author's specific bridge in a field every local-AI connection renders. That
+// one specific bridge in a field every local-AI connection renders. That
 // violates Cobblr's "generic, never use-case/product-shaped" rule.)
 //
 // The class: a field `label:` (or a choice `label:`) in a generic/local provider

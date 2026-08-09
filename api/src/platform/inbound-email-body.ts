@@ -61,7 +61,7 @@ export function bestReceiptBody(text: string | undefined, html: string | undefin
  *  From `receipt-noreply@<domain>` and NO Reply-To — an earlier version set
  *  Reply-To to the workspace's `receipts+<token>@` address, which meant a user who
  *  replied to ask a question ("what is this?") had their reply INGESTED as a junk
- *  inbox item (the author, 2026-07-24). Ingest happens by FORWARDING a receipt to the
+ *  inbox item (reported 2026-07-24). Ingest happens by FORWARDING a receipt to the
  *  address on the Scan page, never by replying here (and the dispatcher ignores
  *  mail to no-reply addresses). Still threads under the original via In-Reply-To/
  *  References so the confirmation lands in the same conversation. `address` is any

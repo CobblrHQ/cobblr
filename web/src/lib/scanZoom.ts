@@ -1,10 +1,10 @@
 // Auto-zoom: put more pixels on a code that is too small to read, instead of
 // asking the user to lean in.
 //
-// "Scanning takes a while and needs me to fiddle with the distance" (the author,
+// "Scanning takes a while and needs me to fiddle with the distance" (reported
 // 2026-08-04). Distance was the one lever with no answer: focus is
 // unsupported on the device, lighting is the torch's job, angle is the
-// orientation estimator's. Zoom is available (1-10 on the author's iPhone) and until
+// orientation estimator's. Zoom is available (1-10 on the reference iPhone) and until
 // now was a manual ?zoom=N knob.
 //
 // The signal is free. The orientation estimator already locates the barcode

@@ -348,7 +348,7 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
       <OverlayFlag />
       {/* Header */}
       {/* The heading and the actions competed for a phone's width and the
-          heading lost, wrapping to roughly one word per line (the author, 2026-08-05).
+          heading lost, wrapping to roughly one word per line (reported 2026-08-05).
           A full-screen sheet has vertical room to spare, so below `sm` the
           actions take their own line and the heading gets the full width. */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 border-b border-line dark:border-slate-800 px-4 py-3">

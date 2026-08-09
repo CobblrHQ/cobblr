@@ -115,7 +115,7 @@ export function measurementContext(input: Record<string, unknown>): string {
   // Categories this workspace is ALREADY using. Every item is identified on its
   // own, so without this each call invents its own wording and siblings drift
   // apart by construction - three shirts scanned together came back "apparel",
-  // "apparel" and "clothing" (the author, 2026-07-30). Showing the vocabulary is the
+  // "apparel" and "clothing" (reported 2026-07-30). Showing the vocabulary is the
   // cheapest fix: reuse beats reconciliation.
   const known = Array.isArray(input.known_categories)
     ? (input.known_categories as unknown[])

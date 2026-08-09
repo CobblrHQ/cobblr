@@ -5,6 +5,8 @@
 // paperback the user actually has, not a random hardcover). Keyless public API;
 // best-effort; in-process cached so a shelf of one series hits it once per title.
 
+import { userAgent } from "@cobblr/platform-contract/outbound-identity";
+
 interface OlSearchDoc {
   key?: string;
   isbn?: string[];
@@ -28,7 +30,7 @@ const yearOf = (d?: string) => {
 function reqInit(): RequestInit {
   return {
     signal: AbortSignal.timeout(6000),
-    headers: { "User-Agent": "Cobblr scan (+https://cobblr.me) openlibrary lookup", Accept: "application/json" },
+    headers: { "User-Agent": userAgent("openlibrary lookup"), Accept: "application/json" },
   };
 }
 function pickIsbn13(list?: string[]): string | null {

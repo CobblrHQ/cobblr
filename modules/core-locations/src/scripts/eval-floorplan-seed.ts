@@ -5,7 +5,7 @@
 // API-level eval (the test-match-template convention): it creates a throwaway
 // location in the target workspace, runs /floorplan/seed with dry_run (writes
 // NOTHING), asserts the drafted geometry against the canonical fixture — the
-// description the author gave verbatim — then deletes the throwaway location.
+// description given verbatim — then deletes the throwaway location.
 //
 // Env: COBBLR_API (default http://localhost:4000/api/v1),
 //      COBBLR_TOKEN + COBBLR_SLUG (a cbt_ token + workspace with AI resolving).
@@ -16,7 +16,7 @@ const API = process.env.COBBLR_API ?? "http://localhost:4000/api/v1";
 const TOKEN = process.env.COBBLR_TOKEN ?? "";
 const SLUG = process.env.COBBLR_SLUG ?? "";
 
-// The canonical fixture — the author, 2026-07-09, verbatim.
+// The canonical fixture — reported 2026-07-09, verbatim.
 // Fixture includes the furniture sentence ON PURPOSE: the model must resist
 // drafting the rack/toolboxes/bench as zones (verified live 2026-07-09 — it
 // did), so the no-furniture assertion has teeth.

@@ -4,7 +4,7 @@
 // right for a modal over a page, and wrong for one over the camera: the scan
 // result card is positioned over a running viewfinder ON PURPOSE, so you can
 // keep the item in frame while you read the match. Going full-bleed turned it
-// into a blocking page and hid the thing you were pointing at (the author: "that one
+// into a blocking page and hid the thing you were pointing at (feedback: "that one
 // actually needed to be the way that it was").
 //
 // This is a CONTEXT rather than a per-modal prop deliberately. Every modal the

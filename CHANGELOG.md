@@ -2,6 +2,21 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-08-09
+
+### Features
+- Cobblr can now learn how fast you go through something and put it on your shopping list before you run out, instead of waiting for you to cross a reorder line. Turn on the new Cadence capability and the Groceries bundle starts learning from ordinary shopping: every time you check an item off the list it quietly records the restock, and once there is enough history it predicts the next run-out. It also notices the opposite problem, telling you to buy less of something that keeps going bad rather than reordering it on schedule.
+- The published container images now say where they come from: each one carries a link to the public source repository, a description and its licence, so the GitHub package page shows a README and a link back to the code instead of a bare list of tags.
+- Say "I'll get it" on a shopping list so nobody comes home with two of the same thing. Every open line gets a claim toggle, your name shows on it for everyone else, and the list refreshes itself while it is open. Checking the line off clears the claim.
+- Put something where it actually belongs. A book on your Bookshelf that is really just inventory, or a kitchen item that wants its own "Cooking Stuff" list, can now be moved instead of deleted and retyped. The record keeps everything: its history, its tags, its photos, and the QR label already stuck on the thing.
+- The Groceries bundle now installs a What's on hand app: a vending-machine view of the kitchen with a quantity badge and a status dot per item, and a use-it-or-lose-it list sorted by what expires first. Bundle-authored apps can finally use view and stat blocks, by naming a view the bundle provides instead of pasting an id that only exists in one workspace.
+
+### Improvements
+- Bundles in the catalog are now named for the thing they track, all the way down. Groceries, Pets, Plants, Vehicles, Documents, Warranties and Filament used to carry older internal names behind the scenes (Groceries was filed as "food-cluster"), which made them hard to find when searching. Anything you already installed keeps working and updates itself; you may see a version bump on those bundles. Three titles also dropped the phrasing that described what they do rather than what they are: Household Supplies, Home Maintenance, and Grocery Spend.
+
+### Fixes
+- The automated nightly release works when it runs on the deploy box itself. Every script that needed the box reached it in a way that only worked from a developer's machine, so the scheduled release refused to run.
+
 ## 2026-08-08
 
 ### Improvements

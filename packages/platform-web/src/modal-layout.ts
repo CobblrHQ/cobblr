@@ -8,7 +8,7 @@
 //  2. UNLESS something live is behind it. The scan result card sits over a
 //     running viewfinder on purpose; full-bleed turned it into a blocking page
 //     and hid the thing you were pointing at, which is the regression rule 1
-//     caused (the author: "that one actually needed to be the way that it was").
+//     caused (feedback: "that one actually needed to be the way that it was").
 //
 // dvh everywhere, never vh: on iOS 100vh is the LARGE viewport (measured as if
 // the browser toolbars were retracted), so a vh-sized overlay is taller than

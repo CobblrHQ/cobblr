@@ -1,6 +1,6 @@
 // The one right-side overlay panel (Ask Cobb, Notifications). It exists to hold
 // two rules in ONE place, both learned from the mobile bug where Ask Cobb sat
-// shifted down with its composer below the fold (the author, 2026-08-01):
+// shifted down with its composer below the fold (reported 2026-08-01):
 //
 //  1. NEVER size an overlay with `h-screen` / `100vh`. On iOS `100vh` is the
 //     LARGE viewport (as if the toolbars were retracted), so the panel is

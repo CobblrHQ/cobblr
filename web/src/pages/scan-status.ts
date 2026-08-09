@@ -10,7 +10,7 @@ import type { ScanInboxItem } from "../lib/api";
 // disagreed for the full ~60s of a real AI re-run: the header read these
 // timestamps (correct: still running) while the card tracked only its own detached
 // mutation (`rerun.isPending || reading`, which cleared the instant the name
-// landed), so "1 finishing" showed with no spinner (the author, 2026-07-17). It lives
+// landed), so "1 finishing" showed with no spinner (reported 2026-07-17). It lives
 // here, not in ScanPage, so both the page and its test import ONE truth (and the
 // no-page-imports-a-page lint stays satisfied). The 300s ceiling is the backstop
 // for a run that dies without ever stamping finalized_at; the backend stamps it on
@@ -51,7 +51,7 @@ export function itemEnriching(it: ScanInboxItem, now = Date.now()): boolean {
   // still reads as "matching" while the server routes it; otherwise aiAgeMs is
   // Infinity, serverMatching is false, and the line looks DONE the instant it
   // appears: no spinner + only the slow idle poll, so an EMAILED receipt looked
-  // frozen and didn't refresh live (the author, 2026-07-24). matched_at ends it either way.
+  // frozen and didn't refresh live (reported 2026-07-24). matched_at ends it either way.
   const freshMs = it.created_at ? now - new Date(it.created_at).getTime() : Infinity;
   const workingAgeMs = Math.min(aiAgeMs, freshMs);
   const serverMatching =

@@ -4,7 +4,7 @@
 // signupFreshOrg CHECK ONE OUT — a claim + a token, no provisioning on the test
 // critical path.
 //
-// Entirely gated on COBBLR_TEST_ORG_POOL. Prod / staging / cobblr.me never set
+// Entirely gated on COBBLR_TEST_ORG_POOL. Prod / staging / the hosted service never set
 // it, so nothing here runs there (the checkout route isn't even registered, the
 // table stays empty). CI + the test rig are the only callers.
 //

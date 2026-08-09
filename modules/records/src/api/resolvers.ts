@@ -98,7 +98,7 @@ export function registerRecordsResolvers(): void {
   // entities.lookup — returns null. That is exactly what silently broke the
   // cover auto-fetch for a book on a shelf: the search phrase is derived from
   // a lookup, so it derived nothing and then reported "these need a name
-  // first" about records that plainly had names (the author, 2026-07-18).
+  // first" about records that plainly had names (reported 2026-07-18).
   // lint:instance-resolvers now enforces the pair.
   platform().entities.registerInstanceResolver("records", async (orgId, instance, id) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<RecordsDB>;

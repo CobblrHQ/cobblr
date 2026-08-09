@@ -54,7 +54,7 @@ export const NATIVE_FORMATS = [
  */
 /** Idle between decode attempts.
  *
- *  Was 110ms, chosen blind. ?diag=1 on the author's iPhone (2026-08-05) measured a
+ *  Was 110ms, chosen blind. ?diag=1 on the reference iPhone (2026-08-05) measured a
  *  166ms cycle at 6 attempts/sec — and since that interval is decode PLUS this
  *  delay, the decode itself is only ~56ms: two thirds of every cycle was
  *  deliberate idle while he held the phone still waiting for a read.
@@ -122,7 +122,7 @@ export interface SmartDecodeResult {
  *  · our blind 90° retry, which fixed perpendicular codes but covered only one
  *    orientation and DOUBLED the chances of a diagonal slice misreading as a
  *    shorter checksum-valid code (a UPC-A scanned as EAN-8 "33720272" at ~45°,
- *    the author 2026-08-05).
+ *    reported 2026-08-05).
  * Measuring first means ONE aimed attempt, only when something stripe-like is
  * actually in frame — fewer decode passes on junk, not more.
  */
@@ -132,7 +132,7 @@ export interface SmartDecodeResult {
  *  frame, measured 2026-08-05) and the effort it buys is mostly its own
  *  rotated retry — the broken one this module routes around by measuring the
  *  angle instead. Every frame with no code in it paid that toll, which is why
- *  the loop fell to 2.2 attempts/sec on the author's phone. The upright sweep runs
+ *  the loop fell to 2.2 attempts/sec on the reference phone. The upright sweep runs
  *  lean; the passed-in thorough reader still does the AIMED passes, where a
  *  code has actually been located and maximum effort is worth paying for. */
 let sweepReader: BrowserMultiFormatReader | null = null;
@@ -248,7 +248,7 @@ export function lensOverride(search?: string): RegExp | null {
 /**
  * Score-pick the best rear lens from enumerated devices.
  *
- * NOTE ON THE RANKING, which was inverted for iPhone (the author, 2026-08-05): the
+ * NOTE ON THE RANKING, which was inverted for iPhone (reported 2026-08-05): the
  * "ultra-wide can't focus near" premise is true of most ANDROID ultra-wides
  * (fixed focus) and FALSE on iPhone 13 Pro and later, where the ultra-wide
  * gained autofocus and IS the macro lens (~2cm) while the main wide bottoms out
@@ -352,7 +352,7 @@ export async function acquireScannerStream(
  * sharp as the phone moves. Best-effort; not every device exposes it.
  */
 /** Apply ?zoom=N when the track supports it. Zoom puts more pixels on a distant
- *  barcode without walking closer — the author's iPhone reports 1-10 available. Off by
+ *  barcode without walking closer — the reference iPhone reports 1-10 available. Off by
  *  default: narrowing the field of view costs aim, and which trade wins is a
  *  shelf question. */
 export function applyZoomOverride(track: MediaStreamTrack | null): void {

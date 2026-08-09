@@ -156,7 +156,7 @@ export function MeNotificationsPage() {
                   <div className="flex-1 min-w-0">
                     {/* Wrap to a couple of lines — a single truncated line cut
                         the key phrase off on mobile (the org badge squeezes the
-                        row), so "the author offered to share their…" lost its point. */}
+                        row), so "Alex offered to share their…" lost its point. */}
                     <div className="text-sm text-content dark:text-mortar-100 line-clamp-2">
                       {n.message}
                     </div>

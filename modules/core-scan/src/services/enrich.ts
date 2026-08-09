@@ -1224,7 +1224,7 @@ async function writeTenantCache(ctx: EnrichContext, v: BarcodeCacheValue): Promi
  *  "no image" graphic instead of nothing at all. go-upc serves
  *  `https://go-upc.com/img/no-image-placeholder.png`, and we stored it, uploaded
  *  it and rendered it as the product's photo — over a real photo the user had
- *  already taken (the author, 2026-07-20: a Buc-ee's mug showed a grey crossed-out
+ *  already taken (reported 2026-07-20: a Buc-ee's mug showed a grey crossed-out
  *  camera).
  *
  *  Nothing is lost by refusing these: no image at all is honest and leaves the
@@ -1274,7 +1274,7 @@ export async function downloadCatalogImage(
         // Look like a BROWSER, not a bot: a real UA + a same-origin Referer +
         // an image Accept. Hotlink protection keys on exactly these — a missing
         // Referer / bot UA is why an image the user can SEE full-screen (their
-        // browser sends them) 403s when WE fetch it (the author, 2026-07-24).
+        // browser sends them) 403s when WE fetch it (reported 2026-07-24).
         headers: browserImageHeaders(imageUrl),
         signal: AbortSignal.timeout(8_000),
       });

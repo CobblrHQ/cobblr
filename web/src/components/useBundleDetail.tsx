@@ -1,6 +1,6 @@
 // Open a bundle's detail modal WHERE YOU ARE.
 //
-// House rule (the author, 2026-08-01): a modal appears on the page it was invoked
+// House rule (reported 2026-08-01): a modal appears on the page it was invoked
 // from. Six places used to answer "show me that bundle" by navigating to
 // /bundles and opening the modal there, which is a different page behind a
 // dialog, and — worse — throws away whatever the user was in the middle of.

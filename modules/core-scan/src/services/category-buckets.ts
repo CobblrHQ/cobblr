@@ -6,7 +6,7 @@
 // "Whisky américain", "Tequilas", "Liqueurs" and "spirits" are all one shelf.
 // On a brand-new workspace with no bins yet, the heuristic proposes no bins, so
 // every item used to dead-end at "unassigned" — the planner told you nothing
-// about where anything should go (the author, 2026-07-11: "it's not telling me where
+// about where anything should go (reported 2026-07-11: "it's not telling me where
 // to put anything").
 //
 // This rolls those noisy categories into a small set of COARSE STARTER BINS so

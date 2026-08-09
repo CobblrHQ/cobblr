@@ -6,7 +6,7 @@
 // Meta-only (no tenant pools opened), idempotent (only unlinked users), and resilient
 // (a failed batch or a single link never aborts the rest). It PUSHES each user's existing
 // (bcrypt) password_hash so the migrated account can log in centrally unchanged; the
-// identity service merges duplicates by email (try + cobblr.me under one email → one id).
+// identity service merges duplicates by email (the trial + hosted deployments under one email → one id).
 
 import { meta } from "../db/meta.js";
 import { identityEnabled, backfillToIdentity, logIdentityConfig, type BackfillUser } from "../auth/identity-client.js";

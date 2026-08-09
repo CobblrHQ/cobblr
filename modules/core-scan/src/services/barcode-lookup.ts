@@ -34,7 +34,13 @@ export type BarcodeOutcome =
   // A provider was reachable but throttled and no other provider had the
   // product. The UPC is UNRESOLVED, not absent — the caller must leave the
   // cache untouched so a later scan retries.
-  | { outcome: "rate_limited"; scope: "burst" | "daily" };
+  | { outcome: "rate_limited"; scope: "burst" | "daily" }
+  // Configured, reachable, and it refused this install's key, with nothing else
+  // resolving the code. Same invariant as rate_limited: UNRESOLVED, not absent, so
+  // the caller must not cache it. Without this, an install misconfigured for an hour
+  // negative-caches every code it scans and fixing the key does not bring them back
+  // until those entries expire.
+  | { outcome: "unavailable"; reason: "auth" };
 
 // upcitemdb's trial can be slow under load; give it room. OPF is snappy.
 const UPCITEMDB_TIMEOUT_MS = 12_000;
@@ -420,6 +426,15 @@ const BIDB_TIMEOUT_MS = 12_000;
 
 export const bidbEnabled = (): boolean => Boolean(process.env.COBBLR_BIDB_URL?.trim());
 
+// Deliberately NO exported key-state helper here. The api reports configuration state
+// by reading the env directly, because importing a module's internals across the
+// isolation boundary is not allowed, and bidbEnabled() stays URL-only on purpose: the
+// SERVER decides whether a request is allowed (it 401s an unkeyed one today), so
+// letting it serve anonymous reads later needs no client change.
+
+// One line per process for a standing configuration fault, not one per scanned barcode.
+let bidbAuthWarned = false;
+
 export async function tryBidb(upc: string): Promise<ProviderResult> {
   const base = (process.env.COBBLR_BIDB_URL ?? "").replace(/\/+$/, "");
   const key = process.env.COBBLR_BIDB_KEY?.trim();
@@ -430,6 +445,12 @@ export async function tryBidb(upc: string): Promise<ProviderResult> {
   );
   if (status === 404) return { kind: "miss" }; // known-absent — safe to cache
   if (status === 429) return { kind: "rate_limited", scope: "daily" }; // over fair-use
+  // 401/403 is not a transport problem, it is a CONFIGURATION one: the URL is set and
+  // reachable, the key is missing, wrong or revoked. Marked so the caller can say that
+  // instead of "unreachable", which sends an operator looking at the network.
+  if (status === 401 || status === 403) {
+    throw Object.assign(new Error(`bidb rejected the key (HTTP ${status})`), { bidbAuth: true });
+  }
   if (status !== 200) throw new Error(`bidb HTTP ${status}`); // transport-ish → fall through
   // A hit is a flat product record (barcode-intelligence-db.md §3.5).
   const p = body as {
@@ -565,17 +586,36 @@ async function doLookupBarcode(norm: string): Promise<BarcodeOutcome> {
   // BIdb-only tier (the trial: external lookups off) never caches a rate-limit
   // as a permanent miss (the no-poison rule).
   let bidbThrottled = false;
+  let bidbAuthFailed = false;
   if (bidbEnabled()) {
     try {
       const r = await tryBidb(norm);
       if (r.kind === "hit") return { outcome: "hit", hit: r.hit };
       if (r.kind === "rate_limited") bidbThrottled = true;
     } catch (e) {
-      console.error(`[core-scan] bidb unreachable (${(e as Error).message}) — falling back to local chain`);
+      if ((e as { bidbAuth?: boolean }).bidbAuth) {
+        bidbAuthFailed = true;
+        // A standing misconfiguration, so say it ONCE and say what to do. Repeating it
+        // per scan buried it, and calling it "unreachable" pointed at the wrong thing.
+        if (!bidbAuthWarned) {
+          bidbAuthWarned = true;
+          console.error(
+            `[core-scan] BIdb rejected this install's key (${(e as Error).message}). Every lookup will ` +
+              `fall back to the local providers until COBBLR_BIDB_KEY is set to a valid key. ` +
+              `A URL without a key is not enough: the key is what selects the tier and the data class.`,
+          );
+        }
+      } else {
+        console.error(`[core-scan] bidb unreachable (${(e as Error).message}) — falling back to local chain`);
+      }
     }
   }
   const throttledMiss = (): BarcodeOutcome =>
-    bidbThrottled ? { outcome: "rate_limited", scope: "daily" } : { outcome: "miss" };
+    bidbThrottled
+      ? { outcome: "rate_limited", scope: "daily" }
+      : bidbAuthFailed
+        ? { outcome: "unavailable", reason: "auth" }
+        : { outcome: "miss" };
 
   // Third-party direct lookups — master switch (self-host privacy). Off ⇒ no
   // external barcode calls at all; only the cache + box resolver (above) answer.

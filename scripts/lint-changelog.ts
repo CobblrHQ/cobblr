@@ -24,6 +24,9 @@
 import { execSync } from "node:child_process";
 // @ts-expect-error plain .mjs module, shared with the docs site's lint
 import { lintProse } from "./prose-rules.mjs";
+// @ts-expect-error plain .mjs module, shared with the publisher so this gate and
+// the renderer can never disagree about who an entry is for
+import { ALL_ENTRY_TYPES, AUDIENCE_TYPES, isInternalChangelogEntry } from "./publish/changelog-filter.mjs";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 
 function git(cmd: string): string {
@@ -67,7 +70,31 @@ const malformed: string[] = [];
 for (const f of touchedEntries) {
   const raw = readFileSync(f, "utf8");
   const fm = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
-  if (!/^type:\s*(feature|improvement|fix)\s*$/m.test(fm)) malformed.push(`${f}: missing/invalid type:`);
+  const entryType = fm.match(/^type:\s*(\S+)\s*$/m)?.[1] ?? "";
+  if (!ALL_ENTRY_TYPES.includes(entryType)) {
+    malformed.push(`${f}: missing/invalid type: — one of ${ALL_ENTRY_TYPES.join(", ")}`);
+  }
+
+  // ── who is this FOR? ──
+  // The publisher has always had a regex net for maintainer-pipeline entries, but
+  // it ran at publish time and silently, so nobody ever saw its verdict. On
+  // 2026-08-09 "The automated nightly release works when it runs on the deploy box
+  // itself" was announced to Discord and the forum as a user-facing fix, and a
+  // build-provenance change went out under "Features". Ask the question HERE,
+  // where the author can still answer it.
+  if (AUDIENCE_TYPES.USER.includes(entryType)) {
+    const entryBody = raw.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "");
+    const entryScope = fm.match(/^scope:\s*(\S+)\s*$/m)?.[1] ?? "";
+    if (isInternalChangelogEntry(entryScope, entryBody)) {
+      malformed.push(
+        `${f}: reads as MAINTAINER plumbing but is typed "${entryType}", so it would be announced\n` +
+          `      to every user. Pick the audience:\n` +
+          `        type: internal   our own pipeline (release job, CI, dev tooling) — announced nowhere\n` +
+          `        type: selfhost   for people running their own instance — its own section in the post\n` +
+          `      If it really is user-facing, reword the lead to say what the USER gets.`,
+      );
+    }
+  }
   const dateStr = fm.match(/^date:\s*(\d{4}-\d{2}-\d{2})\s*$/m)?.[1];
   if (!dateStr) {
     malformed.push(`${f}: missing/invalid date: YYYY-MM-DD`);

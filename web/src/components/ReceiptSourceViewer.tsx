@@ -3,7 +3,7 @@
 // BY TYPE: an <img> for a photo, an <iframe> for a PDF, and a <pre> for text/html
 // (the emailed body). An earlier version always used an <iframe>, but the emailed
 // body is stored with no file extension so the browser typed the blob as
-// octet-stream and DOWNLOADED it instead of rendering (the author, 2026-07-24). The
+// octet-stream and DOWNLOADED it instead of rendering (reported 2026-07-24). The
 // source is an authed core-files reference fetched to a blob: URL via useImageSrc;
 // we then read that blob's content-type to pick the renderer.
 

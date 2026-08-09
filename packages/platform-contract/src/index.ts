@@ -3347,11 +3347,41 @@ export interface InstanceInfo {
   item_count: number | null;
 }
 
+/** How a module moves its own records between its own instances. Registering
+ *  one is what makes "Move to..." appear for that module: a module that has
+ *  not considered its instance-scoped foreign keys simply does not offer the
+ *  action, which is the right default. */
+export interface InstanceMoverContract {
+  /** Flip the instance column for these ids and return the ids actually moved.
+   *  MUST be a plain update. Never insert, never delete, never mint an id: the
+   *  record keeps its uuid, which is what lets its printed QR label and every
+   *  reference to it survive the move.
+   *
+   *  `db` is the platform's OPEN TRANSACTION on the tenant database, and the
+   *  implementation must use it rather than fetching its own handle. Calling
+   *  `tenants.getDb()` here would run the update on a different connection,
+   *  outside the transaction, so a later failure would roll back the reference
+   *  rewrites while leaving the records moved. */
+  move(orgId: string, ids: string[], from: string, to: string, db: unknown): Promise<string[]>;
+  /** The entity kind a record answers to in a given instance. Only the module
+   *  knows its own default-instance rule (inventory's default is
+   *  `inventory:part`; every named instance is `<instance>:item`). */
+  kindFor(instance: string): string;
+  /** The custom-field bag (`metadata`) of each of these records, so the move
+   *  preview can say which values would render unlabeled in the target. Read
+   *  through the module rather than the generic resolver because that projects
+   *  fields through `exposableFields`, which can hide the very custom values
+   *  this needs to count. */
+  metadataFor(orgId: string, ids: string[]): Promise<Array<Record<string, unknown>>>;
+}
+
 export interface PlatformInstances {
   registerItemCounter(
     moduleName: string,
     counter: (orgId: string, instanceName: string) => Promise<number>,
   ): void;
+  /** Opt this module into moving records between its instances. */
+  registerMover(moduleName: string, mover: InstanceMoverContract): void;
   /** Every instance in the workspace (all enabled modules' default + named
    *  instances), each enriched with its item count. Org-scoped — only what
    *  this workspace has turned on. */

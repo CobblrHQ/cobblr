@@ -9,7 +9,7 @@
 // reimplemented inline on SEVEN surfaces and only two knew about the check, so
 // the result sheet's photo strip announced the catalog shot as the "Display
 // photo" while the image right above it deliberately showed the user's own
-// (the author, 2026-08-04). Surfaces that answer the same question separately drift.
+// (reported 2026-08-04). Surfaces that answer the same question separately drift.
 //
 // So: any file that picks between `catalog_image_*` and `image_file_id` must go
 // through leadPhoto()/photoOrder(). This flags an inline ladder — a file that

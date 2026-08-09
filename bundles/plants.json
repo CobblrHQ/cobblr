@@ -1,7 +1,7 @@
 {
   "manifest": {
-    "id": "cobblr.flagship.plant-care",
-    "version": "0.3.4",
+    "id": "cobblr.flagship.plants",
+    "version": "0.3.2",
     "name": "Plants",
     "description": "Your houseplants as their own table: species, light, watering interval + pot size, grouped by light.",
     "author": "Cobblr",

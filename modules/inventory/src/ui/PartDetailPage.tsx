@@ -4,8 +4,8 @@
 
 import { useState, type FocusEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Copy, Library, Minus, Plus, Printer, ShieldCheck, Trash2 } from "lucide-react";
-import { ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, EntityThumb, Modal, UnitInput, useConfirm, usePageTitle, useToast, useUnits } from "@cobblr/platform-web";
+import { Archive, ArrowRightLeft, Copy, Library, Minus, Plus, Printer, ShieldCheck, Trash2 } from "lucide-react";
+import { ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, EntityThumb, Modal, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { QtyStepper } from "./QtyStepper";
 import { NewPartDialog } from "./NewPartDialog";
@@ -133,7 +133,7 @@ function ReconcileCard({
 }
 
 export function PartDetailPage({ id, onClose }: { id: string; onClose: () => void }) {
-  const { api, orgSlug, getToken, entityKind, itemNoun, parent } = useInventory();
+  const { api, orgSlug, getToken, entityKind, instance, itemNoun, parent } = useInventory();
   const fp = useFieldPresentation(entityKind);
   const disclosure = useDisclosure();
   const units = useUnits();
@@ -155,6 +155,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
   const toast = useToast();
   const confirm = useConfirm();
   const [dup, setDup] = useState(false);
+  const [moving, setMoving] = useState(false);
 
   // The current parent "type" of this unit (the `instance-of` pairing target),
   // resolved to {id, name}. Only fetched on instances that declare a parent.
@@ -673,6 +674,12 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           <Copy size={12} /> Duplicate
         </button>
         <button
+          onClick={() => setMoving(true)}
+          className="text-xs text-faint dark:text-slate-500 hover:text-accent inline-flex items-center gap-1.5"
+        >
+          <ArrowRightLeft size={12} /> Move to…
+        </button>
+        <button
           onClick={async () => {
             const ok = await confirm({
               title: `Delete "${p.name}"?`,
@@ -687,6 +694,26 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           <Trash2 size={12} /> Delete this {itemNoun}
         </button>
       </div>
+
+      <MoveToInstanceModal
+        open={moving}
+        onClose={() => setMoving(false)}
+        slug={orgSlug}
+        getToken={getToken}
+        moduleName="inventory"
+        fromInstance={instance ?? "inventory"}
+        ids={[id]}
+        noun={itemNoun}
+        onMoved={(_n, where) => {
+          toast.success(`Moved to ${where}`);
+          // Invalidate before closing: the list underneath is cached, and
+          // without this the record you just moved is still sitting in the list
+          // you moved it out of. The toast says it left, the screen says it did
+          // not, and the screen is what people believe.
+          void qc.invalidateQueries();
+          onClose();
+        }}
+      />
 
       {dup && (
         // Seed a fresh create form from this item — the user reviews + saves,

@@ -4,7 +4,7 @@
 //
 // The bug: the box was left empty with the derived phrase only as a greyed-out
 // placeholder. The user then cannot see what was actually searched, so they
-// cannot tell a bad phrase from a bad web (the author, 2026-07-18: "should not be
+// cannot tell a bad phrase from a bad web (reported 2026-07-18: "should not be
 // blank, it should start with the search term pre-filled in"). A placeholder is
 // a hint; this is data, and data goes in the value.
 //

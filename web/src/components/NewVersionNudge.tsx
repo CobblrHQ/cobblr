@@ -4,7 +4,7 @@
 // build_sha (COBBLR_BUILD_SHA — set by the deploy env); when it changes from the
 // sha this tab first saw, raise it as a sticky ACTION TOAST, where every other
 // toast goes (bottom-right), instead of a fixed pill floating over the bottom-
-// middle of the content (the author, 2026-07-10).
+// middle of the content (reported 2026-07-10).
 import { useEffect, useRef } from "react";
 import { useToast } from "@cobblr/platform-web";
 

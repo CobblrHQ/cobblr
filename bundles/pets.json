@@ -1,8 +1,8 @@
 {
   "manifest": {
-    "id": "cobblr.flagship.pet-care",
+    "id": "cobblr.flagship.pets",
     "catalog": "extended",
-    "version": "0.2.3",
+    "version": "0.2.2",
     "name": "Pets",
     "description": "Your pets as their own table: vitals + vet/vaccination dates (calendar-reminded), grouped by species.",
     "author": "Cobblr",

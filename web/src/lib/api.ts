@@ -3790,6 +3790,8 @@ export const api = {
       ai_enabled: boolean;
       sandbox_registry_configured: boolean;
       barcode_resolver_configured: boolean;
+      operator_contact_configured: boolean;
+      bidb: "off" | "configured" | "url without key";
     }>("GET", `/super-admin/instance-config`),
   superAdminResolverStats: () =>
     request<{

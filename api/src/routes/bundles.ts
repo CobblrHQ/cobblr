@@ -13,6 +13,7 @@ import { requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
 import { getTenantDb } from "../db/tenant.js";
+import { resolveAppViewRefs, type SeededView } from "./bundle-app-view-refs.js";
 import * as activity from "../platform/activity.js";
 import { enableModuleForOrg } from "../modules/enable.js";
 import { getEntry } from "../modules/registry.js";
@@ -1689,11 +1690,14 @@ export async function applyValidatedBundle(
       inst.saved_views.map((v) => ({ ...v, entity_kind: `${inst.instance_name}:item` })),
     ),
   ];
+  // Keyed for the app-block view references below: a bundle app names the view
+  // it wants, and only this insert knows the id that name got in THIS workspace.
+  const seededViews: SeededView[] = [];
   if (allViews.length > 0) {
     try {
       const tdb = (await getTenantDb(orgId)) as unknown as Kysely<BundleTenantDB>;
       for (const v of allViews) {
-        await tdb
+        const inserted_view = await tdb
           .insertInto("core_views_views")
           .values({
             entity_kind: v.entity_kind,
@@ -1706,7 +1710,9 @@ export async function applyValidatedBundle(
             bundle_id: inserted.id,
             source_module: null,
           } as never)
-          .execute();
+          .returning(["id", "name", "entity_kind"])
+          .executeTakeFirst();
+        if (inserted_view) seededViews.push(inserted_view as SeededView);
         viewsInstalled++;
       }
     } catch (err) {
@@ -1748,6 +1754,16 @@ export async function applyValidatedBundle(
           .where("slug", "=", app.slug)
           .executeTakeFirst();
         if (exists) continue;
+        // Bind any `view_name` reference to the id that view actually got in
+        // this workspace. Unresolved names are logged and the block is left as
+        // authored: the App Player will reject it, which is the honest outcome
+        // and exactly what lint:bundle-app-view-refs prevents ever reaching here.
+        const { pages, unresolved } = resolveAppViewRefs(app.pages, seededViews);
+        if (unresolved.length > 0) {
+          console.error(
+            `[bundle-install] app "${app.slug}" references unknown saved view(s) ${unresolved.join(", ")} in bundle ${inserted.external_id}`,
+          );
+        }
         await tdb
           .insertInto("core_apps_apps")
           .values({
@@ -1755,7 +1771,7 @@ export async function applyValidatedBundle(
             name: app.name,
             icon: app.icon ?? null,
             visible_capability: app.visible_capability ?? null,
-            pages: sql`${JSON.stringify(app.pages)}::jsonb` as never,
+            pages: sql`${JSON.stringify(pages)}::jsonb` as never,
             theme: app.theme ? (sql`${JSON.stringify(app.theme)}::jsonb` as never) : null,
             created_by: null,
           } as never)

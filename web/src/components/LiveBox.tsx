@@ -12,7 +12,7 @@
 //     bottom-right; tapping it morphs into a panel whose collapse strip is at the
 //     BOTTOM, the same corner you tapped to open.
 //
-// LAYERING (the author, 2026-08-03: "it's on top of so much stuff that it shouldn't be…
+// LAYERING (reported 2026-08-03: "it's on top of so much stuff that it shouldn't be…
 // why don't we only have it on top of the base pages"): the floating pill sits at
 // LIVE_Z, which is deliberately BELOW every overlay in the app — modals (50), side
 // panels (60), the full-screen scanner (40). It is page furniture, so anything that
@@ -458,7 +458,7 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
   const [open, setOpen] = useState(false);
   // The sidebar flyout is PORTALED to <body> and fixed-positioned: rendered in
   // place (absolute left-full) it flew out past the sidebar's overflow-hidden
-  // edge and got clipped, so the menu "never opened" (the author, 2026-07-30). rowRef
+  // edge and got clipped, so the menu "never opened" (reported 2026-07-30). rowRef
   // anchors it to the right of the icon row.
   const rowRef = useRef<HTMLDivElement>(null);
   const [flyoutPos, setFlyoutPos] = useState<{ left: number; bottom: number } | null>(null);
@@ -505,7 +505,7 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
   // The bridge ships EVERY driver (label printers, laser/LightBurn, …) and reports
   // all of them, connected or not. Only surface a channel this workspace has
   // actually set up — one with a saved printer pointing at it. A channel you never
-  // touched in Cobblr must not appear as if it's yours (the author, 2026-07-31: "I never
+  // touched in Cobblr must not appear as if it's yours (reported 2026-07-31: "I never
   // did anything with lightburn, thus I should not be seeing anything about it").
   const configuredInstances = bridge.instances.filter((i) => !!rowForInstance(i.instance));
   const printing = printProgress ? Math.max(0, printProgress.total - printProgress.done) : 0;
@@ -596,7 +596,7 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
   if (mode === "sidebar") {
     // Nothing is actually LIVE — no armed control, no batch printing — so this is
     // just a dormant toggle, not an "ongoing session mode". Don't spend a whole
-    // sidebar row on a single idle status icon (the author, 2026-07-26); it reappears the
+    // sidebar row on a single idle status icon (reported 2026-07-26); it reappears the
     // moment auto-print is armed or a job runs. The controls stay armable from
     // their own surfaces (e.g. the Labels page's Auto-print button). An OFFER has
     // already returned above and is unaffected.

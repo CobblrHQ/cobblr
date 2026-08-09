@@ -20,7 +20,7 @@ export interface EnvBadge {
    *  `mark`   — neutral header, no chip, a coloured dot on the logo instead.
    *             Right for canary, which holds REAL production data and should
    *             read as the product. A banner there is a permanent interruption
-   *             on the surface you use most (the author, 2026-08-06).
+   *             on the surface you use most (reported 2026-08-06).
    */
   chrome: "banner" | "mark";
   /** Dot colour for `chrome: "mark"`. Required there — without it the

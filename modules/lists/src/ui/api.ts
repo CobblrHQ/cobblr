@@ -19,6 +19,11 @@ export interface ListItem {
   qty: string | null;
   checked: boolean;
   checked_at: string | null;
+  /** Who said they'd get this. The name is snapshotted server-side at claim
+   *  time so a line stays readable without a membership lookup. */
+  claimed_by: string | null;
+  claimed_by_name: string | null;
+  claimed_at: string | null;
   created_at: string;
   /** Set by the add-item wire when a line came from another entity (e.g. an
    *  inventory part that ran low). Drives the "from inventory" provenance badge
@@ -86,6 +91,9 @@ export class ListsApi {
   }
   toggleItem(id: string, checked: boolean) {
     return this.req<ListItem>("PATCH", `/items/${id}`, { checked });
+  }
+  claimItem(id: string, claimed: boolean) {
+    return this.req<ListItem>("PATCH", `/items/${id}`, { claimed });
   }
   removeItem(id: string) {
     return this.req<void>("DELETE", `/items/${id}`);

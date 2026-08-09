@@ -1,6 +1,6 @@
 {
   "$comment": "Operator-curated list of marketplace modules baked into THIS cobblr-core image. Foundational + stock modules are NOT listed here — they live in modules/ and ship with the repo. Each entry has kind: \"module\" (in-process JS, marketplace v0.2) or kind: \"sandboxed\" (wasm-isolated, marketplace v0.3). The image-build pipeline (scripts/install-registry-modules.mjs) fetches each entry's tarball, verifies sha256 + ed25519 signature, extracts to /app/modules/<name>/ or /app/sandboxed-modules/<name>/ respectively. Edit + rebuild the image to ship a new module or version. See docs/modules/marketplace.md.",
-  "registry_url": "https://api.github.com/repos/CobblrHQ/registry/contents/modules.json",
+  "registry_url": "https://raw.githubusercontent.com/CobblrHQ/registry/main/modules.json",
   "modules": [
     {
       "name": "bricklink-connector",

@@ -1,4 +1,4 @@
-// The AI change ledger — the author's rule: auto-apply is only safe standing on
+// The AI change ledger — the standing rule: auto-apply is only safe standing on
 // perfect tracking + undo. EVERY write Ask Cobb executes (user-confirmed or
 // auto-applied) goes through performWrite(), which captures a BEFORE-IMAGE and
 // records a core_ai_chat_writes row; undoWrite() is then mechanical:

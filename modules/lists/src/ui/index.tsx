@@ -6,7 +6,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
-import { ListChecks, Plus, Trash2, X, RotateCcw } from "lucide-react";
+import { ListChecks, Plus, Trash2, X, RotateCcw, Hand } from "lucide-react";
 import { ListsApi, type ListSummary, type ListItem, ListsApiError } from "./api.js";
 
 export const navItems = [{ label: "Lists", path: "/lists", icon: ListChecks }];
@@ -130,7 +130,15 @@ function ListDetailModal({ listId, api, onClose }: { listId: string; api: ListsA
   const qc = useQueryClient();
   const toast = useToast();
   const [draft, setDraft] = useState("");
-  const detail = useQuery({ queryKey: ["lists-detail", listId], queryFn: () => api.getList(listId) });
+  // A shared list is read by more than one person at once — someone claiming a
+  // line in the store is only useful if the other phone sees it without a
+  // manual reload. Polling only while the modal is open keeps that cheap.
+  const detail = useQuery({
+    queryKey: ["lists-detail", listId],
+    queryFn: () => api.getList(listId),
+    refetchInterval: 15_000,
+    refetchOnWindowFocus: true,
+  });
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["lists-detail", listId] });
@@ -146,6 +154,11 @@ function ListDetailModal({ listId, api, onClose }: { listId: string; api: ListsA
     onSuccess: invalidate,
   });
   const remove = useMutation({ mutationFn: (id: string) => api.removeItem(id), onSuccess: invalidate });
+  const claim = useMutation({
+    mutationFn: ({ id, claimed }: { id: string; claimed: boolean }) => api.claimItem(id, claimed),
+    onSuccess: invalidate,
+    onError: (e) => toast.error(e instanceof ListsApiError ? e.message : String(e)),
+  });
   const clearDone = useMutation({
     mutationFn: () => api.clearDone(listId),
     onSuccess: (r) => { toast.success(`Cleared ${r.cleared} done`); invalidate(); },
@@ -194,7 +207,28 @@ function ListDetailModal({ listId, api, onClose }: { listId: string; api: ListsA
                     <RotateCcw size={10} /> {it.metadata.source_ref.kind.split(":")[0]}
                   </span>
                 )}
+                {it.claimed_by_name && !it.checked && (
+                  <span
+                    className="ml-2 inline-flex items-center gap-1 rounded bg-amber-50 dark:bg-amber-900/30 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300 align-middle"
+                    title={`${it.claimed_by_name} said they'd get this`}
+                  >
+                    <Hand size={10} /> {it.claimed_by_name}
+                  </span>
+                )}
               </span>
+              {!it.checked && (
+                <button
+                  type="button"
+                  onClick={() => claim.mutate({ id: it.id, claimed: !it.claimed_by })}
+                  className={`shrink-0 rounded px-2 py-0.5 text-[11px] transition ${
+                    it.claimed_by
+                      ? "text-muted hover:text-accent"
+                      : "text-slate-300 hover:text-accent opacity-0 group-hover:opacity-100 focus:opacity-100"
+                  }`}
+                >
+                  {it.claimed_by ? "Never mind" : "I'll get it"}
+                </button>
+              )}
               <button type="button" onClick={() => remove.mutate(it.id)} className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100" aria-label="Remove item">
                 <X size={14} />
               </button>

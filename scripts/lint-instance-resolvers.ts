@@ -10,7 +10,7 @@
 // It shipped twice, in `records` and `assets`. It surfaced when the cover
 // auto-fetch derives its search phrase from a lookup: for a book on a shelf the
 // lookup returned null, so it derived no phrase and reported "these records
-// need a name first" about books that plainly had names (the author, 2026-07-18). The
+// need a name first" about books that plainly had names (reported 2026-07-18). The
 // same hole silently degrades anything else that looks up one instance record.
 //
 // The rule, mechanically: for each modules/<name>/src/**, if the source calls

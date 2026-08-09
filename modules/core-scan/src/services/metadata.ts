@@ -55,7 +55,7 @@ export const IDENTIFY_OWNED_KEYS = [
   // barcode path's last resort (nameFromPhoto) doesn't, so a re-run WITH a hint
   // resolved correctly, then wiped the hint at the final step. The colour derived
   // from it vanished with it, and the image search silently reverted to the
-  // colourless phrase mid-run (the author, 2026-07-30: "it changed the title/search term
+  // colourless phrase mid-run (reported 2026-07-30: "it changed the title/search term
   // to have nothing to do with black"). The undo-rerun path already documents the
   // rule this list contradicted: an undo reverts the RUN, not the person.
   "photo_observations",
@@ -126,7 +126,7 @@ export function identityMeta(
  *  "color: navy") or be about completely different things ("color: black", then
  *  "it's the loose fit"). Returning only the newest — which is what the first
  *  cut did — silently threw away the older ones, so correcting the size would
- *  have dropped the colour the user had already given (the author, 2026-07-30: "they
+ *  have dropped the colour the user had already given (reported 2026-07-30: "they
  *  could contradict, or be completely unrelated").
  *
  *  So the SEQUENCE is the fact, and the consumer decides: the identify prompt

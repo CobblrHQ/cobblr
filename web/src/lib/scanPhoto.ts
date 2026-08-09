@@ -6,7 +6,7 @@
 //
 // - While the check is merely PENDING, the catalog art leads anyway, marked
 //   "checking". Holding it back until the check cleared made the main image
-//   lag the strip by seconds, and the author ruled on it (2026-08-05): "if the image
+//   lag the strip by seconds, and ruled on it (2026-08-05): "if the image
 //   is good enough to put in the strip, it's good enough to put into the main
 //   image." Optimistic display, honest label.
 // - A CONFIRMED mismatch demotes it: a collided or spam UPC resolves to junk
@@ -18,7 +18,7 @@
 // capture-drawer ladders, and two panels), and only two of them knew about the
 // cross-check. So the strip announced the catalog shot as the "Display photo"
 // while the main image two inches above it deliberately showed the user's own
-// (the author, 2026-08-04). Two surfaces answering the same question separately always
+// (reported 2026-08-04). Two surfaces answering the same question separately always
 // drift — the same lesson as useScanQuantity/QtyStepper.
 //
 // So: the DECISION lives here. URL construction stays with the caller, because

@@ -20,7 +20,7 @@ export const registryRouter = Router();
 registryRouter.use(requireAuth);
 
 // The public, unauthenticated catalog endpoint. This is what "serve the
-// catalog from cobblr.me's own stack" means: GET /api/v1/registry/index.json
+// catalog from this instance's own stack" means: GET /api/v1/registry/index.json
 // returns the official index built locally from the baked-in bundle manifests
 // — the drop-in replacement for the GitHub-hosted cobblr-extensions/index.json.
 // No auth (the GitHub URL it replaces was public too); mounted BEFORE the
@@ -57,7 +57,7 @@ function verifyEd25519(pubkeyB64: string, data: Buffer, sigB64: string): boolean
 // No GitHub, no manual publish — the catalog is always current with the deploy.
 //
 // COBBLR_EXTENSIONS_URL stays as an OPTIONAL override: point it at an external
-// index.json (e.g. another cobblr.me's /api/v1/registry/index.json, or a
+// index.json (e.g. another Cobblr instance's /api/v1/registry/index.json, or a
 // future signed index) and that URL becomes the official source instead of the
 // local build. Empty/unset (the default, and what compose passes) → local.
 const EXTERNAL_INDEX_URL = process.env.COBBLR_EXTENSIONS_URL || "";

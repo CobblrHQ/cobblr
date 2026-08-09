@@ -12,7 +12,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "lists",
-  version: "0.2.0",
+  version: "0.2.1",
   displayName: "Lists",
   description:
     "Lightweight checklists: a list + check-off-able items. Shopping lists, to-do, packing. Other modules can auto-add items via a wire (e.g. 'running low' → shopping list).",
@@ -81,6 +81,8 @@ export default defineModule({
       "lists.list.deleted",
       "lists.item.added",
       "lists.item.checked",
+      // Someone said "I'm getting this" (or took it back) on a shared list.
+      "lists.item.claimed",
       "lists.item.removed",
       // Fired by the expiry sweeper per inventory part expiring soon — wire it
       // to lists:add-item to auto-restock the shopping list.

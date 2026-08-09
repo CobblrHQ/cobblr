@@ -53,6 +53,7 @@ import * as deviceApply from "./platform/device-apply.js";
 import * as scanRegistry from "./platform/scan-registry.js";
 import * as unitsImpl from "./platform/units.js";
 import * as instancesImpl from "./platform/instances.js";
+import { registerMover } from "./platform/move-records.js";
 import * as scanResolvers from "./platform/scan-resolvers.js";
 import * as queue from "./platform/queue.js";
 import * as sharedCache from "./platform/shared-cache.js";
@@ -333,6 +334,7 @@ async function boot() {
     },
     instances: {
       registerItemCounter: instancesImpl.registerItemCounter,
+      registerMover: registerMover,
       patchDerivedConfig: instancesImpl.patchInstanceDerivedConfig,
       list: async (orgId: string) => {
         const rows = await instancesImpl.listInstances(orgId);

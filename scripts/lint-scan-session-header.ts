@@ -7,7 +7,7 @@
 // which is exactly the slot the filing trio needs. It had already drifted to
 // `location · file · Original · PO# · Re-parse · open`, so the trio sat in a
 // different column depending on whether a session came from a receipt or a scan
-// and the eye had to re-find it on every row (the author, 2026-07-30: "redo the
+// and the eye had to re-find it on every row (reported 2026-07-30: "redo the
 // ordering so the loc place open are the same 3 rightmost controls always").
 //
 // Nothing about appending a control fails a typecheck or a test, so the order
@@ -58,7 +58,7 @@ const src = withoutComments.slice(anchorAt);
 /** Where a marker sits WITHIN the session header, or -1. */
 const at = (needle: string) => src.indexOf(needle);
 
-// Renamed 2026-08-01 (the author: shorten this row rather than let it wrap): the
+// Renamed 2026-08-01 (feedback: shorten this row rather than let it wrap): the
 // unset chip says the ACTION now, and the verbs drop their long half below sm.
 const LOCATION = at('"Set location"');
 const FILE_ALL = at("File<span className=\"hidden sm:inline\">&nbsp;all</span> {readyIds.length}");

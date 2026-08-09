@@ -360,7 +360,7 @@ export async function listWorkspaceAiOffers(orgId: string): Promise<WorkspaceAiO
   const ownerIds = new Set(owners.map((o) => o.user_id));
   return rows.map((r) => {
     const isOwn = ownerIds.has(r.offered_by_user_id);
-    // The connection's label ("Claude bridge (example-user)") and provider
+    // The connection's label ("Claude bridge (your-account)") and provider
     // ("edge-bridge") are the SHARER's private naming — how they set up their own
     // AI is not the recipient workspace's business. Only surface them when the
     // viewer owns the credential (their own share); otherwise the owner sees just

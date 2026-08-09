@@ -646,7 +646,7 @@ export function QueuePage() {
   // the whole page). Does NOT touch the queue yet: like the Rollo path, raise a
   // "mark printed" toast and only record + clear the batch once the user confirms
   // the paper looks right. (Was: api.print() snapshotted + cleared the queue before
-  // the dialog even opened, so cancelling still lost the labels — the author, 2026-07-23.)
+  // the dialog even opened, so cancelling still lost the labels — reported 2026-07-23.)
   const doBrowserPrint = () => {
     const printables = previewQr.data ?? [];
     if (!printables.length) return;
@@ -697,7 +697,7 @@ export function QueuePage() {
           if (!isWebSerialAvailable()) throw new Error(NO_WEB_SERIAL);
         } else if (!isWebBluetoothAvailable()) throw new Error(NO_WEB_BLUETOOTH);
         const stored = (printer.settings ?? {}) as unknown as BluetoothPrinterSettings;
-        // The media/label you pick in the toolbar drives the print (the author's fix),
+        // The media/label you pick in the toolbar drives the print (the fix),
         // keeping the printer's protocol + calibration; fall back to the stored
         // media if no size resolves.
         const labelDims = pickedCustom
@@ -784,7 +784,7 @@ export function QueuePage() {
       if ("bluetooth" in r && r.bluetooth) {
         const { printed, failed, deviceName } = r.bluetooth;
         const n = printed.reduce((acc, i) => acc + Math.max(1, i.copies ?? 1), 0);
-        // Live BLE printing must NOT block for a "did it look good?" confirm (the author).
+        // Live BLE printing must NOT block for a "did it look good?" confirm (feedback).
         // The labels are already recorded + cleared; this is a non-blocking UNDO to
         // the side. When it came out wrong you don't want to reprint the SAME thing —
         // you want the rows BACK so you can fix the size and try again. So the action

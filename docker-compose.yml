@@ -57,6 +57,10 @@ services:
       # dev (no /super-admin/* access); set in prod .env per
       # docs/operations/PRODUCTION_DEPLOY.md §3.1.
       SUPERADMIN_EMAILS: ${SUPERADMIN_EMAILS:-}
+      # The operator's contact address for outbound third-party calls (see
+      # packages/platform-contract/src/outbound-identity.ts). Falls back to the
+      # first SUPERADMIN_EMAILS entry.
+      COBBLR_OPERATOR_EMAIL: ${COBBLR_OPERATOR_EMAIL:-}
       # Backup destinations (docs/operations/google-drive-backup-setup.md).
       # All empty in dev. Google app (Path A) + broker (Path B) config.
       BACKUP_FS_ROOT: ${BACKUP_FS_ROOT:-}
@@ -113,13 +117,23 @@ services:
       # User-uploaded files (core-files). Bind-mounted to ./data/files
       # so they survive image rebuilds.
       COBBLR_FILES_ROOT: /var/cobblr/files
-      # Optional: registry URL + auth token for /sandbox/install.
-      # Defaults to cobblrhq/registry's modules.json on GitHub.
+      # Optional: registry URL for /sandbox/install. Defaults to the PUBLIC
+      # CobblrHQ/registry modules.json (raw URL, no token) — set this only to
+      # point at an index of your own.
       COBBLR_REGISTRY_URL: ${COBBLR_REGISTRY_URL:-}
-      # COBBLR_REGISTRY_TOKEN is reused by the extension-registry proxy
-      # (GET /registry/index) to read the PRIVATE cobblr-extensions repo.
-      # Without it the marketplace falls back to the app's built-in list.
+      # Needed ONLY when the URL above (or COBBLR_EXTENSIONS_URL) points at a
+      # PRIVATE index; it is sent as a bearer token. The official catalogs need
+      # no credential.
       COBBLR_REGISTRY_TOKEN: ${COBBLR_REGISTRY_TOKEN:-}
+      # Shared barcode intelligence. Unset = the tier is inert (ships dark), so
+      # this passthrough is a no-op until the service exists and an operator sets
+      # a URL. Declared now because the dev compose enumerates env explicitly:
+      # without the line, setting it in .env would silently do nothing here.
+      COBBLR_BIDB_URL: ${COBBLR_BIDB_URL:-}
+      COBBLR_BIDB_KEY: ${COBBLR_BIDB_KEY:-}
+      # The companion Discord bot's base URL, if one is running. Offered in
+      # .env.example and read by the app, so it has to be passed in here too.
+      COBBLR_DISCORD_BOT_URL: ${COBBLR_DISCORD_BOT_URL:-}
       # Extension registry (the marketplace index). SELF-HOSTED by default:
       # the app builds the official catalog in-process from its baked-in bundle
       # manifests and serves it at GET /api/v1/registry/index.json — no GitHub,

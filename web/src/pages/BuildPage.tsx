@@ -166,7 +166,7 @@ export function BuildPage() {
   // It fires in BOTH build modes and on a BARE NOUN. Typing "yarn" is the most
   // natural thing anyone does and it used to match nothing anywhere, because
   // the matcher demanded a "track/collect/…" verb AND an 8-character intent
-  // (the author, 2026-08-01). What stops it hijacking a field tweak is no longer a
+  // (reported 2026-08-01). What stops it hijacking a field tweak is no longer a
   // verb list but the workspace itself: a sentence that lands on kinds you
   // ALREADY HAVE is a modification ("add a warranty date to parts" → Part), so
   // there is no install to pitch. Landing on nothing means it is a new thing.
@@ -616,7 +616,7 @@ export function BuildPage() {
         {/* The scope, DERIVED and shown as a result rather than asked as the
             first question. It appears only once you've typed, says what it
             worked out and why, and hides the full kind picker behind "Change"
-            for the rare miss (the author, 2026-08-01 - new-user-flow follow-up). */}
+            for the rare miss (reported 2026-08-01 - new-user-flow follow-up). */}
         {mode === "tweak" && intent.trim().length > 2 && kindItems.length > 0 && (
           <div className="text-xs">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">

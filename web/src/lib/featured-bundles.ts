@@ -155,26 +155,82 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     blurb:
       "Track the fridge/pantry with expiry + storage, and auto-build a shopping list when something runs low or is about to expire. Check an item off → it restocks.",
     manifest: {
-      id: "cobblr.flagship.food-cluster",
-      version: "0.2.1",
-      released_at: "2026-07-17",
+      id: "cobblr.flagship.groceries",
+      version: "0.3.0",
+      released_at: "2026-08-09",
       changelog:
-        "Back in the catalog as a core (suggested) bundle. The groceries story (pantry stock with expiry + storage, an auto-built shopping list on low-stock/expiry, restock on check-off) had no live offer after the catalog curation pass, and it is a flagship use case (one app for inventory AND groceries). Its axis has no competing suggestion, so returning it adds no scan ambiguity.",
+        "Adds a What's on hand app: a vending-machine view of the kitchen with a quantity badge and a status dot per item, plus a use-it-or-lose-it list sorted by expiry. Answers what do we actually have without opening the fridge. Learns your cadence from ordinary shopping. Checking an item off the shopping list now also records a purchase in the consumption ledger (when the Cadence capability is on), so the system can start predicting when you will run out instead of only reacting to a low-stock threshold. Same fields, same restock behaviour.",
       name: "Groceries",
       description:
-        "Turn inventory + lists into a kitchen system: expiry + storage fields, auto shopping list on low-stock/expiry, restock on check-off.",
+        "Turn inventory + lists into a kitchen system: track food with expiry + storage fields, an auto grocery list on low-stock/expiry, restock on check-off.",
       author: "Cobblr",
-      requires: [{ module: "inventory" }, { module: "lists" }],
+      // core-cadence is opt-in platform-wide (autoEnable: false), but the two
+      // cadence wires below are part of THIS bundle's promise, so installing
+      // Groceries brings the capability with it. A workspace that never installs
+      // Groceries still carries no ledger.
+      requires: [{ module: "inventory" }, { module: "lists" }, { module: "core-cadence" }],
       wires: [
         { source_kind: "inventory:part", action_id: "lists:add-item", trigger_type: "event", trigger_event: "inventory.stock.low", args: { listTitle: "Shopping list" } },
         { source_kind: "inventory:part", action_id: "lists:add-item", trigger_type: "event", trigger_event: "lists.item.expiring", args: { listTitle: "Shopping list" } },
         { source_kind: "inventory:part", action_id: "inventory:adjust-stock", trigger_type: "event", trigger_event: "lists.item.checked", args: { delta: 1, reason: "Restocked, checked off the shopping list" } },
+        // Closes the learning loop: the same check-off that restocks also files a
+        // purchase in the cadence ledger, so "how fast do I go through this"
+        // learns from ordinary shopping with nobody logging anything. Needs
+        // core-cadence enabled; the wire is inert (unknown action) without it.
+        { source_kind: "inventory:part", action_id: "core-cadence:record-event", trigger_type: "event", trigger_event: "lists.item.checked", args: { event_type: "purchase", qty_delta: 1, source: "list" } },
+        // Expiry is WASTE, not consumption. Without this the expiring wire above
+        // would quietly add it to the list as if it had been used, and the
+        // learned rate would climb on food nobody ate. Recording it as a discard
+        // is what makes "3 of your last 4 went bad, buy fewer" possible.
+        { source_kind: "inventory:part", action_id: "core-cadence:record-event", trigger_type: "event", trigger_event: "lists.item.expiring", args: { event_type: "discard", qty_delta: -1, source: "checkin" } },
+        // The predictive half of the reorder signal, beside the shipped
+        // threshold one above: stock.low fires when you CROSS the reorder level,
+        // this fires when the learned rate says you are about to. Same list, same
+        // action, so the two unify at the destination instead of competing.
+        { source_kind: "inventory:part", action_id: "lists:add-item", trigger_type: "event", trigger_event: "core-cadence.reorder.due", args: { listTitle: "Shopping list" } },
       ],
       field_defs: [
         { entity_kind: "inventory:part", name: "expires_on", display_label: "Expires", type: "date", position: 1 },
         { entity_kind: "inventory:part", name: "opened_on", display_label: "Opened", type: "date", position: 2 },
         { entity_kind: "inventory:part", name: "storage", display_label: "Storage", type: "text", position: 3, choices: ["Fridge", "Freezer", "Pantry", "Counter", "Spice rack"] },
         { entity_kind: "inventory:part", name: "food_category", display_label: "Category", type: "text", position: 4, choices: ["Produce", "Dairy", "Meat", "Bakery", "Frozen", "Canned", "Dry goods", "Condiments", "Beverages", "Snacks"] },
+      ],
+      saved_views: [
+        // The vending-machine renderer: slots, a qty badge, one status dot. It
+        // answers "what do we actually have" at a glance, which is the question
+        // people open the fridge to ask.
+        {
+          entity_kind: "inventory:part",
+          name: "What's on hand",
+          view_type: "vending",
+          pinned: true,
+          config: { qty_field: "qty", expiry_field: "expires_on", min_qty_field: "min_qty", group_by: "food_category" },
+        },
+        {
+          entity_kind: "inventory:part",
+          name: "Use it or lose it",
+          view_type: "table",
+          config: { sort_by: "expires_on", sort_dir: "asc", visible_fields: ["title", "expires_on", "storage", "qty"] },
+        },
+      ],
+      provides_apps: [
+        {
+          slug: "whats-on-hand",
+          name: "What's on hand",
+          icon: "🥕",
+          pages: [
+            {
+              slug: "on-hand",
+              title: "On hand",
+              blocks: [
+                { type: "stat", view_name: "What's on hand", agg: "count", label: "Things in the kitchen" },
+                { type: "view", view_name: "What's on hand", title: "Everything you have" },
+                { type: "markdown", body: "### Eat these first\n\nClosest to its expiry date at the top. Anything that runs out or goes off lands on the shopping list by itself." },
+                { type: "view", view_name: "Use it or lose it" },
+              ],
+            },
+          ],
+        },
       ],
     },
   },
@@ -211,13 +267,15 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     blurb:
       "Bridge: every grocery order you receive logs its cost as a 'Grocery spend' measurement: your spending trends like any metric. Set a monthly budget as the goal.",
     manifest: {
-      id: "cobblr.flagship.kitchen-fitness",
+      id: "cobblr.flagship.grocery-spend",
       catalog: "disabled",
-      version: "0.1.0",
-      name: "Kitchen × Fitness — grocery spend",
+      version: "0.1.2",
+      name: "Grocery Spend",
       description:
         "Connects the grocery flow to the Tracking module: order received → log spend into a metric. Neither module knows about the other.",
       author: "Cobblr",
+      changelog:
+        "Named for the thing it produces. The old title was a use-case sentence (and carried an em dash into user-facing copy); the bundle tracks one noun, so it is “Grocery Spend”.",
       requires: [{ module: "purchases" }, { module: "tracking" }],
       wires: [
         {
@@ -1104,8 +1162,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       { label: "Add a spool", module: "inventory", path: "/instances/filament", hint: "Pick its type, then just the spool size, batch code, and how much is left." },
     ],
     manifest: {
-      id: "cobblr.flagship.filament-stash",
-      version: "0.5.4",
+      id: "cobblr.flagship.filament",
+      version: "0.5.5",
       name: "Filament",
       description: "A filament TYPE (Royal Blue PLA) defines the filament once: material, colour, diameter, nozzle/bed temps, needs-drying. SPOOLS pick a type + add only what's per-spool: size, batch code, remaining, state. Each type rolls up its spool count + total kg.",
       author: "Cobblr",
@@ -1319,9 +1377,9 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       { label: "Add your first item", module: "inventory", path: "/instances/warranties", hint: "Make/model, where + when you bought it, the return-by date." },
     ],
     manifest: {
-      id: "cobblr.flagship.warranties-receipts",
+      id: "cobblr.flagship.warranties",
       catalog: "extended",
-      version: "0.2.1",
+      version: "0.2.2",
       name: "Warranties",
       description: "Your appliances/electronics as their own table: where/when you bought it + warranty and return-by dates, grouped by category.",
       author: "Cobblr",
@@ -1426,8 +1484,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       { label: "Add your first plant", module: "assets", path: "/instances/plants", hint: "Species, light, how often to water." },
     ],
     manifest: {
-      id: "cobblr.flagship.plant-care",
-      version: "0.3.1",
+      id: "cobblr.flagship.plants",
+      version: "0.3.2",
       name: "Plants",
       description: "Your houseplants as their own table: species, light, watering interval + pot size, grouped by light.",
       author: "Cobblr",
@@ -1701,9 +1759,9 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       { label: "Add your first document", module: "assets", path: "/instances/documents", hint: "Type, number, issuer, and the expiry date." },
     ],
     manifest: {
-      id: "cobblr.flagship.documents-renewals",
+      id: "cobblr.flagship.documents",
       catalog: "extended",
-      version: "0.2.2",
+      version: "0.2.3",
       name: "Documents",
       description: "Every document that expires as its own table: number/issuer/expiry, grouped by type, with expiry dates on your calendar.",
       author: "Cobblr",
@@ -1747,9 +1805,9 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       { label: "Add your first pet", module: "assets", path: "/instances/pets", hint: "Species, breed, birthday, vet + vaccination dates." },
     ],
     manifest: {
-      id: "cobblr.flagship.pet-care",
+      id: "cobblr.flagship.pets",
       catalog: "extended",
-      version: "0.2.1",
+      version: "0.2.2",
       name: "Pets",
       description: "Your pets as their own table: vitals + vet/vaccination dates (calendar-reminded), grouped by species.",
       author: "Cobblr",
@@ -1850,13 +1908,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.household-supplies",
       catalog: "disabled",
-      version: "0.3.1",
-      name: "Household Supplies auto-reorder",
+      version: "0.3.2",
+      name: "Household Supplies",
       description: "Your household supplies as their own table, reorder level per supply auto-adds to a shopping list on low stock; check off → it restocks. Grouped by where they live.",
       author: "Cobblr",
       released_at: "2026-07-15",
       changelog:
-        "“Area” is now a real Location. The separate “Area” field is gone: supplies file into your Location tree (rooms/zones, and bins inside them) like everything else, so a thing has one place, not two. Your existing area values move over automatically on this update: each becomes a Location and its supplies are filed into it, nothing lost, and the pinned “By area” view groups off the real Location. Earlier: “Usual pack” became “Pack size” (the package you actually scanned, filled from the observed pack).",
+        "Named for the thing, not the trick it does: “Household Supplies auto-reorder” is now just “Household Supplies” (the auto-reorder is what it DOES, and the description already says so). Earlier: “Area” became a real Location, so a thing has one place, not two, and existing area values moved over automatically; before that, “Usual pack” became “Pack size”.",
       requires: [{ module: "inventory" }, { module: "lists" }],
       provides_instances: [
         {
@@ -1912,13 +1970,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.home-maintenance",
       catalog: "disabled",
-      version: "0.3.1",
-      name: "Home Maintenance Schedule",
+      version: "0.3.2",
+      name: "Home Maintenance",
       description: "Your home's systems as their own table (furnace, water heater, HVAC filters, detectors) with service logs + next-due dates on your calendar.",
       author: "Cobblr",
       released_at: "2026-07-15",
       changelog:
-        "The “Location” of each system is now a real Location, not a separate text field: systems file into your Location tree (rooms/zones) like everything else, so a thing has one place, not two. Your existing location values move over automatically on this update: each becomes a Location and its systems are filed into it, nothing lost. Earlier: Home Maintenance became its OWN table (an assets instance) with only the fields a maintenance schedule needs, plain-language hints, and a pinned “By system” view.",
+        "Named for the thing, not the artefact: “Home Maintenance Schedule” is now just “Home Maintenance” (a bundle title is the noun; the schedule is one of the things inside it). Earlier: each system's “Location” became a real Location so a thing has one place not two, with existing values moved over automatically; before that, Home Maintenance became its OWN table with only the fields a maintenance schedule needs.",
       requires: [{ module: "assets" }, { module: "core-maintenance" }],
       provides_instances: [
         {
@@ -2142,9 +2200,9 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Vehicles as their own table - make/model/year, VIN, mileage, plate - with service logs and next-due dates on your calendar.",
     item_example: "your car (scan the VIN)",
     manifest: {
-      "id": "cobblr.flagship.vehicle-maintenance",
+      "id": "cobblr.flagship.vehicles",
       "name": "Vehicles",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "description": "Your vehicles as their own table - make/model/year, VIN, mileage, plate - with service logs (oil, tires, brakes) and next-due dates on your calendar. Replaces a glovebox folder of receipts and a sticky note on the windshield.",
       "author": "Cobblr",
       "released_at": "2026-07-13",

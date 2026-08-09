@@ -1,5 +1,5 @@
 // The ONE inbound-email dispatcher. Cloudflare Email Routing allows a single
-// catch-all per zone, so every inbound message to cobblr.me arrives here through
+// catch-all per zone, so every inbound message to the mail domain arrives here through
 // one thin Worker (scripts/email-workers/inbound-email/). The Worker is dumb
 // Cloudflare glue — it parses the MIME and POSTs { to, from_email, text,
 // attachments }; ALL the "what does this address mean" routing lives HERE, in

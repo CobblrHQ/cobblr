@@ -15,7 +15,7 @@ Please include the version you tested (the `version` and `build_sha` from
 attacker gains. You will get an acknowledgement within a few days.
 
 Please do **not** open a public issue for a vulnerability, and do not test
-against cobblr.me workspaces you do not own — stand up a self-host instance
+against cobblr.me workspaces you do not own. Stand up a self-host instance
 (see [SELF_HOSTING.md](./SELF_HOSTING.md)); it is the same code.
 
 ## Scope
@@ -25,7 +25,7 @@ against cobblr.me workspaces you do not own — stand up a self-host instance
 
 Out of scope: denial of service against the hosted service, social engineering,
 and issues requiring a malicious workspace *owner* (owners are trusted within
-their own tenant by design — tenant isolation between workspaces is very much
+their own tenant by design, though tenant isolation between workspaces is very much
 in scope).
 
 ## Supported versions

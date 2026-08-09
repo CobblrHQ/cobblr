@@ -59,7 +59,7 @@ export const MARGIN_FRAC = 0.06;
  *  A roll is held straight down the feed by the gap sensor, but it wanders
  *  LATERALLY in the feed path — and the printable width can be narrower than the
  *  media besides. A symmetric margin therefore clips the right edge first, which
- *  is exactly what showed up on a 2-up print (the author, 2026-07). Wider sides cost a
+ *  is exactly what showed up on a 2-up print (reported 2026-07). Wider sides cost a
  *  little QR size and buy tolerance against a physical error we cannot control. */
 export const SIDE_MARGIN_FRAC = 0.11;
 /** Floor under the QR, as a fraction of the margin. */
@@ -95,7 +95,7 @@ export function captionBox(w: number, h: number, layout: LabelLayout): CaptionBo
   // with feed margins on all sides — NOT against the narrower drawn QR. Widening
   // the side margins shrinks the QR, which GROWS the leftover strip; letting the
   // fitter fill that grown strip inflated fonts ~50% and a wide name clipped
-  // ("Thumper" -> "Thumpe", the author 2026-07). Side margins exist to buy edge
+  // ("Thumper" -> "Thumpe", reported 2026-07). Side margins exist to buy edge
   // CLEARANCE against paper wander; they must never change the typography that
   // was approved under the symmetric geometry.
   const qrFeed = layout === "square" ? (w - 2 * mY) * 0.82 : Math.min(w - 2 * mY, contentH);

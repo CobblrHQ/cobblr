@@ -1,6 +1,6 @@
 // A panel that changes size SLIDES to the new size; it never pops.
 //
-// the author, 2026-08-03: "if we ever do go from a tall drawer to a short drawer I
+// reported 2026-08-03: "if we ever do go from a tall drawer to a short drawer I
 // want that to be a smooth slide, not a gesture and the new size flashes."
 // Swapping the capture drawer's contents re-rendered a taller (or shorter)
 // box in one frame, so the sheet appeared to snap into existence at its new

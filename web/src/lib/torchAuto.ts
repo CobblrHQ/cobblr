@@ -9,7 +9,7 @@
 // (then a cooldown before it may re-fire), or the page's own lifecycle
 // (sheet open / scan success / close), which calls release().
 //
-// WHY BRIGHTNESS CANNOT ANSWER "is the room lit again?" (the author, ?diag=1,
+// WHY BRIGHTNESS CANNOT ANSWER "is the room lit again?" (from ?diag=1,
 // 2026-08-05): with the torch on, a BRIGHT room read mean luma 121 — the same
 // value a torch-lit DARK room reads. iOS auto-exposure drives the frame to a
 // target level, so once there is enough light for AE to work with, overall
@@ -28,7 +28,7 @@
 // again, so a still-dark room re-fires in ~3s and a lit room simply stays off.
 // A brief dip every burn window is the price of not lying; it is not a strobe.
 //
-// AND the burn must be FOR something (the author, 2026-08-05: phone dangling at waist
+// AND the burn must be FOR something (reported 2026-08-05: phone dangling at waist
 // height, camera at the floor, "the auto-flash turns on then - that's
 // unexpected and annoying"). Dark alone can't distinguish a dark shelf from a
 // dark floor — but what the torch REVEALS can: light a shelf and the
@@ -64,7 +64,7 @@ export interface TorchAutoConfig {
    *  baseline. The torch's own steady contribution is IN the baseline, so
    *  only genuine ambient change can cross it. (The first version used a
    *  fixed near-saturation 230 instead — unreachable in a normal room, so
-   *  the flash just stayed on. the author, 2026-08-05.) */
+   *  the flash just stayed on. reported 2026-08-05.) */
   brightMargin: number;
   /** ...but never treat anything below this as "bright" (a dim torch-lit
    *  scene plus margin could otherwise sit absurdly low). */

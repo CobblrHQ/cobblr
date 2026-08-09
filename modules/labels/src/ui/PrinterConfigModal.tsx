@@ -5,7 +5,7 @@
 // that pick on every print. So the size fields this modal used to show were not
 // merely a duplicate of the toolbar — they were INERT. You could set "loaded label
 // 40x30" here and it changed nothing about what printed. A control that looks
-// authoritative and does nothing is worse than no control (the author, 2026-07:
+// authoritative and does nothing is worse than no control (reported 2026-07:
 // "redundant and worse").
 //
 // So this owns exactly the settings the toolbar CANNOT know, which are the ones

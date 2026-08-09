@@ -147,7 +147,7 @@ export function Dashboard() {
       <AttentionFeed slug={activeSlug} />
 
       {/* The two scanner CTAs share a row so they cost ONE band of vertical space,
-          not two (the author, 2026-07-26). flex-1 means whichever one is present alone
+          not two (reported 2026-07-26). flex-1 means whichever one is present alone
           still spans full width; `empty:hidden` drops the row entirely when both
           self-hide, so it never leaves a dead gap.
           - PutAwayCard: scanned-but-homeless items (put-away.md §5) — the founding
@@ -172,7 +172,7 @@ export function Dashboard() {
           capture queue ("what to do" + waiting-to-file) + recent activity, all
           reorderable/hideable per workspace via one Arrange mode. The capture
           queue used to render BELOW here as a demoted "add more" bar; it's now
-          the `scan_inbox` section, above recent activity (the author, 2026-07-10). */}
+          the `scan_inbox` section, above recent activity (reported 2026-07-10). */}
       <ArrangeableBody
         slug={activeSlug}
         enabled={enabled}
@@ -604,7 +604,7 @@ function GettingStartedPanel({
   // The guided "What do you want to do?" panel PERSISTS - the guided add
   // (and the mini scan inbox) are useful for adding MORE, not just the
   // first thing. Established workspace: the panel is a growth affordance,
-  // not the hero, so it renders collapsed BELOW the data (the author, 2026-07-18);
+  // not the hero, so it renders collapsed BELOW the data (reported 2026-07-18);
   // on a blank workspace the hero IS the dashboard and keeps the top slot.
   // (The pre-panel "first-run wizard" and its skippedWizard localStorage
   // fossil are gone - nothing had set the flag since the onboarding-start
@@ -943,7 +943,7 @@ function arrangeWidgets(
 // The dashboard's arrangeable sections, in default order. `scan_inbox` (the
 // "what do you want to do" + waiting-to-file capture queue) sits ABOVE recent
 // activity: a scan backlog is actionable workspace state, not a growth
-// afterthought, so it's demoted no lower than recent activity (the author, 2026-07-10).
+// afterthought, so it's demoted no lower than recent activity (reported 2026-07-10).
 const SECTION_IDS = ["at_a_glance", "pinned_views", "scan_inbox", "recent_activity"] as const;
 type SectionId = (typeof SECTION_IDS)[number];
 const SECTION_TITLE: Record<SectionId, string> = {
@@ -1422,7 +1422,7 @@ function PinnedViews({ slug, editing = false }: { slug: string; editing?: boolea
       )}
       {/* Always the 2-up grid. The old full/half toggle only changed the column
           count — the cards render identically either way (each AS its own type),
-          so it added no real choice (the author, 2026-07-10). */}
+          so it added no real choice (reported 2026-07-10). */}
       <div className="grid gap-3 md:grid-cols-2">
         {pinned.map((v) => (
           <PinnedView key={v.id} slug={slug} view={v} />
@@ -1454,12 +1454,12 @@ function PosterCell({ path, title }: { path: string | null; title: string }) {
  *  to BE a distribution: when every item shares one value ("By make" over a single
  *  Honda), the lone 100% bar restates the count already in the header and never
  *  says WHAT you have — "HONDA 1" where "2019 Honda Civic" was the useful answer
- *  (the author, 2026-07-16). One bucket → fall through to the item list. A lone SET
+ *  (reported 2026-07-16). One bucket → fall through to the item list. A lone SET
  *  bucket plus unset items still counts as spread (it shows what's missing).
  *
  *  ALL-UNSET does not: an earlier revision kept the distribution branch for it
  *  and rendered only a "set tube type to group them here" hint — a card with
- *  five laser cutters behind it and zero content ("still 100% useless", the author,
+ *  five laser cutters behind it and zero content ("still 100% useless", reported
  *  2026-07-18). The hint is right; hiding the items to show it is not. All-unset
  *  now falls to the item list, which carries the hint as a footer.
  *  `groupCounts` is [value, n] with "" as the unset bucket. Exported for the test
@@ -1484,7 +1484,7 @@ function PinnedView({
   // strip, a heatmap shows its grid, and a GROUPED view (kanban / any group_by)
   // shows its group DISTRIBUTION — "functional 30 · rebuilding 12 · …", the point
   // of the view — instead of a flat thumb+title list that looked identical to
-  // every other type (the author, 2026-07-10). Only plain list/table fall back to the
+  // every other type (reported 2026-07-10). Only plain list/table fall back to the
   // list.
   const isGallery = view.view_type === "gallery";
   const isHeatmap = view.view_type === "heatmap";
@@ -1506,7 +1506,7 @@ function PinnedView({
   // an empty value is its own "unset" bucket ("" key), NOT the row subtitle. The
   // old subtitle fallback conflated an unset group with a DIFFERENT field: a
   // "Laser fleet by tube type" view whose lasers had no tube_type showed their
-  // STATE ("functional/building") as if it were the tube type (the author, 2026-07-10).
+  // STATE ("functional/building") as if it were the tube type (reported 2026-07-10).
   const groupCounts = useMemo<Array<[string, number]>>(() => {
     if (!isGrouped || !groupBy) return [];
     const m = new Map<string, number>();
@@ -1521,7 +1521,7 @@ function PinnedView({
   // A readable label for the grouping field, for the "nothing set yet" hint.
   const groupLabel = groupBy ? groupBy.replace(/_/g, " ") : "";
   // WHAT is this card about? A view name is a lens, not a subject: "By make"
-  // alone never says by make of WHAT (the author, 2026-07-16), and on a dashboard of
+  // alone never says by make of WHAT (reported 2026-07-16), and on a dashboard of
   // pinned cards the subject is the thing you scan for. Resolve it from the
   // view's kind. Same lookup fixes the noun: taking the kind's suffix reads the
   // literal "item" for an INSTANCE kind (`vehicles:item`), which is why the card
@@ -1570,7 +1570,7 @@ function PinnedView({
             renders AS its type, so "KANBAN" restated what the bars show), and
             the count never wraps — "3D Print… · Printer fleet by st…" next to a
             fully-readable KANBAN chip was the wrong things truncating
-            (the author, 2026-07-18). */}
+            (reported 2026-07-18). */}
         {subject && (
           <>
             <span className="font-medium text-content dark:text-mortar-100 truncate shrink-[2] min-w-[4rem]">{subject}</span>
@@ -1728,7 +1728,7 @@ function RecentActivity({ slug, editing = false }: { slug: string; editing?: boo
       {groups.length > 0 && (
         // Capped + scrollable: recent activity was the single longest element on
         // the page (it renders every group), so it's bounded to a fixed height and
-        // scrolls internally — glanceable without dominating the page (the author,
+        // scrolls internally — glanceable without dominating the page (reported
         // 2026-07-26).
         <ul className={"rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 divide-y divide-line dark:divide-slate-800 " + FEED_SCROLL}>
           {groups.map((g) => {

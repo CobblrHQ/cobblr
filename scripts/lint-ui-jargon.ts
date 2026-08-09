@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 // UI-jargon lint. A user-facing COUNT must read in the item's OWN noun ("5
 // machines"), never DB-speak ("5 rows" / "5 records" / "5 entities"). That leaked
-// into the dashboard + Views count labels (the author, 2026-07-11: "you should use the
+// into the dashboard + Views count labels (reported 2026-07-11: "you should use the
 // nouns that came with the items, not 5 rows").
 //
 // Flags a JSX / template count label — `{expr} rows|records|entities` — in a

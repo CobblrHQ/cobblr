@@ -2,7 +2,7 @@
 //
 // Every item is identified independently, so three shirts scanned together came
 // back "apparel", "apparel" and "clothing" - three items, two sections, when the
-// goal was one (the author, 2026-07-30). The agreement is computed with the SHARED
+// goal was one (reported 2026-07-30). The agreement is computed with the SHARED
 // reconciler (@cobblr/platform-contract/category-reconcile), the same code the
 // server uses, so the header can never propose a different label than the
 // pipeline would.
@@ -35,7 +35,7 @@ export function itemCategory(it: ScanInboxItem): string | null {
  * a row whose stored `fields.category` was "clothing" while its candidate
  * `category` read "apparel" matched nothing, so the chip fell through to the raw
  * value and one session showed "Clothing", "clothing" and "apparel" for one
- * category (the author, 2026-07-30). A declared name cannot drift from its value.
+ * category (reported 2026-07-30). A declared name cannot drift from its value.
  */
 export function declaredCategoryAxis(
   menu: ScanMenuEntry[] | null | undefined,
@@ -111,7 +111,7 @@ export interface SessionFilingReadiness {
 
 /**
  * Filing needs BOTH a sort category and a place - "at least a room" - or an
- * explicit decision from the person to go without (the author, 2026-07-30).
+ * explicit decision from the person to go without (reported 2026-07-30).
  *
  * `isReadyToFile` only ever checked for a name and a destination table, so "File
  * all" would happily commit items with no location at all: they land in the
@@ -163,7 +163,7 @@ export interface SessionLocation {
  *
  * The header needs to SHOW this, not just gate on it: filing needs a place as
  * well as a category, and the old header only revealed that after you pressed
- * the button, which then asked instead of filing (the author, 2026-07-30: "plenty of
+ * the button, which then asked instead of filing (reported 2026-07-30: "plenty of
  * room for a set common location or no location set, so it's set location then
  * you can file"). Mixed locations are reported as mixed rather than collapsed to
  * the first, so the header never claims a place the items do not share.
@@ -186,7 +186,7 @@ export function sessionLocation(readyItems: ScanInboxItem[]): SessionLocation {
  *
  * `categoryDisplay` is per-item and deliberately preserves a value that already
  * carries capitals, so nine jugs identified independently showed "Figurines" on
- * some cards and "Figurine" on others (the author, 2026-08-02). Reconciliation is
+ * some cards and "Figurine" on others (reported 2026-08-02). Reconciliation is
  * inherently cross-item, so a per-item function could never have fixed it: the
  * chip has to be TOLD what the session settled on.
  *

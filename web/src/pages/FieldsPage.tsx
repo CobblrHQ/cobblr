@@ -47,7 +47,7 @@ const RENDERER_SAMPLE: Record<CatalogFieldRenderer, string> = {
   boolean: "true",
   code: "ABC-123",
   markdown: "**Bold**, _italic_, `code`",
-  qr: "https://cobblr.me",
+  qr: "https://cobblr.example.com",
 };
 
 export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {

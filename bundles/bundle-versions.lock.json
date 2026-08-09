@@ -51,41 +51,41 @@
     "version": "0.3.1",
     "hash": "1e00f39d5da0b36a940a109407d63efa65cd6451abbee082bfcc8910d04010a1"
   },
-  "cobblr.flagship.documents-renewals": {
-    "version": "0.2.2",
-    "hash": "ddd775c54b4c52602e4bc575adf688293261efe99449fd22ec70137e611efecb"
+  "cobblr.flagship.documents": {
+    "version": "0.2.3",
+    "hash": "1ef872bc791fca49e3064d95836ea7e3de860bf04856cd534ad409d76aa40f14"
   },
   "cobblr.flagship.fasteners": {
     "version": "0.1.1",
     "hash": "fa0063220c2e7567f2594b7b04e3d8736e8a40423ee567e48da32edbcf1567e4"
   },
-  "cobblr.flagship.filament-stash": {
-    "version": "0.5.4",
-    "hash": "ec011a6d427d38903a956b54783a44621c99e418475d2ee5912cdd15cf16a05e"
-  },
-  "cobblr.flagship.food-cluster": {
-    "version": "0.2.1",
-    "hash": "6bf9f62e1860e1481b10b9124b9f05fa80192b09ae8a487dd0cac77e80c08809"
+  "cobblr.flagship.filament": {
+    "version": "0.5.5",
+    "hash": "7a1b6cb477efb01f41b1b3a20f8da0161d94f142d03120e5c81dd3e1072626ee"
   },
   "cobblr.flagship.gifts-occasions": {
     "version": "0.2.1",
     "hash": "24ca0447bad1d722cdd18aceb900cc1593de21513e082185d69b05a952306852"
+  },
+  "cobblr.flagship.groceries": {
+    "version": "0.3.0",
+    "hash": "da7e00348617dc71785ebcf38cdaa9c9dfbcb2c6fdddadc92484e02582fc8cbd"
+  },
+  "cobblr.flagship.grocery-spend": {
+    "version": "0.1.2",
+    "hash": "cbf3e315cfabb0f74716241205e63efd015ed79692f46b3d13b4f0145afb4c48"
   },
   "cobblr.flagship.home-inventory": {
     "version": "0.4.1",
     "hash": "716031ac9c1e6fb13ce7a1b961b455cfad0130c08064aab2fa32e111361e66f5"
   },
   "cobblr.flagship.home-maintenance": {
-    "version": "0.3.1",
-    "hash": "74e737659fc6737a015ea58461831c006f15b906ca6bc52c73a1c01a214d3275"
+    "version": "0.3.2",
+    "hash": "eb361e205786bbafdcda36bebb919beca80b1389231d681ea24e004b847f3d0a"
   },
   "cobblr.flagship.household-supplies": {
-    "version": "0.3.1",
-    "hash": "50ab319c628688ebc62da8cbc6c89d035dd4f8fdfb9c29c4508bde13648f4049"
-  },
-  "cobblr.flagship.kitchen-fitness": {
-    "version": "0.1.0",
-    "hash": "a758888a3dfe1e0712d3b192c543355f556577a5af2fa31ff8c3325b538acd5f"
+    "version": "0.3.2",
+    "hash": "b7569bde3a4af283d9d1e373662be3aa1a98687bba0448cba079d68e371462ce"
   },
   "cobblr.flagship.maker-workshop": {
     "version": "0.1.1",
@@ -95,29 +95,29 @@
     "version": "0.3.1",
     "hash": "70a502154810c2e79e6fea3f4516400b1a342672d817a790239301f35e497b16"
   },
-  "cobblr.flagship.pet-care": {
-    "version": "0.2.1",
-    "hash": "4ac00ba328cd2e64f33610cb6f593357596da55b96ef114de6579351a58a621b"
+  "cobblr.flagship.pets": {
+    "version": "0.2.2",
+    "hash": "76c079bf39108085d557f40df29b4bd887157c6d2920434bb57b4f39a39618a4"
   },
-  "cobblr.flagship.plant-care": {
-    "version": "0.3.1",
-    "hash": "8df88d5f1693ec51cc481271f56ca2bda2141e12c5e8f91a4159cfbed981d364"
+  "cobblr.flagship.plants": {
+    "version": "0.3.2",
+    "hash": "07624338cfbe4a034a7cd8aadc9e88b29635a3dd30d4866243e4dd4fbed92020"
   },
   "cobblr.flagship.subscriptions": {
     "version": "0.2.2",
     "hash": "c21efaf08112977c62408d2e330a7bca1f9715f73d6943351c317978492c58b2"
   },
-  "cobblr.flagship.vehicle-maintenance": {
-    "version": "0.4.0",
-    "hash": "cc581d5adab778e8cc24864de9872748fee17082e3d73ab5ab4c1bc255f6ccd7"
+  "cobblr.flagship.vehicles": {
+    "version": "0.4.1",
+    "hash": "38730f13129ed104d3b225fce7770607780df8139d96bd123cb68e6d19a64bd5"
   },
   "cobblr.flagship.wardrobe": {
     "version": "0.1.2",
     "hash": "309379ea9bbd4c6b12388dd4d399603a7ac797c975886716524b2891e277fd34"
   },
-  "cobblr.flagship.warranties-receipts": {
-    "version": "0.2.1",
-    "hash": "2780dcb2b241d6b5494c4c24af3138d73c1c44c697b86d8a3251fcedf139cdfc"
+  "cobblr.flagship.warranties": {
+    "version": "0.2.2",
+    "hash": "a98dd10b48911e1e52ea6e202bfc17da432fa4841a59b7f0ea6279371d4e7226"
   },
   "cobblr.flagship.yarn": {
     "version": "0.6.2",

@@ -1,5 +1,5 @@
 // Cosmetic decoration for floor-plan rects — the Gridfinity-conversation
-// contract (the author, 2026-07-10): the RECT stays the only thing the math ever
+// contract (reported 2026-07-10): the RECT stays the only thing the math ever
 // sees (hit-testing, drop, snap, clamp, rebase); inside it, decoration is
 // free country. An `outline` is a silhouette drawn as an SVG polygon in the
 // rect's normalized space (per-mille, 0–1000 on both axes) — a trapezoid
@@ -10,7 +10,7 @@
 export type OutlinePoints = Array<[number, number]>;
 
 /** Presets for the common silhouettes; freeform points are the escape
- *  hatch. taper-left/right are the author's wrench rails: the set fans from big to
+ *  hatch. taper-left/right are the wrench rails: the set fans from big to
  *  small, so the footprint is a trapezoid. */
 export const OUTLINE_PRESETS: Record<string, OutlinePoints> = {
   "taper-left": [

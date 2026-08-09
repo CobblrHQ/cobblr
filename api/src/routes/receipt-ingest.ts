@@ -168,7 +168,7 @@ export async function ingestReceiptEmail(
 
   // link_url is stored RELATIVE (the in-app bell routes it with React Router,
   // which takes a PATH; an absolute URL matches no route and dumps you on the
-  // dashboard - the author, 2026-08-01). Outbound channels absolutize it themselves.
+  // dashboard — reported 2026-08-01). Outbound channels absolutize it themselves.
   // The absolute form is still what goes in email/DM BODY text.
   const scanPath = `/w/${slug}/scan`;
   const scanUrl = absoluteAppUrl(scanPath);

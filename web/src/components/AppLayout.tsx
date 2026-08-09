@@ -307,7 +307,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
       <div className="flex items-center gap-2 min-w-0">
         {/* The brand row is the wordmark + controls ONLY. The env chip lives on
             the workspace row below, so no badge (Staging/Dev/Test, any label
-            length) can crowd "cobblr" down to "co..." — the author, 2026-07-29. */}
+            length) can crowd "cobblr" down to "co..." — reported 2026-07-29. */}
         <Link to="/" className="flex items-center gap-1.5 min-w-0 shrink-0 hover:opacity-80 transition">
           <CobblestoneMark size={20} dot={envDot} />
           <span className="font-display font-extrabold text-content dark:text-mortar-100 lowercase text-[15px]">cobblr</span>
@@ -327,8 +327,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
         {/* Env chip: absolute + anchored to the TOP of this row (not a flex
             sibling), so it neither steals width from the switcher nor floats to
             the vertical middle when the list expands. It sits to the right of the
-            collapsed trigger; the full-width dropdown covers it when open. the author,
-            2026-07-29 (a flex-sibling chip narrowed the dropdown + floated it). */}
+            collapsed trigger; the full-width dropdown covers it when open. reported 2026-07-29 (a flex-sibling chip narrowed the dropdown + floated it). */}
         {envBanner && (
           <button
             type="button"

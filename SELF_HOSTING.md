@@ -178,14 +178,14 @@ Prefer DuckDNS or Cloudflare if you can - they skip this entirely.
 git pull
 docker compose -f docker-compose.yml -f deploy/selfhost/docker-compose.selfhost.yml up -d --build
 ```
-Database migrations run automatically on api start — including across
+Database migrations run automatically on api start, including across
 PostgreSQL major versions (the db image upgrades its own data directory in
 place, leaving the old cluster untouched as the rollback).
 
 **Updates are a one-way door.** Migrations are forward-only: moving to a newer
 build is always supported, but going *back* to an older one can meet a database
 the older code does not understand. If you track a bleeding-edge build, keep
-backups (below) — rolling back means restoring one.
+backups (below), so rolling back means restoring one.
 
 ### Experimental modules
 
@@ -221,8 +221,9 @@ outbound surface and how to turn each off.
 | Feature | Contacts | Default | Turn off |
 |---|---|---|---|
 | **Barcode scanning** | upcitemdb, Open Food/Products/Beauty Facts, DuckDuckGo (+ go-upc if you opt in) | on when you scan | `COBBLR_SCAN_EXTERNAL_LOOKUPS=false` |
+| **Vendor QR lookups** | the maker's own API (e.g. a filament brand's spool service). These ask for a contact address, so `COBBLR_OPERATOR_EMAIL` (or your first `SUPERADMIN_EMAILS`) is sent with the request so they can reach *you*. Unset means the lookup is skipped, never sent under anyone else's name | only when you scan a vendor QR | leave `COBBLR_OPERATOR_EMAIL` unset, or `COBBLR_SCAN_EXTERNAL_LOOKUPS=false` |
 | **AI features** | your chosen LLM provider (OpenAI/Anthropic/…) | needs *your* key - nothing without one | `COBBLR_AI_ENABLED=false` |
-| **Marketplace** | `api.github.com/CobblrHQ/cobblr-extensions` (the extension catalog) | only when you open the marketplace | `COBBLR_EXTENSIONS_URL=` your own, or don't open it |
+| **Module registry** | `raw.githubusercontent.com/CobblrHQ/registry` (the catalog of modules published outside a release) | only when an admin opens the module marketplace | `COBBLR_REGISTRY_URL=` your own, or don't open it |
 | **TLS certificate** | Let's Encrypt / your DNS provider | on (unless the offline `tls internal` option) | use the offline option |
 
 Everything else - Google-Drive backups, Discord/Slack notifications, an external
@@ -252,10 +253,16 @@ which returns open-data and community-corrected results (never another provider'
 licensed data). Your own providers above still handle anything BIdb doesn't know,
 and if BIdb is unreachable the scan falls back to them.
 
+> **Not available yet.** The service exists but has no public address, so no
+> install can reach it and the tier stays inert with both variables blank. They are already in
+> `.env.example` and passed through compose, so switching it on when it launches
+> is one line in your `.env` plus `docker compose up -d`, with no template to
+> re-copy, nothing to migrate. The changelog will say when.
+
 | Var | Default | What it does |
 |---|---|---|
-| `COBBLR_BIDB_URL` | - | Set to `https://bidb.cobblr.xyz` to consult the shared database. Unset keeps the tier inert. |
-| `COBBLR_BIDB_KEY` | - | Your per-install key (generated from a Cobblr account), sent as a bearer token. |
+| `COBBLR_BIDB_URL` | - | The shared database to consult. Unset keeps the tier inert. |
+| `COBBLR_BIDB_KEY` | - | Your per-install key (issued from a Cobblr account), sent as a bearer token. |
 
 The full model (why a self-host install queries but never receives another
 provider's licensed data, and the give-to-receive correction opt-in) is

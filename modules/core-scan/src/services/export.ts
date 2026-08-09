@@ -129,7 +129,7 @@ export interface ExportItem {
      * belong to the source's location tree and mean nothing on the destination,
      * where following one would file things into the wrong place. A name can be
      * matched if the destination happens to have the same location and shown as
-     * a suggestion if it does not - which beats dropping it (the author, 2026-07-31:
+     * a suggestion if it does not - which beats dropping it (reported 2026-07-31:
      * "I'd rather have it as a suggestion than not").
      */
     target_location_name: string | null;
@@ -141,7 +141,7 @@ export interface ExportItem {
      * carries it for a consumer that wants to fetch it, but a Cobblr importing
      * from Cobblr should simply keep the link - the source renders it without
      * fetching anything, and so should the copy. Without this those items
-     * imported blank (the author, 2026-07-31: "they were showing in prod").
+     * imported blank (reported 2026-07-31: "they were showing in prod").
      */
     catalog_image_url: string | null;
   };

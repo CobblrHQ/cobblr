@@ -130,7 +130,7 @@ export function composeMediaNUp(
     // Any 2-up tiling gets a printed cut guide between the columns — you always cut
     // side-by-side faces apart. (It was gated on feed !== "die-cut", but the feed
     // defaults to die-cut when a printer hasn't stored one, so a plain 50×30 roll
-    // printed 2-up got no line at all — the author, 2026-07.) It lands in the labels'
+    // printed 2-up got no line at all — reported 2026-07.) It lands in the labels'
     // whitespace gutter, so a rare pre-die-cut 2-up is unharmed.
     divider: Math.max(1, cols) > 1,
   });

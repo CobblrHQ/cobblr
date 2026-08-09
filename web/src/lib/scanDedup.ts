@@ -24,7 +24,7 @@ import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
 
 /** A generic web link (a product's marketing QR) that is NOT one of Cobblr's own
  *  `<host>/qr/<token>` labels. Lowest-priority sighting: a Nike box's
- *  `qr.nike.com/…` code must never beat the product barcode beside it (the author,
+ *  `qr.nike.com/…` code must never beat the product barcode beside it (reported
  *  2026-07-24). A Cobblr QR is a URL too, but `qrTokenFromUrl` parses it, so it is
  *  NOT generic and keeps its priority. */
 export function isGenericLink(v: string): boolean {
@@ -133,7 +133,7 @@ export function shouldFireScan(
   // Agreement gate: consecutive identical sightings — MORE of them for a
   // short numeric code. A diagonal scan line through part of a UPC-A can
   // decode as a DIFFERENT, checksum-valid EAN-8 (it produced "33720272" from
-  // 859337002726 at ~45° — the author, 2026-08-05), and the checksum can't save you
+  // 859337002726 at ~45° — reported 2026-08-05), and the checksum can't save you
   // because the misread's checksum is genuinely valid. But such slices are
   // unstable frame to frame, while a real EAN-8 held in view repeats
   // identically — so demanding a longer streak filters the phantom and costs a

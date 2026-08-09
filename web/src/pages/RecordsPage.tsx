@@ -119,7 +119,7 @@ export function RecordsPage({
     onSuccess: (r) => {
       if (r.started === 0) {
         // Say WHICH kind of nothing. Blaming the data for a wiring gap sent a
-        // real debugging session down the wrong path (the author, 2026-07-18).
+        // real debugging session down the wrong path (reported 2026-07-18).
         if (r.unresolved > 0)
           toast.error(
             `Couldn't read ${r.unresolved} ${noun}${r.unresolved === 1 ? "" : "s"} — that's a bug on our side, not your data.`,
@@ -315,7 +315,7 @@ function RecordDetailModal({
   // A record with no cover had NO way to get one: the detail rendered a
   // read-only thumb, unlike assets/machines which ship the image editor +
   // web search. Three books arrived coverless from the scan inbox and were
-  // stuck that way (the author, 2026-07-18). Same two paths those pages use:
+  // stuck that way (reported 2026-07-18). Same two paths those pages use:
   // "Auto" searches by the record's own identity, and the picker lets you
   // choose a specific result.
   const [autoBusy, setAutoBusy] = useState(false);
@@ -385,7 +385,7 @@ function RecordDetailModal({
             <div className="space-y-3">
               {/* The cover keeps its OWN proportions. A square thumb
                   object-cover-cropped a portrait book jacket top and bottom
-                  while the column had height to spare (the author, 2026-07-18) — a
+                  while the column had height to spare (reported 2026-07-18) — a
                   record's image is usually the identity (a jacket, a poster,
                   a label), so it renders whole, not cropped to a tile. */}
               <EntityImageEdit

@@ -503,7 +503,7 @@ export function cellLayout(size: LabelSize): CellLayout {
  *  portrait and a square is unchanged, so rotating them is pointless — and for a
  *  portrait cell actively BROKEN: the 2-up 50×30 has 25×30 portrait cells, and
  *  turning one landscape (30×25, nearly square) left the QR filling it with the
- *  caption overflowing off the label (the author, 2026-07). Gate the toggle on this so it
+ *  caption overflowing off the label (reported 2026-07). Gate the toggle on this so it
  *  only appears where it helps. */
 export function labelRotatable(labelW: number, labelH: number): boolean {
   return pickCellLayout(labelW, labelH) === "row";

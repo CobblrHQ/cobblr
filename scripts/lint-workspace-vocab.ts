@@ -6,7 +6,7 @@
 // "Add your first item", "part / asset / project…"). Cobblr is a modular
 // kernel with nothing hardcoded (MEMORY: "modular kernel, nothing hardcoded";
 // "generic placeholders in UI/prompts"): a space with only a Yarn bundle should
-// never be told to "add a part". the author (2026-07-12): "lint for this type of
+// never be told to "add a part". Feedback (2026-07-12): "lint for this type of
 // generic verbiage instead of workspace-specific 'what is there' terms cuz we
 // keep finding issues like this." The recurring exemplar was AllocationsPanel's
 // `placeholder="search a task, project, anything to reserve for…"`.
@@ -63,7 +63,7 @@ const NOUN_RE = new RegExp(`\\b(${NOUNS.join("|")})(s|es)?\\b`, "i");
 const N = `(?:${NOUNS.join("|")})(?:s|es)?`;
 // CALL-TO-ACTION / empty-state shapes that front a generic noun the user is
 // meant to read as "the thing in my space". Deliberately NARROW — exactly the
-// phrasings the author keeps finding, so titles / tooltips / toasts / button labels
+// phrasings that keep turning up, so titles / tooltips / toasts / button labels
 // don't get swept in:
 //   • "No <noun> yet"            (empty-state)   — "No tasks yet", "No parts yet"
 //   • "Add/Create your first <noun>"             — "Add your first item"

@@ -7,6 +7,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import {
   AlertTriangle,
   Archive,
+  ArrowRightLeft,
   Download,
   ExternalLink,
   FileDown,
@@ -24,6 +25,7 @@ import {
   EntityThumb,
   EntityTile,
   Modal,
+  MoveToInstanceModal,
   ViewModeToggle,
   useToast,
   useConfirm,
@@ -80,6 +82,7 @@ export function PartsListPage() {
   const [ravImporting, setRavImporting] = useState(false);
   const [viewMode, setViewMode] = useViewMode("parts", "list");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
   const toast = useToast();
   const confirm = useConfirm();
 
@@ -728,6 +731,13 @@ export function PartsListPage() {
             </button>
             <button
               type="button"
+              onClick={() => setBulkMoveOpen(true)}
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-accent hover:text-accent"
+            >
+              <ArrowRightLeft size={12} /> Move to…
+            </button>
+            <button
+              type="button"
               onClick={() => void bulkDelete()}
               className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-ember-600 hover:text-ember-700"
             >
@@ -736,6 +746,22 @@ export function PartsListPage() {
           </>
         }
       />
+      <MoveToInstanceModal
+        open={bulkMoveOpen}
+        onClose={() => setBulkMoveOpen(false)}
+        slug={orgSlug}
+        getToken={getToken}
+        moduleName="inventory"
+        fromInstance={instance ?? "inventory"}
+        ids={Array.from(selected)}
+        noun={itemNoun}
+        onMoved={(n, where) => {
+          toast.success(`Moved ${n} ${n === 1 ? itemNoun : `${itemNoun}s`} to ${where}`);
+          setSelected(new Set());
+          void qc.invalidateQueries();
+        }}
+      />
+
       {bulkTagOpen && (
         <PartsBulkTagModal
           count={selected.size}

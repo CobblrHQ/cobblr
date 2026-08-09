@@ -229,7 +229,7 @@ registerBackupDriver({
       }));
   },
   async prune({ config, credentials, retention }) {
-    // Drive had NO prune, so backups piled up forever (the author saw 100+). Keep the
+    // Drive had NO prune, so backups piled up forever (one install saw 100+). Keep the
     // newest `retention`, delete the rest. Scoped to backup-*.zip so we never
     // touch anything else in the folder / My Drive.
     const refresh = typeof credentials.refresh_token === "string" ? credentials.refresh_token : "";
@@ -245,7 +245,7 @@ registerBackupDriver({
     const files = ((await res.json()) as { files?: Array<{ id?: string; name?: string }> }).files ?? [];
     const backups = files.filter((f) => /^backup-.*\.zip$/.test(f.name ?? "") && f.id);
     const toDelete = backups.slice(Math.max(1, retention));
-    // Delete in parallel batches, not one-at-a-time: a big backlog (the author hit 1500+
+    // Delete in parallel batches, not one-at-a-time: a big backlog (one install hit 1500+
     // because Drive never pruned before) took 10+ minutes sequentially and got
     // killed before finishing. Batches of 15 clear even a large backlog in seconds.
     const CONCURRENCY = 15;
@@ -447,7 +447,7 @@ export function registerBackupCron(): void {
     // De-dupe redundant ticks. `seedBackupSchedules` re-enqueues a tick on every
     // boot when next_run_at is past, and a blue-green deploy briefly runs two api
     // containers that both process the queue — so a deploy used to fire several
-    // backups minutes apart (the author saw 100). If a backup already ran within most of
+    // backups minutes apart (one install saw 100). If a backup already ran within most of
     // this schedule's interval, this tick is a duplicate: skip the run, but still
     // reschedule the next so the cadence continues.
     const ranRecently = isRedundantScheduledRun(dest.schedule, dest.last_run_at ? new Date(dest.last_run_at) : null, now);

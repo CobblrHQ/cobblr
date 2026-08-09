@@ -42,12 +42,19 @@ const InstallBody = z.object({
 });
 
 const DEFAULT_REGISTRY =
-  // `||` not `??` — compose passes an EMPTY string when unset. The repo is
-  // PRIVATE, so this is the GitHub contents-API URL (Bearer-authed, returns
-  // raw JSON); see api/src/lib/github-registry.ts for why a raw.github URL
-  // can't auth private repos. When the repo goes public a raw URL works too.
+  // `||` not `??` — compose passes an EMPTY string when unset.
+  //
+  // The official index is PUBLIC, so this is a raw URL and needs no token. It
+  // used to be the contents-API URL against a private repo, which meant the
+  // default 404'd for everyone who wasn't us: unauthenticated api.github.com is
+  // also only 60 req/hr per IP, where raw is CDN-served. A self-hoster now gets
+  // a working (empty) catalog instead of an error, with nothing to configure.
+  //
+  // COBBLR_REGISTRY_URL still points this at an internal or company-private
+  // index; that case needs COBBLR_REGISTRY_TOKEN, and github-registry.ts
+  // explains why a private index must use the contents API rather than raw.
   process.env.COBBLR_REGISTRY_URL ||
-  "https://api.github.com/repos/CobblrHQ/registry/contents/modules.json";
+  "https://raw.githubusercontent.com/CobblrHQ/registry/main/modules.json";
 
 function verifyEd25519(publicKeyB64: string, tarball: Buffer, signatureB64: string): boolean {
   const keyDer = Buffer.from(publicKeyB64, "base64");

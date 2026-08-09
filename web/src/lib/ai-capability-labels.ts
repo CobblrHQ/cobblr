@@ -3,7 +3,7 @@
 // A capability with no entry here falls through to its prettified id, so the
 // page shows raw jargon: `rank-images` rendered as "Rank images", which nobody
 // could tell apart from the "pick photos automatically" setting sitting above it
-// ("Rank images is already on the AI page, is this not the same thing?" - the author,
+// ("Rank images is already on the AI page, is this not the same thing?" - reported
 // 2026-07-30). The ids are internal; the page is for a person deciding which AI
 // to spend money on, so every capability gets a plain-English name.
 //

@@ -375,7 +375,7 @@ export function fitCaptionPx(
   // names (bold system-ui) it is ~0.45-0.51; 0.55 keeps a small margin so the
   // longest wrapped line still fits without the HTML re-wrapping. 0.72 was WAY too
   // conservative — it undersized every caption by ~30% and left the text short of
-  // the label's left/right extents (the author, 2026-07: "2019 Honda Civic is way too
+  // the label's left/right extents (reported 2026-07: "2019 Honda Civic is way too
   // small ... scale to the extents").
   const CHAR = 0.55;
   // Real text width at font-size 1, when the caller can measure (canvas 2d). The
@@ -393,7 +393,7 @@ export function fitCaptionPx(
   // Do NOT instead require the font to also fit lc+1 lines: that halves every
   // caption whose word count allows wrapping, while leaving one-word captions
   // untouched (maxLines collapses to 1 for those). It shipped once and made
-  // "Prusa MINI+" print at half the size of "Thumper" beside it — the author, 2026-07.
+  // "Prusa MINI+" print at half the size of "Thumper" beside it — reported 2026-07.
   const WIDTH_SAFETY = 0.94;
   const maxLines = Math.max(1, Math.min(opts.maxLines ?? 2, words.length));
   let best = 0;
@@ -548,7 +548,7 @@ export async function renderLabelCanvas(
       drawCaption(ctx, wrapLines(ctx, caption, tw, box.maxLines), tx, cy, tw, chAll, fontPx, "left");
     }
   } else {
-    // Caption TOP, QR anchored to the FLOOR at the bottom (the author, 2026-07: "the QRs
+    // Caption TOP, QR anchored to the FLOOR at the bottom (reported 2026-07: "the QRs
     // should have a floor they anchor to" — so every label's QR bottom lines up).
     // Every dimension comes from the shared captionBox, so this matches the preview.
     const floor = Math.round(box.floor);
@@ -630,7 +630,7 @@ export function encodeForPrinter(bmp: MonoBitmap, s: BluetoothPrinterSettings): 
  *  ALREADY leaves its own whitespace margin inside the bitmap — so shifting the
  *  whole bitmap down by the dead zone added the two together. On a PM220S / 50x30
  *  label that put the first ink 4.8 mm down (3.0 dead zone + 1.8 internal) while
- *  the bottom kept only 1.8 mm, and the print visibly sat low (the author, 2026-07).
+ *  the bottom kept only 1.8 mm, and the print visibly sat low (reported 2026-07).
  *
  *  The bitmap's own white already satisfies part of the dead zone, so only the
  *  DIFFERENCE needs shifting: the total top inset becomes max(internal, deadzone)

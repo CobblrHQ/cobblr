@@ -104,6 +104,14 @@ export function codeBadgeClass(code: string): "code-circle" | "code-pill" {
 // three cell layouts as an upright label — but on `.rot-inner`, since `.label`
 // no longer carries the layout class. The base `.label .qr` / `.desc` / `.code`
 // rules still apply by descendant match, so QR sizing + badges are unchanged.
+//
+// Which layout a TURNED label lands in: renderSheet swaps the dimensions before
+// picking (layoutSizeForCss above), so a landscape 50×30 becomes a 30×50 and
+// resolves to `portrait` — name on top, QR under. That swap IS the turn. Note
+// this is the ⌘P/preview path only: the Bluetooth and server-PDF renderers own
+// their own layout choice (labelLayoutFor on the label's configured dimensions)
+// and never see opts.rotate, so a printer set up with a tall face already prints
+// the stacked arrangement without this flag.
 const rotateCss = (padIn: string, padXIn: string, floorIn: string) => `  .label.rot { padding: 0; }
   .label.rot .rot-inner {
     position: absolute; top: 50%; left: 50%;
@@ -163,6 +171,22 @@ export function renderPrintSheetHtml(
   // short name fills its box while a long one shrinks — the sheet no longer carries
   // one fixed size.
 
+  // WHERE THE NAME SITS, since the CSS below says it tersely and it has been read
+  // backwards more than once (it put a wrong sentence into two docs sites):
+  //   .label.row       QR LEFT, name right. The QR is a square of the cell HEIGHT
+  //                    and claims its side first, so the name gets only what is
+  //                    left beside it, w - h. On a 50x30 that is 20mm.
+  //   .label.portrait  NAME ON TOP, QR under it. DOM order is .desc then .qr and,
+  //                    unlike row, there is no order:-1 here, so source order
+  //                    wins. The CSS note "QR FIRST" below means first CLAIM ON
+  //                    SPACE (a full-width square sized by the face, never by the
+  //                    caption), NOT first in position.
+  // So turning a landscape label does not make its name run along the long edge:
+  // it stacks them, and the name spans the SHORT edge and gets all of it (30mm on
+  // a 50x30) instead of the leftover column. That is what shouldAutoRotate trades.
+  // Comments live out here on purpose: anything inside the template ships in the
+  // emitted HTML and is pinned by the locked goldens.
+
   return `<!doctype html>
 <html>
 <head>
@@ -194,7 +218,7 @@ export function renderPrintSheetHtml(
   /* Cut guide: a dark line ONLY on a seam BETWEEN two filled cells (drawn once, by
      the upper/left cell), so you cut on it. No full per-cell border — a blanket
      border doubled at every abutment and framed a partial sheet's empty half with a
-     stark box (the author, 2026-07). The seam prints black. */
+     stark box (2026-07). The seam prints black. */
   .label.seam-r { border-right: 1px solid #1a1a1a; }
   .label.seam-b { border-bottom: 1px solid #1a1a1a; }
   .label .qr { flex-shrink: 0; position: relative; }
@@ -220,7 +244,7 @@ export function renderPrintSheetHtml(
     border-radius: 999px; white-space: nowrap;
   }
   /* .desc is a flex box that CENTRES the caption span vertically + horizontally in
-     its strip (so the name sits in the middle of the whitespace above the QR — the author,
+     its strip (so the name sits in the middle of the whitespace above the QR,
      2026-07); the inner span carries the -webkit-box line-clamp. */
   .label .desc {
     font-weight: 600;

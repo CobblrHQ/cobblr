@@ -4,7 +4,7 @@
 // Photos, Receipt, Import) plus a search field. But on a desktop the actual
 // gestures are "paste a code", "paste a link" and "drop a file" - and which one
 // you did is readable from the input itself, so it never needed to be a mode
-// the person picks first (the author, 2026-08-01: "either those go back to first class
+// the person picks first (reported 2026-08-01: "either those go back to first class
 // buttons or Scan is the wrong heading for that dropdown").
 //
 // Pure and unit-tested: the routing decision is the whole feature, and it must

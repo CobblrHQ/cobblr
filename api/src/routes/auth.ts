@@ -311,7 +311,7 @@ authRouter.get("/config", (_req, res) => {
           site_key: (process.env.COBBLR_CAPTCHA_SITE_KEY ?? "").trim() || null,
         }
       : null,
-    // Hosted (cobblr.me / managed) vs self-hosted. Self-hosted by default; the
+    // Hosted (the managed service) vs self-hosted. Self-hosted by default; the
     // managed/public-prod deployment sets COBBLR_HOSTED=true. Drives client hints
     // such as "a hosted Cobblr can't reach your LAN device directly".
     hosted: process.env.COBBLR_HOSTED === "true",
@@ -1332,7 +1332,7 @@ authRouter.post("/pair/start", requireAuth, async (req, res, next) => {
     // The phone visits /pair?code=… . Offer a claim URL for every base this
     // server is reachable at — the request origin (on Cobblr's Cloudflare-
     // tunnel'd prod that IS the phone-reachable public URL, e.g.
-    // https://cobblr.me) plus an optional PUBLIC_BASE_URL for self-hosters who
+    // https://cobblr.example.com) plus an optional PUBLIC_BASE_URL for self-hosters who
     // expose a separate LAN/Tailscale address. localhost bases are dropped when
     // a real one exists (a phone can't resolve the desktop's localhost).
     const proto = (req.headers["x-forwarded-proto"] as string | undefined) ?? req.protocol;

@@ -2,7 +2,7 @@
 //
 // The Purchases banner listed them as "KC Tool (16) · KC Tool (7) · KC Tool (1)"
 // - three receipts from one vendor, told apart only by a line count, which is a
-// SIZE, not an identity (the author, 2026-08-03). You cannot tell which is which, and
+// SIZE, not an identity (reported 2026-08-03). You cannot tell which is which, and
 // the count changes as you confirm lines out of them.
 //
 // A receipt's identifier, when it states one, is its order/invoice number - the

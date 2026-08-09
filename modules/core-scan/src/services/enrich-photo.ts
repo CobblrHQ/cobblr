@@ -51,7 +51,7 @@ export async function refreshCatalogImageByName(
   // Try to DOWNLOAD the top candidates into core-files, falling through until one
   // stores. Storing just the top RAW url (as this did) left many tiles empty: a
   // product-page image often hotlink-blocks or 404s in the browser, and there was
-  // no fallback to the next result (the author, 2026-07-24). downloadCatalogImage handles
+  // no fallback to the next result (reported 2026-07-24). downloadCatalogImage handles
   // SSRF-guard + retries + size limits and stamps catalog_image_file_id. Dynamic
   // import because enrich.ts imports THIS module — a static import would cycle.
   const candidates = rankImageOptions(pool, brand, q)
@@ -127,7 +127,7 @@ export interface PhotoIdentity {
   /** The item's colour in plain English, when it has one obvious colour. Stored
    *  as a METADATA fact, so it exists even when the destination table declares
    *  no colour field — which is the usual case, and why a colour used to be
-   *  unknowable (the author, 2026-07-30). */
+   *  unknowable (reported 2026-07-30). */
   color: string | null;
   entityType: "asset" | "part" | null;
   /** A known series/franchise this titled work belongs to (Harry Potter,
@@ -818,7 +818,7 @@ export type EnrichOutcome = "identified" | "no-photo-bytes" | "not-identified" |
  *  REUSE a label instead of inventing a synonym of one. Reuse beats
  *  reconciliation - three shirts scanned together produced "apparel",
  *  "apparel" and "clothing" precisely because each call was blind to the other
- *  two (the author, 2026-07-30). Cheap, bounded, and silent on failure: an anchor that
+ *  two (reported 2026-07-30). Cheap, bounded, and silent on failure: an anchor that
  *  cannot be read is not worth failing an identify over. */
 export async function knownCategories(
   db: PhotoEnrichContext["db"],

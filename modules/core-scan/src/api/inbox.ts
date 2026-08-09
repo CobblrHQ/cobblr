@@ -122,7 +122,7 @@ inboxRouter.get(
 // Receipt sessions still awaiting confirmation into a purchase order — powers
 // the "N receipts pending" banner on the Purchases page, so a receipt that was
 // imported but not yet confirmed is visible from Purchases, not only from Scan
-// (the author, 2026-07-26). One grouped SQL; no per-item rows.
+// (reported 2026-07-26). One grouped SQL; no per-item rows.
 inboxRouter.get(
   "/inbox/receipt-groups/pending",
   asyncHandler(async (req, res) => {
@@ -131,7 +131,7 @@ inboxRouter.get(
     // The order/invoice number lives on the BATCH (it is editable there via
     // "+ PO#"), not in the item's metadata snapshot — so join it in. Without it
     // three receipts from one vendor read "KC Tool (16) · KC Tool (7) · KC Tool
-    // (1)": a count is not an identity (the author, 2026-08-03). The batch's vendor is
+    // (1)": a count is not an identity (reported 2026-08-03). The batch's vendor is
     // likewise the authoritative one; the item's `receipt_vendor` is the
     // import-time snapshot and only answers for rows with no batch.
     const rows = await db
@@ -1025,7 +1025,7 @@ inboxRouter.post(
           // Stamp the order + line-item ids onto the scan item so a later
           // unconfirm can remove BOTH the part and its order line (and drop the
           // order if it empties) — without this the undo left an orphan order
-          // pointing at a deleted part (the author, 2026-07-25).
+          // pointing at a deleted part (reported 2026-07-25).
           if (itemRes.ok) {
             const lineItem = (await itemRes.json()) as { id?: string };
             await db
@@ -1347,7 +1347,7 @@ const ConfirmBody = z.object({
    *  length: provider titles are marketing copy (a real dimmer's is 206 chars)
    *  and the commit CLAMPS to the entity-name limit below - rejecting the
    *  whole commit because a catalog title is long turned "Add" into
-   *  "bad request body" (the author, 2026-08-03). */
+   *  "bad request body" (reported 2026-08-03). */
   name: z.string().min(1).max(2000).optional(),
   location_id: z.string().uuid().optional(),
   /** Quantity override. Falls back to the inbox row's quantity. */
@@ -1552,7 +1552,7 @@ inboxRouter.post(
     // actually reads — not only the metadata blob candidateFields spreads into
     // below. resolveNativeIdentity falls the native keys back from meta.* to the
     // candidate value. Without it a decoded VIN landed in metadata.serial_number (a
-    // key the VIN box never reads) and the native column stayed blank (the author,
+    // key the VIN box never reads) and the native column stayed blank (reported
     // 2026-07-24). Pure + unit-tested (native-identity.test.ts).
     const { serial_number: nativeSerial, model: nativeModel } = resolveNativeIdentity(
       meta as { serial_number?: unknown; model?: unknown },
@@ -1728,7 +1728,7 @@ inboxRouter.post(
     // scanned as SEPARATE rows then combined; the plate lives on the absorbed
     // sibling, suggested_metadata.combined_into === this row) — then the catalog/
     // internet image. Confirm used to attach ONLY the catalog image, so a user's
-    // captured photos silently vanished at commit (the author, 2026-07-24).
+    // captured photos silently vanished at commit (reported 2026-07-24).
     const siblingPhotos = await db
       .selectFrom("core_scan_inbox_items")
       .select("image_file_id")
@@ -2015,10 +2015,10 @@ inboxRouter.post(
       // Carry the scan's image onto the part. It USED to transfer ONLY a stored
       // file (catalog_image_file_id) — so an item whose image was still a raw
       // web URL (not downloaded yet, or committed mid-enrich) lost its image on
-      // commit (the author, 2026-07-24). Prefer the stored file; else fall back to the
+      // commit (reported 2026-07-24). Prefer the stored file; else fall back to the
       // raw URL so the image is NEVER dropped — set INSTANTLY (no network in the
       // commit path: downloading inline made a bulk "Confirm all" hang, ~25s per
-      // line worst case, the author 2026-07-25). A raw catalog URL can be hotlink-blocked
+      // line worst case, reported 2026-07-25). A raw catalog URL can be hotlink-blocked
       // and render broken, so we ALSO kick off a background download that repoints
       // the part at a stored same-origin file once it lands — commit stays fast.
       const imagePath = committedImagePath(ctx.org.slug, row.catalog_image_file_id, row.catalog_image_url);
@@ -2185,7 +2185,7 @@ inboxRouter.post(
  *  barcode paths, the photo identify, the decoder, the thin-hit enrich, the
  *  cross-check - and the last two run DETACHED, after the response. Storing a
  *  composed title meant whichever pass finished last silently dropped it: the
- *  title gained the colour and then lost it "at the end of the AI run" (the author,
+ *  title gained the colour and then lost it "at the end of the AI run" (reported
  *  2026-07-30), twice, because patching write sites always misses the next one.
  *
  *  So the stored name stays the honest answer from whatever identified it, the
@@ -2210,7 +2210,7 @@ function withTitle<T extends {
 /**
  * The routing note quotes the category the item was filed as - and that quote
  * is STORED, so it kept saying “apparel” under a chip that read “Clothing”
- * (the author, 2026-07-30). Same class as the title: a value other passes rewrite must
+ * (reported 2026-07-30). Same class as the title: a value other passes rewrite must
  * not be frozen into prose. Composing it on the way out heals every row already
  * in the inbox, with no re-run and no migration.
  *
@@ -2263,7 +2263,7 @@ async function appendScanHistory(
     // catalog photo) and then calls this to record the replay: the history
     // entry deleted the snapshot of the very action it was recording, so the
     // undo button never appeared and a hand-picked photo was unrecoverable
-    // (the author, 2026-08-01). `catalog_image_user_set` went the same way.
+    // (reported 2026-08-01). `catalog_image_user_set` went the same way.
     await db
       .updateTable("core_scan_inbox_items")
       .set({ suggested_metadata: mergeMeta({ history: [...prev, e].slice(-8) }) as never })
@@ -2342,7 +2342,7 @@ inboxRouter.post(
     // A typed hint wins; otherwise the item's existing one keeps applying (and is
     // recovered from history if it predates user_hint becoming durable). Without
     // this a re-run silently dropped the correction and re-answered with the very
-    // thing the user had already corrected (the author, 2026-07-30: "the hint is in the
+    // thing the user had already corrected (reported 2026-07-30: "the hint is in the
     // history, I should not have to provide it again").
     const typedHint = rerun?.hint?.trim() || null;
     const priorHints = standingHints(row.suggested_metadata as Record<string, unknown>);
@@ -2425,7 +2425,7 @@ inboxRouter.post(
     if ((!row.barcode_text || attachedPhoto) && !correctedBarcode) {
       // Photo-only path → re-run the vision identify. The vision+match pass runs
       // tens of seconds over the edge relay, so we DON'T hold the request for it
-      // (holding past ~100s 524s behind cobblr.me's Cloudflare tunnel). Instead we
+      // (holding past ~100s 524s behind the hosted Cloudflare tunnel). Instead we
       // kick the work off detached and return immediately; the web shows a local
       // "AI reading…" state on this card and the inbox poll surfaces the result.
       // The detached work runs on its OWN freshly-acquired tenant db (the request
@@ -2435,7 +2435,7 @@ inboxRouter.post(
       if (!row.image_file_id) {
         // No barcode, no photo — but maybe a NAME (a receipt/note line). Re-run the
         // NAME-based lookup (web image search + re-match) instead of refusing, so a
-        // receipt line isn't stuck imageless AND un-rerunnable (the author, 2026-07-24: the
+        // receipt line isn't stuck imageless AND un-rerunnable (reported 2026-07-24: the
         // ↺ button is enabled for name-only items, but the server still rejected).
         // Detached like the photo path; the run ends by stamping finalized_at.
         if (!row.suggested_name) {
@@ -2512,7 +2512,7 @@ inboxRouter.post(
               // SNAPSHOT the answer we're about to overwrite. A re-run is a
               // gamble: vision can read a dark photo of a Hercules tool tote as a
               // "Portable Bluetooth Speaker" and clobber the good name that was
-              // already there (the author, 2026-07-17). The run writes suggested_* in
+              // already there (reported 2026-07-17). The run writes suggested_* in
               // place and `history` only records {at, action}, so the row could
               // not say what it used to be — the old name survived only by luck,
               // in the raw AI call log. One run deep is the useful depth: the
@@ -2886,7 +2886,7 @@ inboxRouter.post(
     // Each failure means something DIFFERENT the user can act on, so say which.
     // The old single catch-all ("no vision provider is configured, or the
     // candidates couldn't be read") told someone whose provider was fine to go
-    // check their provider (the author, 2026-07-30).
+    // check their provider (reported 2026-07-30).
     if (isRankFailure(result)) {
       const reason =
         result.error === "no-provider"
@@ -3034,7 +3034,7 @@ inboxRouter.post(
     // and downloadCatalogImage returns false for those. If we committed the url +
     // lock first (as this used to) and ignored that false, the item kept a broken
     // catalog_image_url and the client still got a 200 → a "Catalog photo updated"
-    // toast that was a lie (the author, 2026-07-24). So only mutate the row on a real
+    // toast that was a lie (reported 2026-07-24). So only mutate the row on a real
     // download; otherwise leave the previous image and 422 so the UI says so.
     const url = (parsed.data as { url: string }).url;
     const stored = await downloadCatalogImage({ db, orgId: ctx.org.id, itemId: row.id }, url);
@@ -3083,7 +3083,7 @@ inboxRouter.post(
 //
 // Why this exists: a re-run is a gamble the user can lose. Vision re-read a dark
 // photo of a Hercules tool tote as a "Portable Bluetooth Speaker" and the good
-// name was simply gone (the author, 2026-07-17) — recoverable only by reading the raw
+// name was simply gone (reported 2026-07-17) — recoverable only by reading the raw
 // AI call log by hand. The undo is the guardrail for that whole class: any pass
 // allowed to replace a good answer must be reversible.
 /** The scalar columns an undo restores from a `pre_rerun` snapshot. Exported so
@@ -3292,7 +3292,7 @@ inboxRouter.post(
     // If this line was committed into a receipt purchase order, remove its order
     // line item too — part_id has no FK cascade, so deleting the part alone left
     // the order pointing at a ghost. Drop the order entirely once its last line
-    // is gone, so an undone "Confirm all" leaves no empty order behind (the author, 2026-07-25).
+    // is gone, so an undone "Confirm all" leaves no empty order behind (reported 2026-07-25).
     const receiptOrderId = typeof meta.receipt_order_id === "string" ? meta.receipt_order_id : null;
     const receiptOrderItemId =
       typeof meta.receipt_order_item_id === "string" ? meta.receipt_order_item_id : null;

@@ -15,9 +15,14 @@ export const POLAR_FILAMENT: ScanUrlResolverManifest = {
   match: { pattern: "(?:3dqr\\.co|pfil\\.us)", key: "[?&]i=([0-9]+-[A-Za-z0-9]+)" },
   request: {
     method: "GET",
-    url: "https://pfil.us/query_spool.php?i={key}&email={env:POLAR_QUERY_EMAIL}&version=1.00",
-    headers: { "user-agent": "CobblrScan/1.0 (+https://cobblr.me)" },
-    env_defaults: { POLAR_QUERY_EMAIL: "contact@example.com" },
+    // `{contact:email}` resolves to THIS instance's operator address, so the
+    // vendor can reach whoever actually made the call. It used to be an
+    // env_defaults literal naming the publisher's own mailbox, which meant every
+    // self-hosted lookup was attributed to them. No default: with no contact
+    // configured the interpreter skips this resolver and says why.
+    url: "https://pfil.us/query_spool.php?i={key}&email={contact:email}&version=1.00",
+    // No URL here either — the interpreter appends this instance's own.
+    headers: { "user-agent": "CobblrScan/1.0" },
     timeout_ms: 8000,
   },
   response: {

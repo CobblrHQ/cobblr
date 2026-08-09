@@ -50,6 +50,7 @@ import { identifyImage } from "@cobblr/core-scan/services/enrich-photo";
 import { platform } from "@cobblr/platform-contract";
 import { assembleContext, compilePrompt, unwrapBuild, parseJsonObject, applyLeanNatives, nativeFieldsByBaseKind } from "@cobblr/core-authoring/services/compile";
 import { validateBundle } from "./bundles.js";
+import { operatorEmail } from "@cobblr/platform-contract/outbound-identity";
 
 // ── Feedback reply email (HTML) ──────────────────────────────────────
 // A small, email-client-safe HTML body for the transactional feedback reply,
@@ -340,8 +341,24 @@ superAdminRouter.get("/instance-config", async (_req, res, next) => {
       public_signup: publicSignupEnabled(),
       self_serve_invites: selfServeInvitesEnabled(),
       ai_enabled: (process.env.COBBLR_AI_ENABLED ?? "true").toLowerCase() !== "false",
-      sandbox_registry_configured: !!process.env.COBBLR_REGISTRY_URL || true, // default GitHub registry counts as configured
+      // The default module registry is a public URL, so a registry is always
+      // reachable whether or not COBBLR_REGISTRY_URL is set. (This read
+      // `!!env || true`, which is always true and therefore said nothing.)
+      sandbox_registry_configured: true,
       barcode_resolver_configured: !!process.env.COBBLR_BARCODE_RESOLVER_URL,
+      // Vendor lookups that must identify the caller are SKIPPED without this, and
+      // a skipped feature with only a log line is indistinguishable from a working
+      // one. Surface it where an operator will actually see it.
+      operator_contact_configured: !!operatorEmail(),
+      // Three states, not two. A URL with no key LOOKS configured and answers nothing,
+      // because the shared database refuses an unkeyed request by design: the key is
+      // what carries the tier, the data class, fair-use and revoke. Naming that state
+      // is the difference between "it is broken" and "it is not finished being set up".
+      bidb: !process.env.COBBLR_BIDB_URL?.trim()
+        ? "off"
+        : process.env.COBBLR_BIDB_KEY?.trim()
+          ? "configured"
+          : "url without key",
     });
   } catch (err) {
     next(err);

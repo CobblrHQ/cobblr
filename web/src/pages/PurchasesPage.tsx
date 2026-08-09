@@ -545,7 +545,7 @@ function StatusPill({ status }: { status: Order["status"] }) {
 // raw email body / text source. Stays truthful: any gap between the line-item
 // subtotal + shipping and the recorded total shows as a "Tax / other" line so
 // the figures always reconcile, and "View original" keeps the raw source one tap
-// away for full fidelity (the author, 2026-07-26).
+// away for full fidelity (reported 2026-07-26).
 function ReceiptRenderModal({
   order,
   onViewOriginal,

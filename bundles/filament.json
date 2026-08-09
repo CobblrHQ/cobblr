@@ -1,7 +1,7 @@
 {
   "manifest": {
-    "id": "cobblr.flagship.filament-stash",
-    "version": "0.5.4",
+    "id": "cobblr.flagship.filament",
+    "version": "0.5.5",
     "name": "Filament",
     "description": "A filament TYPE (Royal Blue PLA) defines the filament once: material, colour, diameter, nozzle/bed temps, needs-drying. SPOOLS pick a type + add only what's per-spool: size, batch code, remaining, state. Each type rolls up its spool count + total kg.",
     "author": "Cobblr",

@@ -4,6 +4,7 @@
 // cache around it. See ./types.ts.
 
 import type { ScanUrlResolution } from "@cobblr/platform-contract";
+import { contactSuffix, operatorEmail } from "@cobblr/platform-contract/outbound-identity";
 import type { FieldMap, ScanUrlResolverManifest } from "./types.js";
 
 /** Walk a dotted path ("spool.material_name") into a JSON value. */
@@ -83,14 +84,36 @@ export function mapResponse(
   };
 }
 
-/** Template `{key}` and `{env:VAR}` (with `env_defaults` fallback) into a string. */
+/** Template `{key}`, `{env:VAR}` (with `env_defaults` fallback) and
+ *  `{contact:email}` into a string.
+ *
+ *  `{contact:email}` is how a vendor that wants a contact address gets one
+ *  WITHOUT the manifest naming anybody: it resolves to this instance's operator
+ *  email. A manifest must never carry a literal address, because a manifest ships
+ *  in the image and would then speak for every install — see outbound-identity.ts
+ *  for the incident. */
 function template(str: string, key: string, envDefaults: Record<string, string>): string {
   return str
     .replace(/\{key\}/g, encodeURIComponent(key))
+    .replace(/\{contact:email\}/g, () => encodeURIComponent(operatorEmail()))
     .replace(/\{env:([A-Z0-9_]+)\}/g, (_, v: string) =>
       encodeURIComponent(process.env[v] ?? envDefaults[v] ?? ""),
     );
 }
+
+/** Does this manifest need the operator's contact address to make its call? */
+function needsContactEmail(manifest: ScanUrlResolverManifest): boolean {
+  const parts = [
+    manifest.request.url,
+    ...Object.values(manifest.request.headers ?? {}),
+    manifest.request.body === undefined ? "" : JSON.stringify(manifest.request.body),
+  ];
+  return parts.some((s) => s.includes("{contact:email}"));
+}
+
+// One line per resolver per process, not per scan: a missing contact address is a
+// standing configuration fact, and repeating it on every barcode would bury it.
+const contactWarned = new Set<string>();
 
 /** Pull the `{key}` token out of a scanned value via the manifest's key regex. */
 export function extractKey(manifest: ScanUrlResolverManifest, value: string): string | null {
@@ -131,12 +154,30 @@ export async function runManifest(
     const cached = await deps.cacheGet(ns, key).catch(() => null);
     if (cached) return cached;
   }
+  // A vendor that asked for a contact address gets a real one or no call at all.
+  // Calling with the field blank invites a block for the whole software, and
+  // calling with a baked-in address makes every install look like one caller.
+  if (needsContactEmail(manifest) && !operatorEmail()) {
+    if (!contactWarned.has(manifest.id)) {
+      contactWarned.add(manifest.id);
+      console.warn(
+        `[scan-url-resolvers] ${manifest.id} needs a contact address for ${manifest.label} and is being skipped. ` +
+          `Set COBBLR_OPERATOR_EMAIL (or SUPERADMIN_EMAILS) to an address the vendor can reach you at.`,
+      );
+    }
+    return null;
+  }
   const envDefaults = manifest.request.env_defaults ?? {};
   const url = template(manifest.request.url, key, envDefaults);
   const headers: Record<string, string> = {};
   for (const [h, v] of Object.entries(manifest.request.headers ?? {})) {
     headers[h] = template(v, key, envDefaults);
   }
+  // The courtesy "who is calling" suffix is added HERE, not in the manifest, so
+  // it covers operator-added resolver rows in scan_url_resolvers too — they are
+  // written by people who have no reason to know the convention.
+  const ua = Object.keys(headers).find((h) => h.toLowerCase() === "user-agent");
+  if (ua && headers[ua] && !headers[ua].includes("(+")) headers[ua] += contactSuffix();
   const init: RequestInit = {
     method: manifest.request.method,
     headers,

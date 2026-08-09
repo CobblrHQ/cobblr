@@ -58,7 +58,7 @@ const UNIT_TOKEN = /^\d+(pk|ct|pcs?|oz|ml|lb|kg|mm|cm|in|ft|gal|qt|ah|mah|[wvagl
  *
  *  Requiring TWO letters made a single-letter code invisible, so nine different
  *  character jugs (D6733, D6527, D6691…) sailed past the veto written for
- *  exactly this (the author, 2026-08-02). The digit floor is what keeps the looser
+ *  exactly this (reported 2026-08-02). The digit floor is what keeps the looser
  *  shape honest - "3d", "x10" and "a4" stay words, not identities.
  *  Exported for tests. */
 export function modelNumberTokens(s: string | null | undefined): Set<string> {

@@ -43,7 +43,7 @@ async function call<T>(_orgId: string, path: string): Promise<T | null> {
     // (COBBLR_CATALOG_RESOLVER_URL), not a tenant-controlled URL, so there's no
     // SSRF surface to guard. On the hosted deployment the guard runs the strict
     // policy and blocks the resolver's private/CGNAT (Tailscale 100.64/10) IP —
-    // which silently broke ALL hosted-catalog calls on cobblr.me (empty results
+    // which silently broke ALL hosted-catalog calls on the hosted service (empty results
     // → every catalog reported browsable:false). The guard is for tenant/user
     // URLs (webhooks, edge devices, sync), not trusted internal infrastructure.
     const res = await fetch(url, {

@@ -42,6 +42,7 @@ COPY modules/core-search/package.json ./modules/core-search/
 COPY modules/core-public-surfaces/package.json ./modules/core-public-surfaces/
 COPY modules/core-openapi/package.json ./modules/core-openapi/
 COPY modules/core-queue/package.json ./modules/core-queue/
+COPY modules/core-cadence/package.json ./modules/core-cadence/
 COPY modules/core-placement/package.json ./modules/core-placement/
 COPY modules/core-locations/package.json ./modules/core-locations/
 COPY modules/core-catalogs/package.json ./modules/core-catalogs/

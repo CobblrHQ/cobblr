@@ -23,9 +23,9 @@
 //
 // The other lanes (drivers / modules / renderers / trusted_keys) are served
 // from a committed base below. They are empty today on purpose: the sandboxed-
-// MODULE marketplace uses a SEPARATE registry (CobblrHQ/registry's modules.json,
-// see routes/sandbox-install.ts), and no drivers/renderers are published to the
-// bundle index. If any are ever published, add them to OFFICIAL_INDEX_BASE (or
+// MODULE marketplace uses a SEPARATE registry (the public CobblrHQ/registry's
+// modules.json, see routes/sandbox-install.ts), and no drivers/renderers are
+// published to the bundle index. If any are ever published, add them to OFFICIAL_INDEX_BASE (or
 // point COBBLR_EXTENSIONS_URL at an external index that carries them).
 
 // Self-contained leaf util on purpose: it reads bundles/*.json directly rather

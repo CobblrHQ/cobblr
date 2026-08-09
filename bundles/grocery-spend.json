@@ -1,11 +1,12 @@
 {
   "manifest": {
-    "id": "cobblr.flagship.kitchen-fitness",
+    "id": "cobblr.flagship.grocery-spend",
     "catalog": "disabled",
-    "version": "0.1.1",
-    "name": "Kitchen × Fitness — grocery spend",
+    "version": "0.1.2",
+    "name": "Grocery Spend",
     "description": "Connects the grocery flow to the Tracking module: order received → log spend into a metric. Neither module knows about the other.",
     "author": "Cobblr",
+    "changelog": "Named for the thing it produces. The old title was a use-case sentence (and carried an em dash into user-facing copy); the bundle tracks one noun, so it is “Grocery Spend”.",
     "requires": [
       {
         "module": "purchases"
