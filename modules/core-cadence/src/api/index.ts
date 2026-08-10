@@ -8,7 +8,8 @@
 
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
-import { tenantDb, sessionUserId, loadEvents } from "../db.js";
+import { tenantDb, tenantContext, sessionUserId, loadEvents } from "../db.js";
+import { cadenceTick } from "../sweeper.js";
 import {
   cadenceState,
   reorderSuggested,
@@ -84,10 +85,19 @@ router.get("/state/:kind/:id", async (req: Request, res: Response, next) => {
       .object({
         min_qty: z.coerce.number().optional(),
         lead_time_days: z.coerce.number().min(0).optional(),
+        /** "the stock still on the shelf is already past its expiry date."
+         *  Only the caller knows this - cadence keeps a ledger, not the item's
+         *  expiry field - so a surface that HAS the date (a scan commit on a
+         *  perishable) passes it and gets `discard` instead of the three-way
+         *  prompt. Without it that branch of classifyRepurchase is unreachable,
+         *  and food that rotted gets recorded as food that got eaten, which
+         *  raises the rate and tells you to buy MORE of what you threw away. */
+        expired: z.enum(["true", "false"]).optional(),
       })
       .safeParse(req.query);
     const minQty = q.success ? q.data.min_qty : undefined;
     const leadTimeDays = q.success ? q.data.lead_time_days : undefined;
+    const expired = q.success && q.data.expired === "true";
 
     const events = await loadEvents(tenantDb(req), req.params.kind!, req.params.id!);
     const state = cadenceState(events);
@@ -99,9 +109,30 @@ router.get("/state/:kind/:id", async (req: Request, res: Response, next) => {
       }),
       buy_less_suggested: buyLessSuggested(state),
       /** What a NEW purchase right now would mean — drives the over-buy prompt. */
-      repurchase_means: classifyRepurchase(state),
+      repurchase_means: classifyRepurchase(state, { expired }),
       event_count: events.length,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Run one sweep for THIS workspace, now.
+ *
+ * The sweeper is hourly, which makes the predictive half of cadence effectively
+ * untestable: you cannot wait an hour in an e2e, and "the sweeper started" in a
+ * log says nothing about whether a tick actually emits anything. Scoped to the
+ * caller's org and owner/admin only, so it is a diagnostic, not a lever on
+ * anyone else's data. Idempotent by the same 24h debounce the timer uses.
+ */
+// AI-REACH: exempt — an operator diagnostic that forces the hourly sweep to run
+// now; it creates nothing and an agent has no reason to trigger it.
+router.post("/sweep", async (req: Request, res: Response, next) => {
+  try {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const result = await cadenceTick({ orgId: tenantContext(req).org.id });
+    res.json(result);
   } catch (err) {
     next(err);
   }

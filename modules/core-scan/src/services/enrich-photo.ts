@@ -708,12 +708,26 @@ export async function crossCheckScanPhoto(
         ...(correctBrand ? { suggested_manufacturer: correctBrand } : {}),
         ai_confidence: "0.7",
         // Drop the pending-check gate — this row is now finalized as a correction.
-        suggested_metadata: mergeMeta(
+        // identityMeta, NOT mergeMeta: this branch REPLACES the identity, so the
+        // rejected one's derived attributes must go with it. Merging only
+        // `source` left every other identify-owned key from the wrong product
+        // sitting on the row - a photo of an HP monitor, correctly renamed from
+        // "Simtronics ... gas detector", kept `category: "gas & flame detector"`
+        // and `entity_type: "asset"`, and the matchmaker then re-derived its
+        // category from that corpse (reported 2026-08-10). IDENTIFY_OWNED_KEYS
+        // exists for exactly this; the call site just wasn't using it.
+        // PENDING_KEYS are already inside that list, so the gate still clears.
+        suggested_metadata: identityMeta(
           {
             source: "photo",
             photo_corrected: { from: prevName, reason: reason || undefined },
           },
-          PENDING_KEYS,
+          {
+            // The vision read that PRODUCED this correction also produced these.
+            // They describe what we renamed TO, so they are not the rejected
+            // identity's leftovers and must survive the drop.
+            keep: ["photo_observations", "photo_distinct", "photo_individuals", "photo_observed_for"],
+          },
         ) as never,
         ai_notes:
           `Renamed from your photo — the lookup ("${prevName}") didn't match the item` +

@@ -69,5 +69,9 @@ export function classifyOmni(raw: string): OmniIntent {
 
 /** Placeholder copy - a phone cannot show the full sentence. */
 export function omniPlaceholder(compact: boolean): string {
-  return compact ? "Search or paste" : "Search, paste a UPC or link, or drop a file";
+  // 41 characters was longer than the field at most widths, so it clipped
+  // mid-word ("...or dr") and read as broken. Drag-and-drop still works; it
+  // just no longer has to be advertised here, now that upload is its own
+  // control on the row (reported 2026-08-10).
+  return compact ? "Search or paste" : "Search, paste a UPC or link";
 }

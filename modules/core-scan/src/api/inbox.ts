@@ -19,6 +19,7 @@
 // body limits sane.
 
 import { randomUUID } from "node:crypto";
+import { buildCadenceEvents } from "../cadence-events.js";
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
@@ -1923,6 +1924,39 @@ inboxRouter.post(
       }
     }
 
+    // The FIRST purchase is still a purchase. Only add-qty used to file one, so
+    // the ledger began at your second buy and cold start lasted one shop longer
+    // than it needed to. Same HTTP-under-the-caller's-bearer hop as the attach
+    // path, same swallow-on-failure: a workspace without Cadence is unaffected.
+    if (created?.id) {
+      const firstBuy = buildCadenceEvents({
+        mode: "add-qty",
+        kind: effectiveKindId,
+        entityId: created.id,
+        // The same quantity the entity was created with: the request's if it
+        // sent one, else the scan row's. `body` is the raw request and does not
+        // carry it, which quietly filed every first purchase as a single unit.
+        // `qty` is the exact number the entity was created with, already
+        // resolved from the request or the scan row (and deliberately undefined
+        // for a unique target, which is one thing). Deriving it a second time
+        // let the ledger and the record disagree, which is how the fall-back
+        // path filed 1 for a scan of 5.
+        added: Math.max(1, Number(qty ?? 1)),
+        priorQty: 0,
+      });
+      for (const ev of firstBuy) {
+        try {
+          await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-cadence/events`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify(ev),
+          });
+        } catch (err) {
+          console.warn("[core-scan] first-purchase not recorded:", err);
+        }
+      }
+    }
+
     res.json({ item: withTitle(resolvedRow), created });
   }),
 );
@@ -2234,6 +2268,52 @@ function withDisplayCategory<T extends { suggested_candidates?: unknown }>(row: 
     return { ...cand, notes: fixed };
   });
   return touched ? { ...row, suggested_candidates: next } : row;
+}
+
+/** Stamp a finished run's OUTCOME onto the history entry that RECORDED it.
+ *
+ *  The entry is written when a re-run starts, so it can only ever say what was
+ *  asked for. The outcome was first carried as a single row-level flag, which
+ *  meant the "the AI didn't answer" qualifier described the LATEST run and so
+ *  HOPPED to whatever entry was newest - detaching from the run it was actually
+ *  about (reported 2026-08-10). An outcome belongs to one run, so it is written
+ *  on that run's own entry: older entries keep their own verdict and nothing
+ *  moves. Targets the newest AI-asking entry that has no verdict yet.
+ *  Best-effort; history is cosmetic. */
+const AI_ASKING_ACTIONS = new Set(["rerun", "rerun-hint", "wrong", "enrich"]);
+
+async function stampScanHistoryOutcome(
+  db: ReturnType<typeof tenantDb>,
+  id: string,
+  aiAnswered: boolean,
+): Promise<void> {
+  try {
+    const cur = await db
+      .selectFrom("core_scan_inbox_items")
+      .select("suggested_metadata")
+      .where("id", "=", id)
+      .executeTakeFirst();
+    const meta = ((cur?.suggested_metadata ?? {}) as Record<string, unknown>) ?? {};
+    const hist = Array.isArray((meta as { history?: unknown }).history)
+      ? ([...(meta as { history: Array<Record<string, unknown>> }).history])
+      : [];
+    if (!hist.length) return;
+    for (let i = hist.length - 1; i >= 0; i--) {
+      const e = hist[i];
+      if (!e || typeof e !== "object") continue;
+      if (!AI_ASKING_ACTIONS.has(String(e.action))) continue;
+      if ("ai_answered" in e) return; // already settled - don't re-stamp an older run
+      hist[i] = { ...e, ai_answered: aiAnswered };
+      await db
+        .updateTable("core_scan_inbox_items")
+        .set({ suggested_metadata: mergeMeta({ history: hist }) as never })
+        .where("id", "=", id)
+        .execute();
+      return;
+    }
+  } catch {
+    /* best-effort */
+  }
 }
 
 async function appendScanHistory(
@@ -3393,6 +3473,24 @@ const AttachBody = z.object({
    *  module route filters to the default instance and would 404). */
   instance: z.string().optional(),
   mode: z.enum(["add-qty", "link-barcode", "move", "merge-fields"]),
+  /** What this re-purchase means, for the consumption ledger. Only add-qty is
+   *  a purchase ("+N, more of the same"); the other modes teach or move an
+   *  entity and consume nothing.
+   *
+   *  `context` is the scan-time chip: a party-sized or stock-up buy must not
+   *  train the rate as if it were your normal weekly shop.
+   *
+   *  `resolution` answers what happened to the stock you still had, which only
+   *  a human can settle - the ledger cannot tell "I ate it faster" from "it
+   *  went off" from "I just bought extra", and those imply opposite advice.
+   *  Absent, nothing beyond the purchase is recorded, which is the honest
+   *  default: silence beats a guess. */
+  cadence: z
+    .object({
+      context: z.enum(["normal", "faster", "bulk", "one_off"]).optional(),
+      resolution: z.enum(["over_buy", "consumed", "discarded"]).optional(),
+    })
+    .optional(),
   /** For mode=move: target location; defaults to the item's own
    *  target_location_id (the active bin it was scanned into). */
   location_id: z.string().optional(),
@@ -3492,6 +3590,8 @@ inboxRouter.post(
 
     const patch: Record<string, unknown> = {};
     let newQty: number | null = null;
+    let priorQty = 0;
+    let qtyAdded = 0;
     const mergedFields: string[] = [];
     if (parsed.data.mode === "add-qty") {
       // A kind without a native quantity (qtyField absent) has nothing to
@@ -3501,6 +3601,10 @@ inboxRouter.post(
         const add = Math.max(1, Number(row.quantity ?? 1));
         newQty = (Number.isFinite(cur) ? cur : 0) + add;
         patch[scannable.qtyField] = newQty;
+        // The ledger needs both, and the server already knows them - never take
+        // a quantity from the client when the entity is authoritative.
+        priorQty = Number.isFinite(cur) ? cur : 0;
+        qtyAdded = add;
       }
       // Barcode-append: a scanned (not AI-read) code the entity doesn't have yet.
       const aiRead =
@@ -3661,12 +3765,39 @@ inboxRouter.post(
       mode: parsed.data.mode,
     });
 
+    // File the purchase in the consumption ledger. Over HTTP under the caller's
+    // bearer, exactly like the entity write above - core-scan must not import
+    // core-cadence, and the ledger is optional (the capability is opt-in), so
+    // every failure here is logged and swallowed: a scan must never fail
+    // because a workspace does not track cadence.
+    const cadenceEvents = buildCadenceEvents({
+      mode: parsed.data.mode,
+      cadence: parsed.data.cadence,
+      kind: parsed.data.kind,
+      entityId: parsed.data.entity_id,
+      added: qtyAdded,
+      priorQty: priorQty,
+    });
+    for (const ev of cadenceEvents) {
+      try {
+        const r = await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-cadence/events`, {
+          method: "POST",
+          headers: authHeaders,
+          body: JSON.stringify(ev),
+        });
+        if (!r.ok) console.warn(`[core-scan] cadence ${ev.event_type} not recorded (${r.status})`);
+      } catch (err) {
+        console.warn(`[core-scan] cadence ${ev.event_type} not recorded:`, err);
+      }
+    }
+
     res.json({
       item: resolvedRow,
       entity_title: entityName,
       new_qty: newQty,
       prev_location_id: prevLocationId,
       merged_fields: mergedFields,
+      cadence_recorded: cadenceEvents.map((e) => e.event_type),
     });
   }),
 );
@@ -3815,8 +3946,19 @@ inboxRouter.post(
         // extra_photos is single-writer (only the gallery endpoints touch it), so
         // deriving the new array from the snapshot is fine — merge so this write
         // stops dropping the OTHER writers' keys.
+        // A rotation is an EDIT of the same photo, not another photo OF the
+        // item. Pushing the pre-rotation file into extra_photos "so nothing is
+        // lost" meant every tap added a thumbnail to the gallery strip: getting
+        // a sideways label upright takes up to three taps and left three
+        // near-identical photos behind (reported 2026-08-10). The strip is for
+        // genuinely different shots. The pre-rotation id is kept OUT of it,
+        // under `rotated_from`, so the original is still recoverable without
+        // being displayed as a photo of the item — and the immediate
+        // predecessor is dropped from the strip, so rotating again cleans up
+        // an intermediate an older build already put there.
         suggested_metadata: mergeMeta({
-          extra_photos: [...extras.filter((p) => p !== newId), row.image_file_id].slice(-8),
+          rotated_from: (meta.rotated_from as string | undefined) ?? row.image_file_id,
+          extra_photos: extras.filter((p) => p !== newId && p !== row.image_file_id),
         }) as never,
         updated_at: new Date(),
       })
@@ -4980,6 +5122,7 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
             return s ? { serial_number: s } : {};
           })()),
           matched_at: new Date().toISOString(),
+
         })}::jsonb` as never,
         ...(top && typeof top === "object" && "notes" in top && (top as { notes?: string }).notes && !barcodeIdentified
           ? {
@@ -5039,6 +5182,14 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
         console.error(`[core-scan] finalize image refresh for ${opts.itemId} failed:`, (e as Error).message);
       }
     }
+    // The run has settled - record on ITS history entry whether a model
+    // actually answered, so the timeline stops claiming an answer it never got.
+    await stampScanHistoryOutcome(
+      db,
+      opts.itemId,
+      !(top && typeof top === "object" && "heuristic" in top
+        && (top as { heuristic?: boolean }).heuristic === true),
+    );
     // Backfill a book's ISBN from Open Library when the match left it blank —
     // the ISBN isn't on the cover, so vision can't read it, but title+author can
     // look it up. Mutates `candidates` + rewrites, before finalize/reconcile.

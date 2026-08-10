@@ -158,21 +158,34 @@ function withBrandPrefix(name: string | null, brand: string | null): string | nu
 // photo, identify the item FROM the photo (vision) and use that as the name —
 // turning the AI's clear "I can see what this is" into an actual title instead of
 // leaving a blank "name required" row. Returns true when it named the item.
-async function nameFromPhoto(ctx: EnrichContext): Promise<boolean> {
+/** Vision's verdict on the scan photo. `named` = it identified the item (the row
+ *  has been written). `visionRan` = the model actually answered; false means the
+ *  call threw — no provider, not entitled, down — so NOTHING vision-based will
+ *  run for this item, including the later cross-check. The hold rule needs that
+ *  distinction: "the photo looked and couldn't tell" and "the photo never got to
+ *  look" are the same boolean today, and treating the second as the first is how
+ *  an unverifiable web guess got written as a name while AI was down. */
+interface PhotoNameResult {
+  named: boolean;
+  visionRan: boolean;
+}
+
+async function nameFromPhoto(ctx: EnrichContext): Promise<PhotoNameResult> {
   const row = await ctx.db
     .selectFrom("core_scan_inbox_items")
     .select(["image_file_id"])
     .where("id", "=", ctx.itemId)
     .executeTakeFirst();
-  if (!row?.image_file_id) return false; // a hardware-wedge scan with no photo
+  if (!row?.image_file_id) return { named: false, visionRan: false }; // hardware-wedge scan, no photo
   const file =
     (await platform().files.read(ctx.orgId, row.image_file_id, "medium")) ??
     (await platform().files.read(ctx.orgId, row.image_file_id, "original"));
-  if (!file) return false;
+  if (!file) return { named: false, visionRan: false };
   // The user's corrections ride into THIS identify too. This is the path that
   // renamed the item when the web result was uncorroborated, so running it blind
   // to a hint is how a corrected item got re-named to something the user had
   // already ruled out.
+  let visionRan = true;
   const identity = await identifyImage(
     ctx.orgId,
     Buffer.from(file.bytes).toString("base64"),
@@ -183,8 +196,15 @@ async function nameFromPhoto(ctx: EnrichContext): Promise<boolean> {
     ctx.hint,
     false,
     ctx.hints,
-  ).catch(() => null);
-  if (!identity?.name) return false;
+  ).catch(() => {
+    // A THROW means vision never answered (no provider / not entitled / down).
+    // A null-name ANSWER means it looked and couldn't say. Only the second is
+    // evidence about the item, so they must not collapse into one boolean.
+    visionRan = false;
+    return null;
+  });
+  if (!visionRan) return { named: false, visionRan: false };
+  if (!identity?.name) return { named: false, visionRan: true };
   // The vision call can outlive the request's tenant pool — re-acquire.
   const db = (await platform().tenants.getDb(ctx.orgId)) as unknown as typeof ctx.db;
   await db
@@ -217,7 +237,7 @@ async function nameFromPhoto(ctx: EnrichContext): Promise<boolean> {
     })
     .where("id", "=", ctx.itemId)
     .execute();
-  return true;
+  return { named: true, visionRan: true };
 }
 
 // SSRF guard for the externally-sourced catalog image_url: block
@@ -553,7 +573,8 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
     // number. So when nothing corroborates the web name and we HAVE a photo, the
     // photo identifies the item and the web name is demoted to a hint. This is
     // heuristic-first applied honestly: read what's in front of you.
-    if (web && !web.corroborated && (await nameFromPhoto(ctx))) {
+    const photoVerdict = web && !web.corroborated ? await nameFromPhoto(ctx) : null;
+    if (photoVerdict?.named) {
       // The photo named it. Deliberately NOT caching anything: an uncorroborated
       // web name must not enter even the tenant cache, or the next scan of this UPC
       // resolves to the junk again.
@@ -571,6 +592,9 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
         corroborated: web.corroborated,
         hasScanPhoto,
         codeType: codeClass.type,
+        // The photo escape below is a promise that the cross-check will correct
+        // a wrong guess. When vision never ran, nothing ever will.
+        photoCheckWillRun: photoVerdict?.visionRan ?? false,
       })
     ) {
       // Blank beats wrong, at the DISPLAY layer too. The cache gate below has
@@ -696,7 +720,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
     // nails what the catalogs missed (a museum-gift souvenir, a foreign-language
     // book edition). Only on a genuine miss, not a transient rate-limit (which
     // should retry the lookup, not burn a vision call).
-    if (!rateLimited && (await nameFromPhoto(ctx))) return;
+    if (!rateLimited && (await nameFromPhoto(ctx)).named) return;
     // Nothing resolved. Distinguish a genuine miss (catalogs + web search all
     // came up empty — fill in manually) from a transient rate-limit (the
     // catalog was throttled and web search didn't save us — a re-scan should
@@ -999,10 +1023,22 @@ export function shouldHoldWebName(opts: {
   corroborated: boolean;
   hasScanPhoto: boolean;
   codeType: ScanCodeType;
+  /** Can a vision cross-check still correct a wrong guess? False when the model
+   *  never answered (no provider / not entitled / down). Defaults true so an
+   *  older caller keeps the previous behaviour rather than silently tightening. */
+  photoCheckWillRun?: boolean;
 }): boolean {
   if (opts.corroborated) return false;
   if (opts.codeType === "unknown") return true;
-  return !opts.hasScanPhoto;
+  // Holding is skipped for a product-shaped code WITH a photo only because the
+  // photo cross-check is expected to confirm or correct the guess. That is a
+  // promise, not a fact: with AI down the check never runs, and the guess stands
+  // as the item's name with nothing having verified it — which is how a monitor
+  // serial came back named after a marine gas detector (2026-08-10). If nothing
+  // can verify it, hold it. Classification alone is no longer trusted, because
+  // the same incident showed a serial classifying as a product code.
+  const canVerify = opts.hasScanPhoto && (opts.photoCheckWillRun ?? true);
+  return !canVerify;
 }
 
 /** A name that is NOT a real identification — the web-search LLM's "I give up"

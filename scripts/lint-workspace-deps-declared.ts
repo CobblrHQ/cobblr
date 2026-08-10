@@ -9,11 +9,9 @@
 // @cobblr/platform-contract without declaring it (2026-07): green locally, red on
 // CI, and the error named the import rather than the missing dependency.
 import { readFileSync } from "node:fs";
-import { globSync } from "node:fs";
+import { sourceFiles } from "./lib/glob-exclude.mjs";
 
-const PKGS = globSync("{packages,modules,api,web}/*/package.json", {
-  exclude: (p) => p.includes("node_modules"),
-});
+const PKGS = sourceFiles("{packages,modules,api,web}/*/package.json");
 
 const problems: string[] = [];
 for (const pkgPath of PKGS) {
@@ -24,9 +22,7 @@ for (const pkgPath of PKGS) {
     ...Object.keys(pkg.dependencies ?? {}),
     ...Object.keys(pkg.devDependencies ?? {}),
   ]);
-  const sources = globSync(`${dir}/**/*.{ts,tsx}`, {
-    exclude: (p) => p.includes("node_modules") || p.includes("/dist/"),
-  });
+  const sources = sourceFiles(`${dir}/**/*.{ts,tsx}`);
   const missing = new Map<string, string>();
   for (const f of sources) {
     const src = readFileSync(f, "utf8");

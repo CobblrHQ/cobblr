@@ -59,6 +59,40 @@ for (const rel of shellFiles) {
       );
     }
   }
+
+  // Rule 2b: CALLS forgejo_token -> must actually source the lib that defines it.
+  //
+  // Rule 2 above treats the mere presence of the string "forgejo_token" as evidence
+  // the helper is in use, which is exactly backwards for this failure: release-daily
+  // called the function and never sourced the file, so the function was undefined,
+  // the command substitution produced an empty string, and the CI-green gate refused
+  // every candidate with "(no token - cannot check CI, refusing)". The nightly
+  // release stopped releasing and the message pointed at the credential file.
+  //
+  // An explicit source line is required rather than a transitive one: relying on
+  // another lib to pull it in makes the dependency invisible and one refactor away
+  // from this same silence.
+  //
+  // The check is for an actual `source` DIRECTIVE, not a mention of the path. A
+  // substring test passes on a script that merely names the file in a comment or an
+  // error message — which this very script does, two lines from the call, so the
+  // first version of this rule reported the fixed and broken trees identically.
+  if (rel !== LIB) {
+    const callsHelper = text
+      .split("\n")
+      .some((l) => !l.trimStart().startsWith("#") && /(^|[^\w.-])forgejo_token\s/.test(l));
+    // `.*` and not `\S*`: the real form is `. "$(dirname "$0")/lib/forgejo-token.sh"`,
+    // which contains a space inside the command substitution. Anchoring on the leading
+    // `.`/`source` is what keeps a comment or an error message from counting.
+    const sourcesHelper = /^\s*(\.|source)\s+.*lib\/forgejo-token\.sh/m.test(text);
+    if (callsHelper && !sourcesHelper) {
+      fails.push(
+        `${rel} calls forgejo_token but never sources ${LIB}, so the function is undefined\n` +
+          `    and the token silently reads as empty. Add near the top:\n` +
+          `        . "$(dirname "$0")/lib/forgejo-token.sh"`,
+      );
+    }
+  }
 }
 
 // Rule 3: the helper must BEHAVE. Deliberately not a string check: grepping for

@@ -8,7 +8,7 @@
 // only the managed-app menu item. Any "Settings, X" / "Settings → X" form in a
 // source string is pointing users at a page that does not exist.
 import { readFileSync } from "node:fs";
-import { globSync } from "node:fs";
+import { sourceFiles } from "./lib/glob-exclude.mjs";
 
 // "Settings" followed by a separator + a KNOWN Cobblr Configuration page name
 // (the list mirrors configuration-nav.ts labels, plus past misnomers like "AI
@@ -18,9 +18,7 @@ import { globSync } from "node:fs";
 const BANNED =
   /Settings(,| →| ->| >) (AI sharing|AI|Printers|Backup|Blueprint|API tokens|Modules|Bundles|Wires|Fields|Devices|Integrations|Scan rules|QR codes)\b/;
 
-const files = globSync("{packages,modules,web,api}/**/*.{ts,tsx}", {
-  exclude: (p) => p.includes("node_modules") || p.includes("/dist/"),
-});
+const files = sourceFiles("{packages,modules,web,api}/**/*.{ts,tsx}");
 
 const offenders: string[] = [];
 for (const f of files) {

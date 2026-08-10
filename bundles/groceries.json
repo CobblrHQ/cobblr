@@ -1,9 +1,9 @@
 {
   "manifest": {
     "id": "cobblr.flagship.groceries",
-    "version": "0.3.0",
+    "version": "0.3.3",
     "released_at": "2026-08-09",
-    "changelog": "Adds a What's on hand app: a vending-machine view of the kitchen with a quantity badge and a status dot per item, plus a use-it-or-lose-it list sorted by expiry. Answers what do we actually have without opening the fridge. Learns your cadence from ordinary shopping. Checking an item off the shopping list now also records a purchase in the consumption ledger (when the Cadence capability is on), so the system can start predicting when you will run out instead of only reacting to a low-stock threshold. Same fields, same restock behaviour.",
+    "changelog": "Marks the expiry date as an expiry field, so re-buying something that already went off is recorded as waste rather than as something you used up. Fixes the status dots on the What's on hand view, which never showed anything about expiry. Adds a What's on hand app: a vending-machine view of the kitchen with a quantity badge and a status dot per item, plus a use-it-or-lose-it list sorted by expiry. Answers what do we actually have without opening the fridge. Learns your cadence from ordinary shopping. Checking an item off the shopping list now also records a purchase in the consumption ledger (when the Cadence capability is on), so the system can start predicting when you will run out instead of only reacting to a low-stock threshold. Same fields, same restock behaviour.",
     "name": "Groceries",
     "description": "Turn inventory + lists into a kitchen system: track food with expiry + storage fields, an auto grocery list on low-stock/expiry, restock on check-off.",
     "author": "Cobblr",
@@ -85,7 +85,8 @@
         "name": "expires_on",
         "display_label": "Expires",
         "type": "date",
-        "position": 1
+        "position": 1,
+        "field_role": "expiry"
       },
       {
         "entity_kind": "inventory:part",
@@ -137,8 +138,7 @@
         "config": {
           "qty_field": "qty",
           "expiry_field": "expires_on",
-          "min_qty_field": "min_qty",
-          "group_by": "food_category"
+          "min_qty_field": "min_qty"
         }
       },
       {

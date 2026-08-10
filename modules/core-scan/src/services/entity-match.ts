@@ -15,6 +15,7 @@
 // significant tokens (≥2, the same bar the combine clusters use) so "WD-40
 // EZ-Reach" matches "WD-40 EZ-Reach Lubricant" but not "WD External Drive".
 
+import type { Kysely } from "kysely";
 import { platform, type ResolvedEntity } from "@cobblr/platform-contract";
 import { isJunkName } from "./enrich.js";
 
@@ -33,7 +34,54 @@ export interface TrackedMatch {
   /** Where it lives now — shown on the banner ("· 📍Garage Shelf") and used
    *  by move-mode to skip entities already in the active bin. */
   location_id: string | null;
+  /** The stock already on the shelf is past the date carried by this kind's
+   *  `expiry`-role field. Resolved from the ROLE, never a field name, so "best
+   *  before" / "use by" / "service due" all work. The cadence ledger cannot
+   *  derive this — it keeps events, not the record's dates — so a re-purchase
+   *  of something that had already gone off would otherwise be recorded as
+   *  consumption, raising the learned rate for food that got binned. */
+  expired: boolean;
   matched_by: "barcode" | "name" | "bin";
+}
+
+/** A named field's value, flat or nested under `metadata` — native columns land
+ *  flat, bundle-added ones do not, and a caller naming a field should not have
+ *  to know which. */
+function fieldValue(fields: Record<string, unknown>, name: string): unknown {
+  if (fields[name] !== undefined) return fields[name];
+  const meta = fields.metadata;
+  return meta && typeof meta === "object" ? (meta as Record<string, unknown>)[name] : undefined;
+}
+
+function isExpired(fields: Record<string, unknown>, expiryField: string | null | undefined): boolean {
+  if (!expiryField) return false;
+  const v = fieldValue(fields, expiryField);
+  if (typeof v !== "string" || !v) return false;
+  const t = Date.parse(v);
+  if (Number.isNaN(t)) return false;
+  const midnight = new Date();
+  midnight.setHours(0, 0, 0, 0);
+  return t < midnight.getTime();
+}
+
+/** kind → the name of its `expiry`-role field, for this org. Custom-field defs
+ *  are a PLATFORM table in cobblr_meta, so this needs no tenant pool and no
+ *  bearer: one small read per findTracked call. */
+async function expiryFieldsByKind(orgId: string): Promise<Map<string, string>> {
+  try {
+    const meta = platform().db.meta as unknown as Kysely<{
+      module_field_defs: { org_id: string; entity_kind: string; name: string; field_role: string | null };
+    }>;
+    const rows = await meta
+      .selectFrom("module_field_defs")
+      .select(["entity_kind", "name"])
+      .where("org_id", "=", orgId)
+      .where("field_role", "=", "expiry")
+      .execute();
+    return new Map(rows.map((r: { entity_kind: string; name: string }) => [r.entity_kind, r.name]));
+  } catch {
+    return new Map(); // no defs, no opinion — never fail a scan over this
+  }
 }
 
 const STOP = new Set([
@@ -139,6 +187,7 @@ function toMatch(
   e: { kind: string; id: string; title: string; subtitle?: string; image_path?: string; detailUrl?: string; fields: Record<string, unknown> },
   info: { noun: string; qtyField?: string },
   matchedBy: "barcode" | "name" | "bin",
+  expiryField?: string | null,
 ): TrackedMatch {
   const rawQty = info.qtyField ? e.fields[info.qtyField] : undefined;
   const qty = typeof rawQty === "number" ? rawQty : Number(rawQty);
@@ -160,6 +209,7 @@ function toMatch(
     noun: info.noun,
     qty: Number.isFinite(qty) ? qty : null,
     location_id: typeof e.fields.location_id === "string" ? e.fields.location_id : null,
+    expired: isExpired(e.fields, expiryField),
     matched_by: matchedBy,
   };
 }
@@ -169,6 +219,7 @@ export async function findTracked(
   opts: { barcode?: string | null; name?: string | null },
 ): Promise<{ barcode_matches: TrackedMatch[]; name_matches: TrackedMatch[] }> {
   const kinds = platform().entities.listScannable();
+  const expiryByKind = await expiryFieldsByKind(orgId);
   const barcode = opts.barcode?.trim() || null;
   const name = opts.name && !isJunkName(opts.name) ? opts.name.trim() : null;
 
@@ -185,7 +236,7 @@ export async function findTracked(
           // count (a resolver that ignored the filter returns arbitrary rows).
           return res.items
             .filter((e) => metaBarcode(e.fields) === barcode)
-            .map((e) => toMatch(e, k, "barcode"));
+            .map((e) => toMatch(e, k, "barcode", expiryByKind.get(e.kind)));
         } catch {
           return [];
         }
@@ -227,7 +278,7 @@ export async function findTracked(
               })
               .map((e) => ({ e, ...nameOverlap(want, e.title) }))
               .filter(({ pass }) => pass)
-              .map(({ e, shared }) => ({ m: toMatch(e, k, "name"), shared }));
+              .map(({ e, shared }) => ({ m: toMatch(e, k, "name", expiryByKind.get(e.kind)), shared }));
           } catch {
             return [];
           }
@@ -259,6 +310,7 @@ export async function findBinContents(
   locationId: string,
 ): Promise<{ items: TrackedMatch[]; single: boolean }> {
   const kinds = platform().entities.listScannable();
+  const expiryByKind = await expiryFieldsByKind(orgId);
   const perKind = await Promise.all(
     kinds.map(async (k) => {
       try {
@@ -268,7 +320,7 @@ export async function findBinContents(
         });
         return res.items
           .filter((e) => typeof e.fields.location_id === "string" && e.fields.location_id === locationId)
-          .map((e) => toMatch(e, k, "bin"));
+          .map((e) => toMatch(e, k, "bin", expiryByKind.get(e.kind)));
       } catch {
         return [];
       }

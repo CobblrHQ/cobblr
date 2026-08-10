@@ -1,22 +1,21 @@
 # Self-hosting Cobblr
 
 Run Cobblr on your own machine, on your own network, with nothing but Docker.
-No account, no cloud, no subscription. This guide gets you to a working
-instance you can open from your phone - **including the camera**, which is the
-one part that needs a little care.
+No subscription, and nothing you have to sign up for to use it. This guide gets
+you to a working instance you can open from your phone - **including the
+camera**, which is the one part that needs a little care.
 
 ## Two install paths
 
-- **Image-based (two files, no build)** -
+- **Image-based (two files, no build) - recommended** -
   [`deploy/selfhost/standalone/`](./deploy/selfhost/standalone/README.md): a
   compose file + a `.env`, pulling prebuilt multi-arch images (amd64 + arm64,
   so a Raspberry Pi runs the same file). Updates are `docker compose pull`,
-  including across PostgreSQL majors. **This becomes the recommended path when
-  the public images open** alongside the first public release; the README
-  there says whether they are live yet.
+  including across PostgreSQL majors. The setup builder at
+  docs.cobblr.xyz/setup-builder generates both files for you.
 - **Clone-and-build** - the rest of this guide. Build the images from this
-  repository yourself; always available, and what the image path falls back
-  to today.
+  repository yourself. Pick this to run modified code, or if you would rather
+  not pull a prebuilt image.
 
 Everything below (HTTPS modes, privacy knobs, backups) applies to both paths.
 
@@ -244,29 +243,37 @@ API key where one exists. Set these in `.env`:
 | `COBBLR_SCAN_GOUPC_API_KEY` | - | Your [go-upc](https://go-upc.com) API key → their **official API** (best coverage). |
 | `COBBLR_SCAN_GOUPC` | `false` | Enable go-upc's HTML *scraper* (no key). Off by default - we don't ship a scraper that runs unasked; prefer the API key above. |
 
-### Shared barcode intelligence (BIdb)
+### The barcode network
 
-Cobblr can run a hosted, cross-install barcode database (BIdb) that serves known
-results fast and pools opt-in corrections. It is **off by default** for
-self-host. When you turn it on, a scanned barcode is sent to Cobblr's service,
-which returns open-data and community-corrected results (never another provider's
-licensed data). Your own providers above still handle anything BIdb doesn't know,
-and if BIdb is unreachable the scan falls back to them.
+Open databases cover groceries, books, and music from any install. Everything else
+- electronics, toys, hardware, tools, craft supplies - lives in databases a stock
+install has no key for. The barcode network closes that gap: you get everyone
+else's corrections, and yours go back in.
 
-> **Not available yet.** The service exists but has no public address, so no
-> install can reach it and the tier stays inert with both variables blank. They are already in
-> `.env.example` and passed through compose, so switching it on when it launches
-> is one line in your `.env` plus `docker compose up -d`, with no template to
-> re-copy, nothing to migrate. The changelog will say when.
+It is **off unless you turn it on**, and it is never a dependency. A scanned
+barcode goes to the service, which returns open-data records plus corrections
+contributed by people on the network. Your own providers above still handle
+anything it doesn't know, and if it is slow or unreachable the scan falls back to
+them.
+
+Joining is both directions at once: you read the shared corpus and your
+corrections travel back. What travels is the corrected value, the barcode, which
+field it fixed, and an opaque account id - not your email, not your workspace,
+not the rest of what you scanned.
+
+Sign up at `account.cobblr.xyz` for a per-install key, then:
 
 | Var | Default | What it does |
 |---|---|---|
-| `COBBLR_BIDB_URL` | - | The shared database to consult. Unset keeps the tier inert. |
-| `COBBLR_BIDB_KEY` | - | Your per-install key (issued from a Cobblr account), sent as a bearer token. |
+| `COBBLR_BIDB_URL` | - | The shared corpus to consult. Unset keeps the tier inert. |
+| `COBBLR_BIDB_KEY` | - | Your per-install key, sent as a bearer token. |
 
-The full model (why a self-host install queries but never receives another
-provider's licensed data, and the give-to-receive correction opt-in) is
-documented on [docs.cobblr.xyz](https://docs.cobblr.xyz).
+One thing to expect: records that came from another database whose licence
+forbids passing them on are withheld, and where a human correction sits on top of
+one you get the correction and nothing else. That is those licences rather than a
+Cobblr preference, and it is why a lookup sometimes returns less than you
+expected. The full model, the fair-use limits and both terms documents are on
+[docs.cobblr.xyz](https://docs.cobblr.xyz).
 
 ### Full air-gap
 

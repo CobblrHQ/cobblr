@@ -41,7 +41,7 @@ export function HeaderMenu({
 }: Props) {
   const [open, setOpen] = useState(false);
   const hostRef = useRef<HTMLSpanElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null);
 
   useEffect(() => {
     if (!open || !hostRef.current) return;
@@ -50,21 +50,49 @@ export function HeaderMenu({
       if (!el) return;
       const r = el.getBoundingClientRect();
       const M = 8;
-      // Clamp into the viewport so a trigger near either edge still opens a
-      // fully-visible panel - the narrow-screen case this menu exists for.
-      let left = align === "right" ? r.right - width : r.left;
-      left = Math.max(M, Math.min(left, window.innerWidth - width - M));
-      setPos({ top: r.bottom + 6, left });
+      // On a narrow screen a fixed-px panel spends its height on WRAPPING: the
+      // same hint that is one line on a desktop becomes three on a phone. So
+      // the panel is allowed to grow LEFT there - up to a cap, never past the
+      // viewport. The cap matters: a panel the full width of the screen stops
+      // reading as a menu and starts reading as a sheet, and the page behind it
+      // is part of how you know it is dismissible.
+      const PHONE = window.innerWidth < 640;
+      const w = PHONE
+        ? Math.max(width, Math.min(340, window.innerWidth - 48))
+        : Math.min(width, window.innerWidth - 2 * M);
+      let left = align === "right" ? r.right - w : r.left;
+      left = Math.max(M, Math.min(left, window.innerWidth - w - M));
+      const top = r.bottom + 6;
+      // Never taller than the room below the trigger. A long menu used to run
+      // off the bottom of a phone with no way to reach the last item except
+      // scrolling the PAGE, which dragged the panel along with it (reported
+      // 2026-08-10). Cap it and let the panel scroll inside itself.
+      setPos({ top, left, width: w, maxHeight: Math.max(160, window.innerHeight - top - M) });
     };
     place();
-    // Reposition rather than float away when the page moves under it.
+    // Re-place on RESIZE only. It used to re-place on scroll too, which is why
+    // the panel appeared to ride the page: it faithfully tracked a trigger that
+    // was scrolling away. The page no longer scrolls while a menu is open (see
+    // below), so there is nothing to track.
     window.addEventListener("resize", place);
-    window.addEventListener("scroll", place, true);
-    return () => {
-      window.removeEventListener("resize", place);
-      window.removeEventListener("scroll", place, true);
-    };
+    return () => window.removeEventListener("resize", place);
   }, [open, align, width]);
+
+  // A menu is a modal moment: the page must hold still under it. Without this
+  // the page scrolled behind an open panel on both phone and desktop.
+  useEffect(() => {
+    if (!open) return;
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtml = html.style.overflow;
+    const prevBody = body.style.overflow;
+    html.style.overflow = "hidden";
+    body.style.overflow = "hidden";
+    return () => {
+      html.style.overflow = prevHtml;
+      body.style.overflow = prevBody;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -100,8 +128,8 @@ export function HeaderMenu({
           <div
             data-header-menu
             role="menu"
-            style={{ top: pos.top, left: pos.left, width }}
-            className="fixed z-[70] rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-xl py-1.5 text-sm"
+            style={{ top: pos.top, left: pos.left, width: pos.width, maxHeight: pos.maxHeight }}
+            className="fixed z-[70] overflow-y-auto overscroll-contain rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-xl py-1.5 text-sm"
           >
             {children({ close: () => setOpen(false) })}
           </div>,
@@ -114,9 +142,38 @@ export function HeaderMenu({
 /** A section label inside a HeaderMenu. */
 export function MenuHead({ children }: { children: ReactNode }) {
   return (
-    <div className="px-3 pt-1.5 pb-1 text-[10.5px] font-semibold uppercase tracking-wide text-faint dark:text-slate-500">
+    <div className="px-3 pt-1.5 pb-0.5 text-[10.5px] font-semibold uppercase tracking-wide text-faint dark:text-slate-500">
       {children}
     </div>
+  );
+}
+
+/** A one-line, section-title-sized row for a FILTER - something that is neither
+ *  a toggle nor an action worth a full row. "50 waiting 2d+" wore a switch and
+ *  read as a setting you were turning on, which it never was (reported
+ *  2026-08-10). Quiet by default, accent when the filter is applied. */
+export function MenuFilterLine({
+  children,
+  active,
+  onClick,
+}: {
+  children: ReactNode;
+  active?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitemcheckbox"
+      aria-checked={!!active}
+      onClick={onClick}
+      className={
+        "block w-full px-3 py-0.5 text-left text-[10.5px] uppercase tracking-wide transition hover:bg-subtle dark:hover:bg-slate-800 " +
+        (active ? "text-accent" : "text-faint dark:text-slate-500")
+      }
+    >
+      {children}
+    </button>
   );
 }
 
@@ -167,7 +224,30 @@ export function MenuItem({
           <span className="block text-[11px] leading-snug text-faint dark:text-slate-500">{hint}</span>
         ) : null}
       </span>
-      {state ? <span className="ml-auto shrink-0 text-[11px] text-muted dark:text-slate-400">{state}</span> : null}
+      {/* A toggle has to LOOK like one. These rows were first-class controls
+          before they were folded into this menu, and rendering their state as
+          the words "on"/"off" made them read as labels rather than switches -
+          you could not tell what tapping would do (reported 2026-08-10). An
+          on/off state now renders a real switch; any other state stays text. */}
+      {state === "on" || state === "off" ? (
+        <span
+          role="switch"
+          aria-checked={state === "on"}
+          className={
+            "ml-auto mt-0.5 shrink-0 inline-flex h-4 w-7 items-center rounded-full transition " +
+            (state === "on" ? "bg-cobble-600" : "bg-mortar-300 dark:bg-slate-600")
+          }
+        >
+          <span
+            className={
+              "h-3 w-3 rounded-full bg-white shadow transition-transform " +
+              (state === "on" ? "translate-x-3.5" : "translate-x-0.5")
+            }
+          />
+        </span>
+      ) : state ? (
+        <span className="ml-auto shrink-0 text-[11px] text-muted dark:text-slate-400">{state}</span>
+      ) : null}
     </button>
   );
 }

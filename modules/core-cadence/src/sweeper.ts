@@ -18,7 +18,7 @@
 //     ignore the list. core_cadence_signals remembers when we last said it.
 
 import { Kysely } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, sourceIdKey } from "@cobblr/platform-contract";
 import { cadenceState, reorderSuggested, buyLessSuggested, type CadenceEvent } from "./model.js";
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
@@ -89,6 +89,9 @@ export async function cadenceTick(
   for (const org of orgs) {
     // One workspace's failure must never abort the sweep for the rest.
     try {
+      // Resolved once per org, and OUTSIDE the tenant closure: membership lives
+      // in cobblr_meta, so fetching it per signal would be a query per record.
+      const memberIds = await platform().notifications.orgMemberIds(org.id);
       await platform().tenants.withDb(org.id, async (raw) => {
         const tdb = raw as Kysely<SweepDB>;
 
@@ -151,6 +154,22 @@ export async function cadenceTick(
               )
               .execute();
 
+            // The wire engine resolves a source entity from `<kindSuffix>Id`,
+            // NOT from entityId — for inventory:part that key is `partId`. Emit
+            // it through the BASE kind so a record living in an instance
+            // (`supplies:item`) still publishes the key the wire reads. Without
+            // this the reorder.due → lists:add-item wire resolves nothing and
+            // silently fires zero times, which is exactly how it shipped.
+            // No raw-kind fallback: an instance kind ("supplies:item") yields
+            // "itemId" while the wire reads the module's "partId", so a miss
+            // must skip the emit rather than publish a key nobody listens for.
+            const baseKind = await platform().entities.baseKindOf(org.id, t.entity_kind);
+            if (!baseKind) {
+              console.warn(`[core-cadence] no base kind for ${t.entity_kind}, skipping signal`);
+              continue;
+            }
+            const idKey = sourceIdKey(baseKind);
+
             void platform().events.emit(
               signal === "reorder_due"
                 ? "core-cadence.reorder.due"
@@ -159,12 +178,38 @@ export async function cadenceTick(
                 orgId: org.id,
                 entityKind: t.entity_kind,
                 entityId: t.entity_id,
+                [idKey]: t.entity_id,
                 daysUntilRunout: state.days_until_runout,
                 onHand: state.on_hand_estimate,
                 wasteRatio: state.waste_ratio,
                 confidence: state.confidence,
               },
             );
+
+            // An event with no consumer is an insight nobody receives. A wire
+            // can turn reorder.due into a shopping-list line, but "most of this
+            // keeps going bad" has no sensible action to fire — it is advice,
+            // so it goes to the people, through the same subscription-respecting
+            // dispatcher the other sweepers use.
+            if (signal === "buy_less") {
+              const pct = Math.round(state.waste_ratio * 100);
+              for (const userId of memberIds) {
+                try {
+                  await platform().notifications.dispatch({
+                    orgId: org.id,
+                    userId,
+                    eventType: "core-cadence.buy-less",
+                    message: `About ${pct}% of this keeps going bad — worth buying less of it.`,
+                    module: "core-cadence",
+                    entityType: t.entity_kind,
+                    entityId: t.entity_id,
+                    payload: { wasteRatio: state.waste_ratio, onHand: state.on_hand_estimate },
+                  });
+                } catch (err) {
+                  console.error("[core-cadence] buy-less notify failed:", (err as Error).message);
+                }
+              }
+            }
             emitted++;
           }
         }

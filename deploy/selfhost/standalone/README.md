@@ -4,9 +4,8 @@ The two-file install: this `docker-compose.yml` + a `.env` (copy
 `.env.example`). No clone, no build — images come from GHCR, multi-arch
 (amd64 + arm64, so a Raspberry Pi runs the same file).
 
-> **Not live yet:** the `ghcr.io/cobblrhq/cobblr-*` packages publish with the
-> public release. Until they flip public, use the clone-and-build path in
-> [SELF_HOSTING.md](../../../SELF_HOSTING.md) one level up.
+This is the recommended way to run Cobblr. If you would rather build the images
+yourself, [SELF_HOSTING.md](../../../SELF_HOSTING.md) one level up has that path.
 
 ## Install
 

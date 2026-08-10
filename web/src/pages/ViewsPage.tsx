@@ -640,14 +640,25 @@ function VendingRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) 
     const n = Number(v);
     return Number.isFinite(n) ? n : null;
   };
+  /** A view config names a field; where the projection stores it is not the
+   *  config author's problem. Native columns (qty, min_qty) land flat, while
+   *  every field a BUNDLE adds - expiry, storage, category - lands nested under
+   *  `metadata`. Reading only the flat level meant native fields worked and
+   *  bundle fields silently read undefined, so an item expiring tomorrow showed
+   *  no expiry status at all. Caught by looking at the grid, not the logs. */
+  const pick = (fields: Record<string, unknown>, name: string): unknown => {
+    if (fields[name] !== undefined) return fields[name];
+    const meta = fields.metadata;
+    return meta && typeof meta === "object" ? (meta as Record<string, unknown>)[name] : undefined;
+  };
 
   return (
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
       {items.map((row) => {
         const f = row.fields ?? {};
-        const qty = num(f[qtyField]);
-        const minQty = num(f[minQtyField]);
-        const days = dayDiff(f[expiryField]);
+        const qty = num(pick(f, qtyField));
+        const minQty = num(pick(f, minQtyField));
+        const days = dayDiff(pick(f, expiryField));
         const out = qty !== null && qty <= 0;
         const expired = !out && days !== null && days < 0;
         const expiring = !out && days !== null && days >= 0 && days <= 2;
@@ -665,17 +676,22 @@ function VendingRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) 
                 ? "bg-cobble-500"
                 : "bg-emerald-500";
 
+        // Same order as the dot, so the words never contradict the light. It
+        // used to prefer any expiry date over low stock, so a tile with an
+        // amber running-low dot read "expires in 60d" and the two disagreed.
         const meta = out
           ? "out of stock"
           : expired
             ? `expired ${-(days as number)}d ago`
-            : days !== null
+            : expiring
               ? days === 0
                 ? "expires today"
                 : `expires in ${days}d`
               : low
                 ? "running low"
-                : "in stock";
+                : days !== null
+                  ? `expires in ${days}d`
+                  : "in stock";
 
         return (
           <div

@@ -56,7 +56,12 @@ const EntityFieldRole = z.enum([
  *  places that validate it (this schema, and the two bundle routes) cannot drift
  *  apart. `lint:field-role-enum` fails if a literal pair is hand-written instead
  *  of imported from here. */
-export const FIELD_ROLE_VALUES = ["category", "pack", "identifier"] as const;
+// `expiry`: the date this record's contents stop being usable. A ROLE, not a
+// field name, because every use case calls it something else (best before, use
+// by, service due, licence expires) and behaviour must never keyword-match a
+// label. Consumers ask "which field carries expiry here", so a bundle can skin
+// the label freely.
+export const FIELD_ROLE_VALUES = ["category", "pack", "identifier", "expiry"] as const;
 export type FieldRole = (typeof FIELD_ROLE_VALUES)[number];
 export const FieldRoleSchema = z.enum(FIELD_ROLE_VALUES);
 

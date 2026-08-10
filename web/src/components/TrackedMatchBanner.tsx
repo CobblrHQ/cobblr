@@ -61,14 +61,44 @@ export function TrackedMatchBanner({
   const locName = (id: string | null) =>
     id ? ((locations.data?.items ?? []).find((l) => l.id === id)?.name ?? null) : null;
 
+  // What the ledger makes of a purchase right now. Only asked for the single
+  // best match, and only when there is a quantity to add - the other attach
+  // modes buy nothing. A workspace without the Cadence capability 404s here,
+  // which the `catch` turns into "no opinion", so the banner is unchanged.
+  const bestMatch = (matches.data?.barcode_matches ?? []).concat(matches.data?.name_matches ?? [])[0] ?? null;
+  const cadence = useQuery({
+    queryKey: ["cadence-state", activeSlug, bestMatch?.kind, bestMatch?.id],
+    queryFn: () => api.cadenceState(activeSlug, bestMatch!.kind, bestMatch!.id).catch(() => null),
+    enabled: !!bestMatch && bestMatch.qty != null,
+    staleTime: 60_000,
+  });
+  const cad = cadence.data ?? null;
+  /** Ask only when the ledger says stock should still be there. Everything else
+   *  (no history, shelf already empty, past its date) it settles on its own. */
+  const needsOverBuyAnswer = cad?.repurchase_means === "ask_over_buy";
+  const daysLeft = cad?.days_until_runout != null ? Math.round(cad.days_until_runout) : null;
+
+  // Buying more of something you already have is the moment the ledger learns
+  // the most, and the only moment a person can answer what happened to the old
+  // stock. Asked here or not at all - nobody revisits it later.
+  const [context, setContext] = useState<"normal" | "faster" | "bulk" | "one_off">("normal");
+  const [asking, setAsking] = useState(false);
+
   const attach = useMutation({
-    mutationFn: (vars: { m: TrackedMatch; mode: "add-qty" | "link-barcode" | "move" | "merge-fields" }) =>
+    mutationFn: (vars: {
+      m: TrackedMatch;
+      mode: "add-qty" | "link-barcode" | "move" | "merge-fields";
+      resolution?: "over_buy" | "consumed" | "discarded";
+    }) =>
       api.scanAttach(activeSlug, item.id, {
         kind: vars.m.kind,
         entity_id: vars.m.id,
         instance: vars.m.instance ?? undefined,
         mode: vars.mode,
         ...(vars.mode === "move" && locationId ? { location_id: locationId } : {}),
+        ...(vars.mode === "add-qty"
+          ? { cadence: { context, ...(vars.resolution ? { resolution: vars.resolution } : {}) } }
+          : {}),
       }),
     onSuccess: (r, vars) => {
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
@@ -83,6 +113,7 @@ export function TrackedMatchBanner({
                 : `${r.entity_title} already had everything — nothing to add`
               : `Barcode linked to ${r.entity_title}`,
       );
+      setAsking(false);
       onAttached?.(r, vars.m, vars.mode);
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
@@ -171,6 +202,77 @@ export function TrackedMatchBanner({
           <p className="text-[11px] text-muted mt-1.5">Only fields it's missing are filled - nothing gets overwritten.</p>
         </div>
       )}
+      {best.qty != null && (cad?.cadence_rate != null || asking) && (
+        <div className="mt-2">
+          <div className="text-[11px] text-muted mb-1">
+            {asking ? "Before that - what happened to the ones you had?" : "This buy was"}
+          </div>
+          {asking ? (
+            <div className="flex flex-wrap gap-1.5">
+              {/* Three answers, three different lessons. Recording waste as
+                  consumption would raise the rate and recommend buying MORE of
+                  what keeps getting binned, so the split is not cosmetic. */}
+              {(
+                [
+                  ["over_buy", "Still have them"],
+                  ["consumed", "Gone - used them faster"],
+                  ["discarded", "They went bad"],
+                ] as const
+              ).map(([resolution, label]) => (
+                <button
+                  key={resolution}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => attach.mutate({ m: best, mode: "add-qty", resolution })}
+                  className="rounded-full border border-amber-400 dark:border-amber-700 text-amber-800 dark:text-amber-200 hover:bg-amber-100/60 dark:hover:bg-amber-900/30 px-2.5 py-1 text-xs font-medium disabled:opacity-50"
+                >
+                  {label}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setAsking(false)}
+                className="px-2 py-1 text-xs text-muted hover:text-content"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {/* Normal is the default and stays selected unless you say
+                  otherwise: a stock-up or a party must not train the rate as
+                  though it were an ordinary week. */}
+              {(
+                [
+                  ["normal", "as usual"],
+                  ["one_off", "a one-off"],
+                  ["bulk", "a stock-up"],
+                  ["faster", "going quicker lately"],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setContext(value)}
+                  aria-pressed={context === value}
+                  className={`rounded-full px-2.5 py-1 text-xs font-medium border transition ${
+                    context === value
+                      ? "border-emerald-500 bg-emerald-100/70 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-200"
+                      : "border-line dark:border-slate-700 text-muted hover:text-content"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+          {asking && daysLeft != null && (
+            <p className="text-[11px] text-muted mt-1.5">
+              You bought this before and there should still be about {daysLeft} {daysLeft === 1 ? "day" : "days"} left.
+            </p>
+          )}
+        </div>
+      )}
       <div className="mt-2 flex flex-wrap gap-1.5">
         {canMerge && (
           <button
@@ -182,11 +284,16 @@ export function TrackedMatchBanner({
             <CheckCircle2 size={12} /> Yes - merge these in
           </button>
         )}
-        {best.qty != null && !canMerge && (
+        {/* Not suppressed by a mergeable scan. Buying MORE of something and
+            filling in what a scan learned are different answers to different
+            questions, and a barcode re-scan of a tracked item usually offers
+            both. Hiding +N behind merge meant the over-buy prompt never
+            appeared in the one situation it exists for. */}
+        {best.qty != null && (
           <button
             type="button"
             disabled={busy}
-            onClick={() => attach.mutate({ m: best, mode: "add-qty" })}
+            onClick={() => (needsOverBuyAnswer ? setAsking(true) : attach.mutate({ m: best, mode: "add-qty" }))}
             className="inline-flex items-center gap-1 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 text-xs font-medium disabled:opacity-50"
           >
             <PackagePlus size={12} /> +{Math.max(1, item.quantity || 1)} to it

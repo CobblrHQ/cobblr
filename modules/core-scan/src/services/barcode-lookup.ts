@@ -602,7 +602,10 @@ async function doLookupBarcode(norm: string): Promise<BarcodeOutcome> {
           console.error(
             `[core-scan] BIdb rejected this install's key (${(e as Error).message}). Every lookup will ` +
               `fall back to the local providers until COBBLR_BIDB_KEY is set to a valid key. ` +
-              `A URL without a key is not enough: the key is what selects the tier and the data class.`,
+              `A URL without a key is not enough: the key is what selects the tier and the data class. ` +
+              // Naming where a key comes from is most of this line's value. An operator
+              // reading it in their own logs should not then have to go looking.
+              `Get one at https://account.cobblr.xyz`,
           );
         }
       } else {

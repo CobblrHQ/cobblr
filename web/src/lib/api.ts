@@ -4,7 +4,7 @@
 
 import { getImpersonationToken } from "./impersonation";
 import type { ResolveOutcome as RegistryResolveOutcome } from "@cobblr/platform-contract/resolvables";
-import type { LiveControlPublic } from "@cobblr/platform-contract";
+import type { LiveControlPublic, FieldRole } from "@cobblr/platform-contract";
 
 const TOKEN_KEY = "cobblr.token";
 
@@ -3137,6 +3137,14 @@ export const api = {
       instance?: string;
       mode: "add-qty" | "link-barcode" | "move" | "merge-fields";
       location_id?: string;
+      /** Only meaningful on add-qty, the one mode that is a purchase.
+       *  `context` keeps a party-sized or stock-up buy from training the rate
+       *  like a normal shop; `resolution` says what became of the stock you
+       *  still had, which nothing but a person can know. */
+      cadence?: {
+        context?: "normal" | "faster" | "bulk" | "one_off";
+        resolution?: "over_buy" | "consumed" | "discarded";
+      };
     },
   ) =>
     request<{
@@ -3145,7 +3153,28 @@ export const api = {
       new_qty: number | null;
       prev_location_id: string | null;
       merged_fields: string[];
+      cadence_recorded?: string[];
     }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/attach`, body),
+  /** What the ledger knows about an item: the learned rate, what is probably
+   *  left, and what a purchase right now would MEAN (`repurchase_means`), which
+   *  is what decides whether a re-scan needs the over-buy question. */
+  cadenceState: (slug: string, kind: string, id: string, opts?: { expired?: boolean }) =>
+    request<{
+      /** Units per day, learned. Named cadence_rate by the engine - this type
+       *  is the contract with a real response, not a guess. */
+      cadence_rate: number | null;
+      on_hand_estimate: number;
+      days_until_runout: number | null;
+      waste_ratio: number;
+      confidence: string;
+      reorder_suggested: boolean;
+      buy_less_suggested: boolean;
+      repurchase_means: "discard" | "consume" | "ask_over_buy";
+      event_count: number;
+    }>(
+      "GET",
+      `/orgs/${slug}/modules/core-cadence/state/${encodeURIComponent(kind)}/${id}${opts?.expired ? "?expired=true" : ""}`,
+    ),
   // Merge several similar pending items (same product, different barcodes) into one
   // line with the summed quantity; keepId's name/photo wins, others are discarded.
   combineScanItems: (slug: string, ids: string[], keepId?: string) =>
@@ -4672,6 +4701,10 @@ export interface TrackedMatch {
   noun: string;
   qty: number | null;
   location_id: string | null;
+  /** The stock you already have is past its expiry date, per this kind's
+   *  expiry-role field. Lets a re-purchase be recorded as waste instead of
+   *  consumption without asking. */
+  expired: boolean;
   matched_by: "barcode" | "name" | "bin";
 }
 
@@ -6099,7 +6132,9 @@ export interface PlatformBundleManifest {
     unit?: string;
     /** Semantic RECORD role: `category` (this table's grouping axis) or `pack`
      *  (the packaging-count field, filled from the scanned package). */
-    field_role?: "category" | "pack";
+    // The shared list, not a copy: this union had already drifted (it was
+    // missing "identifier") and a stale copy silently rejects a valid role.
+    field_role?: FieldRole;
     /** Scan-decode role: `identifier:<kind>` (this field carries the scanned
      *  identifier, e.g. a VIN) or `decode:<key>` (fill from the decoder's
      *  output). Mirrors the server contract's FieldDefEntry. */

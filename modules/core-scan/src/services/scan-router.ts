@@ -33,8 +33,16 @@ export function classifyScanCode(raw: string): { type: ScanCodeType; code: strin
   // classified as "upc" above; go-upc handles those books fine.)
   if (/^[0-9]{9}[0-9X]$/i.test(code)) return { type: "isbn", code: code.toUpperCase() };
 
-  // Amazon ASIN: 10-char alphanumeric containing a letter (modern ones start B0).
-  if (/^[A-Z0-9]{10}$/i.test(code) && /[A-Z]/i.test(code)) return { type: "asin", code: code.toUpperCase() };
+  // Amazon ASIN: 10 chars starting with B. The rule USED to be "10 alphanumerics
+  // containing a letter", which is also the shape of every manufacturer serial
+  // and asset tag on the planet: an HP monitor's `CNT034F0XH` classified as an
+  // Amazon product, so it skipped the non-product guard and a web search for the
+  // bare serial named the item after an unrelated gas detector whose part number
+  // merely ended in the same `0XH` (2026-08-10). Non-book ASINs are B-prefixed;
+  // book ASINs are ISBN-10s, already classified above. A serial that genuinely
+  // starts with B still misses here, which is why the hold rule no longer trusts
+  // classification alone.
+  if (/^B[A-Z0-9]{9}$/i.test(code)) return { type: "asin", code: code.toUpperCase() };
 
   return { type: "unknown", code };
 }

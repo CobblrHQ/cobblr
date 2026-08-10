@@ -156,10 +156,10 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Track the fridge/pantry with expiry + storage, and auto-build a shopping list when something runs low or is about to expire. Check an item off → it restocks.",
     manifest: {
       id: "cobblr.flagship.groceries",
-      version: "0.3.0",
+      version: "0.3.2",
       released_at: "2026-08-09",
       changelog:
-        "Adds a What's on hand app: a vending-machine view of the kitchen with a quantity badge and a status dot per item, plus a use-it-or-lose-it list sorted by expiry. Answers what do we actually have without opening the fridge. Learns your cadence from ordinary shopping. Checking an item off the shopping list now also records a purchase in the consumption ledger (when the Cadence capability is on), so the system can start predicting when you will run out instead of only reacting to a low-stock threshold. Same fields, same restock behaviour.",
+        "Marks the expiry date as an expiry field, so re-buying something that already went off is recorded as waste rather than as something you used up. Fixes the status dots on the What's on hand view, which never showed anything about expiry. Adds a What's on hand app: a vending-machine view of the kitchen with a quantity badge and a status dot per item, plus a use-it-or-lose-it list sorted by expiry. Answers what do we actually have without opening the fridge. Learns your cadence from ordinary shopping. Checking an item off the shopping list now also records a purchase in the consumption ledger (when the Cadence capability is on), so the system can start predicting when you will run out instead of only reacting to a low-stock threshold. Same fields, same restock behaviour.",
       name: "Groceries",
       description:
         "Turn inventory + lists into a kitchen system: track food with expiry + storage fields, an auto grocery list on low-stock/expiry, restock on check-off.",
@@ -190,7 +190,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         { source_kind: "inventory:part", action_id: "lists:add-item", trigger_type: "event", trigger_event: "core-cadence.reorder.due", args: { listTitle: "Shopping list" } },
       ],
       field_defs: [
-        { entity_kind: "inventory:part", name: "expires_on", display_label: "Expires", type: "date", position: 1 },
+        { entity_kind: "inventory:part", name: "expires_on", display_label: "Expires", type: "date", position: 1, field_role: "expiry" },
         { entity_kind: "inventory:part", name: "opened_on", display_label: "Opened", type: "date", position: 2 },
         { entity_kind: "inventory:part", name: "storage", display_label: "Storage", type: "text", position: 3, choices: ["Fridge", "Freezer", "Pantry", "Counter", "Spice rack"] },
         { entity_kind: "inventory:part", name: "food_category", display_label: "Category", type: "text", position: 4, choices: ["Produce", "Dairy", "Meat", "Bakery", "Frozen", "Canned", "Dry goods", "Condiments", "Beverages", "Snacks"] },
@@ -204,7 +204,9 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           name: "What's on hand",
           view_type: "vending",
           pinned: true,
-          config: { qty_field: "qty", expiry_field: "expires_on", min_qty_field: "min_qty", group_by: "food_category" },
+          // No group_by: the vending renderer draws one flat wall of slots. Declaring a
+          // key it ignores reads as a feature and behaves as nothing.
+          config: { qty_field: "qty", expiry_field: "expires_on", min_qty_field: "min_qty" },
         },
         {
           entity_kind: "inventory:part",

@@ -16,6 +16,7 @@
 // nothing enriches it yet — a dead control is worse than none.
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { RepurchaseControls } from "../components/RepurchaseControls";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -27,15 +28,14 @@ import {
   FileText,
   Flag,
   Image as ImageIcon,
+  ImagePlus,
   LayoutGrid,
   Library,
   List,
   Loader2,
-  Mail,
   MapPin,
   MonitorSmartphone,
   MoreHorizontal,
-  Paperclip,
   RefreshCw,
   Pencil,
   RotateCcw,
@@ -66,8 +66,8 @@ import { canRerunLookup } from "../lib/scanRerun";
 import { TrackedMatchBanner } from "../components/TrackedMatchBanner";
 import { BinAdjustModal } from "../components/BinAdjustModal";
 import { PairPhoneButton } from "../components/PairPhoneButton";
-import { HeaderMenu, MenuHead, MenuItem, MenuNote, MenuSep } from "../components/HeaderMenu";
-import { ReceiptAddressChip } from "../components/ReceiptAddressChip";
+import { HeaderMenu, MenuFilterLine, MenuHead, MenuItem, MenuNote, MenuSep } from "../components/HeaderMenu";
+import { ReceiptAddressChip, ReceiptAddressMenuBlock } from "../components/ReceiptAddressChip";
 import { classifyOmni, omniPlaceholder } from "./omniIntake";
 import { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 export { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
@@ -2033,7 +2033,16 @@ export function ScanPage() {
           fit today's copy is what produced the old two-row header, where
           "Email receipts" and the overflow orphaned onto a second line.
           See docs/design-decisions/interface-principles.md #5 and #6. */}
-      <div className="flex items-center gap-2 flex-nowrap border-b border-line dark:border-slate-700 pb-2.5">
+      {/* On a phone the omni box is collapsed, so nothing in the row is elastic
+          and every control packs left with dead space trailing after the ...
+          menu. `justify-between` hands the leftover width to the GAPS - evenly,
+          between every element - rather than pooling it in one place, so the
+          row breathes and the trailing actions still finish at the right edge.
+          A first attempt used a single flex-1 spacer: that right-aligned the
+          icons but left one canyon after "Set location", which is not the same
+          thing (reported 2026-08-10). gap-* stays the FLOOR; from `sm` up the
+          omni box is the elastic member and normal packing is correct. */}
+      <div className="relative flex items-center gap-2 max-sm:gap-1.5 max-sm:justify-between flex-nowrap border-b border-line dark:border-slate-700 pb-2.5">
         {/* The nav bar above already names this page, so on a phone the word
             "Inbox" is row width spent repeating the shell (principle #4). */}
 
@@ -2047,15 +2056,18 @@ export function ScanPage() {
             `min-w-0` + overflow-x makes an overflow structurally impossible at
             ANY count; dropping the separators on a phone (the glyphs already
             say which facet is which) means it never actually has to scroll. */}
-        {/* Title + counts share ONE baseline group. Left as siblings of the row
-            (items-center) their different font sizes centred independently, so
-            "Inbox" and "81 pending" sat on visibly different lines of type
-            (reported 2026-08-08). The group still centres within the row. */}
-        <div className="flex items-baseline gap-2 shrink min-w-0">
+        {/* Title + counts stay ONE group so they shrink together, but the group
+            centres like every other member of the row. It was items-baseline:
+            that aligned "Inbox" to the counts, and in doing so pushed the whole
+            group's text ~2px BELOW the chips beside it, because a baseline box
+            reserves descender room the chips' centred text does not. The ask was
+            always "align Inbox with the rest of the top row", and the row's
+            currency is centres (reported 2026-08-08, again 2026-08-10). */}
+        <div className="flex items-center gap-2 shrink min-w-0">
         <h1 className="hidden sm:block text-lg font-semibold text-content dark:text-mortar-100 shrink-0">
           Inbox
         </h1>
-        <div className="flex items-baseline gap-0 shrink min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden whitespace-nowrap text-[13px] text-muted dark:text-slate-400">
+        <div className="flex items-baseline gap-0 shrink min-w-0 leading-none overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden whitespace-nowrap text-[13px] text-muted dark:text-slate-400">
           <span className="text-sm font-semibold text-content dark:text-mortar-100">
             {totalPending}
           </span>
@@ -2287,11 +2299,14 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
             (dropHot
               ? "border-accent border-dashed bg-cobble-50/60 dark:bg-cobble-900/25 "
               : "border-dashed border-line dark:border-slate-700 ") +
-            // Wide: always open and elastic. Tight: a magnifier that expands to
-            // the whole row when used - a placeholder truncated to "Search, pa"
-            // tells nobody anything and reads as broken.
+            // Wide: always open and elastic, sharing the row. Tight: it MORPHS
+            // over the whole row - absolutely positioned across it, so the
+            // counts, the location chip and the icons are covered rather than
+            // competing for the same line. Sharing the row on a phone left the
+            // field a stub and the placeholder cut mid-word, which reads as
+            // broken (reported 2026-08-10). Same control, two shapes.
             (omniOpen
-              ? "flex-1 min-w-[9rem] order-last sm:order-none w-full sm:w-auto"
+              ? "flex-1 min-w-[9rem] max-sm:absolute max-sm:inset-x-0 max-sm:top-0 max-sm:bottom-2.5 max-sm:z-20 max-sm:flex-none max-sm:bg-canvas max-sm:dark:bg-slate-800"
               : "flex-1 min-w-[9rem] hidden sm:flex") +
             " " +
             (omniOpen ? "" : "cursor-text")
@@ -2358,64 +2373,40 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
             >
               <X size={12} />
             </button>
-          ) : null}
-          {/* Files, by what they ARE - not a "which kind of upload" question. */}
-          <HeaderMenu
-            align="right"
-            trigger={({ toggle }) => (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  toggle();
-                }}
-                aria-label="Add a file"
-                title="Photos, a receipt, or an export to import"
-                className="shrink-0 text-faint hover:text-accent transition"
-              >
-                <Paperclip size={13} />
-              </button>
-            )}
-          >
-            {({ close }) => (
-              <>
-                <MenuHead>Add a file</MenuHead>
-                <MenuItem
-                  icon={<ImageIcon size={14} />}
-                  label="Photos"
-                  hint="Several at once come in as one session"
-                  disabled={uploading}
-                  onClick={() => {
-                    close();
-                    fileRef.current?.click();
-                  }}
-                />
-                <MenuItem
-                  icon={<FileText size={14} />}
-                  label="Receipt"
-                  hint="CSV, PDF or a photo - we pull out the line items"
-                  disabled={uploading}
-                  onClick={() => {
-                    close();
-                    receiptRef.current?.click();
-                  }}
-                />
-                <MenuItem
-                  icon={<Upload size={14} />}
-                  label="Import an export"
-                  hint="JSON or CSV, reversible in one click"
-                  onClick={() => {
-                    close();
-                    setImportOpen(true);
-                  }}
-                />
-              </>
-            )}
-          </HeaderMenu>
+          ) : (
+            // Covering the row means the way out has to be visible: an empty
+            // field closes on blur, but nothing on screen said so.
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                setSearchQ("");
+                setOmniOpen(false);
+              }}
+              aria-label="Close search"
+              className="shrink-0 text-faint hover:text-content sm:hidden"
+            >
+              <X size={12} />
+            </button>
+          )}
         </label>
 
-        {/* Tight widths: the magnifier that opens the box above. */}
+        {/* Adding a photo from this device is a PRIMARY way things get into the
+            inbox, so it is a control on the row - not a menu row, and not an
+            icon hidden inside the search box, which is where it was and is why
+            it went missing on a phone entirely (reported 2026-08-10).
+            Single-purpose: one tap, straight to the picker, no intermediate
+            menu, which is what earns it a picture icon rather than the generic
+            paperclip. On DESKTOP the camera sits beside it and the two glyphs
+            say which is which: camera = the live scanner, picture = photos you
+            already have. On a phone this row has no camera at all - it is
+            `hidden sm:inline-flex`, because the app nav above already carries
+            one - so the distinction is between bars, not within this one.
+            Receipt + import stay in the ... menu: rarer, and each needs a
+            sentence to explain. */}
+        {/* Tight widths: the magnifier that morphs into the box above. It sits
+            LEFT of upload because reading order is search-then-act, and the
+            two were the other way round (reported 2026-08-10). */}
         {!omniOpen && (
           <button
             type="button"
@@ -2429,16 +2420,43 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
             <Search size={14} />
           </button>
         )}
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          disabled={uploading}
+          title="Upload a photo or a receipt from this device"
+          aria-label="Upload a photo or a receipt from this device"
+          className={headerIcon + " disabled:opacity-50"}
+        >
+          {uploading ? <Loader2 size={15} className="animate-spin" /> : <ImagePlus size={15} />}
+        </button>
 
+
+        {/* ONE upload door for everything that is "a pic or a receipt": the
+            file's TYPE routes it, so nobody has to answer "which kind of
+            upload" before they have even chosen a file. A PDF or CSV is only
+            ever a receipt, so it goes to the parser; images go to the photo
+            pipeline, which is the common case by a wide margin. Anything that
+            is neither - an export to import - stays an explicit menu item,
+            grouped with Export, because it is not a pic or a receipt and
+            pretending otherwise would make this control mean nothing. */}
         <input
           ref={fileRef}
           type="file"
-          accept="image/*"
+          accept="image/*,application/pdf,.csv,text/csv"
           multiple
           className="hidden"
           onChange={(e) => {
             const fs = Array.from(e.target.files ?? []);
-            if (fs.length) void uploadPhotos(fs);
+            if (!fs.length) return;
+            const isReceiptDoc = (f: File) =>
+              f.type === "application/pdf" || /\.(pdf|csv)$/i.test(f.name) || f.type === "text/csv";
+            const docs = fs.filter(isReceiptDoc);
+            const pics = fs.filter((f) => !isReceiptDoc(f));
+            // A receipt document is parsed one at a time (each is its own
+            // order); photos come in together as one session.
+            for (const d of docs) void uploadReceipt(d);
+            if (pics.length) void uploadPhotos(pics);
           }}
         />
         <input
@@ -2452,27 +2470,6 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
           }}
         />
 
-        {/* The camera stays on desktop (some do have one) but quietly; on a
-            phone the app shell's HeaderActions already renders core-scan's
-            camera, and a second door to it is just another thing to scan past
-            (principle #4). */}
-        <Link
-          to={`/scan/camera${params.toString() ? `?${params}` : ""}`}
-          title="Open the full-screen scanner"
-          aria-label="Open the camera scanner"
-          className={headerIcon + " hidden sm:inline-flex"}
-        >
-          <Camera size={15} />
-        </Link>
-        <button
-          type="button"
-          onClick={() => setLiveSortOpen(true)}
-          title="Live Sort: scan a thing, get told which location it goes in, confirm, next - sort a pile in one pass"
-          aria-label="Live Sort"
-          className={headerIcon}
-        >
-          <Zap size={15} className="text-amber-500" />
-        </button>
 
         {/* A feature nobody can find is a feature that does not exist, so the
             receipt address keeps a visible affordance on desktop and reveals +
@@ -2501,6 +2498,41 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
         >
           {({ close }) => (
             <>
+              {/* Intake first: these were first-class buttons before the header
+                  became one row, and on a phone the omni box that now holds
+                  them is collapsed behind a magnifier - an icon that reads as
+                  Search, not as "upload a photo". Two non-obvious taps is the
+                  same as gone (reported 2026-08-10). The paperclip stays for
+                  desktop; this is the findable path everywhere. */}
+              {/* A FILTER, not a setting: it wore a switch and read as something
+                  you were turning on. One quiet line at the very top, the size
+                  of a section title (reported 2026-08-10). Phone only - the
+                  desktop row still carries the facet itself. */}
+              {staleCount > 0 && staleCount < totalPending && (
+                <span className="sm:hidden">
+                  <MenuFilterLine
+                    active={staleOnly}
+                    onClick={() => {
+                      setReviewOnly(false);
+                      setStaleOnly((v) => !v);
+                      close();
+                    }}
+                  >
+                    {staleOnly ? `Showing ${staleCount} waiting 2d+ · show all` : `${staleCount} waiting 2d+ · show only these`}
+                  </MenuFilterLine>
+                </span>
+              )}
+              <MenuHead>Sort what&rsquo;s here</MenuHead>
+              <MenuItem
+                icon={<Zap size={14} className="text-amber-500" />}
+                label="Live Sort"
+                hint="Scan a thing, get told which bin it goes in, confirm, next"
+                onClick={() => {
+                  close();
+                  setLiveSortOpen(true);
+                }}
+              />
+              <MenuSep />
               <MenuHead>This inbox</MenuHead>
               <MenuItem
                 icon={<ImageIcon size={14} />}
@@ -2529,37 +2561,30 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                   setExportOpen(true);
                 }}
               />
+              {/* Import belongs NEXT TO export, not with the uploads: it is the
+                  other half of the same conversation, and an export file is
+                  neither a pic nor a receipt. */}
+              <MenuItem
+                icon={<Upload size={14} />}
+                label="Import an export"
+                hint="JSON or CSV, reversible in one click"
+                onClick={() => {
+                  close();
+                  setImportOpen(true);
+                }}
+              />
+              {/* SHOW the address, don't just copy it invisibly. As a plain
+                  menu row this said "Email receipts to…" and put something on
+                  the clipboard you never saw - the desktop chip reveals the
+                  address, and the phone deserves the same fact (reported
+                  2026-08-10). */}
               {receiptAddress && (
                 <span className="sm:hidden">
-                  <MenuItem
-                    icon={<Mail size={14} />}
-                    label="Email receipts to…"
-                    hint="Forward a receipt; its lines become items"
-                    onClick={() => {
-                      void navigator.clipboard?.writeText(receiptAddress);
-                      toast.success("Address copied");
-                      close();
-                    }}
-                  />
+                  <ReceiptAddressMenuBlock address={receiptAddress} onCopied={close} />
                 </span>
               )}
               <MenuSep />
               <MenuHead>Elsewhere</MenuHead>
-              {staleCount > 0 && staleCount < totalPending && (
-                <span className="sm:hidden">
-                  <MenuItem
-                    icon={<span className="text-[13px]">⏱</span>}
-                    label={`${staleCount} waiting 2d+`}
-                    hint="Scanned more than two days ago"
-                    state={staleOnly ? "on" : undefined}
-                    onClick={() => {
-                      setReviewOnly(false);
-                      setStaleOnly((v) => !v);
-                      close();
-                    }}
-                  />
-                </span>
-              )}
               <MenuItem
                 icon={<Wand2 size={14} />}
                 label="Things with no location"
@@ -2581,7 +2606,9 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                   close();
                 }}
               />
-              <PairPhoneButton asMenuItem onPaired={close} />
+              {/* The two TOGGLES sit together; the one-shot action goes last.
+                  Interleaving them made a switch, a button and a switch read as
+                  three of the same kind (author, 2026-08-10). */}
               {canSetPhotoRank && photoRank.data && (
                 <MenuItem
                   icon={<Sparkles size={14} />}
@@ -2592,6 +2619,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                   onClick={() => setPhotoRank.mutate(!photoRank.data.enabled)}
                 />
               )}
+              <PairPhoneButton asMenuItem onPaired={close} />
             </>
           )}
         </HeaderMenu>
@@ -4914,10 +4942,15 @@ function InboxCard({
               <button
                 type="button"
                 onClick={() => (topCand ? openForm(topCand) : setExpanded(true))}
-                className="shrink-0 inline-flex items-center gap-1 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 text-[11px] font-medium transition"
+                className="shrink-0 inline-flex items-center gap-1 rounded-full border border-emerald-500 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100/60 dark:hover:bg-emerald-900/30 px-2.5 py-1 text-[11px] font-medium transition"
               >
                 Compare &amp; merge
               </button>
+              {/* Buying MORE of it is a different answer to "is this the same
+                  one?" than filling in what the scan learned, and on a grocery
+                  re-scan it is the usual one. It carries the cadence chips and
+                  the over-buy question, which had no reachable home before. */}
+              <RepurchaseControls itemId={item.id} quantity={Math.max(1, item.quantity || 1)} />
             </div>
           )}
           {/* ONE row for everything the card says about routing + fields:
@@ -5347,9 +5380,17 @@ function InboxCard({
                     type="button"
                     onClick={() => openZoom("catalog")}
                     title="View full size"
-                    className="block w-full rounded-md overflow-hidden border border-line dark:border-slate-700 bg-white dark:bg-slate-800 aspect-square flex items-center justify-center cursor-zoom-in"
+                    className="block w-full rounded-md overflow-hidden border border-line dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center justify-center cursor-zoom-in"
                   >
-                    <img src={catalogImg} alt="catalog" className="w-full h-full object-contain" onError={() => markBroken(catalogUrl)} />
+                    {/* A SQUARE frame charged every photo the same height. A
+                        landscape shot then sat in a band of empty black that was
+                        pure wasted vertical space, while a portrait one used the
+                        room it was given (reported 2026-08-10). Filling the
+                        width and capping the height lets each photo take only
+                        the height it needs: landscape gets short, portrait stays
+                        tall and letterboxes sideways, which is the harmless
+                        direction. */}
+                    <img src={catalogImg} alt="catalog" className="w-full max-h-[20rem] object-contain" onError={() => markBroken(catalogUrl)} />
                   </button>
                   {/* A photo's controls live ON the photo (its caption), not in
                       a standing ambient row — see scan-inbox-ux-review.md F2. */}
@@ -5383,9 +5424,9 @@ function InboxCard({
                     type="button"
                     onClick={() => openZoom("yours")}
                     title="View full size"
-                    className="block w-full rounded-md overflow-hidden border border-line dark:border-slate-700 bg-black aspect-square flex items-center justify-center cursor-zoom-in"
+                    className="block w-full rounded-md overflow-hidden border border-line dark:border-slate-700 bg-black flex items-center justify-center cursor-zoom-in"
                   >
-                    <img src={yoursImg} alt="your photo" className="w-full h-full object-contain" onError={() => markBroken(yoursRawUrl)} />
+                    <img src={yoursImg} alt="your photo" className="w-full max-h-[20rem] object-contain" onError={() => markBroken(yoursRawUrl)} />
                   </button>
                   <figcaption className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mt-1 flex items-center gap-2">
                     <span>yours</span>
@@ -5575,19 +5616,36 @@ function InboxCard({
                   combine: "Combined similar items",
                   "undo-rerun": "Undid the re-run",
                 };
+                // "Re-ran the lookup with AI" is written when the run STARTS,
+                // so on its own it claims something the run may never have
+                // delivered - the monitor-label item read exactly that for a run
+                // the AI never answered (reported 2026-08-10). The row stamps
+                // whether a model answered the LATEST run; the newest entry IS
+                // that run, so the outcome is reported there and nowhere else.
+                // Only for actions that ASK the AI - a replay is no-AI by design.
+
                 return (
                   <div className="mt-2 border-t border-line dark:border-slate-700/60 pt-1.5">
                     <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">history</div>
                     <ul className="space-y-0.5">
-                      {[...hist].reverse().map((h, i) => (
+                      {[...hist].reverse().map((h, i) => {
+                        // The verdict rides on the ENTRY, so it stays with the
+                        // run it describes instead of hopping to whatever is
+                        // newest (reported 2026-08-10).
+                        const noAnswer = (h as { ai_answered?: boolean }).ai_answered === false;
+                        return (
                         <li key={i} className="text-[11px] text-muted dark:text-slate-400 flex items-baseline gap-2">
                           <span className="min-w-0">
                             {label[h.action] ?? h.action}
+                            {noAnswer && (
+                              <span className="text-amber-600 dark:text-amber-400"> - the AI didn’t answer</span>
+                            )}
                             {h.note ? `: “${h.note}”` : ""}
                           </span>
                           <span className="text-faint ml-auto whitespace-nowrap">{timeAgo(h.at)}</span>
                         </li>
-                      ))}
+                        );
+                      })}
                     </ul>
                   </div>
                 );
@@ -5994,7 +6052,20 @@ function PhotoOptions({
     // just (item, term) with a 5 minute staleTime, so the strip kept serving the
     // photos from BEFORE the re-run. Hinting "color: blue" then looked like it
     // did nothing (reported 2026-07-30).
-    queryKey: ["scan-photo-options", activeSlug, item.id, applied, item.ai_suggested_at ?? ""],
+    // Keyed on the NAME, not just ai_suggested_at: the matchmaker can adopt a
+    // better name without re-stamping ai_suggested_at, so a re-identify that
+    // renamed the item left the strip searching the OLD title until a reload
+    // (reported 2026-08-10). The name IS the search phrase, so it belongs in
+    // the key of the query that searches by it.
+    queryKey: [
+      "scan-photo-options",
+      activeSlug,
+      item.id,
+      applied,
+      item.suggested_name ?? "",
+      item.suggested_manufacturer ?? "",
+      item.ai_suggested_at ?? "",
+    ],
     queryFn: () => api.scanPhotoOptions(activeSlug, item.id, applied || undefined),
     // Only when there's a REAL name to search by — an unidentified item ("Unknown
     // Item") or a bare barcode returns junk photos, so don't even ask.

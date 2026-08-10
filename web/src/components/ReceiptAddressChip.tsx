@@ -15,6 +15,46 @@ import { Mail } from "lucide-react";
 import { useToast } from "@cobblr/platform-web";
 import { HeaderMenu, MenuHead } from "./HeaderMenu";
 
+/** The same fact as the chip, laid out for INSIDE a menu: a phone folds the
+ *  chip into the ⋯ menu, and a chip whose whole job is to open a panel cannot
+ *  open one from within a panel. It lives here rather than inline in the page
+ *  because the capability registry is right that this is one behaviour - the
+ *  first attempt at this row was a second copy in ScanPage and lint:capabilities
+ *  caught it (2026-08-10). */
+export function ReceiptAddressMenuBlock({
+  address,
+  onCopied,
+}: {
+  address: string;
+  onCopied?: () => void;
+}) {
+  const toast = useToast();
+  return (
+    <span className="block px-3 py-1.5">
+      <span className="flex items-center gap-1.5 text-[11px] text-faint dark:text-slate-500">
+        <Mail size={12} /> Email receipts to
+        {/* Inline with the label rather than a third line under the address:
+            the action is small and the panel's height is precious on a phone
+            (reported 2026-08-10). */}
+        <button
+          type="button"
+          onClick={() => {
+            void navigator.clipboard?.writeText(address);
+            toast.success("Address copied");
+            onCopied?.();
+          }}
+          className="ml-auto text-[11px] text-accent hover:underline"
+        >
+          Copy
+        </button>
+      </span>
+      <code className="mt-1 block overflow-x-auto whitespace-nowrap rounded bg-mortar-100 dark:bg-slate-800 px-1.5 py-1 text-[11px] text-content dark:text-mortar-100 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {address}
+      </code>
+    </span>
+  );
+}
+
 export function ReceiptAddressChip({
   address,
   /** Extra classes for the trigger's host (e.g. hiding it on a phone). */
