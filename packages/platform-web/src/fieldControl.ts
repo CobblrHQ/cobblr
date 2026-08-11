@@ -17,6 +17,7 @@ export type FieldControl =
   | "computed" // read-only, server-resolved every read (never stored)
   | "server-managed" // read-only, server-STAMPED stored value (client writes rejected)
   | "relation" // reference to another entity (picker over the def's ref_kind)
+  | "member" // a person (picker over the workspace's members)
   | "color" // swatch picker
   | "choice" // dropdown (has a `choices` list)
   | "checkbox" // boolean
@@ -44,6 +45,9 @@ export function fieldControl(def: {
   if (def.type === "computed") return "computed";
   if (def.server_managed) return "server-managed";
   if (def.type === "relation") return "relation";
+  // Before the `choices` check below: a member field has no static choices, and
+  // falling through to a choice dropdown would render an empty one.
+  if (def.type === "member") return "member";
   // Boolean outranks `choices`: on a boolean def, choices are the two DISPLAY
   // labels ([falseLabel, trueLabel] — what boolLabel renders), not selectable
   // values. A choice dropdown here would commit the label STRING into a boolean

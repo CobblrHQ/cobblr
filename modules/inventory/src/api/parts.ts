@@ -9,6 +9,7 @@ import { Router, type Request } from "express";
 import { z } from "zod";
 import { sql, type RawBuilder } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { suggestKindsFromPhoto } from "./suggest-kinds.js";
 import { instanceOf, instanceQtyUnit, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireCapability, requireRole } from "./util.js";
 import { routeUnknownToMetadata, preserveServerManaged, coerceMetadata } from "./route-helpers.js";
@@ -106,6 +107,11 @@ const PartCreate = z.object({
   notes: z.string().max(8_000).nullable().optional(),
   state: z.enum(["active", "draft", "needs_review"]).optional(),
   metadata: z.record(z.unknown()).optional(),
+  // An ESTIMATE, not a count. Setting it is what turns a record into an
+  // assortment ("roughly 50 adapters"); clearing it turns the estimate off.
+  // Kept apart from `qty` on purpose: a thing is counted or it is guessed at,
+  // and letting them share a column would make the guess look like arithmetic.
+  approximate_qty: z.number().nonnegative().nullable().optional(),
   // HomeBox parity fields.
   serial_number: z.string().max(160).nullable().optional(),
   model_number: z.string().max(160).nullable().optional(),
@@ -238,6 +244,11 @@ partsRouter.get(
         "p.notes",
         "p.state",
         "p.metadata",
+        // The assortment signal. A list is where "a full bin looks empty" does
+        // the most damage, so the row needs to know the 0 in `qty` is not the
+        // whole story. See docs/design-decisions/assorted-contents.md.
+        "p.approximate_qty",
+        "p.estimated_at",
         "p.created_at",
         "p.updated_at",
         "p.category_id",
@@ -366,14 +377,19 @@ partsRouter.get(
         const ms = new Date(r.warranty_expires).getTime() - Date.now();
         warranty_days_until = Math.ceil(ms / 86_400_000);
       }
+      const approximate = r.approximate_qty == null ? null : Number(r.approximate_qty);
       return {
         ...r,
         qty,
         cost: r.cost == null ? null : Number(r.cost),
         min_qty: minQty,
+        approximate_qty: approximate,
         assigned_qty: assigned,
         available_qty: available,
-        low_stock: minQty != null && available <= minQty,
+        // An estimate is never low stock: its `qty` is 0 because nobody counted,
+        // not because the bin is empty, so comparing it to a minimum would put a
+        // reorder warning on a bin holding fifty of the thing.
+        low_stock: minQty != null && approximate == null && available <= minQty,
         warranty_days_until,
         location_name: null as string | null,
       };
@@ -465,7 +481,20 @@ partsRouter.get(
     const next_cursor =
       hasMore && last ? encodeCursor(last.name, last.id) : null;
 
-    res.json({ items: withUnits, next_cursor });
+    // This route is a SECOND read path over the same rows the generic entity
+    // resolver serves, and only that one post-processed. So a relation or
+    // member field printed its raw uuid here while reading correctly through
+    // /entities/:kind. One helper, applied at both, until the two queries are
+    // collapsed into one.
+    const labelled = await platform().entities.withFieldLabels(
+      ctx.org.id,
+      // Field defs are keyed by the kind the caller asked for: a non-default
+      // instance carries its own defs under `<instance>:item`.
+      instanceOf(req) === "inventory" ? "inventory:part" : `${instanceOf(req)}:item`,
+      withUnits,
+    );
+
+    res.json({ items: labelled, next_cursor });
   }),
 );
 
@@ -489,6 +518,7 @@ partsRouter.get(
         "p.name",
         "p.description",
         "p.qty",
+        "p.approximate_qty",
         "p.unit",
         "p.cost",
         "p.min_qty",
@@ -559,6 +589,7 @@ partsRouter.get(
       "name",
       "description",
       "qty",
+      "approximate_qty",
       "unit",
       "cost",
       "min_qty",
@@ -585,6 +616,7 @@ partsRouter.get(
         r.name,
         r.description ?? "",
         r.qty,
+        r.approximate_qty ?? "",
         r.unit,
         r.cost ?? "",
         r.min_qty ?? "",
@@ -816,6 +848,42 @@ partsRouter.get(
 // routeUnknownToMetadata().
 const NATIVE_PART_KEYS = new Set(Object.keys(PartCreate.shape));
 
+// POST /:id/suggest-kinds — one vision read over this record's photo, returning
+// proposed kinds for the user to accept or drop. Suggestion only: nothing is
+// written here, because a model's guess about somebody's bin is a starting
+// point and not a fact.
+//
+// AI-REACH: exempt — reads a photo and returns suggestions; writes nothing, so
+// there is no state for an agent to reach. An agent that wants to break a bin
+// into kinds creates the parts directly (that path IS reachable) rather than
+// asking this endpoint to think for it. Mutating only in the POST sense.
+partsRouter.post(
+  "/:id/suggest-kinds",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "inventory:create-part"))) return;
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const row = await db
+      .selectFrom("inventory_parts")
+      .select(["image_path"])
+      .where("id", "=", req.params.id as string)
+      .where("instance", "=", instanceOf(req))
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "part not found" } });
+      return;
+    }
+    if (!row.image_path) {
+      res.status(400).json({
+        error: { code: "no_photo", message: "Photograph the bin first, then ask." },
+      });
+      return;
+    }
+    const kinds = await suggestKindsFromPhoto(ctx.org.id, row.image_path, sessionUser(req).id);
+    res.json({ kinds });
+  }),
+);
+
 partsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -835,6 +903,12 @@ partsRouter.post(
         description: parsed.data.description ?? null,
         category_id: parsed.data.category_id ?? null,
         qty: String(parsed.data.qty ?? 0),
+        // Creating something already described as "roughly 50" is the common
+        // path (a photo of a bin becomes an assortment), so the stamp is set
+        // here too rather than only on a later edit.
+        approximate_qty:
+          parsed.data.approximate_qty == null ? null : String(parsed.data.approximate_qty),
+        estimated_at: parsed.data.approximate_qty == null ? null : new Date(),
         // The instance's qty_unit (a yarn instance tracks skeins) beats the
         // generic "each" when the caller doesn't say — so API creates (scan
         // confirm, CSV import) match what the New-<noun> modal would do.
@@ -1108,7 +1182,7 @@ partsRouter.patch(
     const patch: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(parsed.data)) {
       if (v === undefined) continue;
-      if (k === "qty" || k === "cost" || k === "min_qty") {
+      if (k === "qty" || k === "cost" || k === "min_qty" || k === "approximate_qty") {
         patch[k] = v == null ? null : String(v);
       } else if (k === "warranty_expires") {
         patch[k] = v == null ? null : new Date(v as string);
@@ -1118,6 +1192,12 @@ partsRouter.patch(
     }
     if (hoistedMerge && Object.keys(hoistedMerge).length > 0) {
       patch.metadata = metadataMergeExpr(hoistedMerge);
+    }
+    // An estimate dates itself. The caller never sets estimated_at: it is the
+    // moment the guess was made, and a client that could backdate it would make
+    // "how old is this guess" unanswerable.
+    if ("approximate_qty" in patch) {
+      patch.estimated_at = patch.approximate_qty == null ? null : new Date();
     }
     patch.updated_at = new Date();
 

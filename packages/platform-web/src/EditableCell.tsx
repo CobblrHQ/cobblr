@@ -24,7 +24,7 @@ import { useRef, useState, type KeyboardEvent } from "react";
 import { Pencil } from "lucide-react";
 import { cellPlan, type CellPlan, type EditableCellDef } from "./cellPlan";
 import { FieldRenderer, boolTruthy, boolLabel } from "./FieldRenderer";
-import { RelationSelect } from "./CustomFieldsPanel";
+import { RelationSelect, MemberSelect } from "./CustomFieldsPanel";
 
 export type { EditableCellDef } from "./cellPlan";
 
@@ -190,6 +190,12 @@ export function EditableCell({
             onChange={(v) => commit(v)}
             className="w-full text-sm py-1"
           />
+        </span>
+      );
+    case "member":
+      return (
+        <span onClick={(e) => e.stopPropagation()}>
+          <MemberSelect value={value} onChange={(v) => commit(v)} className="w-full text-sm py-1" />
         </span>
       );
     case "choice":

@@ -61,7 +61,41 @@ const EntityFieldRole = z.enum([
 // by, service due, licence expires) and behaviour must never keyword-match a
 // label. Consumers ask "which field carries expiry here", so a bundle can skin
 // the label freely.
-export const FIELD_ROLE_VALUES = ["category", "pack", "identifier", "expiry"] as const;
+// `assignee`: whose job this is. A ROLE over either a `member` field (direct
+// user link) or a `relation` to the kind a workspace uses for people, so a
+// household member without a login is still a real, groupable assignee — they
+// simply resolve as not notifiable. Consumers ask the platform who the assignee
+// is and never learn which shape backed it.
+/** Every field TYPE a custom field can have. ONE shared list, for the same
+ *  reason FIELD_ROLE_VALUES is one: this union was hand-written in five places
+ *  and had already drifted three different ways. `relation` reached the bundle
+ *  manifest and the read types but never the write route or the field-builder
+ *  picker, so a relation field was creatable only by authoring a bundle — a
+ *  half-finished feature that looked finished from every angle except the one
+ *  a user stands in. `lint:field-type-enum` fails a hand-written copy.
+ *
+ *  A site that legitimately allows FEWER types states so explicitly
+ *  (`FieldTypeSchema.exclude([...])` with a reason), so a restriction is always
+ *  a decision rather than an omission nobody noticed. */
+export const FIELD_TYPE_VALUES = [
+  "text",
+  "number",
+  "boolean",
+  "date",
+  "url",
+  "richtext",
+  "computed",
+  "relation",
+  // A person. Stored as a user id; rendered as their display name, resolved at
+  // READ time so a rename propagates instead of leaving stale snapshots. This
+  // is the type the `assignee` role sits on — see
+  // design-decisions/household-accountability.md §1.
+  "member",
+] as const;
+export type FieldDefType = (typeof FIELD_TYPE_VALUES)[number];
+export const FieldTypeSchema = z.enum(FIELD_TYPE_VALUES);
+
+export const FIELD_ROLE_VALUES = ["category", "pack", "identifier", "expiry", "assignee"] as const;
 export type FieldRole = (typeof FIELD_ROLE_VALUES)[number];
 export const FieldRoleSchema = z.enum(FIELD_ROLE_VALUES);
 
@@ -1114,7 +1148,7 @@ const ModuleManifest = z.object({
             entity_kind: z.string(),
             name: z.string().regex(/^[a-z][a-z0-9_]*$/),
             display_label: z.string().min(1),
-            type: z.enum(["text", "number", "boolean", "date", "url", "relation", "richtext"]),
+            type: FieldTypeSchema,
             /** For type='relation': the entity-kind id this field references
              *  (e.g. "core-locations:location"). The stored value is the target
              *  entity's id (in metadata); the read layer resolves it to the
@@ -2047,6 +2081,16 @@ export interface PlatformEntities {
    *  here before such a lookup. Reads (`lookup`/`list`/`lookupMany`) don't need
    *  it; they fall back at the resolver level. */
   baseKindOf(orgId: string, kind: string): Promise<string>;
+  /** Inject `<name>_label` for the relation/member fields on rows a module
+   *  queried itself, so a record reads the same whichever URL asked for it.
+   *  The generic entity resolver already does this; a module's own list route
+   *  is a second read path and must not skip it. No-op for kinds with no such
+   *  fields, so it is safe to call unconditionally. Batched across the page. */
+  withFieldLabels<T extends Record<string, unknown>>(
+    orgId: string,
+    kind: string,
+    rows: T[],
+  ): Promise<T[]>;
   /** The names of a kind's SERVER-MANAGED custom fields (field defs with
    *  `server_managed = true`, e.g. core-mobility's `away_since`). A write
    *  route uses this to preserve the stored value across an unrelated client

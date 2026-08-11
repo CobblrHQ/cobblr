@@ -81,6 +81,26 @@ function isContainable(traits: Record<string, unknown> | null | undefined): bool
   return typeof v === "string" || typeof (v as { trait?: unknown }).trait === "string";
 }
 
+/** "roughly 50 more" when any of the contents is an estimate rather than a
+ *  count. Returns null when everything inside has been counted, so an ordinary
+ *  container is unchanged. */
+export function assortedSummary(
+  items: Array<{ fields?: Record<string, unknown> | null }>,
+): string | null {
+  let total = 0;
+  let n = 0;
+  for (const it of items) {
+    const a = it.fields?.approximate_qty;
+    if (a == null) continue;
+    const v = Number(a);
+    if (!Number.isFinite(v)) continue;
+    total += v;
+    n++;
+  }
+  if (n === 0) return null;
+  return `· roughly ${total} in ${n === 1 ? "an assortment" : `${n} assortments`}`;
+}
+
 export function ContentsPanel({
   slug,
   getToken,
@@ -206,6 +226,12 @@ export function ContentsPanel({
           <Package size={15} className="text-muted" />
           {title}
           {items.length > 0 && <span className="text-xs text-faint">({items.length})</span>}
+          {/* An estimate in here means the count on the left is not the story:
+              "(3)" on a bin holding an assortment of fifty is technically true
+              and completely misleading. Say the rough total too. */}
+          {assortedSummary(items) && (
+            <span className="text-xs text-faint">{assortedSummary(items)}</span>
+          )}
         </div>
         <div className="flex items-center gap-3">
           {scanIntoHref && (

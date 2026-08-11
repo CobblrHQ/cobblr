@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "inventory",
-  version: "0.19.0",
+  version: "0.20.0",
   displayName: "Inventory",
   description:
     "Parts, locations, categories, stock tracking, polymorphic allocations. The generalised toolkit you'd otherwise Frankenstein from a spreadsheet.",
@@ -49,6 +49,12 @@ export default defineModule({
           { name: "unit", type: "text", role: "unit" },
           { name: "cost", type: "number" },
           { name: "min_qty", type: "number" },
+          // An ESTIMATE, deliberately not role:"quantity" — that role means a
+          // counted amount, and a face reading it as one would render a guess
+          // with a stepper. Its presence is what marks a record as an
+          // assortment. See docs/design-decisions/assorted-contents.md.
+          { name: "approximate_qty", type: "number" },
+          { name: "estimated_at", type: "date" },
           { name: "manufacturer", type: "text" },
           { name: "supplier_url", type: "url" },
           { name: "image_path", type: "image-path", role: "image" },
@@ -93,6 +99,12 @@ export default defineModule({
           // inventory_parts directly.
           "metadata",
           "location_id",
+          // The estimate is safe to expose and has to be: a container rolling
+          // up "10 kinds, roughly 50" is a cross-module read (core-placement
+          // renders it), and without this the projection strips it and the
+          // rollup silently reads zero.
+          "approximate_qty",
+          "estimated_at",
           // `cost` IS exposable but capability-gated below — it flows
           // to member-facing reads only for viewers who hold
           // inventory:view-costs. supplier_url / manufacturer / notes

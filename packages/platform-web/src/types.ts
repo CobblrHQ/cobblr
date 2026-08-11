@@ -53,15 +53,18 @@ export type FieldRendererId =
  *  input MUST handle each member — see `fieldControl()`, whose exhaustive switch
  *  makes a forgotten type a COMPILE error rather than a silent text-box (the bug
  *  where a `boolean` field rendered as a text input showing "false"). */
-export type FieldType =
-  | "text"
-  | "number"
-  | "boolean"
-  | "date"
-  | "url"
-  | "computed"
-  | "relation"
-  | "richtext";
+// The shared list, not a seventh copy. This one was written across nine lines,
+// which is how it slipped past the first version of lint:field-type-enum: a
+// per-line scan cannot see a union that spans a page.
+import type { FieldDefType as FieldType } from "@cobblr/platform-contract";
+export type { FieldType };
+
+/** A person who can be picked into a `member` field. Deliberately the minimum:
+ *  platform-web has no business knowing roles or join dates. */
+export interface PlatformMember {
+  user_id: string;
+  display_name: string;
+}
 
 export interface PlatformFieldDef {
   id: string;
@@ -144,6 +147,10 @@ export interface PlatformWebApi {
     kind: string,
     q?: string,
   ): Promise<{ items: PlatformResolvedEntity[] }>;
+  /** The workspace's members — the data source for `member`-field pickers.
+   *  Optional, exactly like listEntities: a host that does not wire it renders
+   *  the value read-only rather than a picker it cannot populate. */
+  listMembers?(slug: string): Promise<{ items: PlatformMember[] }>;
   listFieldDefs(slug: string, kind: string): Promise<{ items: PlatformFieldDef[]; sections?: FieldSection[] }>;
   /** Manifest-declared UI contributions from the workspace's ENABLED modules
    *  (`contributes.panels`). Optional: a host that doesn't wire it simply

@@ -48,6 +48,10 @@ export interface InventoryPartsTable {
   serial_number: string | null;
   model_number: string | null;
   assigned_to: string | null;
+  // Assorted contents (migration 0008). approximate_qty's PRESENCE is what
+  // marks a record as an estimate rather than a count.
+  approximate_qty: string | null;
+  estimated_at: Date | null;
   warranty_expires: Date | null;
   lifetime_warranty: Generated<boolean>;
   warranty_details: string | null;
@@ -91,6 +95,8 @@ export const PART_FILTER_COLS = new Set([
   "serial_number",
   "model_number",
   "assigned_to",
+  "approximate_qty",
+  "estimated_at",
   "warranty_expires",
   "lifetime_warranty",
   "warranty_details",

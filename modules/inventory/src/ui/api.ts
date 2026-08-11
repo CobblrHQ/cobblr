@@ -88,6 +88,11 @@ export interface PartListItem extends HomeBoxFields {
   supplier_url: string | null;
   image_path: string | null;
   notes: string | null;
+  /** An ESTIMATE, not a count. Its presence marks this record as an
+   *  assortment ("roughly 50 adapters, jumbled together") and is what earns it
+   *  the photo-led card instead of a stock row. */
+  approximate_qty: number | null;
+  estimated_at: string | null;
   state: "active" | "draft" | "needs_review";
   metadata: Record<string, unknown>;
   created_at: string;
@@ -128,6 +133,10 @@ export interface Part extends HomeBoxFields {
   location_id: string | null;
   created_at: string;
   updated_at: string;
+  /** An ESTIMATE, not a count. String like its numeric siblings on this type
+   *  (pg returns numerics as strings). Its presence marks an assortment. */
+  approximate_qty: string | null;
+  estimated_at: string | null;
   /** How many UNITS (serials) are on file for this model. DERIVED server-side
    *  from the unit-of pairings, never stored: `qty` stays the count face's
    *  number and this is the individual face's. 0 (or absent, on an older
@@ -487,6 +496,35 @@ export class InventoryApi {
       connection_id,
       instance,
     });
+  /** The kinds inside an assortment, and adding one.
+   *
+   *  A kind IS a part: same table, same shape, just estimated and placed inside
+   *  the assortment rather than loose in the bin. That is what lets one
+   *  graduate into a counted item later without being re-entered, so this is
+   *  deliberately createPart + place rather than a bespoke endpoint. */
+  assortmentKinds = (assortmentId: string) =>
+    this.requestAbs<{ items: Array<{ id: string; title: string; fields: Record<string, unknown> }> }>(
+      "GET",
+      `/api/v1/orgs/${this.slug}/modules/core-placement/contents` +
+        `?container_kind=${encodeURIComponent("inventory:part")}&container_id=${assortmentId}`,
+    );
+
+  /** Ask the record's photo what kinds are in there. Suggestion only. */
+  suggestKinds = (assortmentId: string) =>
+    this.partsRequest<{ kinds: Array<{ name: string; approximate_qty: number }> }>(
+      "POST",
+      `/${assortmentId}/suggest-kinds`,
+    );
+
+  addAssortmentKind = async (assortmentId: string, name: string, approximate: number) => {
+    const kind = await this.createPart({ name, qty: 0, approximate_qty: approximate });
+    await this.requestAbs("POST", `/api/v1/orgs/${this.slug}/modules/core-placement/place`, {
+      containee: { kind: "inventory:part", id: kind.id },
+      container: { kind: "inventory:part", id: assortmentId },
+    });
+    return kind;
+  };
+
   createPart = (b: Partial<Omit<PartListItem, "id" | "created_at" | "updated_at" | "assigned_qty" | "available_qty" | "low_stock">> & { name: string }) =>
     this.partsRequest<Part>("POST", "", b);
   updatePart = (id: string, b: Record<string, unknown>) =>

@@ -2,12 +2,13 @@
 // Stock adjustments are explicit (a button) so accidental qty edits
 // don't silently rewrite history.
 
-import { useState, type FocusEvent } from "react";
+import { useEffect, useState, type FocusEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, ArrowRightLeft, Copy, Library, Minus, Plus, Printer, ShieldCheck, Trash2 } from "lucide-react";
-import { ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, EntityThumb, Modal, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits } from "@cobblr/platform-web";
+import { AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, EntityThumb, Modal, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { QtyStepper } from "./QtyStepper";
+import { isAssorted } from "./assorted";
 import { NewPartDialog } from "./NewPartDialog";
 import { ParentPicker } from "./ParentPicker";
 import { useMatchedCatalogEntry } from "./useMatchedCatalogEntry";
@@ -156,6 +157,8 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
   const confirm = useConfirm();
   const [dup, setDup] = useState(false);
   const [moving, setMoving] = useState(false);
+  const [counting, setCounting] = useState(false);
+  const [addingKind, setAddingKind] = useState(false);
 
   // The current parent "type" of this unit (the `instance-of` pairing target),
   // resolved to {id, name}. Only fetched on instances that declare a parent.
@@ -180,6 +183,25 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["inventory-parent", id] });
       void qc.invalidateQueries({ queryKey: ["inventory-part", id] });
+    },
+    onError: (e: unknown) => toast.error((e as Error).message),
+  });
+
+  // The kinds inside this assortment. Fetched unconditionally (the id is always
+  // known) and simply empty for an ordinary part, because a hook cannot be
+  // called conditionally.
+  const kinds = useQuery({
+    queryKey: ["assortment-kinds", orgSlug, id],
+    queryFn: () => api.assortmentKinds(id),
+    enabled: Boolean(id),
+  });
+
+  const addKind = useMutation({
+    mutationFn: ({ name, approx }: { name: string; approx: number }) =>
+      api.addAssortmentKind(id, name, approx),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["assortment-kinds", orgSlug, id] });
+      setAddingKind(false);
     },
     onError: (e: unknown) => toast.error((e as Error).message),
   });
@@ -302,6 +324,81 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
         onDismiss={() => dismissReconcile.mutate()}
       />
 
+      {/* An assortment leads with what it actually is: a photo of a jumble and
+          an estimate. Rendering it as a stock row makes a bin of fifty things
+          look empty, which is the complaint this whole feature answers. The
+          stock panels below still apply; this sits above them rather than
+          replacing them, because a record can be part known. */}
+      <AddKindModal
+        open={addingKind}
+        onClose={() => setAddingKind(false)}
+        busy={addKind.isPending}
+        onAdd={(name, approx) => addKind.mutate({ name, approx })}
+        canSuggest={Boolean(p.image_path)}
+        onSuggest={async () => {
+          const r = await api.suggestKinds(id);
+          return r.kinds;
+        }}
+        onAcceptAll={async (list) => {
+          // Sequential on purpose: each is a create plus a placement, and firing
+          // twelve at once at a fresh workspace is how you find the pool limit.
+          for (const k of list) await api.addAssortmentKind(id, k.name, k.approximate_qty);
+          void qc.invalidateQueries({ queryKey: ["assortment-kinds", orgSlug, id] });
+          setAddingKind(false);
+          toast.success(`Added ${list.length} ${list.length === 1 ? "kind" : "kinds"}`);
+        }}
+      />
+
+      <CountAssortmentModal
+        open={counting}
+        onClose={() => setCounting(false)}
+        noun={itemNoun}
+        suggested={Number(p.approximate_qty ?? 0)}
+        busy={update.isPending}
+        onCount={(qty) => {
+          // The graduation: a real quantity, and the estimate goes. SAME record,
+          // same id, so its history and any printed label survive.
+          update.mutate(
+            { qty, approximate_qty: null },
+            { onSuccess: () => setCounting(false) },
+          );
+        }}
+      />
+
+      {p.approximate_qty != null && (
+        <AssortmentCard
+          title={p.name}
+          approximateQty={Number(p.approximate_qty)}
+          note={p.description}
+          imagePath={p.image_path ?? matched.data?.image_path ?? null}
+          kinds={(kinds.data?.items ?? []).map((k) => ({
+            id: k.id,
+            name: k.title,
+            approximate_qty:
+              k.fields.approximate_qty == null ? null : Number(k.fields.approximate_qty),
+            qty: k.fields.qty == null ? null : Number(k.fields.qty),
+          }))}
+          actions={
+            <>
+              <button
+                type="button"
+                onClick={() => setAddingKind(true)}
+                className="rounded-lg bg-cobble-600 hover:bg-cobble-500 px-3 py-1.5 text-xs font-medium text-white transition"
+              >
+                Break into kinds
+              </button>
+              <button
+                type="button"
+                onClick={() => setCounting(true)}
+                className="rounded-lg border border-line dark:border-slate-600 px-3 py-1.5 text-xs font-medium text-content dark:text-mortar-100 transition"
+              >
+                Count these
+              </button>
+            </>
+          }
+        />
+      )}
+
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
         <div className="flex items-start gap-4">
           <EntityThumb
@@ -369,7 +466,21 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           {(!hide("qty") || !hide("unit")) && (
           <Field label="Qty" className="col-span-2">
             <div className="flex items-center gap-2">
-              {!hide("qty") && <QtyStepper partId={p.id} qty={Number(p.qty)} />}
+              {!hide("qty") &&
+                // An uncounted assortment showed "[-] 0 [+]" directly under a
+                // card reading "~50 estimated, not counted" — the page
+                // contradicting itself, and one click on + silently turning a
+                // guess into a count of 1. Counting is the deliberate act on
+                // the card ("Count these"), so say what is true instead.
+                // A record carrying BOTH a count and an estimate still shows
+                // the count: hiding a real number would be the worse lie.
+                (isAssorted(p) && Number(p.qty) === 0 ? (
+                  <span className="text-muted text-sm" data-qty-uncounted="true">
+                    not counted
+                  </span>
+                ) : (
+                  <QtyStepper partId={p.id} qty={Number(p.qty)} />
+                ))}
               {!hide("unit") && (
                 // Changing the unit auto-converts the quantity when the two are
                 // interconvertible (1000 g → kg = 1); otherwise just the unit
@@ -1811,4 +1922,230 @@ function numOr(v: unknown): number | null {
   if (v == null || v === "") return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+/** Counting an assortment: the moment a guess becomes a number.
+ *
+ *  The estimate is offered as the starting value because the user is usually
+ *  confirming roughly what they already said, and it is the only number they
+ *  have. Accepting it unchanged is a legitimate answer: "I looked, fifty is
+ *  right" is more knowledge than "roughly fifty", even though the digits match.
+ */
+function CountAssortmentModal({
+  open,
+  onClose,
+  noun,
+  suggested,
+  busy,
+  onCount,
+}: {
+  open: boolean;
+  onClose: () => void;
+  noun: string;
+  suggested: number;
+  busy: boolean;
+  onCount: (qty: number) => void;
+}) {
+  const [value, setValue] = useState(String(suggested));
+  useEffect(() => {
+    if (open) setValue(String(suggested));
+  }, [open, suggested]);
+
+  const n = Number(value);
+  const valid = Number.isFinite(n) && n >= 0;
+
+  return (
+    <Modal open={open} onClose={onClose} title={`Count the ${noun}s`} size="sm">
+      <div className="space-y-4">
+        <p className="text-sm text-muted">
+          How many are actually there? This stops being an estimate and becomes a count.
+          Everything else about it stays: its history, its tags, and any label already on it.
+        </p>
+        <label className="block space-y-1">
+          <span className="text-sm font-medium text-content">Counted</span>
+          <input
+            type="number"
+            min={0}
+            value={value}
+            autoFocus
+            onChange={(e) => setValue(e.target.value)}
+            className="w-full rounded-lg border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-content dark:text-mortar-100"
+          />
+        </label>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-line dark:border-slate-600 px-3 py-2 text-sm text-content dark:text-mortar-100"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={!valid || busy}
+            onClick={() => onCount(n)}
+            className="rounded-lg bg-cobble-600 hover:bg-cobble-500 px-3 py-2 text-sm font-medium text-white disabled:opacity-50 transition"
+          >
+            {busy ? "Saving…" : "It is a count now"}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** Adding a kind to an assortment.
+ *
+ *  A kind is another estimate, not a count: "DB25 gender changers, about 7".
+ *  It becomes a part placed inside the assortment, which is what lets it
+ *  graduate into a counted item later without being retyped.
+ */
+function AddKindModal({
+  open,
+  onClose,
+  busy,
+  onAdd,
+  canSuggest,
+  onSuggest,
+  onAcceptAll,
+}: {
+  open: boolean;
+  onClose: () => void;
+  busy: boolean;
+  onAdd: (name: string, approx: number) => void;
+  canSuggest?: boolean;
+  onSuggest?: () => Promise<Array<{ name: string; approximate_qty: number }>>;
+  onAcceptAll?: (list: Array<{ name: string; approximate_qty: number }>) => Promise<void>;
+}) {
+  const [name, setName] = useState("");
+  const [approx, setApprox] = useState("");
+  const [suggested, setSuggested] = useState<
+    Array<{ name: string; approximate_qty: number; keep: boolean }> | null
+  >(null);
+  const [thinking, setThinking] = useState(false);
+  useEffect(() => {
+    if (open) {
+      setName("");
+      setApprox("");
+      setSuggested(null);
+    }
+  }, [open]);
+
+  const n = Number(approx);
+  const valid = name.trim().length > 0 && Number.isFinite(n) && n >= 0;
+
+  return (
+    <Modal open={open} onClose={onClose} title="Add a kind" size="sm">
+      <form
+        className="space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (valid) onAdd(name.trim(), n);
+        }}
+      >
+        <p className="text-sm text-muted">
+          What is in there, roughly? Still an estimate: you are describing the jumble, not
+          counting it.
+        </p>
+
+        {canSuggest && onSuggest && suggested === null && (
+          <button
+            type="button"
+            disabled={thinking}
+            onClick={async () => {
+              setThinking(true);
+              try {
+                const list = await onSuggest();
+                setSuggested(list.map((k) => ({ ...k, keep: true })));
+              } finally {
+                setThinking(false);
+              }
+            }}
+            className="w-full rounded-lg border border-dashed border-cobble-400 px-3 py-2 text-sm text-content dark:text-mortar-100 disabled:opacity-50"
+          >
+            {thinking ? "Looking at the photo…" : "Read them off the photo"}
+          </button>
+        )}
+
+        {suggested !== null && (
+          <div className="space-y-2 rounded-lg border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 p-3">
+            {suggested.length === 0 ? (
+              <p className="text-sm text-muted">
+                Nothing recognisable came back. Type one below instead.
+              </p>
+            ) : (
+              <>
+                <p className="text-xs text-muted">
+                  Untick anything that is not really in there. These are guesses about
+                  someone else&apos;s bin, so they are offered rather than applied.
+                </p>
+                {suggested.map((k, i) => (
+                  <label key={`${k.name}-${i}`} className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={k.keep}
+                      onChange={(e) =>
+                        setSuggested((cur) =>
+                          (cur ?? []).map((x, j) =>
+                            j === i ? { ...x, keep: e.target.checked } : x,
+                          ),
+                        )
+                      }
+                    />
+                    <span className="text-content dark:text-mortar-100">{k.name}</span>
+                    <span className="text-muted">~{k.approximate_qty}</span>
+                  </label>
+                ))}
+                <button
+                  type="button"
+                  disabled={busy || !suggested.some((k) => k.keep)}
+                  onClick={() => void onAcceptAll?.(suggested.filter((k) => k.keep))}
+                  className="w-full rounded-lg bg-cobble-600 hover:bg-cobble-500 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+                >
+                  Add the ticked ones
+                </button>
+              </>
+            )}
+          </div>
+        )}
+        <label className="block space-y-1">
+          <span className="text-sm font-medium text-content">Kind</span>
+          <input
+            value={name}
+            autoFocus
+            placeholder="DB25 gender changer"
+            onChange={(e) => setName(e.target.value)}
+            className="input w-full"
+          />
+        </label>
+        <label className="block space-y-1">
+          <span className="text-sm font-medium text-content">Roughly how many</span>
+          <input
+            type="number"
+            min={0}
+            value={approx}
+            placeholder="7"
+            onChange={(e) => setApprox(e.target.value)}
+            className="input w-full"
+          />
+        </label>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-line dark:border-slate-600 px-3 py-2 text-sm text-content dark:text-mortar-100"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={!valid || busy}
+            className="rounded-lg bg-cobble-600 hover:bg-cobble-500 px-3 py-2 text-sm font-medium text-white disabled:opacity-50 transition"
+          >
+            {busy ? "Adding…" : "Add it"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
 }

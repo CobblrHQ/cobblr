@@ -8,7 +8,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { parseWireFilter } from "../platform/wire-filter.js";
 import { sql } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, FieldTypeSchema } from "@cobblr/platform-contract";
 import { requireAuth } from "../auth/middleware.js";
 import { requireCapability, requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
@@ -790,7 +790,7 @@ const FieldDefCreate = z.object({
   entity_kind: z.string(),
   name: z.string().regex(/^[a-z][a-z0-9_]*$/),
   display_label: z.string().min(1),
-  type: z.enum(["text", "number", "boolean", "date", "url", "richtext", "computed"]),
+  type: FieldTypeSchema,
   required: z.boolean().optional(),
   position: z.number().int().optional(),
   /** When type='text', renders as a dropdown of these choices. */
@@ -801,6 +801,12 @@ const FieldDefCreate = z.object({
   /** When type='computed': the {{ }} template rendered read-only at
    *  resolve time. Required for computed; ignored otherwise. */
   template: z.string().max(2000).optional(),
+  /** When type='relation': the entity-kind id this field points at
+   *  ("core-locations:location"). Without it the field stores an id nothing
+   *  can resolve, so the value renders as a raw uuid forever — which is what
+   *  happened when `relation` became selectable in the field builder before
+   *  this was accepted here. Enforced below, not merely optional. */
+  ref_kind: z.string().min(1).optional(),
   /** The unit a type='number' value is measured in ("mm", "g", "in").
    *  Free text by design — the units vocabulary (core-units) resolves it
    *  at render/consume time and an unmatched string renders as-is. A unit
@@ -1280,6 +1286,19 @@ platformOrgRouter.post(
       // the same canonical trait list. The sentinel is then DERIVED from that list,
       // never taken from the client, so it can't disagree with the predicate it
       // encodes — and the same scope always lands on the same row.
+      // A relation with nowhere to point stores an id nothing can resolve, so
+      // the value renders as a raw uuid forever. Reject it at creation rather
+      // than let someone build a broken field and discover it in a table.
+      if (parsed.data.type === "relation" && !parsed.data.ref_kind) {
+        res.status(400).json({
+          error: {
+            code: "missing_ref_kind",
+            message: "A relation field needs ref_kind: which kind of record it points at.",
+          },
+        });
+        return;
+      }
+
       const scopeTraits =
         parsed.data.applies_to?.traits ?? parseFieldScope(parsed.data.entity_kind);
       if (isFieldScope(parsed.data.entity_kind) && scopeTraits.length === 0) {
@@ -1310,6 +1329,9 @@ platformOrgRouter.post(
           renderer: parsed.data.renderer ?? null,
           template: parsed.data.type === "computed" ? parsed.data.template ?? null : null,
           unit: parsed.data.type === "number" ? parsed.data.unit ?? null : null,
+          // Scoped to the type that uses it, like template and unit above, so a
+          // stray ref_kind on a text field cannot confuse the label resolver.
+          ref_kind: parsed.data.type === "relation" ? parsed.data.ref_kind ?? null : null,
           applies_to: scopeTraits.length
             ? sql`${JSON.stringify({ traits: scopeTraits })}::jsonb`
             : null,

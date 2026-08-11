@@ -689,7 +689,10 @@ export interface BundlesTable {
   enabled_features: Generated<string[]>;
 }
 
-export type FieldDefType = "text" | "number" | "boolean" | "date" | "url" | "computed" | "relation" | "richtext";
+// Re-exported, not redeclared: this union used to be a hand-written copy and
+// had drifted from the others. Imported as well so it is in scope below.
+import type { FieldDefType } from "@cobblr/platform-contract";
+export type { FieldDefType };
 
 export interface ModuleFieldDefsTable {
   id: Generated<string>;

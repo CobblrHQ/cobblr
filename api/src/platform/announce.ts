@@ -53,6 +53,41 @@ function defaultWebhook(): string {
   return process.env.COBBLR_FEEDBACK_DISCORD_WEBHOOK || "";
 }
 
+/** One line at boot saying where user feedback GOES.
+ *
+ *  This is a privacy-relevant routing decision and it is invisible today: a webhook in
+ *  the env or one row in `platform_announce_settings` is the difference between "a
+ *  report stays between the reporter and the operator" and "a report is posted to a
+ *  chat server". An instance serving people the operator does not know (see
+ *  `docs/design-decisions/public-cloud-instance.md`) must be the former, and the way
+ *  to be sure is to be TOLD at boot rather than to infer it from an unset variable.
+ *
+ *  Deliberately not a hard check: a self-hosted operator posting their own feedback to
+ *  their own Discord is a legitimate setup, and the categories are admin-editable at
+ *  runtime, so an assertion would either be wrong or immediately stale. Visible beats
+ *  enforced here. Never throws — a boot line is not worth a failed boot. */
+export async function logAnnounceRouting(): Promise<void> {
+  try {
+    const envWebhook = !!defaultWebhook();
+    const rows = await meta.selectFrom("platform_announce_settings").select(["enabled", "webhook_url"]).execute();
+    const overrides = rows.filter((r) => r.enabled && (r.webhook_url ?? "").trim()).length;
+    if (!envWebhook && overrides === 0) {
+      console.log(
+        "[announce] Discord OFF (no webhook configured) — feedback stays private: it lives in " +
+          "/super-admin → Feedback, and a reply reaches the reporter in-app and by email.",
+      );
+      return;
+    }
+    console.log(
+      `[announce] Discord ON — ${envWebhook ? "COBBLR_FEEDBACK_DISCORD_WEBHOOK set" : "no env webhook"}, ` +
+        `${overrides} per-category override(s). New feedback is POSTED to that webhook, so a report ` +
+        "leaves this instance. Clear it if this deployment serves people you do not know.",
+    );
+  } catch (err) {
+    console.warn("[announce] could not report the routing:", err instanceof Error ? err.message : err);
+  }
+}
+
 /** Resolve a category's effective settings, applying registry defaults for any
  *  category the admin hasn't touched yet. */
 async function settingsFor(category: string): Promise<{ enabled: boolean; webhook: string }> {

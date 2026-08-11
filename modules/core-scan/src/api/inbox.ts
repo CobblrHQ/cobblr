@@ -39,6 +39,13 @@ import {
   refreshCatalogImageByName,
 } from "../services/enrich-photo.js";
 import { mergeMeta, standingHint, standingHints } from "../services/metadata.js";
+import {
+  type CatalogSource,
+  type CatalogStep,
+  popStep,
+  pushStep,
+  seedHistory,
+} from "../services/catalog-history.js";
 import { pickPrimaryId, unionCandidateFields, traitsHaveUnique, combinedQuantity, type CombineItem, type CombineCandidate } from "../services/combine-merge.js";
 import { searchImages, rankImageOptions, selectTopCandidates, deriveImageQuery } from "../services/ddg-images.js";
 import { rankPhotoWithAi, isRankFailure } from "../services/rank-photo.js";
@@ -2996,11 +3003,37 @@ inboxRouter.post(
 // override stashes the original refs in suggested_metadata.orig_catalog so a
 // revert can restore them (server-side → survives reload, unlike a client ref).
 const CatalogImageBody = z.union([
-  z.object({ url: z.string().url().max(2000) }),
+  // `ai_pick` marks an apply that came from "✨ Pick best (AI)". The ranker is
+  // read-only and applies through THIS endpoint, so without the flag its choice
+  // is indistinguishable from a hand-pick — and Revert would restore the raw
+  // first web result, throwing the AI's judgement away (reported 2026-08-11).
+  z.object({ url: z.string().url().max(2000), ai_pick: z.boolean().optional() }),
   z.object({ action: z.enum(["revert", "use_own_photo"]) }),
   // "Take a nice picture" — a freshly-captured upload becomes the DISPLAY
   // (catalog) image; the identify photo is untouched (photo roles).
   z.object({ file_id: z.string().uuid() }),
+  // CROP MY OWN PHOTO into the catalog image.
+  //
+  // The photo you took is often the most accurate picture of the thing - it is
+  // literally the object, in the condition you are filing it in - but it is
+  // rarely FRAMED like a catalog shot. A marketplace listing screenshot is the
+  // clearest case: the product fills the top third and the rest is app chrome
+  // (price, "Message seller", the description). Cropping to the product beats
+  // anything a web search returns for that item, and costs no AI call and no
+  // network (reported 2026-08-11: "it's right there and it's accurate, why rely
+  // on something from the internet?").
+  //
+  // The box is FRACTIONS of the source, the same shape the split feature's
+  // vision segmentation produces, so both paths share cropRegion() rather than
+  // growing a second cropper.
+  z.object({
+    crop: z.object({
+      x: z.number().min(0).max(1),
+      y: z.number().min(0).max(1),
+      w: z.number().min(0.02).max(1),
+      h: z.number().min(0.02).max(1),
+    }),
+  }),
 ]);
 
 interface OrigCatalog {
@@ -3038,32 +3071,82 @@ inboxRouter.post(
       res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
       return;
     }
-    const baseMeta = (row.suggested_metadata ?? {}) as Record<string, unknown> & { orig_catalog?: OrigCatalog };
-    // The keys the catalog-image override OWNS: the user-set lock, and (captured
-    // ONCE, on the first override) the original image so Revert can restore it.
+    const baseMeta = (row.suggested_metadata ?? {}) as Record<string, unknown> & {
+      orig_catalog?: OrigCatalog;
+      catalog_history?: CatalogStep[];
+      catalog_source?: CatalogSource;
+    };
+    // Revert is UNDO, so the images form a STACK, not a single stashed original.
+    //
+    // A real item goes: the blind first web result -> maybe the AI's pick -> maybe
+    // one you chose yourself. Keeping only `orig_catalog` (captured once, on the
+    // first override) meant one press jumped all the way to the bottom, skipping
+    // the AI's judgement — which is the whole reason the ranker exists. Each apply
+    // now PUSHES the image it replaces; each revert POPS one (reported 2026-08-11:
+    // "it should act like undo and go back to the prior pick, so I should be able
+    // to click it multiple times").
+    const history = seedHistory(baseMeta.catalog_history, baseMeta.orig_catalog);
+    // The keys the catalog-image override OWNS: the user-set lock, the undo stack,
+    // and what the CURRENT image came from (so the next push can label it).
     // Merged, not full-replaced — this write shares suggested_metadata with a dozen
     // other passes and used to drop all of theirs.
-    const catalogLockSet = {
+    const catalogSet = (source: CatalogSource) => ({
       catalog_image_user_set: true as const,
-      ...(baseMeta.orig_catalog
-        ? {}
-        : { orig_catalog: { url: row.catalog_image_url, file_id: row.catalog_image_file_id } }),
-    };
+      catalog_history: pushStep(
+        history,
+        { url: row.catalog_image_url, file_id: row.catalog_image_file_id },
+        baseMeta.catalog_source,
+      ),
+      catalog_source: source,
+    });
     const fresh = () =>
       db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", row.id).executeTakeFirstOrThrow();
 
     if ("action" in parsed.data && parsed.data.action === "revert") {
-      const orig = (baseMeta.orig_catalog ?? { url: null, file_id: null }) as OrigCatalog;
-      // Reverting to the auto image relinquishes the user's pick → drop the
-      // `catalog_image_user_set` lock (so a future re-identify can refresh it) and
-      // the stashed `orig_catalog`. DB-side delete, so no OTHER writer's key goes
-      // with them — which is what the whole-snapshot rewrite here used to do.
+      // POP one step. Nothing to undo → say so rather than blanking the image,
+      // which is what restoring an empty stash used to do.
+      const { restore: prev, rest, atBottom } = popStep(history);
+      if (!prev) {
+        res.status(409).json({
+          error: { code: "no_history", message: "There's no earlier catalog photo to go back to." },
+        });
+        return;
+      }
+      if (!atBottom) {
+        // Still standing on a chosen image → keep the lock and the remaining
+        // stack, so pressing again keeps walking back.
+        await db
+          .updateTable("core_scan_inbox_items")
+          .set({
+            catalog_image_url: prev.url,
+            catalog_image_file_id: prev.file_id,
+            suggested_metadata: mergeMeta({
+              catalog_history: rest,
+              catalog_source: prev.source ?? "web",
+            }) as never,
+            updated_at: new Date(),
+          })
+          .where("id", "=", row.id)
+          .execute();
+        res.json(withTitle(await fresh()));
+        return;
+      }
+      // Back at the bottom — the auto image. That relinquishes the user's pick →
+      // drop the `catalog_image_user_set` lock (so a future re-identify can
+      // refresh it) along with the now-empty stack. DB-side delete, so no OTHER
+      // writer's key goes with them — which is what the whole-snapshot rewrite
+      // here used to do.
       await db
         .updateTable("core_scan_inbox_items")
         .set({
-          catalog_image_url: orig.url,
-          catalog_image_file_id: orig.file_id,
-          suggested_metadata: mergeMeta({}, ["orig_catalog", "catalog_image_user_set"]) as never,
+          catalog_image_url: prev.url,
+          catalog_image_file_id: prev.file_id,
+          suggested_metadata: mergeMeta({}, [
+            "orig_catalog",
+            "catalog_image_user_set",
+            "catalog_history",
+            "catalog_source",
+          ]) as never,
           updated_at: new Date(),
         })
         .where("id", "=", row.id)
@@ -3082,8 +3165,41 @@ inboxRouter.post(
         .set({
           catalog_image_file_id: row.image_file_id,
           catalog_image_url: null,
-          // The user chose this image → lock it so a later re-identify won't clobber it.
-          suggested_metadata: mergeMeta(catalogLockSet) as never,
+          // The user chose this image → lock it so a later re-identify won't clobber it,
+          // and push what it replaced so Revert can undo back to it.
+          suggested_metadata: mergeMeta(catalogSet("yours")) as never,
+          updated_at: new Date(),
+        })
+        .where("id", "=", row.id)
+        .execute();
+      res.json(withTitle(await fresh()));
+      return;
+    }
+
+    // A CROP of the user's own photo → the display/catalog image.
+    // Crops the IDENTIFY photo (image_file_id), never the current catalog image,
+    // so cropping twice always starts from the original rather than compounding
+    // a crop of a crop. cropRegion writes a new file and leaves the source
+    // untouched, so the identify photo (and anything already pointing at it)
+    // is unaffected.
+    if ("crop" in parsed.data) {
+      if (!row.image_file_id) {
+        res.status(400).json({ error: { code: "no_photo", message: "This item has no photo of yours to crop." } });
+        return;
+      }
+      const croppedId = await cropRegion(ctx.org.id, row.image_file_id, parsed.data.crop);
+      if (!croppedId) {
+        res.status(422).json({
+          error: { code: "crop_failed", message: "That photo couldn't be cropped. Try a different region." },
+        });
+        return;
+      }
+      await db
+        .updateTable("core_scan_inbox_items")
+        .set({
+          catalog_image_file_id: croppedId,
+          catalog_image_url: null,
+          suggested_metadata: mergeMeta(catalogSet("crop")) as never,
           updated_at: new Date(),
         })
         .where("id", "=", row.id)
@@ -3099,8 +3215,9 @@ inboxRouter.post(
         .set({
           catalog_image_file_id: parsed.data.file_id,
           catalog_image_url: null,
-          // The user chose this image → lock it so a re-identify won't clobber it.
-          suggested_metadata: mergeMeta(catalogLockSet) as never,
+          // The user chose this image → lock it so a re-identify won't clobber it,
+          // and push what it replaced so Revert can undo back to it.
+          suggested_metadata: mergeMeta(catalogSet("upload")) as never,
           updated_at: new Date(),
         })
         .where("id", "=", row.id)
@@ -3117,6 +3234,7 @@ inboxRouter.post(
     // toast that was a lie (reported 2026-07-24). So only mutate the row on a real
     // download; otherwise leave the previous image and 422 so the UI says so.
     const url = (parsed.data as { url: string }).url;
+    const isAiPick = (parsed.data as { ai_pick?: boolean }).ai_pick === true;
     const stored = await downloadCatalogImage({ db, orgId: ctx.org.id, itemId: row.id }, url);
     if (!stored) {
       res.status(422).json({
@@ -3127,13 +3245,14 @@ inboxRouter.post(
       });
       return;
     }
-    // Download stored catalog_image_file_id already. Record the source url + lock
-    // the pick + stash the original (for Revert).
+    // Download stored catalog_image_file_id already. Record the source url, lock
+    // the pick, and push the image it replaced onto the undo stack. The AI's pick
+    // is labelled as such so Revert's button can name what it lands on.
     await db
       .updateTable("core_scan_inbox_items")
       .set({
         catalog_image_url: url,
-        suggested_metadata: mergeMeta(catalogLockSet) as never,
+        suggested_metadata: mergeMeta(catalogSet(isAiPick ? "ai" : "pick")) as never,
         updated_at: new Date(),
       })
       .where("id", "=", row.id)

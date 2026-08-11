@@ -25,6 +25,7 @@ import {
 } from "../lib/flagship-bundles.js";
 import { meta } from "../db/meta.js";
 import { resolveFieldDefsForKind } from "../platform/field-defs.js";
+import { currentBundleId, humaniseBundleId } from "../lib/bundle-aliases.js";
 
 export const quickstartRouter = Router({ mergeParams: true });
 
@@ -153,7 +154,15 @@ quickstartRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
     const groups = new Map<string, { count: number; samples: string[] }>();
     for (const it of items) {
       const top = (it.suggested_candidates ?? [])[0];
-      const bid = top?.bundle_external_id;
+      // A capture records its matched bundle inside a jsonb blob, which the
+      // 2026-08-09 id-rename migration did not reach (it rewrote the columns).
+      // So a capture taken before the rename still names a retired id, and both
+      // halves of this card then break: no manifest answers to it, so the label
+      // fell through to the raw id ("6 look like cobblr.flagship.food-cluster —
+      // install"), and the install button it renders would target a bundle that
+      // no longer exists. Resolving here fixes the label AND the action, for
+      // every workspace, without rewriting anyone's jsonb.
+      const bid = top?.bundle_external_id ? currentBundleId(top.bundle_external_id) : undefined;
       if (!bid) continue;
       const g = groups.get(bid) ?? { count: 0, samples: [] };
       g.count += 1;
@@ -164,7 +173,14 @@ quickstartRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
     const suggestions = [...groups.entries()]
       .map(([bundle_external_id, g]) => ({
         bundle_external_id,
-        bundle_name: labelOf.get(bundle_external_id)?.label ?? nameOf.get(bundle_external_id) ?? bundle_external_id,
+        // Last resort is a HUMANISED id, never the id itself. Aliasing above
+        // means a rename no longer lands here, but a bundle that is genuinely
+        // unknown to this build (an extension, a rolled-back catalog) still
+        // must not put "cobblr.flagship.x-y" in front of a user.
+        bundle_name:
+          labelOf.get(bundle_external_id)?.label ??
+          nameOf.get(bundle_external_id) ??
+          humaniseBundleId(bundle_external_id),
         noun: labelOf.get(bundle_external_id)?.noun ?? "item",
         count: g.count,
         sample_names: g.samples,

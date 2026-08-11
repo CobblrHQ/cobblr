@@ -7,7 +7,7 @@ import { trackProductEvent } from "../platform/product-events.js";
 import { parseWireFilter } from "../platform/wire-filter.js";
 import { z } from "zod";
 import { sql, type Kysely } from "kysely";
-import { platform, CatalogSchemaConfig, packFieldIssues, FieldRoleSchema } from "@cobblr/platform-contract";
+import { platform, CatalogSchemaConfig, packFieldIssues, FieldRoleSchema, FieldTypeSchema } from "@cobblr/platform-contract";
 import { requireAuth } from "../auth/middleware.js";
 import { requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
@@ -120,7 +120,13 @@ const FieldDefEntry = z
     entity_kind: z.string(),
     name: z.string().regex(/^[a-z][a-z0-9_]*$/),
     display_label: z.string(),
-    type: z.enum(["text", "number", "boolean", "date", "url", "computed"]),
+    // Narrower than FieldTypeSchema ON PURPOSE, and now said out loud rather
+    // than by omission. `relation` needs a ref_kind this entry does not carry,
+    //, so until that is plumbed a bundle declaring one would install a field
+    // that cannot resolve.
+    // `richtext` is allowed: it is a text variant, and the manifest schema in
+    // platform-contract already permits it, so the two stop disagreeing.
+    type: FieldTypeSchema.exclude(["relation"]),
     required: z.boolean().optional(),
     position: z.number().int().optional(),
     choices: z.array(z.string()).optional(),

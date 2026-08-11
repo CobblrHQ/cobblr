@@ -36,6 +36,7 @@ import { getEntry } from "../modules/registry.js";
 export { resolveDetailPath } from "./instance-detail.js";
 import { applyComputedFields } from "./computed-fields.js";
 import { applyRelationFields } from "./relation-fields.js";
+import { applyMemberFields } from "./member-fields.js";
 import { normalizeEntitySort } from "./sort.js";
 import { effectiveCapabilities } from "../auth/effective-capabilities.js";
 
@@ -479,7 +480,7 @@ export async function lookup(
       // whitelist above was already computed from the requested kind, so this is
       // consistent.
       const projected = { ...applyExposableProjection(resolved, whitelist, fieldReadScopes, undefined, publicRead), kind };
-      return applyRelationFields(orgId, await applyComputedFields(orgId, projected));
+      return applyMemberFields(orgId, await applyRelationFields(orgId, await applyComputedFields(orgId, projected)));
     }
   } catch (err) {
     console.error(`[entities] resolver for ${kind} failed:`, err);
@@ -748,7 +749,7 @@ export async function list(
     // before the template runs, so a computed field can't leak them).
     items = await Promise.all(
       result.items.map(async (r) =>
-        applyRelationFields(
+        applyMemberFields(orgId, await applyRelationFields(
           orgId,
           await applyComputedFields(
             orgId,
@@ -757,7 +758,7 @@ export async function list(
             // lookup(). No-op for base kinds (resolver already returns them).
             { ...applyExposableProjection(r, whitelist, fieldReadScopes, readScope, publicRead), kind },
           ),
-        ),
+        )),
       ),
     );
     total = result.total;

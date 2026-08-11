@@ -39,6 +39,7 @@ import {
 } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { QtyStepper } from "./QtyStepper";
+import { assortedQty, isAssorted } from "./assorted";
 import { useFieldPresentation } from "./useFieldPresentation";
 import { useDisclosure } from "./useDisclosure";
 import { NewPartDialog } from "./NewPartDialog";
@@ -1102,7 +1103,17 @@ function PartsTable({
               {showQty && (
                 <td className="px-3 py-2 text-right font-mono">
                   <span className="inline-flex items-center gap-1.5">
-                    <QtyStepper partId={p.id} qty={Number(p.qty)} size="sm" />
+                    {/* A stepper on an estimate would turn "roughly 50" into a
+                        count claim with one click, so an assortment reads its
+                        number rather than offering to nudge it. Counting is a
+                        deliberate act on the detail card. */}
+                    {isAssorted(p) ? (
+                      <span className="text-accent" title="Estimated, not counted">
+                        {assortedQty(p)}
+                      </span>
+                    ) : (
+                      <QtyStepper partId={p.id} qty={Number(p.qty)} size="sm" />
+                    )}
                     <span className="text-faint dark:text-slate-500">{p.unit}</span>
                   </span>
                 </td>
@@ -1112,7 +1123,13 @@ function PartsTable({
                   className="px-3 py-2 text-right font-mono"
                   title="Derived from qty minus what's allocated"
                 >
-                  {fmt(p.available_qty)}
+                  {/* Available derives from a count. An estimate has none, and
+                      printing 0 here would contradict the ~50 beside it. */}
+                  {isAssorted(p) ? (
+                    <span className="text-faint dark:text-slate-500">—</span>
+                  ) : (
+                    fmt(p.available_qty)
+                  )}
                 </td>
               )}
               {showMin && (
@@ -1235,10 +1252,23 @@ function PartsTable({
                 <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-mono text-muted dark:text-slate-400">
                   {showQty && (
                     <span className="inline-flex items-center gap-1">
-                      qty <QtyStepper partId={p.id} qty={Number(p.qty)} size="sm" /> {p.unit}
+                      {isAssorted(p) ? (
+                        <span className="text-accent" title="Estimated, not counted">
+                          {assortedQty(p)}
+                        </span>
+                      ) : (
+                        <>
+                          qty <QtyStepper partId={p.id} qty={Number(p.qty)} size="sm" />
+                        </>
+                      )}{" "}
+                      {p.unit}
                     </span>
                   )}
-                  {showQty && <span title="Derived from qty minus what's allocated">avail {fmt(p.available_qty)}</span>}
+                  {showQty && !isAssorted(p) && (
+                    <span title="Derived from qty minus what's allocated">
+                      avail {fmt(p.available_qty)}
+                    </span>
+                  )}
                   {showMin && (
                     <span className="inline-flex items-center gap-1">
                       min
@@ -1371,7 +1401,9 @@ function PartsTileGrid({ items, basePath }: { items: PartListItem[]; basePath: s
             title={p.name}
             subtitle={p.manufacturer || p.category_name || null}
             badge={
-              !disclosure.stock ? undefined : p.low_stock ? (
+              !disclosure.stock ? undefined : isAssorted(p) ? (
+                `${assortedQty(p)} ${p.unit}`
+              ) : p.low_stock ? (
                 <span className="text-ember-600 dark:text-ember-500">
                   {fmt(p.qty)} / {p.min_qty == null ? "—" : fmt(p.min_qty)}
                 </span>

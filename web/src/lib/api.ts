@@ -4,7 +4,7 @@
 
 import { getImpersonationToken } from "./impersonation";
 import type { ResolveOutcome as RegistryResolveOutcome } from "@cobblr/platform-contract/resolvables";
-import type { LiveControlPublic, FieldRole } from "@cobblr/platform-contract";
+import type { LiveControlPublic, FieldRole, FieldDefType } from "@cobblr/platform-contract";
 
 const TOKEN_KEY = "cobblr.token";
 
@@ -3202,11 +3202,14 @@ export const api = {
       "GET",
       `/orgs/${slug}/modules/core-scan/inbox/${id}/photo-options${q && q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ""}`,
     ),
-  setScanCatalogImage: (slug: string, id: string, url: string) =>
+  /** Apply a URL as the catalog image. Pass `aiPick` when the URL came from
+   *  "✨ Pick best (AI)", so Revert can step back TO the ranker's choice instead
+   *  of past it to the raw first web result. */
+  setScanCatalogImage: (slug: string, id: string, url: string, opts?: { aiPick?: boolean }) =>
     request<ScanInboxItem>(
       "POST",
       `/orgs/${slug}/modules/core-scan/inbox/${id}/catalog-image`,
-      { url },
+      opts?.aiPick ? { url, ai_pick: true } : { url },
     ),
   /** "✨ Pick best (AI)" — a vision model ranks the photo options and picks the
    *  cleanest catalog shot (product-only, correct colour, no people). Read-only:
@@ -3247,6 +3250,19 @@ export const api = {
   setScanCatalogFile: (slug: string, id: string, fileId: string) =>
     request<ScanInboxItem>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/catalog-image`, {
       file_id: fileId,
+    }),
+  /** Crop the item's OWN photo into the catalog image. `box` is fractions of
+   *  the source (0-1), the same shape the split feature's segmentation yields.
+   *  Always crops the identify photo, so cropping twice starts from the
+   *  original rather than compounding a crop of a crop. Revertable like any
+   *  other catalog pick. */
+  cropScanCatalogImage: (
+    slug: string,
+    id: string,
+    box: { x: number; y: number; w: number; h: number },
+  ) =>
+    request<ScanInboxItem>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/catalog-image`, {
+      crop: box,
     }),
   /** Rotate the item's own photo (writes a new file; the old one is kept). */
   rotateScanPhoto: (slug: string, id: string, deg: 90 | 180 | 270) =>
@@ -6022,7 +6038,7 @@ export interface PlatformFieldDef {
   applies_to?: { traits: string[] };
   name: string;
   display_label: string;
-  type: "text" | "number" | "boolean" | "date" | "url" | "computed" | "relation" | "richtext";
+  type: FieldDefType;
   required: boolean;
   position: number;
   bundle_id: string | null;
@@ -6115,7 +6131,9 @@ export interface PlatformBundleManifest {
     entity_kind: string;
     name: string;
     display_label: string;
-    type: "text" | "number" | "boolean" | "date" | "url" | "computed" | "richtext";
+    // Was a second hand-written copy, and it was missing "relation" - so a
+    // relation field read back as a type this client did not believe existed.
+    type: FieldDefType;
     required?: boolean;
     position?: number;
     /** When type='text', renders as a dropdown of these choices. */

@@ -69,6 +69,7 @@ import { PairPhoneButton } from "../components/PairPhoneButton";
 import { HeaderMenu, MenuFilterLine, MenuHead, MenuItem, MenuNote, MenuSep } from "../components/HeaderMenu";
 import { ReceiptAddressChip, ReceiptAddressMenuBlock } from "../components/ReceiptAddressChip";
 import { classifyOmni, omniPlaceholder } from "./omniIntake";
+import { catalogUndoHistory, catalogUndoLabel, catalogUndoTitle } from "./scanCatalogUndo";
 import { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 export { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 import { decideLocationScan, filingLabel } from "../lib/scanFiling";
@@ -4450,7 +4451,14 @@ function InboxCard({
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
-  const hasOrigCatalog = !!(item.suggested_metadata as { orig_catalog?: unknown } | null)?.orig_catalog;
+  // Revert is undo over a STACK, so the control lives as long as there is any
+  // earlier image, and it names the one press lands on. The rule is pure and
+  // unit-tested next door rather than inline here.
+  const catalogHistory = catalogUndoHistory(
+    item.suggested_metadata as { catalog_history?: unknown; orig_catalog?: unknown } | null,
+  );
+  const undoLabel = catalogUndoLabel(catalogHistory);
+  const hasOrigCatalog = !!undoLabel;
   const catalogAction = useMutation({
     mutationFn: (action: "revert" | "use_own_photo") => api.scanCatalogAction(activeSlug, item.id, action),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] }),
@@ -5094,13 +5102,36 @@ function InboxCard({
                   // the candidate's category - that guess missed whenever the two
                   // had drifted, which is exactly when it mattered.
                   const axisKey = declaredCategoryAxis(menu, topCand);
+                  // What the row is NOT showing: the filled fields past the cap,
+                  // plus every field this table declares that came back empty.
+                  // Both are "more fields live in here", so they count as one
+                  // affordance rather than two competing "+N" chips.
+                  const unfilled = unfilledFieldLabels(menu, topCand);
+                  const more = extra + unfilled.length;
+                  const moreTitle = [
+                    ...entries.slice(shown.length).map(([k, v]) => `${menuFieldLabel(menu, topCand, k)}: ${v}`),
+                    ...unfilled.map((l) => `${l}: empty`),
+                  ].join(", ");
                   return (
                     <>
+                      {/* A value the scan got wrong is a value you have to be
+                          able to correct, and reading it while the only way to
+                          change it is a separate summon is its own annoyance
+                          ("Acquired from Facebook Marketplace is great! but
+                          it's a field that I still need to be able to edit").
+                          The chip stays a chip and gains the obvious gesture:
+                          tap the value to open the form on this route with the
+                          fields pre-filled. */}
                       {shown.map(([k, v]) => (
-                        <span
+                        <button
                           key={k}
-                          className="inline-flex items-center gap-1 rounded-md bg-subtle/60 dark:bg-slate-800/60 border border-line/70 dark:border-slate-700/70 px-1.5 py-0.5 text-[11px] text-content dark:text-mortar-200 min-w-0"
-                          title={`${menuFieldLabel(menu, topCand, k)}: ${String(v)}`}
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openForm(topCand);
+                          }}
+                          className="inline-flex items-center gap-1 rounded-md bg-subtle/60 dark:bg-slate-800/60 border border-line/70 dark:border-slate-700/70 px-1.5 py-0.5 text-[11px] text-content dark:text-mortar-200 min-w-0 hover:border-cobble-400 dark:hover:border-cobble-600 transition"
+                          title={`${menuFieldLabel(menu, topCand, k)}: ${String(v)} — tap to edit`}
                         >
                           <span className="text-faint shrink-0">{menuFieldLabel(menu, topCand, k)}</span>
                           <span className="truncate">
@@ -5108,15 +5139,20 @@ function InboxCard({
                               ? categoryChipLabel(String(v), sessionCategoryLabel)
                               : String(v)}
                           </span>
-                        </span>
+                        </button>
                       ))}
-                      {extra > 0 && (
-                        <span
-                          className="text-[11px] text-faint shrink-0 px-1"
-                          title={entries.slice(MAX).map(([k, v]) => `${menuFieldLabel(menu, topCand, k)}: ${v}`).join(", ")}
+                      {more > 0 && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openForm(topCand);
+                          }}
+                          className="text-[11px] text-faint shrink-0 px-1 underline decoration-dotted underline-offset-2 hover:text-accent transition"
+                          title={moreTitle}
                         >
-                          +{extra}
-                        </span>
+                          +{more} more {more === 1 ? "field" : "fields"}
+                        </button>
                       )}
                     </>
                   );
@@ -5389,8 +5425,16 @@ function InboxCard({
                         width and capping the height lets each photo take only
                         the height it needs: landscape gets short, portrait stays
                         tall and letterboxes sideways, which is the harmless
-                        direction. */}
-                    <img src={catalogImg} alt="catalog" className="w-full max-h-[20rem] object-contain" onError={() => markBroken(catalogUrl)} />
+                        direction.
+                        The cap has to BIND, though. These panes size by width,
+                        so at a 209px column a 3:4 phone photo is 278px tall next
+                        to a 156px landscape catalog shot - and the row inherits
+                        the taller one. 20rem was above every height the layout
+                        can produce, so it never applied and the pair looked
+                        broken rather than comparable (reported 2026-08-11).
+                        e2e/scan-card-photo-height.mjs holds the row to a budget
+                        with a deliberately mismatched pair. */}
+                    <img src={catalogImg} alt="catalog" className="w-full max-h-32 sm:max-h-48 object-contain" onError={() => markBroken(catalogUrl)} />
                   </button>
                   {/* A photo's controls live ON the photo (its caption), not in
                       a standing ambient row — see scan-inbox-ux-review.md F2. */}
@@ -5409,10 +5453,16 @@ function InboxCard({
                           e.stopPropagation();
                           catalogAction.mutate("revert");
                         }}
-                        title="Put back the original catalog photo"
-                        className="normal-case tracking-normal font-sans text-muted hover:text-content underline decoration-dotted underline-offset-2 transition disabled:opacity-50"
+                        title={catalogUndoTitle(catalogHistory)}
+                        className="normal-case tracking-normal font-sans text-muted hover:text-content underline decoration-dotted underline-offset-2 transition disabled:opacity-50 inline-flex items-center gap-1"
                       >
-                        ↺ original
+                        {/* A real icon, not a unicode rotate glyph baked into
+                            the label. A symbol used as an icon renders
+                            differently on every platform and font, which is how
+                            it ends up looking like a stray foreign character
+                            rather than a control. */}
+                        <RotateCcw size={11} className="shrink-0" />
+                        {undoLabel}
                       </button>
                     )}
                   </figcaption>
@@ -5426,7 +5476,7 @@ function InboxCard({
                     title="View full size"
                     className="block w-full rounded-md overflow-hidden border border-line dark:border-slate-700 bg-black flex items-center justify-center cursor-zoom-in"
                   >
-                    <img src={yoursImg} alt="your photo" className="w-full max-h-[20rem] object-contain" onError={() => markBroken(yoursRawUrl)} />
+                    <img src={yoursImg} alt="your photo" className="w-full max-h-32 sm:max-h-48 object-contain" onError={() => markBroken(yoursRawUrl)} />
                   </button>
                   <figcaption className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mt-1 flex items-center gap-2">
                     <span>yours</span>
@@ -5509,13 +5559,17 @@ function InboxCard({
               onIndex={setZoomIdx}
               onClose={() => setZoomIdx(null)}
               action={{
-                // Only a web candidate can be adopted as the catalog image; the
-                // item's own catalog/your-photo are view-only here (the card's
-                // own buttons handle those).
-                label: (it) => (it.key === "catalog" || it.key === "yours" ? null : "Use this image"),
-                busy: pickCatalogImage.isPending,
+                // Zooming YOUR photo is exactly when you decide it beats the
+                // catalog shot, so the adopt action belongs here too — the card's
+                // small caption button is not where you are looking at that
+                // moment (reported 2026-08-11). The catalog image itself stays
+                // action-less: it is already the catalog image.
+                label: (it) =>
+                  it.key === "catalog" ? null : it.key === "yours" ? "Use as catalog" : "Use this image",
+                busy: pickCatalogImage.isPending || catalogAction.isPending,
                 onAction: (it) => {
-                  if (it.url) pickCatalogImage.mutate(it.url);
+                  if (it.key === "yours") catalogAction.mutate("use_own_photo");
+                  else if (it.url) pickCatalogImage.mutate(it.url);
                   setZoomIdx(null);
                 },
               }}
@@ -6073,7 +6127,10 @@ function PhotoOptions({
     staleTime: 5 * 60_000,
   });
   const pick = useMutation({
-    mutationFn: (url: string) => api.setScanCatalogImage(activeSlug, item.id, url),
+    mutationFn: (p: string | { url: string; aiPick?: boolean }) =>
+      typeof p === "string"
+        ? api.setScanCatalogImage(activeSlug, item.id, p)
+        : api.setScanCatalogImage(activeSlug, item.id, p.url, { aiPick: p.aiPick }),
     onSuccess: () => {
       toast.success("Catalog photo updated");
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
@@ -6099,7 +6156,9 @@ function PhotoOptions({
       if (r.chosen_url) {
         setBestUrl(r.chosen_url);
         setBestReason(r.reason || null);
-        pick.mutate(r.chosen_url);
+        // Flagged as the AI's pick so Revert comes back HERE, not to the first
+        // web result that this same apply stashes as the original.
+        pick.mutate({ url: r.chosen_url, aiPick: true });
       } else {
         setBestUrl(null);
         setBestReason(r.reason || null);
@@ -6290,6 +6349,28 @@ function menuFieldLabel(
     (m) => m.module === cand.module && (m.instance ?? null) === (cand.instance ?? null),
   );
   return entry?.fields.find((f) => f.name === fieldName)?.label ?? fieldName;
+}
+
+/** The fields the DESTINATION declares that the matchmaker left empty.
+ *
+ *  The chip row only ever showed fields with a value, so a table's own
+ *  distinctive fields were invisible whenever a scan happened not to fill them
+ *  — asked as "where are all the unique fields for 3D Printer, not being
+ *  shown?" (2026-08-11). They were never missing, just silent: an empty field
+ *  has nothing to render as a chip. Counting them gives the row something
+ *  honest to point at without pasting a blank form into a triage view. */
+function unfilledFieldLabels(
+  menu: ScanMenuEntry[] | null,
+  cand: ScanCandidate,
+): string[] {
+  const entry = (menu ?? []).find(
+    (m) => m.module === cand.module && (m.instance ?? null) === (cand.instance ?? null),
+  );
+  if (!entry) return [];
+  const filled = new Set(Object.keys(cand.fields ?? {}).map((k) => k.toLowerCase()));
+  return entry.fields
+    .filter((f) => !filled.has(f.name.toLowerCase()))
+    .map((f) => f.label ?? f.name);
 }
 
 /** The `parent` config a bundle puts on a child instance (Spools → Filament

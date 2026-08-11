@@ -2,9 +2,25 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-08-11
+
+### Features
+- Fields can now hold a person. Pick a Member field in the field builder and the field becomes a dropdown of everyone in the workspace, showing their name rather than an id, with Unassigned as a real option. Renaming someone updates it everywhere, and a person who has left still shows on records they were on.
+- You can now crop your own scan photo into the item's catalog picture, instead of taking whatever the web turned up.
+
+### Improvements
+- You can now create a relation field, the one that links a record to another record, from Configuration then Fields. The type existed and worked, but it was only reachable by installing a bundle, so it never appeared in the field builder.
+
+### Fixes
+- Inventory tables showed a raw internal id for fields that point at a person or another record, while the same field read correctly everywhere else. The module's own list was a second way of reading the same records that skipped the step which turns ids into names.
+- Creating a Member field failed with a database error. The type was accepted everywhere in the application and rejected by the database itself, so the field could never actually be saved.
+- A Member field showed a raw internal id instead of the person's name everywhere the value was displayed: table cells, list rows and the API. The picker was right, but everything that only reads the value was not.
+- Creating a relation field now asks which kind of record it points at, and refuses to create one without it. You could previously pick the type but never say what it linked to, so the field stored a reference nothing could resolve and always displayed a raw id.
+
 ## 2026-08-10
 
 ### Features
+- A bin of fifty jumbled things can say so. Instead of pretending you will one day type in every adapter in the box, record it as "assorted adapters, roughly 50", and break it into kinds later only if you want to. Anything you do count keeps its identity, including its printed label.
 - Scanning more of something you already have now asks what kind of buy it was (as usual, a one-off, a stock-up, or going quicker lately), and when the system thinks you should still have some left it asks what happened to them: still have them, used them faster, or they went bad. That last answer is what stops food you threw away being counted as food you ate.
 
 ### Improvements

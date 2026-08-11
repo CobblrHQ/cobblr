@@ -19,6 +19,8 @@ import * as activity from "../platform/activity.js";
 import { isTrialDenied, isTrialDeniedForOrg } from "../platform/trial.js";
 import { clearServerManagedCache } from "../platform/entities.js";
 import { clearRelationDefsCache } from "../platform/relation-fields.js";
+import { clearMemberFieldCaches } from "../platform/member-fields.js";
+import { clearFieldLabelDefsCache } from "../platform/field-labels.js";
 
 /** Maintainer-curated foundational set. A module manifest can declare
  *  `band: "foundational"`, but the kernel only TREATS it as foundational
@@ -251,6 +253,10 @@ export async function enableModuleForOrg(
   if (contributes.fieldDefs.length > 0) {
     clearServerManagedCache();
     clearRelationDefsCache();
+    // Same reason: enabling a module can add member field defs, and a stale defs
+    // cache would leave the new field rendering its raw id for the TTL.
+    clearMemberFieldCaches();
+    clearFieldLabelDefsCache();
   }
   for (const w of contributes.wires) {
     // No idempotency key on bindings; skip if a binding from this

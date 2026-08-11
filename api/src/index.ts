@@ -15,6 +15,7 @@
 // cobblr_meta is more dangerous than an offline api.
 
 import { fileURLToPath } from "node:url";
+import { withFieldLabels } from "./platform/field-labels.js";
 import { dirname, resolve } from "node:path";
 import { setPlatform, canContain, canBeContained } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
@@ -69,6 +70,7 @@ import { mergeLabelsQr } from "./platform/merge-labels-qr.js";
 import { backfillPlacements } from "./platform/migrate-location-to-placement.js";
 import { backfillDefaultBindings } from "./platform/seed-bindings.js";
 import { backfillIdentityLinks } from "./platform/backfill-identity.js";
+import { logAnnounceRouting } from "./platform/announce.js";
 import { startTrialReaper } from "./platform/reap-trials.js";
 import { startDbUpgradeHoldWatch } from "./platform/db-upgrade-status.js";
 import { reconcileOrphanTenantRoles } from "./platform/reconcile-tenant-roles.js";
@@ -176,6 +178,9 @@ async function boot() {
       titleForEntity: entities.titleForEntity,
       resolvedKindForEntity: entities.resolvedKindForEntity,
       baseKindOf: entities.baseKindOf,
+      // Modules call this on rows their OWN list route queried, so a record
+      // reads the same whichever URL asked for it. See field-labels.ts.
+      withFieldLabels,
       serverManagedFields: entities.serverManagedFields,
     },
     actions: {
@@ -961,6 +966,11 @@ async function boot() {
   if (idLinks.linked > 0) {
     console.log(`[cobblr-api] central identity: linked ${idLinks.linked} local user(s)`);
   }
+
+  // Where user feedback goes. A webhook in the env or one admin-set row is the
+  // difference between a private report and one posted to a chat server, and that is
+  // otherwise invisible until somebody notices a card appear.
+  await T("logAnnounceRouting", logAnnounceRouting());
 
   console.log(`[bootphase] === pre-createApp total: ${Date.now() - bootT0}ms ===`);
   const { app } = createApp();

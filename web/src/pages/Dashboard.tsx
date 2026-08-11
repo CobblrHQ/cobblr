@@ -154,7 +154,14 @@ export function Dashboard() {
             mess; renders nothing when everything has a home.
           - BundleSuggestionsCard: captures that fit an uninstalled bundle (a pile
             of VIN scans → Vehicles); renders nothing when there's nothing to suggest. */}
-      <div className="flex flex-col md:flex-row gap-3 md:items-stretch empty:hidden">
+      {/* items-START, not stretch. Stretch made both cards as tall as the taller
+          one, and these two are never the same size: the put-away card is a
+          sentence and a button, while the suggestions card grows a row of
+          install buttons. Measured at 1440, that left the put-away card 72px of
+          content in a 149px box — more than half of it empty (reported
+          2026-08-11: "the left half is stretched way too tall for its short
+          message"). Each card now costs only its own height. */}
+      <div className="flex flex-col md:flex-row gap-3 md:items-start empty:hidden">
         <PutAwayCard slug={activeSlug} />
         <BundleSuggestionsCard slug={activeSlug} role={activeOrg.role} />
       </div>
@@ -287,7 +294,12 @@ function BundleSuggestionsCard({ slug, role }: { slug: string; role?: string }) 
         <Sparkles size={15} className="text-accent shrink-0" />
         You've scanned things that fit a table you don't have yet
       </div>
-      <div className="flex flex-wrap gap-2">
+      {/* A RAIL, not a wrapping block. One install button per suggestion means
+          the card's height grew with however many bundles happened to match, so
+          four of them turned a two-row nag into a four-row one. Scrolling
+          sideways keeps every suggestion reachable while the card stays the same
+          height whether there is one or a dozen. */}
+      <div className="flex flex-nowrap gap-2 overflow-x-auto pb-0.5">
         {suggestions.map((s) => {
           const busy = materializeMut.isPending && materializeMut.variables?.bundle_external_id === s.bundle_external_id;
           return (
@@ -297,7 +309,7 @@ function BundleSuggestionsCard({ slug, role }: { slug: string; role?: string }) 
               onClick={() => materializeMut.mutate(s)}
               disabled={materializeMut.isPending}
               title={s.sample_names.length ? `e.g. ${s.sample_names.join(", ")}` : undefined}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm font-medium transition disabled:opacity-50"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm font-medium transition disabled:opacity-50 whitespace-nowrap"
             >
               <Download size={14} />
               {busy
@@ -307,8 +319,12 @@ function BundleSuggestionsCard({ slug, role }: { slug: string; role?: string }) 
           );
         })}
       </div>
+      {/* One line, not two. This is a nag strip at the top of the dashboard, so
+          every row it spends is a row before the actual dashboard starts; the
+          "or triage them one-by-one" half was restating that the Scan inbox
+          exists, which the nav already says. */}
       <div className="text-[10px] text-faint dark:text-slate-500">
-        Installs the bundle and files those scanned items into it. Or triage them one-by-one in the Scan inbox.
+        Installs the bundle and files those scanned items into it.
       </div>
     </section>
   );

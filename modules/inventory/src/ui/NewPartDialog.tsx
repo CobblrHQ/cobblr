@@ -115,6 +115,11 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
   const [matched, setMatched] = useState<CatalogTypeaheadHit | null>(null);
   const [name, setName] = useState(seed?.name ?? "");
   const [qty, setQty] = useState(seed?.qty != null ? String(seed.qty) : "1");
+  // Counted or guessed at. The SAME number field either way: what changes is
+  // what the number means, which is the whole idea behind assortments. A bin of
+  // jumbled adapters is "roughly 50", and pretending that is a count is the lie
+  // this avoids. See docs/design-decisions/assorted-contents.md.
+  const [estimated, setEstimated] = useState(false);
   const [unit, setUnit] = useState(seed?.unit ?? qtyUnit ?? "each");
   const units = useUnits();
   // The unit when the field was focused — so changing g→kg converts the qty
@@ -200,7 +205,11 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
       const imageFromMatch = matched ? pickImageFromPayload(matched.payload) : null;
       const part = await api.createPart({
         name: name.trim(),
-        qty: Number(qty) || 0,
+        // An estimate is NOT a quantity. Writing the guess into qty would make
+        // it arithmetic downstream (stock levels, reorder points, burn rate),
+        // so the count stays 0 and the number goes where it means "roughly".
+        qty: estimated ? 0 : Number(qty) || 0,
+        ...(estimated ? { approximate_qty: Number(qty) || 0 } : {}),
         unit: unit.trim() || "each",
         category_id: categoryId || null,
         location_id: locationId || null,
@@ -292,7 +301,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
             Full-width things (parent picker, long text) span both columns. */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
           {!fp.hidden("qty") && (
-            <Field label={fp.label("qty", "Qty")}>
+            <Field label={estimated ? "Roughly how many" : fp.label("qty", "Qty")}>
               <input
                 type="number"
                 step="any"
@@ -301,6 +310,14 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
                 onChange={(e) => setQty(e.target.value)}
                 className="input"
               />
+              <label className="mt-1 flex items-center gap-1.5 text-xs text-muted">
+                <input
+                  type="checkbox"
+                  checked={estimated}
+                  onChange={(e) => setEstimated(e.target.checked)}
+                />
+                I have not counted these
+              </label>
             </Field>
           )}
           {!fp.hidden("unit") && (

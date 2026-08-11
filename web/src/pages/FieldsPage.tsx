@@ -3,6 +3,7 @@
 // own without writing a bundle manifest.
 
 import { useState, type FormEvent } from "react";
+import { FIELD_TYPE_VALUES } from "@cobblr/platform-contract";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Plus } from "lucide-react";
 import { ApiError, api, type CatalogFieldRenderer, type FieldScope, type PlatformFieldDef } from "../lib/api";
@@ -17,13 +18,18 @@ import { FieldRenderer, UnitInput, useToast, usePageTitle } from "@cobblr/platfo
 // `relation` is deliberately absent: user-authored relation fields (picking a
 // ref_kind in this UI) are a follow-on; today relation defs are contributed by
 // modules (e.g. core-mobility's home_location) and just display here.
-const TYPES: PlatformFieldDef["type"][] = ["text", "number", "boolean", "date", "url", "richtext", "computed"];
+// Straight from the shared list, so a new type appears here the day it exists.
+// `relation` was missing for a month: it shipped everywhere except the write
+// route and this picker, so only a bundle could create one.
+const TYPES: PlatformFieldDef["type"][] = [...FIELD_TYPE_VALUES];
 
 // Default renderer per field type — keeps the dropdown small and
 // surfaces what the user almost always wants.
 const RENDERERS_BY_TYPE: Record<PlatformFieldDef["type"], CatalogFieldRenderer[]> = {
   text: ["text", "color-hex", "image-url", "url-link", "code", "qr"],
   number: ["text", "year"],
+  // A person renders as their name; nothing else would mean anything.
+  member: ["text"],
   boolean: ["boolean"],
   date: ["text"],
   url: ["url-link", "image-url"],
@@ -80,6 +86,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [type, setType] = useState<PlatformFieldDef["type"]>("text");
   const [renderer, setRenderer] = useState<CatalogFieldRenderer>("text");
   const [template, setTemplate] = useState("");
+  const [refKind, setRefKind] = useState("");
   const [unit, setUnit] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
@@ -102,6 +109,9 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
         type,
         renderer: renderer === "text" ? null : renderer,
         template: type === "computed" ? template : undefined,
+        // A relation with no ref_kind stores an id nothing can resolve; the API
+        // rejects it rather than let a permanently-broken field be created.
+        ref_kind: type === "relation" && refKind ? refKind : undefined,
         unit: type === "number" && unit.trim() ? unit.trim() : undefined,
         // Only text fields take a dropdown; the API rejects choices on any other
         // type, so don't send an empty array and trip it.
@@ -434,6 +444,24 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
                 </label>
               )}
             </div>
+          )}
+          {type === "relation" && (
+            <label className="block col-span-2">
+              <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+                Points at
+                <span className="ml-2 normal-case tracking-normal text-faint dark:text-slate-600">
+                  which kind of record this field links to
+                </span>
+              </span>
+              <select value={refKind} onChange={(e) => setRefKind(e.target.value)} className="input w-full">
+                <option value="">Choose a kind…</option>
+                {(kinds.data?.items ?? []).map((k) => (
+                  <option key={k.id} value={k.id}>
+                    {k.display_name}
+                  </option>
+                ))}
+              </select>
+            </label>
           )}
           {type === "computed" && (
             <label className="block col-span-2">

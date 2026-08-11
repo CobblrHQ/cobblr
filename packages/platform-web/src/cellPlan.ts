@@ -35,6 +35,7 @@ export type CellPlan =
   | { kind: "locked"; reason: string }
   | { kind: "checkbox" }
   | { kind: "relation" }
+  | { kind: "member" }
   | { kind: "choice" }
   | { kind: "color" }
   | { kind: "input" };
@@ -67,6 +68,8 @@ export function cellPlan(def: EditableCellDef): CellPlan {
       return { kind: "checkbox" };
     case "relation":
       return { kind: "relation" };
+    case "member":
+      return { kind: "member" };
     case "choice":
       return { kind: "choice" };
     case "color":

@@ -185,6 +185,8 @@ function toResolvedPart(row: {
   notes: string | null;
   instance: string;
   location_id?: string | null;
+  approximate_qty?: string | null;
+  estimated_at?: Date | null;
   metadata: unknown;
 }): ResolvedEntity {
   const qty = Number(row.qty);
@@ -219,6 +221,12 @@ function toResolvedPart(row: {
       // Where it lives — the scan "already tracked" banner shows it, and
       // move-mode uses it to skip entities already in the active bin.
       location_id: row.location_id ?? null,
+      // An estimate, when this record stands for "roughly this many, jumbled".
+      // Exposed through the resolver so a CONTAINER can roll its contents up
+      // ("10 kinds, roughly 50") without inventory-specific knowledge, and so
+      // the card can pick its shape from the signal rather than being told.
+      approximate_qty: row.approximate_qty == null ? null : Number(row.approximate_qty),
+      estimated_at: row.estimated_at ?? null,
       metadata: row.metadata,
     },
   };

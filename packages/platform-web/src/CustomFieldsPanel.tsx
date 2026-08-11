@@ -388,6 +388,69 @@ function ServerManagedRow({ def, value }: { def: PlatformFieldDef; value: unknow
  *  generic — nothing here knows about locations or any specific kind. Exported
  *  so create forms (e.g. inventory's NewPartDialog) share the exact control the
  *  detail panel uses. */
+/** Picker for a `member` field: the workspace's people, by display name.
+ *
+ *  A `member` value is a user id, but nobody should ever SEE a uuid, so the
+ *  name is resolved at read time from the members list rather than snapshotted
+ *  onto the record — a renamed member then updates everywhere at once. A host
+ *  that does not wire `listMembers` gets a read-only cell instead of an empty
+ *  dropdown, matching how RelationSelect degrades without `listEntities`.
+ *
+ *  Someone assigned who has since LEFT the workspace still resolves: they are
+ *  simply absent from the list, so the value shows as "Former member" rather
+ *  than vanishing and making the record look unassigned. */
+export function MemberSelect({
+  value,
+  onChange,
+  className,
+}: {
+  value: unknown;
+  onChange: (v: string | null) => void;
+  className?: string;
+}) {
+  const { api, orgSlug } = usePlatformWeb();
+  const current = value == null ? "" : String(value);
+  const canList = !!api.listMembers;
+
+  const members = useQuery({
+    queryKey: ["platform-members", orgSlug],
+    queryFn: () => api.listMembers!(orgSlug),
+    enabled: canList,
+    staleTime: 60_000,
+  });
+  const items = members.data?.items ?? [];
+  const nameOf = (id: string) =>
+    items.find((m) => m.user_id === id)?.display_name ?? (id ? "Former member" : "");
+
+  if (!canList) {
+    return (
+      <div className={"input flex-1 bg-mortar-50/60 dark:bg-slate-800/60 cursor-default " + (className ?? "")}>
+        {nameOf(current) || <span className="text-faint dark:text-slate-600">—</span>}
+      </div>
+    );
+  }
+
+  return (
+    <select
+      value={items.some((m) => m.user_id === current) ? current : ""}
+      onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
+      className={"input " + (className ?? "")}
+    >
+      {/* Unassigned is a real state, not an absence — see
+          household-accountability.md §1. */}
+      <option value="">Unassigned</option>
+      {current && !items.some((m) => m.user_id === current) && (
+        <option value={current}>{nameOf(current)}</option>
+      )}
+      {items.map((m) => (
+        <option key={m.user_id} value={m.user_id}>
+          {m.display_name}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 export function RelationSelect({
   refKind,
   value,

@@ -458,6 +458,14 @@ function ActiveOrgScopedRoutes() {
         listPrinters: (slug) => api.listPrinters(slug),
         postToModulePath: (slug, path, body) => api.postToModulePath(slug, path, body),
         listEntities: (slug, kind, q) => api.listEntities(slug, kind, q),
+        // Mapped down to {user_id, display_name}: platform-web has no business
+        // knowing roles or join dates to draw a name in a picker.
+        listMembers: async (slug) => ({
+          items: (await api.listMembers(slug)).items.map((m) => ({
+            user_id: m.user_id,
+            display_name: m.display_name,
+          })),
+        }),
         listFieldDefs: (slug, kind) => api.listFieldDefs(slug, kind),
         // Contributed panels: what ENABLED modules declare for other modules'
         // detail pages. platform-web renders them; this is the gate that keeps
