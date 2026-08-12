@@ -59,6 +59,8 @@
     "lint:instance-kinds": "tsx scripts/lint-instance-kind-registry.ts",
     "lint:workspace-types": "tsx scripts/lint-workspace-types-entry.ts",
     "lint:sigpipe": "tsx scripts/lint-sigpipe-substitution.ts",
+    "lint:sql-or-precedence": "tsx scripts/lint-sql-or-precedence.ts",
+    "lint:vocab-enumeration": "tsx scripts/lint-vocab-enumeration.ts",
     "lint:instance-move": "tsx scripts/lint-instance-move-satellites.ts",
     "lint:staged-docs-reachable": "tsx scripts/lint-staged-docs-reachable.ts",
     "eval:image-rank": "tsx e2e/image-rank-eval.mjs",

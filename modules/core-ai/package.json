@@ -8,6 +8,10 @@
     ".": {
       "import": "./dist/module.js",
       "types": "./dist/module.d.ts"
+    },
+    "./providers/identify-prompt.js": {
+      "types": "./src/providers/identify-prompt.ts",
+      "import": "./dist/providers/identify-prompt.js"
     }
   },
   "scripts": {

@@ -20,6 +20,10 @@ fetchTimeout: 60000
 packages:
   - api
   - web
+  # The cross-instance ops console. It lives here rather than beside the hub that
+  # serves it because it is built from @cobblr/platform-web, whose own deps only
+  # resolve inside this workspace. The hub serves the built dist/.
+  - ops-console
   - packages/*
   - modules/*
   - sandboxed-modules/hello-as

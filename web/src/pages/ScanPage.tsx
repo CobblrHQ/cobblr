@@ -68,7 +68,7 @@ import { BinAdjustModal } from "../components/BinAdjustModal";
 import { PairPhoneButton } from "../components/PairPhoneButton";
 import { HeaderMenu, MenuFilterLine, MenuHead, MenuItem, MenuNote, MenuSep } from "../components/HeaderMenu";
 import { ReceiptAddressChip, ReceiptAddressMenuBlock } from "../components/ReceiptAddressChip";
-import { classifyOmni, omniPlaceholder } from "./omniIntake";
+import { classifyFiles, classifyOmni, clipboardImages, omniPlaceholder } from "./omniIntake";
 import { catalogUndoHistory, catalogUndoLabel, catalogUndoTitle } from "./scanCatalogUndo";
 import { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 export { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
@@ -1632,6 +1632,7 @@ export function ScanPage() {
       const urls = intent.value.split("\n").slice(0, 50);
       setSearchQ("");
       let ok = 0;
+      let lastErr: string | null = null;
       for (const url of urls) {
         try {
           await api.scanBarcode(activeSlug, {
@@ -1640,29 +1641,65 @@ export function ScanPage() {
             target_location_id: fileBin || undefined,
           });
           ok++;
-        } catch {
-          /* skip bad ones; the summary reflects what landed */
+        } catch (e) {
+          // Carry on through the rest, but KEEP the reason. Discarding it is
+          // what turned a server-side 400 into a green "Added 0 URLs" that read
+          // as "nothing happened" instead of "this failed, here is why"
+          // (reported 2026-08-12).
+          lastErr = e instanceof ApiError ? e.message : String(e);
         }
       }
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-      toast.success(`Added ${ok} URL${ok === 1 ? "" : "s"} - identifying in the inbox.`);
+      // "Added 0" is a FAILURE whatever the loop technically did. A success
+      // toast reporting zero confirms nothing and hides the one fact that would
+      // explain it.
+      if (ok === 0) {
+        toast.error(
+          (urls.length === 1 ? "Couldn't add that link" : `Couldn't add any of those ${urls.length} links`) +
+            (lastErr ? `: ${lastErr}` : "."),
+        );
+      } else if (ok < urls.length) {
+        toast.info(
+          `Added ${ok} of ${urls.length} links - identifying in the inbox.` +
+            (lastErr ? ` The rest failed: ${lastErr}` : ""),
+        );
+      } else {
+        toast.success(`Added ${ok} URL${ok === 1 ? "" : "s"} - identifying in the inbox.`);
+      }
     }
   };
   // Dropping a file on the box routes by TYPE, so there is no "which kind of
   // file" question: images are photo intake, a PDF/CSV is a receipt.
+  //
+  // Shared with PASTE below rather than written twice: a screenshot on the
+  // clipboard and a file dragged onto the box are the same intake, and when
+  // this routing gets smarter it has to get smarter in one place. (It needs
+  // to: an IMAGE of a receipt is filed as a product today - see
+  // docs/design-decisions/receipt-from-a-photo.md.)
+  const takeFiles = (files: File[]) => {
+    const intent = classifyFiles(files);
+    if (!intent) return;
+    if (intent.kind === "photos") void uploadPhotos(intent.files);
+    else void uploadReceipt(intent.file);
+  };
   const [dropHot, setDropHot] = useState(false);
   const onOmniDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDropHot(false);
-    const files = Array.from(e.dataTransfer.files ?? []);
+    takeFiles(Array.from(e.dataTransfer.files ?? []));
+  };
+  // Pasting a screenshot into the box is intake too. A receipt, a listing or a
+  // spec sheet usually reaches you as an image on the clipboard, and without
+  // this the only route is saving it to disk to drag it back in.
+  //
+  // Images are intercepted ONLY when the clipboard actually carries one. A
+  // normal text paste - a UPC, a link, a search - must still land in the field,
+  // so preventDefault is called after that check and never before it.
+  const onOmniPaste = (e: React.ClipboardEvent) => {
+    const files = clipboardImages(e.clipboardData);
     if (!files.length) return;
-    const images = files.filter((f) => f.type.startsWith("image/"));
-    if (images.length === files.length) {
-      void uploadPhotos(images);
-      return;
-    }
-    const first = files[0];
-    if (first) void uploadReceipt(first);
+    e.preventDefault();
+    takeFiles(files);
   };
 
   // The inbox's own numbers, as ONE statement rather than four chips. They are
@@ -1900,6 +1937,30 @@ export function ScanPage() {
   // fix a wrong one). The label recomputes server-side.
   const [editingPo, setEditingPo] = useState<string | null>(null);
   const [poInput, setPoInput] = useState("");
+  // Getting OUT of the field. It had only an inline onKeyDown for Escape, which
+  // works right up until the input loses focus - and this list refetches on a
+  // timer, so a re-render mid-edit leaves the field on screen with the caret
+  // gone, at which point Escape reaches nobody and clicking away does nothing
+  // either (reported 2026-08-12: "click elsewhere or ESC does not get out").
+  //
+  // Both exits are handled at the DOCUMENT here, so neither depends on where
+  // focus happens to be. Same shape HeaderMenu uses for its outside-click.
+  const poEditRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!editingPo) return;
+    const onDown = (e: MouseEvent) => {
+      if (!poEditRef.current?.contains(e.target as Node)) setEditingPo(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setEditingPo(null);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [editingPo]);
   const setOrderRef = useMutation({
     mutationFn: (v: { batchId: string; orderRef: string | null }) =>
       api.setReceiptOrderRef(activeSlug, v.batchId, v.orderRef),
@@ -2289,6 +2350,10 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
           }}
           onDragLeave={() => setDropHot(false)}
           onDrop={onOmniDrop}
+          // Also on the LABEL, not only the input: the box is collapsed to an
+          // icon until you click it, so a paste aimed at the control lands here
+          // when the field is not focused yet.
+          onPaste={onOmniPaste}
           onClick={() => {
             if (!omniOpen) {
               setOmniOpen(true);
@@ -2324,6 +2389,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
             ref={omniRef}
             value={searchQ}
             onChange={(e) => setSearchQ(e.target.value)}
+            onPaste={onOmniPaste}
             onBlur={() => {
               // Collapsing while it holds text would eat the search you are
               // in the middle of typing.
@@ -3343,7 +3409,11 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       so pre-source-storage sessions get it too), not sourceFileId. */}
                   {g.isBatch && g.batchId && g.label?.startsWith("Receipt") &&
                     (editingPo === g.batchId ? (
-                      <span onClick={(e) => e.stopPropagation()} className="shrink-0 inline-flex items-center gap-1">
+                      <span
+                        ref={poEditRef}
+                        onClick={(e) => e.stopPropagation()}
+                        className="shrink-0 inline-flex items-center gap-1"
+                      >
                         <span className="text-faint">#</span>
                         <input
                           autoFocus
@@ -3351,10 +3421,16 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                           onChange={(e) => setPoInput(e.target.value)}
                           onKeyDown={(e) => {
                             if (e.key === "Enter") setOrderRef.mutate({ batchId: g.batchId!, orderRef: poInput.trim() || null });
-                            else if (e.key === "Escape") setEditingPo(null);
                           }}
                           placeholder="order #"
-                          className="w-24 bg-transparent border-b border-cobble-400 dark:border-cobble-600 text-content dark:text-mortar-100 text-sm px-0.5 focus:outline-none"
+                          // Sized to the number it is HOLDING. A fixed w-24 fits
+                          // about eight characters, and a real order number is
+                          // longer than that ("15026-52466"), so the value you
+                          // came here to check was the part scrolled out of view.
+                          // Grows with the content between a legible floor and a
+                          // ceiling that cannot push the header row into overflow.
+                          style={{ width: `${Math.min(24, Math.max(8, poInput.length + 2))}ch` }}
+                          className="bg-transparent border-b border-cobble-400 dark:border-cobble-600 text-content dark:text-mortar-100 text-sm px-0.5 focus:outline-none"
                         />
                         <button
                           type="button"
@@ -4302,7 +4378,7 @@ function InboxCard({
     onSuccess: (fresh, vars) => {
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
       if (vars?.noAi) {
-        toast.success("Replaying the cached read through the current code…");
+        toast.success("Re-applying the latest processing to what the AI already found…");
         return;
       }
       if (vars?.barcode) {
@@ -4368,7 +4444,7 @@ function InboxCard({
   // the "N finishing" pill can't disagree). `reading` alone stopped the moment the
   // name landed, ~60s before a real AI re-run actually finished.
   const rerunning = rerun.isPending || reading || isRerunInFlight(item);
-  // "Replay (no AI)" runs the SAME mutation with noAi — but showing it as
+  // "Replay" runs the SAME mutation with noAi — but showing it as
   // "Re-running the lookup…" with the AI sparkle made a token-free replay look
   // like a model call ("all the spinners are going incl the AI one"). Label the
   // in-flight variant honestly.
@@ -4397,8 +4473,18 @@ function InboxCard({
     ? `/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.image_file_id}/raw?variant=med`
     : null;
   const yoursUrl = yoursRawUrl && !brokenSrcs.has(yoursRawUrl) ? yoursRawUrl : null;
+  // The item's photograph, cropped out of a screenshot by the enrich. Kept as a
+  // filmstrip pane of its own so it stays one tap away after a detour through
+  // the web results — it is a picture of the ACTUAL item, so it is worth
+  // returning to.
+  const screenshotCropId =
+    (item.suggested_metadata as { screenshot_crop_file_id?: string } | null)?.screenshot_crop_file_id ?? null;
+  const cropRawUrl = screenshotCropId
+    ? `/api/v1/orgs/${activeSlug}/modules/core-files/files/${screenshotCropId}/raw?variant=med`
+    : null;
   const catalogImg = useImageSrc(catalogUrl);
   const yoursImg = useImageSrc(yoursUrl);
+  const cropImg = useImageSrc(cropRawUrl && !brokenSrcs.has(cropRawUrl) ? cropRawUrl : null);
   // While a barcode's catalog image is UNVERIFIED — being checked against your
   // photo, or already flagged a mismatch — lead with YOUR photo, not the catalog
   // one. A barcode can resolve to a wrong/spam product (an action figure, a
@@ -4425,6 +4511,7 @@ function InboxCard({
   const [photoCandidates, setPhotoCandidates] = useState<ImageOption[]>([]);
   const zoomItems: LightboxItem[] = [
     ...(catalogImg ? [{ key: "catalog", caption: "Catalog image", url: catalogImg }] : []),
+    ...(cropImg && cropImg !== catalogImg ? [{ key: "crop", caption: "From your screenshot", url: cropImg }] : []),
     ...(yoursImg && yoursImg !== catalogImg ? [{ key: "yours", caption: "Your photo", url: yoursImg }] : []),
     ...photoCandidates.map((o) => ({
       key: o.url,
@@ -4460,7 +4547,8 @@ function InboxCard({
   const undoLabel = catalogUndoLabel(catalogHistory);
   const hasOrigCatalog = !!undoLabel;
   const catalogAction = useMutation({
-    mutationFn: (action: "revert" | "use_own_photo") => api.scanCatalogAction(activeSlug, item.id, action),
+    mutationFn: (action: "revert" | "use_own_photo" | "use_screenshot_crop") =>
+      api.scanCatalogAction(activeSlug, item.id, action),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] }),
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -4678,7 +4766,7 @@ function InboxCard({
                 <span className="break-words min-w-0 max-w-full">{item.suggested_name}</span>
                 {rerunning || serverMatching ? (
                   <span className="shrink-0 inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-2 py-0.5 text-[10px] font-mono uppercase tracking-widest text-accent animate-pulse">
-                    {replayNoAi ? "replaying (no AI)" : rerunning ? "re-running" : "AI reading…"}
+                    {replayNoAi ? "replaying" : rerunning ? "re-running" : "AI reading…"}
                   </span>
                 ) : matchFailed ? (
                   <span className="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/30 px-2 py-0.5 text-[10px] font-mono uppercase tracking-widest text-amber-700 dark:text-amber-300">
@@ -4695,11 +4783,11 @@ function InboxCard({
               </>
             ) : rerunning ? (
               <span className="text-accent animate-pulse">
-                {replayNoAi ? "Replaying from cached data (no AI)…" : "Re-running the lookup…"}
+                {replayNoAi ? "Re-applying the latest processing…" : "Re-running the lookup…"}
               </span>
             ) : serverMatching ? (
               <span className="text-accent animate-pulse">
-                {replayNoAi ? "Replaying from cached data (no AI)…" : "AI is reading the details…"}
+                {replayNoAi ? "Re-applying the latest processing…" : "AI is reading the details…"}
               </span>
             ) : rlActive ? (
               <span className="inline-flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
@@ -5350,7 +5438,7 @@ function InboxCard({
             // canRerunLookup — gating on barcode||image alone greyed out receipts.
             disabled={aiWorking || !canRerunLookup(item)}
             className="text-faint hover:text-accent p-1.5 disabled:opacity-30"
-            title={replayNoAi ? "Replaying (no AI)…" : aiWorking ? "AI is working…" : "Rerun lookup"}
+            title={replayNoAi ? "Replaying…" : aiWorking ? "AI is working…" : "Rerun lookup"}
           >
             <RotateCcw size={14} className={aiWorking ? "animate-spin text-accent" : ""} />
           </button>
@@ -5565,10 +5653,15 @@ function InboxCard({
                 // moment (reported 2026-08-11). The catalog image itself stays
                 // action-less: it is already the catalog image.
                 label: (it) =>
-                  it.key === "catalog" ? null : it.key === "yours" ? "Use as catalog" : "Use this image",
+                  it.key === "catalog"
+                    ? null
+                    : it.key === "yours" || it.key === "crop"
+                      ? "Use as catalog"
+                      : "Use this image",
                 busy: pickCatalogImage.isPending || catalogAction.isPending,
                 onAction: (it) => {
                   if (it.key === "yours") catalogAction.mutate("use_own_photo");
+                  else if (it.key === "crop") catalogAction.mutate("use_screenshot_crop");
                   else if (it.url) pickCatalogImage.mutate(it.url);
                   setZoomIdx(null);
                 },
@@ -5661,7 +5754,7 @@ function InboxCard({
                 if (!Array.isArray(hist) || hist.length === 0) return null;
                 const label: Record<string, string> = {
                   rerun: "Re-ran the lookup with AI",
-                  replay: "Replayed from cached data (no AI)",
+                  replay: "Replayed: the latest processing, same identification",
                   "rerun-hint": "Re-ran with a hint",
                   barcode: "Corrected the barcode",
                   wrong: "Flagged wrong — re-checked everything",
@@ -6263,23 +6356,23 @@ function HintBox({
         className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800 resize-none"
       />
       <div className="mt-1.5 flex items-center justify-end gap-2">
-        {/* Replay — no model call, no tokens. Re-runs the pipeline's OWN code
-            (reply parsers, pack-size, the split derivation, keyword routing,
-            decoder role-fill, field mapping) over the model's cached answer, so
-            a fix to any of that can be tried on a real item instantly and for
-            free. It CANNOT test a prompt change: the cache is keyed on the image,
-            not the prompt, so the cached reply answers the OLD prompt. Hidden
-            when a hint is typed — a hint is new information, which needs a real
-            read. */}
+        {/* Replay — no model call of any kind. It re-runs everything DOWNSTREAM
+            of the identification (routing, field mapping, pack size, decoder
+            role-fill, the split derivation, category) over the answer already
+            stored on this row, so a fix to any of that can be tried on a real
+            item instantly and for free. It cannot produce a new identification,
+            and by construction it cannot make the item worse. Use Re-run AI for a
+            fresh look. Hidden when a hint is typed — a hint is new information,
+            which needs a real read. */}
         {!hint.trim() && (
           <button
             type="button"
             disabled={busy}
             onClick={() => fire({ noAi: true })}
-            title="Free and instant: reuses the AI's previous answer and re-applies Cobblr's own processing (routing, fields, pack size). It won't produce a NEW identification - use Re-run AI for that."
+            title="Free and instant: re-applies Cobblr's latest processing (routing, fields, pack size) to what the AI already found. It keeps the identification as-is - use Re-run AI for a fresh look."
             className="rounded border border-line dark:border-slate-600 px-2.5 py-1.5 text-sm text-muted dark:text-slate-300 hover:bg-mortar-50 dark:hover:bg-slate-800 disabled:opacity-50 shrink-0 inline-flex items-center gap-1.5"
           >
-            <RefreshCw size={13} className={busyKind === "replay" ? "animate-spin" : ""} /> Replay (no AI)
+            <RefreshCw size={13} className={busyKind === "replay" ? "animate-spin" : ""} /> Replay
           </button>
         )}
         <button

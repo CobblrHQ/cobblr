@@ -1,128 +1,134 @@
 [
- {
-  "rule": "D-module-names-module",
-  "file": "modules/core-ai/src/providers/anthropic.ts",
-  "token": "labels",
-  "reason": "FALSE POSITIVE (name collision, not coupling): `labels` here is the image-classify call's classification-LABEL list (input.labels / the {\"labels\":[\u2026]} JSON reply schema in the AI prompt), not the `labels` module. The literal-match lint can't disambiguate a prompt/JSON key from a module name."
- },
- {
-  "rule": "D-module-names-module",
-  "file": "modules/core-ai/src/providers/openai.ts",
-  "token": "labels",
-  "reason": "FALSE POSITIVE (name collision, not coupling): `labels` here is the image-classify call's classification-LABEL list (input.labels / the {\"labels\":[\u2026]} JSON reply schema in the AI prompt), not the `labels` module. The literal-match lint can't disambiguate a prompt/JSON key from a module name."
- },
- {
-  "rule": "C-kernel-names-module",
-  "file": "api/src/modules/enable.ts",
-  "token": "core-files",
-  "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist \u2014 the kernel must know which modules are load-bearing so a module can't self-declare itself permanent. See manifest-contract.md + audit-2026-06-26.md P1 #2."
- },
- {
-  "rule": "C-kernel-names-module",
-  "file": "api/src/modules/enable.ts",
-  "token": "core-notifications",
-  "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist \u2014 the kernel must know which modules are load-bearing so a module can't self-declare itself permanent. See manifest-contract.md + audit-2026-06-26.md P1 #2."
- },
- {
-  "rule": "C-kernel-names-module",
-  "file": "api/src/modules/enable.ts",
-  "token": "core-activity-log",
-  "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist \u2014 the kernel must know which modules are load-bearing so a module can't self-declare itself permanent. See manifest-contract.md + audit-2026-06-26.md P1 #2."
- },
- {
-  "rule": "C-kernel-names-module",
-  "file": "api/src/modules/enable.ts",
-  "token": "core-tags",
-  "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist \u2014 the kernel must know which modules are load-bearing so a module can't self-declare itself permanent. See manifest-contract.md + audit-2026-06-26.md P1 #2."
- },
- {
-  "rule": "C-kernel-names-module",
-  "file": "api/src/modules/enable.ts",
-  "token": "core-queue",
-  "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist \u2014 the kernel must know which modules are load-bearing so a module can't self-declare itself permanent. See manifest-contract.md + audit-2026-06-26.md P1 #2."
- },
- {
-  "rule": "C-kernel-names-module",
-  "file": "api/src/modules/enable.ts",
-  "token": "core-healthcheck",
-  "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist \u2014 the kernel must know which modules are load-bearing so a module can't self-declare itself permanent. See manifest-contract.md + audit-2026-06-26.md P1 #2."
- },
- {
-  "rule": "C-kernel-names-module",
-  "file": "api/src/modules/enable.ts",
-  "token": "core-locations",
-  "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist \u2014 the kernel must know which modules are load-bearing so a module can't self-declare itself permanent. See manifest-contract.md + audit-2026-06-26.md P1 #2."
- },
- {
-  "rule": "C-kernel-names-module",
-  "file": "api/src/modules/enable.ts",
-  "token": "core-placement",
-  "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist \u2014 core-placement owns the tenant-local containment table (core_placement_placements) that platform().placement reads, so it's load-bearing infrastructure and can't be disableable. See placement-and-containment.md + manifest-contract.md."
- },
- {
-  "rule": "D-module-names-module",
-  "file": "modules/core-authoring/src/services/compile.ts",
-  "token": "records",
-  "reason": "FALSE POSITIVE (name collision, not coupling): `records` here is the bundle-compile prompt's seed-shape JSON key (\"records\": the rows to insert per kind) \u2014 it predates the records module. The literal-match lint can't disambiguate a prompt/JSON key from a module name."
- },
- {
-  "rule": "D-module-names-module",
-  "file": "modules/core-integrations/src/sync/sources/ravelry.ts",
-  "token": "projects",
-  "reason": "INTENTIONAL, not coupling: the Ravelry built-in sync manifest declares a TARGET ENTITY KIND (\"projects:project\") \u2014 the platform-contract composition surface entity writers resolve, exactly like an INSTALLED manifest names one. No import, no table read; the section only lands if the user maps it to a projects instance. First-party manifests just ship as data-in-source rather than data-in-DB. (\"inventory:part\" for the stash section names a kind the same way but isn't flagged \u2014 core-integrations already references it.)"
- },
- {
-  "rule": "D-module-names-module",
-  "file": "modules/core-import/src/api/homebox-import.ts",
-  "token": "inventory",
-  "reason": "ORCHESTRATOR, not coupling: core-import is a migration capability that fans a Homebox export out to the modules that own the records via their PUBLIC HTTP APIs carrying the caller's bearer (POST /modules/inventory/parts) \u2014 the sanctioned pattern (same as core-scan -> core-files). No import, no table read."
- },
- {
-  "rule": "D-module-names-module",
-  "file": "modules/core-import/src/api/homebox-import.ts",
-  "token": "core-locations",
-  "reason": "ORCHESTRATOR: builds the location tree via core-locations' public HTTP API (GET/POST /modules/core-locations/locations) with the caller's bearer. Sanctioned cross-module-endpoint call, not an import."
- },
- {
-  "rule": "D-module-names-module",
-  "file": "modules/core-import/src/services/homebox.ts",
-  "token": "labels",
-  "reason": "FALSE POSITIVE (name collision): `labels` is the Homebox export's label FIELD (HB.labels, mapped to core-tags), not the `labels` print module. The literal-match lint can't disambiguate a data field from a module name."
- },
- {
-  "rule": "C-kernel-names-module",
-  "file": "api/src/modules/enable.ts",
-  "token": "inventory",
-  "reason": "TRANSITIONAL (placement/containment migration, removed at the step-5 location_id cutover): enableModuleForOrg installs the location_id->placement sync triggers the moment a location-bearing module is enabled, so orgs created after boot don't drift untriggered. See placement-and-containment.md 'Transition semantics'."
- },
- {
-  "rule": "C-kernel-names-module",
-  "file": "api/src/modules/enable.ts",
-  "token": "machines",
-  "reason": "TRANSITIONAL (placement/containment migration, removed at the step-5 location_id cutover): enableModuleForOrg installs the location_id->placement sync triggers the moment a location-bearing module is enabled, so orgs created after boot don't drift untriggered. See placement-and-containment.md 'Transition semantics'."
- },
- {
-  "rule": "C-kernel-names-module",
-  "file": "api/src/modules/enable.ts",
-  "token": "assets",
-  "reason": "TRANSITIONAL (placement/containment migration, removed at the step-5 location_id cutover): enableModuleForOrg installs the location_id->placement sync triggers the moment a location-bearing module is enabled, so orgs created after boot don't drift untriggered. See placement-and-containment.md 'Transition semantics'."
- },
- {
-  "rule": "C-kernel-names-module",
-  "file": "api/src/modules/enable.ts",
-  "token": "records",
-  "reason": "TRANSITIONAL (placement/containment migration, removed at the step-5 location_id cutover): enableModuleForOrg installs the location_id->placement sync triggers the moment a location-bearing module is enabled, so orgs created after boot don't drift untriggered. See placement-and-containment.md 'Transition semantics'."
- },
- {
-  "rule": "C-kernel-names-module",
-  "file": "api/src/platform/rehome-instance.ts",
-  "token": "assets",
-  "reason": "DELIBERATE cross-module data migration: rehome-instance moves an instance's rows from assets_assets to records_records (the field-model Phase-2 data move). A migration between two named modules is definitionally cross-module and kernel-owned \u2014 same class as the baselined migrate-bookshelf-to-instance / migrate-location-to-placement boot passes. Explicit super-admin/test-support operation, not a runtime seam."
- },
- {
-  "rule": "C-kernel-names-module",
-  "file": "api/src/platform/rehome-instance.ts",
-  "token": "records",
-  "reason": "DELIBERATE cross-module data migration: rehome-instance moves an instance's rows from assets_assets to records_records (the field-model Phase-2 data move). A migration between two named modules is definitionally cross-module and kernel-owned \u2014 same class as the baselined migrate-bookshelf-to-instance / migrate-location-to-placement boot passes. Explicit super-admin/test-support operation, not a runtime seam."
- }
+  {
+    "rule": "D-module-names-module",
+    "file": "modules/core-ai/src/providers/anthropic.ts",
+    "token": "labels",
+    "reason": "FALSE POSITIVE (name collision, not coupling): `labels` here is the image-classify call's classification-LABEL list (input.labels / the {\"labels\":[\u2026]} JSON reply schema in the AI prompt), not the `labels` module. The literal-match lint can't disambiguate a prompt/JSON key from a module name."
+  },
+  {
+    "rule": "D-module-names-module",
+    "file": "modules/core-ai/src/providers/openai.ts",
+    "token": "labels",
+    "reason": "FALSE POSITIVE (name collision, not coupling): `labels` here is the image-classify call's classification-LABEL list (input.labels / the {\"labels\":[\u2026]} JSON reply schema in the AI prompt), not the `labels` module. The literal-match lint can't disambiguate a prompt/JSON key from a module name."
+  },
+  {
+    "rule": "C-kernel-names-module",
+    "file": "api/src/modules/enable.ts",
+    "token": "core-files",
+    "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist \u2014 the kernel must know which modules are load-bearing so a module can't self-declare itself permanent. See manifest-contract.md + audit-2026-06-26.md P1 #2."
+  },
+  {
+    "rule": "C-kernel-names-module",
+    "file": "api/src/modules/enable.ts",
+    "token": "core-notifications",
+    "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist \u2014 the kernel must know which modules are load-bearing so a module can't self-declare itself permanent. See manifest-contract.md + audit-2026-06-26.md P1 #2."
+  },
+  {
+    "rule": "C-kernel-names-module",
+    "file": "api/src/modules/enable.ts",
+    "token": "core-activity-log",
+    "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist \u2014 the kernel must know which modules are load-bearing so a module can't self-declare itself permanent. See manifest-contract.md + audit-2026-06-26.md P1 #2."
+  },
+  {
+    "rule": "C-kernel-names-module",
+    "file": "api/src/modules/enable.ts",
+    "token": "core-tags",
+    "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist \u2014 the kernel must know which modules are load-bearing so a module can't self-declare itself permanent. See manifest-contract.md + audit-2026-06-26.md P1 #2."
+  },
+  {
+    "rule": "C-kernel-names-module",
+    "file": "api/src/modules/enable.ts",
+    "token": "core-queue",
+    "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist \u2014 the kernel must know which modules are load-bearing so a module can't self-declare itself permanent. See manifest-contract.md + audit-2026-06-26.md P1 #2."
+  },
+  {
+    "rule": "C-kernel-names-module",
+    "file": "api/src/modules/enable.ts",
+    "token": "core-healthcheck",
+    "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist \u2014 the kernel must know which modules are load-bearing so a module can't self-declare itself permanent. See manifest-contract.md + audit-2026-06-26.md P1 #2."
+  },
+  {
+    "rule": "C-kernel-names-module",
+    "file": "api/src/modules/enable.ts",
+    "token": "core-locations",
+    "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist \u2014 the kernel must know which modules are load-bearing so a module can't self-declare itself permanent. See manifest-contract.md + audit-2026-06-26.md P1 #2."
+  },
+  {
+    "rule": "C-kernel-names-module",
+    "file": "api/src/modules/enable.ts",
+    "token": "core-placement",
+    "reason": "INTENTIONAL (not drift): the maintainer-curated foundational allowlist \u2014 core-placement owns the tenant-local containment table (core_placement_placements) that platform().placement reads, so it's load-bearing infrastructure and can't be disableable. See placement-and-containment.md + manifest-contract.md."
+  },
+  {
+    "rule": "D-module-names-module",
+    "file": "modules/core-authoring/src/services/compile.ts",
+    "token": "records",
+    "reason": "FALSE POSITIVE (name collision, not coupling): `records` here is the bundle-compile prompt's seed-shape JSON key (\"records\": the rows to insert per kind) \u2014 it predates the records module. The literal-match lint can't disambiguate a prompt/JSON key from a module name."
+  },
+  {
+    "rule": "D-module-names-module",
+    "file": "modules/core-integrations/src/sync/sources/ravelry.ts",
+    "token": "projects",
+    "reason": "INTENTIONAL, not coupling: the Ravelry built-in sync manifest declares a TARGET ENTITY KIND (\"projects:project\") \u2014 the platform-contract composition surface entity writers resolve, exactly like an INSTALLED manifest names one. No import, no table read; the section only lands if the user maps it to a projects instance. First-party manifests just ship as data-in-source rather than data-in-DB. (\"inventory:part\" for the stash section names a kind the same way but isn't flagged \u2014 core-integrations already references it.)"
+  },
+  {
+    "rule": "D-module-names-module",
+    "file": "modules/core-import/src/api/homebox-import.ts",
+    "token": "inventory",
+    "reason": "ORCHESTRATOR, not coupling: core-import is a migration capability that fans a Homebox export out to the modules that own the records via their PUBLIC HTTP APIs carrying the caller's bearer (POST /modules/inventory/parts) \u2014 the sanctioned pattern (same as core-scan -> core-files). No import, no table read."
+  },
+  {
+    "rule": "D-module-names-module",
+    "file": "modules/core-import/src/api/homebox-import.ts",
+    "token": "core-locations",
+    "reason": "ORCHESTRATOR: builds the location tree via core-locations' public HTTP API (GET/POST /modules/core-locations/locations) with the caller's bearer. Sanctioned cross-module-endpoint call, not an import."
+  },
+  {
+    "rule": "D-module-names-module",
+    "file": "modules/core-import/src/services/homebox.ts",
+    "token": "labels",
+    "reason": "FALSE POSITIVE (name collision): `labels` is the Homebox export's label FIELD (HB.labels, mapped to core-tags), not the `labels` print module. The literal-match lint can't disambiguate a data field from a module name."
+  },
+  {
+    "rule": "C-kernel-names-module",
+    "file": "api/src/modules/enable.ts",
+    "token": "inventory",
+    "reason": "TRANSITIONAL (placement/containment migration, removed at the step-5 location_id cutover): enableModuleForOrg installs the location_id->placement sync triggers the moment a location-bearing module is enabled, so orgs created after boot don't drift untriggered. See placement-and-containment.md 'Transition semantics'."
+  },
+  {
+    "rule": "C-kernel-names-module",
+    "file": "api/src/modules/enable.ts",
+    "token": "machines",
+    "reason": "TRANSITIONAL (placement/containment migration, removed at the step-5 location_id cutover): enableModuleForOrg installs the location_id->placement sync triggers the moment a location-bearing module is enabled, so orgs created after boot don't drift untriggered. See placement-and-containment.md 'Transition semantics'."
+  },
+  {
+    "rule": "C-kernel-names-module",
+    "file": "api/src/modules/enable.ts",
+    "token": "assets",
+    "reason": "TRANSITIONAL (placement/containment migration, removed at the step-5 location_id cutover): enableModuleForOrg installs the location_id->placement sync triggers the moment a location-bearing module is enabled, so orgs created after boot don't drift untriggered. See placement-and-containment.md 'Transition semantics'."
+  },
+  {
+    "rule": "C-kernel-names-module",
+    "file": "api/src/modules/enable.ts",
+    "token": "records",
+    "reason": "TRANSITIONAL (placement/containment migration, removed at the step-5 location_id cutover): enableModuleForOrg installs the location_id->placement sync triggers the moment a location-bearing module is enabled, so orgs created after boot don't drift untriggered. See placement-and-containment.md 'Transition semantics'."
+  },
+  {
+    "rule": "C-kernel-names-module",
+    "file": "api/src/platform/rehome-instance.ts",
+    "token": "assets",
+    "reason": "DELIBERATE cross-module data migration: rehome-instance moves an instance's rows from assets_assets to records_records (the field-model Phase-2 data move). A migration between two named modules is definitionally cross-module and kernel-owned \u2014 same class as the baselined migrate-bookshelf-to-instance / migrate-location-to-placement boot passes. Explicit super-admin/test-support operation, not a runtime seam."
+  },
+  {
+    "rule": "C-kernel-names-module",
+    "file": "api/src/platform/rehome-instance.ts",
+    "token": "records",
+    "reason": "DELIBERATE cross-module data migration: rehome-instance moves an instance's rows from assets_assets to records_records (the field-model Phase-2 data move). A migration between two named modules is definitionally cross-module and kernel-owned \u2014 same class as the baselined migrate-bookshelf-to-instance / migrate-location-to-placement boot passes. Explicit super-admin/test-support operation, not a runtime seam."
+  },
+  {
+    "rule": "C-kernel-names-module",
+    "file": "api/src/platform/repair-replay-truncated-names.ts",
+    "token": "core-scan",
+    "reason": "INTENTIONAL (historical data migration, not kernel logic): a one-shot boot repair for rows a pre-2026-08-12 Replay truncated. Repairing data the platform itself damaged is the platform's job, and it cannot go through a module API because the damaged rows are exactly the ones no live code path visits. It names core-scan only to SCOPE itself - a workspace without core-scan opens no tenant pool. Retires with the file: see its DONE WHEN header (rowsRepaired=0 on prod + staging + dev), and docs/design-decisions/replay-recomputes-derivation.md."
+  }
 ]

@@ -19,7 +19,12 @@
 // "MILK        3.68" comes back as "MILK 3.68". Everything below keys off the
 // END of the line instead.
 
-import { buildReceipt, isoDate, type ParsedReceipt } from "./receipt-shared.js";
+import {
+  buildReceipt,
+  enrichReceiptFromText,
+  isoDate,
+  type ParsedReceipt,
+} from "./receipt-shared.js";
 
 /** Rows that are receipt STRUCTURE, not things you bought. Matched on the
  *  label after its amount is stripped. This is a document-structure vocabulary
@@ -257,5 +262,11 @@ export function parseTextReceipt(text: string): TextReceiptParse | null {
   });
   if (!receipt) return null;
 
-  return { receipt, reconciliation: { sum, expected, against: expectedAgainst, delta } };
+  return {
+    // The line items say WHAT was bought; the text below them says what it cost
+    // after discounts, who sold it, and when it lands. Read here because this is
+    // the last point that still has the receipt itself rather than a summary.
+    receipt: enrichReceiptFromText(receipt, text),
+    reconciliation: { sum, expected, against: expectedAgainst, delta },
+  };
 }

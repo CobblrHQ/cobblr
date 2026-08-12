@@ -7,7 +7,7 @@ import { trackProductEvent } from "../platform/product-events.js";
 import { parseWireFilter } from "../platform/wire-filter.js";
 import { z } from "zod";
 import { sql, type Kysely } from "kysely";
-import { platform, CatalogSchemaConfig, packFieldIssues, FieldRoleSchema, FieldTypeSchema } from "@cobblr/platform-contract";
+import { platform, CatalogSchemaConfig, packFieldIssues, FieldRoleSchema, FieldTypeSchema, isFieldScope, parseFieldScope } from "@cobblr/platform-contract";
 import { requireAuth } from "../auth/middleware.js";
 import { requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
@@ -623,6 +623,21 @@ export async function validateBundle(
   const kindList = [...knownKindIds].sort().join(", ") || "(none)";
 
   for (const f of m.field_defs) {
+    // A trait SCOPE (`@physical`) is not a registered kind, deliberately: it
+    // matches a CLASS of kinds through the same predicate actions use, so new
+    // kinds inherit the field with no migration. Checking it against the kind
+    // registry rejected every fields-only pack, which is the shape a shared
+    // custom field takes. Validate the traits instead of the kind id.
+    if (isFieldScope(f.entity_kind)) {
+      if (parseFieldScope(f.entity_kind).length === 0) {
+        errors.push({
+          path: "field_defs.entity_kind",
+          code: "unknown_field_scope",
+          message: `"${f.entity_kind}" names no known trait. Use a scope like "@physical".`,
+        });
+      }
+      continue;
+    }
     if (!knownKindIds.has(f.entity_kind)) {
       errors.push({
         path: "field_defs.entity_kind",

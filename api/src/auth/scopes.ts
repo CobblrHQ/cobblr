@@ -52,6 +52,22 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
     ],
   },
   {
+    key: "ops:read",
+    label: "Operator read-only",
+    description:
+      "Read the operator dashboards - overview counts and product metrics. No tenant " +
+      "data, no writes, nothing else. For a cross-instance ops console that reports on " +
+      "several deployments at once.",
+    // GET only, and only the two aggregate surfaces. Deliberately NOT /workspaces,
+    // /users or /activity: a token that leaves one deployment to be read by another
+    // process should carry as little of other people's data as the job allows, and the
+    // job is counts and trends.
+    allow: [
+      ["GET", /^\/super-admin\/overview$/],
+      ["GET", /^\/super-admin\/product-metrics$/],
+    ],
+  },
+  {
     key: "scan:eval",
     label: "Scan eval harness",
     description:

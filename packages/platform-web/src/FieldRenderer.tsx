@@ -43,6 +43,10 @@ interface Props {
    *  catalog list uses inline; the detail page can use block for
    *  the hero image / color swatch. */
   size?: "inline" | "block";
+  /** The one-off clarifier beside a choice value ("eBay · detroitaxle"). It is
+   *  rendered muted and is never part of the value: see field-note.ts for why
+   *  identity has to stay the value alone. */
+  note?: string | null;
 }
 
 /** Whether a boolean field's stored value reads as TRUE. Beyond real booleans
@@ -75,9 +79,20 @@ export function FieldRenderer({
   choices,
   unit,
   size = "inline",
+  note,
 }: Props) {
+  const clarifier = note?.trim() ? (
+    <span className="text-muted dark:text-slate-400"> · {note.trim()}</span>
+  ) : null;
+
   if (value === null || value === undefined || value === "") {
-    return <span className="text-faint dark:text-slate-600">—</span>;
+    // A clarifier with no value is worth showing: "· detroitaxle" tells you
+    // nothing, but "detroitaxle" alone is still the only provenance we have.
+    return clarifier ? (
+      <span className="text-muted dark:text-slate-400">{note!.trim()}</span>
+    ) : (
+      <span className="text-faint dark:text-slate-600">—</span>
+    );
   }
   // A number with a declared unit renders as a quantity ("12 mm"). Its own
   // component so the units hook mounts only when a consumer passed a unit.
@@ -124,7 +139,12 @@ export function FieldRenderer({
       return <QrCode value={String(value)} size={size === "block" ? 128 : 44} />;
     case "text":
     default:
-      return <span>{String(value)}</span>;
+      return (
+        <span>
+          {String(value)}
+          {clarifier}
+        </span>
+      );
   }
 }
 

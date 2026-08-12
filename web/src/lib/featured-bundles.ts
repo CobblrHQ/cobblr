@@ -9,6 +9,9 @@
 // here, then run `npx tsx scripts/sync-bundles.ts` and commit both. CI's
 // `lint:bundles-synced` fails the build if they drift.
 //
+// VOCAB-ENUMERATION OK: these are bundle MANIFESTS, so naming a field_role is
+// declaring what one particular field means, not branching on the vocabulary.
+// A bundle that ships an expiry date has to say `expiry`; that is the point.
 // Each entry is the raw manifest we'd send to /bundles/install.
 // Adding a bundle: add a FeaturedBundle entry here, then run the sync.
 

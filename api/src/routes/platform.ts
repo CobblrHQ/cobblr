@@ -8,7 +8,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { parseWireFilter } from "../platform/wire-filter.js";
 import { sql } from "kysely";
-import { platform, FieldTypeSchema } from "@cobblr/platform-contract";
+import { platform, FieldTypeSchema, FieldRoleSchema } from "@cobblr/platform-contract";
 import { requireAuth } from "../auth/middleware.js";
 import { requireCapability, requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
@@ -788,7 +788,16 @@ const FieldRenderer = z.enum([
 
 const FieldDefCreate = z.object({
   entity_kind: z.string(),
-  name: z.string().regex(/^[a-z][a-z0-9_]*$/),
+  // `_note` is reserved: a choice field's one-off clarifier lives at
+  // `<name>_note` in metadata (see packages/platform-web/src/field-note.ts), so
+  // a real field with that name would fight the clarifier of the field it
+  // shadows for one key, and whichever wrote last would win.
+  name: z
+    .string()
+    .regex(/^[a-z][a-z0-9_]*$/)
+    .refine((n) => !n.endsWith("_note"), {
+      message: "field names cannot end in _note (reserved for a choice field's clarifier)",
+    }),
   display_label: z.string().min(1),
   type: FieldTypeSchema,
   required: z.boolean().optional(),
@@ -823,6 +832,14 @@ const FieldDefCreate = z.object({
   applies_to: z
     .object({ traits: z.array(z.enum(TRAIT_NAMES)).min(1) })
     .optional(),
+  /** What this field MEANS, from the closed vocabulary a bundle already uses.
+   *  The name is a local label and storage key; the role is the identity that
+   *  lets two workspaces (or two packs) recognise the same concept under
+   *  different names. Omitted here until now, which is the entire reason a
+   *  hand-made field could never be matched, mapped or safely merged: not a
+   *  step users skipped, a step that did not exist.
+   *  Validated with the SAME schema the manifest uses so the two can't drift. */
+  field_role: FieldRoleSchema.nullable().optional(),
 }).refine(
   (d) => !d.choices || d.type === "text",
   { message: "choices is only valid for type='text'", path: ["choices"] },
@@ -844,6 +861,9 @@ const FieldDefPatch = z.object({
   /** Only meaningful on type='number' defs — validated against the row's
    *  type in the handler (the patch body alone can't see it). */
   unit: z.string().trim().min(1).max(40).nullable().optional(),
+  /** Settable after the fact, so a field made before roles existed can be told
+   *  what it means without being recreated. Null clears it. */
+  field_role: FieldRoleSchema.nullable().optional(),
 });
 
 platformOrgRouter.get(
@@ -1335,6 +1355,7 @@ platformOrgRouter.post(
           applies_to: scopeTraits.length
             ? sql`${JSON.stringify({ traits: scopeTraits })}::jsonb`
             : null,
+          field_role: parsed.data.field_role ?? null,
         })
         .returningAll()
         .executeTakeFirstOrThrow();
@@ -1386,6 +1407,7 @@ platformOrgRouter.patch(
       if (parsed.data.renderer !== undefined) updates.renderer = parsed.data.renderer;
       if (parsed.data.template !== undefined) updates.template = parsed.data.template;
       if (parsed.data.unit !== undefined) updates.unit = parsed.data.unit;
+      if (parsed.data.field_role !== undefined) updates.field_role = parsed.data.field_role;
 
       // Provenance check: a `choices` change on a BUNDLE-owned field def routes to
       // the USER override layer (bundle_id null), never the bundle row — so the

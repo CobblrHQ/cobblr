@@ -186,17 +186,16 @@ async function nameFromPhoto(ctx: EnrichContext): Promise<PhotoNameResult> {
   // to a hint is how a corrected item got re-named to something the user had
   // already ruled out.
   let visionRan = true;
-  const identity = await identifyImage(
-    ctx.orgId,
-    Buffer.from(file.bytes).toString("base64"),
-    file.mimeType,
-    ctx.itemId,
-    ctx.userId,
-    !!ctx.hint || !!ctx.force,
-    ctx.hint,
-    false,
-    ctx.hints,
-  ).catch(() => {
+  const identity = await identifyImage({
+    orgId: ctx.orgId,
+    imageB64: Buffer.from(file.bytes).toString("base64"),
+    mediaType: file.mimeType,
+    sourceId: ctx.itemId,
+    userId: ctx.userId,
+    bypassCache: !!ctx.hint || !!ctx.force,
+    hint: ctx.hint,
+    hints: ctx.hints,
+  }).catch(() => {
     // A THROW means vision never answered (no provider / not entitled / down).
     // A null-name ANSWER means it looked and couldn't say. Only the second is
     // evidence about the item, so they must not collapse into one boolean.

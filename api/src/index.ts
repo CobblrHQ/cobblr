@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { withFieldLabels } from "./platform/field-labels.js";
 import { dirname, resolve } from "node:path";
 import { setPlatform, canContain, canBeContained } from "@cobblr/platform-contract";
+import { resolveFieldDefsForKind } from "./platform/field-defs.js";
 import { sql, type Kysely } from "kysely";
 import { env } from "./env.js";
 import { meta, metaPool, pingMeta } from "./db/meta.js";
@@ -69,6 +70,7 @@ import { migrateBookshelfToInstance } from "./platform/migrate-bookshelf-to-inst
 import { mergeLabelsQr } from "./platform/merge-labels-qr.js";
 import { backfillPlacements } from "./platform/migrate-location-to-placement.js";
 import { backfillDefaultBindings } from "./platform/seed-bindings.js";
+import { repairReplayTruncatedNames } from "./platform/repair-replay-truncated-names.js";
 import { backfillIdentityLinks } from "./platform/backfill-identity.js";
 import { logAnnounceRouting } from "./platform/announce.js";
 import { startTrialReaper } from "./platform/reap-trials.js";
@@ -156,6 +158,20 @@ async function boot() {
       registerListResolver: entities.registerListResolver,
       registerInstanceListResolver: entities.registerInstanceListResolver,
       registerInstanceResolver: entities.registerInstanceResolver,
+      // The kernel owns trait-scope resolution (it needs matchAction), so it
+      // answers "which roled fields apply here" rather than making every module
+      // reimplement a matcher and get `@physical` wrong.
+      roledFieldsFor: async (orgId, kind) => {
+        const defs = await resolveFieldDefsForKind(orgId, kind);
+        return defs
+          .filter((d) => d.field_role)
+          .map((d) => ({
+            name: d.name,
+            field_role: d.field_role,
+            type: d.type,
+            choices: (d.choices as string[] | null) ?? null,
+          }));
+      },
       registerComputedContext: computedFields.registerComputedContext,
       registerCreateDefaults: createDefaults.registerCreateDefaults,
       unregisterCreateDefaults: createDefaults.unregisterCreateDefaults,
@@ -934,6 +950,17 @@ async function boot() {
   // trigger_event), so repeated boots are safe.
   const seeded = await T("backfillDefaultBindings", backfillDefaultBindings());
   console.log(`[cobblr-api] default bindings backfilled: ${seeded} added`);
+
+  // Put back scan names a Replay truncated before 2026-08-12 (a cache miss
+  // degraded to the keyword heuristic, whose candidate name then overwrote the
+  // real one). The user did nothing to cause it, so the platform undoes it
+  // rather than asking them to. See platform/repair-replay-truncated-names.ts.
+  const nameRepair = await T("repairReplayTruncatedNames", repairReplayTruncatedNames());
+  if (nameRepair.rowsRepaired > 0) {
+    console.log(
+      `[cobblr-api] replay-truncated scan names: ${nameRepair.rowsRepaired} restored across ${nameRepair.orgsTouched} workspace(s)`,
+    );
+  }
 
   // Sweep per-tenant Postgres roles left behind by deleted workspaces (roles are
   // cluster-global, so DROP DATABASE never removed them). One query on a healthy

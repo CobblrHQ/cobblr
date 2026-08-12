@@ -95,7 +95,62 @@ export const FIELD_TYPE_VALUES = [
 export type FieldDefType = (typeof FIELD_TYPE_VALUES)[number];
 export const FieldTypeSchema = z.enum(FIELD_TYPE_VALUES);
 
-export const FIELD_ROLE_VALUES = ["category", "pack", "identifier", "expiry", "assignee"] as const;
+/** What a field MEANS, as opposed to what it is called.
+ *
+ *  A role is the semantic identity of a field. "Best before" and "Use by" are
+ *  the same idea, and once both declare `expiry`, anything built on that idea
+ *  works on both without knowing either name. The name is a local label and a
+ *  storage key; the role is what two workspaces can agree on.
+ *
+ *  DELIBERATELY CLOSED, and that is the feature. A free-text role is a synonym
+ *  generator: one pack says `acquired-from`, another says `where-from`, both
+ *  install cleanly, and the user ends up with two fields for one concept and no
+ *  error anywhere. Every value here is a word the whole platform commits to, so
+ *  adding one is a real decision. See docs/design-decisions/field-packs.md.
+ *
+ *  The `acquired-*` group answers "how did this come to be mine", which a
+ *  receipt can fill in without anybody typing (docs/design-decisions/arrivals.md):
+ *    acquired-from  where it came from: the shop, the marketplace, the person
+ *    acquired-on    when it became yours
+ *    acquired-for   what it cost you: net of discounts, before tax
+ *    seller         WHO sold it, when that differs from where you bought it
+ *                   (a marketplace listing has both, and they are not the same
+ *                   fact; absent this field the seller rides as the clarifier on
+ *                   acquired-from instead) */
+/** A choice field's durable VALUE lives at `<name>`; its one-off CLARIFIER lives
+ *  at `<name>_note` in the same metadata bag ("eBay" + "detroitaxle", rendered
+ *  "eBay · detroitaxle").
+ *
+ *  Identity is the value alone: grouping, filters, counts and matching never
+ *  look at the note, or one choice would fragment into many. Search does.
+ *
+ *  Defined HERE, not in platform-web, because the receipt mapper writes these
+ *  keys server-side and the field panel reads them client-side. Two copies of a
+ *  string like this drift the first time one of them is edited. */
+export const FIELD_NOTE_SUFFIX = "_note";
+
+/** The metadata key holding `name`'s clarifier. */
+export function fieldNoteKey(name: string): string {
+  return `${name}${FIELD_NOTE_SUFFIX}`;
+}
+
+/** True when a key is a clarifier rather than a value in its own right, so
+ *  anything enumerating fields for IDENTITY can skip it. */
+export function isFieldNoteKey(key: string): boolean {
+  return key.endsWith(FIELD_NOTE_SUFFIX);
+}
+
+export const FIELD_ROLE_VALUES = [
+  "category",
+  "pack",
+  "identifier",
+  "expiry",
+  "assignee",
+  "acquired-from",
+  "acquired-on",
+  "acquired-for",
+  "seller",
+] as const;
 export type FieldRole = (typeof FIELD_ROLE_VALUES)[number];
 export const FieldRoleSchema = z.enum(FIELD_ROLE_VALUES);
 
@@ -2052,6 +2107,22 @@ export interface PlatformEntities {
   listKindsForOrg(orgId: string): Promise<EntityKindRecord[]>;
   /** Get a single kind's full declaration. */
   getKind(kind: string): Promise<EntityKindRecord | null>;
+  /**
+   * The workspace's field defs FOR THIS KIND that declare a role, with trait
+   * scopes already resolved.
+   *
+   * A module cannot work this out for itself. A field scoped to `@physical`
+   * applies to `inventory:part` through the same predicate the action registry
+   * uses, and that matcher is a kernel internal: reading `module_field_defs`
+   * directly and filtering on `entity_kind = kind` silently misses every
+   * trait-scoped field, which is precisely where the interesting ones (origin,
+   * acquisition) live.
+   *
+   * So the kernel answers the question and modules ask it. Returns only defs
+   * with a `field_role`, because the callers are the ones that act on MEANING
+   * rather than on a name.
+   */
+  roledFieldsFor(orgId: string, kind: string): Promise<RoledField[]>;
   /** The ONE resolver for where a QR/scan/search hit for an entity should land,
    *  INSTANCE AWARE — shared by the QR-token resolver, the scan registry, and
    *  search so they can't drift (they were three hand-kept copies that each
@@ -4025,3 +4096,119 @@ export function parseJsonReply<T = unknown>(content: string): T | null {
   return null;
 }
 
+// Facts tagged by ROLE, landed on whatever the workspace calls those things.
+//
+// TWO rules, and the second one is the one that keeps getting broken:
+//
+//   1. Never match on a field's NAME. A mapper looking for `acquired_from`
+//      works in exactly the workspace that inspired it and silently does
+//      nothing in every other.
+//   2. Never enumerate the CONCEPTS either. An earlier version of this had one
+//      branch per role and a four-property input type, so adding a fifth fact
+//      meant editing the mapper. That is the same hardcoding as rule 1, moved
+//      one level up and easier to miss, because the field names were generic
+//      and it therefore looked finished.
+//
+// So this layer knows nothing about receipts, vendors, or prices. It is a
+// matcher: role-tagged facts in, metadata keys out. Adding a fact means adding
+// a role to the vocabulary and teaching the EXTRACTOR to produce it. Nothing
+// here changes.
+//
+// Pure: no db, no platform(), no module imports.
+// Lives in the contract because the scan inbox owns the confirm path and a
+// module may not import api internals.
+//
+// See docs/design-decisions/arrivals.md.
+
+/** What was found, keyed by what it MEANS. The extractor owns every judgment
+ *  about which fact is which; this layer owns only where each one lands. */
+export type RoledFacts = Partial<Record<FieldRole, string | number>>;
+
+/** The subset of a field def the matcher needs. Structural so callers can pass
+ *  their own rows without a conversion step. */
+export interface RoledField {
+  name: string;
+  field_role?: string | null;
+  type?: string | null;
+  choices?: string[] | null;
+}
+
+export interface MappedValue {
+  /** The metadata key to write. */
+  key: string;
+  value: string | number;
+  /** Which role put it there, so a confirm UI can explain itself. */
+  role: FieldRole;
+  /** True when this rode in as a clarifier beside another field's value rather
+   *  than as a value in its own right. */
+  isNote?: boolean;
+  /** Set when the value is not in that field's `choices` yet, so the UI can
+   *  OFFER to add it rather than adding it silently. */
+  unlistedChoice?: boolean;
+}
+
+/**
+ * Roles that have somewhere to go when the workspace has no field for them.
+ *
+ * DATA, not branches. A seller with nowhere to live is still worth keeping, so
+ * it rides as the clarifier beside where you bought it ("eBay · detroitaxle")
+ * instead of being dropped. Declaring that as a table means the next role with
+ * the same shape is one line here and no change to the matcher.
+ *
+ * Deliberately NOT appended to the host's value: "eBay (detroitaxle)" would
+ * fragment one choice into many and break "everything I bought on eBay". See
+ * FIELD_NOTE_SUFFIX.
+ */
+export const ROLE_CLARIFIES: Partial<Record<FieldRole, FieldRole>> = {
+  seller: "acquired-from",
+};
+
+/**
+ * Land each fact on the field that declares its role.
+ *
+ * A workspace declaring no roles gets an empty result, which is today's
+ * behaviour and stays correct: nothing is invented and no field is created.
+ */
+export function mapRoledFacts(
+  facts: RoledFacts,
+  fields: readonly RoledField[],
+): MappedValue[] {
+  const byRole = new Map<string, RoledField>();
+  for (const f of fields) {
+    if (f.field_role && !byRole.has(f.field_role)) byRole.set(f.field_role, f);
+  }
+
+  const out: MappedValue[] = [];
+  for (const [r, value] of Object.entries(facts)) {
+    const role = r as FieldRole;
+    if (value == null || value === "") continue;
+
+    const field = byRole.get(role);
+    if (field) {
+      const unlisted =
+        typeof value === "string" &&
+        (field.choices?.length ?? 0) > 0 &&
+        !field.choices!.some((c) => c.trim().toLowerCase() === value.trim().toLowerCase());
+      out.push({ key: field.name, value, role, ...(unlisted ? { unlistedChoice: true } : {}) });
+      continue;
+    }
+
+    // No field of its own. If this role clarifies another, ride along there.
+    const hostRole = ROLE_CLARIFIES[role];
+    const host = hostRole ? byRole.get(hostRole) : undefined;
+    if (host) out.push({ key: fieldNoteKey(host.name), value, role, isNote: true });
+  }
+  return out;
+}
+
+/** The metadata patch, for a caller that just wants to write it. Values the UI
+ *  must confirm first (an unlisted choice) are EXCLUDED: offering to add a
+ *  choice and then adding it anyway would make the offer decorative. */
+export function roledFactsPatch(mapped: readonly MappedValue[]): Record<string, string | number> {
+  const patch: Record<string, string | number> = {};
+  for (const m of mapped) {
+    if (m.unlistedChoice) continue;
+    patch[m.key] = m.value;
+  }
+  return patch;
+}

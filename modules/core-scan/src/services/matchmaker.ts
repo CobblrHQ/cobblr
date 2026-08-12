@@ -438,11 +438,18 @@ function cleanCaptureName(raw: string): string {
     // leading article first — "A spool of black PLA" must still strip to
     // "Black PLA" (the article used to defeat the unit strip entirely)
     .replace(/^\s*(a|an|the)\s+/i, "")
-    .replace(/^\s*\d+\s*(x|×)?\s*/i, "")
+    // …but a leading DECIMAL is part of the name, not a count: "0.9 degree
+    // stepper" must not lose its "0" and become ".9 degree stepper".
+    .replace(/^\s*\d+(?!\.\d)\s*(x|×)?\s*/i, "")
     .replace(/^(skeins?|balls?|spools?|rolls?|packs?|boxes?|bottles?|cans?|bags?|units?|pcs?|pieces?)\b\s*/i, "")
     .replace(/^of\s+/i, "")
     .trim();
-  const cut = s.split(/[,.;\n]/)[0]?.trim() || s;
+  // A period ends a clause only when it is NOT a decimal point. Splitting on
+  // every "." truncated model numbers to their integer part — "Voron 0.1 3D
+  // Printer (partially built)" became "Voron 0" (reported 2026-08-12) — and
+  // because the matchmaker writes this name back onto the row, the item was
+  // renamed to a number permanently.
+  const cut = s.split(/[,;\n]|\.(?!\d)/)[0]?.trim() || s;
   return cut ? cut.charAt(0).toUpperCase() + cut.slice(1) : raw.slice(0, 80);
 }
 
@@ -880,16 +887,29 @@ export async function runMatchmaker(
   /** The scanning user (null for a cron/background match) — routes to their
    *  personal AI connection. */
   userId?: string | null,
-  /** REPLAY: serve the model call from cache, never pay. On a miss it fails like
-   *  any unavailable provider, so we land on `heuristicMatch` — which is exactly
-   *  the deterministic routing a no-AI re-run exists to exercise. */
-  cacheOnly?: boolean,
+  /** REPLAY: recompute the routing from what the row ALREADY holds, with no model
+   *  call of any kind.
+   *
+   *  A stored candidate has the same shape as a model reply, so it goes through
+   *  the identical refinement below: re-validated against the CURRENT menu,
+   *  fields re-filtered to each table's schema, pack size re-seeded, category
+   *  re-snapped to the live vocabulary, corroboration gate re-applied. That is
+   *  the whole point of a replay — the same knowledge, the newest code.
+   *
+   *  It used to serve the model call cache-only instead, which fails like an
+   *  unavailable provider on a miss and landed on `heuristicMatch`. Since the
+   *  cache key is pinned to provider + model, a miss is the NORMAL case, so
+   *  "replay" in practice meant "answer with the dumbest available path" and
+   *  quietly downgraded the row (reported 2026-08-12). */
+  replay?: { storedCandidates: unknown[] },
 ): Promise<MatchCandidate[]> {
   // A physical scan never routes to a record table — drop them before the model
   // even sees the menu, so it can't suggest one (and the heuristic fallback below
   // inherits the already-filtered menu).
   const menu = filterMenuForItem(item, menuIn);
-  if (menu.length === 0) return [];
+  // No table to route to. A first match legitimately has nothing to say; a REPLAY
+  // must still not empty a row that already had candidates.
+  if (menu.length === 0) return replay ? (replay.storedCandidates as MatchCandidate[]) : [];
 
   const system =
     "You sort a scanned physical item into the user's catalog of tables and " +
@@ -1098,10 +1118,7 @@ export async function runMatchmaker(
         // stated explicitly because THIS prompt demands routing determinism.
         config: { max_tokens: 2048, temperature: 0 },
         source: { kind: "core-scan:matchmaker", id: sourceId ?? "" },
-        // A replay never bypasses the cache — the retry below asks for a FRESH
-        // sample, which is precisely the paid call replay promises not to make.
-        bypass_cache: !cacheOnly && bypassCache,
-        cache_only: cacheOnly,
+        bypass_cache: bypassCache,
       })
       .then((r) => r.result as { content?: string })
       .catch(() => null);
@@ -1119,15 +1136,20 @@ export async function runMatchmaker(
   // (RETRY_MIN_MS), so a slow first call (e.g. via the subscription bridge) can't
   // trigger a second that doubles latency + times out a synchronous caller; on a
   // fast provider the retry has ample budget and fires.
-  let rawList = await callOnce(false, MATCH_DEADLINE_MS);
-  // The retry exists to resample a garbled reply; under replay there IS no second
-  // sample to draw (same cache key, same bytes), so it would only burn a call.
-  if (rawList === null && !cacheOnly && remaining() > RETRY_MIN_MS)
-    rawList = await callOnce(true, remaining());
-  // AI unavailable (no provider / not entitled / errored / timed out) → fall back
-  // to the deterministic heuristic so capture-first still suggests a tracker for
-  // free / no-AI workspaces. The whole point: capture-first never goes dark.
-  if (rawList === null) return heuristicMatch(item, menu);
+  let rawList: unknown[] | null;
+  if (replay) {
+    // The knowledge is already on the row. Feed it through the same refinement a
+    // model reply gets — no call, no cache read, and therefore no degrade path to
+    // fall down.
+    rawList = replay.storedCandidates;
+  } else {
+    rawList = await callOnce(false, MATCH_DEADLINE_MS);
+    if (rawList === null && remaining() > RETRY_MIN_MS) rawList = await callOnce(true, remaining());
+    // AI unavailable (no provider / not entitled / errored / timed out) → fall back
+    // to the deterministic heuristic so capture-first still suggests a tracker for
+    // free / no-AI workspaces. The whole point: capture-first never goes dark.
+    if (rawList === null) return heuristicMatch(item, menu);
+  }
 
   // Validate each candidate against the menu — the model may only route to a
   // table we actually offered, and we resolve module/kind/label from the menu
@@ -1201,8 +1223,12 @@ export async function runMatchmaker(
     // heuristic's cap): a third table was almost always noise/padding.
     if (out.length >= 2) break;
   }
-  // AI returned nothing usable for this menu → heuristic floor, never blank.
-  if (out.length === 0) return heuristicMatch(item, menu);
+  // Nothing usable for this menu. Normally that means the heuristic floor, never
+  // blank. Under REPLAY it means the stored routing no longer validates (its
+  // table was uninstalled, or renamed), and manufacturing a keyword guess in its
+  // place is the downgrade this whole path exists to stop — so keep what the row
+  // already had and let the user re-identify if they want a fresh opinion.
+  if (out.length === 0) return replay ? (replay.storedCandidates as MatchCandidate[]) : heuristicMatch(item, menu);
   // AI proposes, code corroborates: a primary routed to a NOT-installed bundle
   // must survive the same lexical bar the heuristic routes with, or the honest
   // fallback+category leads and the bundle drops to the alternative slot.

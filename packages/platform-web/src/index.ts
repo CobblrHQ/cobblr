@@ -39,9 +39,26 @@ export { useImageSrc } from "./useImageSrc";
 export { BulkActionBar } from "./BulkActionBar";
 export { CustomFieldsPanel, RelationSelect } from "./CustomFieldsPanel";
 export { EditableCell, type EditableCellDef } from "./EditableCell";
+export {
+  isForeign,
+  byPriorityThenRecent,
+  type FeedbackSource,
+  type FeedbackSourceItem,
+  type FeedbackUpdate,
+} from "./feedback-source";
+export { FeedbackCard, PriorityChip, FEEDBACK_STATUSES, fbStatusLabel } from "./FeedbackCard";
+
 export { fieldControl, type FieldControl } from "./fieldControl";
 export { relativeTime } from "./relativeTime";
 export { FieldRenderer, boolLabel, boolTruthy, NoImage } from "./FieldRenderer";
+export {
+  NOTE_SUFFIX,
+  canCarryNote,
+  isNoteKey,
+  noteKey,
+  noteOf,
+  valueWithNote,
+} from "./field-note";
 export { Markdown, stripMarkdown } from "./Markdown";
 export { MarkdownEditor } from "./MarkdownEditor";
 export { QrCode } from "./QrCode";

@@ -23,7 +23,14 @@ import { buildCadenceEvents } from "../cadence-events.js";
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
-import { platform, planDecodeFill, traitAxisValue, type DecodeFillTarget } from "@cobblr/platform-contract";
+import {
+  mapRoledFacts,
+  planDecodeFill,
+  platform,
+  roledFactsPatch,
+  traitAxisValue,
+  type DecodeFillTarget,
+} from "@cobblr/platform-contract";
 import { categoryDisplay } from "@cobblr/platform-contract/category-reconcile";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { resolveNativeIdentity } from "../native-identity.js";
@@ -65,6 +72,8 @@ import {
   type MatchCandidate,
   type ScanMenuEntry,
 } from "../services/matchmaker.js";
+import { isCuratedBarcodeIdentification, shouldAdoptCandidateName } from "../services/adopt-name.js";
+import { guardReplayCandidates } from "../services/replay-guard.js";
 import { lookupBookIsbn } from "../services/book-lookup.js";
 import { resolvePaintColorFromText } from "../services/paint-code.js";
 import { resolvePaintCodeViaWeb } from "../services/paint-code-websearch.js";
@@ -77,6 +86,7 @@ import { cropRegion, detectSplitItems, rotateImage } from "../services/image-ops
 import { extractLocation, type LocationLite } from "../services/note-location.js";
 import { suggestLocationForItem } from "../services/suggest-location.js";
 import { normaliseCategory } from "@cobblr/platform-contract/category-reconcile";
+import { receiptFacts, type ReceiptMeta } from "../services/receipt-facts.js";
 
 export const inboxRouter = Router({ mergeParams: true });
 
@@ -198,15 +208,21 @@ inboxRouter.post(
     if (!parsed.success) return badBody(res, parsed.error);
     const body = parsed.data;
 
-    // Require either a barcode or an image_file_id. A barcode takes the
-    // fast path (catalog lookup → web-search fallback); a photo with no
-    // barcode takes the vision path (core-ai identify-image), fired
-    // detached below so intake stays instant.
-    if (!body.barcode && !body.image_file_id) {
+    // Require SOMETHING to identify from. A barcode takes the fast path
+    // (catalog lookup → web-search fallback); a photo with no barcode takes the
+    // vision path (core-ai identify-image), fired detached below so intake
+    // stays instant; a source_url is read by the URL branch further down.
+    //
+    // `source_url` belongs in this list and was missing from it, which made
+    // every URL scan a 400 before the branch that handles it could run -
+    // pasting a product link into the scan box added nothing (reported
+    // 2026-08-12). The guard predates URL intake and was never widened when it
+    // landed, so the feature was unreachable through this route from the start.
+    if (!body.barcode && !body.image_file_id && !body.source_url) {
       res.status(400).json({
         error: {
           code: "no_input",
-          message: "scan needs at least a barcode or an image_file_id",
+          message: "scan needs at least a barcode, an image_file_id or a source_url",
         },
       });
       return;
@@ -570,6 +586,7 @@ async function materializeReceiptLines(opts: {
   baseUrl: string;
 }): Promise<Array<{ id: string }>> {
   const groupId = randomUUID();
+  const t = opts.receipt.totals;
   const baseMeta = {
     source: "receipt",
     receipt_group_id: groupId,
@@ -577,6 +594,28 @@ async function materializeReceiptLines(opts: {
     receipt_date: opts.receipt.date,
     receipt_currency: opts.receipt.currency,
     parse_method: opts.method,
+    // Provenance: what this purchase WAS, beyond the line's own description.
+    // Kept as components rather than one "price", because a receipt carries
+    // several numbers that all look like the price and picking one is how the
+    // wrong one gets recorded. See docs/design-decisions/arrivals.md.
+    ...(opts.receipt.seller ? { receipt_seller: opts.receipt.seller } : {}),
+    ...(opts.receipt.expected_arrival
+      ? { expected_arrival: opts.receipt.expected_arrival }
+      : {}),
+    ...(t
+      ? {
+          list_price: t.subtotal,
+          discounts: t.discounts,
+          tax: t.tax,
+          shipping: t.shipping,
+          total_charged: t.totalCharged,
+          // Null unless the components reconciled. A price we cannot corroborate
+          // is not offered: someone typing it is cheaper than a wrong number
+          // nobody notices.
+          net_price: t.netPrice,
+          price_reconciled: t.reconciled,
+        }
+      : {}),
   };
   const rows: Array<{ id: string }> = [];
   for (const line of opts.receipt.items) {
@@ -1523,6 +1562,26 @@ inboxRouter.post(
     } catch {
       /* advisory — fall through to the fungible default */
     }
+
+    // What the receipt knew about the PURCHASE, landed on whatever this
+    // workspace calls those things. Mapped by ROLE, never by field name: a
+    // mapper looking for `acquired_from` works in one workspace and silently
+    // does nothing in every other. A workspace that declares no roles gets an
+    // empty patch, which is the current behaviour and stays correct.
+    let provenancePatch: Record<string, string | number> = {};
+    try {
+      // The receipt's facts, keyed by MEANING (receipt-facts.ts owns that
+      // translation), landed on whatever this workspace named its fields. A
+      // workspace declaring no roles gets an empty patch, which is the current
+      // behaviour and stays correct: nothing invented, no field created.
+      const facts = receiptFacts(meta as ReceiptMeta);
+      if (Object.keys(facts).length > 0) {
+        const roled = await platform().entities.roledFieldsFor(ctx.org.id, effectiveKindId);
+        provenancePatch = roledFactsPatch(mapRoledFacts(facts, roled));
+      }
+    } catch {
+      /* advisory — a confirm must never fail over provenance */
+    }
     const scannedQty = Number(row.quantity ?? 1);
     const qty =
       parsed.data.quantity ??
@@ -1600,6 +1659,9 @@ inboxRouter.post(
         // batch_code). Generic: the kernel doesn't know the vendor — it
         // just carries whatever `fields` the resolver stamped. Matchmaker
         // candidate + user-typed values still win per-key below.
+        // Machine-derived, so it sits BELOW the matchmaker's candidate and well
+        // below anything the user typed.
+        ...provenancePatch,
         ...((meta as { fields?: Record<string, unknown> }).fields ?? {}),
         ...candidateFields,
         ...typedMetadata,
@@ -2651,38 +2713,34 @@ inboxRouter.post(
       const replay = !!rerun?.no_ai;
       void (async () => {
         const workDb = (await platform().tenants.getDb(ctx.org.id)) as unknown as typeof db;
-        const outcome = await enrichPhotoItem({
-          db: workDb,
-          orgId: ctx.org.id,
-          itemId: id,
-          imageFileId,
-          userId: uid,
-          force: true,
-          hint: photoHint,
-          hints: effectiveHints,
-          replay,
-        });
-        // A replay with no cached reply keeps the IDENTITY as-is (nothing to
-        // re-parse, nothing spent) — but it must still: (1) stamp
-        // ai_suggested_at, the client's completion signal, or the REPLAYING
-        // badge spins to its 95s timeout on a run that finished in a second;
-        // and (2) fall through to re-MATCH below — replay's whole point is
-        // re-running the ROUTING through current code, and the early return
-        // here meant items with an uncached photo kept absurd stored
-        // candidates forever, immune to every routing fix.
-        const nothingCached = replay && outcome === "nothing-cached";
-        if (nothingCached) {
+        // A REPLAY DOES NOT RE-IDENTIFY. The identity — name, manufacturer, sku,
+        // category, observations — is already stored on this row, so there is
+        // nothing to ask for and nothing to pay. It used to call identify
+        // cache-only and hope for a hit, which was backwards: the answer was
+        // already owned, and on a miss (the normal case, since the cache key is
+        // pinned to provider + model) the row degraded. What a replay re-runs is
+        // everything DOWNSTREAM of identity, which is `matchItem` below.
+        //
+        // It must still stamp ai_suggested_at — that is the client's completion
+        // signal, and without it the REPLAYING badge spins to its 95s timeout on
+        // a run that finished in a second.
+        if (replay) {
           await workDb
             .updateTable("core_scan_inbox_items")
-            .set({
-              ai_notes:
-                "Replay (no AI): no cached photo reply, so the name was kept as-is; the table suggestions were re-derived with the current rules. Use Re-run AI to re-identify for real.",
-              ai_suggested_at: new Date(),
-              updated_at: new Date(),
-            })
+            .set({ ai_suggested_at: new Date(), updated_at: new Date() })
             .where("id", "=", id)
             .execute();
         } else {
+          await enrichPhotoItem({
+            db: workDb,
+            orgId: ctx.org.id,
+            itemId: id,
+            imageFileId,
+            userId: uid,
+            force: true,
+            hint: photoHint,
+            hints: effectiveHints,
+          });
           // Identity actually (re)landed → let the wires react.
           void platform().events.emit("core-scan.scan.enriched", { orgId: ctx.org.id, itemId: id });
         }
@@ -2703,14 +2761,13 @@ inboxRouter.post(
       return;
     }
 
-    // "Replay (no AI)" on a BARCODE item must keep the button's promise: no
-    // model call, no tokens. This branch used to ignore no_ai entirely — it
-    // cache-deleted, force-re-asked the catalogs (whose tails call vision/web
-    // AI), and ran the matchmaker live, so a "free replay" burned real tokens
-    // and lit every AI spinner. Under replay: identity stays as stored, and
-    // only the ROUTING re-runs below — the cached matchmaker reply through the
-    // CURRENT post-processing (cache_only, so a prompt-cache miss falls to the
-    // deterministic heuristic instead of a paid call).
+    // "Replay" on a BARCODE item must keep the button's promise: no model call,
+    // no tokens. This branch used to ignore no_ai entirely — it cache-deleted,
+    // force-re-asked the catalogs (whose tails call vision/web AI), and ran the
+    // matchmaker live, so a "free replay" burned real tokens and lit every AI
+    // spinner. Under replay: identity stays as stored, and only the ROUTING
+    // re-runs below — the row's own candidates back through the CURRENT
+    // refinement, no cache read and no degrade path.
     const replayBarcode = !!rerun?.no_ai;
     const baseUrl =
       (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
@@ -3008,7 +3065,7 @@ const CatalogImageBody = z.union([
   // is indistinguishable from a hand-pick — and Revert would restore the raw
   // first web result, throwing the AI's judgement away (reported 2026-08-11).
   z.object({ url: z.string().url().max(2000), ai_pick: z.boolean().optional() }),
-  z.object({ action: z.enum(["revert", "use_own_photo"]) }),
+  z.object({ action: z.enum(["revert", "use_own_photo", "use_screenshot_crop"]) }),
   // "Take a nice picture" — a freshly-captured upload becomes the DISPLAY
   // (catalog) image; the identify photo is untouched (photo roles).
   z.object({ file_id: z.string().uuid() }),
@@ -3168,6 +3225,32 @@ inboxRouter.post(
           // The user chose this image → lock it so a later re-identify won't clobber it,
           // and push what it replaced so Revert can undo back to it.
           suggested_metadata: mergeMeta(catalogSet("yours")) as never,
+          updated_at: new Date(),
+        })
+        .where("id", "=", row.id)
+        .execute();
+      res.json(withTitle(await fresh()));
+      return;
+    }
+
+    // Back to the crop the enrich took out of a screenshot. It is already a
+    // stored file, so this re-points at it rather than cropping again — and it
+    // exists because a screenshot's crop is a picture of the ACTUAL item, which
+    // stays worth returning to after a detour through the web results.
+    if ("action" in parsed.data && parsed.data.action === "use_screenshot_crop") {
+      const cropId = (row.suggested_metadata as { screenshot_crop_file_id?: string } | null)?.screenshot_crop_file_id;
+      if (!cropId) {
+        res.status(400).json({
+          error: { code: "no_crop", message: "This item has no screenshot crop to use." },
+        });
+        return;
+      }
+      await db
+        .updateTable("core_scan_inbox_items")
+        .set({
+          catalog_image_file_id: cropId,
+          catalog_image_url: null,
+          suggested_metadata: mergeMeta(catalogSet("crop")) as never,
           updated_at: new Date(),
         })
         .where("id", "=", row.id)
@@ -4979,32 +5062,27 @@ function applyPaintColorFill(color: string, candidates: MatchCandidate[], menu: 
  *  result (+ a matched_at stamp so intake auto-match never repeats). Returns
  *  the candidates, or null when skipped (no row / nothing identified yet /
  *  already matched / another match in flight). */
-/** Fill each new candidate's `fields` from the PREVIOUS run's candidate for the
- *  same route, for keys this run didn't produce. Used on the no-AI replay path,
- *  which re-derives routing from cached data and would otherwise drop fields only
- *  a vision pass could have known. This run wins per key — a replay corrects, it
- *  never erases. Matching is by (module, instance): carrying a vehicle's plate
- *  onto a candidate for some other table would be worse than losing it. */
-export function carryForwardCandidateFields(prevRaw: unknown, next: unknown[]): void {
-  const prev = (prevRaw ?? []) as Array<{
-    module?: string;
-    instance?: string | null;
-    fields?: Record<string, unknown>;
-  }>;
-  if (!Array.isArray(prev) || prev.length === 0) return;
-  for (const c of next as Array<{
-    module?: string;
-    instance?: string | null;
-    fields?: Record<string, unknown>;
-  }>) {
-    if (!c || typeof c !== "object") continue;
-    const p = prev.find(
-      (x) => x.module === c.module && (x.instance ?? null) === (c.instance ?? null),
-    );
-    if (!p?.fields) continue;
-    const carried = { ...p.fields, ...(c.fields ?? {}) };
-    if (Object.keys(carried).length) c.fields = carried;
+/** The row's stored candidate list, as a plain array.
+ *
+ *  This is a replay's INPUT, which is the whole shift: a replay used to re-ask
+ *  the AI (cache-only) and merge the leftovers back in, so it needed a
+ *  field-by-field carry-forward to stop a degraded answer erasing what a vision
+ *  pass had found. Now the stored list IS what gets refined, so there is nothing
+ *  to carry and nothing to lose.
+ *
+ *  jsonb reaches us as a parsed array under `pg`, but a `JSON.stringify`'d write
+ *  read straight back can arrive as a string, so accept both. */
+export function storedCandidateList(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === "string") {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
   }
+  return [];
 }
 
 async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
@@ -5061,9 +5139,13 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     let photoDistinct = observationIsCurrent ? (meta.photo_distinct ?? null) : null;
     let photoIndividuals = observationIsCurrent ? (meta.photo_individuals ?? null) : null;
     let photoObservedFor = observationIsCurrent ? observedFor : null;
-    if (!photoObservations && row.image_file_id) {
+    // A REPLAY never makes this call. Observing a photo is a vision pass, and a
+    // replay re-derives from what the row already holds rather than looking
+    // again — so when the stored observation is missing, or describes a photo
+    // that has since been retaken, this pass simply goes without one.
+    if (!photoObservations && row.image_file_id && !opts.replay) {
       const obs = await Promise.race([
-        observeScanPhoto(opts.orgId, row.image_file_id, opts.itemId, opts.userId, opts.replay),
+        observeScanPhoto(opts.orgId, row.image_file_id, opts.itemId, opts.userId),
         new Promise<null>((resolve) => setTimeout(() => resolve(null), 15_000)),
       ]);
       if (obs) {
@@ -5095,7 +5177,9 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
       menu,
       opts.itemId, // links the AI-log row to this scan
       opts.userId,
-      opts.replay,
+      // A replay routes from the candidates the row already carries, through the
+      // same refinement a model reply gets. No call, so nothing to degrade from.
+      opts.replay ? { storedCandidates: storedCandidateList(row.suggested_candidates) } : undefined,
     );
 
     // Decoder role-fill (P2/P3). When the item was resolved by an identifier
@@ -5110,14 +5194,22 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     // gets the VIN that exists, not the one the scanner hallucinated.
     applyDecoderFill(row.suggested_metadata, candidates, menu, row.barcode_text);
 
-    // Replay (no AI) is a CHEAPER re-derivation, not a fresh look at the thing.
-    // The keyword heuristic CANNOT know what a vision pass read off the photo —
-    // a plate, a paint colour — so replacing the candidate list wholesale makes a
-    // replay FORGET those fields and silently downgrade the item (a 0.98 match
-    // carrying license_plate/color became a 0.60 keyword match carrying nothing).
-    // Carry the previous run's fields forward for the SAME route; this run still
-    // wins per key, so a replay can correct but never erase.
-    if (opts.replay) carryForwardCandidateFields(row.suggested_candidates, candidates);
+    // THE REPLAY INVARIANT, checked rather than merely intended: a replay may
+    // only add or refine. It re-derives from the row's own stored knowledge, so
+    // it has nothing to say that could make the row worse — but every derivation
+    // pass added to the path above inherits that promise without knowing it
+    // exists, which is what turns one fixed bug into a closed class. Fires almost
+    // never; logs when it does, because that means a pass tried to regress a row.
+    if (opts.replay) {
+      const held = guardReplayCandidates(storedCandidateList(row.suggested_candidates), candidates);
+      if (held.refused) {
+        console.warn(
+          `[core-scan] replay would have downgraded item ${opts.itemId} (${held.refused}); kept what was stored`,
+        );
+        candidates.length = 0;
+        candidates.push(...(held.candidates as typeof candidates));
+      }
+    }
 
     // Persist: candidates + the matched_at stamp (the web renders a passive
     // "AI is reading…" pulse until this lands — no client triggering) +
@@ -5128,37 +5220,19 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     // pre-call handle is the classic "pool after end" (see /scan read-back).
     const dbAfter = (await platform().tenants.getDb(opts.orgId)) as unknown as ReturnType<typeof tenantDb>;
     const top = candidates[0];
-    // A barcode item a curated PROVIDER already identified keeps its "Resolved
-    // via {source}" provenance + identification confidence — the matchmaker's
-    // keyword-routing note ("Matched by keywords (no AI)…") must not clobber the
-    // identification headline (the routing still shows via the candidate chips).
-    // Photos/notes have no such provenance → the matchmaker's note IS the
-    // identification, so it stands.
     const idSource = ((row.suggested_metadata ?? {}) as { source?: string }).source ?? "";
-    const REAL_BARCODE_SOURCES = new Set(["go-upc", "openfoodfacts", "openproductsfacts", "upcitemdb"]);
-    const barcodeIdentified = !!row.barcode_text && !!row.suggested_name && REAL_BARCODE_SOURCES.has(idSource);
-    // A decoder (VIN) name is AUTHORITATIVE — vPIC's "year make model body trim"
-    // is ground truth, not a guess — so the matchmaker's reconciliation must not
-    // rename it. Without this, adoptName dropped "2019 Honda Civic Hatchback EX"
-    // back to the model's terser "2019 Honda Civic" on every match/re-run.
-    const decoderIdentified = idSource.startsWith("decoder:");
-    // For web-search / photo (NON-curated) items the matchmaker's candidate name
-    // is the reconciled one its note describes — publisher / author-parenthetical /
-    // retailer-noise stripped (a book: "Delmar Cengage Learning … (Whitman)" →
-    // "Refrigeration & Air Conditioning Technology"). Adopt it as the displayed
-    // name so the name and the note AGREE (the note kept claiming a cleanup the
-    // header didn't reflect). Guards: only when it changed, and never DROP a
-    // size/spec the resolved name carried (keep #384's "1.75 L").
+    const barcodeIdentified = isCuratedBarcodeIdentification(idSource, !!row.barcode_text, !!row.suggested_name);
     const candName =
       top && typeof top === "object" && "name" in top ? String((top as { name?: string }).name ?? "").trim() : "";
-    const SPEC_RE =
-      /\b\d+(?:\.\d+)?\s?(?:ml|cl|l|fl\.?\s?oz|oz|g|kg|mg|lb|ct|pk|pack|count|gal|qt|pt|proof|%)\b/i;
-    const adoptName =
-      !!candName &&
-      !barcodeIdentified &&
-      !decoderIdentified &&
-      candName.toLowerCase() !== (row.suggested_name ?? "").toLowerCase() &&
-      !(SPEC_RE.test(row.suggested_name ?? "") && !SPEC_RE.test(candName));
+    // May the top candidate RENAME the row? Four guards, each a past regression —
+    // see services/adopt-name.ts, where they live as one tested decision.
+    const adoptName = shouldAdoptCandidateName({
+      storedName: row.suggested_name,
+      candName,
+      idSource,
+      hasBarcode: !!row.barcode_text,
+      heuristic: !!top && typeof top === "object" && (top as { heuristic?: boolean }).heuristic === true,
+    });
 
     // Vehicle paint color: resolve the code the photo pass read (candidate notes
     // / observations / ai_notes) to a color name and fill it onto the vehicle

@@ -61,6 +61,9 @@ interface Props {
    *  one, the cell renders it beside a pencil instead of making the whole cell
    *  a click target, because a link and an edit target can't share a click. */
   children?: React.ReactNode;
+  /** The one-off clarifier beside a choice value. Display only: it is never
+   *  edited here and never part of the value (see field-note.ts). */
+  note?: string | null;
 }
 
 const isBlank = (v: unknown) => v === null || v === undefined || v === "";
@@ -78,6 +81,7 @@ export function EditableCell({
   options,
   fallbackLabel,
   children,
+  note,
 }: Props) {
   const [editing, setEditing] = useState(false);
 
@@ -103,6 +107,7 @@ export function EditableCell({
       choices={def.choices}
       unit={def.unit}
       size="inline"
+      note={note}
     />
   );
 

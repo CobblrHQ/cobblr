@@ -39,8 +39,24 @@ export interface SplitBox {
   h: number;
 }
 
-/** Crop one region (fraction box, 5% padding, clamped) → a NEW file id. */
-export async function cropRegion(orgId: string, fileId: string, box: SplitBox): Promise<string | null> {
+/** Crop one region (fraction box, clamped) → a NEW file id.
+ *
+ *  `pad` widens the box by that fraction of its own size on each side, and
+ *  defaults to 5% for the SPLIT case it was written for: a box drawn tightly
+ *  around one object in a group photo reads better with a little air, and the
+ *  neighbouring pixels are more of the same scene.
+ *
+ *  A SCREENSHOT region is the opposite situation and passes 0. There the box is
+ *  the page's own photo rectangle, so the pixels just outside it are the page
+ *  chrome the crop exists to remove — 5% pulled a sliced-off strip of the
+ *  listing title into the bottom of the catalog image, which was visible in the
+ *  output before anyone looked at the numbers. */
+export async function cropRegion(
+  orgId: string,
+  fileId: string,
+  box: SplitBox,
+  opts: { pad?: number } = {},
+): Promise<string | null> {
   const src = await readBytes(orgId, fileId);
   if (!src) return null;
   const img = sharp(src.buf, { failOn: "none" });
@@ -48,7 +64,7 @@ export async function cropRegion(orgId: string, fileId: string, box: SplitBox): 
   const W = meta.width ?? 0;
   const H = meta.height ?? 0;
   if (!W || !H) return null;
-  const pad = 0.05;
+  const pad = opts.pad ?? 0.05;
   const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
   const x0 = clamp01(box.x - pad * box.w);
   const y0 = clamp01(box.y - pad * box.h);
@@ -155,4 +171,45 @@ export async function detectSplitItems(
     });
   }
   return out;
+}
+
+// ── the product photo inside a screenshot ────────────────────────────────────
+// A screenshot of a marketplace listing already contains a good picture of the
+// item, wrapped in app chrome, price, seller and buttons. Cropping that out
+// beats searching the internet for a picture of some OTHER unit of the same
+// product: it is the actual thing, and it needs no search, no fetch, and no
+// chance of a hotlink-blocked 404 (a failure mode the web-image path carries
+// real code for).
+//
+// The BOX comes back on the identify reply, which already looks at every photo,
+// so finding it costs no extra call. An earlier draft made a second, gated call
+// instead — and the gate could not be built: four deterministic tests for "is
+// this a screenshot?" were measured against the committed fixtures and all four
+// failed. See docs/design-decisions/screenshot-to-catalog.md for the numbers.
+// What is left here is the part that still matters, which is refusing a box that
+// would make the catalog image worse.
+
+/** Validate a reply into a usable box, or null. Pure — exported for tests.
+ *
+ *  The size floor is the load-bearing part. A model that finds no photograph
+ *  sometimes returns a sliver or a near-full-frame box instead of the null it
+ *  was asked for, and both are worse than doing nothing: a sliver crops away the
+ *  item, and a near-full-frame "crop" is the screenshot again, chrome and all,
+ *  installed as the catalog image. */
+export function parseProductRegion(raw: unknown): SplitBox | null {
+  const box = (raw as { box?: unknown } | null)?.box;
+  if (!box || typeof box !== "object") return null;
+  const b = box as Record<string, unknown>;
+  const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
+  const x = num(b.x), y = num(b.y), w = num(b.w), h = num(b.h);
+  if ([x, y, w, h].some(Number.isNaN)) return null;
+  if (x < 0 || y < 0 || w <= 0 || h <= 0) return null;
+  if (x + w > 1.001 || y + h > 1.001) return null;
+  const area = w * h;
+  // Too small to BE the product photo — a logo, an avatar, a thumbnail.
+  if (area < 0.05) return null;
+  // Effectively the whole screenshot, so cropping it achieves nothing except
+  // installing the page chrome as the catalog image.
+  if (area > 0.9) return null;
+  return { x, y, w, h };
 }

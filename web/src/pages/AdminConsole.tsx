@@ -22,7 +22,7 @@ import {
   Eye,
 } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
-import { useConfirm, usePageTitle, useToast, Modal, useImageSrc } from "@cobblr/platform-web";
+import { useConfirm, usePageTitle, useToast, Modal } from "@cobblr/platform-web";
 import { setImpersonation } from "../lib/impersonation";
 import { displaySlug } from "../lib/workspaceSlug";
 import {
@@ -32,13 +32,14 @@ import {
   type WaitlistEntry,
   type SuperAdminAiActivityItem,
   type SuperAdminBarcodeCacheItem,
-  type FeedbackItem,
   type ScanEvalCase,
 } from "../lib/api";
 import { ADMIN_SECTIONS, isAdminSection, type AdminSectionId } from "../lib/adminSections";
 import { TokenManager } from "../components/TokenManager";
 import { ScanResolversTab } from "../components/ScanResolversTab";
 import { PayloadView, usageLine } from "../components/PayloadView";
+import { FeedbackCard, FEEDBACK_STATUSES, fbStatusLabel, type FeedbackSourceItem } from "@cobblr/platform-web";
+import { apiFeedbackSource } from "../lib/feedback-source-api";
 
 // The console content — one routed section at a time. The shell (AdminLayout)
 // owns the operator chrome + the section nav; this just dispatches /admin/:section
@@ -2000,12 +2001,9 @@ function AnnouncementsTab() {
   );
 }
 
-const FEEDBACK_STATUSES = ["new", "triaged", "in_progress", "awaiting_decision", "backlog", "resolved", "wontfix"] as const;
+// The status vocabulary and its labels live with the card in @cobblr/platform-web, so
+// the ops hub renders the same words for the same states.
 const FEEDBACK_FILTERS = ["all", ...FEEDBACK_STATUSES] as const;
-// `awaiting_decision` = the autopilot posted a spec/question card; OPEN + in the
-// working queue (not hidden in backlog) until the author picks Build/Pursue/Pass/Backlog.
-const FEEDBACK_STATUS_LABEL: Record<string, string> = { awaiting_decision: "awaiting you" };
-const fbStatusLabel = (s: string) => FEEDBACK_STATUS_LABEL[s] ?? s.replace(/_/g, " ");
 const FEEDBACK_SORTS = ["priority", "recent"] as const;
 type FeedbackSort = (typeof FEEDBACK_SORTS)[number];
 const FEEDBACK_FILTER_KEY = "cobblr.admin.feedback.filter";
@@ -2110,237 +2108,15 @@ function FeedbackTab() {
       )}
       <ul className="space-y-3">
         {items.map((f) => (
-          <FeedbackCard key={f.id} f={f} onUpdate={(body) => update.mutate({ id: f.id, body })} />
+          <FeedbackCard
+            key={f.id}
+            f={f as unknown as FeedbackSourceItem}
+            source={apiFeedbackSource}
+            onUpdate={(body) => update.mutate({ id: f.id, body })}
+          />
         ))}
       </ul>
     </div>
-  );
-}
-
-const PRIORITY_CHIP: Record<string, string> = {
-  urgent: "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300",
-  high: "bg-orange-100 text-orange-700 dark:bg-orange-900/50 dark:text-orange-300",
-  medium: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
-  low: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400",
-};
-
-function PriorityChip({ priority }: { priority: "urgent" | "high" | "medium" | "low" }) {
-  return (
-    <span
-      className={
-        "px-1.5 py-0.5 rounded font-mono uppercase text-[10px] font-semibold " +
-        (PRIORITY_CHIP[priority] ?? PRIORITY_CHIP.low)
-      }
-    >
-      {priority}
-    </span>
-  );
-}
-
-function ValidViableChip({ ok, label }: { ok: boolean | null; label: string }) {
-  if (ok === null) return null;
-  return (
-    <span className={ok ? "text-moss-600 dark:text-moss-400" : "text-red-500 dark:text-red-400"}>
-      {ok ? "✓" : "✕"} {label}
-    </span>
-  );
-}
-
-// A reporter-attached screenshot: thumbnail in the card, click to enlarge. The
-// image routes through useImageSrc (Bearer → blob) since the raw endpoint is
-// auth-gated; one `medium` fetch serves both the thumb and the lightbox.
-function FeedbackShot({ feedbackId, fileId, name }: { feedbackId: string; fileId: string; name?: string }) {
-  const [zoom, setZoom] = useState(false);
-  const src = useImageSrc(api.feedbackAttachmentRawUrl(feedbackId, fileId, "medium"));
-  return (
-    <>
-      <button
-        type="button"
-        onClick={() => setZoom(true)}
-        title={name || "screenshot"}
-        className="w-16 h-16 rounded-md overflow-hidden border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800"
-      >
-        {src ? (
-          <img src={src} alt={name || "screenshot"} className="w-full h-full object-cover" />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-[10px] text-faint">…</div>
-        )}
-      </button>
-      <Modal open={zoom} onClose={() => setZoom(false)} title={name || "Screenshot"} size="lg">
-        {src ? (
-          <img src={src} alt={name || "screenshot"} className="max-h-[70vh] w-auto mx-auto rounded" />
-        ) : (
-          <div className="text-xs text-faint p-8 text-center">loading…</div>
-        )}
-      </Modal>
-    </>
-  );
-}
-
-function FeedbackCard({
-  f,
-  onUpdate,
-}: {
-  f: FeedbackItem;
-  onUpdate: (body: {
-    status?: string;
-    admin_notes?: string | null;
-    notify_reporter?: boolean;
-    reply_message?: string;
-    public_summary?: string;
-  }) => void;
-}) {
-  const [notes, setNotes] = useState(f.admin_notes ?? "");
-  const [reply, setReply] = useState("");
-  // Third-person "what we fixed" note for the Discord feedback-resolved post.
-  const [publicSummary, setPublicSummary] = useState("");
-  const ctx = (f.context ?? {}) as { url?: string; route?: string };
-  const emoji = f.type === "bug" ? "🐛" : f.type === "confusing" ? "😕" : f.type === "idea" ? "💡" : "•";
-  return (
-    <li className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 text-sm space-y-2">
-      <div className="flex items-center gap-2 flex-wrap text-xs">
-        <span>
-          {emoji} <span className="font-mono uppercase text-accent">{f.type}</span>
-        </span>
-        {f.triage_priority && <PriorityChip priority={f.triage_priority} />}
-        {f.origin === "discord" && (
-          <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300">
-            discord
-          </span>
-        )}
-        <span className="text-faint dark:text-slate-500">
-          {f.user_name || f.user_email || f.origin_ref?.username || "?"}
-        </span>
-        {f.workspace_slug && (
-          <span className="text-faint dark:text-slate-500">· {f.workspace_name || f.workspace_slug}</span>
-        )}
-        <span className="text-faint dark:text-slate-500">· {new Date(f.created_at).toLocaleString()}</span>
-        <div className="flex-1" />
-        <select
-          value={f.status}
-          onChange={(e) =>
-            onUpdate({
-              status: e.target.value,
-              // On resolve, carry the "what we fixed" note into the Discord post.
-              ...(e.target.value === "resolved" && publicSummary.trim()
-                ? { public_summary: publicSummary.trim() }
-                : {}),
-            })
-          }
-          className="text-xs rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-1 py-0.5"
-        >
-          {FEEDBACK_STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {fbStatusLabel(s)}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className="text-content dark:text-mortar-100 whitespace-pre-wrap">{f.message}</div>
-      {ctx.route && (
-        <div className="text-[10px] font-mono text-faint dark:text-slate-500 break-all">@ {ctx.route}</div>
-      )}
-      {f.attachments?.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {f.attachments.map((a) => (
-            <FeedbackShot key={a.file_id} feedbackId={f.id} fileId={a.file_id} name={a.name} />
-          ))}
-        </div>
-      )}
-      {f.followups?.length > 0 && (
-        <div className="border-l-2 border-indigo-300 dark:border-indigo-700 pl-2.5 space-y-1.5">
-          <div className="text-[10px] font-mono uppercase tracking-wide text-faint dark:text-slate-500">
-            💬 {f.followups.length} follow-up{f.followups.length === 1 ? "" : "s"}
-          </div>
-          {f.followups.map((fu, i) => (
-            <div key={i} className="text-xs">
-              <span className="text-faint dark:text-slate-500">{fu.from}: </span>
-              <span className="text-content dark:text-mortar-200 whitespace-pre-wrap">{fu.text}</span>
-              {fu.images?.map((img, j) => (
-                <a
-                  key={j}
-                  href={img.url && /^https?:\/\//i.test(img.url) ? img.url : undefined}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="ml-1.5 text-accent hover:underline"
-                >
-                  🖼 {img.name || "image"}
-                </a>
-              ))}
-            </div>
-          ))}
-        </div>
-      )}
-      {f.triaged_at && (
-        <div className="rounded-lg border border-line/70 dark:border-slate-800 bg-subtle/60 dark:bg-slate-800/40 p-2.5 space-y-1.5">
-          <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-wide text-faint dark:text-slate-500">
-            <span>🤖 AI triage</span>
-            <ValidViableChip ok={f.triage_valid} label="valid" />
-            <ValidViableChip ok={f.triage_viable} label="viable" />
-            {f.triage_model && <span className="text-faint/70">· {f.triage_model}</span>}
-          </div>
-          {f.triage_summary && (
-            <div className="text-xs text-content dark:text-mortar-200">{f.triage_summary}</div>
-          )}
-          {f.triage_action && (
-            <div className="text-xs text-faint dark:text-slate-400">
-              <span className="font-medium text-accent">→ </span>
-              {f.triage_action}
-            </div>
-          )}
-        </div>
-      )}
-      <div className="flex items-end gap-2">
-        <textarea
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          rows={1}
-          placeholder="triage notes…"
-          className="flex-1 text-xs rounded border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800/70 px-2 py-1 text-content dark:text-mortar-200"
-        />
-        <button
-          type="button"
-          onClick={() => onUpdate({ admin_notes: notes })}
-          className="text-xs px-2 py-1 rounded bg-cobble-600 hover:bg-cobble-700 text-white"
-        >
-          save note
-        </button>
-      </div>
-      {/* Close the loop with the reporter — sends them an in-app notification
-          ("we fixed it" / "we're looking into it"). Empty reply = a default
-          keyed off the current status. */}
-      <div className="flex items-end gap-2 border-t border-line/60 dark:border-slate-800 pt-2">
-        <input
-          value={reply}
-          onChange={(e) => setReply(e.target.value)}
-          placeholder={`reply to ${f.user_name || f.user_email || f.origin_ref?.username || "the reporter"} ${f.origin === "discord" ? "(in Discord thread)" : "(in-app)"}…`}
-          className="flex-1 text-xs rounded border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800/70 px-2 py-1 text-content dark:text-mortar-200"
-        />
-        <button
-          type="button"
-          onClick={() => {
-            onUpdate({
-              notify_reporter: true,
-              reply_message: reply.trim() || undefined,
-              status: f.status,
-            });
-            setReply("");
-          }}
-          className="text-xs px-2 py-1 rounded bg-violet-600 hover:bg-violet-700 text-white whitespace-nowrap"
-          title="Send the reporter an in-app notification. Uses your reply, or a default based on the current status."
-        >
-          notify reporter
-        </button>
-      </div>
-      {/* Public "what we fixed" note — third-person; posted to the Discord
-          feedback channel when you set status → resolved. Not sent to the reporter. */}
-      <input
-        value={publicSummary}
-        onChange={(e) => setPublicSummary(e.target.value)}
-        placeholder="what we fixed (third-person - posts to Discord on resolve)…"
-        className="w-full text-xs rounded border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800/70 px-2 py-1 text-content dark:text-mortar-200"
-      />
-    </li>
   );
 }
 

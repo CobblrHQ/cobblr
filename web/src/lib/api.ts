@@ -3240,7 +3240,7 @@ export const api = {
   setScanPhotoRankConfig: (slug: string, enabled: boolean) =>
     request<{ enabled: boolean }>("PUT", `/orgs/${slug}/modules/core-scan/photo-rank-config`, { enabled }),
   /** Revert the catalog image to the original, or use the user's own scan photo. */
-  scanCatalogAction: (slug: string, id: string, action: "revert" | "use_own_photo") =>
+  scanCatalogAction: (slug: string, id: string, action: "revert" | "use_own_photo" | "use_screenshot_crop") =>
     request<ScanInboxItem>(
       "POST",
       `/orgs/${slug}/modules/core-scan/inbox/${id}/catalog-image`,

@@ -40,6 +40,7 @@ import {
 import { useInventory } from "./context";
 import { QtyStepper } from "./QtyStepper";
 import { assortedQty, isAssorted } from "./assorted";
+import { noteOf } from "@cobblr/platform-web";
 import { useFieldPresentation } from "./useFieldPresentation";
 import { useDisclosure } from "./useDisclosure";
 import { NewPartDialog } from "./NewPartDialog";
@@ -1094,6 +1095,7 @@ function PartsTable({
                   <EditableCell
                     def={c}
                     value={(p.metadata as Record<string, unknown> | null)?.[c.name]}
+                    note={noteOf(p.metadata as Record<string, unknown> | null, c.name)}
                     onCommit={(v) => setMeta(p, c.name, v)}
                   />
                 </td>

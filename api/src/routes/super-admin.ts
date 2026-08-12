@@ -2950,7 +2950,13 @@ superAdminRouter.post("/scan-eval", async (req, res, next) => {
     }
 
     // photo-identify
-    res.json({ identity: await identifyImage(orgId, parsed.data.image_b64, parsed.data.image_media_type) });
+    res.json({
+      identity: await identifyImage({
+        orgId,
+        imageB64: parsed.data.image_b64,
+        mediaType: parsed.data.image_media_type,
+      }),
+    });
   } catch (err) {
     next(err);
   }

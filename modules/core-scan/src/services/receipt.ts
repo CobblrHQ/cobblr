@@ -24,6 +24,7 @@ import {
   buildReceipt,
   type ParsedReceipt,
   type ReceiptResult,
+  enrichReceiptFromText,
 } from "./receipt-shared.js";
 import {
   enrichReceiptMeta,
@@ -183,7 +184,9 @@ export async function parseReceipt(orgId: string, fileId: string, userId?: strin
     try {
       const receipt = shapeReceipt(await chatExtract(orgId, pdf.text, fileId, userId));
       if (!receipt) return { ok: false, reason: "Couldn't find any line items on that receipt." };
-      return { ok: true, receipt, method: "ai-chat" };
+      // The model is asked for line items; the totals, the seller and the ETA
+      // are read deterministically from the same text rather than trusted to it.
+      return { ok: true, receipt: enrichReceiptFromText(receipt, pdf.text), method: "ai-chat" };
     } catch (e) {
       return { ok: false, reason: aiError(e) };
     }
@@ -207,7 +210,7 @@ export async function parseReceipt(orgId: string, fileId: string, userId?: strin
   try {
     const receipt = shapeReceipt(await chatExtract(orgId, asText, fileId, userId));
     if (!receipt) return { ok: false, reason: "Couldn't find any line items on that receipt." };
-    return { ok: true, receipt, method: "ai-chat" };
+    return { ok: true, receipt: enrichReceiptFromText(receipt, asText), method: "ai-chat" };
   } catch (e) {
     return { ok: false, reason: aiError(e) };
   }

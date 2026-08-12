@@ -21,6 +21,7 @@ import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { signSession } from "../auth/jwt.js";
 import { inboundSecretOk } from "../platform/inbound-secret.js";
+import { landedSomething } from "../platform/inbound-dedupe.js";
 import { notifyAccount } from "../platform/notifications.js";
 import { absoluteAppUrl } from "../platform/public-url.js";
 import { planBodyCapture } from "../platform/receipt-body.js";
@@ -153,7 +154,7 @@ export async function ingestReceiptEmail(
       .select(["id"])
       .where("message_id", "=", msgId)
       .where("processed_at", "is not", null)
-      .where(sql<boolean>`coalesce(outcome->>'item_count','0') <> '0' or coalesce((outcome->>'note')::boolean, false)`)
+      .where(landedSomething())
       .limit(1)
       .executeTakeFirst();
     if (priorSuccess) {

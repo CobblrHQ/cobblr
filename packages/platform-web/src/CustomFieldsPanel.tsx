@@ -9,12 +9,13 @@
 // the choices via api.appendFieldDefChoice (if the host adapter
 // implements it).
 
-import { useMemo, useState, type FocusEvent } from "react";
+import { useEffect, useMemo, useState, type FocusEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePlatformWeb } from "./context";
 import type { PlatformFieldDef } from "./types";
 import { fieldControl } from "./fieldControl";
 import { FieldRenderer, boolLabel, boolTruthy } from "./FieldRenderer";
+import { canCarryNote, noteKey, noteOf } from "./field-note";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { relativeTime } from "./relativeTime";
 import { useUnits } from "./useUnits";
@@ -131,6 +132,8 @@ export function CustomFieldsPanel({
           fallbackValue={fallbackValues?.[f.name]}
           fallbackLabel={fallbackLabel}
           onCommit={(v) => onCommit(f.name, v)}
+          note={noteOf(values, f.name)}
+          onCommitNote={(v) => onCommit(noteKey(f.name), v)}
         />
       ))}
     </div>
@@ -172,12 +175,16 @@ function FieldRow({
   fallbackValue,
   fallbackLabel,
   onCommit,
+  note,
+  onCommitNote,
 }: {
   def: PlatformFieldDef;
   value: unknown;
   fallbackValue?: unknown;
   fallbackLabel?: string;
   onCommit: (v: unknown) => void;
+  note?: string | null;
+  onCommitNote?: (v: unknown) => void;
 }) {
   // One shared decision (see fieldControl) so this panel and the create
   // modal can't disagree on a field's control — the bug where a boolean
@@ -198,8 +205,15 @@ function FieldRow({
       // Colour branch — a real swatch picker (type a hex/name OR pick).
       <ColorRow def={def} value={value} onCommit={onCommit} />
     ) : control === "choice" ? (
-      // Dropdown branch — a `choices` list.
-      <ChoiceRow def={def} value={value} onCommit={onCommit} />
+      // Dropdown branch — a `choices` list, plus the optional one-off clarifier
+      // that keeps the long tail (a specific seller) out of the curated list.
+      <ChoiceRow
+        def={def}
+        value={value}
+        onCommit={onCommit}
+        note={note}
+        onCommitNote={onCommitNote}
+      />
     ) : control === "checkbox" ? (
       // Boolean — a real checkbox, not a text box.
       <BoolRow def={def} value={value} onCommit={onCommit} />
@@ -657,10 +671,14 @@ function ChoiceRow({
   def,
   value,
   onCommit,
+  note,
+  onCommitNote,
 }: {
   def: PlatformFieldDef;
   value: unknown;
   onCommit: (v: unknown) => void;
+  note?: string | null;
+  onCommitNote?: (v: unknown) => void;
 }) {
   const { api, orgSlug } = usePlatformWeb();
   const qc = useQueryClient();
@@ -710,38 +728,80 @@ function ChoiceRow({
   }
 
   return (
-    <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-        {def.display_label}
-        {def.required ? <span className="text-ember-500"> *</span> : null}
-      </span>
-      <select
-        value={current || ""}
-        onChange={(e) => {
-          const v = e.target.value;
-          if (v === ADD_NEW) {
-            setPendingNew("");
-            return;
-          }
-          onCommit(v === "" ? null : v);
-        }}
-        className="input"
-      >
-        <option value="">—</option>
-        {def.choices!.map((c) => (
-          <option key={c} value={c}>
-            {c}
-          </option>
-        ))}
-        {/* current value isn't in choices? show it anyway so we don't
-            silently lose it. */}
-        {current && !def.choices!.includes(current) && (
-          <option value={current}>{current} (legacy)</option>
-        )}
-        {api.appendFieldDefChoice && (
-          <option value={ADD_NEW}>+ add new…</option>
-        )}
-      </select>
-    </label>
+    <div className="space-y-1">
+      <label className="block">
+        <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+          {def.display_label}
+          {def.required ? <span className="text-ember-500"> *</span> : null}
+        </span>
+        <select
+          value={current || ""}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v === ADD_NEW) {
+              setPendingNew("");
+              return;
+            }
+            onCommit(v === "" ? null : v);
+          }}
+          className="input"
+        >
+          <option value="">—</option>
+          {def.choices!.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+          {/* current value isn't in choices? show it anyway so we don't
+              silently lose it. */}
+          {current && !def.choices!.includes(current) && (
+            <option value={current}>{current} (legacy)</option>
+          )}
+          {api.appendFieldDefChoice && (
+            <option value={ADD_NEW}>+ add new…</option>
+          )}
+        </select>
+      </label>
+      {/* The one-off clarifier. Deliberately secondary and unlabelled beyond its
+          placeholder: it is an optional detail, not a second required field, and
+          giving it equal weight would imply everyone should fill it in. Only
+          offered once a value exists, since "eBay · detroitaxle" needs the eBay
+          first, and only on a field with a curated list to protect. */}
+      {onCommitNote && current && canCarryNote(def) && (
+        <NoteInput
+          value={note ?? ""}
+          onCommit={(v) => onCommitNote(v.trim() === "" ? null : v.trim())}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Uncontrolled-until-blur so typing does not fire a write per keystroke. */
+function NoteInput({
+  value,
+  onCommit,
+}: {
+  value: string;
+  onCommit: (v: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  // Re-sync when the record changes underneath (a refetch, a different row).
+  useEffect(() => setDraft(value), [value]);
+  return (
+    <input
+      type="text"
+      value={draft}
+      placeholder="who specifically? (optional)"
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        if (draft.trim() !== value.trim()) onCommit(draft);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        if (e.key === "Escape") setDraft(value);
+      }}
+      className="input text-[12px] py-1"
+    />
   );
 }

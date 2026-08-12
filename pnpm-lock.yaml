@@ -1204,6 +1204,37 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
+  ops-console:
+    dependencies:
+      '@cobblr/platform-web':
+        specifier: workspace:*
+        version: link:../packages/platform-web
+      react:
+        specifier: ^19.1.0
+        version: 19.2.6
+      react-dom:
+        specifier: ^19.1.0
+        version: 19.2.6(react@19.2.6)
+    devDependencies:
+      '@vitejs/plugin-react':
+        specifier: ^4.3.4
+        version: 4.7.0(vite@7.3.3(@types/node@22.19.19)(jiti@1.21.7)(tsx@4.22.0))
+      autoprefixer:
+        specifier: ^10.4.20
+        version: 10.5.0(postcss@8.5.14)
+      postcss:
+        specifier: ^8.4.49
+        version: 8.5.14
+      tailwindcss:
+        specifier: ^3.4.17
+        version: 3.4.19(tsx@4.22.0)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vite:
+        specifier: ^7.0.0
+        version: 7.3.3(@types/node@22.19.19)(jiti@1.21.7)(tsx@4.22.0)
+
   packages/mcp-server:
     dependencies:
       '@cobblr/workspace-tools':

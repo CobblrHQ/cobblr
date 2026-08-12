@@ -76,6 +76,17 @@ export const IDENTIFY_PROMPT =
   "case), name it in plain English (\"black\", \"navy\", \"red\"). Use the " +
   "colour of the ITEM, not its packaging. Omit it for something with no one " +
   "colour, and never guess from a colour CODE you cannot interpret.\n\n" +
+  "If this image is a SCREENSHOT of a page or app rather than a photo of the " +
+  "thing itself — a marketplace listing, a shop page, a chat — report " +
+  '"product_photo_box": the bounding box of the ONE largest photograph OF THE ' +
+  "ITEM inside it, as fractions of the whole image (x,y = top-left corner, w,h " +
+  "= size, all 0..1). Exclude everything that is not that photograph: " +
+  "navigation, headers, buttons, price and description text, seller avatars, " +
+  "site logos, keyboards, status bars, and thumbnails of OTHER items. Report " +
+  "null when this is an ordinary photo of a thing, when the whole image already " +
+  "IS the item's photograph with no page around it, or when no photograph of " +
+  "the item is visible. Identify the ITEM either way: a listing screenshot is " +
+  "still a scan of that item.\n\n" +
   'Reply with ONLY a JSON object: {"name": <string>, "brand": <string|null>, ' +
   '"color": <the item\'s colour in plain English, else null>, ' +
   '"category": <string|null>, "entity_type": "asset"|"part"|null, ' +
@@ -83,6 +94,7 @@ export const IDENTIFY_PROMPT =
   '"barcode": <the UPC/EAN digits if clearly legible, else null>, ' +
   '"serial_number": <the serial number / service tag read verbatim if clearly legible, else null>, ' +
   '"observations": <string>, "distinct_items": <integer>, ' +
+  '"product_photo_box": {"x": <0..1>, "y": <0..1>, "w": <0..1>, "h": <0..1>}|null, ' +
   '"items": [{"name": <string>, "brand": <string|null>, "qty": <integer>}], ' +
   '"confidence": <0..1, how sure you are>}. If the photo is unclear, empty, or ' +
   "not an identifiable object, reply name \"\" and confidence 0.";

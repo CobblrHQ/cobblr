@@ -18,6 +18,9 @@ import { reportBarcodeCorrection, reportBarcodeReject } from "./barcode-correcti
 import { identityMeta, mergeMeta } from "./metadata.js";
 import { evictBarcodeCaches, rememberLocalIdentity } from "./barcode-cache.js";
 import { searchImages, rankImageOptions, imageQuery, mediaSearchExtras } from "./ddg-images.js";
+import { sql } from "kysely";
+import { cropRegion, parseProductRegion } from "./image-ops.js";
+import { seedHistory, pushStep, type CatalogSource } from "./catalog-history.js";
 
 /** Re-fetch the catalog image to match a (corrected) name. The card prefers the
  *  downloaded `catalog_image_file_id` over `catalog_image_url`, so a rename left
@@ -109,9 +112,6 @@ interface PhotoEnrichContext {
   /** Every correction the user has given this item, oldest first (standingHints).
    *  The prompt weighs later over earlier; `hint` is the newest. */
   hints?: string[];
-  /** REPLAY: re-parse the model's PREVIOUS reply with today's code, never call
-   *  the provider (see RerunBody.no_ai). Beats `force`, which means the opposite. */
-  replay?: boolean;
 }
 
 function clamp01(n: number): number {
@@ -147,6 +147,11 @@ export interface PhotoIdentity {
    *  listing-derived counts and is what catches the unit-barcode-on-a-multipack
    *  trap. Empty string when the model didn't say (an older cached reply). */
   observations: string;
+  /** When the upload was a SCREENSHOT of a listing, where the item's own
+   *  photograph sits inside it — so it can be cropped out and used as the
+   *  catalog image instead of a stock photo of some other unit. Null for an
+   *  ordinary photo, which is the common case. */
+  product_photo_box: { x: number; y: number; w: number; h: number } | null;
   /** How many DISTINCT things are pictured. Several units of the SAME product is
    *  a quantity, not a split (a sealed 10-pack of screws is ONE thing) — only
    *  genuinely different items count. 1 for the overwhelmingly common case. */
@@ -207,23 +212,41 @@ export function normalizeIndividuals(
  * single item. Shared by `enrichPhotoItem` (which then writes the row) and the
  * super-admin eval seam (docs/operations/ai-prompt-eval-harness.md, P3).
  */
-export async function identifyImage(
-  orgId: string,
-  imageB64: string,
-  mediaType: string,
-  sourceId?: string,
-  userId?: string | null,
-  bypassCache?: boolean,
-  hint?: string,
-  cacheOnly?: boolean,
+/** Named, not positional, on purpose. This took eight positional parameters, and
+ *  four of them were optional and adjacent, so deleting one silently shifted
+ *  every argument after it into the wrong slot at every call site. That happened
+ *  while removing the replay flag: `hints` landed in the slot the deleted
+ *  parameter had occupied, and only a type mismatch (string[] vs boolean) turned
+ *  it into a compile error instead of a wrong prompt. Two same-typed neighbours
+ *  and it would have shipped. A named bag makes the mistake unexpressible. */
+export interface IdentifyImageOpts {
+  orgId: string;
+  imageB64: string;
+  mediaType: string;
+  sourceId?: string;
+  userId?: string | null;
+  bypassCache?: boolean;
+  hint?: string;
   /** Every correction the user has given this item, oldest first. The prompt
    *  shows them all and weighs later over earlier; `hint` stays the newest for
    *  callers that only carry one. */
-  hints?: string[],
+  hints?: string[];
   /** The workspace's existing category vocabulary, so the identify reuses a
    *  label instead of inventing a synonym of one. */
-  knownCategories?: string[],
-): Promise<PhotoIdentity | null> {
+  knownCategories?: string[];
+}
+
+export async function identifyImage({
+  orgId,
+  imageB64,
+  mediaType,
+  sourceId,
+  userId,
+  bypassCache,
+  hint,
+  hints,
+  knownCategories,
+}: IdentifyImageOpts): Promise<PhotoIdentity | null> {
   let parsed: Record<string, unknown> | null = null;
   try {
     const r = await platform().ai.invoke({
@@ -245,9 +268,6 @@ export async function identifyImage(
       // CURRENT identify prompt, not a result cached under an older one (keyed by
       // image, not prompt — a prompt fix wouldn't otherwise reach a cached image).
       bypass_cache: bypassCache,
-      // A REPLAY re-parses the previous reply with today's code and never calls
-      // out; a miss throws in the no-provider family and we return null below.
-      cache_only: cacheOnly,
     });
     // OpenAI returns {role, content}; Anthropic returns {text} — tolerate both.
     const res = r.result as { text?: string; content?: string };
@@ -333,6 +353,9 @@ export function parseIdentityReply(parsed: Record<string, unknown> | null): Phot
     // has neither: observations "" and distinct 1 — i.e. exactly the pre-change
     // behavior, no split offer. Never a reason to fail the identify.
     observations: str(p.observations).slice(0, 1500),
+    // Validated, not trusted: a model that finds no photograph sometimes returns
+    // a sliver or a near-full-frame box instead of the null it was asked for.
+    product_photo_box: parseProductRegion({ box: p.product_photo_box }),
     ...normalizeIndividuals(p.items, p.distinct_items),
   };
 }
@@ -434,7 +457,6 @@ export async function observeScanPhoto(
   imageFileId: string,
   sourceId?: string,
   userId?: string | null,
-  cacheOnly?: boolean,
 ): Promise<PhotoObservation | null> {
   const file =
     (await platform().files.read(orgId, imageFileId, "medium")) ??
@@ -446,7 +468,6 @@ export async function observeScanPhoto(
       orgId,
       userId: userId ?? undefined,
       capability: "classify-image",
-      cache_only: cacheOnly,
       input: {
         image_b64: imageB64,
         image_media_type: file.mimeType,
@@ -822,9 +843,8 @@ export async function crossCheckScanPhoto(
   }
 }
 
-/** Why an enrich did nothing — so a REPLAY can report "nothing cached to replay"
- *  instead of looking like a silent no-op, and never be mistaken for a failure. */
-export type EnrichOutcome = "identified" | "no-photo-bytes" | "not-identified" | "nothing-cached";
+/** Why an enrich did nothing, so a caller can tell a real failure from a no-op. */
+export type EnrichOutcome = "identified" | "no-photo-bytes" | "not-identified";
 
 /** Categories this workspace has recently used, most-used first.
  *
@@ -873,19 +893,17 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOu
   const imageB64 = Buffer.from(file.bytes).toString("base64");
 
   const knownCats = await knownCategories(ctx.db);
-  const identity = await identifyImage(
-    ctx.orgId,
+  const identity = await identifyImage({
+    orgId: ctx.orgId,
     imageB64,
-    file.mimeType,
-    ctx.itemId,
-    ctx.userId,
-    // A replay must never bypass the cache — that's what would make it pay.
-    !ctx.replay && (ctx.force || !!ctx.hint),
-    ctx.hint,
-    ctx.replay,
-    ctx.hints,
-    knownCats,
-  );
+    mediaType: file.mimeType,
+    sourceId: ctx.itemId,
+    userId: ctx.userId,
+    bypassCache: ctx.force || !!ctx.hint,
+    hint: ctx.hint,
+    hints: ctx.hints,
+    knownCategories: knownCats,
+  });
   // identifyImage's vision call can run tens of seconds. When enrichPhotoItem
   // runs detached (after the HTTP response has returned), the request's tenant
   // pool may have been reaped meanwhile — a later write then throws "Cannot use
@@ -893,11 +911,6 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOu
   // post-vision write (the same guard matchItem uses).
   ctx.db = (await platform().tenants.getDb(ctx.orgId)) as unknown as typeof ctx.db;
   if (!identity) {
-    // A REPLAY with nothing cached for this image. There is no new information,
-    // so leave the row EXACTLY as it was — stamping the couldn't-identify note
-    // here would destroy a perfectly good name to report that we declined to
-    // spend money.
-    if (ctx.replay) return "nothing-cached";
     // No vision provider, the model/parse failed, or no single item was visible.
     await patchNote(
       ctx,
@@ -954,6 +967,14 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOu
     .where("id", "=", ctx.itemId)
     .execute();
 
+  // A SCREENSHOT of a listing already contains a photograph of the item. Crop it
+  // out and use THAT, rather than searching the internet for a picture of some
+  // other unit of the same product: it is the actual thing, it needs no search
+  // or fetch, and it cannot 404 or hotlink-block. Falls through to the image
+  // search when this is not a screenshot, which is the ordinary case.
+  const cropped = await catalogFromScreenshot(ctx, identity.product_photo_box).catch(() => false);
+  if (cropped) return "identified";
+
   // Auto-suggest a clean CATALOG image for a photographed item — the user's own
   // photo stays as "yours", but a studio shot from an image search on the
   // resolved name gives a nicer display. Previously this only ran on a barcode
@@ -961,4 +982,68 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOu
   // honors a user-picked image (refreshCatalogImageByName checks the lock).
   void refreshCatalogImageByName(ctx.orgId, ctx.itemId, identity.name, identity.brand).catch(() => {});
   return "identified";
+}
+
+/** Crop the item's photograph out of a screenshot and make it the catalog image.
+ *
+ *  Returns whether it did, so the caller can skip the image search: when we have
+ *  a picture of the actual item there is nothing to go looking for.
+ *
+ *  Awaited rather than detached, unlike the search it replaces, because the two
+ *  race for the same column. Detaching both meant whichever finished last won,
+ *  which is a coin toss between "your item" and "a stock photo of a different
+ *  one". It is one call on a rare shape, and the enrich is already detached from
+ *  the request.
+ *
+ *  Never overrides a human's pick, same rule as everything else that writes this
+ *  column. */
+async function catalogFromScreenshot(
+  ctx: PhotoEnrichContext,
+  box: { x: number; y: number; w: number; h: number } | null,
+): Promise<boolean> {
+  if (!box) return false;
+  const row = await ctx.db
+    .selectFrom("core_scan_inbox_items")
+    .select(["suggested_metadata", "catalog_image_url", "catalog_image_file_id"])
+    .where("id", "=", ctx.itemId)
+    .executeTakeFirst();
+  const meta = (row?.suggested_metadata ?? {}) as Record<string, unknown>;
+  if (meta.catalog_image_user_set === true) return false;
+
+  // pad: 0 — the box IS the page's photo rectangle, so the pixels just outside it
+  // are the chrome this crop exists to remove.
+  const croppedId = await cropRegion(ctx.orgId, ctx.imageFileId, box, { pad: 0 });
+  if (!croppedId) return false;
+
+  // Onto the undo stack, so Revert walks back to whatever was showing before,
+  // exactly as it does for a hand-picked image. Each apply pushes the image it
+  // REPLACES, tagged with where THAT one came from; `catalog_source` then
+  // records what is showing now, so the next push can label it in turn.
+  const history = pushStep(
+    seedHistory(meta.catalog_history, meta.orig_catalog as { url: string | null; file_id: string | null } | undefined),
+    { url: row?.catalog_image_url ?? null, file_id: row?.catalog_image_file_id ?? null },
+    meta.catalog_source as CatalogSource | undefined,
+  );
+
+  await ctx.db
+    .updateTable("core_scan_inbox_items")
+    .set({
+      catalog_image_file_id: croppedId,
+      catalog_image_url: null,
+      // NOT `catalog_image_user_set` — no human chose this, and claiming they did
+      // would silence the ✨ pick-best ranker permanently. Its own flag says the
+      // same thing to the passes that must not clobber it, and no more.
+      suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({
+        catalog_image_from_screenshot: true,
+        catalog_source: "crop",
+        catalog_history: history,
+        /** The crop's own file id, so the photo-options strip can offer it as a
+         *  pane after the user has moved to a web image and wants it back. */
+        screenshot_crop_file_id: croppedId,
+      })}::jsonb` as never,
+      updated_at: new Date(),
+    })
+    .where("id", "=", ctx.itemId)
+    .execute();
+  return true;
 }

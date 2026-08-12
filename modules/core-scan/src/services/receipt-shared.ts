@@ -28,6 +28,13 @@ export function vendorFromLabel(label: string | null | undefined): string | null
   return m?.[1]?.trim() || null;
 }
 
+import {
+  detectSeller,
+  parseEstimatedDelivery,
+  parseReceiptTotals,
+  type ReceiptTotals,
+} from "@cobblr/platform-contract/receipt-totals";
+
 export interface ParsedReceipt {
   vendor: string | null;
   /** Order / invoice / reference number, when the receipt states one — makes two
@@ -38,6 +45,18 @@ export interface ParsedReceipt {
   /** ISO-4217 code, uppercased, when stated. */
   currency: string | null;
   total: number | null;
+  /** WHO sold it, when that differs from the vendor. A marketplace listing
+   *  carries both and they are not the same fact: the vendor is where you shop
+   *  again, the seller may never come up twice. */
+  seller: string | null;
+  /** The money broken into components, with a reconciliation verdict. Null when
+   *  there was no source text to read (a vision-only parse). See
+   *  docs/design-decisions/arrivals.md for why the net price is the useful one
+   *  and why an unreconciled one is withheld rather than guessed. */
+  totals: ReceiptTotals | null;
+  /** ISO date the receipt says it should arrive. This is what turns a receipt
+   *  into an ORDER with an ETA rather than a thing you supposedly already own. */
+  expected_arrival: string | null;
   items: ReceiptLine[];
 }
 
@@ -85,6 +104,9 @@ export function buildReceipt(parts: {
   date?: unknown;
   currency?: unknown;
   total?: unknown;
+  seller?: unknown;
+  totals?: ReceiptTotals | null;
+  expected_arrival?: unknown;
   items: Array<{ description?: unknown; qty?: unknown; unit_price?: unknown; line_total?: unknown }>;
 }): ParsedReceipt | null {
   const items: ReceiptLine[] = [];
@@ -106,7 +128,31 @@ export function buildReceipt(parts: {
     date: isoDate(parts.date),
     currency: currency ? currency.toUpperCase().slice(0, 3) : null,
     total: num(parts.total),
+    seller: str(parts.seller),
+    totals: parts.totals ?? null,
+    expected_arrival: isoDate(parts.expected_arrival),
     items,
+  };
+}
+
+/**
+ * Read what the LINE ITEMS cannot tell us out of the receipt's own text: the
+ * money broken into components, who sold it, and when it should arrive.
+ *
+ * Separate from buildReceipt because the two AI paths hand us a model's JSON
+ * rather than the receipt, and only some of them still hold the source text. A
+ * parse with no text keeps its nulls, which is honest: these are read, never
+ * inferred.
+ */
+export function enrichReceiptFromText(receipt: ParsedReceipt, text: string | null | undefined): ParsedReceipt {
+  if (!text) return receipt;
+  const totals = parseReceiptTotals(text);
+  return {
+    ...receipt,
+    seller: receipt.seller ?? detectSeller(text, receipt.vendor),
+    // Keep whatever the line parse already established; fill only the gaps.
+    totals: receipt.totals ?? totals,
+    expected_arrival: receipt.expected_arrival ?? parseEstimatedDelivery(text),
   };
 }
 
