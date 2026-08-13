@@ -25,6 +25,7 @@ import { landedSomething } from "../platform/inbound-dedupe.js";
 import { notifyAccount } from "../platform/notifications.js";
 import { absoluteAppUrl } from "../platform/public-url.js";
 import { planBodyCapture } from "../platform/receipt-body.js";
+import { outcomeStatus } from "../platform/inbound-outcome.js";
 import { bestReceiptBody, receiptReplyHeaders } from "../platform/inbound-email-body.js";
 import {
   extractReceiptToken,
@@ -87,6 +88,8 @@ export interface ReceiptEmailInput {
  *  /receipt-ingest/email route AND the /inbound-email dispatcher can call it.
  *  Never throws for a routing miss — returns a 200 { ignored, reason } so a
  *  stray email doesn't bounce. */
+
+
 export async function ingestReceiptEmail(
   input: ReceiptEmailInput,
 ): Promise<{ status: number; body: Record<string, unknown>; orgId?: string; userId?: string }> {
@@ -188,6 +191,9 @@ export async function ingestReceiptEmail(
   // saved as one note "1 item".
   let parsedCount = 0;
   let noteCreated = false;
+  /** Why the body parse failed, when it did. Null means it was never tried or
+   *  it succeeded. Feeds the outcome `status` below. */
+  let bodyFailure: "ai_unavailable" | "no_line_items" | "unreadable" | null = null;
   // Set when the receipt route reports this receipt is already imported (same
   // vendor + order #). Carries the file so the notification can offer a
   // one-click "import anyway" (re-runs the route with force).
@@ -255,6 +261,7 @@ export async function ingestReceiptEmail(
           receipt?: { item_count?: number };
           duplicate?: boolean;
           existing?: { order_ref?: string | null; vendor?: string | null; item_count?: number };
+          error?: { failure?: "ai_unavailable" | "no_line_items" | "unreadable" };
         };
         if (r.ok && rb.duplicate) {
           duplicate = {
@@ -267,6 +274,12 @@ export async function ingestReceiptEmail(
         } else if (r.ok) {
           parsedCount += rb.receipt?.item_count ?? 0;
           results.push({ source: "body", ok: true, item_count: rb.receipt?.item_count ?? 0 });
+        } else {
+          // A non-ok parse used to be dropped on the floor, which is how the
+          // work-list ended up unable to tell "no AI configured, try again
+          // later" from "there was no receipt in this email". Keep the reason.
+          bodyFailure = rb.error?.failure ?? "no_line_items";
+          results.push({ source: "body", ok: false, failure: bodyFailure });
         }
       }
     } catch (err) {
@@ -364,7 +377,14 @@ export async function ingestReceiptEmail(
 
   return {
     status: 200,
-    body: { workspace: slug, item_count: parsedCount, note: noteCreated, duplicate: !!duplicate, results },
+    body: {
+      workspace: slug,
+      item_count: parsedCount,
+      note: noteCreated,
+      duplicate: !!duplicate,
+      status: outcomeStatus({ parsedCount, duplicate: !!duplicate, bodyFailure }),
+      results,
+    },
     orgId,
     userId,
   };

@@ -85,12 +85,24 @@ export async function getInboundPayload(id: string): Promise<InboundPayload | nu
   };
 }
 
-/** The reprocess work-list: archived messages that landed nothing yet — never
- *  processed at all, or a RECEIPT that produced zero items. Deliberately excludes
- *  a *processed* feedback reply: replaying one would double-append it to the
- *  thread, and its "nothing" isn't an item_count. (A failed feedback reply is
- *  unprocessed → still listed; a genuinely-stuck one can be replayed by id.)
- *  Newest first, bounded. */
+/** The reprocess work-list: messages a replay could still do something for.
+ *
+ *  It used to mean "a RECEIPT that produced zero items", which conflates three
+ *  unrelated situations behind one number: a parse that failed for want of a
+ *  capability (worth replaying once it exists), a message with no receipt in it
+ *  (a replay does the same thing forever), and a duplicate that was right to
+ *  import nothing. Two of those are finished work, so the list showed items
+ *  needing no action — and a list that cries wolf is one nobody reads, which
+ *  matters because this IS the recovery path for a dead-lettered receipt.
+ *
+ *  So it now reads the outcome's own `status` (see outcomeStatus). Rows written
+ *  BEFORE that existed have no status and keep exactly today's behaviour, so
+ *  nothing needs backfilling and no judgment is made about the past; they age
+ *  out on their own.
+ *
+ *  Still excludes a *processed* feedback reply: replaying one would
+ *  double-append it to the thread, and its "nothing" isn't an item_count. (A
+ *  failed feedback reply is unprocessed → still listed.) Newest first, bounded. */
 export async function listReprocessable(limit = 50): Promise<Array<{ id: string; received_at: Date; from_email: string | null; handler: string | null }>> {
   return meta
     .selectFrom("inbound_emails")
@@ -98,7 +110,17 @@ export async function listReprocessable(limit = 50): Promise<Array<{ id: string;
     .where((eb) =>
       eb.or([
         eb("processed_at", "is", null),
-        eb.and([eb("handler", "=", "receipt"), eb(sql`coalesce(outcome->>'item_count', '0')`, "=", "0")]),
+        // Said explicitly by the dispatcher.
+        eb(sql`outcome->>'status'`, "=", "degraded"),
+        // Legacy rows: no status was recorded, so fall back to the old rule
+        // rather than guess. Parenthesised deliberately — an unparenthesised OR
+        // inside a chained builder escapes the ANDs around it, which is exactly
+        // how the duplicate check broke (see scripts/lint-sql-or-precedence.ts).
+        eb.and([
+          eb(sql`outcome->>'status'`, "is", null),
+          eb("handler", "=", "receipt"),
+          eb(sql`coalesce(outcome->>'item_count', '0')`, "=", "0"),
+        ]),
       ]),
     )
     .orderBy("received_at", "desc")

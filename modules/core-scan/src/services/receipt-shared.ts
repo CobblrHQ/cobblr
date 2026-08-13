@@ -65,9 +65,28 @@ export interface ParsedReceipt {
  *  deterministic parse or the AI fallback. */
 export type ParseMethod = "csv" | "pdf-table" | "text-lines" | "ai-chat" | "ai-vision";
 
+/**
+ * WHY a parse failed, in a form something can branch on.
+ *
+ * The distinction that matters downstream is whether running it again later
+ * could plausibly do better:
+ *
+ *   ai_unavailable  a capability was missing or the provider failed. Configure
+ *                   one and a replay genuinely gets you your items. RECOVERABLE.
+ *   no_line_items   we read it and there was no receipt in it. A replay does
+ *                   the same thing forever. DONE.
+ *   unreadable      the bytes could not be read at all (a corrupt file, an
+ *                   image-only PDF). Needs a different input, not a retry.
+ *
+ * Kept as a code rather than left in the prose `reason` because the caller has
+ * to decide something with it, and deciding by matching on a human sentence is
+ * a string comparison waiting to be reworded.
+ */
+export type ReceiptFailure = "ai_unavailable" | "no_line_items" | "unreadable";
+
 export type ReceiptResult =
   | { ok: true; receipt: ParsedReceipt; method: ParseMethod }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string; code: ReceiptFailure };
 
 export function num(v: unknown): number | null {
   if (typeof v === "number") return Number.isFinite(v) ? v : null;

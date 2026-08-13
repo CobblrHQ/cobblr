@@ -686,7 +686,12 @@ inboxRouter.post(
     if (!result.ok) {
       // 422: the file was read but yielded no usable line items (bad scan, no
       // AI provider, not a receipt). The reason is user-facing.
-      res.status(422).json({ error: { code: "receipt_unparsed", message: result.reason } });
+      res
+        .status(422)
+        // `failure` says WHY in a form a caller can branch on. The prose in
+        // `message` is for a person; matching on it is a string comparison
+        // waiting to be reworded.
+        .json({ error: { code: "receipt_unparsed", message: result.reason, failure: result.code } });
       return;
     }
     const { receipt, method } = result;
@@ -819,7 +824,12 @@ inboxRouter.post(
 
     const result = await parseReceipt(ctx.org.id, batch.source_file_id, session?.id ?? null);
     if (!result.ok) {
-      res.status(422).json({ error: { code: "receipt_unparsed", message: result.reason } });
+      res
+        .status(422)
+        // `failure` says WHY in a form a caller can branch on. The prose in
+        // `message` is for a person; matching on it is a string comparison
+        // waiting to be reworded.
+        .json({ error: { code: "receipt_unparsed", message: result.reason, failure: result.code } });
       return;
     }
     const { receipt, method } = result;

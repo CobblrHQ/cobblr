@@ -149,7 +149,7 @@ async function readPdf(bytes: Buffer): Promise<{ text: string; tables: string[][
  *  throws — every failure is a typed `{ ok:false, reason }`. */
 export async function parseReceipt(orgId: string, fileId: string, userId?: string | null): Promise<ReceiptResult> {
   const file = await platform().files.read(orgId, fileId, "original");
-  if (!file) return { ok: false, reason: "Couldn't read that file." };
+  if (!file) return { ok: false, reason: "Couldn't read that file.", code: "unreadable" };
   const bytes = Buffer.from(file.bytes);
   const mime = file.mimeType || "";
   const isPdf = mime === "application/pdf" || bytes.subarray(0, 5).toString("latin1").startsWith("%PDF");
@@ -166,7 +166,7 @@ export async function parseReceipt(orgId: string, fileId: string, userId?: strin
   // ── Tier 2: PDF — deterministic table first, AI on the text otherwise ───────
   if (isPdf) {
     const pdf = await readPdf(bytes);
-    if (!pdf) return { ok: false, reason: "Couldn't read that PDF." };
+    if (!pdf) return { ok: false, reason: "Couldn't read that PDF.", code: "unreadable" };
     const table = parsePdfTableReceipt(pdf.tables);
     if (table) {
       return { ok: true, receipt: enrichReceiptMeta(table, pdf.text), method: "pdf-table" };
@@ -175,6 +175,9 @@ export async function parseReceipt(orgId: string, fileId: string, userId?: strin
       return {
         ok: false,
         reason: "That PDF has no extractable text (a scan?). Upload a photo of the receipt instead.",
+        // Not recoverable by replaying the same bytes: it needs a different
+        // input, which is what the message asks for.
+        code: "unreadable",
       };
     }
     // No ruled table, but a till-style PDF is still line-structured. Free, and
@@ -183,12 +186,12 @@ export async function parseReceipt(orgId: string, fileId: string, userId?: strin
     if (byLine) return { ok: true, receipt: byLine.receipt, method: "text-lines" };
     try {
       const receipt = shapeReceipt(await chatExtract(orgId, pdf.text, fileId, userId));
-      if (!receipt) return { ok: false, reason: "Couldn't find any line items on that receipt." };
+      if (!receipt) return { ok: false, reason: "Couldn't find any line items on that receipt.", code: "no_line_items" };
       // The model is asked for line items; the totals, the seller and the ETA
       // are read deterministically from the same text rather than trusted to it.
       return { ok: true, receipt: enrichReceiptFromText(receipt, pdf.text), method: "ai-chat" };
     } catch (e) {
-      return { ok: false, reason: aiError(e) };
+      return { ok: false, reason: aiError(e), code: "ai_unavailable" };
     }
   }
 
@@ -196,10 +199,10 @@ export async function parseReceipt(orgId: string, fileId: string, userId?: strin
   if (isImage) {
     try {
       const receipt = shapeReceipt(await visionExtract(orgId, bytes.toString("base64"), mime, fileId, userId));
-      if (!receipt) return { ok: false, reason: "Couldn't find any line items on that receipt." };
+      if (!receipt) return { ok: false, reason: "Couldn't find any line items on that receipt.", code: "no_line_items" };
       return { ok: true, receipt, method: "ai-vision" };
     } catch (e) {
-      return { ok: false, reason: aiError(e) };
+      return { ok: false, reason: aiError(e), code: "ai_unavailable" };
     }
   }
 
@@ -209,9 +212,9 @@ export async function parseReceipt(orgId: string, fileId: string, userId?: strin
   if (byLine) return { ok: true, receipt: byLine.receipt, method: "text-lines" };
   try {
     const receipt = shapeReceipt(await chatExtract(orgId, asText, fileId, userId));
-    if (!receipt) return { ok: false, reason: "Couldn't find any line items on that receipt." };
+    if (!receipt) return { ok: false, reason: "Couldn't find any line items on that receipt.", code: "no_line_items" };
     return { ok: true, receipt: enrichReceiptFromText(receipt, asText), method: "ai-chat" };
   } catch (e) {
-    return { ok: false, reason: aiError(e) };
+    return { ok: false, reason: aiError(e), code: "ai_unavailable" };
   }
 }
