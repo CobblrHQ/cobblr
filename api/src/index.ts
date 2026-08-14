@@ -73,6 +73,7 @@ import { backfillDefaultBindings } from "./platform/seed-bindings.js";
 import { repairReplayTruncatedNames } from "./platform/repair-replay-truncated-names.js";
 import { backfillIdentityLinks } from "./platform/backfill-identity.js";
 import { logAnnounceRouting } from "./platform/announce.js";
+import { logSignupGates } from "./platform/signup-gates.js";
 import { startTrialReaper } from "./platform/reap-trials.js";
 import { startDbUpgradeHoldWatch } from "./platform/db-upgrade-status.js";
 import { reconcileOrphanTenantRoles } from "./platform/reconcile-tenant-roles.js";
@@ -998,6 +999,7 @@ async function boot() {
   // difference between a private report and one posted to a chat server, and that is
   // otherwise invisible until somebody notices a card appear.
   await T("logAnnounceRouting", logAnnounceRouting());
+  logSignupGates();
 
   console.log(`[bootphase] === pre-createApp total: ${Date.now() - bootT0}ms ===`);
   const { app } = createApp();

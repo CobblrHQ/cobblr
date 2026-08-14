@@ -10,6 +10,7 @@ import { meta } from "../db/meta.js";
 import { announceReturningMessage } from "../platform/announce.js";
 import { reporterCardFields } from "../platform/feedback-card.js";
 import { pokeTriage } from "../platform/triage-trigger.js";
+import { notifyOperators } from "../platform/operator-alert.js";
 import { verifyReplyToken } from "../platform/feedback-reply.js";
 import { inboundSecretOk } from "../platform/inbound-secret.js";
 
@@ -198,6 +199,33 @@ feedbackRouter.post("/", async (req, res, next) => {
             .set({ announce_message_id: posted.messageId, announce_channel_id: posted.channelId })
             .where("id", "=", row.id)
             .execute();
+        }
+        // Nothing was posted, so nobody has been told. On a public instance that is
+        // deliberate — a stranger's report quotes their own data and must not land in
+        // a chat server whose membership is not theirs to see — but the consequence is
+        // an item sitting in a queue no one is watching. On any instance it also covers
+        // an expired or broken webhook, which until now failed silently.
+        if (!posted.delivered) {
+          await notifyOperators({
+            subject: `[Cobblr] New ${parsed.data.type} feedback`,
+            text: [
+              `Somebody submitted feedback on this Cobblr instance.`,
+              ``,
+              `Type: ${parsed.data.type}`,
+              route ? `Where: ${route}` : `Where: not recorded`,
+              `Item: ${row.id}`,
+              ``,
+              parsed.data.message.slice(0, 800),
+              // null, not "": the empty strings above are deliberate blank lines, and
+              // filtering on emptiness would strip the paragraph breaks with it.
+              parsed.data.message.length > 800 ? `… (truncated)` : null,
+              ``,
+              `Read and reply in Super admin -> Feedback. The reply reaches them the way`,
+              `they chose: the in-app thread, a notification, or email.`,
+            ]
+              .filter((line) => line !== null)
+              .join("\n"),
+          });
         }
       } catch (err) {
         console.error("[feedback] announce/message-id capture failed:", err);

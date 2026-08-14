@@ -7,7 +7,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "purchases",
-  version: "0.6.0",
+  version: "0.8.1",
   displayName: "Purchases",
   description:
     "Orders, line items, and cost rollup. Each order is a vendor purchase; line items can link to inventory parts and to whatever consumed them: printer mods, projects, anything.",
@@ -144,6 +144,20 @@ export default defineModule({
           "Add this part to a draft (planned) purchase order for its usual vendor at its usual quantity: derived from purchase history. Skips parts already on an open order. Args (all optional): { partId, qty, vendorId }.",
         appliesTo: { kinds: ["inventory:part"] },
         invokeHandler: "purchases.draft-po",
+        userInvokable: true,
+      },
+      {
+        // The answer to "did it turn up?" — one tap on the order the arrival
+        // sweep asked about. Sets status to arrived (which emits the arrival
+        // and its per-line received events, so stock bumps), stamps today, and
+        // no-ops when the order is already arrived so a stale prompt answered
+        // twice cannot double-count.
+        id: "purchases:mark-arrived",
+        label: "Mark arrived",
+        description:
+          "Record that a purchase order turned up: sets its status to arrived, stamps the arrival date, and releases the stock-receipt events for every line mapped to a part. Does nothing if the order is already arrived. Args (all optional): { orderId, arrivedOn }.",
+        appliesTo: { kinds: ["purchases:order"] },
+        invokeHandler: "purchases.mark-arrived",
         userInvokable: true,
       },
     ],

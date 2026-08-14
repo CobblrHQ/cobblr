@@ -32,7 +32,14 @@ function dummyPasswordHash(): Promise<string> {
 }
 import { signSession } from "../auth/jwt.js";
 import { listMembershipsForUser } from "../platform/memberships.js";
-import { identityEnabled, verifyIdentityToken } from "../auth/identity-client.js";
+import {
+  identityEnabled,
+  identityCallbackEnabled,
+  autoProvisionEnabled,
+  verifyIdentityToken,
+  redeemIdentityCode,
+  fetchIdentityProfile,
+} from "../auth/identity-client.js";
 import { isPlatformAdmin, requireAuth } from "../auth/middleware.js";
 import { publicSignupEnabled, managedAppSignupEnabled, selfServeInvitesEnabled } from "../auth/signup-gate.js";
 import { dispatch } from "../platform/notifications.js";
@@ -643,6 +650,165 @@ authRouter.post("/login", async (req, res, next) => {
 // surface) — Slice 4's demo-provision is what would create one. No-op unless wired.
 
 const IdentityExchangeBody = z.object({ token: z.string().min(1) });
+
+// ─────────── POST /identity/callback (the browser hand-off's second half) ───────────
+//
+// The account service sends a browser back here with a ONE-TIME CODE. This trades the
+// code for an identity token server-to-server, then hands it to the same verification
+// the exchange endpoint uses. Two round trips instead of one, and the reason is that a
+// token in a redirect URL lands in browser history, a Referer header, and every proxy
+// log on the way; a code is single-use and dead within a minute.
+//
+// The deployment secret is what makes redemption ours: intercepting the code is not
+// enough to redeem it. It never leaves this process.
+const IdentityCallbackBody = z.object({ code: z.string().min(20).max(512) });
+
+type AdoptResult = { userId: string } | { status: number; error: { code: string; message: string } };
+
+const NO_LOCAL_ACCOUNT = {
+  status: 404,
+  error: { code: "no_local_account", message: "No workspace for this account on this surface." },
+} as const;
+
+/** A verified central account arrived and has no user here yet. Decide what that means.
+ *
+ *  THREE OUTCOMES, and the difference between them matters more than the code:
+ *   • adopt   — a local account already exists at this address but was never linked
+ *               (it predates central identity, or the backfill has not reached it).
+ *               Link it. Creating a second account for the same person would strand
+ *               them next to their own data.
+ *   • provision — nobody here by that address, and this surface hands workspaces out.
+ *   • refuse  — anything else, including a surface that does not hand them out.
+ *
+ *  EVERY path requires a VERIFIED address, adoption most of all: without that check,
+ *  registering someone else's email at the account service and never confirming it
+ *  would take over their workspace here. The account service is the only thing that
+ *  knows whether the address was proven, so this asks it rather than assuming. */
+async function adoptOrProvisionIdentity(identityId: string, identityToken: string): Promise<AdoptResult> {
+  const profile = await fetchIdentityProfile(identityToken);
+  if (!profile) return NO_LOCAL_ACCOUNT;
+  if (!profile.emailVerified) {
+    return {
+      status: 403,
+      error: { code: "email_unverified", message: "Confirm your email address on your Cobblr account first." },
+    };
+  }
+
+  const byEmail = await meta
+    .selectFrom("users")
+    .select(["id", "active", "identity_id"])
+    .where("email", "=", profile.email)
+    .executeTakeFirst();
+  if (byEmail) {
+    if (!byEmail.active) {
+      return { status: 403, error: { code: "account_disabled", message: "This account is disabled on this surface." } };
+    }
+    // Already someone else's identity. Not an error to explain in detail — it means two
+    // central accounts claim one address here, and quietly re-pointing the link would
+    // hand one person the other's workspace.
+    if (byEmail.identity_id && byEmail.identity_id !== identityId) return NO_LOCAL_ACCOUNT;
+    await meta.updateTable("users").set({ identity_id: identityId }).where("id", "=", byEmail.id).execute();
+    return { userId: byEmail.id };
+  }
+
+  if (!autoProvisionEnabled()) return NO_LOCAL_ACCOUNT;
+  if (blockDisposableEnabled() && isDisposableEmail(profile.email)) {
+    return {
+      status: 403,
+      error: { code: "email_not_allowed", message: "Please use a permanent email address." },
+    };
+  }
+
+  // The column is NOT NULL and this account has no password to store, so it gets a hash
+  // of 32 random bytes: nothing anyone can type will ever match it. A sentinel string
+  // would have to be excluded by every comparison site forever, which is one forgotten
+  // call site away from a login that succeeds on a fake password.
+  const password_hash = await hashPassword(randomBytes(32).toString("base64"));
+  const created = await meta
+    .insertInto("users")
+    .values({
+      email: profile.email,
+      password_hash,
+      display_name: profile.displayName,
+      identity_id: identityId,
+      email_verified_at: new Date(),
+    })
+    .returning("id")
+    .executeTakeFirstOrThrow();
+
+  const provisioned = await provisionOrgForUser(created.id, `${profile.displayName}'s workspace`);
+  // Same lifecycle seam signup uses, so the hosted overlay sees these accounts too
+  // (trial stamping, welcome flows) rather than only the ones that came through a form.
+  await fireSignup({ userId: created.id, email: profile.email, orgId: provisioned.orgId });
+  try {
+    await activity.log({
+      orgId: provisioned.orgId,
+      userId: created.id,
+      action: "user_created",
+      ref: { module: null, entityType: "user", entityId: created.id },
+      diff: { email: profile.email, via: "central_identity" },
+    });
+  } catch (err) {
+    console.error("[identity] user_created log failed:", err);
+  }
+  console.log(`[identity] provisioned a workspace for a central account (${created.id})`);
+  return { userId: created.id };
+}
+
+authRouter.post("/identity/callback", async (req, res, next) => {
+  try {
+    if (!identityCallbackEnabled()) {
+      return res.status(404).json({
+        error: { code: "identity_disabled", message: "Central identity is not enabled on this surface." },
+      });
+    }
+    if (!identityExchangeLimiter(req.ip ?? "unknown")) {
+      return res.status(429).json({ error: { code: "rate_limited", message: "Too many attempts — wait a moment." } });
+    }
+    const { code } = IdentityCallbackBody.parse(req.body);
+    const redeemed = await redeemIdentityCode(code);
+    if (!redeemed) {
+      return res.status(401).json({
+        error: { code: "invalid_code", message: "That sign-in link has expired or was already used." },
+      });
+    }
+    let identityId: string;
+    try {
+      identityId = await verifyIdentityToken(redeemed);
+    } catch {
+      // The account service handed us something we cannot verify. That is a
+      // configuration fault (issuer, audience, or a rotated key), not a bad user.
+      return res.status(502).json({
+        error: { code: "identity_token_invalid", message: "The account service returned a token this surface cannot verify." },
+      });
+    }
+    const linked = await meta
+      .selectFrom("users")
+      .select(["id", "active"])
+      .where("identity_id", "=", identityId)
+      .executeTakeFirst();
+    // A disabled account is a decision somebody made, so it stops here rather than
+    // falling through to the path that would hand it a fresh workspace.
+    if (linked && !linked.active) {
+      return res.status(403).json({
+        error: { code: "account_disabled", message: "This account is disabled on this surface." },
+      });
+    }
+    let userId = linked?.id;
+    if (!userId) {
+      const outcome = await adoptOrProvisionIdentity(identityId, redeemed);
+      if ("error" in outcome) return res.status(outcome.status).json({ error: outcome.error });
+      userId = outcome.userId;
+    }
+    await meta.updateTable("users").set({ last_login_at: new Date() }).where("id", "=", userId).execute();
+    return res.json(await buildAuthResponse(userId));
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: { code: "invalid_body", message: "Bad callback payload", details: err.issues } });
+    }
+    return next(err);
+  }
+});
 
 authRouter.post("/identity/exchange", async (req, res, next) => {
   try {

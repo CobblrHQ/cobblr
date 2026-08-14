@@ -14,6 +14,27 @@ export function identityEnabled(): boolean {
   return !!env.IDENTITY_URL;
 }
 
+/** The rule, as a pure function so a test can reach it. Importing this module runs env,
+ *  which process.exit(1)s without database vars, so anything worth asserting has to be
+ *  callable without touching env — the same reason announce-url.ts is its own file. */
+export function callbackEnabledFrom(url?: string, secret?: string): boolean {
+  return !!url && !!secret;
+}
+
+/** The browser hand-off needs BOTH a service to talk to and this surface's own secret to
+ *  redeem with. Half-configured is off: a callback route that accepted codes it could not
+ *  redeem would fail per-user, at sign-in, which is the worst place to discover it. */
+export function identityCallbackEnabled(): boolean {
+  return callbackEnabledFrom(env.IDENTITY_URL, env.IDENTITY_DEPLOYMENT_SECRET);
+}
+
+/** Does this surface hand a workspace to an account that arrives without one?
+ *  Off unless explicitly set: a private surface turning strangers away is the correct
+ *  behaviour, and getting this backwards on one is a public signup nobody opened. */
+export function autoProvisionEnabled(): boolean {
+  return env.COBBLR_IDENTITY_AUTOPROVISION === "true";
+}
+
 /** This surface's stable id in the identity map (deployment_links). */
 export function deploymentId(): string {
   return env.COBBLR_DEPLOYMENT || env.COBBLR_ENV || "default";
@@ -111,4 +132,82 @@ export async function backfillToIdentity(users: BackfillUser[]): Promise<Record<
   if (!res.ok) throw new Error(`identity backfill HTTP ${res.status}`);
   const data = (await res.json()) as { links?: Record<string, string> };
   return data.links ?? {};
+}
+
+/** Trade a one-time sign-in code for an identity token, server-to-server.
+ *
+ *  The code arrives in the browser's URL; the token does not, and that asymmetry is the
+ *  point. This surface proves it is itself with IDENTITY_DEPLOYMENT_SECRET, so a code
+ *  seen in a log or a Referer header cannot be redeemed by whoever saw it.
+ *
+ *  Returns null for any refusal. The account service answers identically for a bad code
+ *  and a bad secret on purpose, so there is nothing here worth distinguishing either. */
+export async function redeemIdentityCode(code: string): Promise<string | null> {
+  if (!env.IDENTITY_URL || !env.IDENTITY_DEPLOYMENT_SECRET) return null;
+  try {
+    const res = await fetch(base() + "/authorize/redeem", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        code,
+        deployment: deploymentId(),
+        secret: env.IDENTITY_DEPLOYMENT_SECRET,
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { token?: string };
+    return body.token ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Shape the account service's /me into what provisioning needs, or null if it cannot.
+ *
+ *  Separated from the fetch so the decisions here are testable: an address is lowercased
+ *  before it is ever compared to a local one (otherwise the same person arrives as a
+ *  second account the first time they capitalise it), a missing display name falls back
+ *  to the local-part rather than blanking the workspace name, and `emailVerified` is
+ *  true ONLY for a literal true — a missing field must never read as verified, since
+ *  that flag is the whole defence against adopting someone else's account. */
+export function profileFromMe(body: unknown): IdentityProfile | null {
+  const identity = (body as { identity?: { email?: unknown; display_name?: unknown; email_verified?: unknown } })?.identity;
+  const email = typeof identity?.email === "string" ? identity.email.trim().toLowerCase() : "";
+  if (!email) return null;
+  const name = typeof identity?.display_name === "string" ? identity.display_name.trim() : "";
+  return {
+    email,
+    displayName: name || email.split("@")[0]!,
+    emailVerified: identity?.email_verified === true,
+  };
+}
+
+export interface IdentityProfile {
+  email: string;
+  displayName: string;
+  emailVerified: boolean;
+}
+
+/** The account's own view of itself, read with the identity token we just verified.
+ *
+ *  The token carries only `sub` — no email, no name — and that is the right trade: a
+ *  30-day token with an email claim in it goes stale the moment someone changes their
+ *  address, and widens what a leaked one reveals. Provisioning is the only path that
+ *  needs the profile, so it is fetched then, fresh, and never cached.
+ *
+ *  Returns null on anything unexpected, and the caller treats that as "cannot
+ *  provision" rather than inventing a placeholder account. */
+export async function fetchIdentityProfile(token: string): Promise<IdentityProfile | null> {
+  if (!env.IDENTITY_URL) return null;
+  try {
+    const res = await fetch(base() + "/me", {
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return null;
+    return profileFromMe(await res.json());
+  } catch {
+    return null;
+  }
 }

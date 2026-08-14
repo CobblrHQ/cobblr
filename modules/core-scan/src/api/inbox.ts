@@ -409,7 +409,24 @@ inboxRouter.post(
       const timed = new Promise<"timeout">((resolve) =>
         setTimeout(() => resolve("timeout"), budget),
       );
-      await Promise.race([enrichTask, timed]);
+      const raced = await Promise.race([enrichTask, timed]);
+
+      // The lookup outran its budget. It is still going and will fill this in,
+      // but the row we are about to return would otherwise carry a null note —
+      // indistinguishable from "nobody looked", which is what a scan on a slow
+      // connection looks like today.
+      //
+      // Conditional on ai_notes still being null, so a result that lands in the
+      // gap between here and the read-back is never clobbered by this.
+      if (raced === "timeout") {
+        await db
+          .updateTable("core_scan_inbox_items")
+          .set({ ai_notes: "Still looking this up. It will fill in shortly." })
+          .where("id", "=", inserted.id)
+          .where("ai_notes", "is", null)
+          .execute()
+          .catch((err) => console.error("[core-scan] timeout note failed:", (err as Error).message));
+      }
       // Read back the (possibly-enriched) row to return current state.
     } else if (body.source_kind === "url" && body.source_url && token) {
       // URL intake (incl. bulk paste): enrich DETACHED via the same pipeline —

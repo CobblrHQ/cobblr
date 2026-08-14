@@ -32,6 +32,10 @@ registerDetailPanel(
   "purchases:price-history",
   lazy(() => import("../features/purchases/priceHistory").then((m) => ({ default: m.PriceHistoryPanel }))),
 );
+registerDetailPanel(
+  "core-shipments:shipment",
+  lazy(() => import("../features/core-shipments/shipment").then((m) => ({ default: m.ShipmentPanel }))),
+);
 
 export const hasPageTab = (id: string): boolean => !!PAGE_TABS[id];
 export { hasDetailPanel, ContributedDetailPanels };

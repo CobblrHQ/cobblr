@@ -201,9 +201,22 @@ picker either way.
 
 ## Backups
 
-Your data lives in bind-mounted folders under `./data/` (Postgres, uploaded
-files, installed modules, Caddy certs). Back up the whole `./data/` tree - a
-copy of that directory is a complete backup. For database-only dumps:
+The stack takes a **nightly `pg_dumpall`** to `./data/backups/daily` on its own
+(Sundays are also copied to `weekly/`; 30 daily and 12 weekly are kept). That is
+the copy to restore from.
+
+Your data also lives in bind-mounted folders under `./data/` (Postgres, uploaded
+files, installed modules, Caddy certs). Back up that whole tree for the files -
+but **a copy of the Postgres directory taken while the server is running is a torn
+snapshot and may not restore.** That is what the dumps are for; copy them off the
+box, since they sit on the same disk as the database.
+
+Restore a dump:
+```bash
+gunzip -c data/backups/daily/cobblr-<stamp>.sql.gz | docker compose exec -T db psql -U cobblr
+```
+
+To take one by hand:
 ```bash
 docker compose -f docker-compose.yml -f deploy/selfhost/docker-compose.selfhost.yml \
   exec db pg_dumpall -U cobblr | gzip > cobblr-backup-$(date +%F).sql.gz

@@ -10,10 +10,14 @@ import { vendorsRouter } from "./vendors.js";
 import { registerPurchasesResolvers } from "./resolvers.js";
 import { registerPurchasesActionHandlers } from "./action-handlers.js";
 import { registerPurchasesCalendarSource } from "./calendar-source.js";
+import { startArrivalSweeper } from "../arrival-sweeper.js";
 
 registerPurchasesResolvers();
 registerPurchasesActionHandlers();
 registerPurchasesCalendarSource();
+// Asks "did it turn up?" on the day an order was due. Cheap when nothing is
+// due: one indexed read per workspace that has purchases enabled.
+startArrivalSweeper();
 
 // Per-instance item count — lets the nav hide an empty auto-created default
 // instance once the workspace has named ones (orders are the primary entity).

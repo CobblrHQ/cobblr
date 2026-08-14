@@ -163,13 +163,49 @@ const Schema = z.object({
   IDENTITY_ISSUER: z.string().default("cobblr-identity"),
   IDENTITY_AUDIENCE: z.string().default("cobblr"),
   IDENTITY_ADMIN_TOKEN: z.string().optional(),
+  //  • IDENTITY_DEPLOYMENT_SECRET — this surface's shared secret with the identity
+  //    service, presented when redeeming a sign-in code. Without it the hand-off is
+  //    off and sign-in works exactly as it did before.
+  IDENTITY_DEPLOYMENT_SECRET: z.string().optional(),
+  //  • COBBLR_IDENTITY_AUTOPROVISION — "true" gives a central account that has no
+  //    workspace here one, on first arrival, instead of turning it away. That is what
+  //    an open surface (a trial box) wants and what a private one must not do, so it
+  //    is per-deployment and off unless set.
+  COBBLR_IDENTITY_AUTOPROVISION: z.string().optional(),
   COBBLR_DEPLOYMENT: z.string().optional(),
 });
 
 export type Env = z.infer<typeof Schema>;
 
+/** Drop empty-string values, so `${VAR:-}` means "unset" everywhere.
+ *
+ *  docker-compose passes an unset variable as an EMPTY STRING, not as absent
+ *  (CLAUDE.md 14.6). For a plain `z.string().optional()` that is merely untidy, but for
+ *  an enum it is a HARD BOOT FAILURE — `z.enum(["turnstile"])` rejects "" and the api
+ *  crash-loops with "Invalid enum value ... received ''". A coerced number is worse and
+ *  quieter: Number("") is 0, so `.positive()` fails and a blank line in .env stops the
+ *  instance from starting.
+ *
+ *  That is not hypothetical. Wiring these settings through compose (which is itself a
+ *  fix, for settings that reached nothing) turned "absent" into "" for COBBLR_TIER,
+ *  COBBLR_CAPTCHA_PROVIDER, TRY_TTL_DAYS and the trial-reap window all at once, and the
+ *  first instance built from it crash-looped on boot. Handling it per-field means
+ *  remembering, every time; handling it here means the schema can read the way it looks
+ *  like it reads.
+ *
+ *  An operator wanting to blank a value already does it by leaving the line empty, which
+ *  is exactly what this treats as "not set". No setting in this schema uses "" to mean
+ *  something different from unset. */
+function withoutEmpties(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(source)) {
+    if (v !== "") out[k] = v;
+  }
+  return out;
+}
+
 function loadEnv(): Env {
-  const parsed = Schema.safeParse(process.env);
+  const parsed = Schema.safeParse(withoutEmpties(process.env));
   if (!parsed.success) {
     // Print every failure and exit. Don't try to keep running with
     // broken config — that's how staging-style "it works for me" bugs
@@ -184,3 +220,5 @@ function loadEnv(): Env {
 }
 
 export const env = loadEnv();
+
+export { withoutEmpties as _withoutEmpties };

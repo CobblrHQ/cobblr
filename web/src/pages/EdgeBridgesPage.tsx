@@ -19,6 +19,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Activity, Cable, CheckCircle2, ChevronRight, Plug, User, XCircle } from "lucide-react";
 import { api } from "../lib/api";
+import { DriverPackages } from "../features/edge/DriverPackages";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { usePageTitle, useToast } from "@cobblr/platform-web";
 import { EdgeBridgeInstall } from "../components/EdgeBridgeInstall";
@@ -217,6 +218,13 @@ export function EdgeBridgesPage({ embedded = false }: { embedded?: boolean } = {
             ))}
           </ul>
         )}
+      </section>
+
+      {/* What a bridge can be TAUGHT, as opposed to which modules attach to it.
+          Hidden until one exists — the component decides, so a declaration made
+          earlier stays reachable if the bridge later goes away. */}
+      <section>
+        <DriverPackages slug={slug} hasBridge={agents.length > 0} />
       </section>
     </div>
   );

@@ -15,7 +15,7 @@
 
 import { Client } from "pg";
 import { env } from "../env.js";
-import { sendAuthEmail } from "./hosted-seams.js";
+import { notifyOperators } from "./operator-alert.js";
 
 export interface DbUpgradeHold {
   reason: string;
@@ -74,33 +74,25 @@ async function checkAndAlert(): Promise<void> {
       `${hold.detail} The upgrade retries on the next database container start once the ` +
       `cause is resolved. See docs/operations/PRODUCTION_DEPLOY.md (major Postgres upgrades).`,
   );
-  const admins = (env.SUPERADMIN_EMAILS ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  for (const to of admins) {
-    await sendAuthEmail({
-      to,
-      kind: "notification",
-      subject: `[Cobblr] Database major upgrade is held back (Postgres ${hold.oldMajor} -> ${hold.targetMajor})`,
-      text: [
-        `This Cobblr instance's database image wants to upgrade PostgreSQL ${hold.oldMajor} -> ${hold.targetMajor},`,
-        `but the upgrade could not proceed safely, so it is still serving PostgreSQL ${hold.oldMajor}`,
-        `from the untouched existing cluster. Nothing is broken and no data was modified.`,
-        ``,
-        `Reason: ${hold.reason}`,
-        `Detail: ${hold.detail}`,
-        `Held since: ${hold.since.toISOString()}`,
-        ``,
-        `What to do: resolve the cause above, then restart the database container —`,
-        `the upgrade runs automatically on boot and this alert clears itself.`,
-        `To keep holding deliberately, set COBBLR_DB_MAJOR_UPGRADE=hold; this email`,
-        `repeats daily while the hold is in place.`,
-        ``,
-        `Runbook: docs/operations/PRODUCTION_DEPLOY.md (major Postgres upgrades).`,
-      ].join("\n"),
-    });
-  }
+  await notifyOperators({
+    subject: `[Cobblr] Database major upgrade is held back (Postgres ${hold.oldMajor} -> ${hold.targetMajor})`,
+    text: [
+      `This Cobblr instance's database image wants to upgrade PostgreSQL ${hold.oldMajor} -> ${hold.targetMajor},`,
+      `but the upgrade could not proceed safely, so it is still serving PostgreSQL ${hold.oldMajor}`,
+      `from the untouched existing cluster. Nothing is broken and no data was modified.`,
+      ``,
+      `Reason: ${hold.reason}`,
+      `Detail: ${hold.detail}`,
+      `Held since: ${hold.since.toISOString()}`,
+      ``,
+      `What to do: resolve the cause above, then restart the database container —`,
+      `the upgrade runs automatically on boot and this alert clears itself.`,
+      `To keep holding deliberately, set COBBLR_DB_MAJOR_UPGRADE=hold; this email`,
+      `repeats daily while the hold is in place.`,
+      ``,
+      `Runbook: docs/operations/PRODUCTION_DEPLOY.md (major Postgres upgrades).`,
+    ].join("\n"),
+  });
 }
 
 /** Check once at boot, then daily while the process lives. Silent unless the

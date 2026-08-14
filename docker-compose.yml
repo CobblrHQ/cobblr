@@ -110,6 +110,70 @@ services:
       # degrade gracefully. Operator's hard floor, above per-workspace
       # BYO-key config.
       COBBLR_AI_ENABLED: ${COBBLR_AI_ENABLED:-true}
+      # ── settings the schema accepted but compose never carried ──────────
+      # env.ts read all of these and none of them arrived: this map is
+      # explicit, so a variable it does not list is absent however carefully
+      # it was set in .env. The trial guards are the sharp end — a try
+      # instance would have booted with COBBLR_TIER unset and every guard
+      # off, which looks exactly like a working deploy.
+      # lint:env-reaches-container now holds this list to api/src/env.ts.
+      COBBLR_TIER: ${COBBLR_TIER:-}
+      TRY_TTL_DAYS: ${TRY_TTL_DAYS:-}
+      COBBLR_TRIAL_REAP_WARN_DAYS: ${COBBLR_TRIAL_REAP_WARN_DAYS:-}
+      COBBLR_TRIAL_DENY_MODULES: ${COBBLR_TRIAL_DENY_MODULES:-}
+      # Signup gates: captcha (the site key is public and served at runtime
+      # via /auth/config, so the shared web image bakes in no key),
+      # disposable-address blocking, and verify-before-login.
+      COBBLR_CAPTCHA_PROVIDER: ${COBBLR_CAPTCHA_PROVIDER:-}
+      COBBLR_CAPTCHA_SECRET: ${COBBLR_CAPTCHA_SECRET:-}
+      COBBLR_CAPTCHA_SITE_KEY: ${COBBLR_CAPTCHA_SITE_KEY:-}
+      COBBLR_BLOCK_DISPOSABLE_EMAILS: ${COBBLR_BLOCK_DISPOSABLE_EMAILS:-}
+      COBBLR_REQUIRE_EMAIL_VERIFY: ${COBBLR_REQUIRE_EMAIL_VERIFY:-}
+      # Central identity. Unset = off, and this surface signs people in with
+      # its own local passwords exactly as before.
+      #   IDENTITY_URL                 the account service, e.g. http://<host>:8790
+      #   IDENTITY_DEPLOYMENT_SECRET   this surface's half of the sign-in hand-off
+      #   COBBLR_DEPLOYMENT            its name there (falls back to COBBLR_ENV)
+      # See docs/architecture/central-identity.md.
+      IDENTITY_URL: ${IDENTITY_URL:-}
+      IDENTITY_ISSUER: ${IDENTITY_ISSUER:-}
+      IDENTITY_AUDIENCE: ${IDENTITY_AUDIENCE:-}
+      IDENTITY_ADMIN_TOKEN: ${IDENTITY_ADMIN_TOKEN:-}
+      IDENTITY_DEPLOYMENT_SECRET: ${IDENTITY_DEPLOYMENT_SECRET:-}
+      COBBLR_DEPLOYMENT: ${COBBLR_DEPLOYMENT:-}
+      # "true" gives a central account with no workspace here one on arrival.
+      # What an open trial surface wants; what a private one must never do.
+      COBBLR_IDENTITY_AUTOPROVISION: ${COBBLR_IDENTITY_AUTOPROVISION:-}
+      # Daily caps on new accounts, per source address and instance-wide. Read
+      # through a helper that takes the NAME AS A STRING, so no schema parse and
+      # no process.env scan could see them: they were missing here while the
+      # docs told an operator to set them, which on an open signup page is the
+      # brake silently not connected. lint:env-reaches-container now checks the
+      # documented names too.
+      COBBLR_SIGNUP_MAX_PER_IP_PER_DAY: ${COBBLR_SIGNUP_MAX_PER_IP_PER_DAY:-}
+      COBBLR_SIGNUP_MAX_PER_DAY: ${COBBLR_SIGNUP_MAX_PER_DAY:-}
+      COBBLR_RATELIMIT: ${COBBLR_RATELIMIT:-}
+      # Marks this instance as hosted: strict egress + hosted defaults.
+      COBBLR_HOSTED: ${COBBLR_HOSTED:-}
+      # Sandbox pool + CPU quota tuning. Documented for years under names the
+      # code does not read, and absent here besides.
+      SANDBOX_WORKER_POOL_MAX: ${SANDBOX_WORKER_POOL_MAX:-}
+      SANDBOX_WORKER_IDLE_MS: ${SANDBOX_WORKER_IDLE_MS:-}
+      SANDBOX_DEFAULT_DEADLINE_MS: ${SANDBOX_DEFAULT_DEADLINE_MS:-}
+      SANDBOX_CPU_WINDOW_MS: ${SANDBOX_CPU_WINDOW_MS:-}
+      SANDBOX_CPU_QUOTA_MS_PER_WINDOW: ${SANDBOX_CPU_QUOTA_MS_PER_WINDOW:-}
+      # This instance's own address, and the Discord sign-in app.
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
+      DISCORD_REDIRECT_URI: ${DISCORD_REDIRECT_URI:-}
+      DISCORD_INVITE_URL: ${DISCORD_INVITE_URL:-}
+      # A second instance sharing this Postgres (the canary channel): the
+      # peer's DSN, so each side can notice a migration the other lacks.
+      COBBLR_SHARED_DB_PEER: ${COBBLR_SHARED_DB_PEER:-}
+      # Bound the activity log on a public host; unset keeps every row.
+      ACTIVITY_LOG_RETENTION_DAYS: ${ACTIVITY_LOG_RETENTION_DAYS:-}
+      COBBLR_DISABLE_EXPERIMENTAL_MODULES: ${COBBLR_DISABLE_EXPERIMENTAL_MODULES:-}
       # Marketplace v0.3.x runtime install — sandboxed module
       # tarballs go here. Bind-mounted so installs persist across
       # api restarts AND survive image rebuilds.
@@ -131,6 +195,17 @@ services:
       # without the line, setting it in .env would silently do nothing here.
       COBBLR_BIDB_URL: ${COBBLR_BIDB_URL:-}
       COBBLR_BIDB_KEY: ${COBBLR_BIDB_KEY:-}
+      # Carrier credentials for following a parcel. Same reason as above: this
+      # compose enumerates env, so an unlisted var set in .env reaches nothing.
+      COBBLR_FEDEX_API_KEY: ${COBBLR_FEDEX_API_KEY:-}
+      COBBLR_FEDEX_SECRET_KEY: ${COBBLR_FEDEX_SECRET_KEY:-}
+      COBBLR_FEDEX_ENV: ${COBBLR_FEDEX_ENV:-}
+      COBBLR_TRACKING_API: ${COBBLR_TRACKING_API:-}
+      COBBLR_TRACKING_API_URL: ${COBBLR_TRACKING_API_URL:-}
+      COBBLR_TRACKING_API_KEY: ${COBBLR_TRACKING_API_KEY:-}
+      COBBLR_TRACKING_API_TRANSIT: ${COBBLR_TRACKING_API_TRANSIT:-}
+
+      COBBLR_TRACKING_POLL_INTERVAL: ${COBBLR_TRACKING_POLL_INTERVAL:-}
       # The companion Discord bot's base URL, if one is running. Offered in
       # .env.example and read by the app, so it has to be passed in here too.
       COBBLR_DISCORD_BOT_URL: ${COBBLR_DISCORD_BOT_URL:-}

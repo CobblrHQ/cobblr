@@ -389,6 +389,16 @@ export interface VendorDetail extends Vendor {
   total_spend: number;
 }
 
+/** A driver package a workspace declares for its bridges. `bridgeId` null
+ *  means every bridge; a value scopes it to one. */
+export interface EdgeDriverDeclaration {
+  kind: string;
+  version: string;
+  sha256: string;
+  source: string;
+  bridgeId?: string | null;
+}
+
 export interface Order {
   id: string;
   vendor: string | null;
@@ -409,6 +419,56 @@ export interface Order {
   created_at: string;
   updated_at: string;
 }
+
+/** A tracking number's carrier, identified from the number's own format.
+ *  `trackingUrl` is null where the carrier has no single public page to send
+ *  someone to (an international postal format shared by many national posts). */
+export interface ShipmentCarrier {
+  code: string;
+  name: string;
+  number: string;
+  trackingUrl: string | null;
+}
+
+/** Where to send someone to look at this parcel. Always present, even when no
+ *  carrier was recognised — `isCarrier` says whether it is the carrier's own
+ *  page or a universal resolver standing in. */
+export interface TrackingLookup {
+  url: string;
+  via: string;
+  isCarrier: boolean;
+}
+
+/** Cobblr's own coarse parcel states, not a carrier's codes. */
+export type ShipmentState =
+  | "pre_transit"
+  | "in_transit"
+  | "out_for_delivery"
+  | "delivered"
+  | "exception"
+  | "unknown";
+
+export interface ShipmentStatus {
+  carrier: string;
+  number: string;
+  state: ShipmentState;
+  /** The carrier's own wording, always more specific than `state`. */
+  description: string;
+  location: string | null;
+  estimatedDelivery: string | null;
+  deliveredAt: string | null;
+  events: { at: string; description: string; location: string | null }[];
+  checkedAt: string;
+}
+
+/** Why there is no status, when there is no status. Each value is a different
+ *  thing for the user to do, so none of them may render as silence. */
+export type ShipmentStatusReason =
+  | "unrecognised"
+  | "no_driver"
+  | "not_connected"
+  | "carrier_error"
+  | "quota_exhausted";
 
 export interface OrderItem {
   id: string;
@@ -1179,6 +1239,23 @@ export const api = {
       "GET",
       `/orgs/${slug}/modules/purchases/items?part_id=${encodeURIComponent(partId)}`,
     ),
+  /** Which carrier a tracking number belongs to, worked out from the number's
+   *  own format + check digit. `carrier: null` means no format recognised it,
+   *  which is a normal answer about a real parcel rather than an error. */
+  shipmentCarrier: (slug: string, number: string) =>
+    request<{ carrier: ShipmentCarrier | null; lookup: TrackingLookup }>(
+      "GET",
+      `/orgs/${slug}/modules/core-shipments/carrier?number=${encodeURIComponent(number)}`,
+    ),
+  /** Where the parcel is, asked of the carrier now. A null `status` always
+   *  comes with a `reason`, because "we could not follow it" and "it has not
+   *  moved" are different answers and must not both render as blank. */
+  shipmentStatus: (slug: string, number: string) =>
+    request<{
+      carrier: ShipmentCarrier | null;
+      status: ShipmentStatus | null;
+      reason: ShipmentStatusReason | null;
+    }>("GET", `/orgs/${slug}/modules/core-shipments/status?number=${encodeURIComponent(number)}`),
   createFieldDef: (slug: string, body: Partial<PlatformFieldDef>) =>
     request<PlatformFieldDef>("POST", `/orgs/${slug}/field-defs`, body),
   updateFieldDef: (slug: string, id: string, body: Partial<PlatformFieldDef>) =>
@@ -1873,6 +1950,19 @@ export const api = {
       personal: { connected: boolean; backs?: string[] };
       stale_after_ms: number;
     }>("GET", `/orgs/${slug}/edge/status`),
+  /** Driver packages this workspace has declared. Carries the source URL, so
+   *  it is admin-only and deliberately NOT what a bridge is served. */
+  getEdgeDriverDeclarations: (slug: string) =>
+    request<{ drivers: EdgeDriverDeclaration[] }>("GET", `/orgs/${slug}/edge/driver-declarations`),
+  /** Declare or re-pin a driver. Writes a row; the bridge converges on its own
+   *  next poll, so this works while the bridge is offline. */
+  declareEdgeDriver: (slug: string, body: EdgeDriverDeclaration) =>
+    request<{ ok: boolean; kind: string }>("POST", `/orgs/${slug}/edge/drivers`, body),
+  removeEdgeDriver: (slug: string, kind: string, bridgeId?: string | null) =>
+    request<void>(
+      "DELETE",
+      `/orgs/${slug}/edge/drivers/${encodeURIComponent(kind)}${bridgeId ? `?bridge=${encodeURIComponent(bridgeId)}` : ""}`,
+    ),
   /** Modules that can attach to a bridge — data-driven consumer registry. */
   getEdgeConsumers: (slug: string) =>
     request<{ consumers: Array<{ module: string; label: string; description: string; href: string; enabled: boolean }> }>(

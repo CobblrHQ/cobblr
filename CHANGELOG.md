@@ -2,10 +2,35 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-08-14
+
+### Fixes
+- A blank line in .env no longer stops the instance from starting: an empty value now means "not set", which is what docker-compose passes for an unset variable.
+- A scanned barcode whose lookup takes longer than usual now says it is still looking, instead of appearing with no note at all.
+
 ## 2026-08-13
 
 ### Features
+- An order with an expected arrival date now asks you whether it turned up, on the day it was due, instead of sitting open forever.
+- An edge bridge can now install and update driver packages from Cobblr, instead of you editing a config file on the machine it runs on.
+- A Cobblr account can now sign you in to a surface directly, instead of that account only existing to be verified.
+- Signing in with a Cobblr account on a surface that welcomes new people now gets you a workspace on the spot, instead of a dead end.
 - Scan a screenshot of a listing and Cobblr crops the item's photo out of it. Upload a marketplace or shop screenshot and the item's own picture is cut out of the page, away from the chrome, price, buttons and seller, and used as the catalog photo. It is a picture of the actual item you are getting rather than a stock shot of some other unit of the same product, it appears instantly because nothing has to be searched or downloaded, and it cannot break later the way a hotlinked image can. The internet options are still one tap away in the photo strip, the crop stays there as a "From your screenshot" pane so you can go back to it, and Revert undoes it like any other picture change. Costs no extra AI: the read that identifies your item answers this at the same time.
+- Cobblr now follows a tracked parcel on its own schedule, uses the carrier's date when it is better than the seller's estimate, and only asks you about an order when there is something to answer.
+- Paste a tracking number on an order and Cobblr works out which carrier it belongs to, then links you straight to their tracking page.
+- Connect FedEx and an order with a tracking number shows where the parcel actually is, with its scan history.
+- A tracking service running on your own network can now be reached through your edge bridge, so hosted Cobblr can follow parcels it could not otherwise see.
+- Connect a tracking service and Cobblr can follow parcels from any carrier, including ones it has no built-in support for.
+
+### Improvements
+- A tracking number Cobblr cannot name now links to a universal lookup instead of leaving you with nowhere to click.
+- Set how often Cobblr checks a tracked parcel, when you know your tracking service is cheap to ask.
+
+### Fixes
+- Renaming a scan item in its own fields now sticks. Open a scan inbox item, correct the name, and the card's title updates to match and the correction is saved. Before, that field only decided what the item would be called once you filed it: the title above kept showing the AI's name, and if you left without filing, your correction was thrown away. Every other place you can rename a scanned item already worked this way, so this one now matches. A name you have not touched is never written back, which also means an untouched barcode item can no longer publish a phantom correction to the shared barcode database.
+- A parcel's status now shows when the carrier was actually asked, rather than when Cobblr last called its tracking service.
+- A parcel wrongly marked delivered keeps being watched, so if it turns up on a truck again the next day Cobblr notices.
+- Opening an order you had already confirmed no longer spends a call on your tracking service.
 
 ## 2026-08-12
 

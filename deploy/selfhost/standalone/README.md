@@ -54,6 +54,27 @@ docker compose exec db sh -c 'pg_dumpall -U "$POSTGRES_USER"' | gzip > cobblr-$(
 ```
 
 Set `COBBLR_DATA_ROOT` in `.env` to relocate every mount at once (a NAS, a
+
+## Backups
+
+A nightly `pg_dumpall` lands in `${COBBLR_DATA_ROOT}/backups/daily` (Sundays are also
+copied to `weekly/`), kept for 30 days and 12 weeks. **Copying the data tree is not a
+substitute:** a Postgres data directory copied while the server is running is a torn
+snapshot that may not restore. The dumps restore anywhere.
+
+A dump only counts as usable above `BACKUP_MIN_BYTES`, and retention counts only usable
+dumps — otherwise a bad week silently evicts the good backups underneath it. A truncated
+dump is kept for triage and pruned on its own shorter clock.
+
+Restore one:
+
+```bash
+gunzip -c data/backups/daily/cobblr-<stamp>.sql.gz | docker compose exec -T db psql -U cobblr
+```
+
+**These dumps live on the same disk as the database.** Copy them somewhere else — that
+is the part this stack cannot do for you.
+
 data disk). Deliberately no named volumes.
 
 ## Troubleshooting

@@ -9,7 +9,7 @@
 # runs the bundled TLS proxy; empty runs bare, for `tailscale serve/funnel`
 # on the host. All data lives in bind mounts under ${COBBLR_DATA_ROOT:-./data}/ —
 # set COBBLR_DATA_ROOT in .env to relocate every mount at once (e.g. onto a NAS
-# or a data disk); copying that tree is a complete backup. Deliberately NO named
+# or a data disk). Deliberately NO named
 # volumes.
 
 services:
@@ -60,6 +60,68 @@ services:
       - ${COBBLR_DATA_ROOT:-./data}/files:/var/cobblr/files
       - ${COBBLR_DATA_ROOT:-./data}/modules:/var/cobblr/sandboxed-modules
     restart: unless-stopped
+
+
+  # ─── Nightly database dumps ──────────────────────────────────────────
+  # Copying the data tree is NOT a complete backup on its own: a Postgres data
+  # directory copied while the server is running is a torn snapshot that may not
+  # restore. This writes a real pg_dumpall every day, which restores anywhere.
+  #
+  # A dump that "succeeded" at 20 bytes is what hid a three-day outage on the
+  # hosted instance, so a run only counts as usable if it clears BACKUP_MIN_BYTES,
+  # and retention counts only usable dumps — otherwise a bad week quietly evicts
+  # the good backups underneath it.
+  backup:
+    image: ghcr.io/cobblrhq/cobblr-db:${COBBLR_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGUSER: ${POSTGRES_USER:-cobblr}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGHOST: db
+      PGDATABASE: ${POSTGRES_DB:-cobblr_meta}
+      BACKUP_DAILY_RETENTION: ${BACKUP_DAILY_RETENTION:-30}
+      BACKUP_WEEKLY_RETENTION: ${BACKUP_WEEKLY_RETENTION:-12}
+      # MUST be listed here: the entrypoint reads ${BACKUP_MIN_BYTES:-...} and a
+      # value in .env reaches this container only if compose passes it.
+      BACKUP_MIN_BYTES: ${BACKUP_MIN_BYTES:-10000}
+    volumes:
+      - ${COBBLR_DATA_ROOT:-./data}/backups:/backups
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -euo pipefail
+        mkdir -p /backups/daily /backups/weekly
+        while true; do
+          STAMP=$$(date -u +%Y%m%dT%H%M%SZ)
+          OUT="/backups/daily/cobblr-$$STAMP.sql.gz"
+          echo "[backup] $$STAMP -> pg_dumpall -> $$OUT"
+          ok=1
+          pg_dumpall --clean --if-exists | gzip > "$$OUT" || ok=0
+          SZ=$$(stat -c%s "$$OUT" 2>/dev/null || echo 0)
+          if [ "$$ok" = "1" ] && [ "$$SZ" -ge "$${BACKUP_MIN_BYTES:-100000}" ]; then
+            echo "[backup] $$STAMP done — $$SZ bytes"
+            [ "$$(date +%u)" = "7" ] && cp "$$OUT" /backups/weekly/ && echo "[backup] weekly copy"
+            SLEEP=86400
+          else
+            echo "[backup] $$STAMP FAILED — $$SZ bytes; kept for triage, retrying within the hour"
+            SLEEP=3600
+          fi
+          # Retention counts only USABLE dumps: letting 20-byte failures occupy slots
+          # means a bad week quietly evicts the good backups underneath them.
+          find /backups/daily -name '*.sql.gz' -size -$$(( $${BACKUP_MIN_BYTES:-100000} / 1024 ))k -mmin +2880 -delete 2>/dev/null || true
+          # `|| true` is load-bearing: a `while` returns its LAST test's status, so a
+          # final undersized file would make the pipeline non-zero and set -e would
+          # kill the container.
+          { ls -1t /backups/daily/*.sql.gz 2>/dev/null \
+            | while read -r f; do [ "$$(stat -c%s "$$f")" -ge "$${BACKUP_MIN_BYTES:-100000}" ] && echo "$$f"; done \
+            | tail -n +$$((BACKUP_DAILY_RETENTION + 1)) | xargs -r rm -f; } || true
+          { ls -1t /backups/weekly/*.sql.gz 2>/dev/null | tail -n +$$((BACKUP_WEEKLY_RETENTION + 1)) | xargs -r rm -f; } || true
+          sleep $$SLEEP
+        done
 
   web:
     image: ghcr.io/cobblrhq/cobblr-web:${COBBLR_VERSION:-latest}

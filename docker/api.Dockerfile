@@ -62,6 +62,7 @@ COPY modules/tracking/package.json ./modules/tracking/
 COPY modules/digifab/package.json ./modules/digifab/
 COPY modules/core-devices/package.json ./modules/core-devices/
 COPY modules/core-mobility/package.json ./modules/core-mobility/
+COPY modules/core-shipments/package.json ./modules/core-shipments/
 COPY modules/core-file-preview/package.json ./modules/core-file-preview/
 COPY modules/bricklink-connector/package.json ./modules/bricklink-connector/
 COPY modules/core-print/package.json ./modules/core-print/

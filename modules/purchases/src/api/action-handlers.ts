@@ -157,4 +157,67 @@ export function registerPurchasesActionHandlers(): void {
       created_order: created,
     };
   });
+
+  // The answer to the arrival sweep's question, in one tap.
+  //
+  // Setting status to 'arrived' is what the existing PATCH already does, and
+  // what emits purchases.order.arrived plus one order_item.received per mapped
+  // line — the wire that bumps stock. This exists so the answer is a BUTTON on
+  // the order (and something an agent can invoke) rather than a status dropdown
+  // plus a date picker, because it is asked of people who were interrupted to
+  // answer it.
+  platform().actions.registerHandler("purchases.mark-arrived", async (ctx) => {
+    const args = (ctx.args as { orderId?: string; arrivedOn?: string } | null) ?? {};
+    const orderId = args.orderId ?? (ctx.entity?.id || undefined);
+    if (!orderId) return { ok: true, skipped: "no order in scope" };
+
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<PurchasesDB>;
+    const before = await db
+      .selectFrom("purchases_orders")
+      .select(["id", "status", "arrived_at"])
+      .where("id", "=", orderId)
+      .executeTakeFirst();
+    if (!before) return { ok: false, error: "order not found" };
+    // Idempotent: answering twice (two devices, or a stale notification) must
+    // not re-emit the arrival and double-bump stock.
+    if (before.status === "arrived") return { ok: true, skipped: "already arrived" };
+
+    const arrivedOn = args.arrivedOn ?? new Date().toISOString().slice(0, 10);
+    await db
+      .updateTable("purchases_orders")
+      .set({ status: "arrived" as OrderStatus, arrived_at: arrivedOn, updated_at: new Date() } as never)
+      .where("id", "=", orderId)
+      .execute();
+
+    await platform().events.emit("purchases.order.status_changed", {
+      orgId: ctx.orgId,
+      orderId,
+      from: before.status,
+      to: "arrived",
+    });
+    await platform().events.emit("purchases.order.arrived", { orgId: ctx.orgId, orderId });
+
+    // Same fan-out as the PATCH path: one event per line mapped to a part, so
+    // the stock-bump wire has something to bind to.
+    const items = await db
+      .selectFrom("purchases_order_items")
+      .select(["id", "part_id", "qty", "unit_cost", "description"])
+      .where("order_id", "=", orderId)
+      .where("part_id", "is not", null)
+      .execute();
+    for (const it of items) {
+      if (!it.part_id) continue;
+      await platform().events.emit("purchases.order_item.received", {
+        orgId: ctx.orgId,
+        orderId,
+        orderItemId: it.id,
+        partId: it.part_id,
+        qty: Number(it.qty),
+        unitCost: it.unit_cost == null ? null : Number(it.unit_cost),
+        description: it.description,
+      });
+    }
+
+    return { ok: true, order_id: orderId, arrived_at: arrivedOn, lines_received: items.length };
+  });
 }

@@ -16,6 +16,7 @@ import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
 import { ModulePurposeHint } from "../components/ModulePurposeHint";
 import { usePublishChatContext } from "../lib/chat-context";
 import { BulkActionBar, EntityActionsBar, EntityThumb, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { ContributedDetailPanels } from "../panels/registry";
 import { receiptGroupSummary } from "./receiptLabel";
 import { ReceiptAddressChip } from "../components/ReceiptAddressChip";
 
@@ -766,6 +767,21 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
             {!fp.hidden("shipping_cost") && <EditField label={fp.label("shipping_cost", "Shipping cost")} value={o.shipping_cost ?? ""} numeric onCommit={(v) => update.mutate({ shipping_cost: v ? (v as unknown as string) : null })} />}
           </dl>
           <EditField label="Notes" value={o.notes ?? ""} multiline onCommit={(v) => update.mutate({ notes: v || null })} />
+
+          {/* Contributed detail panels (e.g. core-shipments' Shipment) — the
+              panel registry renders whatever enabled modules declare for
+              purchases:order; this page names no contributor. The tracking
+              number rides along as a hint because it is the order's, not the
+              contributor's, to read. */}
+          <ContributedDetailPanels
+            target="purchases:order"
+            ctx={{
+              slug: activeSlug,
+              entityId: o.id,
+              entityTitle: o.vendor ?? o.order_number ?? "Order",
+              hints: { tracking_number: o.tracking_number ?? undefined },
+            }}
+          />
 
           <div>
             <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">

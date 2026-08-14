@@ -70,6 +70,7 @@ import { HeaderMenu, MenuFilterLine, MenuHead, MenuItem, MenuNote, MenuSep } fro
 import { ReceiptAddressChip, ReceiptAddressMenuBlock } from "../components/ReceiptAddressChip";
 import { classifyFiles, classifyOmni, clipboardImages, omniPlaceholder } from "./omniIntake";
 import { catalogUndoHistory, catalogUndoLabel, catalogUndoTitle } from "./scanCatalogUndo";
+import { shouldPersistNameEdit } from "./scanNameEdit";
 import { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 export { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 import { decideLocationScan, filingLabel } from "../lib/scanFiling";
@@ -6928,6 +6929,35 @@ function ConfirmForm({
   })();
 
   const [name, setName] = useState(initialCand?.name ?? item.suggested_name ?? "");
+  // Editing NAME here used to change only what the item would be FILED as: the
+  // value went to confirmScanItem and never to the row, so the card's title kept
+  // showing the AI's name, and leaving without committing threw the correction
+  // away (reported 2026-08-13). Renaming an inbox item is already a supported
+  // action - five other surfaces call updateScanItem({ name }) - so this one
+  // joins them.
+  //
+  // ONLY ON A REAL EDIT, though, and that guard is load-bearing rather than
+  // tidy. This field is seeded from the CANDIDATE's reconciled name, which
+  // legitimately differs from the row's, so a blur-triggered save would rewrite
+  // suggested_name just because someone opened the form and tabbed past. Worse:
+  // PATCH /inbox/:id reports a renamed BARCODE item to the shared Barcode
+  // Intelligence DB, so that phantom rename would publish a bogus correction to
+  // every workspace that ever scans that UPC.
+  const [nameDirty, setNameDirty] = useState(false);
+  const persistName = useMutation({
+    mutationFn: (next: string) => api.updateScanItem(activeSlug, item.id, { name: next }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] }),
+    // Silent: the commit below sends the name regardless, so a failed
+    // rename costs the live title, not the user's edit.
+    onError: () => {},
+  });
+  const commitNameEdit = () => {
+    // The decision is pure and tested next door - see scanNameEdit.ts for why a
+    // phantom rename is worse than a missed one.
+    if (shouldPersistNameEdit({ dirty: nameDirty, next: name, rowName: item.suggested_name })) {
+      persistName.mutate(name.trim());
+    }
+  };
   // A serial/service tag the vision read off the label. It already commits to the
   // destination's native serial_number column, but was never SHOWN — so the user
   // couldn't tell it was captured (and the matchmaker note "no serial field in
@@ -7170,7 +7200,11 @@ function ConfirmForm({
           <input
             type="text"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setNameDirty(true);
+              setName(e.target.value);
+            }}
+            onBlur={commitNameEdit}
             placeholder={item.suggested_name ?? "(name required)"}
             className={inputCls}
             required
