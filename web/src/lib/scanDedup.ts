@@ -21,6 +21,7 @@
 // re-fired. That's exactly the kind of off-by-one a test pins down.
 
 import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
+import { hasUnallocatedPrefix } from "./gs1Prefix";
 
 /** A generic web link (a product's marketing QR) that is NOT one of Cobblr's own
  *  `<host>/qr/<token>` labels. Lowest-priority sighting: a Nike box's
@@ -104,10 +105,25 @@ export function freshDedupState(): DedupState {
  * @param repeatGapMs how long a code must be ABSENT before it counts as new.
  */
 /** How many consecutive identical sightings a code needs before it fires.
- *  Short NUMERIC codes (under UPC-A's 12 digits: EAN-8, UPC-E, and — the case
- *  that matters — partial-slice misreads of longer codes) need a longer streak. */
+ *
+ *  TWO ways a code earns the longer streak, and the second was learned the hard
+ *  way:
+ *
+ *  1. It is SHORT (under UPC-A's 12 digits: EAN-8, UPC-E, and partial-slice
+ *     misreads of longer codes).
+ *  2. It claims a GS1 prefix nobody has been issued. A rotated read of
+ *     859337002726 produced 6876437002726 — thirteen digits, checksum-valid,
+ *     sharing the last EIGHT digits with the real code (reported 2026-08-14).
+ *     Being LONGER, it sailed past rule 1 on the lenient requirement of 2. Its
+ *     prefix, 687, has never been allocated to anybody.
+ *
+ *  Rule 2 is a second net, not the answer: only about 28% of the prefix space
+ *  is unallocated, so most misreads still land somewhere plausible and are
+ *  caught, if at all, by having to repeat themselves. */
 export function requiredSightings(code: string): number {
-  return /^\d{4,11}$/.test(code) ? 4 : 2;
+  if (/^\d{4,11}$/.test(code)) return 4;
+  if (hasUnallocatedPrefix(code)) return 4;
+  return 2;
 }
 
 export function shouldFireScan(

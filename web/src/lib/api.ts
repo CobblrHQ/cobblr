@@ -1181,7 +1181,26 @@ export const api = {
       bindingId?: string;
       args?: Record<string, unknown>;
     },
-  ) => request<{ ok: boolean; result: unknown }>("POST", `/orgs/${slug}/actions/invoke`, body),
+  ) =>
+    // The route's 200 means "the action was invoked"; whether the operation went
+    // ahead is the handler's own `result.ok`. Callers reasonably treat a resolved
+    // promise as success — the App Player toasted "ran." on a refusal — so a
+    // refusal is raised HERE, once, with the handler's reason. Every existing
+    // caller's catch then shows why instead of a false confirmation, and no
+    // future caller has to remember to unwrap the envelope.
+    request<{ ok: boolean; result: unknown }>("POST", `/orgs/${slug}/actions/invoke`, body).then(
+      (res) => {
+        const inner = res.result as { ok?: unknown; error?: unknown } | null;
+        if (inner && typeof inner === "object" && inner.ok === false) {
+          throw new Error(
+            typeof inner.error === "string" && inner.error.trim()
+              ? inner.error
+              : "That action couldn't run.",
+          );
+        }
+        return res;
+      },
+    ),
 
   // Pillar B — registered actions + per-org appliesTo overrides
   listRegisteredActions: (slug: string) =>
@@ -2780,7 +2799,7 @@ export const api = {
       items: ScanInboxItem[];
       /** Session labels keyed by scan_batch_id — the inbox group header + the
        *  receipt's stored original (for View original / Re-parse). */
-      batches?: Record<string, { label: string | null; origin: string | null; source_file_id: string | null; order_ref: string | null }>;
+      batches?: Record<string, { label: string | null; origin: string | null; source_file_id: string | null; order_ref: string | null; tracking_number: string | null }>;
       next_cursor?: string | null;
       total?: number;
     }>("GET", `/orgs/${slug}/modules/core-scan/inbox${qs ? "?" + qs : ""}`);
@@ -2801,6 +2820,15 @@ export const api = {
       "PATCH",
       `/orgs/${slug}/modules/core-scan/scan/receipt/${batchId}/order-ref`,
       { order_ref: orderRef },
+    ),
+  /** Set/clear the tracking number for the parcel a receipt session describes.
+   *  Filing a receipt that carries one records the order as still in transit,
+   *  so it gets followed instead of being closed on arrival at the doorstep. */
+  setReceiptTracking: (slug: string, batchId: string, trackingNumber: string | null) =>
+    request<{ id: string; tracking_number: string | null }>(
+      "PATCH",
+      `/orgs/${slug}/modules/core-scan/scan/receipt/${batchId}/tracking`,
+      { tracking_number: trackingNumber },
     ),
   /** Light in-the-moment edits the camera modal makes — quantity, name. */
   updateScanItem: (
@@ -2855,6 +2883,9 @@ export const api = {
         /** Order / invoice number when the receipt stated one - what tells two
          *  receipts from the same vendor apart. */
         orderRef: string | null;
+        /** The parcel's tracking number, when one has been recorded. Its
+         *  presence is what files the receipt as still in transit. */
+        trackingNumber: string | null;
         count: number;
       }>;
       total_items: number;
@@ -3295,11 +3326,22 @@ export const api = {
   /** Apply a URL as the catalog image. Pass `aiPick` when the URL came from
    *  "✨ Pick best (AI)", so Revert can step back TO the ranker's choice instead
    *  of past it to the raw first web result. */
-  setScanCatalogImage: (slug: string, id: string, url: string, opts?: { aiPick?: boolean }) =>
+  setScanCatalogImage: (
+    slug: string,
+    id: string,
+    url: string,
+    opts?: { aiPick?: boolean; thumbUrl?: string },
+  ) =>
     request<ScanInboxItem>(
       "POST",
       `/orgs/${slug}/modules/core-scan/inbox/${id}/catalog-image`,
-      opts?.aiPick ? { url, ai_pick: true } : { url },
+      {
+        url,
+        ...(opts?.aiPick ? { ai_pick: true } : {}),
+        // The picture the user is actually looking at. Sent so a hotlink-blocked
+        // original can fall back to it rather than refusing a visible image.
+        ...(opts?.thumbUrl && opts.thumbUrl !== url ? { thumb_url: opts.thumbUrl } : {}),
+      },
     ),
   /** "✨ Pick best (AI)" — a vision model ranks the photo options and picks the
    *  cleanest catalog shot (product-only, correct colour, no people). Read-only:
@@ -3537,6 +3579,10 @@ export const api = {
        *  until the draft leaves "building", then read its validation.preview. */
       building?: boolean;
       draft_id?: string;
+      /** Tier-1.5 escorts: screens Cobb walked the user to this turn (the
+       *  widget navigates; prefill.* params fill the form; the page's own
+       *  submit stays the user's). */
+      escorts?: Array<{ path: string; label: string }>;
     }>("POST", `/orgs/${slug}/modules/core-ai/chat`, { messages, ...(context ? { context } : {}) }),
   aiChatExecute: (slug: string, proposal: AiChatProposal) =>
     request<{
@@ -4210,7 +4256,26 @@ export interface AiProviderDef {
   label: string;
   credentials: Record<string, { label: string; secret: boolean; choices?: Array<{ value: string; label: string }> }>;
   capabilities: Record<string, { models: string[]; defaultModel?: string }>;
+  /** What this provider is FOR. Absent on the per-workspace AI catalogue, which
+   *  is AI by definition; the personal catalogue at /me/connections carries
+   *  every kind and always sets it. */
+  kind?: string;
+  /** One line under the picker, for a kind whose purpose isn't self-evident. */
+  blurb?: string;
 }
+
+/** How the personal-connections page introduces each kind. An unlisted kind
+ *  still works — it just gets its raw id as a heading instead of prose. */
+export const CONNECTION_KIND_LABELS: Record<string, { title: string; blurb: string }> = {
+  "ai-provider": {
+    title: "AI",
+    blurb: "Your own key, or the local-AI edge bridge.",
+  },
+  "parcel-tracking": {
+    title: "Parcel tracking",
+    blurb: "Follow your own deliveries with your own tracking account.",
+  },
+};
 
 export type ConnRouteMode = "my-calls" | "workspace-default";
 export type ConnRouteScope = "sole_member" | "owner" | "all_mine" | "explicit";
@@ -4226,6 +4291,9 @@ export interface ConnRoute {
 export interface UserConnection {
   id: string;
   provider_id: string;
+  /** Which catalogue this came from ('ai-provider', 'tracking', …), so the
+   *  page groups a user's connections by what they are for. */
+  kind: string;
   label: string;
   route_mode: ConnRouteMode;
   route_scope: ConnRouteScope;

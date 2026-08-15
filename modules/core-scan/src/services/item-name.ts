@@ -10,6 +10,7 @@
 // that appends a known word is free, instant and testable (heuristic-first).
 
 import { colorFromText } from "./ddg-images.js";
+import { isVarietyColour } from "./colour-compound.js";
 
 const title = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 
@@ -46,6 +47,12 @@ export function nameWithColor(
     const brandHasIt = colorFromText(brand ?? "")?.toLowerCase() === inName.toLowerCase();
     // The colour word belongs to the brand - leave it alone and add ours.
     if (brandHasIt) return `${n}, ${title(c)}`;
+    // ...or to the PRODUCT ITSELF. Green tea is not tea that happens to be
+    // green, so substituting there renames the product rather than recolouring
+    // it: "Ginger Peach Green Tea" in a red box would become "Ginger Peach Red
+    // Tea". Same remedy as the brand case and for the same reason - the word is
+    // not a claim about this item's colour, so append rather than overwrite.
+    if (isVarietyColour(n, inName)) return `${n}, ${title(c)}`;
     return n.replace(new RegExp(`\\b${inName}\\b`, "i"), title(c));
   }
   return `${n}, ${title(c)}`;

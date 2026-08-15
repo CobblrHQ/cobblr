@@ -50,6 +50,17 @@ async function main(): Promise<void> {
       if (!mod.default.name) {
         failures.push({ module: m, reason: "manifest has no `name`" });
       }
+      // "platform" is the RESERVED owner of the kernel's own actions
+      // (api/src/platform/platform-actions.ts) — registry-sync seeds
+      // entity_actions rows under that name from the kernel side. A module
+      // claiming it would collide in the registry and shadow kernel actions.
+      if (mod.default.name === "platform") {
+        failures.push({
+          module: m,
+          reason:
+            '`name: "platform"` is reserved for the kernel\'s own actions (platform:add-field, ...) - pick another name',
+        });
+      }
     } catch (err) {
       // defineModule throws a multi-line "Invalid module manifest for …" here.
       failures.push({ module: m, reason: (err as Error).message });

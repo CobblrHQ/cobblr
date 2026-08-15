@@ -131,11 +131,29 @@ export function rankImagesPromptFor(input: Record<string, unknown>): string {
   lines.push(`3. Prefer a clean studio / catalog look over a lifestyle or in-use shot.`);
   const guidance = categoryGuidance(input);
   if (guidance) lines.push(guidance);
+  // Asked about the CHOSEN tile only, and asked as a coarse SIDE rather than a
+  // box. The tile is the candidate letterboxed into a 400px square, so a box
+  // would have to be un-letterboxed at low precision; "which half holds one
+  // unit" survives that and is all a crop needs. Answered in the reply the call
+  // was already making, so a multi-unit photo costs no extra vision call.
+  lines.push(
+    `Finally, look ONLY at the tile you chose. Retail photos often show two or ` +
+      `more of the SAME item side by side or stacked, when the record is for ONE. ` +
+      `Say how many separate units of the same product are visible, and if there ` +
+      `is more than one, which half of the tile contains one clean, complete, ` +
+      `unobstructed unit. Answer "units": 1 whenever a single unit is shown, or ` +
+      `whenever the units overlap, are cut off, or cannot be separated by a ` +
+      `straight cut down the middle — a wrong cut destroys the picture, so say 1 ` +
+      `when unsure. Different products together are NOT multiple units.`,
+  );
   lines.push(
     `Reply with ONLY a JSON object: ` +
       `{"chosen_tile": <the tile's printed number, an integer from 1 to ${tiles}>, ` +
       `"reason": "<one short sentence on why>", ` +
-      `"color_seen": "<the colour of the item in the tile you chose>"}. ` +
+      `"color_seen": "<the colour of the item in the tile you chose>", ` +
+      `"units": <how many identical units are visible in that tile, an integer>, ` +
+      `"unit_side": "<left|right|top|bottom, the half holding one clean unit; ` +
+      `omit when units is 1>"}. ` +
       `If none are good, pick the least-bad tile and say so in "reason".`,
   );
   return lines.join("\n\n");

@@ -38,9 +38,60 @@ const DEFAULT_AGGREGATOR = "easypost";
  *  better served by "nothing is connected" than by quietly getting a different
  *  vendor's client pointed at their URL. */
 export function aggregatorDriver(): CarrierDriver | null {
-  const name = (process.env.COBBLR_TRACKING_API || DEFAULT_AGGREGATOR).trim().toLowerCase();
-  const driver = AGGREGATORS[name];
+  const driver = aggregatorCandidate();
   return driver?.configured() ? driver : null;
+}
+
+/** The aggregator this build would use, set up or not. */
+function aggregatorCandidate(): CarrierDriver | null {
+  const name = (process.env.COBBLR_TRACKING_API || DEFAULT_AGGREGATOR).trim().toLowerCase();
+  return AGGREGATORS[name] ?? null;
+}
+
+/** Is this driver set up for THIS parcel — the instance's credentials, or the
+ *  owner's own connection? A driver with only instance-wide credentials has no
+ *  per-parcel answer to give, so its `configured()` stands. */
+async function usable(
+  driver: CarrierDriver,
+  route: { orgId?: string; ownerUserId?: string | null },
+): Promise<boolean> {
+  return driver.configuredFor ? await driver.configuredFor(route) : driver.configured();
+}
+
+/** Can an aggregator answer for THIS caller — the instance's credentials, or
+ *  their own connection? What the settings page asks: an aggregator makes every
+ *  recognised carrier followable, so this is "is tracking live for me". */
+export async function aggregatorConnectedFor(route: {
+  orgId?: string;
+  ownerUserId?: string | null;
+}): Promise<boolean> {
+  const agg = aggregatorCandidate();
+  return agg ? await usable(agg, route) : false;
+}
+
+/** Who should answer for this carrier ON THIS PARCEL, and whether they can.
+ *
+ *  The route-aware twin of `driverFor`, and the one the action handler uses.
+ *  Once a credential can belong to a person, "is tracking connected here" has
+ *  no single answer — it depends whose parcel is being followed. An
+ *  instance-only check would tell someone who connected their own service that
+ *  nothing is connected, which is the bug this exists to prevent. */
+export async function driverForRoute(
+  code: string,
+  route: { orgId?: string; ownerUserId?: string | null },
+): Promise<{ driver: CarrierDriver | null; connected: boolean }> {
+  const own = CARRIER_DRIVERS.find((d) => d.code === code);
+  // A carrier's own driver is first-hand where an aggregator reads the same
+  // data second-hand, so it keeps winning wherever one is set up.
+  if (own && (await usable(own, route))) return { driver: own, connected: true };
+
+  const agg = aggregatorCandidate();
+  if (agg && (await usable(agg, route))) return { driver: agg, connected: true };
+
+  // Same distinction driverFor makes: an unconfigured carrier driver lets the
+  // caller say "FedEx is not connected here" rather than the vaguer "we cannot
+  // follow FedEx" — different things for a person to do about it.
+  return { driver: own ?? null, connected: false };
 }
 
 /** The wire formats this build can speak, for diagnostics and the settings UI. */
@@ -75,10 +126,4 @@ export function driverFor(code: string): CarrierDriver | null {
 export function driverStatus(): { code: string; configured: boolean }[] {
   const viaAggregator = aggregatorDriver() !== null;
   return CARRIER_DRIVERS.map((d) => ({ code: d.code, configured: d.configured() || viaAggregator }));
-}
-
-/** True when an aggregator is configured, so the UI can say that a carrier with
- *  no driver of its own is still followable. */
-export function aggregatorConfigured(): boolean {
-  return aggregatorDriver() !== null;
 }

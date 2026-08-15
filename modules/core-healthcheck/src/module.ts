@@ -28,6 +28,9 @@ export default defineModule({
   intents: [],
   dependencies: [],
 
+  // AI-REACH: none needed — operator plumbing (liveness probes for the deploy).
+  // Not a workspace surface; nothing a user of a workspace would ask about.
+
   provides: { entityKinds: [] },
 
   exposes: {

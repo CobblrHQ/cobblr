@@ -39,6 +39,11 @@ export default defineModule({
   intents: [],
   dependencies: [],
 
+  // AI-REACH: no kinds by design. Templates are READ through the shared
+  // registry's get_workspace_setup (part: "templates"), which reports what each
+  // one creates and prefills. Creating one is not yet reachable — a deliberate
+  // gap, not an oversight: see docs/design-decisions/ai-reach-audit.md.
+
   provides: {
     entityKinds: [],
   },

@@ -10,7 +10,10 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 
 export const viewsRouter = Router({ mergeParams: true });
 
-const ViewCreate = z.object({
+/** Exported so the core-views:save-view handler validates a view the SAME way
+ *  this route does — what counts as a valid view must not mean one thing when a
+ *  person saves one and another when the assistant does. */
+export const ViewCreate = z.object({
   entity_kind: z.string().min(1).max(120),
   name: z.string().min(1).max(160),
   view_type: z.string().min(1).max(40),

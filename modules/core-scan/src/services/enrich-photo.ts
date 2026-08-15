@@ -16,6 +16,13 @@ import { tidyTruncatedName } from "./item-name.js";
 import type { CoreScanDB } from "../db.js";
 import { reportBarcodeCorrection, reportBarcodeReject } from "./barcode-corrections.js";
 import { identityMeta, mergeMeta } from "./metadata.js";
+import {
+  earnsMatchesYourPhoto,
+  firstPass,
+  mayActOnMismatch,
+  needsEscalation,
+  type CheckBasis,
+} from "./crosscheck-policy.js";
 import { evictBarcodeCaches, rememberLocalIdentity } from "./barcode-cache.js";
 import { searchImages, rankImageOptions, imageQuery, mediaSearchExtras } from "./ddg-images.js";
 import { sql } from "kysely";
@@ -564,17 +571,39 @@ export function isNameEcho(correctName: string, rejectedName: string): boolean {
   return a === b || a.includes(b) || b.includes(a);
 }
 
+export interface CrossCheckOptions {
+  /** Check THIS photo rather than the item's own scan shot. Set when someone
+   *  deliberately added a picture: that is the evidence they meant to supply,
+   *  and the scan-moment frame is not it. */
+  fileId?: string;
+  /** Refuse to rename even on a clear image-basis mismatch; raise the flag and
+   *  its one-tap fix instead.
+   *
+   *  For a photo a PERSON added to an already-named item. The gesture is
+   *  ambiguous by nature — "the name is right and this picture is better" and
+   *  "the name is wrong, here is proof" look identical from the button — so the
+   *  reversible reading wins. Being made to tap once to accept a correction
+   *  costs a second; having a correct item silently renamed underneath you is
+   *  the complaint that started all of this. */
+  flagOnly?: boolean;
+}
+
 export async function crossCheckScanPhoto(
   orgId: string,
   itemId: string,
   resolvedName: string,
+  opts: CrossCheckOptions = {},
 ): Promise<void> {
   const db = (await platform().tenants.getDb(orgId)) as unknown as Kysely<CoreScanDB>;
-  const row = await db
+  const stored = await db
     .selectFrom("core_scan_inbox_items")
     .select(["image_file_id", "suggested_metadata"])
     .where("id", "=", itemId)
     .executeTakeFirst();
+  // A supplied photo replaces the subject of the check, and with it the
+  // observation: `photo_observations` describes the scan-moment frame, so
+  // reusing it here would answer a question about a different picture.
+  const row = opts.fileId ? { ...stored, image_file_id: opts.fileId } : stored;
 
   const meta = (row?.suggested_metadata ?? {}) as {
     photo_observations?: string;
@@ -626,68 +655,84 @@ export async function crossCheckScanPhoto(
       ? meta.photo_observations.trim()
       : null;
 
-  let verdict: { match?: string; reason?: string; correct_name?: string; correct_brand?: string } | null =
-    null;
-  try {
-    const r = observation
-      ? // ai-userless: background barcode-vs-photo mismatch cross-check (runs
-        // detached from the cron, no request user in scope).
-        await platform().ai.invoke({
-          orgId,
-          capability: "chat",
-          input: {
-            messages: [
-              {
-                role: "user",
-                content:
-                  `A scanned barcode resolved an item to: "${resolvedName}".\n` +
-                  `A factual description of the actual photographed item reads:\n"${observation}"\n\n` +
-                  "Does the described item plausibly match that name/identity? Consider product " +
-                  "type, packaging and any label text; allow for a generic or differently-angled " +
-                  'shot. Answer "no" ONLY when the description clearly shows a DIFFERENT kind of ' +
-                  "product. When (and only when) it's a clear mismatch AND the description names the " +
-                  "real product unambiguously, also return what it actually IS (concise retail name " +
-                  "+ brand if present). Omit them otherwise.\n" +
-                  'Reply with JSON only: {"match":"yes"|"no"|"unsure","reason":"<one short sentence>",' +
-                  '"correct_name":"<optional>","correct_brand":"<optional>"}.',
-              },
-            ],
-          },
-          source: { kind: "core-scan:photo-crosscheck-text", id: itemId },
-        })
-      : await (async () => {
-          const file =
-            (await platform().files.read(orgId, row.image_file_id!, "medium")) ??
-            (await platform().files.read(orgId, row.image_file_id!, "original"));
-          if (!file) throw new Error("no photo bytes");
-          // ai-userless: background barcode-vs-photo mismatch cross-check (runs
-          // detached from the cron, no request user in scope).
-          return platform().ai.invoke({
-            orgId,
-            capability: "classify-image",
-            input: {
-              image_b64: Buffer.from(file.bytes).toString("base64"),
-              image_media_type: file.mimeType,
-              prompt:
-                `A scanned barcode resolved this item to: "${resolvedName}". ` +
-                "Look at the photo and decide whether the product visible in it plausibly " +
-                "matches that name/identity — consider the product type, packaging, and any " +
-                "readable label text, and allow for a generic or differently-angled shot. " +
-                'Only answer "no" when the photo clearly shows a DIFFERENT kind of product. ' +
-                "When (and ONLY when) it's a clear mismatch AND the photo's label makes the " +
-                "real product unambiguous, also return what the item actually IS — a concise " +
-                "retail product name, plus brand if visible. Omit them if you can't read it " +
-                "confidently. " +
-                'Reply with JSON only: {"match":"yes"|"no"|"unsure","reason":"<one short sentence>",' +
-                '"correct_name":"<the real product name, optional>","correct_brand":"<brand, optional>"}.',
-            },
-            source: { kind: "core-scan:photo-crosscheck", id: itemId },
-          });
-        })();
+  type Verdict = { match?: string; reason?: string; correct_name?: string; correct_brand?: string };
+  const parseVerdict = (r: { result: unknown }): Verdict => {
     const res = r.result as { text?: string; content?: string };
     const raw = res.text ?? res.content ?? "";
     const m = raw.match(/\{[\s\S]*\}/);
-    verdict = JSON.parse(m ? m[0] : raw);
+    return JSON.parse(m ? m[0] : raw) as Verdict;
+  };
+
+  const askDescription = async (): Promise<Verdict> =>
+    parseVerdict(
+      // ai-userless: background barcode-vs-photo mismatch cross-check (runs
+      // detached from the cron, no request user in scope).
+      await platform().ai.invoke({
+        orgId,
+        capability: "chat",
+        input: {
+          messages: [
+            {
+              role: "user",
+              content:
+                `A scanned barcode resolved an item to: "${resolvedName}".\n` +
+                `A factual description of the actual photographed item reads:\n"${observation ?? ""}"\n\n` +
+                "Does the described item plausibly match that name/identity? Consider product " +
+                "type, packaging and any label text; allow for a generic or differently-angled " +
+                'shot. Answer "no" ONLY when the description clearly shows a DIFFERENT kind of ' +
+                "product.\n" +
+                'Reply with JSON only: {"match":"yes"|"no"|"unsure","reason":"<one short sentence>"}.',
+            },
+          ],
+        },
+        source: { kind: "core-scan:photo-crosscheck-text", id: itemId },
+      }),
+    );
+
+  const askPhoto = async (): Promise<Verdict> => {
+    const file =
+      (await platform().files.read(orgId, row.image_file_id!, "medium")) ??
+      (await platform().files.read(orgId, row.image_file_id!, "original"));
+    if (!file) throw new Error("no photo bytes");
+    return parseVerdict(
+      // ai-userless: background barcode-vs-photo mismatch cross-check (runs
+      // detached from the cron, no request user in scope).
+      await platform().ai.invoke({
+        orgId,
+        capability: "classify-image",
+        input: {
+          image_b64: Buffer.from(file.bytes).toString("base64"),
+          image_media_type: file.mimeType,
+          prompt:
+            `A scanned barcode resolved this item to: "${resolvedName}". ` +
+            "Look at the photo and decide whether the product visible in it plausibly " +
+            "matches that name/identity — consider the product type, packaging, and any " +
+            "readable label text, and allow for a generic or differently-angled shot. " +
+            'Only answer "no" when the photo clearly shows a DIFFERENT kind of product. ' +
+            "When (and ONLY when) it's a clear mismatch AND the photo's label makes the " +
+            "real product unambiguous, also return what the item actually IS — a concise " +
+            "retail product name, plus brand if visible. Omit them if you can't read it " +
+            "confidently. " +
+            'Reply with JSON only: {"match":"yes"|"no"|"unsure","reason":"<one short sentence>",' +
+            '"correct_name":"<the real product name, optional>","correct_brand":"<brand, optional>"}.',
+        },
+        source: { kind: "core-scan:photo-crosscheck", id: itemId },
+      }),
+    );
+  };
+
+  let verdict: Verdict | null = null;
+  let basis: CheckBasis = firstPass(!!observation);
+  try {
+    verdict = basis === "text" ? await askDescription() : await askPhoto();
+    // The cheap pass may only RAISE a mismatch, never conclude one: it read a
+    // description, and a description can be wrong about the thing it describes.
+    // Escalating to the pixels is what turns a suspicion into a finding, and it
+    // is paid for only on the rare frames where the cheap pass objects.
+    if (needsEscalation(basis, String(verdict?.match ?? ""))) {
+      verdict = await askPhoto();
+      basis = "image";
+    }
   } catch {
     await confirmPending(false); // can't verify → fall back to the barcode result
     return; // best-effort — a flaky/absent vision provider never blocks anything
@@ -695,9 +740,16 @@ export async function crossCheckScanPhoto(
   const matchVerdict = String(verdict?.match ?? "").toLowerCase();
   if (matchVerdict !== "no") {
     // "yes" / "unsure" → the photo does not contradict the barcode. Release the
-    // gate; only a positive "yes" earns the "matches your photo" note.
-    await confirmPending(matchVerdict === "yes");
+    // gate; only a look at the photo itself earns the "matches your photo" note.
+    await confirmPending(earnsMatchesYourPhoto(basis, matchVerdict));
     return; // flag only a clear mismatch
+  }
+  if (!mayActOnMismatch(basis)) {
+    // Unreachable while the escalation above stands, and deliberately kept as
+    // the single place the rule is stated: nothing renames, flags or votes off
+    // a description alone, however the flow above is later rearranged.
+    await confirmPending(false);
+    return;
   }
   const reason = typeof verdict?.reason === "string" ? verdict.reason.trim() : "";
   const correctName = typeof verdict?.correct_name === "string" ? verdict.correct_name.trim() : "";
@@ -717,7 +769,7 @@ export async function crossCheckScanPhoto(
   // wrong product; fall through to the mismatch flag. This is what let a photo of
   // yellow yarn get "corrected" to the Anchorman action figure the barcode wrongly
   // resolved to: the model said "not an action figure" yet echoed that name back.
-  if (correctName && !isNameEcho(correctName, resolvedName)) {
+  if (correctName && !isNameEcho(correctName, resolvedName) && !opts.flagOnly) {
     // The photo UNAMBIGUOUSLY identifies a different product → the photo wins.
     // The barcode/web-search name is the weakest source (a UPC search can surface a
     // spurious listing), so replace it outright with the photo's identity and treat
@@ -819,11 +871,19 @@ export async function crossCheckScanPhoto(
     .updateTable("core_scan_inbox_items")
     .set({
       ai_confidence: "0.3",
-      suggested_metadata: mergeMeta({ photo_mismatch: { reason: reason || undefined } }, PENDING_KEYS) as never,
+      // `correct_name` is what the card's one-tap accept applies. The UI has
+      // read this key since the flag was introduced and nothing ever wrote it,
+      // so a mismatch that DID know the real product still made you retype it.
+      // Under flagOnly it is the whole point: the rename is offered rather than
+      // performed, and the offer needs the name.
+      suggested_metadata: mergeMeta(
+        { photo_mismatch: { reason: reason || undefined, correct_name: correctName || undefined } },
+        PENDING_KEYS,
+      ) as never,
       ai_notes:
         `⚠ This photo doesn't look like "${resolvedName}" — the barcode may be wrong` +
         (reason ? ` (${reason})` : "") +
-        ". Double-check, or fix the name.",
+        (correctName ? `. It looks like "${correctName}" — tap to use that, or fix the name.` : ". Double-check, or fix the name."),
       updated_at: new Date(),
     })
     .where("id", "=", itemId)
@@ -833,7 +893,10 @@ export async function crossCheckScanPhoto(
   // resolves to an action figure, then a reverse-phone site). Downvote it and drop
   // the local cache so a re-scan re-queries; once enough workspaces agree the
   // resolver suppresses it and future scans go straight to photo-first.
-  if (existing?.barcode_text) {
+  // Not under flagOnly: voting is acting, just at everyone else's expense. If
+  // this check is not confident enough to rename one row, it is not confident
+  // enough to push a barcode toward suppression for every workspace.
+  if (existing?.barcode_text && !opts.flagOnly) {
     void reportBarcodeReject({
       upc: existing.barcode_text,
       reason: reason || "photo doesn't match the barcode",

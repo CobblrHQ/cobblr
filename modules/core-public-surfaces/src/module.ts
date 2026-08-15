@@ -46,6 +46,10 @@ export default defineModule({
 
   dependencies: [],
 
+  // AI-REACH: no kinds/actions by design. A public link exposes workspace data to
+  // people OUTSIDE it, so minting one is deliberately a human decision with the
+  // sharing consequences on screen, not something an agent proposes.
+
   provides: { entityKinds: [] },
 
   exposes: {

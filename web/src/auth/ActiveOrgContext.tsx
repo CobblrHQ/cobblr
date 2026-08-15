@@ -18,7 +18,7 @@ import {
   type ReactNode,
 } from "react";
 import { useAuth } from "./AuthContext";
-import { deepPathAfterWorkspace } from "../lib/deep-path";
+import { deepPathAfterWorkspace, pathAcrossWorkspaces } from "../lib/deep-path";
 import { displaySlug } from "../lib/workspaceSlug";
 import { useImpersonation } from "../lib/impersonation";
 import type { OrgMembership } from "../lib/api";
@@ -67,7 +67,7 @@ export function pickDefaultOrg(orgs: OrgMembership[]): OrgMembership | null {
 interface ActiveOrgCtx {
   activeOrg: OrgMembership | null;
   activeSlug: string; // FULL slug — what the API keys on
-  setActiveSlug: (slug: string) => void;
+  setActiveSlug: (slug: string, to?: string) => boolean;
 }
 
 const Ctx = createContext<ActiveOrgCtx | null>(null);
@@ -120,17 +120,31 @@ export function ActiveOrgProvider({
     }
   }, [org]);
 
+  /**
+   * Switch workspace. Returns TRUE when it is navigating away, so a caller with
+   * its own follow-up navigation knows not to bother: this is a full document
+   * load, and a router call after it cannot survive the unload.
+   *
+   * `to` is where to land in the new workspace. Omit it and you keep your
+   * place, which is what the switcher wants. Pass one and you go there, which
+   * is what a notification wants: its target, not wherever you happened to be.
+   */
   const setActiveSlug = useCallback(
-    (nextSlug: string) => {
+    (nextSlug: string, to?: string): boolean => {
       const next = orgs.find((o) => o.slug === nextSlug);
-      if (!next || next.slug === org?.slug) return;
+      if (!next || next.slug === org?.slug) return false;
       try {
         localStorage.setItem(STORAGE_KEY, next.slug);
       } catch {
         /* ignore */
       }
       // Full navigation to the new basename — per-tab + clean tenant state.
-      window.location.assign(`/w/${urlHandleFor(next, orgs)}/dashboard`);
+      // Landing on the dashboard whatever you were looking at meant walking
+      // back by hand after every switch. pathAcrossWorkspaces keeps the place
+      // and drops anything identifying a record, which does not exist there.
+      const dest = to ?? pathAcrossWorkspaces(window.location.pathname);
+      window.location.assign(`/w/${urlHandleFor(next, orgs)}${dest.startsWith("/") ? dest : `/${dest}`}`);
+      return true;
     },
     [org, orgs],
   );

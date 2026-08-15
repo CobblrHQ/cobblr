@@ -38,6 +38,25 @@
 // changes (the frame-difference spike of the phone being raised), at which
 // point the dark-dwell trigger is live again.
 //
+// AND THE TRIGGER IS A FAILING SCAN, NOT A DARK ROOM (reported 2026-08-14:
+// "auto-on flash is coming on too frequently... there are times that the light
+// is needed to be able to scan a barcode, but I end up just turning it on
+// manually now"). The rule above only ever ended a bad burn after it had
+// already started; darkness still began one, and darkness is common and mostly
+// harmless. So the same structure evidence now drives the ON side too, in two
+// grades:
+//
+//   STRUGGLING — a code-like region is in view and no read is landing, in a
+//     scene dim enough that light is a plausible cause. That is precisely when
+//     a human reaches for the torch button, so it fires fast.
+//   DARK ONLY — no structure evidence, just a dark frame. Weak: it describes a
+//     dark floor as readily as a dark shelf. It still fires, because a room can
+//     be too dark for the estimator to find anything at all and that is the
+//     case the torch exists for, but it must hold for much longer first.
+//
+// A decode loop that cannot measure structure only ever reaches the patient
+// grade, so it is strictly less eager than before and never more.
+//
 // Pure state machine: samples in, "turn the torch on/off" intents out. The
 // canvas glue (sampling luma + falloff off the live video) sits at the bottom;
 // everything above it is node-testable, and the strobe case is pinned in
@@ -46,9 +65,19 @@
 export interface TorchAutoConfig {
   /** Mean luma (0-255) below which the scene counts as dark. */
   darkLuma: number;
-  /** Dark must hold this long before the torch fires — a shadow you pan
-   *  past is not a dark room. */
+  /** Dark ALONE must hold this long before the torch fires. Long on purpose: a
+   *  dark frame with nothing code-like in it is the weakest reason to fire, and
+   *  at the old 900ms every glance at a dark surface lit the room. A scene that
+   *  is genuinely too dark to scan stays dark, so it still gets there. */
   darkDwellMs: number;
+  /** Luma below which a code-like region that WON'T decode is plausibly a light
+   *  problem. Higher than darkLuma: a barcode in shadow, or a low-contrast one
+   *  under weak light, reads far above "dark" and is exactly the case people
+   *  hit the torch button for. Above this, light is not what's missing. */
+  dimLuma: number;
+  /** ...and how long that struggle must hold. Short: unlike a dark frame, this
+   *  is direct evidence of a scan that is trying and failing. */
+  strugglingDwellMs: number;
   /** While ON: absolute saturation — this bright means improved regardless of
    *  any baseline. */
   brightLuma: number;
@@ -109,7 +138,9 @@ export interface TorchAutoConfig {
 
 export const TORCH_AUTO_DEFAULTS: TorchAutoConfig = {
   darkLuma: 50,
-  darkDwellMs: 900,
+  darkDwellMs: 2500,
+  dimLuma: 110,
+  strugglingDwellMs: 900,
   brightLuma: 230,
   brightDwellMs: 2000,
   baselineSettleMs: 800,
@@ -135,8 +166,13 @@ export interface LumaSample {
   mean: number;
   falloff: number;
   /** Did the frame contain code-like structure (the orientation estimator
-   *  located a stripe region)? Omit when unknown — the fruitless rule then
-   *  stays out of the way entirely. */
+   *  located a stripe region)? Omit when unknown — the fruitless rule and the
+   *  eager ON grade then both stay out of the way entirely, leaving the
+   *  patient dark rule and the plain cap.
+   *
+   *  While the torch is OFF this is read as "seen but unread": the sample loop
+   *  only runs while actively scanning, and a frame that DECODED ends the scan,
+   *  so a region that keeps being located without a read is a scan in trouble. */
   structure?: boolean;
   /** Mean absolute difference vs the previous sampled frame (0-255). Omit
    *  when unknown. */
@@ -145,7 +181,9 @@ export interface LumaSample {
 
 export interface TorchAutoState {
   on: boolean;
-  darkSince: number | null;
+  /** When the scene started asking for light — by either grade. Not "dark
+   *  since": a struggling read in a merely dim scene starts this clock too. */
+  wantSince: number | null;
   brightSince: number | null;
   onAt: number | null;
   cooldownUntil: number;
@@ -167,7 +205,7 @@ export interface TorchAutoState {
 export function torchAutoInitial(): TorchAutoState {
   return {
     on: false,
-    darkSince: null,
+    wantSince: null,
     brightSince: null,
     onAt: null,
     cooldownUntil: 0,
@@ -204,13 +242,20 @@ export function torchAutoSample(
     }
     if (suppressedAt !== s.suppressedAt) s = { ...s, suppressedAt };
     if (s.suppressedAt > 0) {
-      return { state: { ...s, darkSince: null }, turn: null };
+      return { state: { ...s, wantSince: null }, turn: null };
     }
-    if (luma >= cfg.darkLuma) {
-      return { state: { ...s, darkSince: null }, turn: null };
+    // Two grades of "light would help", and they want very different patience.
+    // Struggling is direct evidence (a code is right there and won't read);
+    // dark alone is circumstantial, so it has to persist.
+    const struggling = structure === true && luma < cfg.dimLuma;
+    if (!struggling && luma >= cfg.darkLuma) {
+      return { state: { ...s, wantSince: null }, turn: null };
     }
-    const darkSince = s.darkSince ?? now;
-    if (now - darkSince >= cfg.darkDwellMs && now >= s.cooldownUntil) {
+    const wantSince = s.wantSince ?? now;
+    // The clock is shared, so a scene that was merely dark and then starts
+    // struggling gets credit for the waiting it already did.
+    const dwell = struggling ? cfg.strugglingDwellMs : cfg.darkDwellMs;
+    if (now - wantSince >= dwell && now >= s.cooldownUntil) {
       // Re-firing right after a bright-off means that off was wrong — the
       // "brightness" was the torch bouncing off something reflective. Raise
       // the margin so the same surface can't cycle the torch again.
@@ -222,7 +267,7 @@ export function torchAutoSample(
         state: {
           ...s,
           on: true,
-          darkSince: null,
+          wantSince: null,
           brightSince: null,
           onAt: now,
           onBaseline: null,
@@ -233,7 +278,7 @@ export function torchAutoSample(
         turn: "on",
       };
     }
-    return { state: { ...s, darkSince }, turn: null };
+    return { state: { ...s, wantSince }, turn: null };
   }
 
   // ON: track whether this burn has revealed anything code-like.
@@ -311,11 +356,11 @@ export function torchAutoSample(
 /** The parts of the state an OFF clears — session learning survives. */
 function offReset(): Pick<
   TorchAutoState,
-  "on" | "darkSince" | "brightSince" | "onAt" | "onBaseline" | "onFalloff" | "sawStructure"
+  "on" | "wantSince" | "brightSince" | "onAt" | "onBaseline" | "onFalloff" | "sawStructure"
 > {
   return {
     on: false,
-    darkSince: null,
+    wantSince: null,
     brightSince: null,
     onAt: null,
     onBaseline: null,

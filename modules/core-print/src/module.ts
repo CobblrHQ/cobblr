@@ -48,6 +48,11 @@ export default defineModule({
   intents: [],
   dependencies: [],
 
+  // AI-REACH: no kinds/actions of its own by design — printing is reached through
+  // the labels module's labels:print action, which is the surface a person
+  // actually asks for ("print a label for this"). This module is the driver
+  // layer underneath (CUPS, Bluetooth, edge), not a thing to ask about.
+
   provides: {
     entityKinds: [],
   },

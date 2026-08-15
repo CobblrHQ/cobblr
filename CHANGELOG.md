@@ -2,11 +2,46 @@
 
 User-facing changes, newest first. Dates are release dates.
 
-## 2026-08-14
+## 2026-08-15
+
+### Features
+- Ask Cobb can now change your workspace's own setup, with your confirmation: add a custom field, create a separate list from a module, and switch an automation on or off.
+- Ask Cobb now walks you to the screens he cannot operate for you, with the form already filled in: ask him to invite someone and you land on Members with the invite ready, you press Send.
 
 ### Fixes
+- A barcode read at an awkward angle can decode as a different code whose check digit is valid, so the checksum cannot catch it. The scanner now also asks whether the code claims a manufacturer prefix that has ever been issued, and makes a code claiming an unissued one prove itself over more frames before it counts. Genuine barcodes are unaffected.
+
+## 2026-08-14
+
+### Features
+- Ask Cobb can now answer what needs you, what changed, what you missed, what is due for service and what is coming up: he reads your attention feed, activity log, notifications, maintenance and calendar.
+- Ask Cobb can now see how your workspace is set up, your lists, saved views, automations, apps, templates and units, and can add a unit for you when you ask.
+- Ask Cobb can now see the items in your scan inbox, not just the count: ask what is waiting, what needs a look, or what has been sitting there for days, and he reads the actual queue.
+- Add a tracking number to a receipt while it is still in your scan inbox, and Cobblr files it as still on its way instead of already arrived.
+- A scan item's fields are chips now, not a page of boxes. Opening an item used to give you one labelled box per field, including every field the table defines that the scan left empty, which on a phone ran well past a screen. Now each field is a small chip sized to its own value, several sit on a row, and the fields nothing filled in are offered underneath as a row of named chips rather than hidden behind a "+1 more field" counter that never said what it was hiding. Tap any chip to edit it right there: the chip holds its place so nothing shifts under your finger, then grows as you type so you can always see the whole value instead of scrolling inside a tiny box. Tap one of the offered fields and it opens ready to type, and if you change your mind and leave it blank it goes back on offer instead of sitting there empty.
+
+### Improvements
+- Ask Cobb survives a page refresh. If the panel was open when you reloaded, it comes back, on that page. It does not follow you around: open it on the scan inbox, wander off to Inventory, and Inventory stays as you left it. Closing the tab forgets it entirely, so a fresh visit never greets you with a panel you opened once yesterday.
+- A notification that has nowhere to take you now stays put. Clicking it marks it read and leaves you where you are, with the panel still open so you can work through the rest. Before, it could switch you to another workspace on the way to nowhere and shut the panel behind you. Rows that do have somewhere to go behave as before, and only those look clickable.
+- Personal connections are no longer AI-only: a parcel-tracking account can be connected under your profile and routed to the workspaces you choose, the same way your own AI key already was.
+- A photo you add to a scanned item is now looked at, not just displayed. If the item has no name yet, the photo identifies it. If it already has one and the photo shows something else, the item says so and offers the corrected name in one tap, rather than renaming itself or ignoring the picture.
+- Catalog photo searches now use the packaging shape the scan already noticed, so an item described as a box stops coming back illustrated with a bottle. And the offer to split one photo into several items is limited to photos you took on purpose: a barcode scan no longer proposes splitting because something unrelated was on the bench behind it.
+- When Pick best (AI) chooses a catalog photo that shows two or more of the same item, the picture is now cropped to one of them. The chosen photo is still the one the ranker judged most accurate, and it costs no extra AI call: the same pass that picks the photo now also reports how many units it sees. A photo whose units overlap or cannot be cleanly separated is left whole.
+- The scanner's auto-flash now fires when a scan is failing rather than whenever the room is dark. A barcode that will not read in dim light lights up within about a second, while plain darkness with nothing scannable in view has to hold for a few seconds first, so glancing at a dark shelf or pointing the phone at the floor no longer turns the light on.
+- Catalog photos fetched from the web are trimmed down to the product. Studio shots often put a small item in a large empty field, which made the thumbnail mostly background and the item hard to recognise at a glance. The dead space is cropped away and a margin is left so nothing is clipped. Photos that already fill their frame, and your own uploaded pictures, are left exactly as they are.
+- Your own tracking bridge now serves every workspace you route it to, instead of needing one per workspace.
+- Switching workspace keeps you where you were. Change workspace from the scan page and you land on the new workspace's scan page, not its dashboard. Anything that points at a specific record is dropped, since that record does not exist in the other workspace, and you land on that section instead. Clicking a notification for another workspace now also takes you to what the notification was about, rather than to that workspace's dashboard.
+
+### Fixes
+- When an action declines to run, you now see why: the reason appears instead of a success message, both in the app and when Ask Cobb runs one for you.
+- Arrival reminders cover orders due within the last month, so switching them on stays quiet about old records.
 - A blank line in .env no longer stops the instance from starting: an empty value now means "not set", which is what docker-compose passes for an unset variable.
+- Clicking a notification takes you to the thing it is about. Some notifications landed you on the dashboard instead, because their saved link included the workspace and the app added it again, so the address matched no page. Older notifications are fixed too: the link is repaired when you click it, since a notification cannot be edited once sent.
+- A scan card no longer stretches to fit an unusually tall product photo. A narrow, tall picture such as a spice grinder made its card about three times the height of the text in it, wasting most of the row. The photo is still shown in full, and more items fit on screen.
+- Picking a catalog photo you can see no longer fails with "that image couldn't be used". Many sites serve the small preview happily and block the full-size original, so when the original cannot be fetched the picture actually on screen is used instead. The full-screen viewer does the same rather than showing an empty frame.
 - A scanned barcode whose lookup takes longer than usual now says it is still looking, instead of appearing with no note at all.
+- A scan whose barcode look-up hit a busy catalog is now retried by the server, so it keeps trying after you close the tab. The item shows which attempt it is on, and once the attempts run out it says so and points you at filling in the name or adding a photo.
+- A colour word that is part of what a product IS no longer gets overwritten by the colour detected from its photo. Green tea in a red box stays green tea, and the detected colour is added alongside instead of replacing it. Colours that really do describe the object are still corrected as before.
 
 ## 2026-08-13
 

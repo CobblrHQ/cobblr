@@ -149,6 +149,14 @@ export async function deriveRankContext(
     brand: row.suggested_manufacturer ?? null,
     fields: candidateFields,
     override: opts?.queryOverride ?? null,
+    // Costs nothing and sends nothing: the observation is already on the row,
+    // so the strip can be shape-aware even where it deliberately shows no
+    // picture to a model (withReference: false).
+    observation:
+      typeof (row.suggested_metadata as { photo_observations?: unknown } | null)?.photo_observations ===
+      "string"
+        ? ((row.suggested_metadata as { photo_observations?: string }).photo_observations ?? null)
+        : null,
   });
 
   let referenceB64: string | null = null;
@@ -267,7 +275,9 @@ export async function autoRankCatalogPhoto(opts: {
   // Download FIRST: a lot of web-image URLs can't be fetched (hotlink block,
   // 404, non-image), and committing the url anyway is how a row ends up wearing
   // a broken image (the same trap POST /catalog-image documents).
-  const stored = await downloadCatalogImage({ db, orgId, itemId }, result.chosenUrl);
+  const stored = await downloadCatalogImage({ db, orgId, itemId }, result.chosenUrl, {
+    unitSide: result.unitSide,
+  });
   // Stamp the QUERY we just answered, so the guard can tell a repeat of the same
   // question from a genuinely new one (a corrected colour changes the query).
   const rankedFor = ctx.query.trim();

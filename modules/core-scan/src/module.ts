@@ -16,13 +16,24 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-scan",
-  version: "0.39.3",
+  version: "0.44.0",
   displayName: "Scan",
   description:
     "Scan a barcode or take a photo of a thing; end up with a draft inventory row, pre-filled with the resolved name + brand + catalog photo. One tap to commit.",
   icon: "scan-line",
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace
+
+  // A throttled barcode look-up is retried by a core-queue worker, so the
+  // "trying again" a card shows is backed by something that outlives the
+  // browser tab that started the scan. Same dynamic-import shape digifab uses
+  // for its own queue workers.
+  lifecycle: {
+    onBoot: async () => {
+      const { registerRetryLookupWorker } = await import("./services/retry-worker.js");
+      registerRetryLookupWorker();
+    },
+  },
 
   // Browse-not-configure: this is a page you VISIT, so it owns a nav entry
   // and one canonical URL rather than living under /configuration.

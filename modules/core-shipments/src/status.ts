@@ -67,10 +67,25 @@ export interface CarrierDriver {
    *  that cannot be configured is not an error: most installs will connect one
    *  carrier and never the rest. */
   configured(): boolean;
+  /** Whether this driver can act for ONE PARCEL — a different question from
+   *  `configured()` once a credential can belong to a person rather than to the
+   *  instance. Someone who connected their own tracking service is set up for
+   *  their own parcels on a box that carries no key at all.
+   *
+   *  Optional: a driver with only instance-wide credentials omits it, and the
+   *  registry falls back to `configured()`. */
+  configuredFor?(route: { orgId?: string; ownerUserId?: string | null }): Promise<boolean>;
   /** `carrierCode` matters only to a driver that serves more than one carrier.
    *  `orgId` is only needed to route to a workspace's edge bridge, when the
    *  endpoint lives on the user's own network rather than the public internet. */
-  track(number: string, carrierCode?: string, orgId?: string): Promise<ShipmentStatus>;
+  track(
+    number: string,
+    carrierCode?: string,
+    /** Routing context for an endpoint on the user's own network. `ownerUserId`
+     *  takes precedence: a parcel belongs to a person, so their bridge serves
+     *  every workspace they route it to. */
+    route?: { orgId?: string; ownerUserId?: string | null },
+  ): Promise<ShipmentStatus>;
 }
 
 /** Thrown when a carrier answered, and the answer was a failure.

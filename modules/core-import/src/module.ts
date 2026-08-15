@@ -27,6 +27,11 @@ export default defineModule({
 
   dependencies: [],
 
+  // AI-REACH: no kinds/actions by design. An import is a one-shot operation a
+  // person drives with a file in hand; what it produces is reachable as the
+  // ordinary kinds it created. Import itself is not agent-invokable, because a
+  // bulk write from a file the agent cannot see is not a change anyone can check.
+
   provides: { entityKinds: [] },
 
   exposes: {

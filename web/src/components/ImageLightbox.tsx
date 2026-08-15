@@ -41,11 +41,15 @@ type Variant = "thumb" | "medium" | "original";
  *  useImageSrc; plain urls pass straight through. Always calls the hook (rules
  *  of hooks) — the file url is "" for a plain-url item, which useImageSrc
  *  treats as nothing. */
-function useItemSrc(item: LightboxItem, variant: Variant): string | null {
+function useItemSrc(item: LightboxItem, variant: Variant, fellBack = false): string | null {
   const fileUrl = item.file ? api.fileRawUrl(item.file.slug, item.file.fileId, variant) : "";
   const authed = useImageSrc(fileUrl);
   if (item.file) return authed;
   if (variant === "thumb") return item.thumbUrl ?? item.url ?? null;
+  // The full-size original failed to load. The thumbnail is the picture the
+  // strip is already showing, so it demonstrably works — a smaller image beats
+  // an empty viewer for a photo the user can see two inches away (2026-08-14).
+  if (fellBack) return item.thumbUrl ?? null;
   return item.url ?? null;
 }
 
@@ -65,7 +69,9 @@ function Frame({
   onError?: () => void;
   draggable?: boolean;
 }) {
-  const src = useItemSrc(item, variant);
+  const [fellBack, setFellBack] = useState(false);
+  useEffect(() => setFellBack(false), [item.url, item.thumbUrl]);
+  const src = useItemSrc(item, variant, fellBack);
   if (!src) {
     return (
       <div className={className + " flex items-center justify-center text-white/40 text-[10px]"}>…</div>
@@ -77,7 +83,14 @@ function Frame({
       alt={item.caption ?? ""}
       className={className}
       onClick={onClick}
-      onError={onError}
+      onError={() => {
+        // One retry at the smaller size before telling anyone it failed.
+        if (!fellBack && !item.file && item.thumbUrl && item.thumbUrl !== item.url) {
+          setFellBack(true);
+          return;
+        }
+        onError?.();
+      }}
       draggable={draggable}
       loading="lazy"
     />

@@ -29,6 +29,11 @@ export interface CredentialRoute {
 
 export interface UserCredentialInput {
   provider_id: string;
+  /** What this credential is FOR — 'ai-provider' (the original, and the
+   *  column's default) or another kind registered under platform().connections.
+   *  Every rule in this file is about who owns a credential and where they
+   *  routed it, so the kind only ever narrows a lookup. */
+  kind?: string;
   label?: string;
   credentials: Record<string, unknown>;
   route_mode?: RouteMode;
@@ -44,6 +49,9 @@ export interface UserCredentialInput {
 export interface UserCredentialView {
   id: string;
   provider_id: string;
+  /** Which catalogue this came from, so the page can group a user's AI
+   *  connections apart from the rest instead of listing them as one pile. */
+  kind: string;
   label: string;
   route_mode: RouteMode;
   route_scope: RouteScope;
@@ -142,7 +150,7 @@ export async function addUserCredential(
     .insertInto("user_credentials")
     .values({
       user_id: userId,
-      kind: "ai-provider",
+      kind: input.kind ?? "ai-provider",
       provider_id: input.provider_id,
       label: input.label ?? "",
       credentials_encrypted: encryptCreds(JSON.stringify(input.credentials ?? {})),
@@ -244,6 +252,7 @@ export async function listUserCredentials(
   return rows.map((r) => ({
     id: r.id,
     provider_id: r.provider_id,
+    kind: r.kind,
     label: r.label,
     route_mode: r.route_mode,
     route_scope: r.route_scope,
@@ -466,6 +475,10 @@ export interface ResolvedPersonalProvider {
   providerId: string;
   credentials: Record<string, unknown>;
   label: string;
+  /** Who owns this credential. A personal bridge is keyed by USER, so this is
+   *  what routes the call down their tunnel — including in workspace-default
+   *  mode, where the caller is someone else, or a sweep, where there is none. */
+  ownerUserId: string;
 }
 
 /**
@@ -478,11 +491,16 @@ export interface ResolvedPersonalProvider {
  * the workspace's chosen shared AI: an APPROVED 'workspace-default' offer,
  * preferring the owner-activated one, then most-recent. `supportsCapability` is
  * supplied by the AI layer (the provider map).
+ *
+ * `kind` narrows to one family of credential and defaults to AI, so every
+ * existing caller keeps its behaviour byte-for-byte. It is a filter and nothing
+ * more — none of the rules above differ by kind.
  */
 export async function resolvePersonalProvider(
   orgId: string,
   callerUserId: string | null,
   supportsCapability: (providerId: string) => boolean,
+  kind = "ai-provider",
 ): Promise<ResolvedPersonalProvider | null> {
   // FAIL-SAFE: this layer is opt-in + default-off, so if its tables are missing
   // (e.g. a meta DB without migration 053) or any query throws, it must NEVER
@@ -490,7 +508,7 @@ export async function resolvePersonalProvider(
   // workspace provider. (Regression guard: a thrown query here surfaced as a
   // generic ai_error instead of the clean no_ai_provider the degrade path wants.)
   try {
-    return await resolvePersonalProviderUnsafe(orgId, callerUserId, supportsCapability);
+    return await resolvePersonalProviderUnsafe(orgId, callerUserId, supportsCapability, kind);
   } catch {
     return null;
   }
@@ -500,6 +518,7 @@ async function resolvePersonalProviderUnsafe(
   orgId: string,
   callerUserId: string | null,
   supportsCapability: (providerId: string) => boolean,
+  kind: string,
 ): Promise<ResolvedPersonalProvider | null> {
   const members = await meta
     .selectFrom("org_memberships")
@@ -524,7 +543,7 @@ async function resolvePersonalProviderUnsafe(
     ? await meta
         .selectFrom("user_credentials")
         .selectAll()
-        .where("kind", "=", "ai-provider")
+        .where("kind", "=", kind)
         .where("user_id", "in", Array.from(memberIds))
         .execute()
     : [];
@@ -534,6 +553,10 @@ async function resolvePersonalProviderUnsafe(
     const explicitCreds = await meta
       .selectFrom("user_credentials")
       .selectAll()
+      // Filtered by kind here too. The routing table is shared across kinds, so
+      // without this an explicit route would drag a credential of the WRONG
+      // kind into the candidate set and rely on the supports-check to catch it.
+      .where("kind", "=", kind)
       .where("id", "in", Array.from(explicitCredIds))
       .execute();
     for (const c of explicitCreds) byId.set(c.id, c);
@@ -603,5 +626,11 @@ async function resolvePersonalProviderUnsafe(
   // mode where the caller differs from the owner. Harmless to providers that
   // ignore it (a BYO key just uses its own fields).
   credentials.__connection_user_id = pick.user_id;
-  return { credentialId: pick.id, providerId: pick.provider_id, credentials, label: pick.label };
+  return {
+    credentialId: pick.id,
+    providerId: pick.provider_id,
+    credentials,
+    label: pick.label,
+    ownerUserId: pick.user_id,
+  };
 }

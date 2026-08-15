@@ -421,6 +421,9 @@ chatRouter.post(
     let autoWrites = 0;
     const userId = sessionUserId(req) ?? "";
     const ldb = tenantDb(req);
+    // Escorts the loop's take_user_to calls produced this turn — the widget
+    // navigates to each (and pages read the prefill params). Inert server-side.
+    const escorts: Array<{ path: string; label: string }> = [];
     let outcome: AgentLoopOutcome;
     try {
       outcome = await runAgentLoop(parsed.data.messages as ChatTurn[], {
@@ -444,7 +447,15 @@ chatRouter.post(
         executeRead: async (name, args) => {
           const tool = getTool(name);
           if (!tool || tool.mode !== "read") return { ok: false, error: `no such read tool: ${name}` };
-          return tool.execute(wsApi, args);
+          const result = await tool.execute(wsApi, args);
+          // The escort tool (tier 1.5) rides the read rail — it mutates nothing
+          // — but its OUTPUT is for the widget, not only the model: collect the
+          // destinations so the response can move the user's screen there.
+          if (name === "take_user_to" && result.ok) {
+            const esc = (result.data as { escort?: { path: string; label: string } } | null)?.escort;
+            if (esc) escorts.push(esc);
+          }
+          return result;
         },
         isWrite: (name) => WRITE_NAMES.has(name),
         ...(prefs.write_mode === "auto"
@@ -494,6 +505,7 @@ chatRouter.post(
           type: "reply",
           text: problems.join(" ") || outcome.text || "I couldn't line that up — can you rephrase?",
           ...(done.length ? { applied: done } : {}),
+          ...(escorts.length ? { escorts } : {}),
         });
         return;
       }
@@ -504,10 +516,11 @@ chatRouter.post(
           summary: items[0]!.summary,
           proposal: items[0]!.proposal,
           ...(done.length ? { applied: done } : {}),
+          ...(escorts.length ? { escorts } : {}),
         });
         return;
       }
-      res.json({ type: "proposals", text: outcome.text || undefined, items, ...(done.length ? { applied: done } : {}) });
+      res.json({ type: "proposals", text: outcome.text || undefined, items, ...(done.length ? { applied: done } : {}), ...(escorts.length ? { escorts } : {}) });
       return;
     }
 
@@ -515,7 +528,7 @@ chatRouter.post(
 
     const move = parseMove(text);
     if (!move || move.type === "reply") {
-      res.json({ type: "reply", text: move?.text ?? text, ...(done.length ? { applied: done } : {}) });
+      res.json({ type: "reply", text: move?.text ?? text, ...(done.length ? { applied: done } : {}), ...(escorts.length ? { escorts } : {}) });
       return;
     }
 

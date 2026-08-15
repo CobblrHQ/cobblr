@@ -70,6 +70,10 @@ export interface CoreScanBatchesTable {
    *  EDIT the order # and we recompute `label` = "Receipt · <vendor> #<ref>". */
   vendor: ColumnType<string | null, string | null | undefined, string | null | undefined>;
   order_ref: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  /** The parcel's tracking number, when the receipt is for something still on
+   *  its way. Its presence is what files the order as in-transit rather than
+   *  arrived — see the receipt-confirm handler. */
+  tracking_number: ColumnType<string | null, string | null | undefined, string | null | undefined>;
 }
 
 /** A stored Guided Organize plan (services/organize-plan.ts). Apply validates

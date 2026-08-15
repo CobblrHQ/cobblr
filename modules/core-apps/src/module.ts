@@ -46,6 +46,10 @@ export default defineModule({
 
   // No entityKinds — an app is an infrastructure/presentation concept,
   // not a domain entity end-users attach files / actions to.
+  // AI-REACH: no kinds by design. A user-built app's RECORDS are reachable as
+  // ordinary kinds (that is the point of the app), and the apps themselves are
+  // read through get_workspace_setup (part: "apps"). Building one is the
+  // authoring surface, which the MCP server exposes directly (cobblr_authoring_*).
   provides: { entityKinds: [] },
 
   exposes: {

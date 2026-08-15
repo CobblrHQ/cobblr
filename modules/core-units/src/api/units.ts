@@ -17,7 +17,10 @@ import { BUILTIN_UNITS } from "../units-catalog.js";
 
 export const unitsRouter = Router({ mergeParams: true });
 
-const CustomUnit = z.object({
+/** Exported so the core-units:add-unit handler validates a unit the SAME way
+ *  this route does — the shadowing rule and the code format must not mean one
+ *  thing when a person adds a unit and another when the assistant does. */
+export const CustomUnit = z.object({
   code: z
     .string()
     .min(1)

@@ -15,7 +15,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Camera, Check, RotateCcw, X } from "lucide-react";
-import { useToast, OverlayFlag } from "@cobblr/platform-web";
+import { OverlayFlag } from "@cobblr/platform-web";
 import { acquireScannerStream } from "../lib/barcodeScanner";
 
 export function CameraCaptureSheet({
@@ -36,7 +36,7 @@ export function CameraCaptureSheet({
   onCapture: (blob: Blob) => void;
   onClose: () => void;
 }) {
-  const toast = useToast();
+  const [shootError, setShootError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   // Streams WE acquired (never the borrowed scanner stream) — stopped on close.
@@ -94,6 +94,7 @@ export function CameraCaptureSheet({
   }, [mode, open, stream]);
 
   function shoot() {
+    setShootError(null);
     const v = videoRef.current;
     if (!v || v.readyState < 2) return;
     if (typeof navigator.vibrate === "function") navigator.vibrate(30);
@@ -104,7 +105,10 @@ export function CameraCaptureSheet({
     c.toBlob(
       (blob) => {
         if (!blob) {
-          toast.error("Could not capture a frame - try again");
+          // In the sheet, not a toast: this sheet covers the whole screen, so a
+          // page-bottom toast lands on the shutter the user just pressed and is
+          // the first thing their next tap hits.
+          setShootError("Could not capture a frame - try again");
           return;
         }
         setPreview({ blob, url: URL.createObjectURL(blob) });
@@ -156,6 +160,11 @@ export function CameraCaptureSheet({
           style={{ paddingTop: "max(0.75rem, env(safe-area-inset-top))" }}
         >
           <span className="text-sm font-medium truncate">{mode === "preview" ? "Use this shot?" : title}</span>
+          {shootError && (
+            <span className="mx-2 rounded-full bg-amber-600/95 px-2.5 py-1 text-[11px] font-medium">
+              {shootError}
+            </span>
+          )}
           <button
             type="button"
             onClick={close}

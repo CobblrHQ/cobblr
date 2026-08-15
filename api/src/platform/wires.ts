@@ -334,3 +334,46 @@ async function fireBindings(
     }
   }
 }
+
+// ─────────────────────── toggling a wire by id ─────────────────────
+//
+// The shared body of the platform:set-wire-enabled action. The bindings PATCH
+// route keeps its full-edit single UPDATE (its behavior is pinned by tests and
+// there is no validation rule to fork on a boolean write); this helper owns the
+// action path's needs — the org-scoped lookup, the write, and the ledger entry
+// that says WHO flipped it, because "why did my automation stop" must have an
+// answer in the activity log.
+
+export type SetWireEnabledResult =
+  | { ok: true; wire: { id: string; action_id: string; source_kind: string; enabled: boolean } }
+  | { ok: false; code: "not_found"; message: string };
+
+export async function setWireEnabled(
+  orgId: string,
+  wireId: string,
+  enabled: boolean,
+  userId: string | null,
+): Promise<SetWireEnabledResult> {
+  const updated = await meta
+    .updateTable("entity_action_bindings")
+    .set({ enabled, updated_at: new Date() })
+    .where("id", "=", wireId)
+    .where("org_id", "=", orgId)
+    .returning(["id", "action_id", "source_kind", "enabled"])
+    .executeTakeFirst();
+  if (!updated) {
+    return {
+      ok: false,
+      code: "not_found",
+      message: "No automation with that id in this workspace — check get_workspace_setup (automations).",
+    };
+  }
+  await logActivity({
+    orgId,
+    userId: userId ?? undefined,
+    action: enabled ? "wire_enabled" : "wire_disabled",
+    ref: { module: null, entityType: "binding", entityId: updated.id },
+    diff: { action_id: updated.action_id, source_kind: updated.source_kind, enabled },
+  });
+  return { ok: true, wire: updated };
+}

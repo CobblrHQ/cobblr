@@ -9,8 +9,9 @@ import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { getEntry } from "../modules/registry.js";
 import { getTenantDb } from "../db/tenant.js";
-import { deleteOverride } from "./entity-kind-overrides.js";
+import { deleteOverride, upsertOverride } from "./entity-kind-overrides.js";
 import { removeNavMember } from "./nav-headings.js";
+import { singularize, pluralize } from "../lib/inflect.js";
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
 
@@ -290,4 +291,93 @@ export async function countInstanceItems(
     );
     return null;
   }
+}
+
+// ─────────────────────── provisioning (the full birth) ─────────────
+//
+// Extracted from the POST /instances route body so the
+// platform:create-instance action handler and the route share ONE
+// implementation. The route's body was more than createInstance(): the
+// module-enabled check, the workspace-wide name-collision check, and the
+// presentation-override seed that gives the new instance its nav label and
+// item noun. A caller that skipped the seed would create instances with no
+// nav presence and a fallback noun — the UI-depth failure — so the whole
+// birth lives here, once.
+
+export type ProvisionInstanceResult =
+  | { ok: true; instance: ModuleInstance }
+  | {
+      ok: false;
+      code:
+        | "module_not_enabled"
+        | "instance_name_taken"
+        | "invalid_slug"
+        | "unknown_module"
+        | "module_is_single_instance";
+      message: string;
+    };
+
+export async function provisionInstance(args: {
+  orgId: string;
+  moduleName: string;
+  instanceName: string;
+  displayName: string;
+}): Promise<ProvisionInstanceResult> {
+  // Confirm the module is enabled for the workspace before creating an
+  // instance of it.
+  const enabled = await meta
+    .selectFrom("org_modules")
+    .select("module_name")
+    .where("org_id", "=", args.orgId)
+    .where("module_name", "=", args.moduleName)
+    .executeTakeFirst();
+  if (!enabled) {
+    return {
+      ok: false,
+      code: "module_not_enabled",
+      message: `Module '${args.moduleName}' isn't enabled for this workspace. Enable it first.`,
+    };
+  }
+  // Confirm the instance_name doesn't collide with another instance
+  // (workspace-unique across all modules).
+  const collision = await getInstance(args.orgId, args.instanceName);
+  if (collision) {
+    return {
+      ok: false,
+      code: "instance_name_taken",
+      message: `Instance name '${args.instanceName}' is already used by ${collision.module_name}.`,
+    };
+  }
+  let created: ModuleInstance;
+  try {
+    created = await createInstance({
+      orgId: args.orgId,
+      moduleName: args.moduleName,
+      instanceName: args.instanceName,
+      displayName: args.displayName,
+      isDefault: false,
+    });
+  } catch (err) {
+    const code = (err as { code?: string }).code;
+    if (code === "invalid_slug" || code === "unknown_module" || code === "module_is_single_instance") {
+      return { ok: false, code, message: (err as Error).message };
+    }
+    throw err;
+  }
+  // Seed a presentation override row so the new instance shows up in the
+  // nav with its display name AND carries its own item noun. The noun
+  // defaults from the collection name ("Films" → "Film"/"Films"), so a
+  // skinnable module's UI never has to fall back to its hardcoded word
+  // ("part"). It's a default the user can fix in the instance settings —
+  // see docs/design-decisions/one-record-substrate.md.
+  const itemNoun = singularize(args.displayName);
+  await upsertOverride({
+    orgId: args.orgId,
+    targetKind: "instance",
+    targetId: `${args.moduleName}:${args.instanceName}`,
+    displayLabel: args.displayName,
+    config: { item_noun: itemNoun, item_noun_plural: pluralize(itemNoun) },
+    insertOnly: true,
+  });
+  return { ok: true, instance: created };
 }

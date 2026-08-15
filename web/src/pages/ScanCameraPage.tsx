@@ -34,8 +34,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeftRight, ArrowRight, Camera, Check, Flashlight, Loader2, MapPin, Package, Plus, ScanLine, SkipForward, Undo2, X, Zap } from "lucide-react";
-import { LiveSurfaceProvider, Modal, usePageTitle, useOverlayOpenFlag, useToast } from "@cobblr/platform-web";
+import { AlertTriangle, ArrowLeftRight, ArrowRight, Camera, Check, Flashlight, Loader2, MapPin, Package, Plus, ScanLine, SkipForward, Undo2, X, Zap } from "lucide-react";
+import { LiveSurfaceProvider, Modal, usePageTitle, useOverlayOpenFlag } from "@cobblr/platform-web";
 import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
 import { ApiError, api, type LiveSortEntry, type ScanInboxItem, type ScanResolveCandidate, type TrackedMatch } from "../lib/api";
 import { LOCATION_ENTITY_KIND, decideLocationScan, filingLabel } from "../lib/scanFiling";
@@ -173,11 +173,32 @@ export function ScanCameraPage() {
     setPhaseState(p);
   }, []);
   const filingNoteTimerRef = useRef<number | null>(null);
-  const showFilingNote = useCallback((text: string) => {
-    setFilingNote(text);
+  /** The scanner's ONLY way of saying something.
+   *
+   *  A toast renders at the bottom of the viewport, which in a full-screen
+   *  camera is exactly where the shutter is: it covers the control you are
+   *  about to press and eats the next touch. That was already known here for
+   *  the filing confirmation and the save note, and every other message went on
+   *  using toasts anyway (reported 2026-08-14: "still get toasts in camera
+   *  scanner, should never happen").
+   *
+   *  `warn` exists so errors could come along rather than being left behind as
+   *  the one thing still allowed to obstruct the shutter. They dwell longer and
+   *  wrap instead of truncating, because an error you cannot finish reading is
+   *  barely better than no error at all. */
+  const showFilingNote = useCallback((text: string, tone: "ok" | "warn" = "ok") => {
+    setFilingNote({ text, tone });
     if (filingNoteTimerRef.current) window.clearTimeout(filingNoteTimerRef.current);
-    filingNoteTimerRef.current = window.setTimeout(() => setFilingNote(null), 2200);
+    filingNoteTimerRef.current = window.setTimeout(
+      () => setFilingNote(null),
+      tone === "warn" ? 4500 : 2200,
+    );
   }, []);
+  /** Whatever the API threw, in a sentence. */
+  const noteError = useCallback(
+    (e: unknown) => showFilingNote(e instanceof ApiError ? e.message : String(e), "warn"),
+    [showFilingNote],
+  );
 
   // ?diag=1 — measure this device instead of guessing at it (bug-queue 3/4/5).
   const [diagOpen, setDiagOpen] = useState(scanDiagEnabled);
@@ -239,7 +260,6 @@ export function ScanCameraPage() {
   // Assign sheet (LocationPicker over core-locations).
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
-  const toast = useToast();
   const [areaId, setAreaId] = useState<string | null>(null);
   // Scan-into-container: the active bin can be a container ENTITY (a server
   // asset, a machine) instead of a location. Mutually exclusive with areaId.
@@ -352,7 +372,7 @@ export function ScanCameraPage() {
   // dark preview — not through the global toast, which renders at the bottom and
   // sat directly on top of the shutter (the exact obstruction the author already
   // worked around for the photo-saved note). Same top slot, tap-through, auto-hide.
-  const [filingNote, setFilingNote] = useState<string | null>(null);
+  const [filingNote, setFilingNote] = useState<{ text: string; tone: "ok" | "warn" } | null>(null);
   // Reading a QR label pauses the camera (the preview freezes) while we ask the
   // server what it points at. THAT is the moment worth narrating — the old
   // always-on "scanning" chip said "scanning" when the reticle already showed it
@@ -397,10 +417,10 @@ export function ScanCameraPage() {
         location_id: mv.prevLocationId ?? undefined,
       }),
     onSuccess: (_r, mv) => {
-      toast.success(`Moved ${mv.title} back`);
+      showFilingNote(`Moved ${mv.title} back`);
       setMoveStack((s) => s.filter((x) => x !== mv));
     },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+    onError: (e) => noteError(e),
   });
   const locations = useQuery({
     queryKey: ["core-locations", activeSlug],
@@ -629,10 +649,10 @@ export function ScanCameraPage() {
         sortSessionRef.current = r.session_id;
         const confirmed = (r.entries ?? []).filter((e) => e.status === "confirmed").length;
         setSortCount(confirmed);
-        if (r.resumed && confirmed > 0) toast.info(`Sort session resumed — ${confirmed} sorted so far.`);
+        if (r.resumed && confirmed > 0) showFilingNote(`Sort session resumed — ${confirmed} sorted so far.`);
       })
       .catch(() => {
-        toast.error("Couldn't start the sort session.");
+        showFilingNote("Couldn't start the sort session.", "warn");
         setSortMode(false);
       });
     return () => {
@@ -647,7 +667,7 @@ export function ScanCameraPage() {
       if (!sid) return;
       const r = await api.putawayScan(activeSlug, sid, { inbox_item_id: inboxItemId });
       if (r.already_placed) {
-        toast.info(`Already lives in ${r.already_placed.location_name ?? "a bin"} — re-find, not a re-sort.`);
+        showFilingNote(`Already lives in ${r.already_placed.location_name ?? "a bin"} — re-find, not a re-sort.`);
         return;
       }
       if (!r.entry) return;
@@ -669,7 +689,7 @@ export function ScanCameraPage() {
         }, 2_500);
       }
     },
-    [activeSlug, toast],
+    [activeSlug, noteError],
   );
 
   const handleSortScan = useCallback(
@@ -713,14 +733,14 @@ export function ScanCameraPage() {
           void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
           await routeSortItem(item.id);
         } catch (e) {
-          toast.error(e instanceof ApiError ? e.message : String(e));
+          noteError(e);
         } finally {
           sortBusyRef.current = false;
           setSortBusy(false);
         }
       })();
     },
-    [activeSlug, areaName, ensureBatchId, qc, routeSortItem, toast],
+    [activeSlug, areaName, ensureBatchId, qc, routeSortItem, noteError],
   );
 
   const confirmSort = useCallback(
@@ -729,7 +749,7 @@ export function ScanCameraPage() {
       const entry = sortEntryRef.current;
       if (!sid || !entry || entry.status !== "proposed") return;
       if (!overrideLocationId && !entry.directive.location_id) {
-        toast.info("No bin suggested - scan the bin's QR label to file it there.");
+        showFilingNote("No bin suggested - scan the bin's QR label to file it there.");
         return;
       }
       void api
@@ -746,9 +766,9 @@ export function ScanCameraPage() {
           setSortEntry((cur) => (cur && cur.id === r.entry.id ? null : cur));
           setSortCount((n) => n + 1);
         })
-        .catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)));
+        .catch((e) => noteError(e));
     },
-    [activeSlug, toast],
+    [activeSlug, noteError],
   );
   const confirmSortRef = useRef(confirmSort);
   confirmSortRef.current = confirmSort;
@@ -780,7 +800,7 @@ export function ScanCameraPage() {
       // instead" gesture. The camera never pauses for this.
       if (sortModeRef.current && sortEntryRef.current) {
         if (isLocation) confirmSortRef.current(r!.entity_id);
-        else toast.error("That QR isn't a bin label.");
+        else showFilingNote("That QR isn't a bin label.", "warn");
         return;
       }
 
@@ -861,7 +881,7 @@ export function ScanCameraPage() {
 
       navigate(fallbackPath);
     },
-    [activeSlug, locations, navigate, setPhase, toast],
+    [activeSlug, locations, navigate, setPhase, noteError],
   );
   const routeResolvedRef = useRef(routeResolved);
   routeResolvedRef.current = routeResolved;
@@ -875,10 +895,10 @@ export function ScanCameraPage() {
       .then(() => {
         setSortLast(null);
         setSortCount((n) => Math.max(0, n - 1));
-        toast.success("Undone - back to unsorted.");
+        showFilingNote("Undone - back to unsorted.");
       })
-      .catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)));
-  }, [activeSlug, sortLast, toast]);
+      .catch((e) => noteError(e));
+  }, [activeSlug, sortLast, noteError]);
 
 
   // Offer to resume a recent session (same workspace, < 4h old, has saves).
@@ -1009,12 +1029,13 @@ export function ScanCameraPage() {
               instance: params.get("into"),
               serial: raw,
             });
-            toast.success(`Filed ${u.serial_number ?? "a unit"}`);
+            showFilingNote(`Filed ${u.serial_number ?? "a unit"}`);
           } catch (e) {
             // Name the code that failed — in a 40-serial run "that serial" is
             // unfindable; this one can be retyped into the manual field.
-            toast.error(
+            showFilingNote(
               `Couldn't file ${raw}${e instanceof ApiError ? ` — ${e.message}` : " — scan it again."}`,
+              "warn",
             );
           }
         })();
@@ -1101,7 +1122,7 @@ export function ScanCameraPage() {
               // The format is a known rule (intent declared) but nothing here
               // matches — a calm, specific note, NOT an error, and we do NOT fall
               // through to web search. Re-arm the camera.
-              toast.info(
+              showFilingNote(
                 `Recognized this as “${out.rule_name}” (${out.key}), but nothing here matches it yet.`,
               );
               setPhase("scanning");
@@ -1139,7 +1160,7 @@ export function ScanCameraPage() {
       setPendingBarcode(raw);
       setPhase("result");
     },
-    [setPhase, activeSlug, handleSortScan, toast],
+    [setPhase, activeSlug, handleSortScan, noteError],
   );
   useEffect(() => {
     onDetectRef.current = onDetect;
@@ -1278,7 +1299,8 @@ export function ScanCameraPage() {
             const idle =
               phaseRef.current !== "scanning" || armedRef.current || sheetOpenRef.current || reviewItemRef.current;
             if (!idle) {
-              autoTorchTick(video);
+              // Last attempt's verdict — this tick runs before the next one.
+              autoTorchTick(video, lastStructureRef.current);
               const t0 = performance.now();
               const { text, rotatedHit, didRotate, regionWidth } = attempt();
               // A decoded frame trivially contained a code; otherwise the
@@ -1321,7 +1343,13 @@ export function ScanCameraPage() {
         raf = requestAnimationFrame(loop);
         return;
       }
-      autoTorchTick(video);
+      // The native detector answers "did you decode", never "is there a code
+      // here I can't read" — it exposes geometry only for symbols it already
+      // read. So there is no honest structure verdict on this path, and
+      // reporting the decode as one would conflate "nothing to scan" with
+      // "haven't managed it yet" and cut short exactly the dark-room burns the
+      // torch exists for. Undefined leaves the patient dark rule in charge.
+      autoTorchTick(video, undefined);
       const t0 = performance.now();
       detector
         .detect(video)
@@ -1437,8 +1465,14 @@ export function ScanCameraPage() {
   }, []);
 
   /** One throttled luma sample + whatever the machine says to do. Called from
-   *  inside both decode loops, only while actively scanning. */
-  const autoTorchTick = useCallback((video: HTMLVideoElement) => {
+   *  inside both decode loops, only while actively scanning.
+   *
+   *  `structure` is REQUIRED rather than read off a shared ref on purpose: it
+   *  drives both when the torch fires and when a pointless burn ends, and a
+   *  decode loop that never reports it silently disables both halves. Passing
+   *  it makes each loop state what it can actually see — including `undefined`
+   *  for "this decoder has no region signal", which is a real answer. */
+  const autoTorchTick = useCallback((video: HTMLVideoElement, structure: boolean | undefined) => {
     if (!autoTorchRef.current || autoSuppressedRef.current || !hasTorchRef.current) return;
     if (torchOwnerRef.current === "manual") return;
     const now = Date.now();
@@ -1449,11 +1483,7 @@ export function ScanCameraPage() {
     if (sample === null) return;
     prevLumaFrameRef.current = sample.raw;
     recordTorchSample(sample.mean, sample.falloff);
-    const { state, turn } = torchAutoSample(
-      torchAutoRef.current,
-      { ...sample, structure: lastStructureRef.current },
-      now,
-    );
+    const { state, turn } = torchAutoSample(torchAutoRef.current, { ...sample, structure }, now);
     torchAutoRef.current = state;
     if (!turn) return;
     const track = streamRef.current?.getVideoTracks()[0] ?? null;
@@ -1674,14 +1704,14 @@ export function ScanCameraPage() {
         // Only a NEW capture can be retried from the drawer; an arm's target
         // may be gone by then, so those surface as a toast and keep the arm.
         if (!armed) setFailedShot({ blob, stamps });
-        toast.error(e instanceof ApiError ? e.message : String(e));
+        noteError(e);
       }
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : String(e));
+      noteError(e);
     } finally {
       setShutterBusy(false);
     }
-  }, [activeSlug, onSaved, qc, saveShot, showFilingNote, shutterBusy, toast]);
+  }, [activeSlug, onSaved, qc, saveShot, showFilingNote, shutterBusy, noteError]);
 
   // The + shutter: while a sheet blocks the viewfinder the shutter can't
   // photograph anything, so it becomes "add a photo to THIS item" — it puts
@@ -1692,10 +1722,19 @@ export function ScanCameraPage() {
     const it = reviewItemRef.current ?? resultItemRef.current ?? drawerItem;
     if (!it) {
       // Lookup still running — queue the arm and close the sheet NOW.
-      if (phaseRef.current === "result") {
+      //
+      // "resolving" belongs here as much as "result" does, and leaving it out
+      // is what made this button dead exactly when someone reaches for it: the
+      // sheet is up, the name has not landed yet, so you photograph the thing
+      // to help — and the tap did nothing at all, silently (reported
+      // 2026-08-14). Every other phase has genuinely nothing to attach to, so
+      // it says that rather than also saying nothing.
+      if (phaseRef.current === "result" || phaseRef.current === "resolving") {
         earlyIntentRef.current = "photo";
         showFilingNote("One sec - the shutter arms when the scan lands…");
         rearm();
+      } else {
+        showFilingNote("Scan or photograph something first, then + adds another shot to it.");
       }
       return;
     }
@@ -1769,13 +1808,13 @@ export function ScanCameraPage() {
         }
       } catch (e) {
         earlyIntentRef.current = null;
-        toast.error(e instanceof ApiError ? e.message : String(e));
+        noteError(e);
         if (phaseRef.current === "result") rearm();
       } finally {
         if (ingestKeyRef.current === key) setIngestBusy(false);
       }
     })();
-  }, [phase, pendingBarcode, activeSlug, armFor, ensureBatchId, onSaved, qc, rearm, showFilingNote, toast]);
+  }, [phase, pendingBarcode, activeSlug, armFor, ensureBatchId, onSaved, qc, rearm, showFilingNote, noteError]);
 
   // An action taken while the lookup is still running: the sheet closes NOW,
   // the intent executes when the row lands.
@@ -1799,11 +1838,11 @@ export function ScanCameraPage() {
       await saveShot(failedShot.blob, failedShot.stamps);
       setFailedShot(null);
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : String(e));
+      noteError(e);
     } finally {
       setRetryBusy(false);
     }
-  }, [failedShot, retryBusy, saveShot, toast]);
+  }, [failedShot, retryBusy, saveShot, noteError]);
 
   // What the DRAWER is showing. Deliberately NOT recent[0]: a barcode result is
   // owned by ScanResultModal, which calls the same onSaved, so the drawer used
@@ -1857,9 +1896,18 @@ export function ScanCameraPage() {
           className="absolute inset-x-0 z-30 flex justify-center pointer-events-none px-4"
           style={{ top: UNDER_TOP_CHROME }}
         >
-          <div className="inline-flex items-center gap-2 rounded-full bg-emerald-600/90 text-white text-xs font-medium px-3 py-1.5 shadow-lg backdrop-blur-sm max-w-[92%]">
-            <MapPin size={13} className="shrink-0" />
-            <span className="truncate">{filingNote}</span>
+          <div
+            className={`inline-flex items-center gap-2 rounded-2xl text-white text-xs font-medium px-3 py-1.5 shadow-lg backdrop-blur-sm max-w-[92%] ${
+              filingNote.tone === "warn" ? "bg-amber-600/95" : "bg-emerald-600/90"
+            }`}
+          >
+            {filingNote.tone === "warn" ? (
+              <AlertTriangle size={13} className="shrink-0" />
+            ) : (
+              <MapPin size={13} className="shrink-0" />
+            )}
+            {/* A warning wraps; a confirmation is short enough to stay on one line. */}
+            <span className={filingNote.tone === "warn" ? "" : "truncate"}>{filingNote.text}</span>
           </div>
         </div>
       )}
@@ -2304,7 +2352,7 @@ export function ScanCameraPage() {
               // the item stays in the inbox.
               setDrawerItem(null);
               setDrawerDismissed(true);
-              toast.success("Kept in your scan inbox.");
+              showFilingNote("Kept in your scan inbox.");
             }}
             onUndo={(it) => {
               setUndoBusy(true);
@@ -2314,9 +2362,9 @@ export function ScanCameraPage() {
                   setDrawerItem((prev) => (prev?.id === it.id ? null : prev));
                   setLastFrame((prev) => (prev?.itemId === it.id ? (URL.revokeObjectURL(prev.url), null) : prev));
                   void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-                  toast.success("Undone - removed from the inbox");
+                  showFilingNote("Undone - removed from the inbox");
                 })
-                .catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)))
+                .catch((e) => noteError(e))
                 .finally(() => setUndoBusy(false));
             }}
           />
@@ -2474,7 +2522,7 @@ export function ScanCameraPage() {
                     void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
                     void qc.invalidateQueries({ queryKey: ["scan-item-live", activeSlug, it.id] });
                   })
-                  .catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)));
+                  .catch((e) => noteError(e));
               }}
             />
           </div>
@@ -2524,7 +2572,7 @@ export function ScanCameraPage() {
             // The bin is gaining a second SKU — flip to the filing flow: set it
             // as the active bin and keep scanning into it.
             setAreaId(binAdjust.locationId);
-            toast.success(`Filing into ${binAdjust.locationName} — scan the new item`);
+            showFilingNote(`Filing into ${binAdjust.locationName} — scan the new item`);
             setBinAdjust(null);
             setPhase("scanning");
           }}

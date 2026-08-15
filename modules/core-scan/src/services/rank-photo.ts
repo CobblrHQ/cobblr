@@ -107,10 +107,22 @@ export async function fetchImageBase64(url: string): Promise<{ b64: string; medi
  *
  *  Tolerates `chosen_index` as a legacy alias for replies produced by a cached
  *  older prompt, and a numeric string. */
+export type UnitSide = "left" | "right" | "top" | "bottom";
+
+/** The half of the chosen photo holding ONE unit, when it shows several of the
+ *  same product. Null whenever the reply did not clearly say so — which is the
+ *  common case, and the safe one: a wrong cut destroys the picture. */
+export function parseUnitSide(parsed: Record<string, unknown>): UnitSide | null {
+  const units = typeof parsed.units === "number" ? parsed.units : Number(parsed.units);
+  if (!Number.isFinite(units) || units < 2) return null;
+  const side = typeof parsed.unit_side === "string" ? parsed.unit_side.trim().toLowerCase() : "";
+  return side === "left" || side === "right" || side === "top" || side === "bottom" ? side : null;
+}
+
 export function parseRankReply(
   raw: string,
   opts: { tileCount: number },
-): { candidateIndex: number; reason: string; colorSeen: string | null } | null {
+): { candidateIndex: number; reason: string; colorSeen: string | null; unitSide: UnitSide | null } | null {
   if (opts.tileCount <= 0) return null;
   let parsed: Record<string, unknown>;
   try {
@@ -128,7 +140,7 @@ export function parseRankReply(
   const reason = typeof parsed.reason === "string" ? parsed.reason.trim() : "";
   const colorSeen =
     typeof parsed.color_seen === "string" && parsed.color_seen.trim() ? parsed.color_seen.trim() : null;
-  return { candidateIndex, reason, colorSeen };
+  return { candidateIndex, reason, colorSeen, unitSide: parseUnitSide(parsed) };
 }
 
 /** Why a rank produced no pick — each maps to a DIFFERENT thing the user can do
@@ -144,6 +156,9 @@ export interface RankPhotoResult {
   colorSeen: string | null;
   /** How many candidates it actually ranked over (after unfetchable ones drop). */
   rankedOver: number;
+  /** The half of the chosen photo holding ONE unit, when it shows several of
+   *  the same product. Null in every other case, including "not sure". */
+  unitSide: UnitSide | null;
 }
 
 /** A pick, or the reason there isn't one. */
@@ -172,7 +187,6 @@ export async function rankPhotoWithAi(opts: {
   candidates: DdgImageResult[];
   bypassCache?: boolean;
 }): Promise<RankPhotoOutcome> {
-  const hasReference = !!opts.referenceB64;
   // Fetch the candidate thumbnails concurrently; drop any that won't load so the
   // tiles the model sees line up exactly with `usable`.
   const fetched = await Promise.all(
@@ -230,5 +244,9 @@ export async function rankPhotoWithAi(opts: {
     reason: parsed.reason,
     colorSeen: parsed.colorSeen,
     rankedOver: usable.length,
+    // Which half of the winner holds one unit, when it shows several. The
+    // ranker was RIGHT about which photo is best - this does not second-guess
+    // that, it only says the picture contains two of the thing.
+    unitSide: parsed.unitSide,
   };
 }

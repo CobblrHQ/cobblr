@@ -8,6 +8,7 @@ import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { listEntries } from "../modules/registry.js";
 import { clearExposableFieldsCache } from "./entities.js";
+import { PLATFORM_ACTIONS, PLATFORM_ACTION_OWNER } from "./platform-actions.js";
 
 export async function syncManifestRegistries(): Promise<{
   kinds: number;
@@ -114,6 +115,28 @@ export async function syncManifestRegistries(): Promise<{
         version: a.version ?? m.version,
       });
     }
+  }
+
+  // The KERNEL's own actions ride the SAME array as module actions — same
+  // upsert below, and the orphan-cleanup's "not in presentActionIds" naturally
+  // keeps them. A side-channel insert here would be deleted on the next boot.
+  for (const a of PLATFORM_ACTIONS) {
+    actionRows.push({
+      id: a.id,
+      module_name: PLATFORM_ACTION_OWNER,
+      label: a.label,
+      description: a.description,
+      icon: a.icon,
+      // Workspace-scoped: appliesTo is ignored (matches no kind) — see the
+      // registered-actions route, which forces matched_kinds to [] for them.
+      applies_to: { any: true },
+      scope: a.scope,
+      invoke_route: null,
+      invoke_handler: a.invoke_handler,
+      user_invokable: a.user_invokable,
+      args_schema: a.args_schema,
+      version: a.version,
+    });
   }
 
   await meta.transaction().execute(async (trx) => {

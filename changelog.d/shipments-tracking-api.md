@@ -31,3 +31,27 @@ where a tracking service is a third party reading the same data.
 **The URL is a separate setting on purpose.** Anything that answers the same
 shape works, including something you run yourself. Cobblr cannot tell the
 difference and takes no position on what is behind that address.
+
+### Using your own tracking account instead
+
+The settings above belong to whoever runs the server, which is the right answer
+when that is you. On a Cobblr you do not run, it is not: you would be asking an
+operator to put your key on their box.
+
+So a tracking service can also be a **personal connection**. Under **Profile >
+Connections**, add a Parcel tracking connection with your own key and choose
+which workspaces it applies to. Your parcels are then followed with your
+credentials and billed to your account, in every workspace you routed it to.
+
+Your own connection wins wherever you have one. Where you do not, whatever the
+instance is configured with still applies, so a self-hosted box keeps working
+exactly as before with nothing to change.
+
+Two things follow from a connection belonging to a person rather than a
+workspace:
+
+- **Just me** means your own parcels use it. **Share** offers it to the whole
+  workspace, and its owner has to accept before anyone else's parcels use it.
+- If your tracking service runs on your own network, set transit to `bridge` and
+  it rides **your** edge bridge, whichever workspace the parcel is in. One bridge
+  serves all of them.

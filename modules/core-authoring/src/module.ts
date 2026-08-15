@@ -43,6 +43,11 @@ export default defineModule({
   // builder works on a workspace without core-ai.
   dependencies: [],
 
+  // AI-REACH: no kinds/actions by design. Authoring is reached by an EXTERNAL
+  // agent through the MCP server's cobblr_authoring_* tools (compile → candidate
+  // → apply), which are build tools rather than workspace-operate tools. The
+  // in-app assistant deliberately does not build apps unattended.
+
   provides: { entityKinds: [] },
 
   exposes: {

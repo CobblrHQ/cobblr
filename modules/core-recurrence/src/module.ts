@@ -32,6 +32,10 @@ export default defineModule({
 
   api: () => import("./api/index.js"),
 
+  // AI-REACH: no kinds/actions by design. A recurrence is a schedule attached
+  // to another module's record, not a thing of its own; what it PRODUCES shows
+  // up through list_calendar and the owning record's own kind.
+
   exposes: {
     events: ["core-recurrence.rule.fired"],
     api: ["tick"],

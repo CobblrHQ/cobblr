@@ -3081,6 +3081,54 @@ export interface PlatformEdge {
   getReleaseLoader(): string;
 }
 
+/** One provider a user can connect under /me/connections — their own key, or
+ *  a service of theirs a bridge reaches. `kind` groups providers by what they
+ *  are FOR ("ai-provider", "tracking"); a consumer resolves by kind and never
+ *  needs to know which providers exist. */
+export interface ConnectionProviderDef {
+  id: string;
+  kind: string;
+  label: string;
+  /** The fields to ask for. `secret: true` is write-only — stored encrypted and
+   *  never returned, so the edit form shows "set" rather than the value. */
+  credentials: Record<string, { label: string; secret: boolean }>;
+  /** One line under the picker, for a kind whose purpose isn't self-evident. */
+  blurb?: string;
+}
+
+/** A personal connection that applies to a call, with the secret decrypted. */
+export interface ResolvedConnection {
+  credentialId: string;
+  providerId: string;
+  credentials: Record<string, unknown>;
+  label: string;
+  /** The user who OWNS this connection. A personal bridge is keyed by user, so
+   *  this is what routes a call down THEIR tunnel — even when the caller is
+   *  someone else (a shared connection) or nobody (a sweep). */
+  ownerUserId: string;
+}
+
+/** Personal (user-scoped) connections: a credential its USER owns and routes to
+ *  workspaces, rather than one a workspace owns.
+ *
+ *  AI was the first kind and for a while the only one, so the surface hardcoded
+ *  it. Nothing about the routing, the share-approval flow or the precedence
+ *  rules was ever AI-specific — so a second kind is a registration, not a
+ *  second copy of any of it. */
+export interface PlatformConnections {
+  /** Offer a provider under /me/connections. Call at module load. */
+  registerProvider(p: ConnectionProviderDef): void;
+  listProviders(kind?: string): ConnectionProviderDef[];
+  getProvider(id: string): ConnectionProviderDef | null;
+  /** The connection that applies to (workspace, caller) for this kind, or null
+   *  when the user has connected nothing — in which case the caller falls back
+   *  to whatever the workspace itself is configured with.
+   *
+   *  Precedence is the caller's OWN connection first, then one shared into the
+   *  workspace and approved by its owner. */
+  resolve(kind: string, orgId: string, callerUserId: string | null): Promise<ResolvedConnection | null>;
+}
+
 /** The single per-tenant egress policy every external-HTTP path routes through —
  *  consistent SSRF posture across sync connectors, device drivers, webhooks, and
  *  module polls (replaces the historic divergent per-module guards). */
@@ -3835,6 +3883,7 @@ export interface Platform {
   ai: PlatformAi;
   units: PlatformUnits;
   edge: PlatformEdge;
+  connections: PlatformConnections;
   egress: PlatformEgress;
   auth: PlatformAuth;
   pairings: PlatformPairings;

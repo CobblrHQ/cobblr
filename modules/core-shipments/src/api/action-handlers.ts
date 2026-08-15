@@ -13,7 +13,7 @@
 
 import { platform } from "@cobblr/platform-contract";
 import { detectCarrier } from "../carriers.js";
-import { driverFor } from "../drivers/index.js";
+import { driverForRoute } from "../drivers/index.js";
 import { isPollDue, nextPollAt } from "../cadence.js";
 import { etaSourceOfState, mergeEta, type EtaSource } from "../eta-confidence.js";
 import { CarrierError, type ShipmentState } from "../status.js";
@@ -67,8 +67,11 @@ export function registerShipmentsActionHandlers(): void {
     const lastState = args.lastState ?? null;
     const poll = { confirmed: args.confirmed === true, deliveredAt: args.deliveredAt ?? null };
 
-    const driver = driverFor(carrier.code);
-    if (!driver || !driver.configured()) {
+    // Whose parcel this is decides who can follow it: the instance may have no
+    // tracking credentials at all while its owner has connected their own.
+    const route = { orgId: ctx.orgId, ownerUserId: ctx.userId ?? null };
+    const { driver, connected } = await driverForRoute(carrier.code, route);
+    if (!driver || !connected) {
       return {
         ok: true,
         followed: false,
@@ -99,7 +102,9 @@ export function registerShipmentsActionHandlers(): void {
 
     let status;
     try {
-      status = await driver.track(carrier.number, carrier.code, ctx.orgId);
+      // A person asking about their own parcel routes to THEIR bridge; the
+      // sweep has no user, so it falls back to the workspace's.
+      status = await driver.track(carrier.number, carrier.code, route);
     } catch (err) {
       const retryable = err instanceof CarrierError ? err.retryable : true;
       // A carrier that did not answer has told us nothing. The caller keeps its

@@ -19,6 +19,13 @@ export function registerHandler(handlerKey: string, handler: ActionHandler): voi
   handlers.set(handlerKey, handler);
 }
 
+/** Is a handler registered under this key? Exists for the guard test that pins
+ *  platform-actions.ts ↔ platform-action-handlers.ts 1:1 — an action declared
+ *  without its handler would fail at invoke time, in front of a user. */
+export function hasHandler(handlerKey: string): boolean {
+  return handlers.has(handlerKey);
+}
+
 export async function listApplicable(
   kind: string,
   orgId?: string,

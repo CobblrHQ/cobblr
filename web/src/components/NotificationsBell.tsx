@@ -14,6 +14,8 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, Check, PanelRight, PanelRightClose, X } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
+import { notificationRoute } from "../lib/deep-path";
+import { notificationAction } from "../lib/notification-action";
 import ReactMarkdown from "react-markdown";
 import { api, type CrossOrgNotificationEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -120,35 +122,21 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
    *  every row written before that fix still carries an absolute url forever.
    *  Hence: strip our own origin here rather than only fixing it upstream.
    *  A link to some OTHER origin is not ours to route — open it in a new tab. */
-  function routeFor(link: string): { path?: string; external?: string } {
-    if (!/^https?:\/\//i.test(link)) return { path: link.startsWith("/") ? link : `/${link}` };
-    try {
-      const u = new URL(link);
-      if (u.origin === window.location.origin) return { path: `${u.pathname}${u.search}${u.hash}` };
-      return { external: link };
-    } catch {
-      return {};
-    }
-  }
+
 
   function handleItemClick(n: CrossOrgNotificationEntry) {
     if (!n.read_at) markRead.mutate(n.id);
-    // Some notifications have no destination worth taking you to: a reply to
-    // your feedback is the message ITSELF, so hijacking the click to a queue
-    // page is a detour (the row keeps a quiet "view thread" link for anyone who
-    // wants it). Clicking just marks it read.
-    if (NO_NAVIGATE.has(n.event_type)) { setOpen(false); return; }
-    // A workspace-invite is about ANOTHER workspace you're not in yet — it's
-    // scoped to one of your own only so it surfaces. Don't switch to that scope
-    // workspace; just open the accept link.
-    if (n.event_type !== "workspace.invited") setActiveSlug(n.org_slug);
-    if (n.link_url) {
-      const { path, external } = routeFor(n.link_url);
-      if (path) navigate(path);
-      else if (external) window.open(external, "_blank", "noopener");
-    }
-    setOpen(false);
+    const act = notificationAction(n);
+    // A click with nowhere to go marks the row read and stops. It does not
+    // move you, and it does not close the panel out from under you: nobody
+    // reads one notification at a time.
+    if (!act.goesSomewhere) return;
+    if (act.switchTo && setActiveSlug(act.switchTo, act.path)) return;
+    if (act.path) navigate(act.path);
+    else if (act.external) window.open(act.external, "_blank", "noopener");
+    if (act.close) setOpen(false);
   }
+
 
   // Shared inbox body (header actions + the list + "see all"). Rendered inside
   // both the dropdown popover and the sidebar so the two modes never drift.
@@ -233,7 +221,18 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
                       handleItemClick(n);
                     }
                   }}
-                  className="flex-1 min-w-0 text-left px-3 py-2.5 cursor-pointer"
+                  // A row that goes nowhere still marks itself read on click,
+                  // so it stays a button. What changes is the PROMISE: the
+                  // pointer cursor says "this takes you somewhere", and when
+                  // that is not true the click reads as broken rather than as
+                  // deliberate.
+                  className={
+                    "flex-1 min-w-0 text-left px-3 py-2.5 " +
+                    (notificationAction(n).goesSomewhere ? "cursor-pointer" : "cursor-default")
+                  }
+                  title={
+                    notificationAction(n).goesSomewhere ? undefined : "Marks as read"
+                  }
                 >
                   {/* Message "header": who + when up top, like a chat bubble's
                       sender/timestamp line — visually separates it from the body.
@@ -257,9 +256,17 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
                       onClick={(e) => {
                         e.stopPropagation();
                         if (!n.read_at) markRead.mutate(n.id);
-                        setActiveSlug(n.org_slug);
-                        const { path } = routeFor(n.link_url!);
-                        if (path) navigate(path);
+                        // Same two rules as the row click: resolve the stored
+                        // link into a router path, and hand it to the switch
+                        // rather than navigating after a full page load.
+                        // The row deliberately stays put for these; this
+                        // button is the explicit way through, so it resolves
+                        // the link itself rather than asking for the row's
+                        // decision.
+                        const { path } = notificationRoute(n.link_url);
+                        if (!path) return;
+                        if (setActiveSlug(n.org_slug, path)) return;
+                        navigate(path);
                         setOpen(false);
                       }}
                       className="mt-1.5 text-[11px] text-faint dark:text-slate-500 hover:text-accent transition"

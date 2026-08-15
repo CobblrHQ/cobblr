@@ -30,6 +30,10 @@ export default defineModule({
   intents: [],
   dependencies: [],
 
+  // AI-REACH: none needed — the background job runner. Its jobs are an
+  // implementation detail of other modules' work; what they PRODUCE is reachable
+  // through those modules' own kinds.
+
   exposes: {
     events: [],
     api: ["enqueue", "registerWorker"],

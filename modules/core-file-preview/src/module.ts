@@ -42,6 +42,9 @@ export default defineModule({
   api: () => import("./api/index.js"),
 
   intents: [],
+  // AI-REACH: none needed — pure rendering plumbing (it turns a stored file into a
+  // preview). Nothing here is a thing a person asks about; the FILES themselves
+  // are reachable as core-files:file.
   provides: { entityKinds: [] },
   exposes: { events: [], api: [], actions: [] },
 });

@@ -1,4 +1,6 @@
 export {
+  ESCORT_DESTINATIONS,
+  type EscortDestination,
   WORKSPACE_TOOLS,
   READ_TOOLS,
   WRITE_TOOLS,

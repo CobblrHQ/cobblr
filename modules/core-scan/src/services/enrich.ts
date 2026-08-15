@@ -20,6 +20,13 @@ import { reportBarcodeCorrection } from "./barcode-corrections.js";
 import { classifyScanCode, resolveIsbn, resolveAsin, type ScanCodeType } from "./scan-router.js";
 import { crossCheckScanPhoto, identifyImage, parsePackSize, refreshCatalogImageByName } from "./enrich-photo.js";
 import { identityMeta, mergeMeta } from "./metadata.js";
+import { looksNonEnglish } from "./catalog-normalize.js";
+import { trimCatalogMargins } from "./trim-margins.js";
+import { cropToUnit } from "./unit-crop.js";
+import { cropToFirstUnit } from "./unit-profile.js";
+import type { UnitSide } from "./rank-photo.js";
+import { enqueueRetryLookup, retryNote } from "./retry-lookup.js";
+import { rejectionNote, type RejectedRequest, type RejectionReason } from "./enrich-feedback.js";
 import { tidyTruncatedName } from "./item-name.js";
 import { BARCODE_NS } from "./barcode-cache.js";
 import { findDecoder } from "./identifier-registry.js";
@@ -273,13 +280,16 @@ interface EnrichContext {
   /** Org slug — used to build core-files URLs for the catalog
    *  image download. */
   orgSlug: string;
-  /** Caller's bearer token — re-used so the core-files attach
-   *  call runs through requireAuth + withTenant just like a real
-   *  user upload. */
-  bearer: string;
-  /** Same-host base URL — `${protocol}://${host}` from the
-   *  triggering request. */
-  baseUrl: string;
+  /** UNREAD. Both of these described a core-files attach that used to go out
+   *  over HTTP to our own api; `downloadCatalogImage` writes through the
+   *  platform now and takes only `db`/`orgId`/`itemId`. Nothing in this file
+   *  reads either field.
+   *
+   *  Optional rather than deleted so the six request-path callers keep passing
+   *  what they have, but documented as dead so nobody concludes (as the queued
+   *  retry nearly did) that background enrichment needs a token it cannot get. */
+  bearer?: string;
+  baseUrl?: string;
   /** The scanning user (null for a cron/background enrich) — passed to every
    *  AI call so their user-scoped personal connection resolves. */
   userId?: string | null;
@@ -728,7 +738,7 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
       .updateTable("core_scan_inbox_items")
       .set({
         ai_notes: rateLimited
-          ? "Barcode service is rate-limited — retrying automatically in a moment."
+          ? retryNote(0)
           : "No catalog hit for this barcode, and web search turned up nothing. Fill in manually.",
         // On a rate-limit, leave ai_suggested_at NULL (reads as unfinished) AND
         // tag the row so the client shows a distinct "retrying" state and paces
@@ -748,6 +758,18 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
       })
       .where("id", "=", ctx.itemId)
       .execute();
+    // Hand the promise to something that outlives this request. Only on the
+    // FIRST throttled pass: a queued retry that is itself throttled again is
+    // already inside core-queue's own backoff, and enqueuing from here would
+    // fan one stuck row out into a widening tree of jobs.
+    if (rateLimited && !ctx.force) {
+      await enqueueRetryLookup({
+        orgId: ctx.orgId,
+        itemId: ctx.itemId,
+        upc: ctx.upc,
+        orgSlug: ctx.orgSlug,
+      }).catch((e) => console.error("[core-scan] could not queue a retry:", (e as Error).message));
+    }
     return;
   }
 
@@ -1072,20 +1094,28 @@ export function isJunkName(name: string | null | undefined): boolean {
  *  letters (Spanish/French/Portuguese/German/…) or any non-Latin script. An
  *  English-market name that legitimately carries an accent ("Nestlé") is safe —
  *  the re-identify just returns the same accented name and nothing changes. */
-function looksNonEnglish(s: string | null | undefined): boolean {
-  if (!s) return false;
-  // Accented Latin letters, skipping × (×) and ÷ (÷).
-  if (/[À-ÖØ-öø-ſ]/.test(s)) return true;
-  // Any non-Latin script (Greek, Cyrillic, CJK, Arabic, Hebrew, …).
-  if (/[Ͱ-῿Ⰰ-퟿豈-﷿ﹰ-﻿＀-￯]/.test(s)) return true;
-  return false;
-}
 
 /** Web+AI-enrich a thin hit into a full product title, update the row, and feed
  *  the richer result back to BIdb (trusted actor → supersedes the thin entry).
  *  Only upgrades when the web result is genuinely FULLER + about the same product
  *  (shares the head noun) + reasonably confident — never replaces a hit with a
  *  shakier guess. Detached/best-effort. */
+/** Tell the row that an explicitly-requested re-run considered a result and
+ *  declined it. Best-effort: a note that fails to write must never turn a
+ *  correct rejection into an error. */
+async function sayRejected(
+  ctx: EnrichContext,
+  request: RejectedRequest,
+  reason: RejectionReason,
+): Promise<void> {
+  await ctx.db
+    .updateTable("core_scan_inbox_items")
+    .set({ ai_notes: rejectionNote(request, reason), updated_at: new Date() })
+    .where("id", "=", ctx.itemId)
+    .execute()
+    .catch((e) => console.error("[core-scan] could not record a rejection:", (e as Error).message));
+}
+
 async function enrichThinHit(ctx: EnrichContext, hit: BarcodeHit): Promise<void> {
   const thin = hit.title?.trim() ?? "";
   const web = await resolveBarcodeViaWebSearch(ctx.orgId, ctx.upc, ctx.hint, ctx.userId).catch(() => null);
@@ -1144,9 +1174,10 @@ async function enrichThinHit(ctx: EnrichContext, hit: BarcodeHit): Promise<void>
     // even if it's SHORTER — stripping a wrong "96 Packs" shortens but improves
     // the name, so the `fuller` bar must NOT apply. sharesAnyWord still guards
     // against the identify hallucinating a different product.
-    if (!sharesAnyWord) return;
+    if (!sharesAnyWord) return await sayRejected(ctx, "hint", "different-product");
   } else if (ctx.enrich) {
-    if (!sharesAnyWord || !fuller) return;
+    if (!sharesAnyWord) return await sayRejected(ctx, "enrich", "different-product");
+    if (!fuller) return await sayRejected(ctx, "enrich", "no-better");
   } else if (langUpgrade) {
     /* accept: English replacement of a localized provider title, same product */
   } else {
@@ -1293,6 +1324,11 @@ export function catalogImageUrlOrNull(url: string | null | undefined): string | 
 export async function downloadCatalogImage(
   ctx: Pick<EnrichContext, "db" | "orgId" | "itemId">,
   imageUrl: string,
+  opts: {
+    /** The rank pass saw several of the same unit in this photo and said which
+     *  half holds one. Applied here because this is where the bytes land. */
+    unitSide?: UnitSide | null;
+  } = {},
 ): Promise<boolean> {
   // A stock "no image" graphic is not a photo. Refuse before spending a fetch.
   if (isPlaceholderImageUrl(imageUrl)) return false;
@@ -1322,11 +1358,27 @@ export async function downloadCatalogImage(
       // variants + the DB row), NOT the HTTP upload route — that route is the
       // USER upload surface and may be entitlement-gated (e.g. the trial tier
       // withholds user uploads). A fetched catalog image is not a user upload.
-      const written = await platform().files.write(
-        ctx.orgId,
-        new Uint8Array(await blob.arrayBuffer()),
-        { filename, mimeType: blob.type || "image/jpeg" },
-      );
+      const raw = new Uint8Array(await blob.arrayBuffer());
+      // A clean studio shot is what the search was asked for, and what it often
+      // returns is a small product adrift in a white field — correct, and
+      // unreadable as a thumbnail. Trim the dead border so the product fills
+      // its frame, keeping a margin so nothing is clipped. Returns null (and
+      // the original is stored untouched) whenever trimming would not clearly
+      // improve the picture.
+      // Crop to ONE unit first when the ranker said the photo shows several,
+      // THEN trim: the cut leaves the background the second unit was standing
+      // on, and the trim is what takes it away.
+      // The rank pass answers this when it runs, but it only runs on demand, so
+      // the FIRST catalog image an item gets has no verdict. Fall back to the
+      // ink-profile detector, which finds two separated objects of the same
+      // width and colour wherever they sit in the frame.
+      const single =
+        (opts.unitSide ? await cropToUnit(raw, opts.unitSide) : await cropToFirstUnit(raw)) ?? raw;
+      const trimmed = (await trimCatalogMargins(single)) ?? single;
+      const written = await platform().files.write(ctx.orgId, trimmed, {
+        filename,
+        mimeType: trimmed === raw ? blob.type || "image/jpeg" : "image/jpeg",
+      });
       if (!written) continue;
       await ctx.db
         .updateTable("core_scan_inbox_items")

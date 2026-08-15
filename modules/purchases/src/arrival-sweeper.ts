@@ -25,6 +25,9 @@ const TICK_MS = 60 * 60 * 1000; // hourly; the decision below is what makes it d
 const NUDGE_AFTER_DAYS = 3;
 /** Never a third ask. Someone who ignored two is not served by a third. */
 const MAX_ASKS = 2;
+/** How long after its date an unanswered order is still a live QUESTION rather
+ *  than history. Past this and a first contact stays quiet. */
+const STALE_AFTER_DAYS = 30;
 
 export function startArrivalSweeper(): void {
   if (intervalHandle) clearInterval(intervalHandle);
@@ -92,7 +95,16 @@ export function decideAsk(state: AskState, now: Date): AskDecision {
   // followed by a nudge they also cannot answer.
   if (carrierState === "in_transit" || carrierState === "pre_transit") return "quiet";
 
-  if (!prior) return "ask";
+  if (!prior) {
+    // Never asked, and long past due: this is history, not a question. Without
+    // this, switching the sweep on asks about every order anybody ever left
+    // open, all at once — and so does importing a year of old records later.
+    // A month-late parcel nobody marked arrived was chased or written off long
+    // before Cobblr noticed.
+    const overdueDays = (now.getTime() - Date.parse(`${state.expectedArrival}T23:59:59`)) / 86_400_000;
+    if (Number.isFinite(overdueDays) && overdueDays > STALE_AFTER_DAYS) return "quiet";
+    return "ask";
+  }
 
   // A moved date is a different question. Reset rather than inherit the count.
   if (prior.expectedArrival !== state.expectedArrival) return "ask";

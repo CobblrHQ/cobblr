@@ -43,6 +43,28 @@ export function HeaderMenu({
   const hostRef = useRef<HTMLSpanElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null);
 
+  // A menu is a modal moment: the page must hold still under it. Without this
+  // the page scrolled behind an open panel on both phone and desktop.
+  //
+  // DECLARED BEFORE the placement effect on purpose. Effects run in declaration
+  // order, and locking the scroll changes the layout — so measuring the trigger
+  // first means measuring a page that is about to move, and the panel lands
+  // detached from the control that opened it (reported 2026-08-14: a menu opened
+  // from a row far down the page rendered up near the top).
+  useEffect(() => {
+    if (!open) return;
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtml = html.style.overflow;
+    const prevBody = body.style.overflow;
+    html.style.overflow = "hidden";
+    body.style.overflow = "hidden";
+    return () => {
+      html.style.overflow = prevHtml;
+      body.style.overflow = prevBody;
+    };
+  }, [open]);
+
   useEffect(() => {
     if (!open || !hostRef.current) return;
     const place = () => {
@@ -70,29 +92,23 @@ export function HeaderMenu({
       setPos({ top, left, width: w, maxHeight: Math.max(160, window.innerHeight - top - M) });
     };
     place();
+    // …and again on the next frame. Whatever the page does between the click and
+    // the panel appearing — the scroll lock landing, a row expanding, a font
+    // settling — the second pass measures the layout that actually exists.
+    // NOT a fix for a diagnosed cause: a menu opening detached from its trigger
+    // was reported 2026-08-14 and could not be reproduced headlessly, so this is
+    // hardening against the class rather than a repair of a known mechanism.
+    const raf = requestAnimationFrame(place);
     // Re-place on RESIZE only. It used to re-place on scroll too, which is why
     // the panel appeared to ride the page: it faithfully tracked a trigger that
     // was scrolling away. The page no longer scrolls while a menu is open (see
     // below), so there is nothing to track.
     window.addEventListener("resize", place);
-    return () => window.removeEventListener("resize", place);
-  }, [open, align, width]);
-
-  // A menu is a modal moment: the page must hold still under it. Without this
-  // the page scrolled behind an open panel on both phone and desktop.
-  useEffect(() => {
-    if (!open) return;
-    const html = document.documentElement;
-    const body = document.body;
-    const prevHtml = html.style.overflow;
-    const prevBody = body.style.overflow;
-    html.style.overflow = "hidden";
-    body.style.overflow = "hidden";
     return () => {
-      html.style.overflow = prevHtml;
-      body.style.overflow = prevBody;
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", place);
     };
-  }, [open]);
+  }, [open, align, width]);
 
   useEffect(() => {
     if (!open) return;

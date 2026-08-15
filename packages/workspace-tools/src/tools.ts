@@ -36,7 +36,287 @@ export interface WorkspaceTool {
 /** Clamp big reads so a tool result stays prompt-sized. */
 const LIST_LIMIT_MAX = 50;
 
+/** The dashboard's "needs you" rows (api/src/routes/attention.ts). */
+interface AttentionRow {
+  kind: string;
+  label: string;
+  count: number;
+  sample?: string[];
+  entries?: Array<{ id: string; title: string }>;
+}
+
+/** The record's name as the CHANGE recorded it. The activity route treats a
+ *  diff that carries a name as already answering "which one", and only resolves
+ *  a live title for the entries that don't — so both halves have to be read to
+ *  name every entry. */
+function nameFromDiff(diff: unknown): string | null {
+  if (!diff || typeof diff !== "object") return null;
+  const d = diff as Record<string, unknown>;
+  for (const key of ["name", "title", "label"]) {
+    const v = d[key];
+    if (typeof v === "string" && v.trim()) return v;
+  }
+  return null;
+}
+
+/** One activity-log entry, already enriched server-side with the actor's name
+ *  and (where the diff doesn't carry one) the record's live title. */
+interface ActivityRow {
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  module_name?: string | null;
+  occurred_at: string;
+  title?: string | null;
+  diff?: unknown;
+  auth_method?: string;
+  actor?: { display_name?: string | null; email?: string | null } | null;
+  token?: { name?: string } | null;
+}
+
+interface NotificationRow {
+  message: string;
+  event_type: string;
+  created_at: string;
+  read_at?: string | null;
+  link_url?: string | null;
+}
+
+interface MaintenanceRow {
+  id: string;
+  name: string;
+  entity_module?: string | null;
+  entity_type?: string | null;
+  entity_id?: string | null;
+  scheduled_at?: string | null;
+  performed_at?: string | null;
+  recurrence_rule?: string | null;
+  notes?: string | null;
+}
+
+interface CalendarRow {
+  date: string;
+  title: string;
+  source: string;
+  category?: string;
+  entityModule?: string;
+  entityType?: string;
+  entityId?: string;
+}
+
+/** The workspace's own shape — one row type per area of get_workspace_setup. */
+interface InstanceRow {
+  module_name: string;
+  instance_name: string;
+  display_name: string;
+  is_default?: boolean;
+  item_count?: number | null;
+}
+
+interface ViewRow {
+  name: string;
+  entity_kind: string;
+  view_type: string;
+  is_default?: boolean;
+  pinned?: boolean;
+}
+
+interface BindingRow {
+  id: string;
+  source_kind: string;
+  action_id: string;
+  trigger_type: string;
+  trigger_event?: string | null;
+  trigger_schedule?: string | null;
+  enabled?: boolean;
+}
+
+interface AppRow {
+  name: string;
+  slug: string;
+}
+
+interface TemplateRow {
+  name: string;
+  target_kind: string;
+  description?: string | null;
+  defaults?: Record<string, unknown>;
+}
+
+interface UnitVocabularyRow {
+  builtins?: Array<{ name: string; symbol: string }>;
+  custom?: Array<{ name: string; symbol: string }>;
+  display_mode?: string;
+}
+
+/** A scan-inbox row, as the core-scan list route returns it. Only the fields
+ *  worth telling a model about — `needs_review` and `waiting_days` are derived
+ *  server-side from the shared triage predicate, so the model is told the same
+ *  thing the Scan page shows the user. */
+interface ScanInboxRow {
+  id?: string;
+  suggested_name?: string | null;
+  suggested_manufacturer?: string | null;
+  barcode_text?: string | null;
+  source_kind?: string | null;
+  quantity?: number | null;
+  ai_notes?: string | null;
+  scan_area?: string | null;
+  scan_batch_id?: string | null;
+  needs_review?: boolean;
+  waiting_days?: number | null;
+  target_kind?: string | null;
+  target_location_id?: string | null;
+  target_container_id?: string | null;
+  suggested_candidates?: unknown;
+}
+
+/** One queue row, flattened to what a person would say about it. Drops the
+ *  identification internals (candidate arrays, scores, image ids) — a chat
+ *  answer needs what it is, how long it has waited and what it still needs. */
+function summarizeScanItem(
+  it: ScanInboxRow,
+  batches: Record<string, { label?: string | null }>,
+): Record<string, unknown> {
+  // Where it is headed: the route already chosen, else the matchmaker's top
+  // candidate (what filing it would create, and under which category).
+  const top = Array.isArray(it.suggested_candidates)
+    ? (it.suggested_candidates as Array<{ kind?: string; label?: string; category?: string }>)[0]
+    : null;
+  const target = it.target_kind ?? top?.kind ?? null;
+  const session = it.scan_batch_id ? batches[it.scan_batch_id]?.label : null;
+  return {
+    id: it.id,
+    // An unidentified capture is the honest answer, not a blank name.
+    name: it.suggested_name ?? "(not identified yet)",
+    ...(it.suggested_manufacturer ? { brand: it.suggested_manufacturer } : {}),
+    ...(top?.category ? { category: top.category } : {}),
+    ...(it.quantity && it.quantity !== 1 ? { quantity: it.quantity } : {}),
+    captured_as: it.source_kind ?? "scan",
+    ...(it.barcode_text ? { barcode: it.barcode_text } : {}),
+    ...(typeof it.waiting_days === "number" ? { waiting_days: it.waiting_days } : {}),
+    ...(it.needs_review ? { needs_review: true } : {}),
+    ...(it.ai_notes ? { notes: it.ai_notes } : {}),
+    ...(target ? { would_become: target } : {}),
+    has_destination: !!(it.target_location_id || it.target_container_id),
+    ...(it.scan_area ? { scanned_in: it.scan_area } : {}),
+    ...(session ? { session } : {}),
+  };
+}
+
+// ─────────────────────── escort destinations (tier 1.5) ───────────────────
+//
+// The surfaces the assistant may WALK THE USER TO but never operate: each is a
+// tier-1 "no door" surface (docs/design-decisions/platform-actions.md — the
+// consent tiers), where a Confirm card cannot carry the decision's weight, so
+// the page itself is the consent surface. The escort is inert by construction:
+// navigation + prefilled form fields, and the page's own submit — under the
+// page's own role checks, showing the full blast radius — is the only thing
+// that mutates. Prefill params are only read by pages that opt in via
+// usePrefill(); nothing ever auto-submits.
+//
+// This list IS the tier-1 catalogue. Adding a row here must not add a write
+// path — if a surface deserves operating, it becomes an action (tier 2), not
+// a bigger escort.
+
+export interface EscortDestination {
+  id: string;
+  path: string;
+  label: string;
+  /** Prefill keys the destination's page reads (via usePrefill) — the contract
+   *  between this registry and the page. Empty = navigation only. */
+  prefill: Record<string, string>;
+  /** Why this surface is escort-only — surfaced to the model so it can say so. */
+  why: string;
+}
+
+export const ESCORT_DESTINATIONS: EscortDestination[] = [
+  {
+    id: "members",
+    path: "/configuration/members",
+    label: "Members & invites",
+    prefill: {
+      email: "email address to prefill on the invite form",
+      role: "role to preselect: member, editor, admin or guest",
+    },
+    why: "who is in the workspace, and as what, is a human decision",
+  },
+  {
+    id: "api-tokens",
+    path: "/configuration/tokens",
+    label: "API tokens",
+    prefill: {},
+    why: "credentials are never minted or revoked by the assistant",
+  },
+  {
+    id: "backup",
+    path: "/configuration/backup",
+    label: "Backup & restore",
+    prefill: {},
+    why: "a restore replaces data wholesale; the page shows what a card cannot",
+  },
+  {
+    id: "ai-config",
+    path: "/configuration/ai",
+    label: "AI providers",
+    prefill: {},
+    why: "the assistant does not configure its own reach or keys",
+  },
+  {
+    id: "wires",
+    path: "/wires",
+    label: "Automations (wires)",
+    prefill: {},
+    why: "composing standing automation is consented in the composer, not a card",
+  },
+  {
+    id: "fields",
+    path: "/fields",
+    label: "Fields & forms",
+    prefill: {},
+    why: "editing or deleting a field touches the data under it; adding one is the platform:add-field action",
+  },
+];
+
 export const WORKSPACE_TOOLS: WorkspaceTool[] = [
+  {
+    name: "take_user_to",
+    description:
+      "ESCORT the user to a configuration screen you cannot operate yourself — inviting members, API tokens, backup & restore, AI providers, composing automations, editing fields. In the Cobblr app this MOVES their screen there (elsewhere, give them the path as a link) and can PREFILL the form (e.g. the invite email), but nothing is submitted: the user presses the page's own button. Use this when they ask for something on those surfaces instead of refusing dry — say why it needs their hand, then take them there. Destinations: " +
+      ESCORT_DESTINATIONS.map((d) => `${d.id} (${d.why})`).join("; ") +
+      ".",
+    mode: "read",
+    params: {
+      destination: z
+        .string()
+        .describe(`One of: ${ESCORT_DESTINATIONS.map((d) => d.id).join(", ")}`),
+      email: z.string().optional().describe("members only: email to prefill on the invite form"),
+      role: z.string().optional().describe("members only: member, editor, admin or guest"),
+    },
+    execute: async (_api, args) => {
+      const id = typeof args.destination === "string" ? args.destination.trim().toLowerCase() : "";
+      const dest = ESCORT_DESTINATIONS.find((d) => d.id === id);
+      if (!dest) {
+        return toolFail(
+          `no such destination — use one of: ${ESCORT_DESTINATIONS.map((d) => d.id).join(", ")}`,
+        );
+      }
+      // Only the keys the destination DECLARES ride along; anything else is
+      // dropped, so a page can trust that every prefill.* param it reads was
+      // meant for it.
+      const params = new URLSearchParams();
+      for (const key of Object.keys(dest.prefill)) {
+        const v = args[key];
+        if (typeof v === "string" && v.trim()) params.set(`prefill.${key}`, v.trim());
+      }
+      const qs = params.toString();
+      return toolOk({
+        escort: { path: qs ? `${dest.path}?${qs}` : dest.path, label: dest.label },
+        note:
+          "The user's screen is moving there now (in-app). Nothing was submitted — tell them what to press to finish, and why this one is theirs to press.",
+      });
+    },
+  },
   {
     name: "list_record_kinds",
     description:
@@ -200,6 +480,339 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
           ? items.filter((a) => a.scope === "workspace" || (a.matched_kinds ?? []).includes(kind))
           : items,
       );
+    },
+  },
+  {
+    name: "get_attention",
+    description:
+      "What needs the user RIGHT NOW: the same 'needs you' feed their dashboard shows — stock that has run low, dates that are overdue or coming up in the next 30 days, and captures still waiting to be filed. Derived from the workspace's own field semantics, so it covers every tracker they have, including ones they built themselves. Reach for this FIRST on any open-ended question about their situation (\"what should I do today?\", \"anything need me?\", \"am I behind on anything?\") — it is one call and it is what they are looking at.",
+    mode: "read",
+    params: {},
+    execute: async (api) => {
+      const res = await api.request("GET", "/attention");
+      if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't read what needs attention"));
+      const rows = ((res.body as { items?: AttentionRow[] }).items ?? []).map((r) => ({
+        kind: r.kind,
+        what: r.label,
+        count: r.count,
+        examples: (r.entries ?? []).slice(0, 8).map((e) => e.title).concat(r.sample ?? []).slice(0, 8),
+      }));
+      if (rows.length === 0) return toolOk({ items: [], note: "Nothing needs them right now." });
+      return toolOk({ items: rows });
+    },
+  },
+  {
+    name: "list_activity",
+    description:
+      "The workspace's history — what actually happened, newest first: who created, updated or deleted what, and when. Use for any question about the PAST (\"what changed this week?\", \"who edited this part?\", \"did anything get deleted?\", \"what have I been doing?\"). Records answer what the user HAS; this answers what HAPPENED to it. Filter by entity_type to follow one kind of thing.",
+    mode: "read",
+    params: {
+      limit: z.number().optional().describe("Max entries (default 25, max 100)"),
+      actions: z
+        .string()
+        .optional()
+        .describe("Comma-separated action filter, e.g. delete,update (omit for everything)"),
+      entity_type: z.string().optional().describe("Only entries about this entity type, e.g. part"),
+    },
+    execute: async (api, args) => {
+      const limit = Math.min(Number(args.limit) || 25, 100);
+      const q = [`limit=${limit}`];
+      if (typeof args.actions === "string" && args.actions.trim())
+        q.push(`actions=${encodeURIComponent(args.actions.trim())}`);
+      if (typeof args.entity_type === "string" && args.entity_type.trim())
+        q.push(`entity_type=${encodeURIComponent(args.entity_type.trim())}`);
+      const res = await api.request("GET", `/activity?${q.join("&")}`);
+      if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't read the activity log"));
+      const items = ((res.body as { items?: ActivityRow[] }).items ?? []).map((a) => ({
+        when: a.occurred_at,
+        action: a.action,
+        // The route resolves `title` from the live record ONLY when the diff
+        // doesn't already carry a name — so a create, whose diff always does,
+        // arrives with title null. Reading just `title` therefore reported every
+        // creation as its bare type ("created vendor"), which is the exact
+        // failure the route's own title-resolution exists to prevent.
+        what: a.title ?? nameFromDiff(a.diff) ?? a.entity_type,
+        kind: a.module_name ? `${a.module_name}:${a.entity_type}` : a.entity_type,
+        id: a.entity_id,
+        // "system" and "api_token" are as much a part of the answer as a person:
+        // "who changed this" is often "a wire did" or "your own script did".
+        by: a.actor?.display_name ?? a.actor?.email ?? (a.auth_method === "system" ? "the system" : null),
+        ...(a.token?.name ? { via_token: a.token.name } : {}),
+      }));
+      return toolOk({ items });
+    },
+  },
+  {
+    name: "list_notifications",
+    description:
+      "The user's notifications in this workspace — what the system has been telling them (a job finished, stock ran out, something needs review), newest first. Use for \"what did I miss?\", \"anything new?\", \"what happened while I was away?\". Pass unread_only to see only what they have not read yet.",
+    mode: "read",
+    params: {
+      unread_only: z.boolean().optional().describe("Only notifications they have not read"),
+      limit: z.number().optional().describe("Max notifications (default 25, max 100)"),
+    },
+    execute: async (api, args) => {
+      const limit = Math.min(Number(args.limit) || 25, 100);
+      const unread = args.unread_only ? "&unread=1" : "";
+      const res = await api.request("GET", `/notifications?limit=${limit}${unread}`);
+      if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't read notifications"));
+      const items = ((res.body as { items?: NotificationRow[] }).items ?? []).map((n) => ({
+        when: n.created_at,
+        message: n.message,
+        about: n.event_type,
+        unread: !n.read_at,
+        ...(n.link_url ? { link: n.link_url } : {}),
+      }));
+      return toolOk({ items, unread_count: items.filter((i) => i.unread).length });
+    },
+  },
+  {
+    name: "list_maintenance",
+    description:
+      "Scheduled and completed maintenance across the workspace — services, inspections, filter changes, anything logged against a machine, vehicle, asset or tool. Use for \"what is due for service?\", \"when did I last change that?\", \"what maintenance is overdue?\". `due` narrows to work that is scheduled and not yet done; `history` to work already performed; `within_days` to what falls due inside a window.",
+    mode: "read",
+    params: {
+      due: z.boolean().optional().describe("Only scheduled work not yet performed"),
+      history: z.boolean().optional().describe("Only work already performed"),
+      within_days: z.number().optional().describe("With due: only what falls due inside this many days"),
+      entity_id: z.string().optional().describe("Only maintenance for this record"),
+      limit: z.number().optional().describe(`Max entries (default 25, max ${LIST_LIMIT_MAX})`),
+    },
+    execute: async (api, args) => {
+      const limit = Math.min(Number(args.limit) || 25, LIST_LIMIT_MAX);
+      // Filter at the source: the route already understands scheduled-vs-history
+      // and a due window, so a page of 25 is 25 of the RIGHT rows rather than 25
+      // of everything, sifted here.
+      const q: string[] = [`limit=${limit}`];
+      if (args.due === true) q.push("kind=scheduled");
+      else if (args.history === true) q.push("kind=history");
+      const within = Number(args.within_days);
+      if (args.due === true && Number.isFinite(within) && within > 0)
+        q.push(`due_within_days=${Math.floor(within)}`);
+      if (typeof args.entity_id === "string" && args.entity_id.trim())
+        q.push(`entity_id=${encodeURIComponent(args.entity_id.trim())}`);
+      const res = await api.request("GET", `/modules/core-maintenance/entries?${q.join("&")}`);
+      if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't read maintenance"));
+      const rows = ((res.body as { items?: MaintenanceRow[] }).items ?? []).map((e) => ({
+        id: e.id,
+        what: e.name,
+        on: e.entity_type ? `${e.entity_module}:${e.entity_type}` : null,
+        entity_id: e.entity_id,
+        ...(e.scheduled_at ? { scheduled: e.scheduled_at } : {}),
+        ...(e.performed_at ? { done: e.performed_at } : { outstanding: true }),
+        ...(e.recurrence_rule ? { repeats: e.recurrence_rule } : {}),
+        ...(e.notes ? { notes: e.notes } : {}),
+      }));
+      return toolOk({
+        items: rows.slice(0, limit),
+        total: rows.length,
+        ...(rows.length > limit ? { note: `showing ${limit} of ${rows.length}` } : {}),
+      });
+    },
+  },
+  {
+    name: "list_calendar",
+    description:
+      "What is coming up (or what was on) the workspace calendar in a date window — due dates, scheduled maintenance, recurring chores, project deadlines, anything the workspace puts on a date. Use for \"what's on this week?\", \"what's due before Friday?\", \"what did I have on last month?\". Dates are YYYY-MM-DD; the default window is the next 30 days.",
+    mode: "read",
+    params: {
+      from: z.string().optional().describe("Window start, YYYY-MM-DD (default: today)"),
+      to: z.string().optional().describe("Window end, YYYY-MM-DD (default: 30 days out)"),
+    },
+    execute: async (api, args) => {
+      // The window has to be resolved to real dates, because the endpoint takes
+      // an explicit range — a model asking "what's coming up" should not have to
+      // know today's date to get an answer.
+      const day = 24 * 60 * 60 * 1000;
+      const iso = (t: number) => new Date(t).toISOString().slice(0, 10);
+      const now = Date.now();
+      const from = typeof args.from === "string" && args.from.trim() ? args.from.trim() : iso(now);
+      const to = typeof args.to === "string" && args.to.trim() ? args.to.trim() : iso(now + 30 * day);
+      const res = await api.request(
+        "GET",
+        `/calendar/events?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+      );
+      if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't read the calendar"));
+      const items = ((res.body as { items?: CalendarRow[] }).items ?? []).map((e) => ({
+        date: e.date,
+        title: e.title,
+        from: e.source,
+        ...(e.category ? { category: e.category } : {}),
+        ...(e.entityType ? { about: `${e.entityModule}:${e.entityType}`, entity_id: e.entityId } : {}),
+      }));
+      return toolOk({ window: { from, to }, items });
+    },
+  },
+  {
+    name: "list_scan_inbox",
+    description:
+      "List the actual ITEMS waiting in the scan inbox — captures (barcode scans, photos, notes, receipt lines) that have not been filed into a record yet. The scan inbox is NOT a record kind, so list_records cannot reach it: use THIS whenever the user asks what is in their inbox, what needs reviewing, what has been sitting there, or about a specific captured item. Each item says what it was identified as, how long it has waited, whether it still needs a human, and where it is headed. Filter with `facet`: needs_review (no clean name, low confidence, or a rate-limited lookup), waiting (sitting more than two days), unfiled (no destination yet), ready (has a destination and nothing left to ask).",
+    mode: "read",
+    params: {
+      facet: z
+        .enum(["all", "needs_review", "waiting", "unfiled", "ready"])
+        .optional()
+        .describe("Which slice of the queue (default: everything pending)"),
+      q: z.string().optional().describe("Text filter over name, brand, barcode, notes and scan area"),
+      limit: z.number().optional().describe(`Max items (default 20, max ${LIST_LIMIT_MAX})`),
+    },
+    execute: async (api, args) => {
+      const facet = typeof args.facet === "string" && args.facet ? args.facet : "all";
+      const limit = Math.min(Number(args.limit) || 20, LIST_LIMIT_MAX);
+      const q = typeof args.q === "string" ? args.q.trim().toLowerCase() : "";
+      // A text filter reads wider than the page it returns: the queue is ordered
+      // newest-first, not by relevance, so filtering only the first N rows would
+      // answer "you don't have one" about an item sitting further down.
+      const fetchLimit = q ? 200 : limit;
+      const res = await api.request(
+        "GET",
+        `/modules/core-scan/inbox?status=pending&triage=${encodeURIComponent(facet)}&limit=${fetchLimit}`,
+      );
+      if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't read the scan inbox"));
+      const body = res.body as {
+        items?: ScanInboxRow[];
+        batches?: Record<string, { label?: string | null }>;
+        total?: number;
+        partial?: string;
+      };
+      const all = body.items ?? [];
+      const matched = q
+        ? all.filter((it) =>
+            [it.suggested_name, it.suggested_manufacturer, it.barcode_text, it.ai_notes, it.scan_area].some(
+              (v) => typeof v === "string" && v.toLowerCase().includes(q),
+            ),
+          )
+        : all;
+      const items = matched.slice(0, limit).map((it) => summarizeScanItem(it, body.batches ?? {}));
+      return toolOk({
+        items,
+        // The QUEUE's total, not the page's length — answering "you have 6" off a
+        // page of 6 out of 148 is the failure worth spending a field on.
+        ...(typeof body.total === "number" ? { total_in_facet: body.total } : {}),
+        ...(q ? { matched: matched.length } : {}),
+        ...(matched.length > items.length
+          ? {
+              note: `showing ${items.length} of ${matched.length} — narrow with q or raise limit (max ${LIST_LIMIT_MAX})`,
+            }
+          : {}),
+        ...(body.partial ? { partial: body.partial } : {}),
+      });
+    },
+  },
+  {
+    name: "get_workspace_setup",
+    description:
+      "How this workspace is SET UP, as opposed to what it holds: its instances (the separate lists one module runs, e.g. 3D Printers and CNC both from Machines), its saved views, its automations (wires: when X happens, do Y), the apps the user built, their entity templates, and their unit vocabulary. Use for \"how is my workspace set up?\", \"what automations do I have?\", \"why did that happen by itself?\", \"what views/apps/templates do I have?\", or before proposing a change to any of them. `part` picks one area; omit it for a summary of every area at once.",
+    mode: "read",
+    params: {
+      part: z
+        .enum(["all", "instances", "views", "automations", "apps", "templates", "units"])
+        .optional()
+        .describe("Which area of the setup (default: a summary of all of them)"),
+    },
+    execute: async (api, args) => {
+      const part = typeof args.part === "string" && args.part ? args.part : "all";
+      const want = (p: string) => part === "all" || part === p;
+      // Each area is optional: a workspace that has not enabled a module 404s
+      // that one, and the honest answer is "that area is not set up here" — not
+      // a failed tool call that loses the six areas that DID answer.
+      const grab = async <T>(path: string, pick: (body: Record<string, unknown>) => T): Promise<T | null> => {
+        const res = await api.request("GET", path);
+        if (res.status >= 400) return null;
+        try {
+          return pick(res.body);
+        } catch {
+          return null;
+        }
+      };
+      const out: Record<string, unknown> = {};
+
+      if (want("instances")) {
+        const rows = await grab("/instances", (b) => (b.items as InstanceRow[] | undefined) ?? []);
+        if (rows) {
+          out.instances = rows.map((i) => ({
+            name: i.display_name,
+            instance: i.instance_name,
+            from_module: i.module_name,
+            ...(i.is_default ? { is_default: true } : {}),
+            ...(typeof i.item_count === "number" ? { items: i.item_count } : {}),
+            // The kind id is what every OTHER tool needs to act on this list.
+            kind: `${i.instance_name}:item`,
+          }));
+        }
+      }
+      if (want("views")) {
+        const rows = await grab("/modules/core-views/views", (b) => (b.items as ViewRow[] | undefined) ?? []);
+        if (rows) {
+          out.views = rows.map((v) => ({
+            name: v.name,
+            of: v.entity_kind,
+            shown_as: v.view_type,
+            ...(v.is_default ? { is_default: true } : {}),
+            ...(v.pinned ? { pinned_to_dashboard: true } : {}),
+          }));
+        }
+      }
+      if (want("automations")) {
+        const rows = await grab("/bindings", (b) => (b.items as BindingRow[] | undefined) ?? []);
+        if (rows) {
+          out.automations = rows.map((w) => ({
+            does: w.action_id,
+            on: w.source_kind,
+            when:
+              w.trigger_type === "schedule"
+                ? `on a schedule (${w.trigger_schedule ?? "unspecified"})`
+                : w.trigger_type === "event"
+                  ? `the event ${w.trigger_event ?? "?"}`
+                  : w.trigger_type,
+            // A disabled wire explains a "why didn't that happen" as surely as an
+            // enabled one explains a "why did that happen".
+            ...(w.enabled === false ? { enabled: false } : {}),
+            id: w.id,
+          }));
+        }
+      }
+      if (want("apps")) {
+        const rows = await grab("/modules/core-apps/apps", (b) => (b.items as AppRow[] | undefined) ?? []);
+        if (rows) out.apps = rows.map((a) => ({ name: a.name, slug: a.slug }));
+      }
+      if (want("templates")) {
+        const rows = await grab(
+          "/modules/core-templates/templates",
+          (b) => (b.items as TemplateRow[] | undefined) ?? [],
+        );
+        if (rows) {
+          out.templates = rows.map((t) => ({
+            name: t.name,
+            creates: t.target_kind,
+            ...(t.description ? { description: t.description } : {}),
+            prefills: Object.keys(t.defaults ?? {}),
+          }));
+        }
+      }
+      if (want("units")) {
+        const vocab = await grab("/modules/core-units/units", (b) => b as unknown as UnitVocabularyRow);
+        if (vocab) {
+          out.units = {
+            // Only the CUSTOM ones are a fact about this workspace; the builtins
+            // are the same everywhere and would be noise in every answer.
+            custom: (vocab.custom ?? []).map((u) => `${u.name} (${u.symbol})`),
+            builtin_count: (vocab.builtins ?? []).length,
+            ...(vocab.display_mode ? { display_mode: vocab.display_mode } : {}),
+          };
+        }
+      }
+
+      const areas = Object.keys(out);
+      if (areas.length === 0) {
+        return toolOk({
+          note:
+            part === "all"
+              ? "None of these areas are set up in this workspace yet."
+              : `The ${part} area is not available in this workspace (its module may not be enabled).`,
+        });
+      }
+      return toolOk(out);
     },
   },
   {
@@ -369,6 +982,22 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         args: (args.args as Record<string, unknown> | undefined) ?? undefined,
       });
       if (res.status >= 400) return toolFail(apiErrorMessage(res, "action failed"));
+      // The route answers 200 when the action was INVOKED; whether the operation
+      // went ahead is the handler's own `result.ok`, and a handler that refuses
+      // (a frozen label group, a unit that already ships built in, an argument
+      // that doesn't resolve) says so there. Reading only the HTTP status
+      // reported every one of those refusals to the model as a success — so it
+      // told the user the change was made. 136 refusal paths across ~20 modules
+      // are reachable through this one tool; unwrapping the envelope is what
+      // makes "it wouldn't let me, because…" sayable at all.
+      const body = res.body as { result?: unknown };
+      const inner = body.result;
+      if (inner && typeof inner === "object" && (inner as { ok?: unknown }).ok === false) {
+        const reason = (inner as { error?: unknown }).error;
+        return toolFail(
+          typeof reason === "string" && reason.trim() ? reason : "the action declined to run",
+        );
+      }
       return toolOk(res.body);
     },
   },

@@ -26,6 +26,10 @@ export default defineModule({
   intents: [],
   dependencies: [],
 
+  // AI-REACH: no kinds/actions by design. Read through the shared registry's
+  // list_notifications tool. A notification is delivered TO a person, never
+  // authored by one, so there is nothing for an agent to create or edit.
+
   exposes: {
     events: [
       "core-notifications.dispatched",

@@ -14,7 +14,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-ai",
-  version: "0.16.2",
+  version: "0.17.0",
   displayName: "AI",
   description:
     "Use AI on your workspace data: classify photos, extract text, summarise, rank product images, match to catalogs. Configure OpenAI, Anthropic, Ollama, or any provider.",
@@ -31,6 +31,10 @@ export default defineModule({
 
   intents: [],
   dependencies: [],
+
+  // AI-REACH: none needed — this module IS the assistant (and the provider
+  // plumbing behind it). Giving it a door would be Cobb calling Cobb; its
+  // settings are an operator surface under Configuration → AI.
 
   provides: {
     entityKinds: [],

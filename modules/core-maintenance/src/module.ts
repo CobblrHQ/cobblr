@@ -43,6 +43,11 @@ export default defineModule({
   intents: [],
   dependencies: [],
 
+  // AI-REACH: no kinds by design (entries hang off the entity they service
+  // rather than standing alone in nav). Read through the shared registry's
+  // list_maintenance tool, which filters at the source (kind=scheduled,
+  // due_within_days) so "what is due" is answered without paging everything.
+
   provides: {
     entityKinds: [],
   },

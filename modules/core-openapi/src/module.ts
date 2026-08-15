@@ -28,6 +28,10 @@ export default defineModule({
   intents: [],
   dependencies: [],
 
+  // AI-REACH: none needed — generates the OpenAPI spec for the workspace's own
+  // API. An agent that wants to know what exists asks list_record_kinds, which
+  // is the same information in the form the tools already speak.
+
   provides: { entityKinds: [] },
 
   exposes: {

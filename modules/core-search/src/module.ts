@@ -31,6 +31,10 @@ export default defineModule({
 
   dependencies: [],
 
+  // AI-REACH: no kinds by design — this module IS a reach mechanism. It is
+  // reached through the shared registry's search_records tool, which is the
+  // cross-kind text search an agent uses when it does not know where a thing lives.
+
   provides: { entityKinds: [] },
 
   exposes: {

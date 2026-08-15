@@ -12,6 +12,7 @@ import {
 } from "../lib/api";
 import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
 import { displaySlug } from "../lib/workspaceSlug";
+import { usePrefill } from "../lib/prefill";
 
 interface Props {
   /** Render in-flow (settings page mode) instead of as an overlay. */
@@ -57,8 +58,12 @@ export function MembersModal({ open, onClose, slug, inline, chromeless }: Props)
   const canInviteToPlatform = isOwner && config.data?.self_serve_invites === true;
 
   // ── invite create form ────────────────────────────────────────
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<OrgMembership["role"]>("member");
+  // Escort prefill (tier 1.5): Cobb can't invite anyone, but "invite Sam" walks
+  // the user here with the form filled — pressing Send invite stays theirs.
+  const prefill = usePrefill(["email", "role"]);
+  const prefillRole = INVITE_ROLES.find((r) => r === prefill.role) ?? null;
+  const [inviteEmail, setInviteEmail] = useState(prefill.email ?? "");
+  const [inviteRole, setInviteRole] = useState<OrgMembership["role"]>(prefillRole ?? "member");
   // "workspace" = join THIS workspace as a member; "platform" = start their own
   // Cobblr (their own fresh workspace). The two are genuinely different invites.
   const [inviteKind, setInviteKind] = useState<"workspace" | "platform">("workspace");

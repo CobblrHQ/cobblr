@@ -365,6 +365,13 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
         if ((r.applied ?? []).length > 0) {
           window.dispatchEvent(new CustomEvent("cobblr:workspace-changed", { detail: { via: "cobb" } }));
         }
+        // Tier-1.5 escort: Cobb walks the user to a screen he cannot operate
+        // (members, tokens, backup, …). Navigation only — the page reads any
+        // prefill.* params, and the page's own submit stays the user's. The
+        // chat panel is docked, so the conversation survives the move. If the
+        // model asked for several, the last one wins (one screen at a time).
+        const escortTo = (r.escorts ?? []).at(-1);
+        if (escortTo?.path?.startsWith("/")) navigate(escortTo.path);
         const doneCards: Msg[] = (r.applied ?? []).map((a) => ({
           role: "assistant" as const,
           content: a.summary,

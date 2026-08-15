@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/platform-contract",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
@@ -12,7 +12,8 @@
     "./label-geometry": "./src/label-geometry.ts",
     "./edge-bridge-client": "./src/edge-bridge-client.ts",
     "./outbound-identity": "./src/outbound-identity.ts",
-    "./receipt-totals": "./src/receipt-totals.ts"
+    "./receipt-totals": "./src/receipt-totals.ts",
+    "./scan-triage": "./src/scan-triage.ts"
   },
   "types": "src/index.ts",
   "scripts": {

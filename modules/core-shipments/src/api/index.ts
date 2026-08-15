@@ -9,11 +9,16 @@ import { Router } from "express";
 import { platform } from "@cobblr/platform-contract";
 import { z } from "zod";
 import { detectCarrier, knownCarriers, trackingLookup } from "../carriers.js";
-import { aggregatorConfigured, aggregatorNames, driverFor, driverStatus } from "../drivers/index.js";
+import { aggregatorConnectedFor, aggregatorNames, driverStatus } from "../drivers/index.js";
 import { CarrierError } from "../status.js";
 import { registerShipmentsActionHandlers } from "./action-handlers.js";
+import { registerTrackingConnection } from "../drivers/connection.js";
+import { requestOrg } from "./request-org.js";
 
 registerShipmentsActionHandlers(); // core-shipments.track
+// Offers "connect your own tracking service" under /me/connections, so a parcel
+// can be followed with its OWNER's credentials on an instance that has none.
+registerTrackingConnection();
 
 const router = Router({ mergeParams: true });
 
@@ -59,7 +64,7 @@ router.get("/status", async (req, res) => {
     return;
   }
 
-  const orgId = (req as { org?: { id?: string } }).org?.id ?? "";
+  const { orgId, userId } = requestOrg(req);
 
   try {
     // Through the ACTION, never straight to a driver. The action is where the
@@ -68,11 +73,15 @@ router.get("/status", async (req, res) => {
     // second path with none of them. `lint:shipments-one-door` keeps it so.
     const out = (await platform().actions.invoke("core-shipments:track", {
       orgId,
-      userId: null,
+      // The person asking, not "system". A parcel is followed with its owner's
+      // own connection where they have one, and their bridge serves it -- both
+      // of which need to know who is asking. Passing null made every
+      // interactive check fall back to the instance's settings.
+      userId,
       event: {
         name: "core-shipments.status-read",
         payload: {},
-        actor: { user_id: null, display_name: null, auth_method: "system" },
+        actor: { user_id: userId, display_name: null, auth_method: "session" },
         timestamp: new Date().toISOString(),
         trigger_type: "user-invoked",
       },
@@ -113,11 +122,16 @@ router.get("/status", async (req, res) => {
 /** The carriers this build can identify, and which of them this deployment can
  *  actually follow. The UI needs both to tell "we cannot read that number"
  *  from "nobody has connected FedEx here yet". */
-router.get("/carriers", (_req, res) => {
+router.get("/carriers", async (req, res) => {
   const drivers = new Map(driverStatus().map((d) => [d.code, d.configured]));
+  // Asked for THIS caller, not for the instance: someone who connected their
+  // own tracking service is set up even where the box itself is not, and a
+  // page that said "not connected" to them would be wrong.
+  const { orgId, userId } = requestOrg(req);
+  const route = { orgId, ownerUserId: userId };
   // An aggregator answers for carriers we have no driver of our own for, so
   // it makes every recognised carrier followable.
-  const aggregator = aggregatorConfigured();
+  const aggregator = await aggregatorConnectedFor(route);
   res.json({
     aggregator,
     // Which wire formats this build can speak, so a settings screen can offer

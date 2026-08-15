@@ -8,7 +8,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { parseWireFilter } from "../platform/wire-filter.js";
 import { sql } from "kysely";
-import { platform, FieldTypeSchema, FieldRoleSchema } from "@cobblr/platform-contract";
+import { platform, FieldRoleSchema } from "@cobblr/platform-contract";
 import { requireAuth } from "../auth/middleware.js";
 import { requireCapability, requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
@@ -23,13 +23,16 @@ import { effectiveAppliesTo, matchAction, getActionScope } from "../platform/act
 import type { ActionAppliesToDecl } from "@cobblr/platform-contract";
 import {
   FIELD_SCOPE_PRESETS,
-  TRAIT_NAMES,
   fieldScopeProfiles,
   fieldScopeSentinel,
-  isFieldScope,
-  parseFieldScope,
 } from "@cobblr/platform-contract";
-import { listAllFieldDefs, resolveFieldDefsForKind } from "../platform/field-defs.js";
+import {
+  FieldDefCreate,
+  FieldRenderer,
+  createFieldDef,
+  listAllFieldDefs,
+  resolveFieldDefsForKind,
+} from "../platform/field-defs.js";
 
 export const platformOrgRouter = Router({ mergeParams: true });
 
@@ -773,83 +776,11 @@ platformOrgRouter.delete(
 );
 
 // ──────────────────────── field defs (Pillar D-lite) ───────────────
-
-const FieldRenderer = z.enum([
-  "text",
-  "color-hex",
-  "image-url",
-  "url-link",
-  "year",
-  "boolean",
-  "code",
-  "markdown",
-  "qr",
-]);
-
-const FieldDefCreate = z.object({
-  entity_kind: z.string(),
-  // `_note` is reserved: a choice field's one-off clarifier lives at
-  // `<name>_note` in metadata (see packages/platform-web/src/field-note.ts), so
-  // a real field with that name would fight the clarifier of the field it
-  // shadows for one key, and whichever wrote last would win.
-  name: z
-    .string()
-    .regex(/^[a-z][a-z0-9_]*$/)
-    .refine((n) => !n.endsWith("_note"), {
-      message: "field names cannot end in _note (reserved for a choice field's clarifier)",
-    }),
-  display_label: z.string().min(1),
-  type: FieldTypeSchema,
-  required: z.boolean().optional(),
-  position: z.number().int().optional(),
-  /** When type='text', renders as a dropdown of these choices. */
-  choices: z.array(z.string().max(120)).optional(),
-  /** Built-in renderer id for how the value should be drawn on
-   *  detail pages + list rows. Null/omit = plain text. */
-  renderer: FieldRenderer.nullable().optional(),
-  /** When type='computed': the {{ }} template rendered read-only at
-   *  resolve time. Required for computed; ignored otherwise. */
-  template: z.string().max(2000).optional(),
-  /** When type='relation': the entity-kind id this field points at
-   *  ("core-locations:location"). Without it the field stores an id nothing
-   *  can resolve, so the value renders as a raw uuid forever — which is what
-   *  happened when `relation` became selectable in the field builder before
-   *  this was accepted here. Enforced below, not merely optional. */
-  ref_kind: z.string().min(1).optional(),
-  /** The unit a type='number' value is measured in ("mm", "g", "in").
-   *  Free text by design — the units vocabulary (core-units) resolves it
-   *  at render/consume time and an unmatched string renders as-is. A unit
-   *  resolving to a catalog category gives the field declared physical
-   *  semantics (this is what size-aware features consume — never the
-   *  field's name). */
-  unit: z.string().trim().min(1).max(40).nullable().optional(),
-  /** TRAIT SCOPE: attach this def to a CLASS of entity kinds instead of one kind
-   *  ("origin", on everything physical). ANY combination of the 12 traits is
-   *  valid — OR within an axis, AND across axes — matched by the same matcher the
-   *  action registry uses. When present, `entity_kind` is DERIVED (the canonical
-   *  sentinel) and whatever the client sent for it is ignored, so the sentinel can
-   *  never disagree with the predicate it encodes. */
-  applies_to: z
-    .object({ traits: z.array(z.enum(TRAIT_NAMES)).min(1) })
-    .optional(),
-  /** What this field MEANS, from the closed vocabulary a bundle already uses.
-   *  The name is a local label and storage key; the role is the identity that
-   *  lets two workspaces (or two packs) recognise the same concept under
-   *  different names. Omitted here until now, which is the entire reason a
-   *  hand-made field could never be matched, mapped or safely merged: not a
-   *  step users skipped, a step that did not exist.
-   *  Validated with the SAME schema the manifest uses so the two can't drift. */
-  field_role: FieldRoleSchema.nullable().optional(),
-}).refine(
-  (d) => !d.choices || d.type === "text",
-  { message: "choices is only valid for type='text'", path: ["choices"] },
-).refine(
-  (d) => d.type !== "computed" || (d.template && d.template.trim().length > 0),
-  { message: "template is required for type='computed'", path: ["template"] },
-).refine(
-  (d) => !d.unit || d.type === "number",
-  { message: "unit is only valid for type='number'", path: ["unit"] },
-);
+//
+// FieldDefCreate + FieldRenderer + the create body live in
+// platform/field-defs.ts (createFieldDef) — shared with the
+// platform:add-field action handler so the trait-scope, relation and
+// reserved-name rules cannot fork between the two surfaces.
 
 const FieldDefPatch = z.object({
   display_label: z.string().min(1).optional(),
@@ -1299,78 +1230,16 @@ platformOrgRouter.post(
         });
         return;
       }
-      // A def is keyed either to ONE kind ("inventory:part") or to a TRAIT SCOPE —
-      // any combination of the 12 traits, OR within an axis and AND across them.
-      // The scope arrives either as an explicit predicate (the trait picker) or as
-      // a sentinel shorthand ("@physical", "@physical+unique"); both collapse to
-      // the same canonical trait list. The sentinel is then DERIVED from that list,
-      // never taken from the client, so it can't disagree with the predicate it
-      // encodes — and the same scope always lands on the same row.
-      // A relation with nowhere to point stores an id nothing can resolve, so
-      // the value renders as a raw uuid forever. Reject it at creation rather
-      // than let someone build a broken field and discover it in a table.
-      if (parsed.data.type === "relation" && !parsed.data.ref_kind) {
-        res.status(400).json({
-          error: {
-            code: "missing_ref_kind",
-            message: "A relation field needs ref_kind: which kind of record it points at.",
-          },
+      const result = await createFieldDef(req.tenant!.org.id, parsed.data);
+      if (!result.ok) {
+        // duplicate_name is a conflict, not a bad request — a retry with the
+        // same body will conflict again for a different reason than malformed.
+        res.status(result.code === "duplicate_name" ? 409 : 400).json({
+          error: { code: result.code, message: result.message },
         });
         return;
       }
-
-      const scopeTraits =
-        parsed.data.applies_to?.traits ?? parseFieldScope(parsed.data.entity_kind);
-      if (isFieldScope(parsed.data.entity_kind) && scopeTraits.length === 0) {
-        res.status(400).json({
-          error: {
-            code: "unknown_scope",
-            message: `"${parsed.data.entity_kind}" isn't a trait scope. Use trait words, e.g. @physical or @physical+unique.`,
-          },
-        });
-        return;
-      }
-      const entityKind = scopeTraits.length
-        ? fieldScopeSentinel(scopeTraits)
-        : parsed.data.entity_kind;
-      const inserted = await meta
-        .insertInto("module_field_defs")
-        .values({
-          org_id: req.tenant!.org.id,
-          entity_kind: entityKind,
-          name: parsed.data.name,
-          display_label: parsed.data.display_label,
-          type: parsed.data.type,
-          required: parsed.data.required ?? false,
-          position: parsed.data.position ?? 0,
-          choices: parsed.data.choices
-            ? (sql`${JSON.stringify(parsed.data.choices)}::jsonb` as unknown as string[])
-            : null,
-          renderer: parsed.data.renderer ?? null,
-          template: parsed.data.type === "computed" ? parsed.data.template ?? null : null,
-          unit: parsed.data.type === "number" ? parsed.data.unit ?? null : null,
-          // Scoped to the type that uses it, like template and unit above, so a
-          // stray ref_kind on a text field cannot confuse the label resolver.
-          ref_kind: parsed.data.type === "relation" ? parsed.data.ref_kind ?? null : null,
-          applies_to: scopeTraits.length
-            ? sql`${JSON.stringify({ traits: scopeTraits })}::jsonb`
-            : null,
-          field_role: parsed.data.field_role ?? null,
-        })
-        .returningAll()
-        .executeTakeFirstOrThrow();
-      clearComputedDefsCache();
-      await activity.log({
-        orgId: req.tenant!.org.id,
-        action: "field_def_created",
-        ref: { module: null, entityType: "field_def", entityId: inserted.id },
-        diff: {
-          entity_kind: entityKind,
-          name: parsed.data.name,
-          type: parsed.data.type,
-        },
-      });
-      res.status(201).json(inserted);
+      res.status(201).json(result.def);
     } catch (err) {
       next(err);
     }

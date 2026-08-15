@@ -11,7 +11,7 @@ import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { getMover } from "../platform/move-records.js";
 import {
-  createInstance,
+  provisionInstance,
   getInstance,
   listInstances,
   setScanFallback,
@@ -25,8 +25,6 @@ import {
   upsertOverride,
   type OverrideTarget,
 } from "../platform/entity-kind-overrides.js";
-import { singularize, pluralize } from "../lib/inflect.js";
-import { meta } from "../db/meta.js";
 
 export const instancesRouter = Router({ mergeParams: true });
 export const overridesRouter = Router({ mergeParams: true });
@@ -100,69 +98,23 @@ instancesRouter.post(
         });
         return;
       }
-      // Confirm the module is enabled for the workspace before creating
-      // an instance of it.
-      const enabled = await meta
-        .selectFrom("org_modules")
-        .select("module_name")
-        .where("org_id", "=", req.tenant!.org.id)
-        .where("module_name", "=", parsed.data.module_name)
-        .executeTakeFirst();
-      if (!enabled) {
-        res.status(400).json({
-          error: {
-            code: "module_not_enabled",
-            message: `Module '${parsed.data.module_name}' isn't enabled for this workspace. Enable it first.`,
-          },
+      // The full birth — enabled check, collision check, create, presentation
+      // seed — lives in platform/instances.ts (provisionInstance), shared with
+      // the platform:create-instance action handler so an instance is born the
+      // same way whichever surface asks.
+      const result = await provisionInstance({
+        orgId: req.tenant!.org.id,
+        moduleName: parsed.data.module_name,
+        instanceName: parsed.data.instance_name,
+        displayName: parsed.data.display_name,
+      });
+      if (!result.ok) {
+        res.status(result.code === "instance_name_taken" ? 409 : 400).json({
+          error: { code: result.code, message: result.message },
         });
         return;
       }
-      // Confirm the instance_name doesn't collide with another instance
-      // (workspace-unique across all modules).
-      const collision = await getInstance(req.tenant!.org.id, parsed.data.instance_name);
-      if (collision) {
-        res.status(409).json({
-          error: {
-            code: "instance_name_taken",
-            message: `Instance name '${parsed.data.instance_name}' is already used by ${collision.module_name}.`,
-          },
-        });
-        return;
-      }
-      try {
-        const created = await createInstance({
-          orgId: req.tenant!.org.id,
-          moduleName: parsed.data.module_name,
-          instanceName: parsed.data.instance_name,
-          displayName: parsed.data.display_name,
-          isDefault: false,
-        });
-        // Seed a presentation override row so the new instance shows up in the
-        // nav with its display name AND carries its own item noun. The noun
-        // defaults from the collection name ("Films" → "Film"/"Films"), so a
-        // skinnable module's UI never has to fall back to its hardcoded word
-        // ("part"). It's a default the user can fix in the instance settings —
-        // see docs/design-decisions/one-record-substrate.md.
-        const itemNoun = singularize(parsed.data.display_name);
-        await upsertOverride({
-          orgId: req.tenant!.org.id,
-          targetKind: "instance",
-          targetId: `${parsed.data.module_name}:${parsed.data.instance_name}`,
-          displayLabel: parsed.data.display_name,
-          config: { item_noun: itemNoun, item_noun_plural: pluralize(itemNoun) },
-          insertOnly: true,
-        });
-        res.status(201).json(created);
-      } catch (err) {
-        const code = (err as { code?: string }).code;
-        if (code === "invalid_slug" || code === "unknown_module" || code === "module_is_single_instance") {
-          res.status(400).json({
-            error: { code, message: (err as Error).message },
-          });
-          return;
-        }
-        throw err;
-      }
+      res.status(201).json(result.instance);
     } catch (err) {
       next(err);
     }

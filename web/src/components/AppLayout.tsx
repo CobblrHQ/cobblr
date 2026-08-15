@@ -48,12 +48,22 @@ import { useTour } from "../tour/useTour";
 import { DASHBOARD_TOUR } from "../tour/tour.config";
 import { useTheme } from "../theme/ThemeContext";
 import { useToast } from "@cobblr/platform-web";
+import { readOpenOn, restoresOn, writeOpenOn } from "../lib/panel-memory";
 
 export function AppLayout({ activeSlug }: { activeSlug: string }) {
   const location = useLocation();
   // Ask-Cobblr panel open state, lifted here so the main content shifts left
   // (into its centering margin) when the panel opens, instead of being overlaid.
-  const [chatOpen, setChatOpen] = useState(false);
+  //
+  // Restored across a refresh, but only on the page it was open on: a panel
+  // that reappears everywhere is something you have to keep closing, which is
+  // worse than losing it. location.pathname is the ROUTER path, so the
+  // `/w/<handle>` basename is already gone and the same page in two workspaces
+  // is one place. See lib/panel-memory.
+  const [chatOpen, setChatOpen] = useState(() => restoresOn(readOpenOn(), location.pathname));
+  useEffect(() => {
+    writeOpenOn(chatOpen ? location.pathname : null);
+  }, [chatOpen, location.pathname]);
   // Vivaldi-style nav placement: the module nav lives in the top bar (default)
   // or a skinny left sidebar; the tiny panel icon left of the wordmark flips
   // it, and the sidebar itself can be pinned or auto-hiding (its pin footer).

@@ -38,6 +38,7 @@ import {
   MoreHorizontal,
   RefreshCw,
   Pencil,
+  Truck,
   RotateCcw,
   ScanLine,
   Search,
@@ -71,9 +72,12 @@ import { ReceiptAddressChip, ReceiptAddressMenuBlock } from "../components/Recei
 import { classifyFiles, classifyOmni, clipboardImages, omniPlaceholder } from "./omniIntake";
 import { catalogUndoHistory, catalogUndoLabel, catalogUndoTitle } from "./scanCatalogUndo";
 import { shouldPersistNameEdit } from "./scanNameEdit";
+import { ChipFields, type ChipFieldDef, type ChipFieldType } from "../components/ChipFields";
 import { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 export { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 import { decideLocationScan, filingLabel } from "../lib/scanFiling";
+import { scanNotesPlacement } from "../lib/scanNotes";
+import { shouldOfferSplit } from "../lib/splitOffer";
 import { leadPhoto, photoOrder, photoUnverified } from "../lib/scanPhoto";
 import { findCombineClusters } from "../lib/scanCombine";
 import { entryKey, withRoutedInstances, pickDestinationKey } from "../lib/scanDestination";
@@ -89,6 +93,7 @@ import {
   type TrackedMatch,
 } from "../lib/api";
 import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
+import { isScanStale, needsScanReview } from "@cobblr/platform-contract/scan-triage";
 import { matchParentType, readField } from "../lib/parent-type-match";
 import { isRerunInFlight, itemEnriching } from "./scan-status";
 import { baseKind, confirmBodyFor, isReadyToFile } from "./scanFileAll";
@@ -822,7 +827,7 @@ export function ScanPage() {
   // Session labels by batch id, merged across pages — drives the group header
   // ("Receipt · <vendor>", "emailed <when>") instead of a bare timestamp.
   const batchMeta = useMemo(() => {
-    const m: Record<string, { label: string | null; origin: string | null; source_file_id: string | null; order_ref: string | null }> = {};
+    const m: Record<string, { label: string | null; origin: string | null; source_file_id: string | null; order_ref: string | null; tracking_number: string | null }> = {};
     for (const p of list.data?.pages ?? []) Object.assign(m, p.batches ?? {});
     return m;
   }, [list.data]);
@@ -842,36 +847,21 @@ export function ScanPage() {
     obs.observe(el);
     return () => obs.disconnect();
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
-  // "Needs review" = a pending item that didn't cleanly resolve: no name yet, a
-  // low-trust or rate-limited flag, or low confidence. Bulk-confirm the confident
-  // ones, then flip this on to focus only on the ones that need a human.
-  const needsReview = (it: ScanInboxItem): boolean => {
-    if (it.status !== "pending") return false;
-    const meta = (it.suggested_metadata ?? {}) as {
-      low_trust?: boolean;
-      rate_limited?: boolean;
-      reviewed?: boolean;
-    };
-    // "Looks fine" — a human already eyeballed it; stop nagging.
-    if (meta.reviewed) return false;
-    return (
-      !it.suggested_name ||
-      !!meta.low_trust ||
-      !!meta.rate_limited ||
-      (it.ai_confidence != null && Number(it.ai_confidence) < 0.5)
-    );
-  };
+  // "Needs review" (a pending item that didn't cleanly resolve — no name yet, a
+  // low-trust or rate-limited lookup, or low confidence) and the >2-day stale
+  // nudge are defined ONCE, in @cobblr/platform-contract/scan-triage. The list
+  // route filters by the same predicates (?triage=…) and Ask Cobb reads the
+  // resulting flags off each row, so the count in this header and the answer the
+  // assistant gives about the same queue cannot drift apart.
+  const needsReview = (it: ScanInboxItem): boolean => needsScanReview(it);
   const [reviewOnly, setReviewOnly] = useState(false);
-  // Stale nudge: pending items sitting > 2 days (the window —
-  // clutter is the motivator to clear; two days is when it starts to rot).
-  const STALE_MS = 2 * 24 * 60 * 60 * 1000;
-  const isStale = (it: ScanInboxItem) =>
-    it.status === "pending" && Date.now() - new Date(it.created_at).getTime() > STALE_MS;
+  const isStale = (it: ScanInboxItem): boolean => isScanStale(it);
   const [staleOnly, setStaleOnly] = useState(false);
   const staleCount = items.filter(isStale).length;
   const reviewCount = items.filter(needsReview).length;
   // Tell Ask Cobb what's on this screen, so "what do I have going on?" can
-  // reference the inbox backlog (the inbox isn't a record kind Cobb can read).
+  // reference the backlog without a tool call. The ITEMS themselves are reachable
+  // too — the list_scan_inbox tool — so an answer is never limited to this line.
   usePublishChatContext({
     label: "Scan Inbox",
     summary:
@@ -1082,6 +1072,7 @@ export function ScanPage() {
       origin: string | null; // "email" → the header says "emailed <when>"
       sourceFileId: string | null; // the receipt's stored original (View / Re-parse)
       orderRef: string | null; // editable order/invoice number
+      trackingNumber: string | null; // set = the parcel is still on its way
     };
     const groups: Group[] = [];
     const byBatch = new Map<string, Group>();
@@ -1099,13 +1090,13 @@ export function ScanPage() {
         if (existing) g = existing;
         else {
           const meta = batchMeta[it.scan_batch_id];
-          g = { key: it.scan_batch_id, isBatch: true, batchId: it.scan_batch_id, items: [], latest: 0, lastTouched: 0, area: null, label: meta?.label ?? null, origin: meta?.origin ?? null, sourceFileId: meta?.source_file_id ?? null, orderRef: meta?.order_ref ?? null };
+          g = { key: it.scan_batch_id, isBatch: true, batchId: it.scan_batch_id, items: [], latest: 0, lastTouched: 0, area: null, label: meta?.label ?? null, origin: meta?.origin ?? null, sourceFileId: meta?.source_file_id ?? null, orderRef: meta?.order_ref ?? null, trackingNumber: meta?.tracking_number ?? null };
           byBatch.set(it.scan_batch_id, g);
           groups.push(g);
         }
       } else {
         if (!pseudo || !Number.isFinite(t) || pseudoLastT - t > SESSION_GAP_MS) {
-          pseudo = { key: `gap:${it.id}`, isBatch: false, batchId: null, items: [], latest: 0, lastTouched: 0, area: null, label: null, origin: null, sourceFileId: null, orderRef: null };
+          pseudo = { key: `gap:${it.id}`, isBatch: false, batchId: null, items: [], latest: 0, lastTouched: 0, area: null, label: null, origin: null, sourceFileId: null, orderRef: null, trackingNumber: null };
           groups.push(pseudo);
         }
         if (Number.isFinite(t)) pseudoLastT = t;
@@ -1203,44 +1194,18 @@ export function ScanPage() {
     !!activeSession?.batchId &&
     !!sessionGroups?.some((g) => g.isBatch && g.batchId === activeSession.batchId);
 
-  // Auto-retry rate-limited scans, one at a time, paced. Rapid scanning throttles
-  // the resolver (go-upc gate / upcitemdb burst); those rows are tagged
-  // `rate_limited` and were deliberately NOT cached, so a retry once the gate
-  // frees resolves them — the user shouldn't have to re-scan the item. Paced (one
-  // per 15s tick, capped at 2 tries each) so we don't re-exhaust the very limit
-  // we're waiting on. Reads live cache inside the tick so the interval stays
-  // stable (no reschedule churn from the 8s poll).
-  const rlAttempts = useRef<Map<string, number>>(new Map());
-  // Once an item's retries are spent it should STOP reading "retrying…" — a
-  // persistent rate-limit (e.g. the daily upcitemdb quota, which won't clear till
-  // UTC midnight) is terminal for now, so the card switches to a nameable
-  // "couldn't identify" state. Reactive so the card re-renders when we give up.
-  const [rlGaveUp, setRlGaveUp] = useState<Set<string>>(new Set());
-  useEffect(() => {
-    if (!activeSlug) return;
-    const MAX_RETRIES = 2;
-    const tick = setInterval(() => {
-      const cur =
-        qc.getQueryData<{ items: ScanInboxItem[] }>(["scan-inbox", activeSlug, batchId])?.items ?? [];
-      const target = cur.find(
-        (i) =>
-          i.status === "pending" &&
-          !i.suggested_name &&
-          !i.ai_suggested_at &&
-          (i.suggested_metadata as { rate_limited?: boolean } | null)?.rate_limited &&
-          (rlAttempts.current.get(i.id) ?? 0) < MAX_RETRIES,
-      );
-      if (!target) return;
-      const n = (rlAttempts.current.get(target.id) ?? 0) + 1;
-      rlAttempts.current.set(target.id, n);
-      if (n >= MAX_RETRIES) setRlGaveUp((s) => new Set(s).add(target.id));
-      void api
-        .rerunScanAi(activeSlug, target.id)
-        .catch(() => {})
-        .finally(() => void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] }));
-    }, 15_000);
-    return () => clearInterval(tick);
-  }, [activeSlug, batchId, qc]);
+  // Rate-limited scans are retried by the SERVER (core-scan:retry-lookup on
+  // core-queue), not here. This page used to run the only retry there was: a
+  // setInterval giving two attempts fifteen seconds apart, alive only while the
+  // tab was open, its give-up state in component state that a reload discarded.
+  // An item sat on "retrying automatically" for over an hour because of it
+  // (reported 2026-08-14).
+  //
+  // Nothing replaces it on the client, deliberately. The worker writes the
+  // outcome onto the row - it drops `rate_limited` and stamps `ai_suggested_at`
+  // when the budget is spent - so `rateLimited` goes false and `needsName` goes
+  // true on their own, which is exactly the state the old `rlGaveUp` set was
+  // faking. The poll below picks it up.
 
   // Recently deleted: discarding is a soft-delete (the row + its enriched data are
   // kept), so a mistaken X is recoverable from here — no confirm needed on delete.
@@ -1819,7 +1784,6 @@ export function ScanPage() {
         menu={menu}
         sessionCategoryLabel={sessionCategoryByItem.get(it.id) ?? null}
         hasLocations={hasLocations}
-        rateLimitGaveUp={rlGaveUp.has(it.id)}
         defaultExpanded
         planContext
         onCollapse={onCollapse}
@@ -1947,13 +1911,24 @@ export function ScanPage() {
   // Both exits are handled at the DOCUMENT here, so neither depends on where
   // focus happens to be. Same shape HeaderMenu uses for its outside-click.
   const poEditRef = useRef<HTMLSpanElement>(null);
+  // The tracking number is edited the same way, in the same row, so it shares
+  // these exits rather than growing a second copy of them that can drift.
+  const [editingTracking, setEditingTracking] = useState<string | null>(null);
+  const [trackingInput, setTrackingInput] = useState("");
+  const trackingEditRef = useRef<HTMLSpanElement>(null);
   useEffect(() => {
-    if (!editingPo) return;
+    if (!editingPo && !editingTracking) return;
+    const closeAll = () => {
+      setEditingPo(null);
+      setEditingTracking(null);
+    };
     const onDown = (e: MouseEvent) => {
-      if (!poEditRef.current?.contains(e.target as Node)) setEditingPo(null);
+      const t = e.target as Node;
+      if (poEditRef.current?.contains(t) || trackingEditRef.current?.contains(t)) return;
+      closeAll();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setEditingPo(null);
+      if (e.key === "Escape") closeAll();
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -1961,13 +1936,27 @@ export function ScanPage() {
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [editingPo]);
+  }, [editingPo, editingTracking]);
   const setOrderRef = useMutation({
     mutationFn: (v: { batchId: string; orderRef: string | null }) =>
       api.setReceiptOrderRef(activeSlug, v.batchId, v.orderRef),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
       setEditingPo(null);
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+
+  const setTracking = useMutation({
+    mutationFn: (v: { batchId: string; tracking: string | null }) =>
+      api.setReceiptTracking(activeSlug, v.batchId, v.tracking),
+    onSuccess: (_r, v) => {
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+      setEditingTracking(null);
+      // Say what it CHANGED, not just that it saved: filing this receipt now
+      // records the order as still on its way instead of already here, and that
+      // is the part a person would not guess from a number appearing in a row.
+      if (v.tracking) toast.success("Tracking number saved. This receipt will file as still in transit.");
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -3210,7 +3199,6 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                   hasLocations={hasLocations}
                   selected={selected.has(item.id)}
                   onToggleSelect={() => toggleSelected(item.id)}
-                  rateLimitGaveUp={rlGaveUp.has(item.id)}
                   onArmBin={setFileBin}
                 />
               </div>
@@ -3457,6 +3445,56 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         className="shrink-0 inline-flex items-center gap-1 text-faint hover:text-accent"
                       >
                         <Pencil size={11} /> {g.orderRef ? "PO#" : "+ PO#"}
+                      </button>
+                    ))}
+                  {/* Tracking number — beside the order number because they
+                      arrive together, off the same receipt, in the same glance. */}
+                  {g.batchId &&
+                    (editingTracking === g.batchId ? (
+                      <span ref={trackingEditRef} className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          autoFocus
+                          value={trackingInput}
+                          onChange={(e) => setTrackingInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter")
+                              setTracking.mutate({ batchId: g.batchId!, tracking: trackingInput.trim() || null });
+                          }}
+                          placeholder="tracking #"
+                          // Same growing-field reasoning as the order number: a
+                          // tracking number is 12 to 22 characters and the whole
+                          // point is checking the one you just typed.
+                          style={{ width: `${Math.min(26, Math.max(10, trackingInput.length + 2))}ch` }}
+                          className="bg-transparent border-b border-cobble-400 dark:border-cobble-600 text-content dark:text-mortar-100 text-sm px-0.5 focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          disabled={setTracking.isPending}
+                          onClick={() => setTracking.mutate({ batchId: g.batchId!, tracking: trackingInput.trim() || null })}
+                          className="text-accent hover:underline text-xs disabled:opacity-50"
+                        >
+                          save
+                        </button>
+                        <button type="button" onClick={() => setEditingTracking(null)} className="text-faint hover:text-content text-xs">
+                          ✕
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setTrackingInput(g.trackingNumber ?? "");
+                          setEditingTracking(g.batchId!);
+                        }}
+                        title={
+                          g.trackingNumber
+                            ? "Edit the tracking number - this receipt files as still in transit"
+                            : "Add a tracking number - the parcel is still on its way"
+                        }
+                        className="shrink-0 inline-flex items-center gap-1 text-faint hover:text-accent"
+                      >
+                        <Truck size={11} /> {g.trackingNumber ? "Tracking #" : "+ Tracking #"}
                       </button>
                     ))}
                   {g.sourceFileId && g.batchId && (
@@ -3710,7 +3748,6 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                 menu={menu}
                 sessionCategoryLabel={sessionCategoryByItem.get(focus.id) ?? null}
                 hasLocations={hasLocations}
-                rateLimitGaveUp={rlGaveUp.has(focus.id)}
                 defaultExpanded
                 onArmBin={setFileBin}
               />
@@ -4005,7 +4042,6 @@ function InboxCard({
   hasLocations,
   selected,
   onToggleSelect,
-  rateLimitGaveUp,
   defaultExpanded,
   planContext,
   onCollapse,
@@ -4020,7 +4056,6 @@ function InboxCard({
   hasLocations: boolean;
   selected?: boolean;
   onToggleSelect?: () => void;
-  rateLimitGaveUp?: boolean;
   /** Open pre-expanded (the gallery view's focus modal). */
   defaultExpanded?: boolean;
   /** Rendered INSIDE an organize plan's accordion: the card is an identity
@@ -4178,12 +4213,16 @@ function InboxCard({
     !item.suggested_name &&
     !item.ai_suggested_at &&
     !!(item.suggested_metadata as { rate_limited?: boolean } | null)?.rate_limited;
-  // Still worth a "retrying…" pulse only while retries remain; once spent (a
-  // persistent rate-limit like the daily upcitemdb quota), it's terminal.
-  const rlActive = rateLimited && !rateLimitGaveUp;
-  // Couldn't auto-identify → offer manual naming. Either enrichment finished
-  // empty (needsName) or the rate-limit retries are spent (rateLimitGaveUp).
-  const cantIdentify = needsName || (rateLimited && !!rateLimitGaveUp);
+  // The "retrying…" pulse. The flag itself is now the whole answer: the server's
+  // retry worker clears it when the budget is spent, so this stops pulsing
+  // because the row stopped saying it was retrying - not because a browser tab
+  // counted to two.
+  const rlActive = rateLimited;
+  // Couldn't auto-identify → offer manual naming. ONE condition now: enrichment
+  // finished and left no name. A spent rate-limit arrives here too, because the
+  // retry worker stamps ai_suggested_at when it gives up, which is what
+  // needsName reads.
+  const cantIdentify = needsName;
   // The matchmaker THREW for this item: the backend stamps match_failed (+
   // matched_at, so the pulse stops) — but the row then read as SETTLED with a
   // name, zero candidates, and no error anywhere, while File-all silently
@@ -4204,6 +4243,9 @@ function InboxCard({
   // wrong match is easy to catch and fix — the fix feeds the shared Barcode
   // Intelligence DB and improves the next scan of this UPC everywhere.
   const lowTrust = !!(item.suggested_metadata as { low_trust?: boolean } | null)?.low_trust;
+  // Amber warning line vs the Source data box - one or the other, never both,
+  // and never a function of whether the card happens to be open.
+  const notesPlacement = scanNotesPlacement({ notes: item.ai_notes, rateLimited, lowTrust });
   const barcodeIdentified = !!item.barcode_text && !!item.suggested_name;
   const [correcting, setCorrecting] = useState(false);
   // The photo cross-check flagged the barcode→name as wrong AND read the real
@@ -4532,7 +4574,13 @@ function InboxCard({
   };
   // "Use this image" on a web candidate in the viewer → set it as the catalog.
   const pickCatalogImage = useMutation({
-    mutationFn: (url: string) => api.setScanCatalogImage(activeSlug, item.id, url),
+    mutationFn: (url: string) =>
+      api.setScanCatalogImage(activeSlug, item.id, url, {
+        // The thumbnail the viewer is showing for this very candidate. If the
+        // full-size original is hotlink-blocked, that visible picture is used
+        // rather than the pick being refused.
+        thumbUrl: photoCandidates.find((o) => o.url === url)?.thumb,
+      }),
     onSuccess: () => {
       toast.success("Catalog photo updated");
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
@@ -4581,6 +4629,7 @@ function InboxCard({
     onError: onErr,
   });
   // Several DIFFERENT things in one photo (units of the SAME thing are a quantity,
+  // not a split). Offered only when the PHOTO was the point - see lib/splitOffer.
   // not a split — the observation pass draws that line). Free: this comes from the
   // vision call every photo scan already makes. Hidden once answered, once split,
   // and on a child that IS a split result.
@@ -4592,9 +4641,17 @@ function InboxCard({
       split_from?: string;
       split_into?: string[];
     };
-    if (!m.photo_distinct || m.photo_distinct < 2) return null;
-    if (m.keep_grouped || m.split_from || m.split_into) return null;
-    if (item.status !== "pending") return null;
+    if (
+      !shouldOfferSplit({
+        distinct: m.photo_distinct,
+        hasBarcode: !!item.barcode_text,
+        keepGrouped: !!m.keep_grouped,
+        alreadySplit: !!m.split_from || !!m.split_into,
+        status: item.status,
+      })
+    ) {
+      return null;
+    }
     return {
       distinct: m.photo_distinct,
       individuals: m.photo_individuals ?? [],
@@ -4680,15 +4737,12 @@ function InboxCard({
       item.suggested_name,
       (item.suggested_metadata as { category?: string } | null)?.category ?? null,
     );
-  // "Looks fine" — human eyeballed a flagged item; drop it from needs-review.
-  const alreadyReviewed = !!(item.suggested_metadata as { reviewed?: boolean } | null)?.reviewed;
-  const flaggedForReview =
-    item.status === "pending" &&
-    !alreadyReviewed &&
-    (!item.suggested_name ||
-      lowTrust ||
-      rateLimited ||
-      (item.ai_confidence != null && Number(item.ai_confidence) < 0.5));
+  // Needs a human: no clean name, a low-trust or rate-limited lookup, or low
+  // confidence — unless someone already said "looks fine".
+  // The card's own copy of this test read the LOCAL `rateLimited`, which also
+  // requires that nothing came back yet — so a rate-limited item that later got
+  // a suggestion counted in the header's "to review" and showed nothing here.
+  const flaggedForReview = needsScanReview(item);
   // "Where should this go?" — accept the suggested home (from where siblings
   // live). One tap sets it as the item's filed location.
   const acceptSuggestedLocation = useMutation({
@@ -4722,8 +4776,17 @@ function InboxCard({
             shot reads far better big. Wider now (the select checkbox moved ONTO
             it as a top-left overlay, freeing its old column), and object-CONTAIN
             so a tall bottle/tub shows in full instead of a cropped centre strip.
-            min-h keeps a short card's image sensible. */}
-        <div className="relative w-28 shrink-0 self-stretch min-h-[4.5rem] rounded-l-xl border-r border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 flex items-center justify-center overflow-hidden">
+            min-h keeps a short card's image sensible.
+
+            max-h BOUNDS IT. `h-full` inside a column with no determinate height
+            falls back to the image's intrinsic size, so the picture decided how
+            tall the row was: a spice grinder shot at roughly 1:3, drawn 112px
+            wide, made a 336px card holding one line of text and a strip of
+            empty space (reported 2026-08-14 - "the aspect ratio of the image
+            makes the box too tall, and this is a bad use of screen real
+            estate"). object-contain still shows the whole product; it is simply
+            no longer allowed to set the card's height. */}
+        <div className="relative w-28 shrink-0 self-stretch min-h-[4.5rem] max-h-40 rounded-l-xl border-r border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 flex items-center justify-center overflow-hidden">
           {thumb ? (
             <img
               src={thumb}
@@ -4914,10 +4977,11 @@ function InboxCard({
             })()}
           </div>
           {/* Routine provenance ("Identified via go-upc.") no longer costs the
-              closed card a line - it lives in the expanded Source data box. The
-              line renders only when it is a WARNING a triager must see. */}
-          {!expanded && item.ai_notes && (rateLimited || lowTrust) && (
-            <div className="text-[11px] mt-0.5 line-clamp-1 text-amber-600 dark:text-amber-400">
+              closed card a line - it lives in the Source data box. This line is
+              for a WARNING a triager must see, and it stays amber whether the
+              card is open or closed (see scanNotesPlacement). */}
+          {notesPlacement.amber && (
+            <div className={`text-[11px] mt-0.5 text-amber-600 dark:text-amber-400 ${expanded ? "" : "line-clamp-1"}`}>
               {item.ai_notes}
             </div>
           )}
@@ -4997,7 +5061,10 @@ function InboxCard({
               menu - a closed card's height should be its IMAGE's height, and an
               offer nobody has taken is not worth a line (same rule as the drive
               offer). Only the LOW-TRUST warning variant keeps its line, and the
-              inline editor still appears right here once summoned. */}
+              inline editor still appears right here once summoned. It is the
+              amber warning's own action, so it goes wherever the warning goes -
+              open or closed - rather than disappearing at the moment someone
+              opened the card to act on it. */}
           {barcodeIdentified && correcting && (
             <CorrectNameInline
               slug={activeSlug}
@@ -5006,7 +5073,7 @@ function InboxCard({
               onDone={() => setCorrecting(false)}
             />
           )}
-          {barcodeIdentified && !correcting && !expanded && lowTrust && (
+          {barcodeIdentified && !correcting && lowTrust && (
             <button
               type="button"
               onClick={(e) => {
@@ -5230,19 +5297,25 @@ function InboxCard({
                           </span>
                         </button>
                       ))}
-                      {more > 0 && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openForm(topCand);
-                          }}
-                          className="text-[11px] text-faint shrink-0 px-1 underline decoration-dotted underline-offset-2 hover:text-accent transition"
-                          title={moreTitle}
-                        >
-                          +{more} more {more === 1 ? "field" : "fields"}
-                        </button>
-                      )}
+                      {/* "+N more fields" said nothing anyone could act on
+                          ("no one knows that's what it means so as far as they
+                          know they can't edit or see anything") and the number
+                          was wrong besides: unfilledFieldLabels returns [] when
+                          the menu has not loaded, so it collapsed to the chip
+                          overflow — "+1" on a table with six hidden fields.
+                          The count is gone. This says what it opens, which is a
+                          form that now lists every field by name. */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openForm(topCand);
+                        }}
+                        className="text-[11px] text-faint shrink-0 px-1 underline decoration-dotted underline-offset-2 hover:text-accent transition"
+                        title={more > 0 ? moreTitle : "Open every field for this item"}
+                      >
+                        All fields
+                      </button>
                     </>
                   );
                 })()}
@@ -5708,7 +5781,9 @@ function InboxCard({
                 />
               </button>
               {aiOpen && (<>
-              {item.ai_notes && (
+              {/* A warning already reads in amber above; repeating it here in
+                  muted body text says it twice and says it quieter. */}
+              {notesPlacement.sourceBox && (
                 <p className="text-xs text-muted dark:text-slate-400 mt-1">{item.ai_notes}</p>
               )}
               {/* A re-run is a gamble you can LOSE: vision re-read a dark photo of
@@ -6087,8 +6162,11 @@ function GalleryTile({
       : null,
   }).src;
   const src = useImageSrc(raw);
-  const meta = (item.suggested_metadata ?? {}) as { low_trust?: boolean; rate_limited?: boolean };
-  const flagged = !item.suggested_name || meta.low_trust || meta.rate_limited;
+  // The amber tile border marks the same thing the header's "to review" count
+  // does, so it asks the shared predicate rather than re-deriving it. Its own
+  // copy had already drifted: it kept flagging an item a human had marked "looks
+  // fine", and stayed quiet on a low-confidence identification.
+  const flagged = needsScanReview(item);
   return (
     <button
       type="button"
@@ -6221,10 +6299,13 @@ function PhotoOptions({
     staleTime: 5 * 60_000,
   });
   const pick = useMutation({
-    mutationFn: (p: string | { url: string; aiPick?: boolean }) =>
-      typeof p === "string"
-        ? api.setScanCatalogImage(activeSlug, item.id, p)
-        : api.setScanCatalogImage(activeSlug, item.id, p.url, { aiPick: p.aiPick }),
+    mutationFn: (p: string | { url: string; aiPick?: boolean }) => {
+      const url = typeof p === "string" ? p : p.url;
+      return api.setScanCatalogImage(activeSlug, item.id, url, {
+        ...(typeof p === "string" ? {} : { aiPick: p.aiPick }),
+        thumbUrl: (options.data?.items ?? []).find((o) => o.url === url)?.thumb,
+      });
+    },
     onSuccess: () => {
       toast.success("Catalog photo updated");
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
@@ -6943,7 +7024,6 @@ function ConfirmForm({
   // PATCH /inbox/:id reports a renamed BARCODE item to the shared Barcode
   // Intelligence DB, so that phantom rename would publish a bogus correction to
   // every workspace that ever scans that UPC.
-  const [nameDirty, setNameDirty] = useState(false);
   const persistName = useMutation({
     mutationFn: (next: string) => api.updateScanItem(activeSlug, item.id, { name: next }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] }),
@@ -6951,11 +7031,9 @@ function ConfirmForm({
     // rename costs the live title, not the user's edit.
     onError: () => {},
   });
-  const commitNameEdit = () => {
-    // The decision is pure and tested next door - see scanNameEdit.ts for why a
-    // phantom rename is worse than a missed one.
-    if (shouldPersistNameEdit({ dirty: nameDirty, next: name, rowName: item.suggested_name })) {
-      persistName.mutate(name.trim());
+  const commitNameEditWith = (next: string) => {
+    if (shouldPersistNameEdit({ dirty: true, next, rowName: item.suggested_name })) {
+      persistName.mutate(next.trim());
     }
   };
   // A serial/service tag the vision read off the label. It already commits to the
@@ -7127,6 +7205,52 @@ function ConfirmForm({
 
   // dark: fields sit one step LIGHTER (slate-800) than the slate-900 card +
   // a visible border — they were blending into the background (the author).
+  // ── the chip field model ────────────────────────────────────────────────
+  // One list of {key,label,value}; ChipFields decides the layout. A field is
+  // OFFERED rather than shown when the table declares it and nothing filled it,
+  // which is what stops a dozen empty boxes from owning the page.
+  const [addedFields, setAddedFields] = useState<string[]>([]);
+  const selectedLoc = locationId ? (locs.data?.items ?? []).find((l) => l.id === locationId) : null;
+  const locLabel = selectedLoc ? (selectedLoc.short_name?.trim() || selectedLoc.name) : locationId ? "…" : "";
+
+  const setChipValue = (key: string, value: string) => {
+    if (key === "name") { setName(value); commitNameEditWith(value); return; }
+    if (key === "manufacturer") { setManufacturer(value); return; }
+    if (key === "serial_number") { setSerial(value); return; }
+    if (key === "quantity") { setQuantity(Number(value) || 1); return; }
+    setCustomValues((m) => ({ ...m, [key]: value }));
+  };
+
+  const builtins: ChipFieldDef[] = [
+    { key: "name", label: fieldLabel("name", "Name"), value: name, placeholder: item.suggested_name ?? "" },
+    { key: "manufacturer", label: fieldLabel("manufacturer", "Brand"), value: manufacturer },
+    ...(showSerial ? [{ key: "serial_number", label: fieldLabel("serial_number", "Serial no."), value: serial }] : []),
+    { key: "quantity", label: "Qty", value: String(quantity), type: "number" as const },
+    ...(hasLocations
+      ? [{
+          key: "location",
+          label: "Location",
+          value: locLabel,
+          emptyHint: "set",
+          icon: locLabel ? <MapPin size={12} className="shrink-0 text-accent" /> : null,
+          onActivate: () => setLocOpen((o) => !o),
+        }]
+      : []),
+  ];
+  const customChips: ChipFieldDef[] = (entry.fields ?? []).map((f) => ({
+    key: f.name,
+    label: f.label ?? f.name,
+    value: String(customValues[f.name] ?? ""),
+    type: (f.type === "select" ? "select" : f.type === "date" ? "date" : f.type === "number" ? "number" : "text") as ChipFieldType,
+    choices: f.choices ?? null,
+  }));
+  const all = [...builtins, ...customChips];
+  // On the item = it has a value, it is always-on (name / add-to / qty), or the
+  // user just asked for it.
+  const ALWAYS = new Set(["name", "quantity"]);
+  const chipFields = all.filter((f) => f.value || ALWAYS.has(f.key) || addedFields.includes(f.key));
+  const chipAvailable = all.filter((f) => !chipFields.includes(f));
+
   const inputCls =
     "w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800";
   const labelCls =
@@ -7171,7 +7295,12 @@ function ConfirmForm({
               setCustomValues((prev) => ({ ...cand.fields, ...prev }));
             }
           }}
-          className={inputCls}
+          // Full width is a phone constraint, not a desktop one. A destination
+          // reads in a few words, so on a wide form it only needs to be as wide
+          // as its longest option; stretching it across the form makes it look
+          // like the page's main input, which it is not now that the fields
+          // beside it are chips.
+          className={`${inputCls} sm:w-auto sm:max-w-[22rem]`}
         >
           {entries.map((m) => {
             const wi = (m as { bundle_external_id?: string }).bundle_external_id;
@@ -7194,163 +7323,51 @@ function ConfirmForm({
           childNoun={entry.noun}
         />
       )}
-      <div className="grid sm:grid-cols-2 gap-3">
-        <label className="block sm:col-span-2">
-          <div className={labelCls}>{fieldLabel("name", "Name")}</div>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => {
-              setNameDirty(true);
-              setName(e.target.value);
-            }}
-            onBlur={commitNameEdit}
-            placeholder={item.suggested_name ?? "(name required)"}
-            className={inputCls}
-            required
-          />
-          {!item.suggested_name && <AiOffMissHint status={aiStatus} />}
-        </label>
-
-        <label className="block">
-          <div className={labelCls}>{fieldLabel("manufacturer", "Brand")}</div>
-          <input
-            type="text"
-            value={manufacturer}
-            onChange={(e) => setManufacturer(e.target.value)}
-            placeholder={item.suggested_manufacturer ?? "—"}
-            className={inputCls}
-          />
-        </label>
-
-        {showSerial && (
-          <label className="block">
-            <div className={labelCls}>{fieldLabel("serial_number", "Serial number")}</div>
-            <input
-              type="text"
-              value={serial}
-              onChange={(e) => setSerial(e.target.value)}
-              placeholder={capturedSerial || "—"}
-              className={`${inputCls} font-mono`}
+      {/* THE FIELDS, as chips. Was a column of ~72px labelled blocks, one per
+          field including every declared field the scan left empty — 14 of them
+          for a 3D printer, of which the scan fills two, which ran past a phone
+          screen and a half. A chip costs its own width and several share a row.
+          Layout arithmetic + the edit behaviour live in components/ChipFields. */}
+      <ChipFields
+        fields={chipFields}
+        available={chipAvailable}
+        onChange={setChipValue}
+        renderEditor={(f) => {
+          const def = (entry.fields ?? []).find((x) => x.name === f.key);
+          if (!def) return null;
+          const rich = def.type === "boolean" || wantsSwatch({ ...def, display_label: f.label } as never) || !!def.help;
+          if (!rich) return null;
+          return (
+            <ScanFieldInput
+              def={{ name: def.name, display_label: def.label ?? def.name, type: def.type,
+                     help: def.help ?? null, choices: def.choices ?? null }}
+              value={customValues[def.name]}
+              onChange={(v) => setCustomValues((m) => ({ ...m, [def.name]: v }))}
             />
-          </label>
-        )}
-
-        {/* "From the label" — everything the resolver parsed that ISN'T a
-            field on this table (so the user sees the info was captured even
-            though there's no box for it here — e.g. a spool's material/colour/
-            temps, which ride onto its linked filament TYPE via the auto-lift).
-            The covered keys (size, batch code…) already show filled in below. */}
-        {(() => {
-          const parsed = parsedScanFields(item.suggested_metadata as Record<string, unknown> | null);
-          const covered = new Set(entry.fields.map((f) => f.name));
-          const extra = Object.entries(parsed).filter(
-            // serial_number has its own editable field above — don't also chip it.
-            ([k, v]) => v != null && v !== "" && !covered.has(k) && k !== "serial_number",
           );
-          if (extra.length === 0) return null;
-          return (
-            <div className="rounded-md border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/40 px-3 py-2">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">
-                From the label
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {extra.map(([k, v]) => {
-                  const sw = /colou?r/i.test(k) ? colorSwatch(v) : null;
-                  return (
-                  <span
-                    key={k}
-                    className="inline-flex items-center gap-1 rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2 py-0.5 text-[11px]"
-                  >
-                    {sw && <span className="h-3 w-3 shrink-0 rounded-full border border-line dark:border-slate-600" style={{ background: sw }} />}
-                    <span className="text-faint dark:text-slate-500">{humanizeKey(k)}</span>
-                    <span className="font-medium text-content dark:text-mortar-100">{String(v)}</span>
-                  </span>
-                  );
-                })}
-              </div>
-              <div className="mt-1.5 text-[10px] text-faint dark:text-slate-500">
-                Parsed from the scan and saved with this item.
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* The selected TABLE's own fields (from the scan menu — the same
-            defs the matchmaker extracts into). Values seed from the lookup
-            + the matchmaker; everything stays editable before commit. */}
-        {entry.fields.map((f) => (
-          <ScanFieldInput
-            key={`${entryKey(entry.module, entry.instance)}:${f.name}`}
-            def={{
-              name: f.name,
-              display_label: f.label,
-              type: f.type,
-              help: f.help ?? null,
-              choices: f.choices ?? null,
+        }}
+        onAdd={(k) => setAddedFields((prev) => (prev.includes(k) ? prev : [...prev, k]))}
+        onDrop={(k) => setAddedFields((prev) => prev.filter((x) => x !== k))}
+      />
+      {/* The location DRAWER stays exactly as it was: its chip above is only the
+          trigger. A picker is not a text box and forcing it into one would lose
+          the rooms-and-bins grid the bulk bar and camera also use. */}
+      {/* The AI-off hint the name block used to carry: still the moment it is
+          worth saying, since a scan with no name at all is what it explains. */}
+      {!item.suggested_name && <AiOffMissHint status={aiStatus} />}
+      {hasLocations && locOpen && (
+        <div className="rounded-md border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/40 p-2 max-h-72 overflow-y-auto">
+          <LocationChipPicker
+            value={locationId || null}
+            onChange={(v) => {
+              setLocTouched(true);
+              setLocationId(v ?? "");
+              persistLocation.mutate(v);
+              if (v) setLocOpen(false);
             }}
-            value={customValues[f.name]}
-            onChange={(v) => setCustomValues((m) => ({ ...m, [f.name]: v }))}
           />
-        ))}
-
-        <label className="block">
-          <div className={labelCls}>Quantity</div>
-          <input
-            type="number"
-            min={1}
-            value={quantity}
-            onChange={(e) => setQuantity(Number(e.target.value))}
-            className={inputCls}
-          />
-        </label>
-        {/* Location is core-locations' noun — hidden unless that module is
-            actually enabled here (modules never assume each other). */}
-        {hasLocations && (() => {
-          const selectedLoc = locationId ? (locs.data?.items ?? []).find((l) => l.id === locationId) : null;
-          // A pick whose name hasn't loaded yet must not read as "no pick".
-          const selLabel = selectedLoc ? (selectedLoc.short_name?.trim() || selectedLoc.name) : locationId ? "…" : null;
-          return (
-            <>
-              <div className="block">
-                <div className={labelCls}>Location (optional)</div>
-                {/* A dropdown-style trigger showing the current pick; tapping opens
-                    the chip drawer (rooms + bins — the same picker the bulk bar +
-                    camera use) instead of dumping the whole tree inline. A pick
-                    persists to the item immediately (no Confirm) and closes it. */}
-                <button
-                  type="button"
-                  onClick={() => setLocOpen((o) => !o)}
-                  className={`${inputCls} flex items-center justify-between gap-2 text-left`}
-                  aria-expanded={locOpen}
-                >
-                  <span className={selLabel ? "inline-flex items-center gap-1.5 text-content dark:text-mortar-100" : "text-faint"}>
-                    {selLabel ? <><MapPin size={13} className="shrink-0 text-accent" />{selLabel}</> : "Set location"}
-                  </span>
-                  <ChevronDown size={15} className={`shrink-0 text-faint transition ${locOpen ? "rotate-180" : ""}`} />
-                </button>
-              </div>
-              {/* Breakout expansion: the trigger keeps its half-width cell, but
-                  the open drawer is its OWN grid row spanning BOTH columns — the
-                  chip grid needs the full form width on desktop (the author). On
-                  mobile the grid is single-column, so this is a no-op. */}
-              {locOpen && (
-                <div className="sm:col-span-2 rounded-md border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/40 p-2 max-h-72 overflow-y-auto">
-                  <LocationChipPicker
-                    value={locationId || null}
-                    onChange={(v) => {
-                      setLocTouched(true);
-                      setLocationId(v ?? "");
-                      persistLocation.mutate(v);
-                      if (v) setLocOpen(false); // dropdown closes on a pick
-                    }}
-                  />
-                </div>
-              )}
-            </>
-          );
-        })()}
-      </div>
+        </div>
+      )}
       {isAdmin && (
         <div className="rounded border border-dashed border-line dark:border-slate-700 p-2 space-y-2">
           <label className="flex items-center gap-2 text-sm text-content cursor-pointer">

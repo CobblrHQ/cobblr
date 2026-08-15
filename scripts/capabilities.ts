@@ -65,6 +65,20 @@ export interface VocabularyCapability extends Base {
 export const CAPABILITIES: Capability[] = [
   {
     kind: "owns",
+    id: "catalog-hit:field-normalization",
+    what: "cleaning a barcode provider's raw fields (the brand synonym list, the name-language choice) before anything downstream stores them",
+    why: 'the Open*Facts adapter split OFF\'s comma-separated `brands` and the resolver tier twenty lines below it passed the same field through whole, so a Lidl item carried "Belbake, Dolciando, Elbake, Lidl" into its own title (2026-08-14)',
+    owner: "modules/core-scan/src/services/catalog-normalize.ts",
+    // Only the lookup file: five provider tiers live here and each one is a
+    // place the next author could "just split it here". Downstream consumers
+    // receive an already-clean hit and are not this rule's business.
+    scope: ["modules/core-scan/src/services/barcode-lookup.ts"],
+    // A raw provider field being sliced or lower-cased inline.
+    detect: /\b(brands|product_name(_en)?|generic_name(_en)?)\b[^;\n]*\.(split|toLowerCase|replace)\(/,
+    use: "primaryBrand(…) / preferredFactsName(…) from catalog-normalize.ts, applied once at the lookupBarcode funnel",
+  },
+  {
+    kind: "owns",
     id: "receipt-address:reveal-and-copy",
     what: "showing the receipt drop-box address in a header, revealed and copied in one press",
     why: "Purchases rendered a permanent wall of address text while Scan had already collapsed it to a chip - one fact, two renderings (2026-08-03)",
@@ -105,6 +119,29 @@ export const CAPABILITIES: Capability[] = [
     // capability's detector gets proved against an actual copy before shipping.
     detect: /matchMedia(\?\.)?\(\s*["'`]\(pointer: coarse\)/,
     use: "useIsTouch() / isTouchPrimary() from web/src/lib/useIsTouch",
+  },
+  {
+    kind: "owns",
+    id: "scan-triage:needs-a-human",
+    what: "deciding whether a pending capture still needs a person to look at it",
+    why: "the predicate lived inline in the Scan page, so the API could not filter by it and Ask Cobb could not read it — and the page's own second copy had already drifted, flagging items a human had marked \"looks fine\" (2026-08-14)",
+    owner: "packages/platform-contract/src/scan-triage.ts",
+    scope: [
+      "web/src/pages/ScanPage.tsx",
+      "web/src/pages/scanFileAll.ts",
+      "web/src/pages/scan-status.ts",
+      "modules/core-scan/src/api/inbox.ts",
+      "modules/core-scan/src/api/organize.ts",
+      "packages/workspace-tools/src/tools.ts",
+    ],
+    // Three single-line signatures of a re-derivation: the confidence threshold,
+    // the stale window, and the two lookup flags read TOGETHER. Reading
+    // `rate_limited` alone to pulse "retrying…", or `low_trust` alone to offer
+    // the barcode corrector, are different affordances and stay allowed — as is
+    // `!x.suggested_name ||`, which organize.ts uses for a different question.
+    detect:
+      /(\bai_confidence\b[^\n]*<\s*0?\.\d)|(\b2\s*\*\s*24\s*\*\s*60\s*\*\s*60\s*\*\s*1000\b)|((low_trust|lowTrust)[^\n]{0,40}(rate_limited|rateLimited))/,
+    use: "needsScanReview() from @cobblr/platform-contract/scan-triage",
   },
   {
     kind: "requires-prop",

@@ -23,6 +23,7 @@ import { buildCadenceEvents } from "../cadence-events.js";
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
+import { fileReceiptAs } from "../services/receipt-arrival.js";
 import {
   mapRoledFacts,
   planDecodeFill,
@@ -32,12 +33,21 @@ import {
   type DecodeFillTarget,
 } from "@cobblr/platform-contract";
 import { categoryDisplay } from "@cobblr/platform-contract/category-reconcile";
+import {
+  matchesScanFacet,
+  needsScanReview,
+  scanWaitingDays,
+  SCAN_TRIAGE_FACETS,
+  type ScanTriageFacet,
+  type ScanTriageRow,
+} from "@cobblr/platform-contract/scan-triage";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { resolveNativeIdentity } from "../native-identity.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { downloadCatalogImage, enrichBarcodeItem, isJunkName } from "../services/enrich.js";
 import { committedImagePath } from "../services/committed-image.js";
 import { clampEntityName } from "../services/item-name.js";
+import { addedPhotoIntent } from "../services/crosscheck-policy.js";
 import {
   crossCheckScanPhoto,
   enrichPhotoItem,
@@ -159,6 +169,7 @@ inboxRouter.get(
         sql<string>`i.suggested_metadata->>'receipt_group_id'`.as("group_id"),
         sql<string | null>`max(coalesce(b.vendor, i.suggested_metadata->>'receipt_vendor'))`.as("vendor"),
         sql<string | null>`max(b.order_ref)`.as("order_ref"),
+        sql<string | null>`max(b.tracking_number)`.as("tracking_number"),
         eb.fn.countAll<number>().as("count"),
       ])
       .where("i.source_kind", "=", "receipt")
@@ -170,6 +181,7 @@ inboxRouter.get(
       groupId: String(r.group_id),
       vendor: r.vendor,
       orderRef: r.order_ref,
+      trackingNumber: r.tracking_number,
       count: Number(r.count),
     }));
     res.json({ groups, total_items: groups.reduce((s, g) => s + g.count, 0) });
@@ -921,6 +933,48 @@ inboxRouter.patch(
   }),
 );
 
+// The tracking number for the parcel this receipt describes.
+//
+// Deliberately here rather than only on the filed order: the inbox is where a
+// person is LOOKING at the receipt, so it is where they have the number in hand.
+// Making them file the receipt first, find the order, and edit it there is three
+// screens to record one string they are already holding.
+const TrackingBody = z.object({ tracking_number: z.string().max(64).nullable() });
+
+// AI-REACH: exempt (scan-inbox metadata edit from the UI, same as the order-ref
+// route above — it writes a transient staging row that exists only until the
+// receipt is filed. The durable home for a tracking number is the ORDER's own
+// tracking_number, which the assistant can already write through the purchases
+// order CRUD, and that is the one worth reaching.)
+inboxRouter.patch(
+  "/scan/receipt/:batchId/tracking",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = TrackingBody.safeParse(req.body ?? {});
+    if (!parsed.success) return badBody(res, parsed.error);
+    const db = tenantDb(req);
+    const batch = await db
+      .selectFrom("core_scan_batches")
+      .select(["id"])
+      .where("id", "=", req.params.batchId ?? "")
+      .executeTakeFirst();
+    if (!batch) {
+      res.status(404).json({ error: { code: "not_found", message: "receipt session not found" } });
+      return;
+    }
+    // Carriers print numbers with spaces for legibility; nobody types them
+    // consistently. Strip whitespace so the same parcel is the same string.
+    const raw = (parsed.data.tracking_number ?? "").replace(/\s+/g, "");
+    const tracking = raw.length > 0 ? raw : null;
+    await db
+      .updateTable("core_scan_batches")
+      .set({ tracking_number: tracking })
+      .where("id", "=", batch.id)
+      .execute();
+    res.json({ id: batch.id, tracking_number: tracking });
+  }),
+);
+
 // ─────────────── POST /receipt-group/:groupId/confirm ───────────────
 // Collapse a parsed receipt's pending lines into ONE purchases order: create the
 // order (vendor + date + total from the group), then confirm EACH line through
@@ -1000,14 +1054,16 @@ inboxRouter.post(
     const batchId = rows[0]!.scan_batch_id;
     let sourceFileId: string | null = null;
     let orderRef: string | null = typeof meta0.receipt_order_ref === "string" ? meta0.receipt_order_ref : null;
+    let trackingNumber: string | null = null;
     if (batchId) {
       const batch = await db
         .selectFrom("core_scan_batches")
-        .select(["source_file_id", "order_ref"])
+        .select(["source_file_id", "order_ref", "tracking_number"])
         .where("id", "=", batchId)
         .executeTakeFirst();
       sourceFileId = batch?.source_file_id ?? null;
       if (!orderRef && batch?.order_ref) orderRef = batch.order_ref;
+      trackingNumber = batch?.tracking_number ?? null;
     }
 
     // Link the order to a real vendor record (find-or-create by name) instead of
@@ -1042,8 +1098,10 @@ inboxRouter.post(
           vendor: vendorId ? undefined : vendor, // vendor_id dual-writes the name text
           order_number: orderRef ?? undefined,
           ordered_at: orderedAt,
-          arrived_at: orderedAt, // a receipt is already fulfilled — arrived when bought
-          status: "arrived", // a receipt is an already-fulfilled purchase
+          // Already here, or still coming — and the tracking number is what
+          // decides. See services/receipt-arrival.ts for why that matters more
+          // than it looks (the arrival sweep skips 'arrived').
+          ...fileReceiptAs(trackingNumber, orderedAt),
           total_cost: sawAmount ? Number(total.toFixed(2)) : undefined,
           notes: "Imported from a receipt.",
           metadata: { receipt_group_id: groupId, source: "receipt", receipt_file_id: sourceFileId ?? undefined },
@@ -1134,7 +1192,53 @@ const ListQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
   /** Opaque keyset cursor: page backwards through created_at-desc, no cap. */
   cursor: z.string().optional(),
+  /** One of the queue's facets — the same ones the Scan page's header filters
+   *  by (needs_review / waiting / unfiled / ready), so a caller that is not the
+   *  page (the assistant, a script) can ask for "the ones that need me" without
+   *  paging the whole queue and re-deriving it. Implies pending. */
+  triage: z.enum(SCAN_TRIAGE_FACETS as [ScanTriageFacet, ...ScanTriageFacet[]]).optional(),
 });
+
+/** How many pending rows a facet query will look at. The facets read jsonb
+ *  metadata and a confidence score, so they are decided in JS from the shared
+ *  predicate rather than re-expressed as SQL — one definition, no drift between
+ *  what the page counts and what this route returns. The cap keeps that honest
+ *  for a queue of any size; a caller that hits it is told so. */
+const TRIAGE_SCAN_CAP = 1000;
+
+interface BatchLabel {
+  label: string | null;
+  origin: string | null;
+  source_file_id: string | null;
+  order_ref: string | null;
+  tracking_number: string | null;
+}
+
+/** Session labels for the batches on a page — the inbox groups items by
+ *  scan_batch_id and shows this as the group header ("Receipt · <vendor>",
+ *  "emailed <when>"). A side map, so the item query/pagination is untouched. */
+async function batchLabelsFor(
+  db: ReturnType<typeof tenantDb>,
+  rows: Array<{ scan_batch_id: string | null }>,
+): Promise<Record<string, BatchLabel>> {
+  const batchIds = [...new Set(rows.map((i) => i.scan_batch_id).filter((x): x is string => !!x))];
+  const batches: Record<string, BatchLabel> = {};
+  if (!batchIds.length) return batches;
+  for (const b of await db
+    .selectFrom("core_scan_batches")
+    .select(["id", "label", "origin", "source_file_id", "order_ref", "tracking_number"])
+    .where("id", "in", batchIds)
+    .execute()) {
+    batches[b.id] = {
+      label: b.label,
+      origin: b.origin,
+      source_file_id: b.source_file_id,
+      order_ref: b.order_ref,
+      tracking_number: b.tracking_number,
+    };
+  }
+  return batches;
+}
 
 // Keyset cursor over (created_at, id) — stable even with duplicate timestamps.
 function encodeCursor(ts: Date | string, id: string): string {
@@ -1158,7 +1262,39 @@ inboxRouter.get(
     const q = ListQuery.safeParse(req.query);
     if (!q.success) return badBody(res, q.error);
     const db = tenantDb(req);
-    const { status, source_kind, batch_id, limit, cursor } = q.data;
+    const { status, source_kind, batch_id, limit, cursor, triage } = q.data;
+
+    // A facet query is a different read: scan the pending queue (capped) and
+    // decide membership with the shared predicate, rather than paginate. It
+    // answers "which ones need me" in one call, which is what a person asking
+    // about their inbox actually wants.
+    if (triage && triage !== "all") {
+      let facetQuery = db
+        .selectFrom("core_scan_inbox_items")
+        .selectAll()
+        .where("status", "=", "pending")
+        .orderBy("created_at", "desc")
+        .orderBy("id", "desc")
+        .limit(TRIAGE_SCAN_CAP);
+      if (source_kind) facetQuery = facetQuery.where("source_kind", "=", source_kind);
+      if (batch_id) facetQuery = facetQuery.where("scan_batch_id", "=", batch_id);
+      const scanned = await facetQuery.execute();
+      const matched = scanned.filter((row) => matchesScanFacet(row, triage));
+      const page = matched.slice(0, limit);
+      const batchMap = await batchLabelsFor(db, page);
+      res.json({
+        items: page.map(withTitle),
+        batches: batchMap,
+        next_cursor: null,
+        total: matched.length,
+        // Never let a capped scan read as a complete answer.
+        ...(scanned.length === TRIAGE_SCAN_CAP
+          ? { partial: `counted over the newest ${TRIAGE_SCAN_CAP} pending items` }
+          : {}),
+      });
+      return;
+    }
+
     let query = db
       .selectFrom("core_scan_inbox_items")
       .selectAll()
@@ -1183,21 +1319,7 @@ inboxRouter.get(
     const last = items[items.length - 1];
     const next_cursor = items.length === limit && last ? encodeCursor(last.created_at, last.id) : null;
 
-    // Session labels for the batches on this page — the inbox groups items by
-    // scan_batch_id and shows this as the group header ("Receipt · <vendor>",
-    // "emailed <when>"). Kept as a side map so the item query/pagination is
-    // untouched.
-    const batchIds = [...new Set(items.map((i) => i.scan_batch_id).filter((x): x is string => !!x))];
-    const batches: Record<string, { label: string | null; origin: string | null; source_file_id: string | null; order_ref: string | null }> = {};
-    if (batchIds.length) {
-      for (const b of await db
-        .selectFrom("core_scan_batches")
-        .select(["id", "label", "origin", "source_file_id", "order_ref"])
-        .where("id", "in", batchIds)
-        .execute()) {
-        batches[b.id] = { label: b.label, origin: b.origin, source_file_id: b.source_file_id, order_ref: b.order_ref };
-      }
-    }
+    const batches = await batchLabelsFor(db, items);
     // Total (for the header) only on the first page — it doesn't change per page.
     let total: number | undefined;
     if (!cursor) {
@@ -2321,12 +2443,12 @@ inboxRouter.post(
  *  So the stored name stays the honest answer from whatever identified it, the
  *  colour stays in metadata, and the two are composed on the way out. No pass
  *  can clobber a value that is computed. */
-function withTitle<T extends {
+function withTitle<T extends ScanTriageRow & {
   suggested_name: string | null;
   suggested_manufacturer?: string | null;
   suggested_candidates?: unknown;
   suggested_metadata?: unknown;
-}>(row: T): T {
+}>(row: T): T & { needs_review: boolean; waiting_days: number | null } {
   const titled = colouredTitleFor({
     suggested_name: row.suggested_name,
     suggested_manufacturer: row.suggested_manufacturer ?? null,
@@ -2334,7 +2456,19 @@ function withTitle<T extends {
     suggested_metadata: (row.suggested_metadata ?? {}) as Record<string, unknown>,
   });
   const base = titled ? { ...row, suggested_name: titled } : row;
-  return withDisplayCategory(base);
+  return withTriage(withDisplayCategory(base));
+}
+
+/** The queue facets, composed onto the row on the way out (same reason as the
+ *  title above: derived, never stored). Without them every caller re-derives
+ *  "does this need me" from raw metadata — which is how the flags ended up
+ *  existing only inside the Scan page, invisible to the API and to Cobb. */
+function withTriage<T extends ScanTriageRow>(row: T): T & { needs_review: boolean; waiting_days: number | null } {
+  return {
+    ...row,
+    needs_review: needsScanReview(row),
+    waiting_days: scanWaitingDays(row),
+  };
 }
 
 /**
@@ -3091,7 +3225,18 @@ const CatalogImageBody = z.union([
   // read-only and applies through THIS endpoint, so without the flag its choice
   // is indistinguishable from a hand-pick — and Revert would restore the raw
   // first web result, throwing the AI's judgement away (reported 2026-08-11).
-  z.object({ url: z.string().url().max(2000), ai_pick: z.boolean().optional() }),
+  z.object({
+    url: z.string().url().max(2000),
+    ai_pick: z.boolean().optional(),
+    /** The search result's own THUMBNAIL, used only if `url` cannot be fetched.
+     *  A picture visible in the strip is proof that SOME url for it works: the
+     *  strip renders the thumbnail while the pick sends the full-size original,
+     *  and plenty of sites serve the first and hotlink-block the second. Being
+     *  told "that image couldn't be used" about a picture on screen is the
+     *  report this answers (2026-08-14). Lower resolution, and far better than
+     *  refusing the pick. */
+    thumb_url: z.string().url().max(2000).optional(),
+  }),
   z.object({ action: z.enum(["revert", "use_own_photo", "use_screenshot_crop"]) }),
   // "Take a nice picture" — a freshly-captured upload becomes the DISPLAY
   // (catalog) image; the identify photo is untouched (photo roles).
@@ -3332,7 +3477,39 @@ inboxRouter.post(
         })
         .where("id", "=", row.id)
         .execute();
-      res.json(withTitle(await fresh()));
+      const saved = await fresh();
+      // A photo somebody deliberately took is EVIDENCE, not just decoration.
+      // Until now this endpoint only swapped the display picture, so the one
+      // gesture people reach for when a name looks wrong ("here, look at the
+      // actual thing") was the one gesture that could not affect the name
+      // (reported 2026-08-14).
+      //
+      // The gesture is genuinely ambiguous — a right name with a poor picture
+      // and a wrong name with proof attached press the same button — so it is
+      // not asked to choose. The picture always becomes the display image, and
+      // the check runs behind it:
+      //   • no name yet  → nothing to protect; the photo names the item.
+      //   • already named → flagOnly, so a disagreement is OFFERED with its
+      //     one-tap fix rather than performed. A silent rename of something
+      //     you were happy with is the failure that started this list.
+      const named = saved.suggested_name;
+      if (addedPhotoIntent(!!named) === "offer-correction" && named) {
+        void crossCheckScanPhoto(ctx.org.id, row.id, named, {
+          fileId: parsed.data.file_id,
+          flagOnly: true,
+        }).catch((e) => console.error("[core-scan] added-photo cross-check threw:", (e as Error).message));
+      } else {
+        void enrichPhotoItem({
+          db,
+          orgId: ctx.org.id,
+          itemId: row.id,
+          imageFileId: parsed.data.file_id,
+          userId: sessionUser(req).id,
+        }).catch((e) =>
+          console.error("[core-scan] added-photo identify threw:", (e as Error).message),
+        );
+      }
+      res.json(withTitle(saved));
       return;
     }
 
@@ -3345,7 +3522,13 @@ inboxRouter.post(
     // download; otherwise leave the previous image and 422 so the UI says so.
     const url = (parsed.data as { url: string }).url;
     const isAiPick = (parsed.data as { ai_pick?: boolean }).ai_pick === true;
-    const stored = await downloadCatalogImage({ db, orgId: ctx.org.id, itemId: row.id }, url);
+    const thumbUrl = (parsed.data as { thumb_url?: string }).thumb_url;
+    let stored = await downloadCatalogImage({ db, orgId: ctx.org.id, itemId: row.id }, url);
+    // The full-size original is frequently hotlink-blocked while the thumbnail
+    // the user is looking at is not. Take the smaller picture over none.
+    if (!stored && thumbUrl && thumbUrl !== url) {
+      stored = await downloadCatalogImage({ db, orgId: ctx.org.id, itemId: row.id }, thumbUrl);
+    }
     if (!stored) {
       res.status(422).json({
         error: {

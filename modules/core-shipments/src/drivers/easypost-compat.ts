@@ -30,19 +30,12 @@ import {
   type ShipmentState,
   type ShipmentStatus,
 } from "../status.js";
-import { edgeFetch, edgeKeyFor, transitMode } from "./edge-transit.js";
+import { platform } from "@cobblr/platform-contract";
+import { edgeFetch, edgeKeyFor } from "./edge-transit.js";
+import { configFor, envConfig } from "./connection.js";
 
-const DEFAULT_BASE = "https://api.easypost.com/v2";
 /** A tracker call can render a real page behind a bridge; bounded, but generous. */
 const TIMEOUT_MS = 30_000;
-
-function config() {
-  // `||` not `??`: compose passes an unset var as "" (CLAUDE.md section 14.6).
-  return {
-    base: (process.env.COBBLR_TRACKING_API_URL || DEFAULT_BASE).trim().replace(/\/+$/, ""),
-    key: (process.env.COBBLR_TRACKING_API_KEY || "").trim(),
-  };
-}
 
 /** EasyPost's tracker statuses to ours. A table, so a status they add later
  *  falls through to a stated default rather than crashing or lying.
@@ -150,14 +143,26 @@ export const easypostCompatDriver: CarrierDriver = {
   code: "easypost-compat",
 
   configured() {
-    return config().key.length > 0;
+    // The INSTANCE-wide answer, which is what the settings UI asks about. A
+    // user's personal connection is per-call and per-person, so it cannot be
+    // reported here; `configFor` finds it when a parcel is actually followed.
+    return envConfig().key.length > 0;
   },
 
-  async track(number: string, carrierCode = "unknown", orgId = ""): Promise<ShipmentStatus> {
-    const { base, key } = config();
-    if (!key) throw new CarrierError("no tracking API key configured", false);
+  async configuredFor(route) {
+    return (await configFor(route)).key.length > 0;
+  },
 
-    const transit = transitMode();
+  async track(
+    number: string,
+    carrierCode = "unknown",
+    route: { orgId?: string; ownerUserId?: string | null } = {},
+  ): Promise<ShipmentStatus> {
+    // Whose key, and where it points, is a property of the parcel — the owner's
+    // own connection if they added one, else the instance's environment.
+    const cfg = await configFor(route);
+    const { base, key } = cfg;
+    if (!key) throw new CarrierError("no tracking API key configured", false);
 
     // Read before create. On real EasyPost creating a tracker is the billable
     // act, so a parcel already being followed must not be re-created on every
@@ -175,9 +180,32 @@ export const easypostCompatDriver: CarrierDriver = {
       // hosted Cobblr, so it rides their bridge instead. The bridge is handed
       // the base URL and does the call locally; nothing about it is
       // shipments-specific, which is why the bridge needs no support for this.
-      res = transit.viaBridge
-        ? await edgeFetch(edgeKeyFor(orgId, transit.named), base, path, { method: "GET", headers })
-        : await fetch(`${base}${path}`, { headers, signal: AbortSignal.timeout(TIMEOUT_MS) });
+      res = cfg.viaBridge
+        ? await edgeFetch(
+            // A personal connection names its OWNER's bridge, whoever is
+            // asking; only an instance-configured one falls back to the
+            // caller/workspace. That is what makes "my parcels, my bridge"
+            // work when the sweep, not the person, is doing the asking.
+            edgeKeyFor(route.orgId ?? "", cfg.named, cfg.ownerUserId ?? route.ownerUserId),
+            base,
+            path,
+            { method: "GET", headers },
+          )
+        : // A URL a USER typed is not trusted to name a public host: on a hosted
+          // Cobblr it could name something internal the server can reach and
+          // they cannot, which is a straightforward SSRF. The guard blocks a
+          // private target there unless the tenant's own bridge vouches for it.
+          //
+          // An operator's env var skips the guard on purpose — they are
+          // configuring their own server, and a self-hosted box pointing at a
+          // service on its own LAN is the normal case, not an attack
+          // (CLAUDE.md 14.1).
+          cfg.userSupplied
+          ? await platform().egress.guardedFetch(route.orgId ?? "", `${base}${path}`, {
+              headers,
+              signal: AbortSignal.timeout(TIMEOUT_MS),
+            })
+          : await fetch(`${base}${path}`, { headers, signal: AbortSignal.timeout(TIMEOUT_MS) });
     } catch (err) {
       // A bridge on a laptop is allowed to be off. Retryable, never a state.
       throw new CarrierError(`tracking API did not answer: ${(err as Error).message}`, true);

@@ -31,6 +31,11 @@ export default defineModule({
   intents: [],
   dependencies: [],
 
+  // AI-REACH: no kinds/actions by design. The log is READ through the shared
+  // registry's list_activity tool (who changed what, when) — an append-only
+  // feed is not a record you create, update or delete, so an entity kind would
+  // put a write surface on something nothing may write.
+
   exposes: {
     events: [],
     api: ["log"],

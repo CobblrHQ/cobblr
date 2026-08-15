@@ -14,6 +14,7 @@ import { meta } from "../db/meta.js";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import * as aiImpl from "../platform/ai.js";
+import * as connectionProviders from "../platform/connections.js";
 import { notifyAccount } from "../platform/notifications.js";
 import { absoluteAppUrl } from "../platform/public-url.js";
 import {
@@ -151,8 +152,15 @@ async function notifyOwnersOfOffers(
 
 // The secret-free provider catalogue (same shape the per-workspace AI page uses)
 // so the "add a personal connection" form can render the right credential fields.
+//
+// Every registered KIND, not only AI. Each item carries its kind so the page can
+// group them; AI's entries additionally carry capabilities + models, which only
+// the AI catalogue has, so they are merged in rather than flattened away.
 connectionsRouter.get("/me/connections/catalogue", requireAuth, (_req, res) => {
-  res.json({ items: aiImpl.listProviders() });
+  const ai = new Map(aiImpl.listProviders().map((p) => [p.id, p]));
+  res.json({
+    items: connectionProviders.listProviders().map((p) => ({ ...ai.get(p.id), ...p })),
+  });
 });
 
 // Is MY personal edge agent connected right now? Drives the transit hint in
@@ -161,24 +169,14 @@ connectionsRouter.get("/me/edge-agent", requireAuth, (req, res) => {
   res.json({ connected: platform().edge.hasChannel(req.session!.id) });
 });
 
-/** Per-(provider, field) secrecy from the AI catalogue, so listUserCredentials
- *  can return NON-secret values (for pre-filling the edit form) while secrets
- *  stay write-only. Unknown provider/field → treated as secret (never exposed). */
-function providerSecretLookup(): (providerId: string, key: string) => boolean {
-  const map = new Map<string, Set<string>>();
-  for (const p of aiImpl.listProviders()) {
-    const secrets = new Set<string>();
-    for (const [k, def] of Object.entries(p.credentials ?? {})) {
-      if ((def as { secret?: boolean }).secret) secrets.add(k);
-    }
-    map.set(p.id, secrets);
-  }
-  return (providerId, key) => map.get(providerId)?.has(key) ?? true;
-}
-
 connectionsRouter.get("/me/connections", requireAuth, async (req, res, next) => {
   try {
-    res.json({ items: await listUserCredentials(req.session!.id, providerSecretLookup()) });
+    // The secrecy lookup spans every catalogue (see platform/connections.ts):
+    // it decides which stored values may be echoed back to pre-fill the edit
+    // form, and an unknown provider is treated as all-secret.
+    res.json({
+      items: await listUserCredentials(req.session!.id, connectionProviders.secretLookup()),
+    });
   } catch (err) {
     next(err);
   }
@@ -191,8 +189,9 @@ connectionsRouter.post("/me/connections", requireAuth, async (req, res, next) =>
       res.status(400).json({ error: { code: "invalid_body", message: "Bad body", details: parsed.error.issues } });
       return;
     }
-    if (!aiImpl.getProvider(parsed.data.provider_id)) {
-      res.status(400).json({ error: { code: "unknown_provider", message: "No such AI provider." } });
+    const provider = connectionProviders.getProvider(parsed.data.provider_id);
+    if (!provider) {
+      res.status(400).json({ error: { code: "unknown_provider", message: "No such provider." } });
       return;
     }
     const routedOrgs = routedOrgIds(parsed.data);
@@ -204,7 +203,10 @@ connectionsRouter.post("/me/connections", requireAuth, async (req, res, next) =>
         return;
       }
     }
-    const id = await addUserCredential(req.session!.id, parsed.data);
+    // The KIND comes from the provider, never from the body: it decides which
+    // resolver will later find this credential, so letting a client name it
+    // would let one connection answer for a service it is not.
+    const id = await addUserCredential(req.session!.id, { ...parsed.data, kind: provider.kind });
     if (parsed.data.routes?.length) {
       const me = await meta.selectFrom("users").select("display_name").where("id", "=", req.session!.id).executeTakeFirst();
       await notifyOwnersOfOffers(req.session!.id, me?.display_name ?? "A member", parsed.data.routes);

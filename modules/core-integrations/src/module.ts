@@ -36,6 +36,10 @@ export default defineModule({
   intents: [],
   dependencies: [],
 
+  // AI-REACH: no kinds/actions by design. A connector holds CREDENTIALS for an
+  // outside service, so it is deliberately not agent-writable. The wires built
+  // on top of it are read through get_workspace_setup (part: "automations").
+
   provides: {
     entityKinds: [],
   },

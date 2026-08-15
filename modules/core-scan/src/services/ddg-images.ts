@@ -11,6 +11,7 @@
 // natural throttle for the LLM half; this half is best-effort).
 
 import { isJunkName } from "./enrich.js";
+import { formFactorFromObservation } from "./form-factor.js";
 
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
@@ -266,6 +267,11 @@ export function deriveImageQuery(opts: {
   fields?: Record<string, unknown> | null;
   /** A user-typed term wins outright — search EXACTLY what they asked for. */
   override?: string | null;
+  /** What the photo pass already wrote about this item. Its FORM FACTOR
+   *  sharpens the search: a bare name gets the category's most photographed
+   *  member back, which is how an item its own observation called a box came
+   *  home illustrated with a bottle (reported 2026-08-14). */
+  observation?: string | null;
 }): string | null {
   const override = (opts.override ?? "").trim();
   if (override) return override;
@@ -273,7 +279,11 @@ export function deriveImageQuery(opts: {
   if (!name || isJunkName(name)) return null;
   const { author, mediaWord } = mediaSearchExtras([{ fields: opts.fields ?? {} }]);
   const color = typeof opts.fields?.color === "string" ? (opts.fields.color as string).trim() : "";
-  const extra = [author, mediaWord, color].filter(Boolean).join(" ") || null;
+  // Last: the media word separates a book from its film, which matters more
+  // than the shape of the packaging, and imageQuery drops terms already in the
+  // name — so a title that says "Box" does not get told twice.
+  const form = formFactorFromObservation(opts.observation);
+  const extra = [author, mediaWord, color, form].filter(Boolean).join(" ") || null;
   return imageQuery(name, opts.brand ?? null, extra);
 }
 

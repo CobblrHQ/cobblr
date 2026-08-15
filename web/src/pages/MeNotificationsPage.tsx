@@ -8,6 +8,7 @@
 import { useState } from "react";
 import { AreaTabs, NOTIFICATION_TABS } from "../components/AreaTabs";
 import { Link, useNavigate } from "react-router-dom";
+import { notificationAction } from "../lib/notification-action";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, Check, CheckCheck } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
@@ -59,8 +60,17 @@ export function MeNotificationsPage() {
 
   function open(n: CrossOrgNotificationEntry) {
     if (!n.read_at) markRead.mutate(n.id);
-    setActiveSlug(n.org_slug);
-    if (n.link_url) navigate(n.link_url);
+    // Same as the bell: the switch is a full document load, so it has to carry
+    // the destination rather than being followed by a navigate that cannot run.
+    // Never hand a stored link straight to navigate(): it may be absolute, or
+    // carry its own /w/<slug>, and both resolve to nothing under the router's
+    // workspace basename.
+    // The same decision the bell makes, so one row cannot behave two ways.
+    const act = notificationAction(n);
+    if (!act.goesSomewhere) return;
+    if (act.switchTo && setActiveSlug(act.switchTo, act.path)) return;
+    if (act.path) navigate(act.path);
+    else if (act.external) window.open(act.external, "_blank", "noopener");
   }
 
   // Group by day for readable scanning.

@@ -14,6 +14,7 @@ import {
   ApiError,
   api,
   type AiProviderDef,
+  CONNECTION_KIND_LABELS,
   type ConnRouteMode,
   type ConnRouteScope,
   type UserConnection,
@@ -68,7 +69,7 @@ export function ConnectionsPage() {
       </div>
 
       <p className="text-sm text-muted dark:text-slate-400">
-        Set up a personal AI provider - your own key, or the local-AI edge bridge - once,
+        Set up a service of your own once - an AI provider, a parcel-tracking account -
         and route it to the workspaces you choose. It follows you instead of being
         re-added per workspace. Secrets are stored encrypted and never shown again.
       </p>
@@ -287,12 +288,25 @@ function ConnectionForm({
           }}
           className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900 disabled:opacity-60"
         >
-          {providers.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.label}
-            </option>
+          {/* Grouped by kind: an AI key and a tracking account are different
+              enough that one flat list of vendor names reads as a jumble. */}
+          {Object.entries(
+            providers.reduce<Record<string, AiProviderDef[]>>((acc, p) => {
+              const k = p.kind ?? "ai-provider";
+              (acc[k] ??= []).push(p);
+              return acc;
+            }, {}),
+          ).map(([kind, items]) => (
+            <optgroup key={kind} label={CONNECTION_KIND_LABELS[kind]?.title ?? kind}>
+              {items.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </optgroup>
           ))}
         </select>
+        {provider?.blurb && <div className="text-[11px] text-faint mt-1">{provider.blurb}</div>}
       </label>
 
       <label className="block">
@@ -348,7 +362,7 @@ function ConnectionForm({
       )}
 
       <div>
-        <div className="text-xs text-muted mb-1">Use this AI in each workspace</div>
+        <div className="text-xs text-muted mb-1">Use this connection in each workspace</div>
         <div className="rounded border border-line dark:border-slate-700 divide-y divide-line dark:divide-slate-700">
           {orgs.length === 0 && <div className="text-[11px] text-faint p-2">No workspaces.</div>}
           {orgs.map((o) => {
@@ -400,7 +414,7 @@ function ConnectionForm({
           })}
         </div>
         <p className="text-[11px] text-faint mt-1">
-          <span className="font-medium">Just me</span> = only your own AI calls here use it.{" "}
+          <span className="font-medium">Just me</span> = only your own work here uses it.{" "}
           <span className="font-medium">Share</span> = offer it to everyone in the workspace (the owner approves).
         </p>
       </div>

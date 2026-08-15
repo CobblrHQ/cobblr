@@ -17,6 +17,8 @@
 // retail/craft coverage but can return junk or wrong listings) > Open Products
 // Facts (food/household-leaning, almost no craft coverage).
 
+import { preferredFactsName, primaryBrand } from "./catalog-normalize.js";
+
 export interface BarcodeHit {
   source: "upcitemdb" | "openproductsfacts" | "go-upc" | string;
   title: string;
@@ -128,17 +130,19 @@ async function tryOpenFacts(upc: string, host: string, source: string): Promise<
   const data = body as { status?: number; product?: Record<string, unknown> } | null;
   if (!data || data.status !== 1 || !data.product) return { kind: "miss" };
   const p = data.product;
-  const name =
-    (typeof p.product_name === "string" && p.product_name) ||
-    (typeof p.generic_name === "string" && p.generic_name) ||
-    "";
+  // Which of the record's OWN name fields to believe. Only this adapter can
+  // make that call, because only it sees the alternatives — the funnel above
+  // receives one title and has nothing to choose between.
+  const name = preferredFactsName(p);
   if (!name) return { kind: "miss" };
   return {
     kind: "hit",
     hit: {
       source,
       title: name.trim(),
-      brand: typeof p.brands === "string" ? p.brands.split(",")[0]?.trim() ?? null : null,
+      // Brand cleaning is the funnel's job (see normalizeOutcome); passing the
+      // raw field is correct here rather than each adapter remembering.
+      brand: typeof p.brands === "string" ? p.brands : null,
       model: null,
       description: typeof p.generic_name === "string" ? p.generic_name : null,
       category: typeof p.categories === "string" ? p.categories.split(",")[0]?.trim() ?? null : null,
@@ -559,9 +563,23 @@ export async function lookupBarcode(upc: string): Promise<BarcodeOutcome> {
   if (!looksLikeProductBarcode(norm)) return { outcome: "miss" };
   const existing = inflightLookups.get(norm);
   if (existing) return existing;
-  const p = doLookupBarcode(norm).finally(() => inflightLookups.delete(norm));
+  // Normalise HERE, not in the adapters. Five provider tiers return a hit and
+  // seven downstream sites write its brand, so a rule enforced per-adapter is
+  // one that N-1 adapters eventually miss — which is exactly what had happened:
+  // the Open*Facts adapter split the brand synonym list and the resolver tier
+  // twenty lines below it passed the same field straight through. This is the
+  // one point every tier's answer converges on, so a new provider inherits the
+  // cleaning by existing.
+  const p = doLookupBarcode(norm)
+    .then(normalizeOutcome)
+    .finally(() => inflightLookups.delete(norm));
   inflightLookups.set(norm, p);
   return p;
+}
+
+function normalizeOutcome(outcome: BarcodeOutcome): BarcodeOutcome {
+  if (outcome.outcome !== "hit") return outcome;
+  return { ...outcome, hit: { ...outcome.hit, brand: primaryBrand(outcome.hit.brand) } };
 }
 
 async function doLookupBarcode(norm: string): Promise<BarcodeOutcome> {

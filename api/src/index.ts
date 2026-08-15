@@ -41,6 +41,7 @@ import * as files from "./platform/files.js";
 import * as hostedSeams from "./platform/hosted-seams.js";
 import { registerConfiguredAuthEmailSender } from "./platform/auth-email-config.js";
 import * as events from "./platform/events.js";
+import * as connectionsImpl from "./platform/connections.js";
 import * as templates from "./platform/templates.js";
 import * as wires from "./platform/wires.js";
 import * as health from "./platform/health.js";
@@ -65,6 +66,7 @@ import * as aiImpl from "./platform/ai.js";
 import * as edgeImpl from "./platform/edge.js";
 import * as egressImpl from "./platform/egress.js";
 import { syncManifestRegistries } from "./platform/registry-sync.js";
+import { registerPlatformActionHandlers } from "./platform/platform-action-handlers.js";
 import { syncInstalledModules } from "./platform/installed-modules.js";
 import { migrateBookshelfToInstance } from "./platform/migrate-bookshelf-to-instance.js";
 import { mergeLabelsQr } from "./platform/merge-labels-qr.js";
@@ -341,6 +343,12 @@ async function boot() {
       getRelease: edgeImpl.getRelease,
       getReleaseBundle: edgeImpl.getReleaseBundle,
       getReleaseLoader: edgeImpl.getReleaseLoader,
+    },
+    connections: {
+      registerProvider: connectionsImpl.registerProvider,
+      listProviders: connectionsImpl.listProviders,
+      getProvider: connectionsImpl.getProvider,
+      resolve: connectionsImpl.resolve,
     },
     egress: {
       guardedFetch: egressImpl.guardedFetch,
@@ -864,6 +872,10 @@ async function boot() {
   // everything except the route handler (which goes through the
   // wasm sandbox). See docs/architecture/module-isolation.md.
   await T("loadAllSandboxedModules", loadAllSandboxedModules());
+  // The kernel's OWN action handlers (platform:add-field, …) — registered
+  // BEFORE the registry sync that seeds their rows, so an action is never
+  // listed without its handler.
+  registerPlatformActionHandlers();
   // Mirror manifests into the cobblr_meta registries after load so
   // <EntityActionsBar> / platform.entities.lookup() etc. have
   // accurate metadata. Done AFTER load so module-side resolver /
