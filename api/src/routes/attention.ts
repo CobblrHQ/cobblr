@@ -34,7 +34,7 @@ interface AttentionEntry {
 }
 
 interface AttentionRow {
-  kind: "low_stock" | "overdue" | "upcoming" | "pending_scans";
+  kind: "low_stock" | "overdue" | "upcoming" | "pending_scans" | "photo_wanted";
   label: string;
   count: number;
   /** Up to 3 item names, for the row's detail line. */
@@ -74,6 +74,33 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
         count: inbox.items.length,
         sample: [],
         route: "/scan",
+      });
+    }
+
+    // "I'll photograph this" — marks a person set at a desk, surfaced where they
+    // will next be holding a phone. Reads the SAME facet the scanner's prompt
+    // does (platform-contract/scan-triage), so the dashboard and the viewfinder
+    // can never disagree about what is waiting. `total` rather than the page
+    // length, or the count would silently cap at the entry limit.
+    const wantPhoto = await j<{
+      items: Array<{ id: string; suggested_name: string | null }>;
+      total?: number;
+    }>(`/orgs/${slug}/modules/core-scan/inbox?triage=photo_wanted&limit=8`, token);
+    if (wantPhoto && wantPhoto.items.length > 0) {
+      const name = (i: { suggested_name: string | null }) => i.suggested_name?.trim() || "an unnamed capture";
+      rows.push({
+        kind: "photo_wanted",
+        label: `waiting for a photo from you`,
+        count: wantPhoto.total ?? wantPhoto.items.length,
+        sample: wantPhoto.items.slice(0, 3).map(name),
+        route: "/scan",
+        // Each entry deep-links the camera straight at that item, which is the
+        // whole point: the row exists so nobody scrolls an inbox on a phone.
+        entries: wantPhoto.items.slice(0, 8).map((i) => ({
+          id: i.id,
+          title: name(i),
+          action: { want: i.id },
+        })),
       });
     }
 
@@ -224,7 +251,7 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
     }
 
     // Severity order: overdue → low stock → pending scans → upcoming.
-    const rank = { overdue: 0, low_stock: 1, pending_scans: 2, upcoming: 3 } as const;
+    const rank = { overdue: 0, low_stock: 1, photo_wanted: 2, pending_scans: 3, upcoming: 4 } as const;
     rows.sort((a, b) => rank[a.kind] - rank[b.kind] || b.count - a.count);
     res.json({ items: rows });
   } catch (err) {

@@ -1,0 +1,21 @@
+{
+  "_provenance": "CAPTURED from the live tracking service 2026-08-15. Tracking number replaced with a stable fake.",
+  "trackers": [
+    {
+      "id": "trk_TEST0FA582557F7B",
+      "tracking_code": "TEST0FA582557F7B",
+      "status": "out_for_delivery",
+      "status_detail": "On FedEx vehicle for delivery",
+      "est_delivery_date": null,
+      "tracking_details": [
+        {
+          "datetime": "2026-08-15T06:14:00-04:00",
+          "message": "On FedEx vehicle for delivery",
+          "tracking_location": "DOVER, NJ, US"
+        }
+      ],
+      "updated_at": "2026-08-15T14:40:21Z"
+    }
+  ],
+  "has_more": false
+}

@@ -25,6 +25,7 @@ import {
 } from "./crosscheck-policy.js";
 import { evictBarcodeCaches, rememberLocalIdentity } from "./barcode-cache.js";
 import { searchImages, rankImageOptions, imageQuery, mediaSearchExtras } from "./ddg-images.js";
+import { formFactorFromObservation } from "./form-factor.js";
 import { sql } from "kysely";
 import { cropRegion, parseProductRegion } from "./image-ops.js";
 import { seedHistory, pushStep, type CatalogSource } from "./catalog-history.js";
@@ -53,9 +54,16 @@ export async function refreshCatalogImageByName(
     .executeTakeFirst();
   if ((cur?.suggested_metadata as { catalog_image_user_set?: boolean } | null)?.catalog_image_user_set) return;
   // Sharpen a weak title with author + media word (the same extras the
-  // photo-options strip uses) so a book finds its cover, not generic images.
+  // photo-options strip uses) so a book finds its cover, not generic images —
+  // and with the observation's FORM FACTOR, so the default auto-fetch knows a
+  // box is a box. The manual strip and the opt-in rank pass got that term in
+  // the original fix while this path, the one every plain scan actually takes,
+  // kept asking with the bare name and could still come home with a bottle.
   const { author, mediaWord } = mediaSearchExtras(cur?.suggested_candidates as Array<{ fields?: Record<string, unknown> }> | null);
-  const extra = [author, mediaWord].filter(Boolean).join(" ") || null;
+  const form = formFactorFromObservation(
+    (cur?.suggested_metadata as { photo_observations?: string } | null)?.photo_observations,
+  );
+  const extra = [author, mediaWord, form].filter(Boolean).join(" ") || null;
   const q = imageQuery(name, brand, extra);
   const pool = await searchImages(q, 24).catch(() => []);
   // Try to DOWNLOAD the top candidates into core-files, falling through until one

@@ -1,0 +1,22 @@
+{
+  "_provenance": "SYNTHESIZED in the shape of the captured response above (same fields, same types). Replace with a capture when the recorder catches this state.",
+  "_why": "Someone has to do something. NOTE the status is `failure`, not `exception`: `exception` is OUR state name, not a status any carrier API emits. The bridge sends `failure` (17track FPackageState 50) and core maps that to `exception`. A fixture that said `exception` fell through to `unknown` \u2014 which is how this distinction was found.",
+  "trackers": [
+    {
+      "id": "trk_TEST0FA582557F7B",
+      "tracking_code": "TEST0FA582557F7B",
+      "status": "failure",
+      "status_detail": "Delivery exception: no access to recipient address",
+      "est_delivery_date": null,
+      "tracking_details": [
+        {
+          "datetime": "2026-08-15T11:02:00-04:00",
+          "message": "Delivery exception",
+          "tracking_location": "DOVER, NJ, US"
+        }
+      ],
+      "updated_at": "2026-08-15T15:40:00Z"
+    }
+  ],
+  "has_more": false
+}

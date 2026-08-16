@@ -14,7 +14,7 @@
 // caller owns the upload + mutation (and closes the sheet on success via `open`).
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Camera, Check, RotateCcw, X } from "lucide-react";
+import { Camera, Check, Image as ImageIcon, RotateCcw, X } from "lucide-react";
 import { OverlayFlag } from "@cobblr/platform-web";
 import { acquireScannerStream } from "../lib/barcodeScanner";
 
@@ -33,7 +33,11 @@ export function CameraCaptureSheet({
   stream?: MediaStream | null;
   /** Caller's upload/mutation is in flight — disables "Use this". */
   busy?: boolean;
-  onCapture: (blob: Blob) => void;
+  /** `uploaded` distinguishes a picture CHOSEN from the device from one taken
+   *  just now. The caller needs it: a capture is a photo of the object in front
+   *  of you, while a file off the camera roll may be a screenshot or a spec
+   *  sheet, and only the first is evidence about the item. */
+  onCapture: (blob: Blob, opts?: { uploaded?: boolean }) => void;
   onClose: () => void;
 }) {
   const [shootError, setShootError] = useState<string | null>(null);
@@ -179,6 +183,26 @@ export function CameraCaptureSheet({
         className="shrink-0 bg-black/90 px-6 pt-4 flex items-center justify-center gap-8"
         style={{ paddingBottom: "max(1.25rem, env(safe-area-inset-bottom))" }}
       >
+        {/* Choose from the device, beside the shutter rather than only when
+            there is no camera. The picture you want is often already ON the
+            phone — a marketplace screenshot with the dimensions on it, a spec
+            sheet, a shot you took yesterday — and until now the only way to
+            reach the camera roll was to have no camera at all, which never
+            happens on a phone (reported 2026-08-15). Secondary styling: taking
+            the picture is still the common act, and the shutter stays the thing
+            your thumb finds. */}
+        {mode === "live" && (
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            aria-label="Choose from device"
+            title="Choose a picture already on this device"
+            className="shrink-0 inline-flex flex-col items-center gap-1 text-white/70 hover:text-white touch-manipulation"
+          >
+            <ImageIcon size={22} />
+            <span className="text-[10px]">Choose</span>
+          </button>
+        )}
         {mode === "live" ? (
           <button
             type="button"
@@ -210,12 +234,16 @@ export function CameraCaptureSheet({
       <input
         ref={fileRef}
         type="file"
-        accept="image/*"
+        // Same set the inbox door takes, and for the same stated reason: the
+        // file's TYPE routes it, so nobody has to answer "which kind of
+        // upload" before they have even chosen a file. A receipt PDF could
+        // not previously be attached to an item at all.
+        accept="image/*,application/pdf,.csv,text/csv"
         hidden
         onChange={(e) => {
           const f = e.target.files?.[0];
           e.currentTarget.value = "";
-          if (f) onCapture(f);
+          if (f) onCapture(f, { uploaded: true });
         }}
       />
     </div>,

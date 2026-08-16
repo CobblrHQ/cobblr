@@ -1,0 +1,27 @@
+{
+  "_provenance": "SYNTHESIZED in the shape of the captured response above (same fields, same types). Replace with a capture when the recorder catches this state.",
+  "_why": "Moving, with a carrier estimate.",
+  "trackers": [
+    {
+      "id": "trk_TEST0FA582557F7B",
+      "tracking_code": "TEST0FA582557F7B",
+      "status": "in_transit",
+      "status_detail": "Departed FedEx hub",
+      "est_delivery_date": "2026-08-16",
+      "tracking_details": [
+        {
+          "datetime": "2026-08-14T22:03:00-04:00",
+          "message": "Departed FedEx hub",
+          "tracking_location": "INDIANAPOLIS, IN, US"
+        },
+        {
+          "datetime": "2026-08-14T04:50:00-04:00",
+          "message": "Arrived at FedEx location",
+          "tracking_location": "PERRYSBURG, OH, US"
+        }
+      ],
+      "updated_at": "2026-08-15T02:10:00Z"
+    }
+  ],
+  "has_more": false
+}

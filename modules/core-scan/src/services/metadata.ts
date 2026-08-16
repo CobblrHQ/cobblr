@@ -50,6 +50,24 @@ export const IDENTIFY_OWNED_KEYS = [
   "decoded",
   "enriched_from",
   "rate_limited",
+  // "There is a live queue job retrying this row" — set beside rate_limited when
+  // the retry is enqueued, so a forced re-run that hits the throttle again does
+  // not start a second parallel chain. Owned here so a successful identify
+  // releases it; the retry worker releases it itself on its no-result and
+  // budget-spent endings, which never come back through an identify write.
+  "retry_queued",
+  // NOT "purchases_order_id" / "receipt_group_id" on an item a person attached
+  // paperwork to: which receipt this was bought on is a FACT about the purchase,
+  // not an output of the identify pass, and a re-run has no standing to forget
+  // it. Same reasoning as photo_wanted and user_hint below.
+  //
+  // NOT "photo_wanted", for the same reason as user_hint below: it is a PERSON
+  // saying "I will photograph this myself", and an AI re-run has no standing to
+  // decide they changed their mind. Re-running is in fact the likeliest thing
+  // to do to an item whose picture is wrong, so listing it here would delete
+  // the intent at exactly the moment it was formed. Only the user clears it, or
+  // the photo arriving does.
+  //
   // NOT "user_hint": it is the USER's correction, not a pipeline output. Listing
   // it here meant any identify pass that didn't re-write it DELETED it — and the
   // barcode path's last resort (nameFromPhoto) doesn't, so a re-run WITH a hint

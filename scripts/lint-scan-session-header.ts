@@ -99,6 +99,37 @@ if (errors.length === 0) {
   }
 }
 
+// PURCHASE-ONLY CONTROLS MUST NAME THE PURCHASE GATE.
+//
+// An order number and a tracking number are facts about something you BOUGHT.
+// They shipped with the gate hand-written at each site, and the tracking
+// number's said only `g.batchId` - so "+ Tracking #" offered itself on every
+// scan session, including a barcode just scanned (reported 2026-08-15). Two
+// controls with one meaning and two hand-written gates is one gate waiting to
+// be wrong, and nothing about a wrong gate fails a typecheck or a test.
+//
+// So the gate has a name, `isReceiptSession`, and each purchase-only control
+// has to be gated on it. A control that needs the stored receipt FILE (Original,
+// Re-parse) legitimately gates on `sourceFileId` instead - that is a capability
+// check, a different question, and it is not what this rule is about.
+const PURCHASE_ONLY: Array<[string, string]> = [
+  ["PO#", "editingPo === g.batchId ?"],
+  ["Tracking #", "editingTracking === g.batchId ?"],
+];
+for (const [name, marker] of PURCHASE_ONLY) {
+  const idx = src.indexOf(marker);
+  if (idx === -1) continue; // removed on purpose is fine
+  // The gate opens the block immediately above the editing ternary.
+  const gate = src.slice(Math.max(0, idx - 220), idx);
+  if (!gate.includes("isReceiptSession")) {
+    errors.push(
+      `the "${name}" control is not gated on isReceiptSession - it is purchase-only, so it must ` +
+        `not offer itself on a plain scan session. Use the named gate rather than spelling a new ` +
+        `one out; that is how "+ Tracking #" ended up on every barcode scan.`,
+    );
+  }
+}
+
 // NOTHING AFTER THE TRIO. The order checks above only know about the controls
 // that existed when they were written, so a BRAND NEW control appended at the
 // end - the way every previous one arrived - would sail past them. This is the
@@ -160,9 +191,43 @@ if (!headerBar) {
   );
 }
 
+// THE ROW HAS TO BE DRAWN AT ALL — including on the single-session page.
+//
+// Every rule above orders controls WITHIN the header, so all of them pass
+// vacuously when the header is never rendered. That is what shipped:
+// `sessionGroups` short-circuited to null whenever the inbox was scoped to one
+// session (?batch), on the reasoning that one session needs no separator. True
+// of the grouping, false of the header — the header is also the session's whole
+// action surface. So the page you open to work ONE session became the only page
+// with no way to act on it as a session: no select-all (its checkbox is the
+// only one on the page), no Place & file all, no Original / PO# / Tracking # /
+// Re-parse. Filing meant ticking every card by hand (reported 2026-08-15).
+//
+// Grouping a single session costs nothing; dropping its controls costs the
+// page. So the memo may not bail out early — let each control decide for itself
+// what applies (`open →` withholds itself when it would link to the current
+// page; Merge withholds itself when there is no older session to fold into).
+const MEMO = "const sessionGroups = useMemo(";
+const memoAt = withoutComments.indexOf(MEMO);
+if (memoAt === -1) {
+  errors.push(`could not find the sessionGroups memo in ${REL} - if it was renamed, update this lint`);
+} else {
+  const memoEnd = withoutComments.indexOf("\n  }, [", memoAt);
+  if (memoEnd === -1) {
+    errors.push(`could not find the end of the sessionGroups memo in ${REL} - update this lint`);
+  } else if (/\breturn\s+null\s*;/.test(withoutComments.slice(memoAt, memoEnd))) {
+    errors.push(
+      "sessionGroups returns null on some path, which drops the ENTIRE session header row " +
+        "(select-all, Place & file all, Original / PO# / Tracking # / Re-parse) from whatever view " +
+        "hits it - the single-session page lost exactly this. Group unconditionally and let each " +
+        "control decide whether it applies.",
+    );
+  }
+}
+
 if (errors.length === 0) {
   console.log(
-    "[lint:scan-session-header] ✓ one row, and location → file → open are the last three controls.",
+    "[lint:scan-session-header] ✓ one row, always rendered, and location → file → open are the last three controls.",
   );
   process.exit(0);
 }

@@ -1021,3 +1021,33 @@ export function getTool(name: string): WorkspaceTool | undefined {
 
 export const READ_TOOLS = WORKSPACE_TOOLS.filter((t) => t.mode === "read");
 export const WRITE_TOOLS = WORKSPACE_TOOLS.filter((t) => t.mode === "write");
+
+// ─────────────────────── the MCP naming policy, once ──────────────────────
+//
+// Three surfaces read this registry: the in-app chat (bare names), and TWO MCP
+// faces — the stdio server (packages/mcp-server) and the HTTP endpoint
+// (api/src/platform/hosted-mcp.ts). Both MCP faces prefix every tool the same
+// way, and both used to hardcode that prefix themselves. Two copies of a naming
+// policy is how one face ends up exposing a different set from the other, which
+// is precisely what happened: the HTTP face carried a hand-kept SIX while this
+// registry held twenty-one, and nothing noticed because a model with fewer
+// tools does not error, it just answers (2026-08-15).
+//
+// The per-transport parts stay per-transport: each face describes its own
+// `workspace` argument in its own terms (an env var for stdio, a query param
+// for HTTP), because those genuinely differ.
+
+/** The prefix both MCP faces put on every workspace tool. */
+export const MCP_TOOL_PREFIX = "cobblr_";
+
+/** A registry tool's name as MCP clients see it. */
+export function mcpToolName(bareName: string): string {
+  return `${MCP_TOOL_PREFIX}${bareName}`;
+}
+
+/** MCP name → the registry tool it addresses (null when it isn't one of ours). */
+export function toolFromMcpName(mcpName: string): WorkspaceTool | undefined {
+  return mcpName.startsWith(MCP_TOOL_PREFIX)
+    ? getTool(mcpName.slice(MCP_TOOL_PREFIX.length))
+    : undefined;
+}

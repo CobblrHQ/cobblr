@@ -36,7 +36,28 @@
  *     never cost an item its picture.
  */
 
-import sharp from "sharp";
+import sharp, { type Metadata } from "sharp";
+
+/** Bake an EXIF orientation into the pixels, once, up front. Every pipeline in
+ *  this family re-encodes with metadata stripped, and a stripped orientation
+ *  tag without the rotation baked in stores the image sideways (verified with
+ *  an orientation-6 camera JPEG: the trim's output rendered rotated 90° from
+ *  what the user saw). It also puts every geometry the callers compute — trim
+ *  boxes, band positions, the ranker's left/right answer — in DISPLAY space,
+ *  which is the space those answers are actually about. Null when the bytes
+ *  will not decode. */
+export async function uprightBytes(
+  input: Uint8Array,
+): Promise<{ bytes: Buffer; meta: Metadata } | null> {
+  const raw = Buffer.from(input);
+  const meta0 = await sharp(raw, { failOn: "none" }).metadata();
+  if (!meta0.width || !meta0.height) return null;
+  if ((meta0.orientation ?? 1) === 1) return { bytes: raw, meta: meta0 };
+  const bytes = await sharp(raw, { failOn: "none" }).rotate().toBuffer();
+  const meta = await sharp(bytes, { failOn: "none" }).metadata();
+  if (!meta.width || !meta.height) return null;
+  return { bytes, meta };
+}
 
 export interface TrimPlan {
   /** Crop to this box (pixels in the SOURCE image), then re-add the margin. */
@@ -88,7 +109,9 @@ export function planTrim(
  *  or null when the image is better left exactly as it is. */
 export async function trimCatalogMargins(input: Uint8Array): Promise<Uint8Array | null> {
   try {
-    const meta = await sharp(Buffer.from(input), { failOn: "none" }).metadata();
+    const up = await uprightBytes(input);
+    if (!up) return null;
+    const { bytes: base, meta } = up;
     if (!meta.width || !meta.height) return null;
 
     // FLATTEN FIRST, and measure the flattened image. A transparent PNG's
@@ -96,8 +119,8 @@ export async function trimCatalogMargins(input: Uint8Array): Promise<Uint8Array 
     // finds a "border" of black and then paints the margin black — the exact
     // void this exists to prevent.
     const flat = meta.hasAlpha
-      ? await sharp(Buffer.from(input), { failOn: "none" }).flatten({ background: CANVAS }).png().toBuffer()
-      : Buffer.from(input);
+      ? await sharp(base, { failOn: "none" }).flatten({ background: CANVAS }).png().toBuffer()
+      : base;
 
     const probe = await sharp(flat, { failOn: "none" })
       .trim({ threshold: 12 })

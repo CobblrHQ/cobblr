@@ -8,8 +8,8 @@ import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { CoreScanDB } from "../db.js";
 import { enrichBarcodeItem } from "./enrich.js";
-import { mergeMeta } from "./metadata.js";
-import { RETRY_LOOKUP_QUEUE, RETRY_MAX_ATTEMPTS, retriesExhausted, retryNote } from "./retry-lookup.js";
+import { dropMeta, mergeMeta } from "./metadata.js";
+import { RETRY_LOOKUP_QUEUE, RETRY_MAX_ATTEMPTS, workerAttempt } from "./retry-lookup.js";
 
 interface RetryPayload {
   itemId?: unknown;
@@ -36,10 +36,9 @@ export function registerRetryLookupWorker(): void {
     // there is nothing left to chase.
     if (!row || row.status === "discarded" || row.suggested_name) return;
 
-    // `attempts` is this attempt's number, so the LAST one has to finish
-    // cleanly rather than throw: a throw here would mark the job failed and
-    // leave the row still claiming a retry was coming.
-    const lastChance = retriesExhausted(job.attempts, RETRY_MAX_ATTEMPTS);
+    // The LAST run has to finish cleanly rather than throw: a throw would mark
+    // the job failed and leave the row still claiming a retry was coming.
+    const { attemptNo, lastChance, note } = workerAttempt(job.attempts, RETRY_MAX_ATTEMPTS);
 
     await enrichBarcodeItem({
       db,
@@ -50,6 +49,7 @@ export function registerRetryLookupWorker(): void {
       // The rate-limited outcome was deliberately never cached, but force also
       // skips the tenant cache's stale miss if one landed since.
       force: true,
+      fromRetryWorker: true,
       // A queued retry has no requesting user, so no user-scoped AI connection
       // resolves. That is correct rather than a limitation: this is the
       // workspace's background work, not a person's.
@@ -61,7 +61,7 @@ export function registerRetryLookupWorker(): void {
       .select(["suggested_name", "suggested_metadata"])
       .where("id", "=", itemId)
       .executeTakeFirst();
-    if (after?.suggested_name) return; // resolved — done
+    if (after?.suggested_name) return; // resolved — a successful identify cleared retry_queued
 
     const stillThrottled =
       !!(after?.suggested_metadata as { rate_limited?: boolean } | null)?.rate_limited;
@@ -69,7 +69,13 @@ export function registerRetryLookupWorker(): void {
     if (!stillThrottled) {
       // The provider answered and simply has nothing. enrichBarcodeItem has
       // already written the honest "fill in manually" note, so this job's work
-      // is finished even though the row has no name.
+      // is finished even though the row has no name. Release the queued-retry
+      // marker so a later throttled re-run can enqueue a fresh chain.
+      await db
+        .updateTable("core_scan_inbox_items")
+        .set({ suggested_metadata: dropMeta(["retry_queued"]) as never, updated_at: new Date() })
+        .where("id", "=", itemId)
+        .execute();
       return;
     }
 
@@ -78,12 +84,15 @@ export function registerRetryLookupWorker(): void {
     await db
       .updateTable("core_scan_inbox_items")
       .set({
-        ai_notes: retryNote(job.attempts, RETRY_MAX_ATTEMPTS),
+        ai_notes: note,
         ...(lastChance
-          ? // Budget spent. Drop the flag so the card stops rendering a
+          ? // Budget spent. Drop the flags so the card stops rendering a
             // "retrying" state nothing is backing, and let the note say plainly
             // that this one needs a human or a photo.
-            { suggested_metadata: mergeMeta({}, ["rate_limited"]) as never, ai_suggested_at: new Date() }
+            {
+              suggested_metadata: mergeMeta({}, ["rate_limited", "retry_queued"]) as never,
+              ai_suggested_at: new Date(),
+            }
           : {}),
         updated_at: new Date(),
       })
@@ -91,6 +100,6 @@ export function registerRetryLookupWorker(): void {
       .execute();
 
     if (lastChance) return;
-    throw new Error(`barcode ${upc} still rate-limited (attempt ${job.attempts})`);
+    throw new Error(`barcode ${upc} still rate-limited (attempt ${attemptNo})`);
   });
 }

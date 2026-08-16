@@ -14,6 +14,7 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { dismissOnEmptySpace } from "../lib/dismiss-on-empty";
 import { NavLink, useNavigate } from "react-router-dom";
 import { Menu, X, Moon, Sun, LogOut, Sliders, UserCog, Bell } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -140,11 +141,12 @@ export function MobileNav() {
         createPortal(
           <div className="md:hidden fixed inset-0 z-[80]">
             <OverlayFlag />
-            {/* backdrop — tap to dismiss */}
-            <div
-              className="absolute inset-0 bg-slate-900/40"
-              onClick={() => setOpen(false)}
-            />
+            {/* No backdrop: the panel below is `absolute inset-0` and opaque, so
+                anything behind it is invisible AND unreachable. One used to sit
+                here claiming "tap to dismiss", which was never true and is the
+                reason the dead space went unnoticed for so long: the code said
+                the gesture existed. Dismissing by tapping nothing is handled
+                inside the panel, where the empty space actually is. */}
             {/* panel — full height so page content never peeks below it; the
                 header pins while the destinations scroll under it. */}
             <nav
@@ -189,7 +191,13 @@ export function MobileNav() {
                 </button>
               </div>
 
-              <div className="flex-1 overflow-y-auto">
+              {/* The slack below the last destination is empty space, and a tap
+                  there means "put this away". This panel covers the whole
+                  screen, so there is no backdrop to reach for. */}
+              <div
+                className="flex-1 overflow-y-auto"
+                onClick={dismissOnEmptySpace(() => setOpen(false))}
+              >
               {/* TWO COLUMNS, for the destinations only.
                   A workspace with a normal number of modules ran this list past
                   the bottom of the screen: measured at 19 items it was 855px of

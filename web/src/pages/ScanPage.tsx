@@ -76,6 +76,7 @@ import { ChipFields, type ChipFieldDef, type ChipFieldType } from "../components
 import { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 export { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 import { decideLocationScan, filingLabel } from "../lib/scanFiling";
+import { measureDevice, photoPressAction } from "../lib/photoDevice";
 import { scanNotesPlacement } from "../lib/scanNotes";
 import { shouldOfferSplit } from "../lib/splitOffer";
 import { leadPhoto, photoOrder, photoUnverified } from "../lib/scanPhoto";
@@ -551,6 +552,18 @@ function NameItInline({ slug, itemId }: { slug: string; itemId: string }) {
  *  name (which, server-side, reports the fix to the shared Barcode Intelligence
  *  DB so the next scan of this UPC is right everywhere). Pre-filled with the
  *  current name so it's a quick edit, not a retype. */
+/** The carrier vocabulary in words a person uses. Six states, so a table
+ *  rather than a chain of conditions — and an unmapped one falls through to
+ *  itself instead of rendering blank. */
+const SHIPMENT_LABEL: Record<string, string> = {
+  pre_transit: "Label created",
+  in_transit: "In transit",
+  out_for_delivery: "Out for delivery",
+  delivered: "Delivered",
+  exception: "Needs attention",
+  unknown: "No information yet",
+};
+
 function CorrectNameInline({
   slug,
   itemId,
@@ -827,7 +840,7 @@ export function ScanPage() {
   // Session labels by batch id, merged across pages — drives the group header
   // ("Receipt · <vendor>", "emailed <when>") instead of a bare timestamp.
   const batchMeta = useMemo(() => {
-    const m: Record<string, { label: string | null; origin: string | null; source_file_id: string | null; order_ref: string | null; tracking_number: string | null }> = {};
+    const m: Record<string, { label: string | null; origin: string | null; source_file_id: string | null; order_ref: string | null; tracking_number: string | null; shipment_state: string | null; shipment_description: string | null; shipment_location: string | null }> = {};
     for (const p of list.data?.pages ?? []) Object.assign(m, p.batches ?? {});
     return m;
   }, [list.data]);
@@ -1052,14 +1065,23 @@ export function ScanPage() {
     );
   };
 
-  // Group the inbox for the grouped view (skipped when already scoped to one
-  // session via ?batch). An explicit scan SESSION (scan_batch_id) is one group;
-  // loose scans with NO batch group by their calendar DAY. So a hardware-scanner
-  // session reads as one timed group, and legacy / un-batched items still read as
-  // coherent "Today / Yesterday / <date>" buckets instead of one undifferentiated
-  // "No session" lump. Newest group first; items keep their created_at-desc order.
+  // Group the inbox for the grouped view. An explicit scan SESSION
+  // (scan_batch_id) is one group; loose scans with NO batch group by their
+  // calendar DAY. So a hardware-scanner session reads as one timed group, and
+  // legacy / un-batched items still read as coherent "Today / Yesterday /
+  // <date>" buckets instead of one undifferentiated "No session" lump. Newest
+  // group first; items keep their created_at-desc order.
+  //
+  // SCOPING TO ONE SESSION (?batch) STILL GROUPS. This used to return null
+  // there, reasoning that one session needs no separator — true of the
+  // grouping, false of the header, because the header is also the session's
+  // whole action surface. Returning null dropped the row entirely, so the page
+  // you open to work ONE session was the only page with no way to act on it as
+  // a session: no select-all (its checkbox is the only one in the file), no
+  // Place & file all, no Original / PO# / Tracking # / Re-parse. Filing meant
+  // ticking every card by hand (reported 2026-08-15). One group is a fine
+  // group; the controls decide for themselves what applies.
   const sessionGroups = useMemo(() => {
-    if (batchId) return null;
     type Group = {
       key: string;
       isBatch: boolean;
@@ -1073,6 +1095,9 @@ export function ScanPage() {
       sourceFileId: string | null; // the receipt's stored original (View / Re-parse)
       orderRef: string | null; // editable order/invoice number
       trackingNumber: string | null; // set = the parcel is still on its way
+      shipmentState: string | null; // where it is, per the last carrier answer
+      shipmentDescription: string | null;
+      shipmentLocation: string | null;
     };
     const groups: Group[] = [];
     const byBatch = new Map<string, Group>();
@@ -1090,13 +1115,13 @@ export function ScanPage() {
         if (existing) g = existing;
         else {
           const meta = batchMeta[it.scan_batch_id];
-          g = { key: it.scan_batch_id, isBatch: true, batchId: it.scan_batch_id, items: [], latest: 0, lastTouched: 0, area: null, label: meta?.label ?? null, origin: meta?.origin ?? null, sourceFileId: meta?.source_file_id ?? null, orderRef: meta?.order_ref ?? null, trackingNumber: meta?.tracking_number ?? null };
+          g = { key: it.scan_batch_id, isBatch: true, batchId: it.scan_batch_id, items: [], latest: 0, lastTouched: 0, area: null, label: meta?.label ?? null, origin: meta?.origin ?? null, sourceFileId: meta?.source_file_id ?? null, orderRef: meta?.order_ref ?? null, trackingNumber: meta?.tracking_number ?? null, shipmentState: meta?.shipment_state ?? null, shipmentDescription: meta?.shipment_description ?? null, shipmentLocation: meta?.shipment_location ?? null };
           byBatch.set(it.scan_batch_id, g);
           groups.push(g);
         }
       } else {
         if (!pseudo || !Number.isFinite(t) || pseudoLastT - t > SESSION_GAP_MS) {
-          pseudo = { key: `gap:${it.id}`, isBatch: false, batchId: null, items: [], latest: 0, lastTouched: 0, area: null, label: null, origin: null, sourceFileId: null, orderRef: null, trackingNumber: null };
+          pseudo = { key: `gap:${it.id}`, isBatch: false, batchId: null, items: [], latest: 0, lastTouched: 0, area: null, label: null, origin: null, sourceFileId: null, orderRef: null, trackingNumber: null, shipmentState: null, shipmentDescription: null, shipmentLocation: null };
           groups.push(pseudo);
         }
         if (Number.isFinite(t)) pseudoLastT = t;
@@ -1109,7 +1134,7 @@ export function ScanPage() {
       if (!g.area && it.scan_area) g.area = it.scan_area;
     }
     return groups.sort((a, b) => b.latest - a.latest);
-  }, [batchId, visibleItems, batchMeta]);
+  }, [visibleItems, batchMeta]);
 
   // The category label each item's SESSION agreed on, by item id.
   //
@@ -1120,18 +1145,15 @@ export function ScanPage() {
   // call sites, one answer.
   const sessionCategoryByItem = useMemo(() => {
     const m = new Map<string, string | null>();
-    const groups: ScanInboxItem[][] = sessionGroups
-      ? sessionGroups.map((g) => g.items)
-      : [visibleItems];
-    for (const g of groups) {
-      const agreed = sessionCategory(g).suggestion;
-      for (const it of g) m.set(it.id, agreed);
+    for (const g of sessionGroups) {
+      const agreed = sessionCategory(g.items).suggestion;
+      for (const it of g.items) m.set(it.id, agreed);
     }
     return m;
-  }, [sessionGroups, visibleItems]);
+  }, [sessionGroups]);
   // Every group (session or day) carries a meaningful time header now, so show
   // them whenever we're grouping at all.
-  const showSessionHeaders = !!sessionGroups && sessionGroups.length > 0;
+  const showSessionHeaders = sessionGroups.length > 0;
   const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
   // A sent-back item returns to its ORIGINAL spot (created_at preserved), so
   // it isn't at the top — surface it non-destructively (expand its session,
@@ -1149,7 +1171,7 @@ export function ScanPage() {
   // refetches; no-ops cleanly if the item isn't grouped/visible.
   useEffect(() => {
     if (!highlightId) return;
-    const grp = sessionGroups?.find((g) => g.items.some((i) => i.id === highlightId));
+    const grp = sessionGroups.find((g) => g.items.some((i) => i.id === highlightId));
     if (grp && collapsedSessions.has(grp.key)) {
       setCollapsedSessions((s) => {
         const n = new Set(s);
@@ -1170,7 +1192,7 @@ export function ScanPage() {
   // sessions and couldn't find the first two). Runs once the groups render.
   useEffect(() => {
     const hash = window.location.hash;
-    if (!hash.startsWith("#s-") || !sessionGroups?.length) return;
+    if (!hash.startsWith("#s-") || !sessionGroups.length) return;
     const el = document.getElementById(hash.slice(1));
     if (el) {
       el.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1192,7 +1214,7 @@ export function ScanPage() {
   // its one unique control (End session) onto that row instead.
   const activeSessionInList =
     !!activeSession?.batchId &&
-    !!sessionGroups?.some((g) => g.isBatch && g.batchId === activeSession.batchId);
+    sessionGroups.some((g) => g.isBatch && g.batchId === activeSession.batchId);
 
   // Rate-limited scans are retried by the SERVER (core-scan:retry-lookup on
   // core-queue), not here. This page used to run the only retry there was: a
@@ -1916,15 +1938,26 @@ export function ScanPage() {
   const [editingTracking, setEditingTracking] = useState<string | null>(null);
   const [trackingInput, setTrackingInput] = useState("");
   const trackingEditRef = useRef<HTMLSpanElement>(null);
+  // Which receipt is showing its parcel's status. Shares the exits below, so
+  // Escape and a click outside close it like every other transient panel here.
+  const [trackingPopover, setTrackingPopover] = useState<string | null>(null);
+  const trackingPopRef = useRef<HTMLSpanElement>(null);
   useEffect(() => {
-    if (!editingPo && !editingTracking) return;
+    if (!editingPo && !editingTracking && !trackingPopover) return;
     const closeAll = () => {
       setEditingPo(null);
       setEditingTracking(null);
+      setTrackingPopover(null);
     };
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
-      if (poEditRef.current?.contains(t) || trackingEditRef.current?.contains(t)) return;
+      if (
+        poEditRef.current?.contains(t) ||
+        trackingEditRef.current?.contains(t) ||
+        trackingPopRef.current?.contains(t)
+      ) {
+        return;
+      }
       closeAll();
     };
     const onKey = (e: KeyboardEvent) => {
@@ -1936,7 +1969,7 @@ export function ScanPage() {
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [editingPo, editingTracking]);
+  }, [editingPo, editingTracking, trackingPopover]);
   const setOrderRef = useMutation({
     mutationFn: (v: { batchId: string; orderRef: string | null }) =>
       api.setReceiptOrderRef(activeSlug, v.batchId, v.orderRef),
@@ -3216,7 +3249,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
             );
           }
           // Flat list when there's nothing to group by (scoped ?batch view).
-          if (!showSessionHeaders || !sessionGroups) return visibleItems.map(card);
+          if (!showSessionHeaders) return visibleItems.map(card);
           // Otherwise a collapsible header per group: a real session shows its
           // time (· area); a day bucket shows the day. Both show a count.
           return sessionGroups.map((g, gi) => {
@@ -3268,6 +3301,21 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
             // carries the "active" pulse + End control that used to live in the
             // now-suppressed green banner.
             const isActiveSession = sessionActive && g.isBatch && g.batchId === activeSession?.batchId;
+            // ONE definition of "this session is a purchase", for every control
+            // that only makes sense on one. An order number and a tracking
+            // number are facts about something you BOUGHT; a burst of barcodes
+            // off a shelf has neither. Each control used to spell its own gate
+            // out, and the tracking number's said only `g.batchId` — so "+
+            // Tracking #" sat on every scan session, including a barcode just
+            // scanned (reported 2026-08-15). Two controls with the same meaning
+            // and two hand-written gates is one gate waiting to be wrong.
+            //
+            // By LABEL rather than sourceFileId, deliberately: sessions from
+            // before receipt originals were stored are still purchases. The
+            // controls that need the stored FILE (Original, Re-parse) keep
+            // gating on sourceFileId — that is a capability check, not this
+            // question.
+            const isReceiptSession = g.isBatch && !!g.batchId && !!g.label?.startsWith("Receipt");
             return (
               <div key={g.key} id={g.batchId ? `s-${g.batchId}` : undefined} className="space-y-2 scroll-mt-24">
                 {/* ONE row, always. No `flex-wrap`, and `overflow-hidden` so a
@@ -3394,9 +3442,8 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       <FileText size={11} /> Original
                     </button>
                   )}
-                  {/* Edit the order/invoice #. Gated on a RECEIPT session (by label,
-                      so pre-source-storage sessions get it too), not sourceFileId. */}
-                  {g.isBatch && g.batchId && g.label?.startsWith("Receipt") &&
+                  {/* Edit the order/invoice #. Purchase-only — see isReceiptSession. */}
+                  {isReceiptSession &&
                     (editingPo === g.batchId ? (
                       <span
                         ref={poEditRef}
@@ -3448,8 +3495,15 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       </button>
                     ))}
                   {/* Tracking number — beside the order number because they
-                      arrive together, off the same receipt, in the same glance. */}
-                  {g.batchId &&
+                      arrive together, off the same receipt, in the same glance.
+                      And gated the same way, for the same reason: a parcel is
+                      something a PURCHASE has.
+
+                      The `|| g.trackingNumber` is not a loophole: a number
+                      saved while the control was ungated has to stay editable
+                      and clearable, or tightening the gate would strand it on a
+                      session that can no longer reach it. */}
+                  {(isReceiptSession || (!!g.batchId && !!g.trackingNumber)) &&
                     (editingTracking === g.batchId ? (
                       <span ref={trackingEditRef} className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                         <input
@@ -3480,23 +3534,111 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         </button>
                       </span>
                     ) : (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setTrackingInput(g.trackingNumber ?? "");
-                          setEditingTracking(g.batchId!);
-                        }}
-                        title={
-                          g.trackingNumber
-                            ? "Edit the tracking number - this receipt files as still in transit"
-                            : "Add a tracking number - the parcel is still on its way"
-                        }
-                        className="shrink-0 inline-flex items-center gap-1 text-faint hover:text-accent"
+                      // The status hangs off this control rather than taking a
+                      // line of its own. Where a parcel is belongs to the
+                      // RECEIPT, so the header is the right area — but the
+                      // header is already dense, and a permanent second line
+                      // for a fact you check occasionally is a poor trade.
+                      <span
+                        // Attached only to the OPEN one. A single ref across
+                        // every receipt in the list would end up pointing at
+                        // whichever rendered last, so clicking inside an open
+                        // popover on any other row would count as "outside"
+                        // and dismiss it.
+                        ref={trackingPopover === g.batchId ? trackingPopRef : undefined}
+                        className="relative shrink-0 inline-flex"
                       >
-                        <Truck size={11} /> {g.trackingNumber ? "Tracking #" : "+ Tracking #"}
-                      </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            // Nothing to show without a number: go straight to
+                            // the input rather than open an empty panel.
+                            if (!g.trackingNumber) {
+                              setTrackingInput("");
+                              setEditingTracking(g.batchId!);
+                              return;
+                            }
+                            setTrackingPopover(trackingPopover === g.batchId ? null : g.batchId!);
+                          }}
+                          title={
+                            g.trackingNumber
+                              ? "Where this parcel is, and the number"
+                              : "Add a tracking number - the parcel is still on its way"
+                          }
+                          // Green once a number is set, so "is this one being
+                          // followed?" is answerable by glancing down the column
+                          // instead of reading each label for a leading +.
+                          className={`inline-flex items-center gap-1 ${
+                            g.trackingNumber
+                              ? "text-emerald-600 dark:text-emerald-400 hover:text-emerald-500"
+                              : "text-faint hover:text-accent"
+                          }`}
+                        >
+                          <Truck size={11} />{" "}
+                          {/* The label IS the status once there is one. The
+                              header had no room for a second line, and a
+                              control that says "Tracking #" next to a number
+                              you cannot see is a label for a label. */}
+                          {!g.trackingNumber
+                            ? "+ Tracking #"
+                            : g.shipmentState
+                              ? (SHIPMENT_LABEL[g.shipmentState] ?? g.shipmentState)
+                              : "Tracking #"}
+                        </button>
+
+                        {trackingPopover === g.batchId && g.trackingNumber && (
+                          // Click, not hover: a phone has no hover, and this is
+                          // the surface a phone user reaches for most.
+                          <div
+                            onClick={(e) => e.stopPropagation()}
+                            className="absolute left-0 top-full z-30 mt-1.5 w-64 rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-2.5 shadow-lg space-y-1.5 text-left"
+                          >
+                            {/* No state line: the button is already showing it.
+                                This panel carries what would not fit there. */}
+                            {!g.shipmentState && (
+                              <div className="text-xs text-faint italic">Not checked yet</div>
+                            )}
+                            {/* The carrier's own wording is more specific than
+                                our six states ("Arrived at FedEx location"). */}
+                            {g.shipmentDescription && (
+                              <div className="text-[11px] text-muted">{g.shipmentDescription}</div>
+                            )}
+                            {g.shipmentLocation && (
+                              <div className="text-[11px] text-faint">{g.shipmentLocation}</div>
+                            )}
+                            <div className="font-mono text-[11px] text-faint break-all pt-0.5">
+                              {g.trackingNumber}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setTrackingPopover(null);
+                                setTrackingInput(g.trackingNumber ?? "");
+                                setEditingTracking(g.batchId!);
+                              }}
+                              className="text-[11px] text-accent hover:underline"
+                            >
+                              Edit number
+                            </button>
+                          </div>
+                        )}
+                      </span>
                     ))}
+                  {/* Where it is, for a receipt still waiting to be filed. The
+                      point of following a parcel is seeing this without having
+                      to go anywhere, so it sits in the row itself. */}
+                  {g.shipmentState && (
+                    <span
+                      title={[g.shipmentDescription, g.shipmentLocation].filter(Boolean).join(" · ") || undefined}
+                      className={`shrink-0 inline-flex items-center gap-1 ${
+                        g.shipmentState === "delivered" ? "text-emerald-600 dark:text-emerald-400" : "text-muted"
+                      }`}
+                    >
+                      {SHIPMENT_LABEL[g.shipmentState] ?? g.shipmentState}
+                      {g.shipmentLocation && <span className="text-faint">· {g.shipmentLocation}</span>}
+                    </span>
+                  )}
                   {g.sourceFileId && g.batchId && (
                     <button
                       type="button"
@@ -3643,7 +3785,12 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       <CheckCircle size={11} /> filed
                     </span>
                   )}
-                  {g.isBatch && g.batchId && (
+                  {/* Not when we ARE that page (?batch): it would link to where
+                      you already are. The only control in this row that a
+                      single-session view has to drop — the rest either apply
+                      unchanged or already withhold themselves (Merge needs an
+                      older session to fold into, and finds none). */}
+                  {g.isBatch && g.batchId && !batchId && (
                     <Link
                       to={`/scan?batch=${g.batchId}`}
                       title="Review just this session"
@@ -4247,6 +4394,10 @@ function InboxCard({
   // and never a function of whether the card happens to be open.
   const notesPlacement = scanNotesPlacement({ notes: item.ai_notes, rateLimited, lowTrust });
   const barcodeIdentified = !!item.barcode_text && !!item.suggested_name;
+  // "I said I would photograph this." A person set it, so an AI re-run must
+  // not clear it (see IDENTIFY_OWNED_KEYS in core-scan metadata.ts).
+  const photoWanted =
+    (item.suggested_metadata as { photo_wanted?: boolean } | null)?.photo_wanted === true;
   const [correcting, setCorrecting] = useState(false);
   // The photo cross-check flagged the barcode→name as wrong AND read the real
   // product off the label. Offer it as a one-tap fix: applying it renames the
@@ -4663,8 +4814,13 @@ function InboxCard({
   const toFile = (b: Blob, tag: string) =>
     b instanceof File ? b : new File([b], `${tag}-${Date.now()}.jpg`, { type: "image/jpeg" });
   const addPhoto = useMutation({
-    mutationFn: (b: Blob) =>
-      api.uploadFile(activeSlug, toFile(b, "photo")).then((up) => api.addScanPhoto(activeSlug, item.id, up.id)),
+    mutationFn: (v: Blob | { blob: Blob; uploaded?: boolean }) => {
+      const blob = v instanceof Blob ? v : v.blob;
+      const uploaded = v instanceof Blob ? false : !!v.uploaded;
+      return api
+        .uploadFile(activeSlug, toFile(blob, "photo"))
+        .then((up) => api.addScanPhoto(activeSlug, item.id, up.id, { uploaded }));
+    },
     onSuccess: () => {
       setCaptureSheet(null);
       // Adding a photo is inert for identification on its own - say where the
@@ -4684,6 +4840,34 @@ function InboxCard({
     onSuccess: () => {
       setCaptureSheet(null);
       toast.success("Catalog photo replaced with your shot");
+      invalidateInbox();
+    },
+    onError: onErr,
+  });
+  // A receipt document, by the same test the inbox's upload door uses. Chosen
+  // from the card, it is the paperwork for THIS item rather than a new intake:
+  // the order is recorded in full and nothing lands in the inbox, because this
+  // item is already here. See docs/design-decisions/receipt-or-provenance.md.
+  const attachReceipt = useMutation({
+    mutationFn: (file: File) =>
+      api
+        .uploadFile(activeSlug, file)
+        .then((up) => api.scanReceipt(activeSlug, up.id, { origin: "upload", target_item_id: item.id })),
+    onSuccess: () => {
+      setCaptureSheet(null);
+      toast.success("Receipt attached - its purchase is on record");
+      invalidateInbox();
+    },
+    onError: onErr,
+  });
+
+  // "I'll photograph this" — the mark half of the one photo button. On a device
+  // that can actually take the picture the button opens the camera instead and
+  // never gets here.
+  const setPhotoWanted = useMutation({
+    mutationFn: (wanted: boolean) => api.updateScanItem(activeSlug, item.id, { photo_wanted: wanted }),
+    onSuccess: (_r, wanted) => {
+      toast.success(wanted ? "Waiting on your phone" : "Cleared");
       invalidateInbox();
     },
     onError: onErr,
@@ -5392,6 +5576,47 @@ function InboxCard({
             ("RAM EZ-Roll'r …"). self-stretch + justify-between spreads them over
             the card's full height: rerun at the top, discard centered, the
             expand chevron pinned near the bottom (rather than a tight top cluster). */}
+        {/* THE one image control on a closed card. Everything rarer (retake for
+            catalog, another angle, split) stays in the ⋯ menu beside it.
+            One button, one sentence: "I'll photograph this." The only thing
+            that varies is now or later, and the DEVICE answers that (see
+            lib/photoDevice.ts) rather than a setting or a menu - so the button
+            means the same thing on every machine and needs no explaining.
+
+            `self-start`, not centred in the rail: the rail is deliberately
+            spread over the card's height, and a control that moves depending on
+            how tall a card happens to be is a control you have to look for. Top
+            of the card is the title's first line, and it stays there when a long
+            title wraps to two - which is the case that would otherwise push it
+            somewhere different on every row. */}
+        {item.status === "pending" && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              const act = photoPressAction(measureDevice(), photoWanted);
+              if (act === "capture") setCaptureSheet("retake");
+              else setPhotoWanted.mutate(act === "mark");
+            }}
+            disabled={setPhotoWanted.isPending}
+            aria-pressed={photoWanted}
+            title={
+              photoWanted
+                ? "Waiting for your photo - tap to clear"
+                : "I'll photograph this myself"
+            }
+            className={`relative shrink-0 self-start mt-2 mr-0.5 rounded-lg border p-1.5 transition disabled:opacity-50 ${
+              photoWanted
+                ? "border-cobble-400 bg-cobble-500/20 text-cobble-200"
+                : "border-transparent text-faint hover:border-line hover:text-accent"
+            }`}
+          >
+            <Camera size={14} />
+            {photoWanted && (
+              <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-amber-400" />
+            )}
+          </button>
+        )}
         <div className="flex flex-col items-center justify-between shrink-0 self-stretch py-2 pr-0.5" onClick={(e) => e.stopPropagation()}>
           {/* The item's rare tools. They lived under the photos, where the row
               they needed cost more vertical space than the controls were worth
@@ -5546,7 +5771,26 @@ function InboxCard({
         open={captureSheet !== null}
         title={captureSheet === "retake" ? "Retake catalog photo" : "Add a photo"}
         busy={retakeCatalog.isPending || addPhoto.isPending}
-        onCapture={(blob) => (captureSheet === "retake" ? retakeCatalog.mutate(blob) : addPhoto.mutate(blob))}
+        // A picture CHOSEN from the device is attached, never promoted to the
+        // display image, whichever door opened the sheet. A capture is a photo
+        // of the object in front of you; a file off the camera roll is
+        // routinely a listing screenshot or a spec sheet, and quietly making
+        // one the item's face is worse than asking. The gallery's make-primary
+        // is one tap away when it really is the picture you want.
+        onCapture={(blob, opts) => {
+          // The file's TYPE routes it, the same rule the inbox door states: a
+          // PDF or CSV is only ever a receipt, so it goes to the parser and
+          // becomes this item's purchase. Everything else is a picture.
+          const f = blob instanceof File ? blob : null;
+          const isReceiptDoc =
+            !!f && (f.type === "application/pdf" || f.type === "text/csv" || /\.(pdf|csv)$/i.test(f.name));
+          if (isReceiptDoc && f) return attachReceipt.mutate(f);
+          return opts?.uploaded
+            ? addPhoto.mutate({ blob, uploaded: true })
+            : captureSheet === "retake"
+              ? retakeCatalog.mutate(blob)
+              : addPhoto.mutate(blob);
+        }}
         onClose={() => setCaptureSheet(null)}
       />
       {makeBinOpen && (
@@ -6220,7 +6464,9 @@ function ExtraPhotoThumb({
         title="Make this the primary photo"
         className="w-14 h-14 rounded-md overflow-hidden border border-line dark:border-slate-700 bg-black flex items-center justify-center disabled:opacity-50"
       >
-        {src ? <img src={src} alt="" className="w-full h-full object-cover" /> : <ImageIcon size={16} className="text-faint" />}
+        {/* CONTAIN: this tile is how you decide WHICH of your photos should
+            lead, so it has to show the whole shot rather than its middle. */}
+        {src ? <img src={src} alt="" className="w-full h-full object-contain" /> : <ImageIcon size={16} className="text-faint" />}
       </button>
       <button
         type="button"

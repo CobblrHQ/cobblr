@@ -67,6 +67,7 @@ import * as edgeImpl from "./platform/edge.js";
 import * as egressImpl from "./platform/egress.js";
 import { syncManifestRegistries } from "./platform/registry-sync.js";
 import { registerPlatformActionHandlers } from "./platform/platform-action-handlers.js";
+import { registerHostedMcp } from "./platform/hosted-mcp.js";
 import { syncInstalledModules } from "./platform/installed-modules.js";
 import { migrateBookshelfToInstance } from "./platform/migrate-bookshelf-to-instance.js";
 import { mergeLabelsQr } from "./platform/merge-labels-qr.js";
@@ -876,6 +877,9 @@ async function boot() {
   // BEFORE the registry sync that seeds their rows, so an action is never
   // listed without its handler.
   registerPlatformActionHandlers();
+  // The HTTP MCP face (POST /api/v1/hooks/mcp). Registered after the module
+  // loader so its tool list reflects every loaded module's kinds and actions.
+  registerHostedMcp();
   // Mirror manifests into the cobblr_meta registries after load so
   // <EntityActionsBar> / platform.entities.lookup() etc. have
   // accurate metadata. Done AFTER load so module-side resolver /

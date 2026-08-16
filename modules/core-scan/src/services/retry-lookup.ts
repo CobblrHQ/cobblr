@@ -50,6 +50,28 @@ export function retriesExhausted(attempts: number, maxAttempts = RETRY_MAX_ATTEM
   return attempts >= maxAttempts;
 }
 
+/** The worker's view of one run, from core-queue's `job.attempts`.
+ *
+ *  That field is the count of PRIOR attempts — the column starts at 0 and is
+ *  incremented only after a run throws — so the run in hand is number
+ *  `attempts + 1` and the final run arrives as `maxAttempts - 1`. The worker
+ *  once compared `job.attempts` itself against the budget, which made the
+ *  give-up branch unreachable: the row kept saying "retrying" after the last
+ *  attempt had already run and the job was marked failed. Route every reading
+ *  of `job.attempts` through here so the two numbering schemes can never be
+ *  conflated again. */
+export function workerAttempt(
+  priorAttempts: number,
+  maxAttempts = RETRY_MAX_ATTEMPTS,
+): { attemptNo: number; lastChance: boolean; note: string } {
+  const attemptNo = priorAttempts + 1;
+  return {
+    attemptNo,
+    lastChance: retriesExhausted(attemptNo, maxAttempts),
+    note: retryNote(attemptNo, maxAttempts),
+  };
+}
+
 /** Queue a fresh look-up for a row a throttled provider left unresolved. */
 export async function enqueueRetryLookup(args: {
   orgId: string;

@@ -23,7 +23,8 @@ import { buildCadenceEvents } from "../cadence-events.js";
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
-import { fileReceiptAs } from "../services/receipt-arrival.js";
+import { fileReceiptAs, type KnownShipment } from "../services/receipt-arrival.js";
+import { addOrderLine, cancelReceiptOrder, createReceiptOrder } from "../services/receipt-order.js";
 import {
   mapRoledFacts,
   planDecodeFill,
@@ -170,6 +171,9 @@ inboxRouter.get(
         sql<string | null>`max(coalesce(b.vendor, i.suggested_metadata->>'receipt_vendor'))`.as("vendor"),
         sql<string | null>`max(b.order_ref)`.as("order_ref"),
         sql<string | null>`max(b.tracking_number)`.as("tracking_number"),
+        sql<string | null>`max(b.shipment_state)`.as("shipment_state"),
+        sql<string | null>`max(b.shipment_description)`.as("shipment_description"),
+        sql<string | null>`max(b.shipment_location)`.as("shipment_location"),
         eb.fn.countAll<number>().as("count"),
       ])
       .where("i.source_kind", "=", "receipt")
@@ -182,6 +186,11 @@ inboxRouter.get(
       vendor: r.vendor,
       orderRef: r.order_ref,
       trackingNumber: r.tracking_number,
+      // Where it is right now, so the inbox row can say so without anyone
+      // having to file the receipt first.
+      shipmentState: r.shipment_state,
+      shipmentDescription: r.shipment_description,
+      shipmentLocation: r.shipment_location,
       count: Number(r.count),
     }));
     res.json({ groups, total_items: groups.reduce((s, g) => s + g.count, 0) });
@@ -358,7 +367,10 @@ inboxRouter.post(
             );
         } else if (attachPhoto && bumped.suggested_name) {
           // Already named, and we just gave it a photo → run the barcode-vs-photo
-          // cross-check so a wrong name gets flagged (and a one-tap fix offered).
+          // cross-check. No flagOnly here, deliberately: a scan-moment photo is
+          // the strongest evidence about the object in hand, so an image-basis
+          // mismatch with a confident read RENAMES (and votes) rather than
+          // merely flagging — the evidence-model treatment for this door.
           void crossCheckScanPhoto(ctx.org.id, bumped.id, bumped.suggested_name).catch((err) =>
             console.error("[core-scan] re-scan cross-check threw:", (err as Error).message),
           );
@@ -613,8 +625,12 @@ async function materializeReceiptLines(opts: {
   method: ParseMethod;
   token: string | null;
   baseUrl: string;
+  /** The receipt_group_id to stamp. Supplied by the parse route so the order it
+   *  creates can carry the same key; generated here when a caller does not care
+   *  (reparse), which keeps this the only place that has to know. */
+  groupId?: string;
 }): Promise<Array<{ id: string }>> {
-  const groupId = randomUUID();
+  const groupId = opts.groupId ?? randomUUID();
   const t = opts.receipt.totals;
   const baseMeta = {
     source: "receipt",
@@ -698,6 +714,15 @@ const ReceiptBody = z.object({
   /** Skip the "you already imported this receipt" guard and import it anyway
    *  (the user chose to, or it's a re-forward of one they'd discarded). */
   force: z.boolean().optional(),
+  /** THIS receipt belongs to an item that already exists.
+   *
+   *  The ordinary upload is an INTAKE: the receipt arrives first and its lines
+   *  become the items. This is the other direction — the item is already here
+   *  and you are attaching the paperwork, which is the case that had no home
+   *  because there was nothing left to triage. So: the order and all its lines
+   *  are recorded as usual, the item is linked to it, and NO inbox rows are
+   *  created. Nothing needs triaging; it already was. */
+  target_item_id: z.string().uuid().optional(),
 });
 
 inboxRouter.post(
@@ -795,7 +820,15 @@ inboxRouter.post(
 
     // One inbox row per line item (shared receipt_group_id, attached to the
     // batch), then matched against the menu — a receipt becomes N parts.
-    const rows = await materializeReceiptLines({
+    const receiptBaseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+    const receiptGroupId = randomUUID();
+    // Attaching paperwork to an item that already exists: the order is still
+    // recorded in full, but nothing is put in the inbox, because nothing needs
+    // triaging. See the target_item_id comment on the body above.
+    const targetItemId = parsed.data.target_item_id ?? null;
+    const rows = targetItemId
+      ? []
+      : await materializeReceiptLines({
       db,
       orgId: ctx.org.id,
       orgSlug: ctx.org.slug,
@@ -804,8 +837,73 @@ inboxRouter.post(
       receipt,
       method,
       token: bearer(req),
-      baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
-    });
+      baseUrl: receiptBaseUrl,
+      groupId: receiptGroupId,
+        });
+
+    // THE ORDER IS BORN HERE, not at confirm. A receipt is a document and
+    // documents live in Purchases, which was only true after somebody triaged
+    // for as long as the order was created by receipt-group confirm: a receipt
+    // nobody got to never reached Purchases at all, and one attached to an
+    // already-triaged item had no moment at which its order could appear. See
+    // docs/design-decisions/order-at-parse.md.
+    //
+    // Every line is recorded on the order with part_id NULL, because a line on a
+    // receipt is not a thing you own — most of a grocery order is eaten. Confirm
+    // is what claims one, by setting part_id.
+    //
+    // Best-effort throughout: a workspace without purchases still uploads,
+    // triages and commits its receipts, it simply has no order.
+    if (batchId) {
+      const headers = { Authorization: `Bearer ${bearer(req)}`, "Content-Type": "application/json" };
+      const orderId = await createReceiptOrder({
+        baseUrl: receiptBaseUrl,
+        slug: ctx.org.slug,
+        headers,
+        vendor: receipt.vendor,
+        orderRef,
+        orderedAt: receipt.date,
+        trackingNumber: null, // nobody has had a chance to add one yet
+        knownShipment: null,
+        total: receipt.total,
+        groupId: receiptGroupId,
+        sourceFileId: parsed.data.file_id,
+      });
+      if (orderId) {
+        await db
+          .updateTable("core_scan_batches")
+          .set({ purchases_order_id: orderId })
+          .where("id", "=", batchId)
+          .execute();
+        for (const line of receipt.items) {
+          await addOrderLine({
+            baseUrl: receiptBaseUrl,
+            slug: ctx.org.slug,
+            headers,
+            orderId,
+            description: line.description,
+            qty: line.qty,
+            unitCost: line.unit_price,
+          });
+        }
+        // The item this paperwork was attached to now knows its purchase. A
+        // user-owned key, deliberately outside IDENTIFY_OWNED_KEYS: an AI
+        // re-run has no standing to forget which receipt a person filed.
+        if (targetItemId) {
+          await db
+            .updateTable("core_scan_inbox_items")
+            .set({
+              suggested_metadata: mergeMeta({
+                purchases_order_id: orderId,
+                receipt_group_id: receiptGroupId,
+              }) as never,
+              updated_at: new Date(),
+            })
+            .where("id", "=", targetItemId)
+            .execute();
+        }
+      }
+    }
 
     res.status(201).json({
       receipt: {
@@ -1052,68 +1150,67 @@ inboxRouter.post(
     // The batch carries the stored receipt file + the parsed order ref, so the
     // order can show the actual receipt and its number — not a bare note.
     const batchId = rows[0]!.scan_batch_id;
+    const batchIdForOrder = batchId;
     let sourceFileId: string | null = null;
     let orderRef: string | null = typeof meta0.receipt_order_ref === "string" ? meta0.receipt_order_ref : null;
     let trackingNumber: string | null = null;
+    let knownShipment: KnownShipment | null = null;
+    // Set when the receipt was parsed by a version that creates the order up
+    // front. Null means "parsed before that shipped" and is what selects the
+    // legacy create path below.
+    let existingOrderId: string | null = null;
     if (batchId) {
       const batch = await db
         .selectFrom("core_scan_batches")
-        .select(["source_file_id", "order_ref", "tracking_number"])
+        .select(["source_file_id", "order_ref", "tracking_number", "shipment_state", "shipment_checked_at", "shipment_next_poll_at", "shipment_location", "purchases_order_id"])
         .where("id", "=", batchId)
         .executeTakeFirst();
+      existingOrderId = batch?.purchases_order_id ?? null;
       sourceFileId = batch?.source_file_id ?? null;
       if (!orderRef && batch?.order_ref) orderRef = batch.order_ref;
       trackingNumber = batch?.tracking_number ?? null;
-    }
-
-    // Link the order to a real vendor record (find-or-create by name) instead of
-    // leaving it as free text. Best-effort — degrades to the legacy vendor string.
-    let vendorId: string | null = null;
-    if (vendor) {
-      try {
-        const vBase = `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/purchases/vendors`;
-        const listRes = await fetch(vBase, { headers });
-        if (listRes.ok) {
-          const items = ((await listRes.json()) as { items?: Array<{ id: string; name: string }> }).items ?? [];
-          const hit = items.find((v) => v.name.trim().toLowerCase() === vendor.trim().toLowerCase());
-          if (hit) vendorId = hit.id;
-          else {
-            const cRes = await fetch(vBase, { method: "POST", headers, body: JSON.stringify({ name: vendor }) });
-            if (cRes.ok) vendorId = ((await cRes.json()) as { id: string }).id;
-          }
-        }
-      } catch (err) {
-        console.warn("[core-scan] receipt vendor link threw:", (err as Error).message);
+      // What the inbox already learned while this receipt sat here, so the
+      // order continues the watch instead of opening at "no information".
+      if (batch?.shipment_state) {
+        knownShipment = {
+          state: batch.shipment_state,
+          checkedAt: batch.shipment_checked_at ?? null,
+          nextPollAt: batch.shipment_next_poll_at ?? null,
+          location: batch.shipment_location ?? null,
+        };
       }
     }
 
-    // Create the order (best-effort — skipped if purchases isn't enabled).
-    let orderId: string | null = null;
-    try {
-      const orderRes = await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/purchases/orders`, {
-        method: "POST",
+    // ATTACH, don't create — the order was born when the receipt was parsed.
+    //
+    // PHASE 1 (docs/design-decisions/order-at-parse.md §Migration): the create
+    // path below is kept for batches parsed BEFORE that moved, whose column is
+    // null. That is the whole tolerance: nothing breaks for a receipt already
+    // sitting in the inbox, and a canary on the previous api only ever takes
+    // the create branch. It retires in phase 2, once no un-confirmed
+    // pre-migration batches remain.
+    let orderId: string | null = existingOrderId;
+    if (!orderId) {
+      orderId = await createReceiptOrder({
+        baseUrl,
+        slug: ctx.org.slug,
         headers,
-        body: JSON.stringify({
-          vendor_id: vendorId ?? undefined,
-          vendor: vendorId ? undefined : vendor, // vendor_id dual-writes the name text
-          order_number: orderRef ?? undefined,
-          ordered_at: orderedAt,
-          // Already here, or still coming — and the tracking number is what
-          // decides. See services/receipt-arrival.ts for why that matters more
-          // than it looks (the arrival sweep skips 'arrived').
-          ...fileReceiptAs(trackingNumber, orderedAt),
-          total_cost: sawAmount ? Number(total.toFixed(2)) : undefined,
-          notes: "Imported from a receipt.",
-          metadata: { receipt_group_id: groupId, source: "receipt", receipt_file_id: sourceFileId ?? undefined },
-        }),
+        vendor,
+        orderRef,
+        orderedAt,
+        trackingNumber,
+        knownShipment,
+        total: sawAmount ? Number(total.toFixed(2)) : null,
+        groupId,
+        sourceFileId,
       });
-      if (orderRes.ok) {
-        orderId = ((await orderRes.json()) as { id: string }).id;
-      } else {
-        console.warn(`[core-scan] receipt PO create skipped (${orderRes.status}) — purchases disabled?`);
+      if (orderId && batchIdForOrder) {
+        await db
+          .updateTable("core_scan_batches")
+          .set({ purchases_order_id: orderId })
+          .where("id", "=", batchIdForOrder)
+          .execute();
       }
-    } catch (err) {
-      console.warn("[core-scan] receipt PO create threw:", (err as Error).message);
     }
 
     // Confirm each line into a part (reusing the per-item confirm), then attach
@@ -1212,6 +1309,11 @@ interface BatchLabel {
   source_file_id: string | null;
   order_ref: string | null;
   tracking_number: string | null;
+  /** Where the parcel is, so a receipt WAITING in the inbox can say so.
+   *  Filing it into an order is bookkeeping; the parcel moves either way. */
+  shipment_state: string | null;
+  shipment_description: string | null;
+  shipment_location: string | null;
 }
 
 /** Session labels for the batches on a page — the inbox groups items by
@@ -1226,7 +1328,7 @@ async function batchLabelsFor(
   if (!batchIds.length) return batches;
   for (const b of await db
     .selectFrom("core_scan_batches")
-    .select(["id", "label", "origin", "source_file_id", "order_ref", "tracking_number"])
+    .select(["id", "label", "origin", "source_file_id", "order_ref", "tracking_number", "shipment_state", "shipment_description", "shipment_location"])
     .where("id", "in", batchIds)
     .execute()) {
     batches[b.id] = {
@@ -1235,6 +1337,9 @@ async function batchLabelsFor(
       source_file_id: b.source_file_id,
       order_ref: b.order_ref,
       tracking_number: b.tracking_number,
+      shipment_state: b.shipment_state,
+      shipment_description: b.shipment_description,
+      shipment_location: b.shipment_location,
     };
   }
   return batches;
@@ -1376,6 +1481,10 @@ const PatchBody = z.object({
   // true = keep as one record; the offer stops asking. An UNANSWERED offer and a
   // declined one must look different, or we'd nag on every render.
   keep_grouped: z.boolean().optional(),
+  // "I will photograph this myself." Set from a desk, where the camera is not
+  // the one you want; the scanner and the dashboard then carry the item to the
+  // phone, instead of you finding it again in a long inbox.
+  photo_wanted: z.boolean().optional(),
 });
 
 inboxRouter.patch(
@@ -1399,7 +1508,8 @@ inboxRouter.patch(
     if (
       parsed.data.box_state !== undefined ||
       parsed.data.reviewed !== undefined ||
-      parsed.data.keep_grouped !== undefined
+      parsed.data.keep_grouped !== undefined ||
+      parsed.data.photo_wanted !== undefined
     ) {
       const cur = await db
         .selectFrom("core_scan_inbox_items")
@@ -1413,6 +1523,13 @@ inboxRouter.patch(
       }
       if (parsed.data.reviewed !== undefined) meta.reviewed = parsed.data.reviewed;
       if (parsed.data.keep_grouped !== undefined) meta.keep_grouped = parsed.data.keep_grouped;
+      // Cleared rather than stored false: the queue asks "which items want a
+      // photo", and a row answering "not me" is noise in a jsonb bag that four
+      // other writers share.
+      if (parsed.data.photo_wanted !== undefined) {
+        if (parsed.data.photo_wanted) meta.photo_wanted = true;
+        else delete meta.photo_wanted;
+      }
       patch.suggested_metadata = JSON.stringify(meta);
     }
     // Capture the prior name first: renaming a barcode item is a correction we
@@ -2359,6 +2476,39 @@ inboxRouter.post(
     if (!row) {
       res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
       return;
+    }
+    // The receipt's LAST live line just went. Its order was created eagerly at
+    // parse (order-at-parse.md), so without this an abandoned receipt leaves a
+    // purchase behind — a cost that did not exist while orders were born at
+    // confirm, and the reason cancelling is part of that change rather than a
+    // follow-up. Cancelled, not deleted: the status exists, and a cancelled
+    // order is a truer record of "uploaded then discarded" than a gap.
+    if (row.scan_batch_id) {
+      void (async () => {
+        try {
+          const live = await db
+            .selectFrom("core_scan_inbox_items")
+            .select((eb) => eb.fn.countAll<number>().as("n"))
+            .where("scan_batch_id", "=", row.scan_batch_id)
+            .where("status", "!=", "discarded")
+            .executeTakeFirst();
+          if (Number(live?.n ?? 0) > 0) return;
+          const batch = await db
+            .selectFrom("core_scan_batches")
+            .select("purchases_order_id")
+            .where("id", "=", row.scan_batch_id!)
+            .executeTakeFirst();
+          if (!batch?.purchases_order_id) return;
+          await cancelReceiptOrder({
+            baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
+            slug: ctx.org.slug,
+            headers: { Authorization: `Bearer ${bearer(req)}`, "Content-Type": "application/json" },
+            orderId: batch.purchases_order_id,
+          });
+        } catch (err) {
+          console.warn("[core-scan] discard order cancel threw:", (err as Error).message);
+        }
+      })();
     }
     void platform().events.emit("core-scan.scan.discarded", {
       orgId: ctx.org.id,
@@ -3472,7 +3622,11 @@ inboxRouter.post(
           catalog_image_url: null,
           // The user chose this image → lock it so a re-identify won't clobber it,
           // and push what it replaced so Revert can undo back to it.
-          suggested_metadata: mergeMeta(catalogSet("upload")) as never,
+          // The photo they said they would take has arrived, so the standing
+          // "I'll photograph this" is answered. Cleared HERE rather than in the
+          // client so it closes the same way from the card, the scanner queue
+          // and a deep link.
+          suggested_metadata: mergeMeta(catalogSet("upload"), ["photo_wanted"]) as never,
           updated_at: new Date(),
         })
         .where("id", "=", row.id)
@@ -3492,7 +3646,11 @@ inboxRouter.post(
       //   • already named → flagOnly, so a disagreement is OFFERED with its
       //     one-tap fix rather than performed. A silent rename of something
       //     you were happy with is the failure that started this list.
-      const named = saved.suggested_name;
+      // A junk placeholder ("Robot Check", the bare digits) counts as unnamed:
+      // offering a correction against it can only produce a flag the user must
+      // tap, when the identify path would have written the name outright.
+      const named =
+        saved.suggested_name && !isJunkName(saved.suggested_name) ? saved.suggested_name : null;
       if (addedPhotoIntent(!!named) === "offer-correction" && named) {
         void crossCheckScanPhoto(ctx.org.id, row.id, named, {
           fileId: parsed.data.file_id,
@@ -4384,7 +4542,8 @@ inboxRouter.post(
 // ─────────────────────── /inbox/:id/photos (gallery) ────────────────
 // Multi-photo per item: the primary is image_file_id; extras live in
 // metadata.extra_photos (capped 8). Add / make-primary / remove.
-const PhotoBody = z.object({ file_id: z.string().uuid() });
+// `uploaded` = CHOSEN from the device, not taken just now. See the fork below.
+const PhotoBody = z.object({ file_id: z.string().uuid(), uploaded: z.boolean().optional() });
 inboxRouter.post(
   "/inbox/:id/photos",
   asyncHandler(async (req, res) => {
@@ -4414,12 +4573,51 @@ inboxRouter.post(
           asPrimary
             ? {}
             : { extra_photos: [...extras.filter((p) => p !== parsed.data.file_id), parsed.data.file_id].slice(-8) },
+          // Answered - see the catalog-image branch.
+          ["photo_wanted"],
         ) as never,
         updated_at: new Date(),
       })
       .where("id", "=", id ?? "")
       .returningAll()
       .executeTakeFirstOrThrow();
+    // Adding a photo from the card is the same gesture as the camera "+":
+    // EVIDENCE, not decoration. This endpoint used to only file the picture,
+    // so the guide's promise ("that picture is what identifies it") was true
+    // through the catalog-image door and silently false through this one —
+    // complaint 13, reachable from the ⋯ menu. Same fork as the other door:
+    // no usable name → the photo names the item; a real name → the check runs
+    // behind the picture, flagOnly, so a disagreement is offered with its
+    // one-tap fix rather than performed.
+    //
+    // ...UNLESS IT WAS UPLOADED. A capture is a photo of the object in front of
+    // you, so it is evidence about that object. A file off the camera roll is
+    // not necessarily a photo of anything: it is routinely a marketplace
+    // screenshot, a spec sheet or a receipt kept for the details it carries.
+    // Running the cross-check on one asks "does this picture show the named
+    // product?" of a web page, which honestly answers no — and the item gets a
+    // "this looks wrong" correction offer earned by nothing. So an upload is
+    // ATTACHED and nothing more; the card's existing re-identify action is
+    // there when the user means it as evidence.
+    if (!parsed.data.uploaded) {
+      const orgId = tenantContext(req).org.id;
+      const named =
+        updated.suggested_name && !isJunkName(updated.suggested_name) ? updated.suggested_name : null;
+      if (addedPhotoIntent(!!named) === "offer-correction" && named) {
+        void crossCheckScanPhoto(orgId, updated.id, named, {
+          fileId: parsed.data.file_id,
+          flagOnly: true,
+        }).catch((e) => console.error("[core-scan] added-photo cross-check threw:", (e as Error).message));
+      } else {
+        void enrichPhotoItem({
+          db,
+          orgId,
+          itemId: updated.id,
+          imageFileId: parsed.data.file_id,
+          userId: sessionUser(req).id,
+        }).catch((e) => console.error("[core-scan] added-photo identify threw:", (e as Error).message));
+      }
+    }
     res.json(withTitle(updated));
   }),
 );

@@ -1,0 +1,17 @@
+-- The purchases order a parsed receipt became.
+--
+-- An order used to be born at receipt-group confirm, which meant an unconfirmed
+-- receipt was not in Purchases at all, and a receipt attached to an ALREADY
+-- triaged item had no moment at which its order could appear. The birthplace
+-- moves to parse time (docs/design-decisions/order-at-parse.md); this column is
+-- how the batch and its order find each other afterwards.
+--
+-- NULLABLE, and the null means something: "parsed before this shipped". The
+-- confirm handler branches on it -- attach when an order is present, create
+-- when it is not -- which is what lets a canary running the previous api keep
+-- working while this lands. The create branch retires in phase 2, once no
+-- un-confirmed pre-migration batches remain.
+--
+-- Weak reference by design: purchases owns that row and cross-module FKs are
+-- forbidden, so this is the uuid and nothing enforces it.
+alter table core_scan_batches add column if not exists purchases_order_id uuid;

@@ -39,6 +39,7 @@ interface TriageMeta {
   low_trust?: boolean;
   rate_limited?: boolean;
   reviewed?: boolean;
+  photo_wanted?: boolean;
 }
 
 function metaOf(row: ScanTriageRow): TriageMeta {
@@ -88,10 +89,19 @@ export function scanHasHome(row: ScanTriageRow): boolean {
   return !!row.target_location_id || !!row.target_container_id;
 }
 
-/** The facets a caller can ask for. `all` is every pending item. */
-export type ScanTriageFacet = "all" | "needs_review" | "waiting" | "unfiled" | "ready";
+/** A person said "I'll photograph this myself" and has not yet. Unlike every
+ *  other facet this one is a stated INTENT rather than a state the pipeline
+ *  derived, which is exactly why it is here: the scanner and the dashboard both
+ *  ask for it, and a predicate that lives in one of them is invisible to the
+ *  other (and to whoever asks the assistant). */
+export function wantsOwnPhoto(row: ScanTriageRow): boolean {
+  return isPending(row) && metaOf(row).photo_wanted === true;
+}
 
-export const SCAN_TRIAGE_FACETS: ScanTriageFacet[] = ["all", "needs_review", "waiting", "unfiled", "ready"];
+/** The facets a caller can ask for. `all` is every pending item. */
+export type ScanTriageFacet = "all" | "needs_review" | "waiting" | "unfiled" | "ready" | "photo_wanted";
+
+export const SCAN_TRIAGE_FACETS: ScanTriageFacet[] = ["all", "needs_review", "waiting", "unfiled", "ready", "photo_wanted"];
 
 /** Does this row belong to the facet? One switch, so a new facet is added in a
  *  single place and every surface gains it at once. */
@@ -110,6 +120,8 @@ export function matchesScanFacet(
     case "ready":
       // Somewhere to go AND nothing left to ask — the "just put them away" set.
       return isPending(row) && scanHasHome(row) && !needsScanReview(row);
+    case "photo_wanted":
+      return wantsOwnPhoto(row);
     case "all":
       return true;
   }

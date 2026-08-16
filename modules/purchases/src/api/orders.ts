@@ -38,6 +38,18 @@ const OrderCreate = z.object({
   tracking_number: z.string().max(160).nullable().optional(),
   notes: z.string().max(8_000).nullable().optional(),
   metadata: z.record(z.unknown()).optional(),
+  // Normally the arrival sweep's to write. Accepted here so a caller that has
+  // ALREADY been following this parcel can hand the watch over rather than
+  // restart it — core-scan files a receipt it tracked in the inbox, and without
+  // this the order opens at "no information" and re-asks the carrier.
+  //
+  // They must be NATIVE keys: routeUnknownToMetadata() hoists anything it does
+  // not recognise into `metadata`, so passing them without this would be
+  // accepted, stored somewhere nothing reads, and change nothing.
+  shipment_state: z.string().max(40).nullable().optional(),
+  shipment_checked_at: z.string().nullable().optional(),
+  shipment_next_poll_at: z.string().nullable().optional(),
+  eta_source: z.string().max(40).nullable().optional(),
 });
 const OrderUpdate = OrderCreate.partial();
 
@@ -55,7 +67,11 @@ const ItemCreate = z.object({
 
 // D6: top-level keys the schemas know about. Anything else the caller
 // POSTs gets hoisted into metadata by routeUnknownToMetadata().
-const ORDER_NATIVE_KEYS = new Set(Object.keys(OrderCreate.shape));
+// Exported because it IS the contract: anything absent from it is silently
+// hoisted into `metadata` instead of reaching its column, which looks like a
+// successful write and is not one. A test asserts the fields core-scan hands
+// over on filing are all in here.
+export const ORDER_NATIVE_KEYS = new Set(Object.keys(OrderCreate.shape));
 const ITEM_NATIVE_KEYS = new Set(Object.keys(ItemCreate.shape));
 
 // Resolve the `vendor` text an order should store: the linked vendor's name

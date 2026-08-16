@@ -74,6 +74,20 @@ export interface CoreScanBatchesTable {
    *  its way. Its presence is what files the order as in-transit rather than
    *  arrived — see the receipt-confirm handler. */
   tracking_number: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  /** Where the parcel is, as last answered by core-shipments. Kept on the batch
+   *  so a receipt still waiting in the inbox is followed too — filing it into an
+   *  order is a bookkeeping decision, and the parcel moves either way. */
+  shipment_state: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  shipment_description: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  shipment_location: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  shipment_checked_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;
+  shipment_next_poll_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;
+  shipment_notified_state: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  /** The purchases order this receipt became, created at PARSE time. Null means
+   *  "parsed before that moved" — the confirm handler branches on exactly that,
+   *  attaching when an order exists and creating when it does not. See
+   *  docs/design-decisions/order-at-parse.md. */
+  purchases_order_id: ColumnType<string | null, string | null | undefined, string | null | undefined>;
 }
 
 /** A stored Guided Organize plan (services/organize-plan.ts). Apply validates

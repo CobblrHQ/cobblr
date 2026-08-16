@@ -412,6 +412,11 @@ export interface Order {
   total_cost: string | null;
   shipping_cost: string | null;
   tracking_number: string | null;
+  /** Where the parcel is, written by the arrival sweep. Null until something
+   *  has been followed — a tracking number with no state has not been asked
+   *  about yet, which is a different thing from "no information". */
+  shipment_state: string | null;
+  shipment_checked_at: string | null;
   notes: string | null;
   metadata: Record<string, unknown>;
   /** Line-item count — present on the list endpoint (GET /orders), absent on detail. */
@@ -2787,10 +2792,15 @@ export const api = {
       batch_id?: string;
       limit?: number;
       cursor?: string;
+      /** Ask for one FACET of the pending queue (needs_review, waiting,
+       *  unfiled, ready, photo_wanted) instead of paginating the whole thing.
+       *  Answered in a single capped read — see platform-contract/scan-triage. */
+      triage?: string;
     } = {},
   ) => {
     const params = new URLSearchParams();
     if (q.status) params.set("status", q.status);
+    if (q.triage) params.set("triage", q.triage);
     if (q.batch_id) params.set("batch_id", q.batch_id);
     if (q.limit) params.set("limit", String(q.limit));
     if (q.cursor) params.set("cursor", q.cursor);
@@ -2799,7 +2809,7 @@ export const api = {
       items: ScanInboxItem[];
       /** Session labels keyed by scan_batch_id — the inbox group header + the
        *  receipt's stored original (for View original / Re-parse). */
-      batches?: Record<string, { label: string | null; origin: string | null; source_file_id: string | null; order_ref: string | null; tracking_number: string | null }>;
+      batches?: Record<string, { label: string | null; origin: string | null; source_file_id: string | null; order_ref: string | null; tracking_number: string | null; shipment_state: string | null; shipment_description: string | null; shipment_location: string | null }>;
       next_cursor?: string | null;
       total?: number;
     }>("GET", `/orgs/${slug}/modules/core-scan/inbox${qs ? "?" + qs : ""}`);
@@ -2843,6 +2853,9 @@ export const api = {
       /** Answer to "this photo has N different things — keep them together, or
        *  split?" true = one record; the offer stops asking. */
       keep_grouped?: boolean;
+      /** "I will photograph this myself." Survives an AI re-run — only the
+       *  person, or the photo arriving, clears it. */
+      photo_wanted?: boolean;
     },
   ) => request<ScanInboxItem>("PATCH", `/orgs/${slug}/modules/core-scan/inbox/${id}`, body),
   /** Guided Organize: propose a grouped put-away plan — for a selection of
@@ -2886,6 +2899,11 @@ export const api = {
         /** The parcel's tracking number, when one has been recorded. Its
          *  presence is what files the receipt as still in transit. */
         trackingNumber: string | null;
+        /** Where the parcel is, per the last carrier answer. Null when nothing
+         *  has asked yet, which is not the same as "no information". */
+        shipmentState: string | null;
+        shipmentDescription: string | null;
+        shipmentLocation: string | null;
         count: number;
       }>;
       total_items: number;
@@ -3138,7 +3156,14 @@ export const api = {
   // Parse an uploaded receipt (CSV / PDF / photo) into one inbox row per line
   // item — each then triages into a part via the normal confirm flow. CSV and
   // text-PDF tables parse deterministically (no AI); everything else falls to AI.
-  scanReceipt: (slug: string, file_id: string, opts?: { force?: boolean; origin?: "email" | "upload" }) =>
+  /** `target_item_id` attaches the receipt to an item that already exists:
+   *  the order is recorded in full, the item is linked to it, and nothing
+   *  lands in the inbox because nothing needs triaging. */
+  scanReceipt: (
+    slug: string,
+    file_id: string,
+    opts?: { force?: boolean; origin?: "email" | "upload"; target_item_id?: string },
+  ) =>
     request<
       | {
           receipt: {
@@ -3160,6 +3185,7 @@ export const api = {
       file_id,
       ...(opts?.force ? { force: true } : {}),
       ...(opts?.origin ? { origin: opts.origin } : {}),
+      ...(opts?.target_item_id ? { target_item_id: opts.target_item_id } : {}),
     }),
   // Collapse a receipt's pending lines into ONE purchases order (vendor + line
   // items) instead of N orphan parts. Each line is still confirmed into a part;
@@ -3400,8 +3426,15 @@ export const api = {
   rotateScanPhoto: (slug: string, id: string, deg: 90 | 180 | 270) =>
     request<ScanInboxItem>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/rotate`, { deg }),
   /** Multi-photo gallery: add / make-primary / remove an extra photo. */
-  addScanPhoto: (slug: string, id: string, fileId: string) =>
-    request<ScanInboxItem>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/photos`, { file_id: fileId }),
+  /** `uploaded` marks a picture CHOSEN from the device rather than taken now.
+   *  A capture is a photo of the object in front of you; a file off the camera
+   *  roll may be a listing screenshot, a spec sheet or a receipt, so it is
+   *  attached without being allowed to drive the item's identity. */
+  addScanPhoto: (slug: string, id: string, fileId: string, opts: { uploaded?: boolean } = {}) =>
+    request<ScanInboxItem>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/photos`, {
+      file_id: fileId,
+      ...(opts.uploaded ? { uploaded: true } : {}),
+    }),
   setScanPrimaryPhoto: (slug: string, id: string, fileId: string) =>
     request<ScanInboxItem>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/photos/primary`, {
       file_id: fileId,

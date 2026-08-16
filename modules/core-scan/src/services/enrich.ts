@@ -301,6 +301,12 @@ interface EnrichContext {
    *  box resolver was never asked again. The fresh result re-puts both
    *  caches below, healing the stale entry for every tenant. */
   force?: boolean;
+  /** This run IS the queued retry chain (set only by retry-worker.ts). A
+   *  throttled ending then rides core-queue's own backoff instead of enqueuing
+   *  a second chain for the same row. Distinct from `force`, which a user's
+   *  re-run also sets — a user's throttled re-run must RE-arm the server-side
+   *  retry, not silently promise one. */
+  fromRetryWorker?: boolean;
   /** The user pressed "This is wrong" — re-resolve across ALL sources and treat
    *  the result as AUTHORITATIVE: run the web identify unconditionally (not only
    *  when the provider name looks thin) and adopt a confident web result even if
@@ -734,6 +740,26 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
     // came up empty — fill in manually) from a transient rate-limit (the
     // catalog was throttled and web search didn't save us — a re-scan should
     // retry, and we deliberately left the cache untouched so it can).
+    //
+    // Hand the promise to something that outlives this request — but exactly one
+    // owner per row: the worker's own runs are already inside the chain (its
+    // still-throttled endings ride core-queue's backoff, and enqueuing from one
+    // would fan a stuck row into a widening tree), and a USER's re-run must
+    // re-arm the retry only when no chain is live. The `retry_queued` marker is
+    // that "a chain is live" bit: set here beside rate_limited, released by a
+    // successful identify or by the worker's own endings. Without the re-arm, a
+    // forced re-run that hit the throttle after the chain died re-wrote the
+    // "trying again" promise with nothing behind it — the original reported bug,
+    // one button-press away.
+    let armRetry = false;
+    if (rateLimited && !ctx.fromRetryWorker) {
+      const metaRow = await ctx.db
+        .selectFrom("core_scan_inbox_items")
+        .select("suggested_metadata")
+        .where("id", "=", ctx.itemId)
+        .executeTakeFirst();
+      armRetry = !(metaRow?.suggested_metadata as { retry_queued?: boolean } | null)?.retry_queued;
+    }
     await ctx.db
       .updateTable("core_scan_inbox_items")
       .set({
@@ -752,17 +778,18 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
         // forever), the user's box_state/reviewed/keep_grouped, everything. A
         // transient outage must not be a data-loss event.
         ...(rateLimited
-          ? { suggested_metadata: mergeMeta({ rate_limited: true }) as never }
+          ? {
+              suggested_metadata: mergeMeta({
+                rate_limited: true,
+                ...(armRetry ? { retry_queued: true } : {}),
+              }) as never,
+            }
           : { ai_suggested_at: new Date() }),
         updated_at: new Date(),
       })
       .where("id", "=", ctx.itemId)
       .execute();
-    // Hand the promise to something that outlives this request. Only on the
-    // FIRST throttled pass: a queued retry that is itself throttled again is
-    // already inside core-queue's own backoff, and enqueuing from here would
-    // fan one stuck row out into a widening tree of jobs.
-    if (rateLimited && !ctx.force) {
+    if (armRetry) {
       await enqueueRetryLookup({
         orgId: ctx.orgId,
         itemId: ctx.itemId,

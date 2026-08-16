@@ -1,0 +1,22 @@
+{
+  "_provenance": "SYNTHESIZED in the shape of the captured response above (same fields, same types). Replace with a capture when the recorder catches this state.",
+  "_why": "A status the carrier added that we have never seen. Must fall through to `unknown`, never crash and never look like delivery.",
+  "trackers": [
+    {
+      "id": "trk_TEST0FA582557F7B",
+      "tracking_code": "TEST0FA582557F7B",
+      "status": "held_at_customs",
+      "status_detail": "Held at customs",
+      "est_delivery_date": null,
+      "tracking_details": [
+        {
+          "datetime": "2026-08-15T09:00:00-04:00",
+          "message": "Held at customs",
+          "tracking_location": "MEMPHIS, TN, US"
+        }
+      ],
+      "updated_at": "2026-08-15T13:00:00Z"
+    }
+  ],
+  "has_more": false
+}

@@ -2821,6 +2821,20 @@ export interface AiProviderDef {
    *  when explicitly chosen/routed and a missing-provider case stays a clean
    *  "no provider configured" rather than an error from the unset provider. */
   autoSelectable?: boolean;
+  /** This backend RUNS tools itself and cannot hand `tool_calls` back (a
+   *  `claude -p`-style agent). Cobb's tools reach it as a read-only MCP relay
+   *  instead: the platform mints a short-lived, workspace-pinned grant and puts
+   *  it on `input.mcp` for the adapter to forward.
+   *
+   *  A BYO connection declares the same thing per-connection through the
+   *  `mcp_relay: "bridge"` credential field. This is the declaration for a
+   *  provider that is ALWAYS such a bridge and has no credentials to carry a
+   *  flag — a managed one, say. Without it, that provider silently receives no
+   *  tools at all: every read tool and every action invisible, the model left
+   *  saying "I don't have that tool", and nothing logged. (Found on staging
+   *  2026-08-15: the assistant's whole tool surface was dark on the managed
+   *  bridge, and it read like a plausible refusal rather than a fault.) */
+  relaysToolsViaMcp?: boolean;
   /**
    * A fingerprint of the PROMPT this provider will actually send for
    * (capability, input) — i.e. the part of the request that the caller's `input`

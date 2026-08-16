@@ -25,6 +25,7 @@
 
 import sharp from "sharp";
 import type { UnitSide } from "./rank-photo.js";
+import { uprightBytes } from "./trim-margins.js";
 
 /** How much of the image to keep. Slightly more than half, because two units
  *  usually touch or overlap slightly at the middle and a hard 50% shaves the
@@ -71,11 +72,13 @@ export function unitBox(
  *  ever too generous, never wrong. */
 export async function cropToUnit(input: Uint8Array, side: UnitSide): Promise<Uint8Array | null> {
   try {
-    const meta = await sharp(Buffer.from(input), { failOn: "none" }).metadata();
-    if (!meta.width || !meta.height) return null;
-    const box = unitBox({ width: meta.width, height: meta.height }, side);
+    // Upright first: the ranker's "left"/"right" is about the image as SEEN,
+    // and the re-encode below strips any orientation tag anyway.
+    const up = await uprightBytes(input);
+    if (!up) return null;
+    const box = unitBox({ width: up.meta.width!, height: up.meta.height! }, side);
     if (!box) return null;
-    const out = await sharp(Buffer.from(input), { failOn: "none" })
+    const out = await sharp(up.bytes, { failOn: "none" })
       .extract(box)
       .jpeg({ quality: 90 })
       .toBuffer();

@@ -20,8 +20,10 @@
  *  It is a lexical fact about retail English, not a use case, which is why a
  *  list is the honest implementation rather than something cleverer: "green
  *  tea" and "green mug" are structurally identical and only a vocabulary tells
- *  them apart. Incomplete by nature — a missing entry costs an append instead
- *  of a substitution, which is the safe direction. */
+ *  them apart. Incomplete by nature — and a missing entry costs a SUBSTITUTION
+ *  (the unlisted compound reads as a mere colour and gets rewritten), which is
+ *  the destructive direction. When a variety compound loses its word to a
+ *  detected colour, the fix is another entry here. */
 
 /** `<colour> <noun>` pairs where the colour is part of the variety. Stored as
  *  the noun that follows, per colour, so a match is one lookup. */

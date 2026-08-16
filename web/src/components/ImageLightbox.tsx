@@ -229,7 +229,16 @@ export function ImageLightbox({
           </div>
         </div>
 
-        {/* Flip through the other images without leaving. */}
+        {/* Flip through the other images without leaving.
+
+            CONTAIN, not cover. These thumbnails exist to be COMPARED — you are
+            choosing which of fourteen search results is the right picture of the
+            thing. A square crop of a product shot keeps the middle band and
+            throws away the lid and the base, so a tall jar becomes an anonymous
+            stripe of label and every candidate looks alike ("mostly cropped and
+            impossible to tell that that was indeed the perfect image", reported
+            2026-08-15). Letterboxing wastes a little of a 64px tile; cropping
+            wastes the whole point of the strip. */}
         {many && (
           <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
             {items.map((it, i) => (
@@ -243,7 +252,7 @@ export function ImageLightbox({
                   (i === index ? "border-cobble-400" : "border-transparent hover:border-white/40")
                 }
               >
-                <Frame item={it} variant="thumb" className="w-full h-full object-cover" />
+                <Frame item={it} variant="thumb" className="w-full h-full object-contain" />
               </button>
             ))}
           </div>

@@ -40,6 +40,7 @@ import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
 import { ApiError, api, type LiveSortEntry, type ScanInboxItem, type ScanResolveCandidate, type TrackedMatch } from "../lib/api";
 import { LOCATION_ENTITY_KIND, decideLocationScan, filingLabel } from "../lib/scanFiling";
 import { freshDedupState, shouldFireScan, pickDetection, makeDetectionCollector, isGenericLink, type DedupState } from "../lib/scanDedup";
+import { PHOTO_WANTED_ARM_MODE, nextWanted, photoQueue, promptLabel } from "../lib/photoQueue";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { LocationChipPicker } from "../components/LocationChipPicker";
 import {
@@ -321,6 +322,46 @@ export function ScanCameraPage() {
       }),
     [],
   );
+  // ── "I'll photograph this", arriving from somewhere else ──────────────
+  //
+  // Items a person marked at a desk. The whole point is that you never hunt for
+  // them: the scanner opens already knowing. Polled rather than fetched once,
+  // because the mark is routinely set on ANOTHER device seconds before you pick
+  // this one up.
+  const wantedQ = useQuery({
+    queryKey: ["scan-photo-wanted", activeSlug],
+    // A FACET, not a page of the inbox: the server answers "which ones want a
+    // photo" in one capped read and says so if it had to cap. Fetching the
+    // whole pending queue to filter it here would grow with the inbox and pull
+    // hundreds of rows onto a phone to find the two that matter.
+    // paginate-ok: a triage facet is a bounded single-read answer, not a list anyone pages through.
+    queryFn: () => api.listScanInbox(activeSlug, { triage: "photo_wanted", limit: 50 }),
+    enabled: !!activeSlug,
+    staleTime: 20_000,
+    refetchInterval: 60_000,
+  });
+  const wantedQueue = useMemo(() => photoQueue(wantedQ.data?.items ?? []), [wantedQ.data]);
+  // "Not now" — session-scoped, because it means not now rather than never.
+  // Never is clearing the mark, which has its own button on the card.
+  const [promptWavedOff, setPromptWavedOff] = useState<Set<string>>(new Set());
+  const wantedNext = nextWanted(wantedQueue, promptWavedOff);
+
+  // ?want=<id> — a link that arrives already pointed at one item (the dashboard
+  // row, a notification). Consume-once like this page's other deep links: the
+  // param seeds the arm and is then stripped, or a refresh would re-point the
+  // camera at something already dealt with.
+  const wantParam = params.get("want");
+  useEffect(() => {
+    if (!wantParam) return;
+    const target = (wantedQ.data?.items ?? []).find((i) => i.id === wantParam);
+    if (!target) return; // still loading, or someone else already photographed it
+    armFor(target, PHOTO_WANTED_ARM_MODE);
+    const next = new URLSearchParams(params);
+    next.delete("want");
+    setParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantParam, wantedQ.data]);
+
   // Dismissed = "I've dealt with this one, hide it". Cleared on the next save
   // so the drawer comes back for the next capture.
   const [drawerDismissed, setDrawerDismissed] = useState(false);
@@ -1682,6 +1723,10 @@ export function ScanCameraPage() {
           // it, an append/retake renders against a CACHED pre-change copy — the
           // new photo simply doesn't appear in the gallery.
           void qc.invalidateQueries({ queryKey: ["scan-item-live", activeSlug, targetId] });
+          // The photo they said they would take has arrived, so the queue that
+          // was asking for it has to stop. The server already dropped the mark;
+          // this is the copy the prompt is reading.
+          void qc.invalidateQueries({ queryKey: ["scan-photo-wanted", activeSlug] });
           // TOP-of-frame note, NOT a bottom toast: a toast here lands exactly
           // on the drawer/shutter and eats the next touch — the same
           // obstruction the filing note was moved to the top for. (Found by
@@ -1702,7 +1747,7 @@ export function ScanCameraPage() {
         }
       } catch (e) {
         // Only a NEW capture can be retried from the drawer; an arm's target
-        // may be gone by then, so those surface as a toast and keep the arm.
+        // may be gone by then, so those surface as a frame note and keep the arm.
         if (!armed) setFailedShot({ blob, stamps });
         noteError(e);
       }
@@ -1908,6 +1953,49 @@ export function ScanCameraPage() {
             )}
             {/* A warning wraps; a confirmation is short enough to stay on one line. */}
             <span className={filingNote.tone === "warn" ? "" : "truncate"}>{filingNote.text}</span>
+          </div>
+        </div>
+      )}
+
+      {/* "You said you'd photograph this." The pile you marked at a desk,
+          offered where you can actually act on it.
+
+          ONE LINE, in the same slot and shape as the notes above, because it
+          sits over the viewfinder and every pixel it takes is a pixel of the
+          thing you are trying to photograph. A first draft drew a card with a
+          heading, the name and two buttons; it ate a third of the frame for
+          something you answer in one tap ("way too big" - reported 2026-08-15).
+
+          The whole pill is the affirmative button, so the common answer costs
+          one tap anywhere along it. ✕ is "not now": it moves to the next one
+          and the mark STAYS - clearing the mark is a different verb and lives
+          on the card. Only shown while genuinely scanning: mid-result or
+          already pointed somewhere, it would be offering a second job during
+          the first. */}
+      {wantedNext && !arm && !sheetOpen && !reviewItem && phase === "scanning" && (
+        <div
+          className="absolute inset-x-0 z-30 flex justify-center px-4"
+          style={{ top: UNDER_TOP_CHROME }}
+        >
+          <div className="inline-flex max-w-[92%] items-center gap-1.5 rounded-full bg-cobble-700/90 text-white shadow-lg backdrop-blur-sm">
+            <button
+              type="button"
+              onClick={() => armFor(wantedNext, PHOTO_WANTED_ARM_MODE)}
+              title="Point the camera at this - your next shot becomes its photo"
+              className="inline-flex min-w-0 items-center gap-1.5 py-1.5 pl-3 pr-1 text-xs font-medium"
+            >
+              <Camera size={13} className="shrink-0" />
+              <span className="truncate">{promptLabel(wantedNext, wantedQueue.length)}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setPromptWavedOff((s) => new Set(s).add(wantedNext.id))}
+              aria-label="Not now"
+              title="Not now - stays marked, asks again next time"
+              className="shrink-0 py-1.5 pl-1 pr-2.5 text-white/60 hover:text-white"
+            >
+              <X size={13} />
+            </button>
           </div>
         </div>
       )}

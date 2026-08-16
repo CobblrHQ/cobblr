@@ -38,6 +38,24 @@ function inputHasTools(input: unknown): boolean {
   return Array.isArray(t) && t.length > 0;
 }
 
+/** Does this chat call need its tools relayed over MCP instead of sent as
+ *  function definitions?
+ *
+ *  TWO ways to be that kind of backend, and reading only the first is what left
+ *  the managed bridge with no tools at all (staging, 2026-08-15):
+ *    · a BYO connection says so per connection — `mcp_relay: "bridge"`;
+ *    · the PROVIDER is always one and has no credentials to carry a flag —
+ *      `relaysToolsViaMcp` in its registration.
+ *
+ *  A named rule rather than an inline `||`, so the second case can't be
+ *  dropped again without a test going red. */
+export function needsMcpToolRelay(
+  credentials: Record<string, unknown> | undefined,
+  provider: Pick<AiProviderDef, "relaysToolsViaMcp"> | undefined | null,
+): boolean {
+  return credentials?.mcp_relay === "bridge" || provider?.relaysToolsViaMcp === true;
+}
+
 /** The workspace slug for an org id (from cobblr_meta) — the MCP endpoint is
  *  addressed by slug (`?workspace=<slug>`), and the grant is pinned to it. */
 async function orgSlugOf(orgId: string): Promise<string | null> {
@@ -435,7 +453,14 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
     earlyCredentials =
       personalCredentials ??
       (row.credentials_enc ? await integrationsImpl.decryptCredentials(req.orgId, row.credentials_enc) : {});
-    if (earlyCredentials.mcp_relay === "bridge") {
+    // Two ways to be a tool-relaying bridge: a BYO connection SAYS so per
+    // connection (`mcp_relay: "bridge"`), or the provider itself is always one
+    // and has no credentials to carry a flag — a managed bridge. Reading only
+    // the credential left the managed case with NO tools whatsoever, and
+    // nothing said so: the model answered "I don't have that tool", which
+    // reads like a limitation rather than the fault it is (staging,
+    // 2026-08-15).
+    if (needsMcpToolRelay(earlyCredentials, providers.get(row.provider_id))) {
       const slug = await orgSlugOf(req.orgId);
       if (slug) {
         const grant = await signMcpReadGrant(req.userId, slug);
@@ -446,6 +471,13 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
         const url = base ? `${base}/api/v1/hooks/mcp` : undefined;
         (req.input as Record<string, unknown>).mcp = { token: grant, workspace: slug, ...(url ? { url } : {}) };
         req.bypass_cache = true; // per-request grant — a tool-relay chat is never cacheable
+      } else {
+        // The grant needs a slug to pin to. Losing it means the turn runs with
+        // no tools at all — say so, because the user only sees a confident
+        // model claiming it cannot do things it can.
+        console.warn(
+          `[ai] chat wanted tools and ${row.provider_id} relays them via MCP, but org ${req.orgId} resolved no slug — this turn runs WITHOUT tools`,
+        );
       }
     }
   }

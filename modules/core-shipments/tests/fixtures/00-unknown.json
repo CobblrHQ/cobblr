@@ -1,0 +1,16 @@
+{
+  "_provenance": "SYNTHESIZED in the shape of the captured response above (same fields, same types). Replace with a capture when the recorder catches this state.",
+  "_why": "The number is known to nobody yet.",
+  "trackers": [
+    {
+      "id": "trk_TEST0FA582557F7B",
+      "tracking_code": "TEST0FA582557F7B",
+      "status": "unknown",
+      "status_detail": null,
+      "est_delivery_date": null,
+      "tracking_details": [],
+      "updated_at": null
+    }
+  ],
+  "has_more": false
+}

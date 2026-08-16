@@ -72,18 +72,43 @@ export function pickDetection(values: string[]): string | null {
  *  two-symbol cover (a book's main code + its price supplement) ALTERNATES
  *  values across callbacks and starves the agreement gate the same way
  *  multi-result native frames did. Collect the values seen within a short
- *  window and always forward the pickDetection winner, so the gate sees a
- *  stable candidate. ~110ms ZXing cadence → a 400ms window spans 3–4 reads. */
+ *  window and forward only the pickDetection winner, so the gate's candidate
+ *  never RESETS to the supplement.
+ *
+ *  FORWARDS ARE PAID FOR WITH DECODES. A value may be forwarded at most as
+ *  many times as the decoder actually produced it. The unlimited version
+ *  turned ONE phantom read into a whole streak: a single rotated misread
+ *  (6876437002726 from 859337002726) sat in the buffer as the longest
+ *  same-tier value, so every subsequent callback that decoded the REAL code
+ *  forwarded the phantom — the genuine sightings fed the phantom's agreement
+ *  count, and requiredSightings' 4-streak defence was defeated by the very
+ *  layer meant to stabilise it. With credit, a losing callback returns null:
+ *  the gate simply doesn't advance that tick, which costs the real code at
+ *  most the buffer window and can never promote a code beyond the number of
+ *  times it was actually seen. */
 export function makeDetectionCollector(
   windowMs: number,
 ): (value: string, now: number) => string | null {
-  let buf: Array<{ value: string; at: number }> = [];
+  let buf: Array<{ value: string; at: number; credit: number }> = [];
   return (value, now) => {
     const v = value.trim();
     if (!v) return null;
-    buf = buf.filter((e) => now - e.at < windowMs && e.value !== v);
-    buf.push({ value: v, at: now });
-    return pickDetection(buf.map((e) => e.value));
+    buf = buf.filter((e) => now - e.at < windowMs);
+    const hit = buf.find((e) => e.value === v);
+    // The cap only matters for a value that keeps LOSING (a supplement under a
+    // main code): unbounded, its banked credit could outlive its presence in
+    // the frame by more forwards than the window justifies.
+    if (hit) {
+      hit.at = now;
+      hit.credit = Math.min(hit.credit + 1, 4);
+    } else {
+      buf.push({ value: v, at: now, credit: 1 });
+    }
+    const winner = pickDetection(buf.map((e) => e.value));
+    const w = winner ? buf.find((e) => e.value === winner) : undefined;
+    if (!w || w.credit <= 0) return null;
+    w.credit -= 1;
+    return winner;
   };
 }
 

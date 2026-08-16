@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "license": "FSL-1.1-ALv2",
-  "description": "Cobblr \u2014 modular workflow platform for niche workflows.",
+  "description": "Cobblr — modular workflow platform for niche workflows.",
   "workspaces": [
     "api",
     "web",
@@ -170,7 +170,11 @@
     "lint:no-secret-echo": "tsx scripts/lint-no-secret-echo.ts",
     "lint:export-build-scripts": "tsx scripts/lint-export-build-scripts.ts",
     "lint:public-prose": "tsx scripts/lint-public-prose.ts",
-    "lint:licences": "tsx scripts/lint-licences.ts"
+    "lint:licences": "tsx scripts/lint-licences.ts",
+    "testbench:shipments": "tsx scripts/shipment-testbench.ts",
+    "lint:image-choice": "tsx scripts/lint-image-choice-contain.ts",
+    "census:coupling": "tsx scripts/census-module-coupling.ts",
+    "lint:ci-runner-labels": "tsx scripts/lint-ci-runner-labels.ts"
   },
   "devDependencies": {
     "playwright": "^1.60.0",

@@ -2,6 +2,7 @@
 //   /api/v1/orgs/:slug/modules/core-scan/.
 
 import { Router } from "express";
+import { startReceiptTrackingSweeper } from "../services/receipt-tracking-sweeper.js";
 import { inboxRouter } from "./inbox.js";
 import { organizeRouter } from "./organize.js";
 import { putawayRouter } from "./putaway.js";
@@ -15,6 +16,10 @@ import { registerEmailInbound } from "../services/email-inbound.js";
 
 registerScanHandlers();
 registerEmailInbound();
+
+// Follow parcels whose receipt is still in the inbox — filing should not
+// be the price of being told your delivery arrived.
+startReceiptTrackingSweeper();
 
 const router = Router({ mergeParams: true });
 router.use("/", inboxRouter);

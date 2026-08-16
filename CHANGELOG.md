@@ -2,13 +2,33 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-08-16
+
+### Features
+- You can attach a receipt to an item you already have. Choose the PDF from the item's own camera button and Cobblr reads it into a purchase, links the item to it, and puts nothing in your inbox, because that item is already there.
+
+### Improvements
+- A receipt now becomes a purchase order the moment it is read, instead of only once you triage its lines. Every line is recorded on the order straight away, and a line becomes an item you own only when you confirm it. Discarding a whole receipt cancels the order it created.
+
 ## 2026-08-15
 
 ### Features
 - Ask Cobb can now change your workspace's own setup, with your confirmation: add a custom field, create a separate list from a module, and switch an automation on or off.
 - Ask Cobb now walks you to the screens he cannot operate for you, with the form already filled in: ask him to invite someone and you land on Members with the invite ready, you press Send.
+- Parcels on their way now show up on the dashboard, and a tracked receipt shows where its parcel is on the item card itself.
+- You can now choose a picture already on your device when adding one to a scan item, instead of only taking a fresh photo. A picture you choose is attached to the item without changing its name or its main photo, because a file off your camera roll is often a listing screenshot or a spec sheet rather than a photo of the thing.
+- The scanner now greets you with the items you marked for a photo, so you never have to find them again in a long inbox. Tap the line to point the camera at one; your next shot becomes its picture.
+- Scan inbox cards now carry a camera button. On a phone it opens the camera pointed at that item. At a desk, where you probably cannot take the picture, it marks the item instead so it comes to you on your phone rather than you hunting for it in a long list.
+- The dashboard now lists the items you marked for a photo, and each one has a button that opens the camera pointed straight at it.
+- Self-hosted instances now serve their own MCP endpoint, so connecting your own Claude to your workspace, and letting Ask Cobb read it through a local bridge, works without the hosted service.
 
 ### Fixes
+- Ask Cobb can read your workspace again on the managed AI: it was answering from conversation alone, saying it had no tools, because its workspace access was never handed to it.
+- Thumbnails you choose between now show the whole picture instead of a square crop of its middle. Picking a catalog photo of a tall jar or bottle no longer means comparing identical stripes of label.
+- Tapping the empty part of the mobile menu closes it. The space below the last destination did nothing before, which read as a stuck menu rather than as somewhere you were not meant to tap. Tapping a destination still opens it, as always.
+- Photographing an item from the scanner's waiting list no longer re-identifies it. Taking a nicer picture of something already named correctly now only replaces the picture, and never changes the name or reports a correction to the shared barcode database.
+- Opening a single scan session from the inbox no longer hides that session's own controls. Select all, Place and file all, Set location, Original, PO number, Tracking number and Re-parse are all back on the session page, in the row and order you already know from the inbox.
+- The tracking number control in the scan inbox now appears only on purchases. It was offering itself on every scan session, including a barcode you had just scanned, where there is no parcel to follow.
 - A barcode read at an awkward angle can decode as a different code whose check digit is valid, so the checksum cannot catch it. The scanner now also asks whether the code claims a manufacturer prefix that has ever been issued, and makes a code claiming an unissued one prove itself over more frames before it counts. Genuine barcodes are unaffected.
 
 ## 2026-08-14
@@ -17,6 +37,7 @@ User-facing changes, newest first. Dates are release dates.
 - Ask Cobb can now answer what needs you, what changed, what you missed, what is due for service and what is coming up: he reads your attention feed, activity log, notifications, maintenance and calendar.
 - Ask Cobb can now see how your workspace is set up, your lists, saved views, automations, apps, templates and units, and can add a unit for you when you ask.
 - Ask Cobb can now see the items in your scan inbox, not just the count: ask what is waiting, what needs a look, or what has been sitting there for days, and he reads the actual queue.
+- A receipt with a tracking number is followed while it is still in your scan inbox, so you are told when the parcel lands without having to file it first.
 - Add a tracking number to a receipt while it is still in your scan inbox, and Cobblr files it as still on its way instead of already arrived.
 - A scan item's fields are chips now, not a page of boxes. Opening an item used to give you one labelled box per field, including every field the table defines that the scan left empty, which on a phone ran well past a screen. Now each field is a small chip sized to its own value, several sit on a row, and the fields nothing filled in are offered underneath as a row of named chips rather than hidden behind a "+1 more field" counter that never said what it was hiding. Tap any chip to edit it right there: the chip holds its place so nothing shifts under your finger, then grows as you type so you can always see the whole value instead of scrolling inside a tiny box. Tap one of the offered fields and it opens ready to type, and if you change your mind and leave it blank it goes back on offer instead of sitting there empty.
 

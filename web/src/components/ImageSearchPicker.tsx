@@ -206,10 +206,17 @@ export function ImageSearchPicker({
                       : "border border-line dark:border-slate-700 hover:border-cobble-400"
                   }`}
                 >
+                  {/* CONTAIN. Every tile here is a candidate you are judging
+                      against the others, and a square crop of a product shot
+                      keeps the middle band and discards the top and bottom -
+                      so a tall bottle or jar reads as a stripe of label and the
+                      grid stops distinguishing anything. Cropping a picture
+                      whose own tooltip says "Use this image" hides the thing
+                      being chosen. */}
                   <img
                     src={o.thumb}
                     alt={o.title}
-                    className="w-full h-full object-cover"
+                    className="w-full h-full object-contain"
                     loading="lazy"
                     onError={() => setBroken((s) => new Set(s).add(o.url))}
                   />

@@ -1,0 +1,22 @@
+{
+  "_provenance": "SYNTHESIZED in the shape of the captured response above (same fields, same types). Replace with a capture when the recorder catches this state.",
+  "_why": "Label made, carrier has not moved it. THIS SHAPE WAS OBSERVED 2026-08-14 (status + detail + one event); the payload is reconstructed.",
+  "trackers": [
+    {
+      "id": "trk_TEST0FA582557F7B",
+      "tracking_code": "TEST0FA582557F7B",
+      "status": "pre_transit",
+      "status_detail": "Arrived at FedEx location",
+      "est_delivery_date": null,
+      "tracking_details": [
+        {
+          "datetime": "2026-08-14T04:50:00-04:00",
+          "message": "Arrived at FedEx location",
+          "tracking_location": "PERRYSBURG, OH, US"
+        }
+      ],
+      "updated_at": "2026-08-14T14:15:00Z"
+    }
+  ],
+  "has_more": false
+}

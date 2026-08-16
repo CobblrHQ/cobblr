@@ -1,0 +1,27 @@
+{
+  "_provenance": "SYNTHESIZED in the shape of the captured response above (same fields, same types). Replace with a capture when the recorder catches this state.",
+  "_why": "On a doorstep. NOT the same as arrived: only a person closes an order.",
+  "trackers": [
+    {
+      "id": "trk_TEST0FA582557F7B",
+      "tracking_code": "TEST0FA582557F7B",
+      "status": "delivered",
+      "status_detail": "Left at front door",
+      "est_delivery_date": "2026-08-16",
+      "tracking_details": [
+        {
+          "datetime": "2026-08-15T13:22:00-04:00",
+          "message": "Delivered, left at front door",
+          "tracking_location": "DOVER, NJ, US"
+        },
+        {
+          "datetime": "2026-08-15T06:14:00-04:00",
+          "message": "On FedEx vehicle for delivery",
+          "tracking_location": "DOVER, NJ, US"
+        }
+      ],
+      "updated_at": "2026-08-15T17:30:00Z"
+    }
+  ],
+  "has_more": false
+}

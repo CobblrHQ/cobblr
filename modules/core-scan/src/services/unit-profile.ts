@@ -32,6 +32,7 @@
  */
 
 import sharp from "sharp";
+import { uprightBytes } from "./trim-margins.js";
 
 /** Working width for the profile. Coarse enough to be cheap and to ignore JPEG
  *  noise, fine enough to resolve a gap between two units. */
@@ -72,24 +73,30 @@ export interface Band {
 export function bandsFromProfile(ink: boolean[], minGap: number): Band[] {
   const bands: Band[] = [];
   let start = -1;
+  let lastInk = -1;
   let gap = 0;
   for (let x = 0; x < ink.length; x++) {
     if (ink[x]) {
+      // A sub-minGap seam inside an open band needs NO special case: a band
+      // only CLOSES at minGap, so ink resuming before that simply continues it.
+      // (An earlier "reopen the previous band" branch here popped the last
+      // closed band instead — bridging the >= minGap gap that legitimately
+      // separated it, so a 2-pack whose RIGHT unit had a thin label seam
+      // collapsed to one band while the mirrored layout was caught.)
       if (start < 0) start = x;
-      else if (gap > 0 && gap < minGap && bands.length > 0) {
-        // A gap too small to separate units: reopen the previous band.
-        start = bands.pop()!.start;
-      }
+      lastInk = x;
       gap = 0;
     } else if (start >= 0) {
       gap++;
       if (gap >= minGap) {
-        bands.push({ start, end: x - gap, top: 0, bottom: 0 });
+        bands.push({ start, end: lastInk, top: 0, bottom: 0 });
         start = -1;
       }
     }
   }
-  if (start >= 0) bands.push({ start, end: ink.length - 1, top: 0, bottom: 0 });
+  // Close on the last INK column, not the array edge: a band followed by a
+  // sub-minGap tail of background otherwise annexes that background.
+  if (start >= 0) bands.push({ start, end: lastInk, top: 0, bottom: 0 });
   return bands.filter((b) => b.end > b.start);
 }
 
@@ -213,10 +220,15 @@ async function compareBands(input: Uint8Array, bands: [Band, Band]): Promise<num
  *  keeps the whole photo, which is only ever too generous, never wrong. */
 export async function cropToFirstUnit(input: Uint8Array): Promise<Uint8Array | null> {
   try {
-    const v = await profileUnits(input);
+    // Upright first, so the profile, the band boxes and the extract all agree
+    // on display space — and so the re-encode below (which strips metadata)
+    // cannot store a sideways image.
+    const up = await uprightBytes(input);
+    if (!up) return null;
+    const v = await profileUnits(up.bytes);
     if (!v?.twoUnits || v.bands.length !== 2) return null;
     const band = v.bands[0]!;
-    const meta = await sharp(Buffer.from(input), { failOn: "none" }).metadata();
+    const meta = up.meta;
     if (!meta.width || !meta.height) return null;
 
     const sx = meta.width / W;
@@ -228,7 +240,7 @@ export async function cropToFirstUnit(input: Uint8Array): Promise<Uint8Array | n
     const height = Math.min(meta.height - top, Math.ceil((band.bottom - band.top + 1) * sy) + pad * 2);
     if (width < 8 || height < 8) return null;
 
-    const out = await sharp(Buffer.from(input), { failOn: "none" })
+    const out = await sharp(up.bytes, { failOn: "none" })
       .extract({ left, top, width, height })
       .jpeg({ quality: 90 })
       .toBuffer();

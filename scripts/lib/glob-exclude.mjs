@@ -29,8 +29,12 @@
  */
 import { globSync } from "node:fs";
 
-/** Path segments that are generated, never authored. */
-export const BUILD_OUTPUT_SEGMENTS = new Set(["node_modules", "dist", "build", ".next", "coverage"]);
+/** Path segments that are generated, never authored. `_tmp` is the scratch
+ *  pile: a publish dry-run leaves a full repo copy under `_tmp/publish-out/`,
+ *  and without this segment run-unit-tests.mjs's completeness sweep reported
+ *  its 200+ test copies as "tests NO ci job runs" — failing `test:unit` on any
+ *  machine that had ever published, while a clean CI checkout stayed green. */
+export const BUILD_OUTPUT_SEGMENTS = new Set(["node_modules", "dist", "build", ".next", "coverage", "_tmp"]);
 
 /**
  * True when any path SEGMENT is build output. Safe for directories and files.

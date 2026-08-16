@@ -22,7 +22,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { WORKSPACE_TOOLS } from "@cobblr/workspace-tools";
+import { WORKSPACE_TOOLS, mcpToolName } from "@cobblr/workspace-tools";
 import { CobblrApiError, type CobblrClient } from "./client.js";
 
 function ok(data: unknown) {
@@ -452,7 +452,7 @@ export function registerTools(server: McpServer, client: CobblrClient): void {
 
   for (const tool of WORKSPACE_TOOLS) {
     server.registerTool(
-      `cobblr_${tool.name}`,
+      mcpToolName(tool.name),
       {
         title: tool.name.replace(/_/g, " "),
         description: tool.description,

@@ -55,6 +55,7 @@ import {
   type SavedView,
 } from "../lib/api";
 import { useWorkspaceContentProbe } from "../lib/workspaceContent";
+import { ParcelsInFlight } from "../components/ParcelsInFlight";
 
 /** Homepage quick-links: big tap targets for the destinations this workspace
  *  actually uses (Scan Inbox, each instance like "Yarn", the domain modules),
@@ -141,6 +142,12 @@ export function Dashboard() {
           approval (until then the workspace has no AI). Loud + inline-actionable
           so it isn't a dead-end. Renders nothing unless there's a pending offer. */}
       <PendingAiShareCallout slug={activeSlug} role={activeOrg.role} />
+
+      {/* What is on its way, above the fold: a parcel that landed is the most
+          time-sensitive thing on this page, and it was previously visible only
+          on the scan inbox or inside one order. Renders nothing when nothing is
+          in flight. */}
+      <ParcelsInFlight slug={activeSlug} />
 
       {/* The cockpit (redesign B2): what needs me TODAY, derived from the
           trackers' own field semantics. Renders nothing when nothing needs you. */}
@@ -349,9 +356,10 @@ function AttentionFeed({ slug }: { slug: string }) {
     overdue: "border-red-300 dark:border-red-800 bg-red-50/70 dark:bg-red-950/20",
     low_stock: "border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/20",
     pending_scans: "border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20",
+    photo_wanted: "border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20",
     upcoming: "border-line dark:border-slate-700 bg-surface dark:bg-slate-900",
   };
-  const glyph: Record<string, string> = { overdue: "⏰", low_stock: "📉", pending_scans: "📷", upcoming: "📅" };
+  const glyph: Record<string, string> = { overdue: "⏰", low_stock: "📉", pending_scans: "📷", photo_wanted: "📷", upcoming: "📅" };
   return (
     <section className="space-y-1.5">
       <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">// needs you</div>
@@ -476,6 +484,18 @@ function AttentionRow({ slug, item: it, tone, glyph }: { slug: string; item: Att
                   <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-faint/50" />
                 )}
                 <span className="flex-1 min-w-0 truncate text-content dark:text-mortar-100">{e.title}</span>
+                {/* Straight into the camera, already pointed at this item. The
+                    row exists so nobody scrolls an inbox on a phone to find
+                    the thing they are standing in front of. */}
+                {e.action?.want && (
+                  <Link
+                    to={`/scan/camera?want=${e.action.want}`}
+                    title="Open the camera for this item"
+                    className="shrink-0 rounded bg-cobble-600 hover:bg-cobble-700 text-white text-[11px] font-medium px-2 py-0.5 transition"
+                  >
+                    Photograph
+                  </Link>
+                )}
                 {e.action?.connection_id && e.action?.device_id && (
                   <span className="shrink-0 flex items-center gap-1">
                     <button
