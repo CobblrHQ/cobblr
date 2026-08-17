@@ -2904,6 +2904,11 @@ export const api = {
         shipmentState: string | null;
         shipmentDescription: string | null;
         shipmentLocation: string | null;
+        /** The scan session, so a caller can deep-link to this receipt. */
+        batchId: string | null;
+        /** The single line's name, when the receipt has exactly one. Null for a
+         *  multi-line receipt, where no one item is "the parcel". */
+        onlyItemName: string | null;
         count: number;
       }>;
       total_items: number;

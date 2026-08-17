@@ -1317,7 +1317,10 @@ function VendorDetailPane({
             ) : (
               <ul className="space-y-1">
                 {v.orders.map((o) => (
-                  <li key={o.id}>
+                  // An anchor per order, so anything that knows an order id can
+                  // link to THAT order rather than to this page. The browser
+                  // does the scrolling; no code needed on this side.
+                  <li key={o.id} id={`order-${o.id}`} className="scroll-mt-24">
                     <button
                       type="button"
                       onClick={() => onOpenOrder(o.id)}

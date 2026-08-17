@@ -174,6 +174,17 @@ inboxRouter.get(
         sql<string | null>`max(b.shipment_state)`.as("shipment_state"),
         sql<string | null>`max(b.shipment_description)`.as("shipment_description"),
         sql<string | null>`max(b.shipment_location)`.as("shipment_location"),
+        // So a caller can link to THIS receipt rather than to the inbox.
+        sql<string | null>`max(b.id::text)`.as("batch_id"),
+        // What is IN it, for a receipt with a single line. "eBay #08-15026" is
+        // findable; "Brake Rotors & Pads Kit" is what you were waiting for. Only
+        // when there is exactly one, because naming the first of sixteen picks
+        // an arbitrary item and calls it the parcel.
+        sql<string | null>`
+          case when count(i.id) filter (where i.status in ('pending','enriching')) = 1
+               then max(i.name) filter (where i.status in ('pending','enriching'))
+          end
+        `.as("only_item_name"),
         eb.fn.countAll<number>().as("count"),
       ])
       .where("i.source_kind", "=", "receipt")
@@ -191,6 +202,8 @@ inboxRouter.get(
       shipmentState: r.shipment_state,
       shipmentDescription: r.shipment_description,
       shipmentLocation: r.shipment_location,
+      batchId: r.batch_id,
+      onlyItemName: r.only_item_name,
       count: Number(r.count),
     }));
     res.json({ groups, total_items: groups.reduce((s, g) => s + g.count, 0) });

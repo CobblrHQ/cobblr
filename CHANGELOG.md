@@ -2,13 +2,23 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-08-17
+
+### Improvements
+- A single-item parcel on the dashboard is named by what is in it, not by the order it came from.
+
 ## 2026-08-16
 
 ### Features
 - You can attach a receipt to an item you already have. Choose the PDF from the item's own camera button and Cobblr reads it into a purchase, links the item to it, and puts nothing in your inbox, because that item is already there.
 
 ### Improvements
+- A parcel notification or dashboard row now opens the exact receipt or order it is about, instead of the page it lives on.
+- A parcel on the dashboard now names the order it is, instead of just the vendor, and stops repeating its own status.
 - A receipt now becomes a purchase order the moment it is read, instead of only once you triage its lines. Every line is recorded on the order straight away, and a line becomes an item you own only when you confirm it. Discarding a whole receipt cancels the order it created.
+
+### Fixes
+- A receipt that named a delivery date is now asked about on that date, even when it has no tracking number and has not been filed yet.
 
 ## 2026-08-15
 

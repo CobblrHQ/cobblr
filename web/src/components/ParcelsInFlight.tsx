@@ -21,6 +21,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { PackageCheck, Truck } from "lucide-react";
 import { api } from "../lib/api";
+import { trimEcho } from "../lib/parcelDetail";
 
 /** The carrier vocabulary in words a person uses. */
 const LABEL: Record<string, string> = {
@@ -46,7 +47,19 @@ const URGENCY: Record<string, number> = {
 interface Parcel {
   key: string;
   what: string;
+  /** How many things are in it. Shown only past one — "1 item" beside a named
+   *  row is noise, since the name already IS the one item. */
+  count: number | null;
+  /** Vendor and order number, when the row is led by an item name instead. */
+  from: string | null;
   state: string | null;
+  /** The carrier's own wording ("Left at garage"), which is more specific than
+   *  our six states and is usually the sentence a person actually wants. */
+  detail: string | null;
+  /** Where the carrier SCANNED it, which is not the same as where it is.
+   *  Reads correctly in transit ("it got as far as Perrysburg") and misleads
+   *  once delivered, where it is usually the station that ran the route rather
+   *  than the address — so it is suppressed there. See the render. */
   where: string | null;
   /** Where the next action lives: the inbox for a receipt, the order for one
    *  already filed. */
@@ -75,10 +88,24 @@ export function ParcelsInFlight({ slug }: { slug: string }): React.ReactElement 
       .filter((g) => !!g.trackingNumber)
       .map((g) => ({
         key: `r:${g.groupId}`,
-        what: g.vendor ? `${g.vendor} order` : "A receipt",
+        // What you were waiting for, when the receipt is a single line: the
+        // thing's own name beats any reference. A multi-line receipt has no
+        // one name, so it falls back to vendor + number, which is what you
+        // would search for anyway and tells two same-vendor orders apart.
+        what:
+          g.onlyItemName?.trim() ||
+          [g.vendor, g.orderRef ? `#${g.orderRef}` : null].filter(Boolean).join(" ") ||
+          "A receipt",
+        count: g.count ?? null,
+        from: g.onlyItemName?.trim()
+          ? [g.vendor, g.orderRef ? `#${g.orderRef}` : null].filter(Boolean).join(" ") || null
+          : null,
         state: g.shipmentState,
+        detail: g.shipmentDescription,
         where: g.shipmentLocation,
-        to: "/scan",
+        // The receipt itself. A row that names one parcel and drops you on a
+        // page of thirty has made you do the finding twice.
+        to: g.batchId ? `/scan?batch=${g.batchId}` : "/scan",
         unfiled: true,
       })),
     ...(orders.data?.items ?? [])
@@ -88,17 +115,20 @@ export function ParcelsInFlight({ slug }: { slug: string }): React.ReactElement 
       .filter((o) => !!o.tracking_number && !o.arrived_at && o.status !== "cancelled")
       .map((o) => ({
         key: `o:${o.id}`,
-        what: o.vendor ? `${o.vendor} order` : (o.order_number ?? "An order"),
+        what:
+          [o.vendor, o.order_number ? `#${o.order_number}` : null].filter(Boolean).join(" ") || "An order",
+        count: o.item_count ?? null,
+        from: null,
         state: o.shipment_state,
+        detail: null,
         where: null,
-        to: "/purchases",
+        // The anchor, not the page — PurchasesPage renders an id per order.
+        to: `/purchases#order-${o.id}`,
         unfiled: false,
       })),
   ].sort((a, b) => (URGENCY[a.state ?? "unknown"] ?? 9) - (URGENCY[b.state ?? "unknown"] ?? 9));
 
   if (parcels.length === 0) return null;
-
-  const landed = parcels.filter((p) => p.state === "delivered").length;
 
   return (
     // Deliberately spare. A dashboard box earns its space by being scannable,
@@ -107,13 +137,10 @@ export function ParcelsInFlight({ slug }: { slug: string }): React.ReactElement 
     // line and the rows.
     <div className="space-y-1">
       <div className="flex items-baseline justify-between gap-2 px-0.5">
+        {/* No count beside this. Every row already says its own state, and a
+            box that self-hides is never long enough for a tally to tell you
+            something the rows do not. */}
         <div className="text-[10px] font-mono uppercase tracking-widest text-accent">// on its way</div>
-        {/* The count that matters is the one you can act on, so it leads. */}
-        {landed > 0 && (
-          <div className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-            {landed} {landed === 1 ? "has" : "have"} landed
-          </div>
-        )}
       </div>
 
       <div className="divide-y divide-line dark:divide-slate-800 border border-line dark:border-slate-700 rounded-lg overflow-hidden bg-surface dark:bg-slate-900">
@@ -133,7 +160,15 @@ export function ParcelsInFlight({ slug }: { slug: string }): React.ReactElement 
               ) : (
                 <Truck size={15} className="text-faint shrink-0" aria-hidden />
               )}
-              <span className="font-medium text-content dark:text-mortar-100 truncate min-w-0">{p.what}</span>
+              <span className="font-medium text-content dark:text-mortar-100 shrink-0">{p.what}</span>
+              {/* What is in it. Two orders from the same vendor are otherwise
+                  the same row twice. */}
+              {/* The order it came from, once the name has taken the lead.
+                  Without this a named row loses the vendor entirely. */}
+              {p.from && <span className="text-[11px] text-faint shrink-0">{p.from}</span>}
+              {p.count != null && p.count > 1 && (
+                <span className="text-[11px] text-faint shrink-0">{p.count} items</span>
+              )}
               <span
                 className={`text-xs shrink-0 ${
                   delivered ? "text-emerald-600 dark:text-emerald-400 font-medium" : "text-muted"
@@ -141,8 +176,27 @@ export function ParcelsInFlight({ slug }: { slug: string }): React.ReactElement 
               >
                 {p.state ? (LABEL[p.state] ?? p.state) : "Not checked yet"}
               </span>
-              {p.where && (
-                <span className="text-[11px] text-faint truncate min-w-0 hidden sm:inline">· {p.where}</span>
+              {/* The carrier's sentence, then the place. These are what the row
+                  was missing: "Delivered" alone does not tell you it is sitting
+                  in the garage. Truncated so the row stays one line. */}
+              {/* Carriers lead the sentence with the state they just reported
+                  ("Delivered, Left at garage"), which we have already shown.
+                  Drop the echo and keep the part that adds something. */}
+              {(() => {
+                const label = p.state ? (LABEL[p.state] ?? p.state) : "";
+                const extra = trimEcho(p.detail, label);
+                return extra ? (
+                  <span className="text-[11px] text-muted truncate min-w-0 hidden sm:inline">{extra}</span>
+                ) : null;
+              })()}
+              {/* Not once it has landed: a delivery scan's location is usually
+                  the carrier's own station, so "Delivered · DOVER, NJ" reads as
+                  a claim about where the parcel is that we cannot support. The
+                  description ("Left at garage") is the part that is about your
+                  address, and it stays. In transit the same string is honest
+                  and useful — it is how far it has got. */}
+              {p.where && !delivered && (
+                <span className="text-[11px] text-faint truncate min-w-0 hidden md:inline">· {p.where}</span>
               )}
               <span className="flex-1" />
               {/* Says what to DO, which is the difference between a status board

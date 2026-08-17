@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "license": "FSL-1.1-ALv2",
-  "description": "Cobblr — modular workflow platform for niche workflows.",
+  "description": "Cobblr \u2014 modular workflow platform for niche workflows.",
   "workspaces": [
     "api",
     "web",
@@ -174,7 +174,8 @@
     "testbench:shipments": "tsx scripts/shipment-testbench.ts",
     "lint:image-choice": "tsx scripts/lint-image-choice-contain.ts",
     "census:coupling": "tsx scripts/census-module-coupling.ts",
-    "lint:ci-runner-labels": "tsx scripts/lint-ci-runner-labels.ts"
+    "lint:ci-runner-labels": "tsx scripts/lint-ci-runner-labels.ts",
+    "lint:notification-deep-links": "tsx scripts/lint-notification-deep-links.ts"
   },
   "devDependencies": {
     "playwright": "^1.60.0",

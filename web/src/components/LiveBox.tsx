@@ -40,6 +40,7 @@ import { iconForName } from "../lib/panel-icons";
 import { useDrive } from "./DriveContext";
 import { tabBrowserId, type DriveState } from "../hooks/useBrowserDrive";
 import { LIVE_Z } from "../lib/live-layering";
+import { useConfigVisibility } from "../lib/useConfigVisibility";
 import type { LiveControlPublic } from "@cobblr/platform-contract";
 
 type ControlState = Record<string, unknown> | null;
@@ -490,12 +491,21 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
   const bridge = useBridgeLive(open ? 15_000 : 0);
   // Which Cobblr printer row each bridge instance belongs to, so the card can
   // show the roll/battery this workspace has already read from it.
+  // Only ask when the workspace HAS core-print. This box follows you across every
+  // page, so an unconditional call meant a workspace without printing logged a 409
+  // on every single page load — 662 console errors in one mobile audit, and a
+  // constant red herring in every walkthrough log. The module is enabled on a small
+  // minority of workspaces, so the unconditional case was the common one.
+  const { enabledModules } = useConfigVisibility();
+  const hasPrint = enabledModules?.has("core-print") ?? false;
   const printersQ = useQuery({
     queryKey: ["live-printers", slug],
     queryFn: () => api.listPrinters(slug!),
     // Fetched even while the box is closed so the configured-channel filter below
     // is ready the instant it opens (no flash of unfiltered bridge channels).
-    enabled: !!slug,
+    // `enabledModules` is null while loading, so this waits rather than guessing —
+    // a wrong guess here is either a 409 or a flash of empty state.
+    enabled: !!slug && hasPrint,
     staleTime: 60_000,
   });
   const rowForInstance = (instance: string) =>

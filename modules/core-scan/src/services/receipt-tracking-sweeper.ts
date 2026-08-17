@@ -42,7 +42,10 @@ interface TrackedRow {
   id: string;
   label: string | null;
   vendor: string | null;
-  tracking_number: string;
+  tracking_number: string | null;
+  /** The date the RECEIPT itself promised, parsed at ingest and kept on the
+   *  items' metadata. Independent of any carrier. */
+  expected_arrival: string | null;
   shipment_state: string | null;
   shipment_checked_at: Date | null;
   shipment_notified_state: string | null;
@@ -54,10 +57,16 @@ interface TrackedRow {
  *  the journey is visible in the inbox without being pushed at anyone. */
 const NOTIFY_STATES = new Set(["delivered", "out_for_delivery"]);
 
+/** Marker for the date-only ask, so it happens once. Not a carrier state, and
+ *  deliberately not one: it means "its own receipt said today". */
+const DUE_MARK = "date-due";
+
 export function messageFor(state: string, what: string): string {
-  return state === "delivered"
-    ? `${what} was delivered. File it when you have it in hand.`
-    : `${what} is out for delivery today.`;
+  if (state === "delivered") return `${what} was delivered. File it when you have it in hand.`;
+  if (state === "out_for_delivery") return `${what} is out for delivery today.`;
+  // The date-only case. No carrier has said anything -- the receipt itself
+  // named a day and the day has come -- so it ASKS rather than announces.
+  return `${what} was due today. Did it turn up?`;
 }
 
 /** A human name for the parcel, preferring what the person would recognise. */
@@ -103,6 +112,11 @@ export async function receiptTrackingTick(
         // Only receipts still WAITING to be filed. Once every line has been
         // confirmed or discarded the inbox is done with it, and the order (if
         // one was made) carries the tracking from there.
+        // Followable OR simply due. A receipt that named a delivery date is
+        // worth asking about even when nobody ever added a tracking number --
+        // that is the majority of receipts, and the case that used to fall
+        // through both sweeps and produce silence.
+        const today = now.toISOString().slice(0, 10);
         const q = sql<TrackedRow>`
           select b.id,
                  b.label,
@@ -111,12 +125,16 @@ export async function receiptTrackingTick(
                  b.shipment_state,
                  b.shipment_checked_at,
                  b.shipment_notified_state,
+                 max(i.suggested_metadata->>'expected_arrival') as expected_arrival,
                  count(i.id) filter (where i.status in ('pending','enriching')) as pending_items
             from core_scan_batches b
             join core_scan_inbox_items i on i.scan_batch_id = b.id
-           where nullif(btrim(coalesce(b.tracking_number, '')), '') is not null
            group by b.id
           having count(i.id) filter (where i.status in ('pending','enriching')) > 0
+             and (
+               nullif(btrim(coalesce(b.tracking_number, '')), '') is not null
+               or max(i.suggested_metadata->>'expected_arrival') <= ${today}
+             )
         `.compile(tdb);
 
         let rows: TrackedRow[];
@@ -130,43 +148,48 @@ export async function receiptTrackingTick(
 
         for (const row of rows) {
           try {
-            const res = (await platform().actions.invoke("core-shipments:track", {
-              orgId,
-              userId: null,
-              event: {
-                name: "core-scan.receipt-tracking-sweep",
-                payload: {},
-                actor: { user_id: null, display_name: null, auth_method: "system" },
-                timestamp: now.toISOString(),
-                trigger_type: "schedule",
-              },
-              args: {
-                number: row.tracking_number,
-                lastState: row.shipment_state,
-                lastCheckedAt: row.shipment_checked_at?.toISOString() ?? null,
-                // Nothing in the inbox has been taken in and put away yet --
-                // that is what filing it means. Said explicitly so the
-                // capability never has to infer it.
-                confirmed: false,
-              },
-            })) as {
+            // Ask the carrier only when there is a number to ask about. A
+            // receipt with just a date skips straight to the question below.
+            type TrackResult = {
               followed?: boolean;
               status?: { state?: string; description?: string; location?: string | null };
               nextPollAt?: string | null;
             } | null;
+            let res: TrackResult = null;
+            if (row.tracking_number) {
+              res = (await platform().actions.invoke("core-shipments:track", {
+                orgId,
+                userId: null,
+                event: {
+                  name: "core-scan.receipt-tracking-sweep",
+                  payload: {},
+                  actor: { user_id: null, display_name: null, auth_method: "system" },
+                  timestamp: now.toISOString(),
+                  trigger_type: "schedule",
+                },
+                args: {
+                  number: row.tracking_number,
+                  lastState: row.shipment_state,
+                  lastCheckedAt: row.shipment_checked_at?.toISOString() ?? null,
+                  // Nothing in the inbox has been taken in and put away yet --
+                  // that is what filing it means. Said explicitly so the
+                  // capability never has to infer it.
+                  confirmed: false,
+                },
+              })) as TrackResult;
+            }
 
-            if (!res?.followed || !res.status?.state) continue;
-            checked += 1;
+            if (res?.followed && res.status?.state) checked += 1;
 
-            const state = res.status.state;
-            await tdb.executeQuery(
+            const state = res?.status?.state ?? null;
+            if (state) await tdb.executeQuery(
               sql`
                 update core_scan_batches
                    set shipment_state         = ${state},
-                       shipment_description   = ${res.status.description ?? null},
-                       shipment_location      = ${res.status.location ?? null},
+                       shipment_description   = ${res?.status?.description ?? null},
+                       shipment_location      = ${res?.status?.location ?? null},
                        shipment_checked_at    = ${now},
-                       shipment_next_poll_at  = ${res.nextPollAt ? new Date(res.nextPollAt) : null}
+                       shipment_next_poll_at  = ${res?.nextPollAt ? new Date(res.nextPollAt) : null}
                  where id = ${row.id}
               `.compile(tdb),
             );
@@ -174,11 +197,20 @@ export async function receiptTrackingTick(
             // Tell someone only when the state is worth acting on, and only
             // once per state -- a parcel sits 'delivered' until it is filed, and
             // an hourly reminder of that is noise, not service.
-            if (NOTIFY_STATES.has(state) && row.shipment_notified_state !== state) {
-              await notifyArrival(orgId, row, state);
+            // Two independent reasons to speak, and the date one must NOT be
+            // gated on the carrier: a receipt with no tracking number still
+            // named a day, and that day passing is the whole question.
+            const announce =
+              state && NOTIFY_STATES.has(state)
+                ? state
+                : !state && row.expected_arrival && row.expected_arrival <= now.toISOString().slice(0, 10)
+                  ? DUE_MARK
+                  : null;
+            if (announce && row.shipment_notified_state !== announce) {
+              await notifyArrival(orgId, row, announce);
               notified += 1;
               await tdb.executeQuery(
-                sql`update core_scan_batches set shipment_notified_state = ${state} where id = ${row.id}`.compile(
+                sql`update core_scan_batches set shipment_notified_state = ${announce} where id = ${row.id}`.compile(
                   tdb,
                 ),
               );
@@ -215,11 +247,14 @@ async function notifyArrival(orgId: string, row: TrackedRow, state: string): Pro
         eventType: "core-scan.parcel.update",
         message,
         module: "core-scan",
-        // The inbox, because that is where the receipt still is and where the
-        // next action lives. dispatch does NOT derive a link from the entity
-        // fields — it passes link_url straight through, so omitting it leaves
-        // the notification with nowhere to go (the arrivals bug, 2026-08).
-        link_url: "/scan",
+        // The RECEIPT, not the inbox. A notification that names one parcel and
+        // lands you on a page of thirty is a search task, and the id is right
+        // here. `?batch=` scopes the inbox to one session (ScanPage).
+        //
+        // dispatch does NOT derive a link from the entity fields — it passes
+        // link_url straight through, so omitting it leaves the notification
+        // with nowhere to go at all (the arrivals bug, 2026-08).
+        link_url: `/scan?batch=${row.id}`,
         payload: { state, tracking_number: row.tracking_number },
       });
     } catch (err) {

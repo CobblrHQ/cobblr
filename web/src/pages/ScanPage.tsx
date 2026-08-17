@@ -3604,8 +3604,12 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                             {g.shipmentDescription && (
                               <div className="text-[11px] text-muted">{g.shipmentDescription}</div>
                             )}
-                            {g.shipmentLocation && (
-                              <div className="text-[11px] text-faint">{g.shipmentLocation}</div>
+                            {/* A scan location, not an address. Once delivered
+                                it is usually the carrier's station, so showing
+                                it there would claim something we cannot support;
+                                in transit it honestly means how far it got. */}
+                            {g.shipmentLocation && g.shipmentState !== "delivered" && (
+                              <div className="text-[11px] text-faint">Last scanned {g.shipmentLocation}</div>
                             )}
                             <div className="font-mono text-[11px] text-faint break-all pt-0.5">
                               {g.trackingNumber}
@@ -3625,20 +3629,6 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         )}
                       </span>
                     ))}
-                  {/* Where it is, for a receipt still waiting to be filed. The
-                      point of following a parcel is seeing this without having
-                      to go anywhere, so it sits in the row itself. */}
-                  {g.shipmentState && (
-                    <span
-                      title={[g.shipmentDescription, g.shipmentLocation].filter(Boolean).join(" · ") || undefined}
-                      className={`shrink-0 inline-flex items-center gap-1 ${
-                        g.shipmentState === "delivered" ? "text-emerald-600 dark:text-emerald-400" : "text-muted"
-                      }`}
-                    >
-                      {SHIPMENT_LABEL[g.shipmentState] ?? g.shipmentState}
-                      {g.shipmentLocation && <span className="text-faint">· {g.shipmentLocation}</span>}
-                    </span>
-                  )}
                   {g.sourceFileId && g.batchId && (
                     <button
                       type="button"
