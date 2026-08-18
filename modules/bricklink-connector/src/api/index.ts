@@ -21,6 +21,7 @@ const ParseWantedBody = z.object({
   xml: z.string().min(1).max(2_000_000),
 });
 
+// AI-REACH: parses a pasted BrickLink wanted-list file; the input is a document, not a sentence
 router.post("/parse-wanted-list", (req, res) => {
   const parsed = ParseWantedBody.safeParse(req.body);
   if (!parsed.success) {
@@ -50,6 +51,7 @@ const ParseOrderBody = z.object({
   csv: z.string().min(1).max(5_000_000),
 });
 
+// AI-REACH: parses a pasted BrickLink order export; the input is a document, not a sentence
 router.post("/parse-order", (req, res) => {
   const parsed = ParseOrderBody.safeParse(req.body);
   if (!parsed.success) {
@@ -89,6 +91,7 @@ const DiffBody = z.object({
     .max(5000),
 });
 
+// AI-REACH: diffs an uploaded wanted list against stock; the input is a document
 router.post("/diff-wanted-list", async (req, res, next) => {
   try {
     const parsed = DiffBody.safeParse(req.body);

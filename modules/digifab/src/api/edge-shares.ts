@@ -70,6 +70,7 @@ const Create = z.object({
 
 // POST / — mint a grant. Validates the picked machines are this workspace's own
 // bridge connections, then returns a ONE-TIME invite token (shown once).
+// AI-REACH: mints an edge-share grant; credentials
 edgeSharesRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -111,6 +112,7 @@ const Redeem = z.object({ owner_org: z.string().min(1), token: z.string().min(1)
 // the link carries the owner_org so we can resolve the grant in the owner's DB.
 // Creates one POINTER connection per shared machine (no machine creds — just a
 // reference the relay resolves to the owner's bridge at request time).
+// AI-REACH: redeems an edge-share grant; credentials
 edgeSharesRouter.post(
   "/redeem",
   asyncHandler(async (req, res) => {
@@ -178,6 +180,7 @@ edgeSharesRouter.post(
 );
 
 // POST /:id/revoke — cut off a grant immediately (the relay re-checks per request).
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 edgeSharesRouter.post(
   "/:id/revoke",
   asyncHandler(async (req, res) => {

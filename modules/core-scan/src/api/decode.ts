@@ -31,6 +31,7 @@ const DecodeBody = z.object({
   code: z.string().min(1).max(200),
 });
 
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 decodeRouter.post(
   "/decode",
   asyncHandler(async (req, res) => {

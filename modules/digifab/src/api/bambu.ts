@@ -84,6 +84,7 @@ const LoginBody = z.object({
   email: z.string().min(3).max(200),
   password: z.string().min(1).max(200),
 });
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 bambuRouter.post("/login", asyncHandler(async (req, res) => {
   if (!requireRole(req, res, "owner", "admin")) return;
   const parsed = LoginBody.safeParse(req.body);
@@ -114,6 +115,7 @@ bambuRouter.post("/login", asyncHandler(async (req, res) => {
 
 // ── POST /code {session, code} — email verify OR 2FA ─────────────────────────
 const CodeBody = z.object({ session: z.string().uuid(), code: z.string().min(1).max(20) });
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 bambuRouter.post("/code", asyncHandler(async (req, res) => {
   if (!requireRole(req, res, "owner", "admin")) return;
   const parsed = CodeBody.safeParse(req.body);
@@ -143,6 +145,7 @@ const CreateBody = z.object({
   mode: z.enum(["cloud", "lan", "hybrid"]),
   label: z.string().min(1).max(120).optional(),
 });
+// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 bambuRouter.post("/create", asyncHandler(async (req, res) => {
   if (!requireRole(req, res, "owner", "admin")) return;
   const parsed = CreateBody.safeParse(req.body);
@@ -208,6 +211,7 @@ const CommandBody = z.object({
   serial: z.string().min(1),
   command: z.enum(["pause", "resume", "stop", "light_on", "light_off", "nudge"]),
 });
+// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 bambuRouter.post("/command", asyncHandler(async (req, res) => {
   if (!requireRole(req, res, "owner", "admin")) return;
   const parsed = CommandBody.safeParse(req.body);

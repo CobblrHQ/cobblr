@@ -15,7 +15,7 @@
 // blob, or an external candidate). Each thumbnail and the main image resolve
 // their own src through <Frame>, so a filmstrip of authed files is fine.
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { useImageSrc, OverlayFlag } from "@cobblr/platform-web";
@@ -33,6 +33,14 @@ export interface LightboxItem {
   url?: string;
   /** Plain thumbnail url; defaults to `url`. */
   thumbUrl?: string;
+  /** Draw a divider immediately before this thumbnail.
+   *
+   *  The strip mixes two kinds of thing: images that are already YOURS (the
+   *  photo you took, the catalog image on the record) and live web search
+   *  results. Running them together makes the one image you can identify at a
+   *  glance just another tile to hunt for. The caller says where the seam is;
+   *  this component does not know what the groups mean. */
+  dividerBefore?: boolean;
 }
 
 type Variant = "thumb" | "medium" | "original";
@@ -102,6 +110,7 @@ export function ImageLightbox({
   index,
   onIndex,
   onClose,
+  searchSlot,
   action,
   onItemError,
 }: {
@@ -110,6 +119,13 @@ export function ImageLightbox({
   index: number;
   onIndex: (i: number) => void;
   onClose: () => void;
+  /** Rendered at the top of the footer. For a picker that should let you refine
+   *  the search WITHOUT leaving the viewer: you are comparing candidates here,
+   *  so the control that changes which candidates exist belongs here too.
+   *
+   *  It works because the footer band swallows clicks; in a region where empty
+   *  space dismissed, a text input would be unusable. */
+  searchSlot?: React.ReactNode;
   /** Optional primary action (e.g. "Use this image" in the search picker).
    *  `label` may be a function of the current item — return null to hide the
    *  button for that item (e.g. no "Use this image" on the item's own photos). */
@@ -185,6 +201,7 @@ export function ImageLightbox({
       {/* Footer: caption + action + filmstrip. stopPropagation so using the
           controls doesn't dismiss the viewer. */}
       <div className="shrink-0 w-full max-w-3xl mx-auto p-4 space-y-2" onClick={stop}>
+        {searchSlot}
         <div className="flex items-center justify-between gap-3">
           {current.caption ? (
             current.href ? (
@@ -242,8 +259,14 @@ export function ImageLightbox({
         {many && (
           <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
             {items.map((it, i) => (
+              <Fragment key={it.key}>
+                {it.dividerBefore && i > 0 && (
+                  <div
+                    aria-hidden
+                    className="w-px self-stretch shrink-0 bg-white/20 mx-1.5"
+                  />
+                )}
               <button
-                key={it.key}
                 type="button"
                 onClick={() => onIndex(i)}
                 title={it.caption ?? ""}
@@ -254,6 +277,7 @@ export function ImageLightbox({
               >
                 <Frame item={it} variant="thumb" className="w-full h-full object-contain" />
               </button>
+              </Fragment>
             ))}
           </div>
         )}

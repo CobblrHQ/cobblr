@@ -53,6 +53,7 @@ function hostLabel(url: string): string {
   }
 }
 
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 bulkRouter.post(
   "/connections",
   asyncHandler(async (req, res) => {
@@ -178,6 +179,7 @@ async function probeJson(url: string, headers: Record<string, string>): Promise<
   }
 }
 
+// AI-REACH: detects machines on the LAN from the bridge; discovery is a set-up step with the hardware present
 bulkRouter.post(
   "/detect",
   asyncHandler(async (req, res) => {

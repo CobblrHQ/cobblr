@@ -968,8 +968,33 @@ export interface TestOrgPoolTable {
   baked_at: Generated<Date>;
 }
 
+/** Bridge presence, shared across api processes. A row here means some process
+ *  has a bridge long-polling for that CHANNEL KEY (a user id for a personal AI
+ *  connection, `<orgId>` or `<orgId>::<name>` for a workspace bridge). */
+export interface EdgeBridgesTable {
+  channel_key: string;
+  last_seen: Generated<Date>;
+}
+
+/** One relayed request. The bridge claims it from whichever process it polled,
+ *  and the response is written back here for whichever process is waiting — so
+ *  neither has to be the same process. */
+export interface EdgeRelayJobsTable {
+  id: string;
+  channel_key: string;
+  request: unknown;
+  status: Generated<string>; // queued | claimed | done
+  response: unknown | null;
+  created_at: Generated<Date>;
+  claimed_at: Date | null;
+  done_at: Date | null;
+  expires_at: Date;
+}
+
 export interface MetaDB {
   feedback: FeedbackTable;
+  edge_bridges: EdgeBridgesTable;
+  edge_relay_jobs: EdgeRelayJobsTable;
   users: UsersTable;
   orgs: OrgsTable;
   org_memberships: OrgMembershipsTable;

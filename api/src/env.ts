@@ -167,6 +167,10 @@ const Schema = z.object({
   //    service, presented when redeeming a sign-in code. Without it the hand-off is
   //    off and sign-in works exactly as it did before.
   IDENTITY_DEPLOYMENT_SECRET: z.string().optional(),
+  //  • IDENTITY_NAME — what to call the account service on the sign-in button. Defaults
+  //    to "Cobblr", which is right for cobblr.xyz and wrong for anyone federating with
+  //    their own: the client is generic, so its label should be too.
+  IDENTITY_NAME: z.string().optional(),
   //  • COBBLR_IDENTITY_AUTOPROVISION — "true" gives a central account that has no
   //    workspace here one, on first arrival, instead of turning it away. That is what
   //    an open surface (a trial box) wants and what a private one must not do, so it

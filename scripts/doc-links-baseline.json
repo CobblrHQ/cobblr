@@ -1,0 +1,110 @@
+[
+  {
+    "file": "docs/architecture/blueprint-backup-export.md",
+    "link": "./lens-promotion.md"
+  },
+  {
+    "file": "docs/architecture/instances.md",
+    "link": "./lens-promotion.md"
+  },
+  {
+    "file": "docs/architecture/instances.md",
+    "link": "./templates.md"
+  },
+  {
+    "file": "docs/architecture/module-layers.md",
+    "link": "./traits-stress-test.md"
+  },
+  {
+    "file": "docs/architecture/nav-primitives.md",
+    "link": "./lens-promotion.md"
+  },
+  {
+    "file": "docs/architecture/nav-primitives.md",
+    "link": "./lens-promotion.md"
+  },
+  {
+    "file": "docs/architecture/pizza-preset.md",
+    "link": "./traits-stress-test.md"
+  },
+  {
+    "file": "docs/walkthroughs/bramble-full-sidebar-walkthrough.md",
+    "link": "../../modules/core-scan.md"
+  },
+  {
+    "file": "docs/walkthroughs/bramble-full-sidebar-walkthrough.md",
+    "link": "../../modules/builds.md"
+  },
+  {
+    "file": "docs/walkthroughs/bramble-full-sidebar-walkthrough.md",
+    "link": "../../modules/digifab.md"
+  },
+  {
+    "file": "docs/walkthroughs/bramble-full-walkthrough.md",
+    "link": "../../modules/core-scan.md"
+  },
+  {
+    "file": "docs/walkthroughs/bramble-full-walkthrough.md",
+    "link": "../../modules/builds.md"
+  },
+  {
+    "file": "docs/walkthroughs/bramble-full-walkthrough.md",
+    "link": "../../modules/digifab.md"
+  },
+  {
+    "file": "docs/walkthroughs/flagship-bundles/vehicle-maintenance.md",
+    "link": "../../../bundles/vehicle-maintenance.json"
+  },
+  {
+    "file": "docs/walkthroughs/flagship-bundles/yarn-stash.md",
+    "link": "../../../bundles/filament-stash.json"
+  },
+  {
+    "file": "docs/walkthroughs/home-life-full-sidebar-walkthrough.md",
+    "link": "../../bundles/food-cluster.json"
+  },
+  {
+    "file": "docs/walkthroughs/home-life-full-sidebar-walkthrough.md",
+    "link": "../../bundles/kitchen-fitness.json"
+  },
+  {
+    "file": "docs/walkthroughs/home-life-full-walkthrough.md",
+    "link": "../../bundles/food-cluster.json"
+  },
+  {
+    "file": "docs/walkthroughs/home-life-full-walkthrough.md",
+    "link": "../../bundles/kitchen-fitness.json"
+  },
+  {
+    "file": "docs/walkthroughs/homebox-migration.md",
+    "link": "./homebox-migration/01-blank-dashboard.png"
+  },
+  {
+    "file": "docs/walkthroughs/homebox-migration.md",
+    "link": "./homebox-migration/02-integrations-page.png"
+  },
+  {
+    "file": "docs/walkthroughs/homebox-migration.md",
+    "link": "./homebox-migration/03-homebox-modal-empty.png"
+  },
+  {
+    "file": "docs/walkthroughs/homebox-migration.md",
+    "link": "./homebox-migration/04-preview.png"
+  },
+  {
+    "file": "docs/walkthroughs/homebox-migration.md",
+    "link": "./homebox-migration/05-import-complete.png"
+  },
+  {
+    "file": "docs/walkthroughs/homebox-migration.md",
+    "link": "./homebox-migration/06-inventory-list.png"
+  },
+  {
+    "file": "docs/walkthroughs/homebox-migration.md",
+    "link": "./homebox-migration/07-part-detail-dewalt.png"
+  },
+  {
+    "file": "docs/walkthroughs/homebox-migration.md",
+    "link": "./homebox-migration/08-locations-tree.png"
+  }
+]

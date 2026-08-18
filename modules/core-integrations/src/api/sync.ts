@@ -149,6 +149,7 @@ const ConnectionCreate = z.object({
 });
 
 // ── create a connection (+ mint the webhook token) ──
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 syncRouter.post(
   "/connections",
   asyncHandler(async (req, res) => {
@@ -241,6 +242,7 @@ const ConnectionUpdate = z.object({
   enabled: z.boolean().optional(),
 });
 
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 syncRouter.patch(
   "/connections/:id",
   asyncHandler(async (req, res) => {
@@ -263,6 +265,7 @@ syncRouter.patch(
   }),
 );
 
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 syncRouter.delete(
   "/connections/:id",
   asyncHandler(async (req, res) => {
@@ -288,6 +291,7 @@ syncRouter.delete(
 // ── archive: move a connection to the history section (NOT delete). Turns off
 //    ongoing sync so the poll worker drops it; the id-map + config survive, so
 //    un-archive resumes it. run/preview/import 404 while archived. ──
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 syncRouter.post(
   "/connections/:id/archive",
   asyncHandler(async (req, res) => {
@@ -303,6 +307,7 @@ syncRouter.post(
 
 // ── un-archive: one click back to the normal list. Sync stays OFF (archiving is
 //    not the same as disabling ongoing sync) — you re-enable it if you want. ──
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 syncRouter.post(
   "/connections/:id/unarchive",
   asyncHandler(async (req, res) => {
@@ -314,6 +319,7 @@ syncRouter.post(
 );
 
 // ── test the connection's credentials ──
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 syncRouter.post(
   "/connections/:id/test",
   asyncHandler(async (req, res) => {
@@ -337,6 +343,7 @@ const SyncConfig = z.object({
 // ── enable/disable live sync + cadence ──
 // Live sync only starts once the first import is approved. Before that the row
 // stays in PREVIEW (next_run_at null) regardless of the enabled flag.
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 syncRouter.put(
   "/connections/:id/syncs/:entityType",
   asyncHandler(async (req, res) => {
@@ -400,6 +407,7 @@ async function loadRefType(
 
 // ── import PREVIEW: a dry-run plan (create/update/link/unchanged/delete) that
 // writes NOTHING. The "what a manual one-time import would do" view. ──
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 syncRouter.post(
   "/connections/:id/syncs/:entityType/preview",
   asyncHandler(async (req, res) => {
@@ -416,6 +424,7 @@ syncRouter.post(
 );
 
 // ── approve & run the one-time IMPORT (merges by name), then go LIVE. ──
+// AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
 syncRouter.post(
   "/connections/:id/syncs/:entityType/import",
   asyncHandler(async (req, res) => {
@@ -462,6 +471,7 @@ syncRouter.post(
 );
 
 // ── sync now: live reconcile (strict external-id; only AFTER import approved) ──
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 syncRouter.post(
   "/connections/:id/syncs/:entityType/run",
   asyncHandler(async (req, res) => {

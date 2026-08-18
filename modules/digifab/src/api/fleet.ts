@@ -402,6 +402,7 @@ fleetRouter.get(
 // Only a *completed*-print attention has effects to confirm/reverse; a
 // failed-print attention just gets cleared (a failed print fired nothing).
 const ReadyBody = z.object({ outcome: z.enum(["good", "scrapped"]).default("good") });
+// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 fleetRouter.post(
   "/:connectionId/:deviceId/ready",
   asyncHandler(async (req, res) => {
@@ -496,6 +497,7 @@ fleetRouter.post(
 // manager that doesn't report one. Upserts the per-device settings row.
 // ⑦ Pin (or unpin) a device to a floor-grid cell — the fleet arrange mode.
 const PositionBody = z.object({ x: z.number().int().min(0).max(63).nullable(), y: z.number().int().min(0).max(255).nullable() });
+// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 fleetRouter.put(
   "/:connectionId/:deviceId/position",
   asyncHandler(async (req, res) => {
@@ -528,6 +530,7 @@ const LayoutBody = z.object({
     )
     .max(500),
 });
+// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 fleetRouter.put(
   "/layout",
   asyncHandler(async (req, res) => {
@@ -553,6 +556,7 @@ fleetRouter.put(
 );
 
 const CameraBody = z.object({ camera_url: z.string().url().max(1000).nullable() });
+// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 fleetRouter.post(
   "/:connectionId/:deviceId/camera",
   asyncHandler(async (req, res) => {
@@ -576,6 +580,7 @@ fleetRouter.post(
 // Snapshot relay — opt-in, OFF by default. Toggle whether the cloud accepts +
 // serves agent-pushed frames for this device (for remote viewing).
 const RelayToggle = z.object({ enabled: z.boolean() });
+// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 fleetRouter.post(
   "/:connectionId/:deviceId/snapshot-relay",
   asyncHandler(async (req, res) => {
@@ -609,6 +614,7 @@ async function resolveSelfConnection(orgId: string, connectionId: string): Promi
 // the workspace owner enabled the relay for this device. Stored in the tenant DB
 // + served back by GET below. The agent dials out, so this is a normal
 // authenticated POST. Use connectionId "self" to auto-resolve (no id to paste).
+// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 fleetRouter.post(
   "/:connectionId/:deviceId/snapshot",
   raw({ type: ["image/jpeg", "application/octet-stream"], limit: "4mb" }),
@@ -724,6 +730,7 @@ fleetRouter.get(
 );
 
 const ControlBody = z.object({ id: z.string().min(1).max(60), params: z.record(z.unknown()).optional() });
+// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 fleetRouter.post(
   "/:connectionId/:deviceId/control",
   asyncHandler(async (req, res) => {
@@ -755,6 +762,7 @@ fleetRouter.post(
 
 // Start a file ALREADY on the printer's storage (from the file list) — no upload.
 const PrintBody = z.object({ name: z.string().min(1).max(300) });
+// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
 fleetRouter.post(
   "/:connectionId/:deviceId/print",
   asyncHandler(async (req, res) => {
@@ -784,6 +792,7 @@ async function readLanMap(orgId: string, connId: string): Promise<{ conn: { id: 
   const creds = conn.credentials_enc ? await platform().integrations.decryptCredentials(orgId, conn.credentials_enc) : {};
   return { conn: { id: conn.id, type: conn.type, credentials_enc: conn.credentials_enc }, map: parseBambuLan(creds) };
 }
+// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 fleetRouter.put(
   "/:connectionId/:deviceId/lan",
   asyncHandler(async (req, res) => {
@@ -803,6 +812,7 @@ fleetRouter.put(
     res.json({ ok: true, host, mode: map[req.params.deviceId!]!.mode });
   }),
 );
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 fleetRouter.delete(
   "/:connectionId/:deviceId/lan",
   asyncHandler(async (req, res) => {

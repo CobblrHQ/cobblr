@@ -244,6 +244,7 @@ const ExtractFileBody = z.object({ file_id: z.string().uuid() });
 // extraction as paste-text. The webapp matches the result against stock
 // (hooks by gauge, yarn by weight/fiber) — the design becomes the bridge
 // between the pattern and the yarn/hooks actually on the shelf.
+// AI-REACH: takes an uploaded pattern file/images; the assistant cannot carry a file
 projectsRouter.post(
   "/:id/extract-pattern-file",
   asyncHandler(async (req, res) => {
@@ -314,6 +315,7 @@ function bearerToken(req: import("express").Request): string | null {
   return typeof auth === "string" && auth.startsWith("Bearer ") ? auth.slice(7) : null;
 }
 
+// AI-REACH: takes an uploaded pattern file/images; the assistant cannot carry a file
 projectsRouter.post(
   "/:id/extract-pattern-images",
   asyncHandler(async (req, res) => {
@@ -422,6 +424,7 @@ projectsRouter.post(
   }),
 );
 
+// AI-REACH: takes an uploaded pattern file/images; the assistant cannot carry a file
 projectsRouter.post(
   "/:id/extract-pattern",
   asyncHandler(async (req, res) => {

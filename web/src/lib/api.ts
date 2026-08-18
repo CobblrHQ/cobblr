@@ -5,6 +5,7 @@
 import { getImpersonationToken } from "./impersonation";
 import type { ResolveOutcome as RegistryResolveOutcome } from "@cobblr/platform-contract/resolvables";
 import type { LiveControlPublic, FieldRole, FieldDefType } from "@cobblr/platform-contract";
+import { describeUnreadableBody } from "@cobblr/platform-web";
 
 const TOKEN_KEY = "cobblr.token";
 
@@ -113,15 +114,27 @@ async function request<T>(
   const contentLength = res.headers.get("content-length");
   if (res.ok && contentLength === "0") return undefined as T;
 
+  // Read the body as TEXT first. `res.json()` CONSUMES it, so when parsing
+  // threw, the one thing that said what actually went wrong was already gone —
+  // and the error raised in its place, "Non-JSON response (502)", named the
+  // transport rather than the cause. A user hit that on a long Ask Cobb turn
+  // and it took hours of proxy, container and relay logs to recover a sentence
+  // the response had been carrying the whole time (2026-08-18).
+  const raw = await res.text();
   let parsed: unknown;
-  try {
-    parsed = await res.json();
-  } catch {
-    // Empty-body success → treat as void rather than failing. Some
-    // POST endpoints return 201 with no body (no content-length set
-    // because the server didn't write one).
+  if (raw) {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      // Empty-body success → treat as void rather than failing. Some
+      // POST endpoints return 201 with no body (no content-length set
+      // because the server didn't write one).
+      if (res.ok) return undefined as T;
+      throw new ApiError(res.status, "non_json", describeUnreadableBody(res.status, raw));
+    }
+  } else {
     if (res.ok) return undefined as T;
-    throw new ApiError(res.status, "non_json", `Non-JSON response (${res.status})`);
+    throw new ApiError(res.status, "non_json", describeUnreadableBody(res.status, ""));
   }
 
   if (!res.ok) {
@@ -655,6 +668,9 @@ export const api = {
       self_serve_invites?: boolean;
       hosted?: boolean;
       captcha?: { provider: string; site_key: string | null } | null;
+      /** Present only when this surface can BOTH reach the account service and redeem
+       *  a code from it. Null means "no such button", not "not configured yet". */
+      identity?: { authorize_url: string; deployment: string; name?: string } | null;
     }>("GET", "/auth/config"),
   // Mint an API token (plaintext returned ONCE). Used by the edge-bridge setup to
   // generate a least-privilege devices:edge token in-flow, and by the API Recipes
@@ -806,6 +822,11 @@ export const api = {
     }>("POST", "/auth/magic/request", body),
   magicConsume: (body: { token: string }) =>
     request<AuthResponse>("POST", "/auth/magic/consume", body),
+  // Central identity: trade the one-time code from account.cobblr.xyz for a session
+  // here. The code arrives in the URL; the identity token never does (the api redeems
+  // it server to server). See docs/architecture/central-identity.md.
+  identityCallback: (body: { code: string }) =>
+    request<AuthResponse>("POST", "/auth/identity/callback", body),
   // QR pair-login (desktop mints a code → phone scans + claims → signed in to
   // the same workspace). See api/src/routes/auth.ts "QR pair-login".
   pairStart: (body: { org_slug: string }) =>
@@ -3195,6 +3216,21 @@ export const api = {
   // Collapse a receipt's pending lines into ONE purchases order (vendor + line
   // items) instead of N orphan parts. Each line is still confirmed into a part;
   // the order links them. Degrades to parts-only if purchases isn't enabled.
+  /** "Which order did THIS receipt become?" — asked by the scan card's
+   *  contributed panel, which knows only its own receipt group id. Returns the
+   *  order with its lines, or null when purchases never saw it (module off, or
+   *  a receipt parsed before orders were created at parse time). */
+  findPurchaseOrderByReceiptGroup: async (slug: string, groupId: string) => {
+    const r = await request<{
+      items: Array<{ id: string; item_count?: number | string }>;
+    }>("GET", `/orgs/${slug}/modules/purchases/orders?receipt_group_id=${encodeURIComponent(groupId)}`);
+    const hit = r.items?.[0];
+    if (!hit) return null;
+    return request<{
+      id: string;
+      items?: Array<{ id: string; description: string | null; qty: number; unit_cost: number | null; part_id: string | null }>;
+    }>("GET", `/orgs/${slug}/modules/purchases/orders/${hit.id}`);
+  },
   confirmReceiptGroup: (slug: string, groupId: string) =>
     request<{
       order_id: string | null;
@@ -3603,25 +3639,35 @@ export const api = {
      *  Cobb's situational awareness. See web/src/lib/chat-context.ts. */
     context?: { label: string; summary?: string },
   ) =>
+    request<AiChatResponse>("POST", `/orgs/${slug}/modules/core-ai/chat`, { messages, ...(context ? { context } : {}) }),
+  /** The same turn, PERSISTED. Returns at once with a turn id; subscribe with
+   *  aiChatTurnEvents for progress and the final response. This is what makes
+   *  the widget show progress, survive a refresh, and stay in sync across
+   *  tabs: the turn lives server-side, not in one tab's pending promise. */
+  aiChatStart: (
+    slug: string,
+    messages: { role: "user" | "assistant"; content: string }[],
+    context?: { label: string; summary?: string },
+  ) =>
+    request<{ type: "turn"; turn_id: string }>(
+      "POST",
+      `/orgs/${slug}/modules/core-ai/chat?mode=turn`,
+      { messages, ...(context ? { context } : {}) },
+    ),
+  /** Is a turn already running for me in this workspace? A tab asks on open. */
+  aiChatOpenTurn: (slug: string) =>
+    request<{ turn: { id: string; prompt: string; status: string; created_at: string } | null }>(
+      "GET",
+      `/orgs/${slug}/modules/core-ai/chat/turns/open`,
+    ),
+  /** One turn's row: status + the final response once done. */
+  aiChatTurn: (slug: string, turnId: string) =>
     request<{
-      type: "reply" | "proposal" | "proposals" | "build-proposal" | "error";
-      text?: string;
-      summary?: string;
-      proposal?: AiChatProposal;
-      /** type:"proposals" — several writes from one turn, each its own confirm. */
-      items?: Array<{ summary: string; proposal: AiChatProposal }>;
-      /** AUTO mode: writes already applied this turn (ledgered) — render as
-       *  "✓ done" cards with an Undo where undoable. */
-      applied?: Array<{ summary: string; ledger_id?: string; undoable?: boolean }>;
-      /** build-proposal: the build runs async — poll authoringDraft(draft_id)
-       *  until the draft leaves "building", then read its validation.preview. */
-      building?: boolean;
-      draft_id?: string;
-      /** Tier-1.5 escorts: screens Cobb walked the user to this turn (the
-       *  widget navigates; prefill.* params fill the form; the page's own
-       *  submit stays the user's). */
-      escorts?: Array<{ path: string; label: string }>;
-    }>("POST", `/orgs/${slug}/modules/core-ai/chat`, { messages, ...(context ? { context } : {}) }),
+      turn: { id: string; prompt: string; status: "queued" | "running" | "done" | "failed"; result: AiChatResponse | null; error: string | null };
+    }>("GET", `/orgs/${slug}/modules/core-ai/chat/turns/${turnId}`),
+  /** The URL the widget opens an EventSource on. */
+  aiChatTurnEventsUrl: (slug: string, turnId: string, after = 0) =>
+    `/api/v1/orgs/${slug}/modules/core-ai/chat/turns/${turnId}/events?after=${after}`,
   aiChatExecute: (slug: string, proposal: AiChatProposal) =>
     request<{
       ok: boolean;
@@ -5359,6 +5405,28 @@ export interface SuperAdminBarcodeCacheItem {
 }
 
 /** A write the agentic chat proposes; the user confirms before it runs. */
+/** What one chat turn returns — the widget renders this whether it came back
+ *  from the blocking POST or from a persisted turn's final event. */
+export interface AiChatResponse {
+  type: "reply" | "proposal" | "proposals" | "build-proposal" | "error";
+  text?: string;
+  summary?: string;
+  proposal?: AiChatProposal;
+  /** type:"proposals" — several writes from one turn, each its own confirm. */
+  items?: Array<{ summary: string; proposal: AiChatProposal }>;
+  /** AUTO mode: writes already applied this turn (ledgered) — render as
+   *  "✓ done" cards with an Undo where undoable. */
+  applied?: Array<{ summary: string; ledger_id?: string; undoable?: boolean }>;
+  /** build-proposal: the build runs async — poll authoringDraft(draft_id)
+   *  until the draft leaves "building", then read its validation.preview. */
+  building?: boolean;
+  draft_id?: string;
+  /** Tier-1.5 escorts: screens Cobb walked the user to this turn (the
+   *  widget navigates; prefill.* params fill the form; the page's own
+   *  submit stays the user's). */
+  escorts?: Array<{ path: string; label: string }>;
+}
+
 export type AiChatProposal =
   | { kind: "create"; entity_kind: string; fields: Record<string, unknown> }
   | { kind: "update"; entity_kind: string; entity_id: string; fields: Record<string, unknown>; entity_label?: string }

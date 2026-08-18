@@ -116,6 +116,7 @@ entriesRouter.get(
   }),
 );
 
+// AI-ACTION: core-maintenance:log
 entriesRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -155,6 +156,7 @@ entriesRouter.post(
   }),
 );
 
+// AI-REACH: editing a past service entry rewrites history; log and complete have actions, edits stay a person's
 entriesRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -202,6 +204,7 @@ entriesRouter.patch(
   }),
 );
 
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 entriesRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -235,6 +238,7 @@ entriesRouter.delete(
  *  the history shows when it was due vs when it was actually
  *  completed. Optionally spawns a follow-up if recurrence_rule is
  *  set (deferred — Phase 2). */
+// AI-ACTION: core-maintenance:complete
 entriesRouter.post(
   "/:id/complete",
   asyncHandler(async (req, res) => {

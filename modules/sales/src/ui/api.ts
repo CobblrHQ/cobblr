@@ -1,6 +1,8 @@
 // Thin fetch wrapper for the sales REST surface + a generic part lookup (for
 // line items). Routes mount at /api/v1/orgs/:slug/modules/sales/...
 
+import { describeUnreadableBody } from "@cobblr/platform-web";
+
 export type SalesOrderStatus = "draft" | "confirmed" | "fulfilled" | "shipped" | "closed" | "cancelled";
 
 export interface Customer {
@@ -69,10 +71,13 @@ export class SalesApi {
   private async parse<T>(res: Response): Promise<T> {
     if (res.status === 204) return undefined as T;
     let parsed: unknown;
+    // TEXT first: res.json() CONSUMES the body, so once it throws the one
+    // thing that says what went wrong is gone. See describeUnreadableBody.
+    const raw = await res.text();
     try {
-      parsed = await res.json();
+      parsed = JSON.parse(raw);
     } catch {
-      throw new SalesApiError(res.status, "non_json", `Non-JSON response (${res.status})`);
+      throw new SalesApiError(res.status, "non_json", describeUnreadableBody(res.status, raw));
     }
     if (!res.ok) {
       const e = (parsed as { error?: { code?: string; message?: string } }).error;

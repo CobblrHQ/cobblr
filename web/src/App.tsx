@@ -31,7 +31,7 @@ import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { useTheme } from "./theme/ThemeContext";
 import { ActiveOrgProvider, useActiveOrg, pickDefaultOrg, urlHandleFor } from "./auth/ActiveOrgContext";
 import { deepPathAfterWorkspace } from "./lib/deep-path";
-import { AuthPage, MagicConsumePage } from "./pages/AuthPage";
+import { AuthPage, MagicConsumePage, IdentityCallbackPage } from "./pages/AuthPage";
 import { PairPage } from "./pages/PairPage";
 import { StartAppPage } from "./pages/StartAppPage";
 import { FeedbackWidget } from "./components/FeedbackWidget";
@@ -269,6 +269,8 @@ function PublicRoutes() {
       {/* Emailed magic-link landing: consumes ?token= and signs in. Without it
           the link falls to the catch-all and nothing consumes the token. */}
       <Route path="/auth/magic" element={<MagicConsumePage />} />
+      {/* Where account.cobblr.xyz returns a browser with its one-time code. */}
+      <Route path="/auth/callback" element={<IdentityCallbackPage />} />
       {/* /pair?code=… — phone-side QR pair-login landing. Claims the code the
           desktop minted and signs the phone in to that workspace. Reached
           unauthenticated (the code is the secret). */}

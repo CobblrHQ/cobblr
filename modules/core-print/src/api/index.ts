@@ -159,6 +159,7 @@ router.get(
   }),
 );
 
+// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
 router.post(
   "/printers",
   asyncHandler(async (req, res) => {
@@ -233,6 +234,7 @@ router.post(
   }),
 );
 
+// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
 router.patch(
   "/printers/:id",
   asyncHandler(async (req, res) => {
@@ -287,6 +289,7 @@ router.patch(
   }),
 );
 
+// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
 router.delete(
   "/printers/:id",
   asyncHandler(async (req, res) => {
@@ -303,6 +306,7 @@ router.delete(
 
 // ───────────────────────────── test + print ─────────────────────────
 
+// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
 router.post(
   "/printers/:id/test",
   asyncHandler(async (req, res) => {
@@ -319,6 +323,7 @@ router.post(
   }),
 );
 
+// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
 router.post(
   "/printers/:id/print",
   asyncHandler(async (req, res) => {

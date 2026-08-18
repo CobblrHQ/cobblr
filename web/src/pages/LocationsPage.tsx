@@ -54,6 +54,7 @@ import { emptyCounts, totalUsage, useLocationUsage, type UsageCounts } from "../
 import { queueLabelsBulk } from "../lib/queue-label";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ImportLocationsDialog } from "../components/ImportLocationsDialog";
+import { LocationTreePicker } from "../components/LocationTreePicker";
 
 // The tree model + (position, then natural name) sort live in the shared
 // buildLocationForest — the SAME viewer the Labels browser uses, so the two
@@ -469,7 +470,6 @@ export function LocationsPage() {
         <LocationFormModal
           slug={activeSlug}
           parentId={createParentId}
-          parents={items}
           onClose={() => setCreateOpen(false)}
           onSaved={() => {
             void qc.invalidateQueries({
@@ -482,7 +482,6 @@ export function LocationsPage() {
       {editTarget && (
         <LocationFormModal
           slug={activeSlug}
-          parents={items}
           target={editTarget}
           onClose={() => setEditTarget(null)}
           onSaved={() => {
@@ -811,14 +810,12 @@ function ZoneCard({
 
 function LocationFormModal({
   slug,
-  parents,
   parentId: parentIdInitial,
   target,
   onClose,
   onSaved,
 }: {
   slug: string;
-  parents: Location[];
   parentId?: string | null;
   target?: Location;
   onClose: () => void;
@@ -844,23 +841,6 @@ function LocationFormModal({
   // melt the server.
   const expansion = !editing ? parseRange(name) : null;
 
-  // Editing: exclude self + descendants from the parent picker (no
-  // cycles). For create, all rows are valid parents.
-  const selectableParents = useMemo(() => {
-    if (!target) return parents;
-    const banned = new Set<string>([target.id]);
-    let added = true;
-    while (added) {
-      added = false;
-      for (const p of parents) {
-        if (p.parent_id && banned.has(p.parent_id) && !banned.has(p.id)) {
-          banned.add(p.id);
-          added = true;
-        }
-      }
-    }
-    return parents.filter((p) => !banned.has(p.id));
-  }, [parents, target]);
 
   return (
     <Modal open onClose={onClose} title={editing ? "Edit location" : "New location"}>
@@ -997,24 +977,16 @@ function LocationFormModal({
             </div>
           )}
         </div>
-        <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-            Parent (optional - leave blank for top-level)
-          </span>
-          <select
-            value={parentId}
-            onChange={(e) => setParentId(e.target.value)}
-            className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-          >
-            <option value="">(top-level)</option>
-            {selectableParents.map((p) => (
-              <option key={p.id} value={p.id}>
-                {"  ".repeat(Math.min(p.depth, 8))}
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        {/* The same picker every other surface uses. It excludes the node and
+            its descendants itself, so this form no longer carries its own copy
+            of that closure sitting next to its own dropdown. */}
+        <LocationTreePicker
+          label="Parent (optional - leave blank for top-level)"
+          value={parentId || null}
+          onChange={(id) => setParentId(id ?? "")}
+          excludeSubtreeOf={target?.id}
+          placeholder="(top-level)"
+        />
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"

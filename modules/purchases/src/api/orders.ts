@@ -58,6 +58,9 @@ const ItemCreate = z.object({
   description: z.string().max(500).nullable().optional(),
   qty: z.number(),
   unit_cost: z.number().nullable().optional(),
+  /** The amount the source line stated. Optional, and authoritative over
+   *  qty * unit_cost when present — see migration 0007. */
+  line_amount: z.number().nullable().optional(),
   consumed_by_module: z.string().max(80).nullable().optional(),
   consumed_by_entity_type: z.string().max(80).nullable().optional(),
   consumed_by_entity_id: z.string().uuid().nullable().optional(),
@@ -102,7 +105,13 @@ ordersRouter.get(
   "/",
   asyncHandler(async (req, res) => {
     const db = tenantDb(req);
-    const items = await db
+    // ?receipt_group_id=<id> — "which order did THIS receipt become?". The
+    // scan card's contributed panel asks it, handing over only the host's own
+    // identifier; the answer is found in this module's own metadata, where the
+    // receipt import stamped it. One row, so no pagination question.
+    const receiptGroupId =
+      typeof req.query.receipt_group_id === "string" ? req.query.receipt_group_id : null;
+    let q = db
       .selectFrom("purchases_orders as o")
       .selectAll("o")
       .select((eb) =>
@@ -112,7 +121,11 @@ ordersRouter.get(
           .select(eb.fn.countAll<number>().as("c"))
           .as("item_count"),
       )
-      .where("o.instance", "=", instanceOf(req))
+      .where("o.instance", "=", instanceOf(req));
+    if (receiptGroupId) {
+      q = q.where(sql<boolean>`o.metadata->>'receipt_group_id' = ${receiptGroupId}`);
+    }
+    const items = await q
       .orderBy("o.ordered_at", "desc")
       .orderBy("o.created_at", "desc")
       .limit(500)
@@ -310,6 +323,7 @@ ordersRouter.delete(
 
 // ── items (nested under /orders/:id/items) ───────────────────────
 
+// AI-ACTION: purchases:add-line
 ordersRouter.post(
   "/:id/items",
   asyncHandler(async (req, res) => {

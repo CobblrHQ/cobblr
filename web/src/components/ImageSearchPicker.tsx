@@ -18,7 +18,7 @@
 // Modes (precedence): `items` (caller supplies a ranked list, e.g. the scan
 // inbox's own pipeline) → `entity` (server-derived) → `query` (literal).
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Maximize2, Sparkles } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type ImageOption } from "../lib/api";
@@ -44,7 +44,25 @@ export function ImageSearchPicker({
   pickingBest,
   bestUrl,
   bestReason,
+  compact = false,
+  leading,
+  leadingLabel,
 }: {
+  /** STRIP layout: one legible header line (label + search + Pick best) and
+   *  then the tiles, instead of a stacked form / caption / grid. Used where the
+   *  picker sits BESIDE another strip and the pair has to read as one row -
+   *  the scan inbox card, where the stacked form cost about 290px of height
+   *  and pushed the card far past the action column beside it. */
+  compact?: boolean;
+  /** Rendered INSIDE the compact tile row, before the web candidates. The scan
+   *  card passes the item's own photos plus a divider, so the two halves are
+   *  literally one flex row and one scroll container - matched tile size, one
+   *  seam. Two adjacent rows with their own wrappers read as two widgets no
+   *  matter how close together they sit. */
+  leading?: ReactNode;
+  /** Names the leading half. Without it the single header line labels the
+   *  whole row "From the web", which is wrong for the tiles before the seam. */
+  leadingLabel?: ReactNode;
   /** Derived mode (preferred): the server builds the phrase from this entity. */
   entity?: { kind: string; id: string } | null;
   /** Literal mode: search exactly this. */
@@ -107,6 +125,40 @@ export function ImageSearchPicker({
   }, [searched, touched]);
 
   const [broken, setBroken] = useState<Set<string>>(new Set());
+  // How much room the header REALLY has. The first column is as wide as the
+  // item's own photos, so an item with three of them pushes this group right
+  // until its tail falls off the end - which is how "Pick best" disappeared on
+  // a card that simply had more photos. Measured, so the box gives way instead
+  // of the buttons.
+  const portRef = useRef<HTMLDivElement | null>(null);
+  const leadRef = useRef<HTMLDivElement | null>(null);
+  const [room, setRoom] = useState<number | null>(null);
+  useEffect(() => {
+    const port = portRef.current;
+    if (!port) return;
+    const measure = () => {
+      const lead = leadRef.current?.getBoundingClientRect().width ?? 0;
+      // What the item's own photos still take from this row - not what they take
+      // in total. The group is sticky, so once they scroll past it pins to the
+      // left edge and that space is genuinely free; measuring only at rest left
+      // the box reserving room for photos no longer on screen.
+      const stillVisible = Math.max(0, lead - port.scrollLeft);
+      // 566px is label + a comfortable box + both buttons + gaps. Past that the
+      // box only gets wider than a search phrase needs - and, since the tiles
+      // scroll UNDER this group, a wider one would cover the pictures it exists
+      // to search for.
+      setRoom(Math.min(566, Math.max(200, port.clientWidth - stillVisible - 24)));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(port);
+    if (leadRef.current) ro.observe(leadRef.current);
+    port.addEventListener("scroll", measure, { passive: true });
+    return () => {
+      ro.disconnect();
+      port.removeEventListener("scroll", measure);
+    };
+  }, [compact]);
   const opts = source.filter((o) => !broken.has(o.url));
 
   function submit(e: FormEvent) {
@@ -119,6 +171,197 @@ export function ImageSearchPicker({
   function tileClick(o: ImageOption) {
     if (onPreview) onPreview(o.url);
     else setViewIdx(opts.indexOf(o));
+  }
+
+  // ONE set of tiles and ONE viewer, rendered by both layouts. The stacked
+  // and strip forms differ in chrome only; duplicating the tile markup is
+  // how two surfaces that look alike start behaving differently.
+  const tiles = opts.map((o) => {
+              const isBest = !!bestUrl && o.url === bestUrl;
+              return (
+              <div key={o.url} className="relative w-20 h-20 shrink-0 group">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => onPick(o.url)}
+                  title={isBest ? `AI's pick — ${o.title} (${o.source})` : `Use this image — ${o.title} (${o.source})`}
+                  aria-label={`Use this image: ${o.title}`}
+                  className={`w-full h-full rounded overflow-hidden bg-white transition disabled:opacity-50 ${
+                    isBest
+                      ? "border-2 border-accent ring-2 ring-accent/40"
+                      : "border border-line dark:border-slate-700 hover:border-cobble-400"
+                  }`}
+                >
+                  {/* CONTAIN. Every tile here is a candidate you are judging
+                      against the others, and a square crop of a product shot
+                      keeps the middle band and discards the top and bottom -
+                      so a tall bottle or jar reads as a stripe of label and the
+                      grid stops distinguishing anything. Cropping a picture
+                      whose own tooltip says "Use this image" hides the thing
+                      being chosen. */}
+                  <img
+                    src={o.thumb}
+                    alt={o.title}
+                    className="w-full h-full object-contain"
+                    loading="lazy"
+                    onError={() => setBroken((s) => new Set(s).add(o.url))}
+                  />
+                </button>
+                {isBest && (
+                  <div className="absolute top-1 left-1 inline-flex items-center gap-0.5 rounded bg-accent text-white text-[9px] font-semibold px-1 py-0.5 shadow">
+                    <Sparkles size={9} /> AI
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => tileClick(o)}
+                  title="View full size"
+                  aria-label={`View full size: ${o.title}`}
+                  // Always visible, not hover-only: on touch there is no hover,
+                  // and a control you can't see is a control that doesn't exist.
+                  // Not disabled by `busy` — looking is safe while a pick saves.
+                  className="absolute bottom-1 right-1 rounded bg-black/60 hover:bg-black/80 text-white shadow-md w-6 h-6 flex items-center justify-center"
+                >
+                  <Maximize2 className="w-3 h-3" strokeWidth={2.5} />
+                </button>
+              </div>
+              );
+            });
+
+  const lightbox = viewIdx !== null && opts[viewIdx] && (
+        <ImageLightbox
+          items={opts.map((o) => ({
+            key: o.url,
+            url: o.url,
+            thumbUrl: o.thumb,
+            caption: `${o.title} · ${o.source}`,
+            href: o.source,
+          }))}
+          index={viewIdx}
+          onIndex={setViewIdx}
+          onClose={() => setViewIdx(null)}
+          action={{
+            label: "Use this image",
+            busy,
+            onAction: (it) => {
+              if (it.url) onPick(it.url);
+              setViewIdx(null);
+            },
+          }}
+          onItemError={(it) => {
+            // Full-size dead but the thumb loaded — drop it and close rather than
+            // leaving a broken image filling the screen.
+            const u = it.url;
+            if (u) setBroken((s) => new Set(s).add(u));
+            setViewIdx(null);
+          }}
+        />
+      );
+
+  // ── compact: the strip layout ───────────────────────────────────────
+  // Same data, same handlers, same tile markup - only the chrome differs.
+
+  if (compact) {
+    // TWO ROWS THAT SHARE A COLUMN EDGE.
+    //
+    // The label and search used to be pushed right with ml-auto, so removing a
+    // photo moved the tiles left and left the controls stranded out over
+    // nothing. A grid ties them together: column one is as wide as the item's
+    // own photos (or their label, whichever is wider), so "Web" and its box
+    // always start exactly where the first web candidate starts.
+    //
+    // The grid is INSIDE the one scroll container and sized to its content
+    // (w-max), so the whole strip still scrolls as a single unit.
+    return (
+      <div ref={portRef} className="min-w-0 overflow-x-auto overflow-y-hidden no-scrollbar pb-1">
+        <div className="grid grid-cols-[auto_auto] gap-x-3 gap-y-1 w-max">
+          {/* A FLOOR, so the web half starts at the same x on every card. This
+              column is content-sized, so an item with photos pushed it wider
+              than one without and the two strips did not line up. */}
+          <div ref={leadRef} className="flex min-w-[6.5rem] items-center gap-2">{leadingLabel}</div>
+          {/* STICKY. The header shares the tiles' scroll container so it can
+              line up with the first web candidate, but scrolling the strip used
+              to carry the search box off to the left with it. "Your photos" is
+              free to scroll away - it labels tiles that have gone - while the
+              web controls stay put, because you reach for them precisely when
+              you are scrolling the candidates. The background is the panel's
+              own, so the label passing underneath is masked. */}
+          <div className="min-w-0">
+            {/* The PINNED thing has to be content-width. Sticky can only shift
+                an element inside its own containing block, and this cell fills
+                the whole web column (1048px in a 712px port), so a sticky cell
+                had no room to move and simply scrolled away. */}
+            {/* The mask is the panel's COMPOSITE colour, measured rather than guessed:
+                the panel paints a 40% tint over the card, so no single utility
+                matches it and layering two guesses left a pale blob beside the
+                last control. card + tint, resolved:
+                  light  #fff        + rgba(251,249,244,.4) -> rgb(253,253,251)
+                  dark   rgb(51,65,85) + rgba(15,23,42,.4)  -> rgb(37,48,68) */}
+            <div
+              // A definite width, not just a cap: w-max would size to content and
+              // leave the box nothing to flex into, so it sat at its minimum on
+              // every card no matter how much room there was.
+              style={room ? { width: room } : undefined}
+              className="sticky left-0 z-10 flex max-w-full items-center gap-2 pr-2 bg-[rgb(253,253,251)] dark:bg-[rgb(37,48,68)]"
+            >
+            <span className="text-xs font-medium text-content shrink-0">Web</span>
+            {searchable && (
+              <form onSubmit={submit} className="flex min-w-0 flex-1 items-center gap-1">
+                <input
+                  value={term}
+                  onChange={(e) => {
+                    setTouched(true);
+                    setTerm(e.target.value);
+                  }}
+                  placeholder="search images…"
+                  className="w-full min-w-0 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-0.5 text-xs"
+                />
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="shrink-0 rounded border border-line dark:border-slate-600 px-2 py-0.5 text-[11px] font-medium text-muted hover:text-content hover:border-faint disabled:opacity-50"
+                >
+                  Search
+                </button>
+              </form>
+            )}
+            {onPickBest && (
+              <button
+                type="button"
+                onClick={onPickBest}
+                disabled={pickingBest || busy}
+                title="Let AI pick the cleanest catalog photo: the product alone, correct colour, no people"
+                className="shrink-0 inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-2 py-0.5 text-[11px] font-medium text-accent hover:border-accent transition disabled:opacity-50"
+              >
+                <Sparkles size={11} className={pickingBest ? "animate-pulse" : ""} />
+                {pickingBest ? "picking…" : "Pick best"}
+              </button>
+            )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">{leading}</div>
+          <div className="flex items-center gap-2">
+            {loading ? (
+              <div className="text-xs text-faint animate-pulse px-2">finding photo options…</div>
+            ) : opts.length === 0 ? (
+              <div className="text-xs text-faint italic px-2">
+                {searched ? `nothing found for "${searched}"` : "no web photos yet"}
+              </div>
+            ) : (
+              tiles
+            )}
+          </div>
+        </div>
+        {bestReason && (
+          <div className="mt-1 flex items-start gap-1 text-[11px] text-accent">
+            <Sparkles size={11} className="mt-0.5 shrink-0" />
+            <span className="min-w-0">{bestReason}</span>
+          </div>
+        )}
+        {lightbox}
+      </div>
+    );
   }
 
   return (
@@ -190,57 +433,7 @@ export function ImageSearchPicker({
                 Zooming is the rarer "let me check this one first", so it gets
                 the small corner button (reported 2026-07-20: "you should click image
                 to select, and press small button to zoom it"). */}
-            {opts.map((o) => {
-              const isBest = !!bestUrl && o.url === bestUrl;
-              return (
-              <div key={o.url} className="relative w-20 h-20 shrink-0 group">
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => onPick(o.url)}
-                  title={isBest ? `AI's pick — ${o.title} (${o.source})` : `Use this image — ${o.title} (${o.source})`}
-                  aria-label={`Use this image: ${o.title}`}
-                  className={`w-full h-full rounded overflow-hidden bg-white transition disabled:opacity-50 ${
-                    isBest
-                      ? "border-2 border-accent ring-2 ring-accent/40"
-                      : "border border-line dark:border-slate-700 hover:border-cobble-400"
-                  }`}
-                >
-                  {/* CONTAIN. Every tile here is a candidate you are judging
-                      against the others, and a square crop of a product shot
-                      keeps the middle band and discards the top and bottom -
-                      so a tall bottle or jar reads as a stripe of label and the
-                      grid stops distinguishing anything. Cropping a picture
-                      whose own tooltip says "Use this image" hides the thing
-                      being chosen. */}
-                  <img
-                    src={o.thumb}
-                    alt={o.title}
-                    className="w-full h-full object-contain"
-                    loading="lazy"
-                    onError={() => setBroken((s) => new Set(s).add(o.url))}
-                  />
-                </button>
-                {isBest && (
-                  <div className="absolute top-1 left-1 inline-flex items-center gap-0.5 rounded bg-accent text-white text-[9px] font-semibold px-1 py-0.5 shadow">
-                    <Sparkles size={9} /> AI
-                  </div>
-                )}
-                <button
-                  type="button"
-                  onClick={() => tileClick(o)}
-                  title="View full size"
-                  aria-label={`View full size: ${o.title}`}
-                  // Always visible, not hover-only: on touch there is no hover,
-                  // and a control you can't see is a control that doesn't exist.
-                  // Not disabled by `busy` — looking is safe while a pick saves.
-                  className="absolute bottom-1 right-1 rounded bg-black/60 hover:bg-black/80 text-white shadow-md w-6 h-6 flex items-center justify-center"
-                >
-                  <Maximize2 className="w-3 h-3" strokeWidth={2.5} />
-                </button>
-              </div>
-              );
-            })}
+            {tiles}
           </div>
           {bestReason && (
             <div className="mt-1 flex items-start gap-1 text-[11px] text-accent">
@@ -253,35 +446,7 @@ export function ImageSearchPicker({
 
       {/* Full-screen viewer — the shared app-wide ImageLightbox. Candidates are
           the filmstrip; "Use this image" is the primary action. */}
-      {viewIdx !== null && opts[viewIdx] && (
-        <ImageLightbox
-          items={opts.map((o) => ({
-            key: o.url,
-            url: o.url,
-            thumbUrl: o.thumb,
-            caption: `${o.title} · ${o.source}`,
-            href: o.source,
-          }))}
-          index={viewIdx}
-          onIndex={setViewIdx}
-          onClose={() => setViewIdx(null)}
-          action={{
-            label: "Use this image",
-            busy,
-            onAction: (it) => {
-              if (it.url) onPick(it.url);
-              setViewIdx(null);
-            },
-          }}
-          onItemError={(it) => {
-            // Full-size dead but the thumb loaded — drop it and close rather than
-            // leaving a broken image filling the screen.
-            const u = it.url;
-            if (u) setBroken((s) => new Set(s).add(u));
-            setViewIdx(null);
-          }}
-        />
-      )}
+      {lightbox}
     </div>
   );
 }

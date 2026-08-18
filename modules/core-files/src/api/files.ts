@@ -48,6 +48,7 @@ const upload = multer({
 //
 // Naming: keep them snake_case to match the rest of the API and the
 // /attachments POST body. `attach_role` defaults to null = primary.
+// AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
 filesRouter.post(
   "/",
   upload.single("file"),

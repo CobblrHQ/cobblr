@@ -54,6 +54,7 @@ linksRouter.get(
 );
 
 // POST /links — create or update a link (idempotent on the device↔entity pair).
+// AI-REACH: binds a device to a record; devices are set up from the Devices page with the thing in hand
 linksRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -84,6 +85,7 @@ linksRouter.post(
 );
 
 // DELETE /links/:id — unlink.
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 linksRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {

@@ -250,6 +250,7 @@ tasksRouter.delete(
 
 // ─────────────────────── Dependencies sub-routes ─────────────────
 
+// AI-ACTION: projects:blocked-by
 tasksRouter.post(
   "/:id/dependencies",
   asyncHandler(async (req, res) => {
@@ -295,6 +296,7 @@ tasksRouter.post(
   }),
 );
 
+// AI-ACTION: projects:unblock
 tasksRouter.delete(
   "/:id/dependencies/:depId",
   asyncHandler(async (req, res) => {

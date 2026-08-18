@@ -106,6 +106,7 @@ qrRulesRouter.get(
   }),
 );
 
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 qrRulesRouter.post(
   "/qr-rules",
   asyncHandler(async (req, res) => {
@@ -130,6 +131,7 @@ qrRulesRouter.post(
   }),
 );
 
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 qrRulesRouter.patch(
   "/qr-rules/:id",
   asyncHandler(async (req, res) => {
@@ -159,6 +161,7 @@ qrRulesRouter.patch(
   }),
 );
 
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 qrRulesRouter.delete(
   "/qr-rules/:id",
   asyncHandler(async (req, res) => {
@@ -177,6 +180,7 @@ qrRulesRouter.delete(
   }),
 );
 
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 qrRulesRouter.post(
   "/qr-rules/reorder",
   asyncHandler(async (req, res) => {
@@ -199,6 +203,7 @@ qrRulesRouter.post(
   }),
 );
 
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 qrRulesRouter.post(
   "/resolve-external",
   asyncHandler(async (req, res) => {

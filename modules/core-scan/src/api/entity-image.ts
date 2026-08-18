@@ -99,6 +99,7 @@ entityImageRouter.get(
   }),
 );
 
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 entityImageRouter.post(
   "/entity-image",
   asyncHandler(async (req, res) => {
@@ -160,6 +161,7 @@ const BackfillBody = z.object({
   /** Bounded per press — this spends a web search + download per record. */
   limit: z.number().int().min(1).max(50).optional(),
 });
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 entityImageRouter.post(
   "/entity-image/backfill",
   asyncHandler(async (req, res) => {

@@ -162,6 +162,15 @@ const EntityField = z.object({
   // "json blob, show keys"; consumer modules read specific keys
   // via platform.entities.lookupMany.
   type: z.enum(["text", "number", "boolean", "date", "image-path", "url", "object"]),
+  // SERVER-OWNED: the value is maintained by the module, not set by whoever
+  // writes the record. Declaring a field WITHOUT this when the writer refuses it
+  // is an invitation to write something that will be silently discarded — the
+  // update returns 200 with a fresh updated_at, so it reads as applied. That is
+  // exactly what `core-locations:location.position` did: the kind offered a
+  // writable number, the assistant set 0-11 across twelve racks, every call
+  // succeeded, and nothing moved (2026-08-18). Anything that describes a kind
+  // for writing (the AI tool registry, form builders) must leave these out.
+  readOnly: z.boolean().optional(),
   role: EntityFieldRole.optional(),
   // The SEMANTIC decode role (P3 of the identifier-decoder registry) — distinct
   // from the PRESENTATION `role` above. Marks a field as either HOLDING a
@@ -3058,7 +3067,9 @@ export interface PlatformEdge {
    *  older one (the relay reaps the stale socket). */
   registerChannel(orgId: string, send: EdgeChannelSender): () => void;
   /** Is there a live edge channel for this workspace right now? */
-  hasChannel(orgId: string): boolean;
+  /** Async: presence is shared state in cobblr_meta, not this process's memory,
+   *  so any api process can answer for any bridge. */
+  hasChannel(key: string): Promise<boolean>;
   /** Send a request to the workspace's edge; rejects if none is connected. */
   send(orgId: string, req: EdgeRequest): Promise<EdgeResponse>;
 
@@ -3071,17 +3082,17 @@ export interface PlatformEdge {
 
   /** Announce/refresh a bridge: registers the channel on first touch and
    *  bumps its liveness clock. */
-  relayTouch(key: string): void;
+  relayTouch(key: string): Promise<void>;
   /** Long-poll for the next queued request; resolves null on keep-alive
    *  timeout or when the poller hangs up (pass an abort signal). */
   relayPoll(key: string, opts?: { signal?: AbortSignal }): Promise<EdgeRelayItem | null>;
   /** Deliver a polled request's result. Returns false if the id is unknown
    *  (already timed out). */
-  relayRespond(key: string, r: { id: string; status: number; body?: unknown }): boolean;
+  relayRespond(key: string, r: { id: string; status: number; body?: unknown }): Promise<boolean>;
   /** Connected agents for a workspace (default + named bridges). */
-  relayAgents(orgId: string): EdgeAgentInfo[];
+  relayAgents(orgId: string): Promise<EdgeAgentInfo[]>;
   /** One bridge's liveness — `bridge` null = the default channel. */
-  relayInfo(orgId: string, bridge?: string | null): { connected: boolean; last_seen: number | null };
+  relayInfo(orgId: string, bridge?: string | null): Promise<{ connected: boolean; last_seen: number | null }>;
 
   // ── Consumer registry — modules declare "I can use a bridge" here.
   registerConsumer(c: EdgeConsumer): void;

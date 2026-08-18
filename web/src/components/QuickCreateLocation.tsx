@@ -1,152 +1,19 @@
-// LocationPicker — picks a row from core-locations:location. Used
-// wherever an entity has a `location_id: string | null` field (machines,
-// assets, inventory parts, future kinds). Renders as a nested-indent
-// dropdown so the hierarchy is legible at a glance.
+// QuickCreateLocation — the inline "+ New location…" accordion that every
+// location picker opens when the place you want doesn't exist yet. Create it
+// without abandoning the form you were filling in, and the picker selects the
+// new row for you.
 //
-// The "+ new location" sentinel in the dropdown opens an inline modal
-// that creates the row, then auto-selects it — so a user discovering
-// they need a new location doesn't have to abandon their form.
+// It used to live inside LocationPicker.tsx (the flat indented <select> that
+// the drill-down picker replaced). That file is gone; this is the half of it
+// that was always shared.
 
-import { useMemo, useState, type FormEvent } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState, type FormEvent, type ReactNode } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { useToast } from "@cobblr/platform-web";
 import { ApiError, api, type Location } from "../lib/api";
-import { useActiveOrg } from "../auth/ActiveOrgContext";
 
-const CREATE_SENTINEL = "__new__";
-// U+00A0 (non-breaking space) for option indentation — regular spaces
-// get collapsed in <option> text by every major browser.
-const INDENT = "  ";
-
-// The ONE place that understands location order: siblings sort by manual
-// drag-order (`position`) then NATURAL name (Bin 1, Bin 2, … Bin 10 — never
-// Bin 1, Bin 10, Bin 2), depth-first so the hierarchy reads top-down. A node
-// whose parent was filtered out (e.g. an area-only list) becomes a root. Matches
-// the LocationsPage tree, so dropdown order == what the user arranged there.
-function orderLocations(items: Location[]): Location[] {
-  const ids = new Set(items.map((i) => i.id));
-  const byParent = new Map<string, Location[]>();
-  const roots: Location[] = [];
-  for (const it of items) {
-    const p = it.parent_id && ids.has(it.parent_id) ? it.parent_id : null;
-    if (p) (byParent.get(p) ?? byParent.set(p, []).get(p)!).push(it);
-    else roots.push(it);
-  }
-  const cmp = (a: Location, b: Location) =>
-    a.position - b.position || a.name.localeCompare(b.name, undefined, { numeric: true });
-  const out: Location[] = [];
-  const walk = (n: Location) => {
-    out.push(n);
-    (byParent.get(n.id) ?? []).sort(cmp).forEach(walk);
-  };
-  roots.sort(cmp).forEach(walk);
-  return out;
-}
-
-interface Props {
-  value: string | null;
-  onChange: (value: string | null) => void;
-  /** When set, the option for this id is excluded — used in the
-   *  Locations admin form to prevent picking yourself as a parent.
-   *  Doesn't filter descendants (caller's job if needed). */
-  excludeId?: string;
-  /** Restrict the pickable rows to one kind. `"area"` = rooms/zones only (for
-   *  things that live in a room — printers, machines, assets); `"container"` =
-   *  bins/drawers only. Omit to offer the whole hierarchy. A location created
-   *  inline defaults to this kind. */
-  kind?: Location["kind"];
-  /** Visible <label> wrapped around the select. Omit when the caller
-   *  draws their own label. */
-  label?: string;
-  className?: string;
-  size?: "sm" | "md";
-}
-
-export function LocationPicker({
-  value,
-  onChange,
-  excludeId,
-  kind,
-  label,
-  className,
-  size = "md",
-}: Props) {
-  const { activeSlug } = useActiveOrg();
-  const [createOpen, setCreateOpen] = useState(false);
-
-  const list = useQuery({
-    queryKey: ["core-locations", activeSlug],
-    queryFn: () => api.listLocations(activeSlug),
-    enabled: !!activeSlug,
-  });
-  const items = useMemo(() => {
-    let rows = (list.data?.items ?? []).filter((i) => i.id !== excludeId);
-    if (kind) rows = rows.filter((i) => i.kind === kind);
-    return orderLocations(rows);
-  }, [list.data, excludeId, kind]);
-
-  const sizeClass = size === "sm" ? "px-2 py-1 text-xs" : "px-2 py-1 text-sm";
-
-  const select = (
-    <select
-      value={value ?? ""}
-      onChange={(e) => {
-        if (e.target.value === CREATE_SENTINEL) {
-          setCreateOpen(true);
-          return;
-        }
-        onChange(e.target.value || null);
-      }}
-      className={
-        "w-full border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900 " +
-        sizeClass +
-        (className ? " " + className : "")
-      }
-    >
-      <option value="">(no location)</option>
-      {items.map((loc) => (
-        <option key={loc.id} value={loc.id}>
-          {INDENT.repeat(loc.depth)}
-          {loc.short_name ?? loc.name}
-          {loc.short_name && loc.short_name !== loc.name ? ` — ${loc.name}` : ""}
-        </option>
-      ))}
-      <option value={CREATE_SENTINEL}>+ new location…</option>
-    </select>
-  );
-
-  const body = label ? (
-    <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-        {label}
-      </span>
-      {select}
-    </label>
-  ) : (
-    select
-  );
-
-  return (
-    <>
-      {body}
-      {createOpen && (
-        <QuickCreateLocation
-          slug={activeSlug}
-          all={list.data?.items ?? []}
-          defaultKind={kind}
-          onClose={() => setCreateOpen(false)}
-          onCreated={(loc) => {
-            onChange(loc.id);
-            setCreateOpen(false);
-          }}
-        />
-      )}
-    </>
-  );
-}
-
-/** The next globally-unique container number — max trailing integer across all
+/** The next free container number: the highest trailing number across all
  *  container locations, + 1. By convention every container (bin/drawer/shelf)
  *  carries a unique number you can label + scan, regardless of its word. */
 function nextContainerNumber(all: Location[]): number {
@@ -162,21 +29,27 @@ function nextContainerNumber(all: Location[]): number {
 const ENDS_WITH_NUMBER = /\d\s*$/;
 
 // Inline accordion — name + parent + kind, expanded right inside the parent
-// form (no nested modal; the author). Containers auto-append a globally-unique number
-// so "Bin" becomes "Bin 17". Mirrors the full form on /locations
-// but trimmed for in-flight use.
+// form (no nested modal). Containers auto-append a globally-unique number so
+// "Bin" becomes "Bin 17". Mirrors the full form on /locations but trimmed for
+// in-flight use.
 export function QuickCreateLocation({
   slug,
   all,
   defaultKind,
   onClose,
   onCreated,
+  parentField,
 }: {
   slug: string;
   all: Location[];
   defaultKind?: Location["kind"];
   onClose: () => void;
   onCreated: (loc: Location) => void;
+  /** Renders the Parent field. Required, and taken as a prop rather than
+   *  imported, because the thing that belongs here is the workspace's location
+   *  picker — and every picker renders THIS component, so importing one back
+   *  would close an import cycle. The picker hands its own down instead. */
+  parentField: (value: string | null, onChange: (id: string | null) => void) => ReactNode;
 }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -258,18 +131,7 @@ export function QuickCreateLocation({
           <span className={labelCls}>Short name (optional)</span>
           <input type="text" value={shortName} onChange={(e) => setShortName(e.target.value)} className={fieldCls} />
         </label>
-        <label className="block">
-          <span className={labelCls}>Parent</span>
-          <select value={parentId} onChange={(e) => setParentId(e.target.value)} className={fieldCls}>
-            <option value="">(top-level)</option>
-            {all.map((p) => (
-              <option key={p.id} value={p.id}>
-                {INDENT.repeat(p.depth)}
-                {p.short_name ?? p.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        {parentField(parentId || null, (id) => setParentId(id ?? ""))}
         <div>
           <span className={labelCls}>Kind</span>
           <div className="grid grid-cols-2 gap-2">

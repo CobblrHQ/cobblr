@@ -86,6 +86,7 @@ function summarize(p: HomeboxParse) {
   };
 }
 
+// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
 homeboxRouter.post("/homebox/preview", (req, res, next) => {
   void (async () => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
@@ -136,6 +137,7 @@ async function ensureLocations(slug: string, token: string, paths: string[][]): 
   return { map, created, failed };
 }
 
+// AI-REACH: a one-shot importer of an uploaded export; the input is a file
 homeboxRouter.post("/homebox", (req, res, next) => {
   void (async () => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;

@@ -71,6 +71,7 @@ const RunCreate = z.object({
   priority: z.number().int().min(0).max(100).default(0),
 });
 
+// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 runsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -133,6 +134,7 @@ const RunPatch = z.object({
   priority: z.number().int().min(0).max(100).optional(),
 });
 
+// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 runsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {

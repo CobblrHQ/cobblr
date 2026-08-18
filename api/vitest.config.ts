@@ -4,8 +4,8 @@ import { BaseSequencer, type TestSpecification } from "vitest/node";
 import fileDurations from "./tests/file-durations.json";
 
 // Longest-first (LPT) file scheduling. With 8 forks the wall-clock is set by
-// whatever's still running at the end — and by default the ~2min
-// platform-pillars.test.ts and the 20-45s digifab files can START in the last
+// whatever's still running at the end — and by default the 30-45s
+// platform-pillars-*.test.ts and digifab files can START in the last
 // third of the run, dragging the wall to ~210s when the same files scheduled
 // longest-first finish in ~140s. Vitest's own duration-aware sort only works
 // off its results cache, which never survives between CI runs — so we pin the

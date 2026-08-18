@@ -10,6 +10,7 @@
 import { sql, type Kysely } from "kysely";
 import { platform, requireActionEntity } from "@cobblr/platform-contract";
 import type { CoreTagsDB } from "../db.js";
+import { mergeTagInto } from "./tags.js";
 
 let registered = false;
 
@@ -110,5 +111,41 @@ export function registerTagActionHandlers(): void {
       source_id: entity.id,
     });
     return { ok: true, removed: true };
+  });
+
+  // Merging two tags was reachable only by hand: the module had tag-record and
+  // untag-record, and no way to say "these two mean the same thing". Tidying up
+  // a tag list is exactly the chore someone asks for in words.
+  platform().actions.registerHandler("core-tags.merge", async (ctx) => {
+    const entity = requireActionEntity(ctx);
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const into =
+      typeof args.into_tag_id === "string" && args.into_tag_id.trim() ? args.into_tag_id.trim() : "";
+    if (!into) return { ok: false, error: "pass into_tag_id: the tag to keep" };
+    if (into === entity.id) return { ok: false, error: "cannot merge a tag into itself" };
+
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreTagsDB>;
+    const [source, target] = await Promise.all([
+      db.selectFrom("core_tags_tags").select(["id", "name"]).where("id", "=", entity.id).executeTakeFirst(),
+      db.selectFrom("core_tags_tags").select(["id", "name"]).where("id", "=", into).executeTakeFirst(),
+    ]);
+    if (!source) return { ok: false, error: "that tag no longer exists" };
+    if (!target) return { ok: false, error: `no tag with id ${into} to merge into` };
+
+    const moved = await mergeTagInto(db as never, source.id, target.id);
+    await platform().events.emit("core-tags.tag.deleted", {
+      orgId: ctx.orgId,
+      tagId: source.id,
+      name: source.name,
+    });
+    return {
+      ok: true,
+      result: {
+        merged: source.name,
+        into: target.name,
+        moved_assignments: moved,
+        note: `"${source.name}" is gone; everything it was on now carries "${target.name}".`,
+      },
+    };
   });
 }

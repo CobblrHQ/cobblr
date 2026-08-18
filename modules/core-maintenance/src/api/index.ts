@@ -4,6 +4,7 @@
 import { Router } from "express";
 import { entriesRouter } from "./entries.js";
 import { tick } from "../sweeper.js";
+import { registerMaintenanceHandlers } from "./handlers.js";
 
 const router = Router({ mergeParams: true });
 router.use("/entries", entriesRouter);
@@ -24,3 +25,7 @@ router.post("/sweep", (req, res, next) => {
 });
 
 export default router;
+
+// Side-effect: the assistant's door to the service log. Without these this
+// module has no entity kind and no action, so it can be read and never added to.
+registerMaintenanceHandlers();

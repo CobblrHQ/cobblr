@@ -11,7 +11,7 @@
 // becomes scannable just by shipping its fields, no scanner code changes.
 
 import { platform, extractJsonObject, repairJson, parseJsonReply } from "@cobblr/platform-contract";
-import { categoryDisplay } from "@cobblr/platform-contract/category-reconcile";
+import { routingNoteBare, routingNoteWithCategory } from "./routing-note.js";
 import { normaliseCategory } from "@cobblr/platform-contract/category-reconcile";
 
 // A HANG GUARD, not a latency knob: the matchmaker
@@ -842,9 +842,7 @@ export function heuristicMatch(item: PerceivedItem, menuIn: ScanMenuEntry[]): Ma
         ...(Number.isInteger(quantity) && quantity! > 0 && quantity! <= 10_000 ? { quantity } : {}),
         ...(cat ? { category: cat.value, ...(cat.isNew ? { category_is_new: true } : {}) } : {}),
         ...(fallback.bundle_external_id ? { bundle_external_id: fallback.bundle_external_id } : {}),
-        notes: cat
-          ? `No specific table matched, so this went to ${fallback.label} as “${categoryDisplay(cat.value)}”. Connect an AI provider for sharper identification + field-fill.`
-          : "No specific table matched (no AI). Connect an AI provider for sharper identification + field-fill.",
+        notes: cat ? routingNoteWithCategory(fallback.label, cat.value) : routingNoteBare(),
       },
     ];
   }

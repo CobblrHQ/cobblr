@@ -91,6 +91,32 @@ export async function signMcpReadGrant(userId: string, orgSlug: string): Promise
     .sign(secretKey());
 }
 
+// MCP WRITE grant — the record-CRUD counterpart, and deliberately NOT the token
+// the bridge holds. The relay hands `claude -p` a READ grant; when a tool call
+// comes back asking to create/update/delete a record, the hosted MCP endpoint
+// checks the user's own chat consent (write_mode: auto) and only then mints one
+// of these, in-process, for that single call. It never crosses the wire to the
+// bridge, which is why a longer reach is acceptable here and would not be on
+// the relayed token.
+//
+// Clamped by mcpWritePathAllowed to record routes (/modules/<m>/… and
+// /instances/<i>/…) — the shapes the entity-kind registry resolves writes to.
+// Actions (/actions/invoke) are NOT reachable: they are irreversible and the
+// consent model says they always confirm, and a relayed chat has no way to ask.
+const MCP_WRITE_TTL_SECONDS = 60; // one tool call's worth
+
+export async function signMcpWriteGrant(userId: string, orgSlug: string): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  return new SignJWT({})
+    .setProtectedHeader({ alg: ALG })
+    .setIssuer(ISSUER)
+    .setSubject(userId)
+    .setAudience(`mcp-write:${orgSlug}`)
+    .setIssuedAt(now)
+    .setExpirationTime(now + MCP_WRITE_TTL_SECONDS)
+    .sign(secretKey());
+}
+
 // Operator impersonation ("View as"). A SHORT-LIVED token distinct from a
 // session: it carries BOTH identities — `sub` is the operator (never replaced,
 // so attribution can't be forged), `act` the target member, `org` the scope,

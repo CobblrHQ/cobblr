@@ -19,6 +19,7 @@ const Body = z.object({
   source: z.object({ kind: z.string(), id: z.string() }).optional(),
 });
 
+// AI-REACH: this module IS the assistant; its own configuration is not a thing it should reach into
 invokeRouter.post(
   "/",
   asyncHandler(async (req, res) => {

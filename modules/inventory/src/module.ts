@@ -156,6 +156,19 @@ export default defineModule({
     api: ["getPartById", "searchParts", "adjustStock", "allocate", "release"],
     actions: [
       {
+        id: "inventory:add-category",
+        label: "Add a category",
+        description:
+          "Create an inventory category (the grouping a part belongs to, e.g. \"Fasteners\"). Pass `name`, optionally `color` as a hex code. Asking for one that already exists returns the existing one rather than failing.",
+        icon: "folder-plus",
+        scope: "workspace" as const,
+        invokeHandler: "inventory.add-category",
+        argsSchema: {
+          name: { label: "Category name", type: "text" },
+          color: { label: "Colour (hex, optional)", type: "text" },
+        },
+      },
+      {
         id: "inventory:use-one",
         label: "Use one",
         description:

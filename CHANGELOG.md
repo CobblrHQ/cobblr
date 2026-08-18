@@ -2,10 +2,48 @@
 
 User-facing changes, newest first. Dates are release dates.
 
-## 2026-08-17
+## 2026-08-18
+
+### Features
+- Ask Cobb can keep your service log. Tell it what you did to something and when, and it records the entry against that thing, or schedules the next one if you say when it is next due. It can also mark a scheduled job done. Until now Cobb could read a service history and had no way to add to it.
+- Ask Cobb can put your locations in order. Say which shelves or racks under a place should come first and Cobb sets that order, the same order dragging them in the tree produces. It orders one parent's children at a time, and it will tell you if you have mixed locations from different parents rather than quietly renumbering both.
+- Ask Cobb can do more of the everyday things you could only click before. It can say that a task is waiting on another task or on a record like a purchase order, and remove that dependency again. It can add a line to a purchase or sales order you already raised, and add an inventory category.
+- Ask Cobb can tidy up for you. It can merge two tags that mean the same thing, clear the done items off a list, and refresh a catalog from the source it was built from. All three were things you could do by clicking and Cobb had no way to do at all.
+- You can now sign in with your Cobblr account from the sign-in page, and your account page lists the Cobblr instances you can reach.
 
 ### Improvements
+- The scan inbox card files an item from one place. The table pill now picks any table in your workspace and Add files there; the fields you want to check edit right under it, in the header row, and the separate form at the bottom of the card is gone. Cards with a long history are shorter, the "Revert" line leads with the name, and the photo strip no longer runs under the controls on a talkative item.
+- The scan inbox card now shows your photos and the web suggestions as one strip, split by a thin line, instead of two stacked rows. The card is shorter, the pictures are bigger, and the search box stays put while you scroll through the suggestions.
+- Scroll the photo strip sideways and the search box widens into the space your own photos leave behind, so a long product name is readable while you look through the suggestions. Scroll back and it returns.
+
+### Fixes
+- Your AI bridge no longer drops out when Cobblr updates itself. The connection between Cobblr and a bridge running on your own machine was held in the memory of whichever server process the bridge happened to reach, so a restart or a routine update could leave Cobblr reporting no bridge connected while it was running perfectly well, and requests would fail in a pattern where one worked and the next did not. That connection is now shared, so any part of Cobblr can reach your bridge.
+- Asking Cobb to set a value it cannot actually change now says so, instead of reporting success. Some fields are maintained by Cobblr itself, like the order of locations in your tree, and until now those looked settable: the change appeared to save, the record showed a fresh edit time, and nothing had moved. Those fields are marked read-only now, Cobb no longer offers to set them, and the record's own history shows what you asked rather than the instructions Cobb was given.
+- When something fails behind the scenes, Cobblr now tells you what happened instead of showing a bare "Non-JSON response (502)". That message described the plumbing rather than the problem, and it hid the real explanation the server had already sent. Errors from a gateway, a relay or an AI connection now carry the actual reason, and a failed Ask Cobb turn is recorded in the server log so it can be looked up rather than reconstructed.
+- Re-run AI is greyed out when no AI provider is connected, instead of looking ready and quietly doing nothing. Replay still works, since it re-applies the latest processing without asking a model.
+- Pressing the lock button with the camera scanner open no longer flashes the light for a second before the screen goes dark. The scanner now stops watching the scene the instant it is backgrounded, and puts the light out if it was already on.
+
+## 2026-08-17
+
+### Features
+- A scan item whose receipt listed other things now says so on its card, and opens to show what they were.
+
+### Improvements
+- Every place you choose a location now uses the same picker. Picking a location on a record, an asset or a machine used to drop you into a flat dropdown listing every location in the workspace, while other screens gave you the searchable drill-down. They all give you the drill-down now. Choosing a parent when you edit a location works the same way, and it hides that location and everything under it, so you cannot accidentally make a shelf its own grandparent.
 - A single-item parcel on the dashboard is named by what is in it, not by the order it came from.
+- Shelf 1 is the bottom shelf. Type a range like `Shelf 1-5` when you are adding a rack's shelves and Cobblr now asks which end you are counting from, with counting up from the floor already chosen. Pick that and shelf 1 sits at floor level on every rack you own, so "shelf 1" is a height you can walk to instead of a label you have to look up, and adding a shelf on top later renames nothing. The list draws the rack the way you see it, top shelf at the top. Counting from the top is one tap away if that is how a rack is already labelled, and you can drag any group into any order afterwards. Drawers are left alone, since drawer 1 is almost always the top one.
+- Your own photo now leads the image strip, and you can search without leaving it. When you are choosing a catalog picture, the photo you took sits first, separated from the web results by a divider, so the one image you can recognise instantly is always in the same place. The search box and Search button are in the full-screen viewer too, so you can refine the term while you are looking at the candidates instead of closing it to retype.
+
+### Fixes
+- Ask Cobb can now make the changes you have already allowed, on workspaces whose AI runs through a Claude subscription connection. Before, Cobb offered to create and update records there but every attempt was refused, and the explanation pointed at a connector permission that does not exist. Cobb now only offers what it can actually do: with Changes set to Auto it creates, updates and deletes records directly (each one still tracked and undoable), and with Changes set to Ask or Off it says so plainly and points at the setting instead.
+- Ask Cobb no longer hits a permissions error reading your workspace over a Claude-subscription bridge: it can reach everything it offers to look at, including your capture inbox, what needs you, and what changed.
+- An order line now keeps the amount its receipt stated, not only a per-unit price. A line whose total did not divide evenly by its quantity was recorded a penny or two off, because a per-unit figure rounds to two decimals and cannot always multiply back.
+- Picking one of your photos from the strip now shows it as the item's picture, and only changes that. The photo you originally scanned stays where it is, the picked photo stays in your gallery, and Revert steps the picture back one choice at a time. Before, the tap left the wrong web image on the front of the card.
+- Order lines from a receipt keep what they cost. A receipt with a plain price column recorded its lines with no cost at all, so the order it created totalled nothing.
+- Adding a photo to a scanned item makes it the item's picture again, as designed.
+- Adding a photo from the scan sheet now returns you to that sheet with the new photo, instead of dropping you into the capture drawer.
+- The camera's scan sheet no longer changes shape while a barcode is looking up, and the photo strip's plus button now adds a photo instead of replacing the display one.
+- A parcel you are still waiting for no longer disappears when you file the receipt's items one at a time.
 
 ## 2026-08-16
 

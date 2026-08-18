@@ -65,7 +65,7 @@ import {
   useViewMode,
 } from "@cobblr/platform-web";
 import { EntityAttachments } from "../components/EntityAttachments";
-import { LocationPicker } from "../components/LocationPicker";
+import { LocationTreePicker } from "../components/LocationTreePicker";
 
 const ENTITY_KIND = "machines:machine";
 
@@ -1401,7 +1401,7 @@ function MachineDetailModal({
             )}
             {/* Quantity is an inventory-ism — a tracked machine (printer/laser/CNC) is one unit. Hide for specialised instances. */}
             {!fp.hidden("quantity") && !instance && <EditField label={fp.label("quantity", "Quantity")} value={String(m.quantity)} numeric onCommit={(v) => update.mutate({ quantity: Number(v) || 0 })} />}
-            <LocationPicker label="Location" kind="area" value={m.location_id} onChange={(id) => update.mutate({ location_id: id })} size="sm" />
+            <LocationTreePicker label="Location" kind="area" value={m.location_id} onChange={(id) => update.mutate({ location_id: id })} size="sm" />
           </dl>
 
           {/* Custom fields render inline (they self-collapse empty ones, and are
@@ -1818,7 +1818,7 @@ function NewMachineModal({
           <span className={lblCls}>Family (e.g. "Voron", "Railcore")</span>
           <input value={family} onChange={(e) => setFamily(e.target.value)} className="input" />
         </label>
-        <LocationPicker label="Location" kind="area" value={locationId} onChange={setLocationId} />
+        <LocationTreePicker label="Location" kind="area" value={locationId} onChange={setLocationId} />
 
         {instance && !digifabEnabled && (
           <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/30 p-3 space-y-1.5">

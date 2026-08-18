@@ -41,6 +41,22 @@ export function registerLocationsWriter(): void {
 
     async update(orgId, id, fields) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreLocationsDB>;
+      // Say NO to a field this writer will not apply, rather than dropping it.
+      // Every unlisted key below used to be discarded in silence while
+      // updated_at was bumped anyway, so the call returned 200 and read as
+      // applied. Ask Cobb set `position` 0-11 across twelve racks that way:
+      // twelve successful updates, nothing moved, and the only reason anyone
+      // noticed is that it read the records back afterwards (2026-08-18).
+      const SERVER_OWNED: Record<string, string> = {
+        position: "sibling order is set by dragging in the tree (the reorder endpoint), not by updating a location",
+        depth: "depth follows parent_id and is recomputed on every move",
+      };
+      const refused = Object.keys(fields).filter((k) => k in SERVER_OWNED);
+      if (refused.length > 0) {
+        throw new Error(
+          `can't set ${refused.join(", ")} on a location — ${refused.map((k) => SERVER_OWNED[k]).join("; ")}`,
+        );
+      }
       const patch: Record<string, unknown> = { updated_at: new Date() };
       if (fields.name !== undefined) patch.name = String(fields.name);
       if (fields.short_name !== undefined) patch.short_name = asStr(fields.short_name);

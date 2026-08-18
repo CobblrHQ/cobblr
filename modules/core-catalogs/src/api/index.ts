@@ -15,3 +15,7 @@ const router = Router({ mergeParams: true });
 router.use("/catalogs", catalogsRouter);
 
 export default router;
+
+// Side-effect: the assistant's only door into this module.
+import { registerCatalogsHandlers } from "./handlers.js";
+registerCatalogsHandlers();

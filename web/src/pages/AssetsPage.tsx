@@ -29,7 +29,7 @@ import {
   useViewMode,
 } from "@cobblr/platform-web";
 import { EntityAttachments } from "../components/EntityAttachments";
-import { LocationPicker } from "../components/LocationPicker";
+import { LocationTreePicker } from "../components/LocationTreePicker";
 import { ContentsPanel } from "../components/ContentsPanel";
 
 const ENTITY_KIND = "assets:asset";
@@ -763,7 +763,7 @@ function AssetDetailModal({
             {!fp.hidden("warranty_until") && <EditField label={fp.label("warranty_until", "Warranty until")} value={a.warranty_until ?? ""} onCommit={(v) => update.mutate({ warranty_until: v || null })} type="date" />}
             {!fp.hidden("last_service_at") && <EditField label={fp.label("last_service_at", "Last service")} value={a.last_service_at ?? ""} onCommit={(v) => update.mutate({ last_service_at: v || null })} type="date" />}
             {!fp.hidden("quantity") && <EditField label={fp.label("quantity", "Quantity")} value={String(a.quantity)} numeric onCommit={(v) => update.mutate({ quantity: Number(v) || 0 })} />}
-            <LocationPicker
+            <LocationTreePicker
               label="Location"
               value={a.location_id}
               onChange={(id) => update.mutate({ location_id: id })}
@@ -912,7 +912,7 @@ function NewAssetModal({
           <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Type / category</span>
           <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder='e.g. "Appliance", "Hand tool"' className="input" />
         </label>
-        <LocationPicker
+        <LocationTreePicker
           label="Location"
           value={locationId}
           onChange={setLocationId}

@@ -34,6 +34,7 @@ const DataQuery = z.object({
   q: z.string().optional(),
 });
 
+// AI-ACTION: core-views:save-view
 viewsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -115,6 +116,7 @@ viewsRouter.get(
   }),
 );
 
+// AI-REACH: authoring of a user-built surface; a whole-workspace build goes through the design flow, and records inside an app are reachable as records
 viewsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -160,6 +162,7 @@ viewsRouter.patch(
   }),
 );
 
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 viewsRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {

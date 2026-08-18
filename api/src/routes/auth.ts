@@ -35,6 +35,7 @@ import { listMembershipsForUser } from "../platform/memberships.js";
 import {
   identityEnabled,
   identityCallbackEnabled,
+  deploymentId,
   autoProvisionEnabled,
   verifyIdentityToken,
   redeemIdentityCode,
@@ -322,6 +323,23 @@ authRouter.get("/config", (_req, res) => {
     // managed/public-prod deployment sets COBBLR_HOSTED=true. Drives client hints
     // such as "a hosted Cobblr can't reach your LAN device directly".
     hosted: process.env.COBBLR_HOSTED === "true",
+    // Central identity, for the "sign in with your Cobblr account" button. Null unless
+    // BOTH halves are configured, because a button that starts a hand-off this surface
+    // cannot finish is worse than no button: it fails after the redirect, on somebody
+    // else's site, where nothing here can explain it.
+    //
+    // `authorize_url` is where the browser goes; the surface names itself so the
+    // account service knows which secret to expect back.
+    identity: identityCallbackEnabled()
+      ? {
+          authorize_url: `${(process.env.IDENTITY_URL ?? "").replace(/\/+$/, "")}/authorize`,
+          deployment: deploymentId(),
+          // Whose account it is. Configurable because nothing else in this feature is
+          // Cobblr-specific: point IDENTITY_URL at your own service and the button
+          // should say your name, not ours.
+          name: (process.env.IDENTITY_NAME ?? "").trim() || "Cobblr",
+        }
+      : null,
   });
 });
 

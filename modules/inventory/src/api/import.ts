@@ -246,6 +246,7 @@ function parseCsv(text: string): ParseResult {
 
 // ────────────────────────── HTTP routes ──────────────────────────
 
+// AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
 importRouter.post(
   "/parts/import",
   asyncHandler(async (req, res) => {

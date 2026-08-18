@@ -27,7 +27,7 @@ import {
 import { EntityAttachments } from "../components/EntityAttachments";
 import { EntityImageEdit } from "../components/EntityImageEdit";
 import { ImageSearchPicker } from "../components/ImageSearchPicker";
-import { LocationPicker } from "../components/LocationPicker";
+import { LocationTreePicker } from "../components/LocationTreePicker";
 
 const ENTITY_KIND = "records:record";
 
@@ -427,7 +427,7 @@ function RecordDetailModal({
                   domain-shaped lives in the CustomFieldsPanel below. */}
               <dl className="grid grid-cols-2 gap-3 text-xs">
                 <EditField label={fp.label("name", "Name")} value={r.name} onCommit={(v) => update.mutate({ name: v })} />
-                <LocationPicker
+                <LocationTreePicker
                   label="Location"
                   value={r.location_id}
                   onChange={(lid) => update.mutate({ location_id: lid })}
@@ -533,7 +533,7 @@ function NewRecordModal({
           <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Name</span>
           <input value={name} onChange={(e) => setName(e.target.value)} autoFocus className="input" />
         </label>
-        <LocationPicker
+        <LocationTreePicker
           label="Location"
           value={locationId}
           onChange={setLocationId}

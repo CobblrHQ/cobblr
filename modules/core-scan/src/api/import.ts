@@ -364,6 +364,7 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R
 }
 
 // ── POST /import/preview — parse + mapping report, never writes ─────────────
+// AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
 importRouter.post(
   "/import/preview",
   expressText({ type: ["text/csv", "text/plain"], limit: "32mb" }),
@@ -393,6 +394,7 @@ importRouter.post(
 );
 
 // ── POST /import ─────────────────────────────────────────────────────────────
+// AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
 importRouter.post(
   "/import",
   expressText({ type: ["text/csv", "text/plain"], limit: "32mb" }),

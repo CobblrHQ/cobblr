@@ -98,3 +98,7 @@ export default router;
 // mounts this at /orgs/:slug/instances/:name/items and dispatches with
 // req.instance set; partsRouter reads instanceOf(req) on every query.
 export { partsRouter as primaryRouter };
+
+// Side-effect: the assistant's door to categories.
+import { registerCategoryHandlers } from "./category-handlers.js";
+registerCategoryHandlers();

@@ -140,6 +140,9 @@ services:
       IDENTITY_AUDIENCE: ${IDENTITY_AUDIENCE:-}
       IDENTITY_ADMIN_TOKEN: ${IDENTITY_ADMIN_TOKEN:-}
       IDENTITY_DEPLOYMENT_SECRET: ${IDENTITY_DEPLOYMENT_SECRET:-}
+      # What the sign-in button calls the account service. Defaults to "Cobblr";
+      # set it when federating with your own.
+      IDENTITY_NAME: ${IDENTITY_NAME:-}
       COBBLR_DEPLOYMENT: ${COBBLR_DEPLOYMENT:-}
       # "true" gives a central account with no workspace here one on arrival.
       # What an open trial surface wants; what a private one must never do.

@@ -38,3 +38,7 @@ export default router;
 // Primary-entity router for instance-scoped item CRUD (orders are the
 // primary entity; order_items stay scoped via their parent order).
 export { ordersRouter as primaryRouter };
+
+// Side-effect: the assistant's door to adding a line to an existing order.
+import { registerLineHandlers } from "./line-handlers.js";
+registerLineHandlers();

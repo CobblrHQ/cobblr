@@ -33,6 +33,10 @@ registerDetailPanel(
   lazy(() => import("../features/purchases/priceHistory").then((m) => ({ default: m.PriceHistoryPanel }))),
 );
 registerDetailPanel(
+  "purchases:receipt-lines",
+  lazy(() => import("../features/purchases/receiptLines").then((m) => ({ default: m.ReceiptLinesPanel }))),
+);
+registerDetailPanel(
   "core-shipments:shipment",
   lazy(() => import("../features/core-shipments/shipment").then((m) => ({ default: m.ShipmentPanel }))),
 );

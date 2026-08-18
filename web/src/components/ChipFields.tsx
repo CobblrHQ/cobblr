@@ -58,6 +58,8 @@ interface Props {
    *  chip will host it at full width instead of substituting a plain input.
    *  Reimplementing those in chip form would have quietly dropped the swatch
    *  picker, the checkbox and every field's help text. */
+  /** Chip scale of the card's own read-only chips, for sitting in that row. */
+  dense?: boolean;
   renderEditor?: (def: ChipFieldDef) => React.ReactNode | null;
   /** Fields with a value, plus any the user has added. */
   fields: ChipFieldDef[];
@@ -73,7 +75,7 @@ interface Props {
 
 const GAP = 6;
 
-export function ChipFields({ fields, available, onChange, onAdd, onDrop, renderEditor, addLabel = "Add a detail" }: Props) {
+export function ChipFields({ fields, available, onChange, onAdd, onDrop, renderEditor, addLabel = "Add a detail", dense = false }: Props) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const mirrorRef = useRef<HTMLSpanElement | null>(null);
   const chipRefs = useRef(new Map<string, HTMLSpanElement>());
@@ -137,6 +139,7 @@ export function ChipFields({ fields, available, onChange, onAdd, onDrop, renderE
       <div ref={boxRef} className="flex flex-wrap gap-1.5">
         {ordered.map((f) => (
           <Chip
+            dense={dense}
             key={f.key}
             def={f}
             wide={wide.has(f.key)}
@@ -161,9 +164,34 @@ export function ChipFields({ fields, available, onChange, onAdd, onDrop, renderE
             }}
           />
         ))}
+        {/* In the card's chip row the "add a field" offers TRAIL the chips - the
+            same row, no caption. As their own block under a label they cost two
+            lines for a couple of pills, and the row above them stopped short of
+            the space they then took. The relayout walks the registered chips,
+            not the box's children, so these are not measured as chips. */}
+        {dense && available.length > 0 && (
+          available.map((f) => (
+          <button
+            key={f.key}
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              addedRef.current.add(f.key);
+              onAdd(f.key);
+              // Straight into typing: the tap that asked for the field is
+              // the tap that opens it.
+              setEditing(f.key);
+            }}
+            className="rounded-full bg-subtle/60 dark:bg-slate-800/60 border border-line/70 dark:border-slate-700/70 px-2 py-0.5 text-[11.5px] text-content dark:text-mortar-200 hover:border-cobble-400 dark:hover:border-cobble-600 transition"
+          >
+            <span className="text-cobble-600 dark:text-cobble-400 font-medium mr-1">+</span>
+            {f.label}
+          </button>
+          ))
+        )}
       </div>
 
-      {available.length > 0 && (
+      {!dense && available.length > 0 && (
         <>
           <p className="text-[11px] text-muted dark:text-slate-400 pt-0.5">{addLabel}</p>
           <div className="flex flex-wrap gap-1.5">
@@ -202,8 +230,10 @@ function Chip({
   onOpen,
   onCommit,
   customEditor,
+  dense,
 }: {
   def: ChipFieldDef;
+  dense?: boolean;
   wide: boolean;
   editing: boolean;
   customEditor?: React.ReactNode | null;
@@ -304,7 +334,8 @@ function Chip({
         else onOpen();
       }}
       className={[
-        "inline-flex items-baseline gap-1.5 max-w-full rounded-lg border px-2 py-1 cursor-text transition",
+        "inline-flex items-baseline max-w-full rounded-lg border cursor-text transition",
+        dense ? "gap-1 px-1.5 py-0.5" : "gap-1.5 px-2 py-1",
         editing
           ? "is-editing border-cobble-500 bg-surface dark:bg-slate-900"
           : "border-line/70 dark:border-slate-700/70 bg-subtle/50 dark:bg-slate-800/50 hover:border-cobble-400 dark:hover:border-cobble-600",
@@ -317,7 +348,7 @@ function Chip({
       {/* text-sm in BOTH states. Dropping it while editing changed the line
           height, which changed the chip height, which moved every chip below —
           the pinned min-width cannot save you from a typography change. */}
-      <span ref={valueRef} className={`text-sm ${editing ? "flex-1 min-w-0" : "truncate"}`}>
+      <span ref={valueRef} className={`${dense ? "text-[11.5px]" : "text-sm"} ${editing ? "flex-1 min-w-0" : "truncate"}`}>
         {hosting ? (
           <span
             className="block w-full"

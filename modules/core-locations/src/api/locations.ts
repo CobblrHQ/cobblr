@@ -22,6 +22,58 @@ const LocationCreate = z.object({
 
 const LocationUpdate = LocationCreate.partial();
 
+/** The ids of one parent's children, in the order they should appear.
+ *  Shared with the core-locations:reorder ACTION so a person dragging in the
+ *  tree and the assistant reordering by name mean exactly the same thing. */
+export const ReorderIds = z.array(z.string().uuid()).min(1).max(2000);
+
+/** Write a sibling group's display order: each id's `position` becomes its
+ *  index. Only touches the rows named. */
+export async function applyOrder(
+  db: ReturnType<typeof tenantDb>,
+  ids: string[],
+): Promise<void> {
+  await db.transaction().execute(async (trx) => {
+    for (let i = 0; i < ids.length; i++) {
+      await trx
+        .updateTable("core_locations_locations")
+        .set({ position: i })
+        .where("id", "=", ids[i]!)
+        .execute();
+    }
+  });
+}
+
+// Columns this module maintains itself. They are declared on the entity kind
+// (so they can be read and talked about) and marked readOnly there, but a
+// caller can still put one in a request body — and zod STRIPS unknown keys, so
+// it vanished before the handler saw it and the update returned 200 with a
+// fresh updated_at. Ask Cobb set `position` across twelve racks that way, read
+// them back, and correctly reported that nothing had moved.
+//
+// The entity-writer seam refuses these too (sync-writer.ts). Both paths need
+// it: the seam is what the kernel calls, and THIS route is what the kind
+// declares as its update endpoint, so it is the one an assistant or an API
+// client actually hits.
+const SERVER_OWNED: Record<string, string> = {
+  position:
+    "sibling order is set by dragging in the tree (POST /reorder with the sibling ids in order), not by updating a location",
+  depth: "depth follows parent_id and is recomputed on every move",
+};
+
+/** 400 naming any server-owned field in the body, or null to carry on. */
+function refuseServerOwned(body: unknown): { code: string; message: string } | null {
+  const keys = Object.keys((body ?? {}) as Record<string, unknown>);
+  const refused = keys.filter((k) => k in SERVER_OWNED);
+  if (refused.length === 0) return null;
+  return {
+    code: "server_owned_field",
+    message: `Can't set ${refused.join(", ")} on a location: ${refused
+      .map((k) => SERVER_OWNED[k])
+      .join("; ")}.`,
+  };
+}
+
 locationsRouter.get(
   "/",
   asyncHandler(async (req, res) => {
@@ -55,23 +107,14 @@ locationsRouter.get(
 // order → each location's `position` set to its index. Defined before the
 // "/:id" routes so it's unambiguous (and it's a POST, so no method clash). Only
 // touches the rows named; callers send one parent's children at a time.
+// AI-ACTION: core-locations:reorder
 locationsRouter.post(
   "/reorder",
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin")) return;
-    const parsed = z.object({ ids: z.array(z.string().uuid()).min(1).max(2000) }).safeParse(req.body);
+    const parsed = z.object({ ids: ReorderIds }).safeParse(req.body);
     if (!parsed.success) return void badBody(res, parsed.error);
-    const { ids } = parsed.data;
-    const db = tenantDb(req);
-    await db.transaction().execute(async (trx) => {
-      for (let i = 0; i < ids.length; i++) {
-        await trx
-          .updateTable("core_locations_locations")
-          .set({ position: i })
-          .where("id", "=", ids[i]!)
-          .execute();
-      }
-    });
+    await applyOrder(tenantDb(req), parsed.data.ids);
     res.json({ ok: true });
   }),
 );
@@ -102,6 +145,12 @@ locationsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
+    // CREATE deliberately IGNORES a server-owned field rather than refusing it:
+    // depth is computed from parent_id precisely so a client cannot spoof it,
+    // and core-locations.test.ts pins that. There is also no expectation to
+    // betray here — nothing existed to change. The refusal below is on UPDATE,
+    // where a caller IS asking to change a stored value and would otherwise be
+    // told it worked.
     const parsed = LocationCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
@@ -165,6 +214,11 @@ locationsRouter.patch(
     const id = req.params.id;
     if (!id) {
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
+      return;
+    }
+    const refused = refuseServerOwned(req.body);
+    if (refused) {
+      res.status(400).json({ error: refused });
       return;
     }
     const parsed = LocationUpdate.safeParse(req.body);

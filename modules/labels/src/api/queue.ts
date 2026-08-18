@@ -79,6 +79,7 @@ queueRouter.get(
   }),
 );
 
+// AI-ACTION: labels:print
 queueRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -133,6 +134,7 @@ const QueuePatch = z
   })
   .refine((b) => b.qty !== undefined || b.description !== undefined, { message: "qty or description required" });
 
+// AI-REACH: edits a queued label job; the queue is a device-bound surface, and queue-from-entity is the door in
 queueRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -163,6 +165,7 @@ queueRouter.patch(
   }),
 );
 
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 queueRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {

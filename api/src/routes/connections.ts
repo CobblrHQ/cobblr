@@ -165,8 +165,8 @@ connectionsRouter.get("/me/connections/catalogue", requireAuth, (_req, res) => {
 
 // Is MY personal edge agent connected right now? Drives the transit hint in
 // the add-a-connection dialog (a bridge-transit provider routes through it).
-connectionsRouter.get("/me/edge-agent", requireAuth, (req, res) => {
-  res.json({ connected: platform().edge.hasChannel(req.session!.id) });
+connectionsRouter.get("/me/edge-agent", requireAuth, async (req, res) => {
+  res.json({ connected: await platform().edge.hasChannel(req.session!.id) });
 });
 
 connectionsRouter.get("/me/connections", requireAuth, async (req, res, next) => {

@@ -43,7 +43,7 @@ export const edgeRelayRouter = Router({ mergeParams: true });
 // POST /register — the bridge announces itself (Bearer = a workspace API token).
 edgeRelayRouter.post("/register", asyncHandler(async (req, res) => {
   if (!requireRole(req, res, "owner", "admin", "member")) return;
-  platform().edge.relayTouch(channelKeyOf(req));
+  await platform().edge.relayTouch(channelKeyOf(req));
   res.json({ ok: true });
 }));
 
@@ -66,7 +66,7 @@ edgeRelayRouter.post("/respond", asyncHandler(async (req, res) => {
     res.status(400).json({ error: { code: "bad_body", message: "id + numeric status required" } });
     return;
   }
-  platform().edge.relayRespond(channelKeyOf(req), parsed.data);
+  await platform().edge.relayRespond(channelKeyOf(req), parsed.data);
   res.json({ ok: true });
 }));
 
@@ -74,7 +74,7 @@ edgeRelayRouter.post("/respond", asyncHandler(async (req, res) => {
 // (The EdgeBridgeSetup dialog polls this while waiting for the box to dial in.)
 edgeRelayRouter.get("/status", asyncHandler(async (req, res) => {
   if (!requireRole(req, res, "owner", "admin", "member")) return;
-  res.json(platform().edge.relayInfo(tenantContext(req).org.id, bridgeOf(req)));
+  res.json(await platform().edge.relayInfo(tenantContext(req).org.id, bridgeOf(req)));
 }));
 
 /** A bridge you reach DIRECTLY, derived from the connections that use it.
@@ -197,13 +197,14 @@ async function directBridges(orgId: string): Promise<DirectBridge[]> {
 edgeRelayRouter.get("/bridges", asyncHandler(async (req, res) => {
   if (!requireRole(req, res, "owner", "admin", "member")) return;
   const orgId = tenantContext(req).org.id;
-  const bridges = platform()
-    .edge.relayAgents(orgId)
-    .map((a) => ({
+  const agents = await platform().edge.relayAgents(orgId);
+  const bridges = await Promise.all(
+    agents.map(async (a) => ({
       bridge: a.bridge,
-      connected: platform().edge.hasChannel(edgeChannelKey(orgId, a.bridge)),
+      connected: await platform().edge.hasChannel(edgeChannelKey(orgId, a.bridge)),
       last_seen: Date.now() - a.last_seen_ms,
-    }));
+    })),
+  );
   // Default first, then named bridges alphabetically.
   bridges.sort((a, b) =>
     a.bridge === null ? -1 : b.bridge === null ? 1 : a.bridge.localeCompare(b.bridge),

@@ -8,6 +8,7 @@ import { locationsImportRouter } from "./import.js";
 import { floorplanRouter } from "./floorplan.js";
 import { registerLocationsResolvers } from "./resolvers.js";
 import { registerLocationsWriter } from "./sync-writer.js";
+import { registerLocationsHandlers } from "./handlers.js";
 
 const router = Router({ mergeParams: true });
 
@@ -25,5 +26,8 @@ registerLocationsResolvers();
 // Side-effect: register the in-process entity writer so the sync engine can
 // mirror an external system's locations in without an HTTP loopback.
 registerLocationsWriter();
+// Side-effect: register the action handlers (core-locations:reorder) so the
+// assistant has a door to the one field the update route refuses.
+registerLocationsHandlers();
 
 export default router;

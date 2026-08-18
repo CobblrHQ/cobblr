@@ -66,6 +66,7 @@ const RenderBody = z.object({
   item_ids: z.array(z.string().uuid()).optional(),
 });
 
+// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
 printRouter.post(
   "/render",
   asyncHandler(async (req, res) => {
@@ -97,6 +98,7 @@ printRouter.post(
   }),
 );
 
+// AI-ACTION: labels:print
 printRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -196,6 +198,7 @@ const RecordPrinted = z.object({
 // whole queue: a partial batch (printer jammed at row 7) must leave the
 // unprinted rows queued. The paper is the source of truth, so this records what
 // physically exists and forgets the rest.
+// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
 printRouter.post(
   "/record",
   asyncHandler(async (req, res) => {

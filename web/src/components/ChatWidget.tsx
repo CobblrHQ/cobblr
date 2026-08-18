@@ -8,7 +8,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X, Send, Check, Eye, PencilLine, Trash2 } from "lucide-react";
-import { api, ApiError, type AiChatProposal, type BundleValidationPreview } from "../lib/api";
+import { api, ApiError, type AiChatProposal, type AiChatResponse, type BundleValidationPreview } from "../lib/api";
+import { readSse } from "../lib/sse";
 import { Cobb, CobbBust, CobbHead, COBB_POSES, type CobbPose } from "./Cobb";
 import { useNavigate } from "react-router-dom";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -193,6 +194,10 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
     mutationFn: (writeId: string) => api.aiChatUndo(activeSlug, writeId),
   });
   const [messages, setMessages] = useState<Msg[]>([]);
+  // Always-current view for code that runs outside the render (the mount
+  // effect that resubscribes to an open turn).
+  const messagesRef = useRef<Msg[]>([]);
+  messagesRef.current = messages;
   const [input, setInput] = useState("");
   // Deep-link seam: any surface can open the chat with GUIDANCE
   // (window.dispatchEvent(new CustomEvent("cobblr:open-chat", {detail:{seed|prefill|opener}}))).
@@ -317,6 +322,67 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
     }
   }
 
+  /** Turn one chat response into messages. Shared by the legacy blocking
+   *  path and the persisted-turn path, so a reply renders identically
+   *  however it arrived. */
+  function applyResponse(next: Msg[], r: AiChatResponse) {
+    if (r.type === "build-proposal" && r.building && r.draft_id) {
+      // The build runs async (~150s). Show a "designing…" message and poll
+      // the draft until it's ready, then swap in the preview + confirm.
+      const draftId = r.draft_id;
+      setMessages([
+        ...next,
+        { role: "assistant", content: r.summary ?? "Designing your workspace…", building: true, buildDraftId: draftId },
+      ]);
+      void pollBuild(draftId);
+    } else {
+      // AUTO mode: writes already applied this turn — one "✓ done" card each,
+      // with an Undo where the ledger says it's reversible.
+      if ((r.applied ?? []).length > 0) {
+        window.dispatchEvent(new CustomEvent("cobblr:workspace-changed", { detail: { via: "cobb" } }));
+      }
+      // Tier-1.5 escort: Cobb walks the user to a screen he cannot operate
+      // (members, tokens, backup, …). Navigation only — the page reads any
+      // prefill.* params, and the page's own submit stays the user's. The
+      // chat panel is docked, so the conversation survives the move. If the
+      // model asked for several, the last one wins (one screen at a time).
+      const escortTo = (r.escorts ?? []).at(-1);
+      if (escortTo?.path?.startsWith("/")) navigate(escortTo.path);
+      const doneCards: Msg[] = (r.applied ?? []).map((a) => ({
+        role: "assistant" as const,
+        content: a.summary,
+        resolved: true,
+        ledgerId: a.ledger_id,
+        undoable: a.undoable,
+      }));
+      if (r.type === "proposal" && r.proposal) {
+        setMessages([
+          ...next,
+          ...doneCards,
+          // The loop may say something useful before proposing ("found 3 skeins
+          // that match — want me to add the pattern?"): keep that text.
+          ...(r.text ? [{ role: "assistant" as const, content: r.text }] : []),
+          { role: "assistant", content: r.summary ?? "I can do that — confirm?", proposal: r.proposal },
+        ]);
+      } else if (r.type === "proposals" && r.items?.length) {
+        // Several writes from one turn — one confirmable card each, so the user
+        // approves or skips them individually.
+        setMessages([
+          ...next,
+          ...doneCards,
+          ...(r.text ? [{ role: "assistant" as const, content: r.text }] : []),
+          ...r.items.map((it) => ({
+            role: "assistant" as const,
+            content: it.summary,
+            proposal: it.proposal,
+          })),
+        ]);
+      } else {
+        setMessages([...next, ...doneCards, { role: "assistant", content: r.text ?? "(no response)" }]);
+      }
+    }
+  }
+
   async function send() {
     const text = input.trim();
     if (!text || busy) return;
@@ -345,73 +411,237 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
 
     setBusy(true);
     try {
-      const r = await api.aiChat(
+      // Start a PERSISTED turn and follow it, rather than holding one request
+      // open for the whole loop. The turn lives server-side: progress streams
+      // in as it happens, a refresh resubscribes to the same id, and a second
+      // tab of the same workspace sees it too (see followTurn + the on-open
+      // check in the mount effect).
+      const started = await api.aiChatStart(
         activeSlug,
         next.map((m) => ({ role: m.role, content: m.content })),
         getChatPageContext() ?? undefined,
       );
-      if (r.type === "build-proposal" && r.building && r.draft_id) {
-        // The build runs async (~150s). Show a "designing…" message and poll
-        // the draft until it's ready, then swap in the preview + confirm.
-        const draftId = r.draft_id;
-        setMessages([
-          ...next,
-          { role: "assistant", content: r.summary ?? "Designing your workspace…", building: true, buildDraftId: draftId },
-        ]);
-        void pollBuild(draftId);
-      } else {
-        // AUTO mode: writes already applied this turn — one "✓ done" card each,
-        // with an Undo where the ledger says it's reversible.
-        if ((r.applied ?? []).length > 0) {
-          window.dispatchEvent(new CustomEvent("cobblr:workspace-changed", { detail: { via: "cobb" } }));
-        }
-        // Tier-1.5 escort: Cobb walks the user to a screen he cannot operate
-        // (members, tokens, backup, …). Navigation only — the page reads any
-        // prefill.* params, and the page's own submit stays the user's. The
-        // chat panel is docked, so the conversation survives the move. If the
-        // model asked for several, the last one wins (one screen at a time).
-        const escortTo = (r.escorts ?? []).at(-1);
-        if (escortTo?.path?.startsWith("/")) navigate(escortTo.path);
-        const doneCards: Msg[] = (r.applied ?? []).map((a) => ({
-          role: "assistant" as const,
-          content: a.summary,
-          resolved: true,
-          ledgerId: a.ledger_id,
-          undoable: a.undoable,
-        }));
-        if (r.type === "proposal" && r.proposal) {
-          setMessages([
-            ...next,
-            ...doneCards,
-            // The loop may say something useful before proposing ("found 3 skeins
-            // that match — want me to add the pattern?"): keep that text.
-            ...(r.text ? [{ role: "assistant" as const, content: r.text }] : []),
-            { role: "assistant", content: r.summary ?? "I can do that — confirm?", proposal: r.proposal },
-          ]);
-        } else if (r.type === "proposals" && r.items?.length) {
-          // Several writes from one turn — one confirmable card each, so the user
-          // approves or skips them individually.
-          setMessages([
-            ...next,
-            ...doneCards,
-            ...(r.text ? [{ role: "assistant" as const, content: r.text }] : []),
-            ...r.items.map((it) => ({
-              role: "assistant" as const,
-              content: it.summary,
-              proposal: it.proposal,
-            })),
-          ]);
-        } else {
-          setMessages([...next, ...doneCards, { role: "assistant", content: r.text ?? "(no response)" }]);
-        }
-      }
+      rememberOpenTurn(started.turn_id);
+      await followTurn(started.turn_id, next);
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : "Something went wrong.";
       setError(/no provider|not entitled|not available|no_ai/i.test(msg) ? "AI isn't enabled for this workspace yet." : msg);
-    } finally {
       setBusy(false);
     }
   }
+
+  // ── Following a persisted turn ────────────────────────────────────────────
+  //
+  // One turn id, three readers that all behave the same: the tab that started
+  // it, a tab that refreshed mid-turn, and a second tab that opened the chat.
+  // Progress events render as a live "working" line under the user's message;
+  // the `done` event carries the same response the blocking POST used to
+  // return and goes through applyResponse, so the final render is identical.
+
+  const openTurnKey = () => `cobblr.chat.turn.${activeSlug}`;
+  function rememberOpenTurn(id: string | null) {
+    try {
+      if (id) localStorage.setItem(openTurnKey(), id);
+      else localStorage.removeItem(openTurnKey());
+    } catch {
+      /* private mode */
+    }
+  }
+
+  const followingRef = useRef<{ id: string; abort: () => void } | null>(null);
+  const [progress, setProgress] = useState<string | null>(null);
+
+  function describeEvent(kind: string, data: Record<string, unknown>): string | null {
+    switch (kind) {
+      case "thinking":
+        return (data.round as number) > 0 ? "Thinking about what it found…" : "Thinking…";
+      case "tool": {
+        const name = String(data.name ?? "");
+        const pretty = name.replace(/_/g, " ");
+        return data.write ? `Making a change: ${pretty}…` : `Reading: ${pretty}…`;
+      }
+      case "tool-result":
+        return data.ok ? null : "That didn't work, trying another way…";
+      case "applied":
+        return "Applied a change…";
+      default:
+        return null;
+    }
+  }
+
+  async function followTurn(turnId: string, next: Msg[]) {
+    // One follower at a time; a newer turn supersedes an older subscription.
+    followingRef.current?.abort();
+    setBusy(true);
+    setProgress("Starting…");
+
+    // Catch up first: if the turn already finished (a refresh that came back
+    // late), there is nothing to stream — just render its result.
+    try {
+      const { turn } = await api.aiChatTurn(activeSlug, turnId);
+      if (turn.status === "done" && turn.result) {
+        finishFollow(next, turn.result);
+        return;
+      }
+      if (turn.status === "failed") {
+        failFollow(turn.error ?? "Something went wrong.");
+        return;
+      }
+    } catch {
+      /* fall through to the stream, which will 404 if it truly is gone */
+    }
+
+    const ac = new AbortController();
+    followingRef.current = { id: turnId, abort: () => ac.abort() };
+    let last = 0;
+    let settled = false;
+
+    const handle = (ev: { id: string | null; event: string; data: string }) => {
+      if (settled) return;
+      const seq = ev.id ? Number(ev.id) : NaN;
+      if (Number.isFinite(seq)) last = Math.max(last, seq);
+      let data: Record<string, unknown> = {};
+      try {
+        data = JSON.parse(ev.data);
+      } catch {
+        /* ignore */
+      }
+      if (ev.event === "done") {
+        settled = true;
+        const result = (data as { result?: AiChatResponse }).result ?? null;
+        if (result) finishFollow(next, result);
+        else failFollow("The turn finished but sent no result.");
+        return;
+      }
+      if (ev.event === "error") {
+        settled = true;
+        failFollow(String((data as { message?: string }).message ?? "Something went wrong."));
+        return;
+      }
+      const line = describeEvent(ev.event, data);
+      if (line) setProgress(line);
+    };
+
+    // Read the stream; on a transport drop, reconnect from the last seq we
+    // saw. The server replays after=N, so nothing is missed either way.
+    (async () => {
+      let attempts = 0;
+      while (!settled && !ac.signal.aborted && attempts < 20) {
+        try {
+          await readSse(api.aiChatTurnEventsUrl(activeSlug, turnId, last), handle, { signal: ac.signal });
+          if (settled || ac.signal.aborted) break;
+          // Stream ended without done/error: the server closed on a finished
+          // turn we did not see finish. Read the row.
+          const { turn } = await api.aiChatTurn(activeSlug, turnId);
+          if (turn.status === "done" && turn.result) {
+            settled = true;
+            finishFollow(next, turn.result);
+          } else if (turn.status === "failed") {
+            settled = true;
+            failFollow(turn.error ?? "Something went wrong.");
+          }
+          break;
+        } catch (e) {
+          if (ac.signal.aborted) break;
+          attempts++;
+          if (/no such turn|404/.test((e as Error).message)) {
+            settled = true;
+            failFollow("That conversation is no longer running.");
+            break;
+          }
+          await new Promise((r) => setTimeout(r, Math.min(1000 * attempts, 5000)));
+        }
+      }
+    })();
+  }
+
+  function finishFollow(next: Msg[], r: AiChatResponse) {
+    rememberOpenTurn(null);
+    setProgress(null);
+    setBusy(false);
+    applyResponse(next, r);
+  }
+  function failFollow(msg: string) {
+    rememberOpenTurn(null);
+    setProgress(null);
+    setBusy(false);
+    setError(/no provider|not entitled|not available|no_ai/i.test(msg) ? "AI isn't enabled for this workspace yet." : msg);
+  }
+
+  // On mount (and workspace change): is a turn already running for me? Two
+  // sources, both cheap — the id this browser remembered, and the server's
+  // own "open turn for this user" (which covers a turn started in another
+  // tab or another browser). Either way, resubscribe rather than start blank.
+  useEffect(() => {
+    if (!activeSlug || aiOff) return;
+    let cancelled = false;
+    (async () => {
+      let id: string | null = null;
+      try {
+        id = localStorage.getItem(openTurnKey());
+      } catch {
+        /* private mode */
+      }
+      if (!id) {
+        try {
+          id = (await api.aiChatOpenTurn(activeSlug)).turn?.id ?? null;
+        } catch {
+          /* no server-side turn */
+        }
+      }
+      if (cancelled || !id) return;
+      // Base the render on what this tab has, but make sure the turn's own
+      // prompt is the last user message: a second tab that never sent it, or a
+      // refresh that raced the history restore, would otherwise render the
+      // reply under nothing.
+      let base = messagesRef.current;
+      try {
+        const { turn } = await api.aiChatTurn(activeSlug, id);
+        const lastUser = [...base].reverse().find((m) => m.role === "user");
+        if (turn.prompt && lastUser?.content !== turn.prompt) {
+          base = [...base, { role: "user", content: turn.prompt }];
+          setMessages(base);
+        }
+      } catch {
+        /* follow anyway; followTurn handles a vanished turn */
+      }
+      if (cancelled) return;
+      await followTurn(id, base);
+    })();
+    // Another tab of this browser started (or finished) a turn: the
+    // remembered id changes under us. Follow the new one; on clear, nothing to
+    // do - our own follower will see `done`. This is what keeps two open tabs
+    // showing the same in-progress state, not just the same final answer.
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== openTurnKey() || cancelled) return;
+      const next = e.newValue;
+      if (next && next !== followingRef.current?.id) {
+        void (async () => {
+          let base = messagesRef.current;
+          try {
+            const { turn } = await api.aiChatTurn(activeSlug, next);
+            const lastUser = [...base].reverse().find((m) => m.role === "user");
+            if (turn.prompt && lastUser?.content !== turn.prompt) {
+              base = [...base, { role: "user", content: turn.prompt }];
+              setMessages(base);
+            }
+          } catch {
+            return;
+          }
+          if (!cancelled) await followTurn(next, base);
+        })();
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("storage", onStorage);
+      followingRef.current?.abort();
+      followingRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSlug, aiOff]);
+
 
   // Poll an async whole-workspace build until the draft leaves "building",
   // then swap the placeholder message for the preview + confirm (or an error).
@@ -789,7 +1019,14 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
                 {/* The "…" is HIS speech bubble (tail pointing back at him), not
                     a widget that happens to sit nearby — same device as the
                     Build greeting, in miniature. */}
-                <div className="cobb-bubble cobb-bubble-sm relative rounded-lg px-3 py-2 bg-subtle dark:bg-slate-800 text-faint text-sm">…</div>
+                {/* What he is doing, not just that he is doing something. The
+                    persisted turn streams progress ("Reading: list records…"),
+                    so a 90-second turn reads as work rather than as a hang.
+                    Falls back to "…" for the first instant before the first
+                    event and for the basic (no-AI) path. */}
+                <div className="cobb-bubble cobb-bubble-sm relative rounded-lg px-3 py-2 bg-subtle dark:bg-slate-800 text-faint text-sm" aria-live="polite">
+                  {progress ?? "…"}
+                </div>
               </div>
             )}
             {error && (

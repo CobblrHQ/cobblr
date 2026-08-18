@@ -43,6 +43,7 @@ const EVENT_BY_KIND = {
   counted: "core-devices.device.counted",
 } as const;
 
+// AI-REACH: the device wire; a sensor or a bridge posts readings here, not a person
 ingestRouter.post(
   "/",
   asyncHandler(async (req, res) => {

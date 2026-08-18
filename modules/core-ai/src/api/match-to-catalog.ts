@@ -31,6 +31,7 @@ const Body = z.object({
   top_k: z.number().int().positive().max(50).optional(),
 });
 
+// AI-REACH: this module IS the assistant; match-to-catalog is a capability the scan flow calls, and the assistant reaches catalogs through core-catalogs:match-to-catalog
 matchToCatalogRouter.post(
   "/",
   asyncHandler(async (req, res) => {

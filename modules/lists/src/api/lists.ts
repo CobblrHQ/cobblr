@@ -125,6 +125,7 @@ listsRouter.delete(
   }),
 );
 
+// AI-ACTION: lists:clear-done
 listsRouter.post(
   "/lists/:id/clear-done",
   asyncHandler(async (req, res) => {

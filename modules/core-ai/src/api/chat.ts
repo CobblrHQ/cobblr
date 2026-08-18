@@ -25,7 +25,9 @@ import {
   type KindRec,
   type WorkspaceApi,
 } from "@cobblr/workspace-tools";
-import { runAgentLoop, type AgentLoopOutcome, type AppliedWrite } from "./agent-loop.js";
+import { runAgentLoop, type AgentLoopDeps, type AgentLoopOutcome, type AppliedWrite } from "./agent-loop.js";
+import { createTurn, emitTurnEvent, finishTurn, readTurn, eventsAfter, openTurnFor, subscribe, sweepTurns } from "./turns.js";
+import { recordRound } from "../providers/replay.js";
 import { performWrite, undoWrite, undoableOf, type WriteRequest, type WriteOutcome } from "./chat-ledger.js";
 import type { ToolCall, ChatTurn } from "../providers/tool-wire.js";
 
@@ -376,6 +378,247 @@ export function pageContextLine(context?: { label: string; summary?: string }): 
   );
 }
 
+/** Everything a chat turn does after the request is validated: run the
+ *  agent loop, turn the outcome into the response the widget renders.
+ *  Extracted so the SAME code serves the legacy blocking POST and the
+ *  persisted-turn path; a `res.json` in here would tie it to one. */
+class TurnError extends Error {
+  constructor(public status: number, message: string) { super(message); }
+}
+
+async function runTurn(
+  req: Parameters<typeof tenantDb>[0],
+  parsed: { data: z.infer<typeof ChatBody> },
+  system: string,
+  c: Ctx,
+  orgId: string,
+  onEvent?: AgentLoopDeps["onEvent"],
+): Promise<Record<string, unknown>> {
+  // The agent loop: read tools auto-run (through THIS caller's permissions,
+  // via chatWorkspaceApi); write tool calls stop the loop and become the
+  // proposals below. Tool-less providers never emit tool_calls, so the loop
+  // degrades to exactly one model call → the legacy JSON-move parse.
+  const wsApi = chatWorkspaceApi(c);
+  // The user's tool consent gates everything downstream: which tool defs the
+  // model sees, and (below) whether legacy JSON-move writes may propose.
+  const prefs = await chatPrefsOf(req);
+  const toolDefs = toolDefsFor(prefs);
+  if (!prefs.read_tools || prefs.write_mode === "off") {
+    system += `\n\nCONSENT: the user has turned OFF ${
+      !prefs.read_tools && prefs.write_mode === "off"
+        ? "workspace reading AND change proposals"
+        : !prefs.read_tools
+          ? "workspace reading (do not claim to know their data)"
+          : "change proposals (answer + explain, but do not propose creates/updates/actions)"
+    } for this chat. Respect that; if they ask for something it blocks, tell them about the toggles at the top of the chat.`;
+  }
+  if (prefs.write_mode === "auto") {
+    system += `\n\nAUTO MODE: your record creates/updates/deletes apply IMMEDIATELY (every change is tracked and the user can undo it) — report what you did plainly. Actions still require the user's confirm.`;
+  }
+  // AUTO mode: record CRUD applies immediately through the ledger (undoable);
+  // actions return null → still proposed. Hard cap per turn.
+  const AUTO_WRITE_CAP = 10;
+  let autoWrites = 0;
+  const userId = sessionUserId(req) ?? "";
+  const ldb = tenantDb(req);
+  // Escorts the loop's take_user_to calls produced this turn — the widget
+  // navigates to each (and pages read the prefill params). Inert server-side.
+  const escorts: Array<{ path: string; label: string }> = [];
+  let outcome: AgentLoopOutcome;
+  try {
+    outcome = await runAgentLoop(parsed.data.messages as ChatTurn[], {
+      callModel: async (turns) => {
+        const r = await platform().ai.invoke({
+          orgId,
+          capability: "chat",
+          // system rides as a first-class field (Anthropic drops a
+          // "system"-role message); tools are the neutral defs every adapter
+          // translates to its native dialect (tool-wire.ts).
+          input: { system, messages: turns, ...(toolDefs.length ? { tools: toolDefs } : {}) },
+          source: { kind: "core-ai:chat", id: orgId },
+          userId: sessionUserId(req),
+        });
+        const result = r.result as
+          | { content?: string; text?: string; tool_calls?: ToolCall[] }
+          | string;
+        if (typeof result === "string") return { content: result };
+        const round = { content: result?.content ?? result?.text ?? "", tool_calls: result?.tool_calls };
+        // Cassette recording (COBBLR_AI_REPLAY_RECORD): capture what a REAL
+        // model said, per round, to build replay fixtures. No-op unless set.
+        recordRound(turns, round);
+        return round;
+      },
+      executeRead: async (name, args) => {
+        const tool = getTool(name);
+        if (!tool || tool.mode !== "read") return { ok: false, error: `no such read tool: ${name}` };
+        const result = await tool.execute(wsApi, args);
+        // The escort tool (tier 1.5) rides the read rail — it mutates nothing
+        // — but its OUTPUT is for the widget, not only the model: collect the
+        // destinations so the response can move the user's screen there.
+        if (name === "take_user_to" && result.ok) {
+          const esc = (result.data as { escort?: { path: string; label: string } } | null)?.escort;
+          if (esc) escorts.push(esc);
+        }
+        return result;
+      },
+      isWrite: (name) => WRITE_NAMES.has(name),
+      ...(onEvent ? { onEvent } : {}),
+      ...(prefs.write_mode === "auto"
+        ? {
+            executeWrite: async (call: ToolCall) => {
+              const w = writeRequestOf(call);
+              // Actions keep the confirm gate (irreversible); over-cap too.
+              if (!w || w.tool === "action" || autoWrites >= AUTO_WRITE_CAP) return null;
+              autoWrites++;
+              return performWrite(wsApi, ldb, userId, w, { auto: true });
+            },
+          }
+        : {}),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const status = /no provider|not entitled|not available/i.test(msg) ? 409 : 502;
+    // A 502 here left NO server-side trace — the only record was one
+    // access-log line, so diagnosing one meant reconstructing the turn from
+    // proxy, container and relay logs. The chat that fails for an
+    // infrastructure reason is exactly the one worth logging (2026-08-18).
+    if (status === 502) console.error(`[core-ai] chat failed: ${msg}`);
+    throw new TurnError(status, msg);
+  }
+
+  const done = appliedSummaries(outcome.applied);
+
+  // Write tool calls → user-confirmed proposals (one per call; the widget
+  // renders each with its own Confirm). Invalid calls turn into an honest
+  // reply instead of a proposal that would fail on confirm. Anything ALREADY
+  // auto-applied this turn rides along as `applied` (done-cards with Undo).
+  if (outcome.kind === "writes" && prefs.write_mode === "off") {
+    // Belt-and-braces: the model shouldn't have write tools when consent is
+    // off, but a hallucinated call must still never become a proposal.
+    return { type: "reply", text: "Change proposals are turned off for this chat (see the toggles at the top). Flip “Propose changes” back on and ask again." };
+  }
+  if (outcome.kind === "writes") {
+    const items: Array<{ summary: string; proposal: Record<string, unknown> }> = [];
+    const problems: string[] = [];
+    const kinds = await fetchKinds(wsApi).catch(() => [] as KindRec[]);
+    for (const call of outcome.calls) {
+      const built = await proposalOf(wsApi, kinds, call);
+      if ("error" in built) problems.push(built.error);
+      else items.push(built);
+    }
+    if (items.length === 0) {
+      return {
+        type: "reply",
+        text: problems.join(" ") || outcome.text || "I couldn't line that up — can you rephrase?",
+        ...(done.length ? { applied: done } : {}),
+        ...(escorts.length ? { escorts } : {}),
+      };
+    }
+    if (items.length === 1) {
+      return {
+        type: "proposal",
+        text: outcome.text || undefined,
+        summary: items[0]!.summary,
+        proposal: items[0]!.proposal,
+        ...(done.length ? { applied: done } : {}),
+        ...(escorts.length ? { escorts } : {}),
+      };
+    }
+    return { type: "proposals", text: outcome.text || undefined, items, ...(done.length ? { applied: done } : {}), ...(escorts.length ? { escorts } : {}) };
+  }
+
+  const text = outcome.text;
+
+  const move = parseMove(text);
+  if (!move || move.type === "reply") {
+    return { type: "reply", text: move?.text ?? text, ...(done.length ? { applied: done } : {}), ...(escorts.length ? { escorts } : {}) };
+  }
+
+  // Consent gate for the LEGACY JSON-move protocol too (a tool-less provider
+  // never saw the filtered tool list, so it can still emit write moves).
+  if (prefs.write_mode === "off") {
+    return { type: "reply", text: "Change proposals are turned off for this chat (see the toggles at the top). Flip “Propose changes” back on and ask again." };
+  }
+
+  if (move.type === "create") {
+    if (!move.entity_kind || !(await createPathFor(c, move.entity_kind))) {
+      return { type: "reply", text: `I can't create "${move.entity_kind ?? "that"}" from chat yet.` };
+    }
+    return {
+      type: "proposal",
+      summary: move.summary ?? `Create a ${move.entity_kind}`,
+      proposal: { kind: "create", entity_kind: move.entity_kind, fields: move.fields ?? {} },
+    };
+  }
+
+  // build — design a whole workspace. The core-authoring design-workspace
+  // engine runs ~150s (enable modules + build fields/wires + auto-repair), so
+  // /build returns immediately with a "building" draft and we hand the draft
+  // id back to the client to POLL (GET .../drafts/:id). Blocking here would
+  // bust the chat request's own proxy timeout. The widget shows the preview +
+  // a confirm once the draft finishes.
+  if (move.type === "build") {
+    if (!move.intent || !move.intent.trim()) {
+      return { type: "reply", text: "Tell me what you'd like your workspace to do and I'll set it up." };
+    }
+    const br = await callApi(c, "POST", "/modules/core-authoring/build", {
+      intent: move.intent.trim(),
+      task: "design-workspace",
+    });
+    if (br.status === 409) {
+      return { type: "reply", text: "Setting up a whole workspace needs AI enabled here: it isn't yet." };
+    }
+    const b = br.body as { draft_id?: string };
+    if (!b.draft_id) {
+      return { type: "reply", text: "I couldn't start the build just now. Give it another try in a moment." };
+    }
+    // building: true → the widget polls the draft, then renders preview + confirm.
+    return {
+      type: "build-proposal",
+      building: true,
+      draft_id: b.draft_id,
+      summary: move.summary ?? "Designing your workspace…",
+    };
+  }
+
+  // action — resolve the entity by name via search before proposing.
+  if (move.type === "action") {
+    if (!move.action_id || !move.entity_kind || !move.entity_query) {
+      return { type: "reply", text: "I need a bit more to do that, which record exactly?" };
+    }
+    const sr = await callApi(
+      c,
+      "GET",
+      `/modules/core-search/search?q=${encodeURIComponent(move.entity_query)}&kinds=${encodeURIComponent(move.entity_kind)}`,
+    );
+    const hits = ((sr.body.items as Array<{ id: string; kind?: string; title?: string }> | undefined) ?? []).filter(
+      (h) => !h.kind || h.kind === move.entity_kind,
+    );
+    if (hits.length === 0) {
+      return { type: "reply", text: `I couldn't find a ${move.entity_kind} matching "${move.entity_query}".` };
+    }
+    if (hits.length > 1) {
+      const names = hits.slice(0, 6).map((h) => `“${h.title ?? h.id}”`).join(", ");
+      return { type: "reply", text: `I found a few matching "${move.entity_query}": ${names}. Which one?` };
+    }
+    const hit = hits[0]!;
+    return {
+      type: "proposal",
+      summary: move.summary ?? `Run ${move.action_id} on “${hit.title ?? hit.id}”`,
+      proposal: {
+        kind: "action",
+        action_id: move.action_id,
+        entity_kind: move.entity_kind,
+        entity_id: hit.id,
+        entity_label: hit.title ?? hit.id,
+      },
+    };
+  }
+
+  return { type: "reply", text };
+}
+
+// AI-REACH: this module IS the assistant; its own configuration is not a thing it should reach into
 chatRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -394,237 +637,170 @@ chatRouter.post(
     // Situational awareness: what screen is the user on right now?
     system += pageContextLine(parsed.data.context);
 
-    // The agent loop: read tools auto-run (through THIS caller's permissions,
-    // via chatWorkspaceApi); write tool calls stop the loop and become the
-    // proposals below. Tool-less providers never emit tool_calls, so the loop
-    // degrades to exactly one model call → the legacy JSON-move parse.
-    const wsApi = chatWorkspaceApi(c);
-    // The user's tool consent gates everything downstream: which tool defs the
-    // model sees, and (below) whether legacy JSON-move writes may propose.
-    const prefs = await chatPrefsOf(req);
-    const toolDefs = toolDefsFor(prefs);
-    if (!prefs.read_tools || prefs.write_mode === "off") {
-      system += `\n\nCONSENT: the user has turned OFF ${
-        !prefs.read_tools && prefs.write_mode === "off"
-          ? "workspace reading AND change proposals"
-          : !prefs.read_tools
-            ? "workspace reading (do not claim to know their data)"
-            : "change proposals (answer + explain, but do not propose creates/updates/actions)"
-      } for this chat. Respect that; if they ask for something it blocks, tell them about the toggles at the top of the chat.`;
+    // ── The turn ─────────────────────────────────────────────────────────
+    // `?mode=turn` (the widget from now on): create a persisted turn, run the
+    // loop DETACHED, and return the id at once. The widget subscribes to
+    // /turns/:id/events and gets progress as it happens; a refresh or a second
+    // tab subscribes to the same id. Anything else (older clients, tests, the
+    // MCP server) gets the blocking response it always did.
+    const asTurn = req.query.mode === "turn";
+    if (!asTurn) {
+      try {
+        res.json(await runTurn(req, parsed, system, c, orgId));
+      } catch (err) {
+        const status = err instanceof TurnError ? err.status : 502;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (status === 502) console.error(`[core-ai] chat failed: ${msg}`);
+        res.status(status).json({ type: "error", error: { code: "no_ai", message: msg } });
+      }
+      return;
     }
-    if (prefs.write_mode === "auto") {
-      system += `\n\nAUTO MODE: your record creates/updates/deletes apply IMMEDIATELY (every change is tracked and the user can undo it) — report what you did plainly. Actions still require the user's confirm.`;
-    }
-    // AUTO mode: record CRUD applies immediately through the ledger (undoable);
-    // actions return null → still proposed. Hard cap per turn.
-    const AUTO_WRITE_CAP = 10;
-    let autoWrites = 0;
+
     const userId = sessionUserId(req) ?? "";
-    const ldb = tenantDb(req);
-    // Escorts the loop's take_user_to calls produced this turn — the widget
-    // navigates to each (and pages read the prefill params). Inert server-side.
-    const escorts: Array<{ path: string; label: string }> = [];
-    let outcome: AgentLoopOutcome;
-    try {
-      outcome = await runAgentLoop(parsed.data.messages as ChatTurn[], {
-        callModel: async (turns) => {
-          const r = await platform().ai.invoke({
-            orgId,
-            capability: "chat",
-            // system rides as a first-class field (Anthropic drops a
-            // "system"-role message); tools are the neutral defs every adapter
-            // translates to its native dialect (tool-wire.ts).
-            input: { system, messages: turns, ...(toolDefs.length ? { tools: toolDefs } : {}) },
-            source: { kind: "core-ai:chat", id: orgId },
-            userId: sessionUserId(req),
-          });
-          const result = r.result as
-            | { content?: string; text?: string; tool_calls?: ToolCall[] }
-            | string;
-          if (typeof result === "string") return { content: result };
-          return { content: result?.content ?? result?.text ?? "", tool_calls: result?.tool_calls };
-        },
-        executeRead: async (name, args) => {
-          const tool = getTool(name);
-          if (!tool || tool.mode !== "read") return { ok: false, error: `no such read tool: ${name}` };
-          const result = await tool.execute(wsApi, args);
-          // The escort tool (tier 1.5) rides the read rail — it mutates nothing
-          // — but its OUTPUT is for the widget, not only the model: collect the
-          // destinations so the response can move the user's screen there.
-          if (name === "take_user_to" && result.ok) {
-            const esc = (result.data as { escort?: { path: string; label: string } } | null)?.escort;
-            if (esc) escorts.push(esc);
-          }
-          return result;
-        },
-        isWrite: (name) => WRITE_NAMES.has(name),
-        ...(prefs.write_mode === "auto"
-          ? {
-              executeWrite: async (call: ToolCall) => {
-                const w = writeRequestOf(call);
-                // Actions keep the confirm gate (irreversible); over-cap too.
-                if (!w || w.tool === "action" || autoWrites >= AUTO_WRITE_CAP) return null;
-                autoWrites++;
-                return performWrite(wsApi, ldb, userId, w, { auto: true });
-              },
-            }
-          : {}),
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      res.status(/no provider|not entitled|not available/i.test(msg) ? 409 : 502).json({
-        type: "error",
-        error: { code: "no_ai", message: msg },
-      });
-      return;
-    }
+    const tdb = tenantDb(req);
+    const lastUser = [...parsed.data.messages].reverse().find((m) => m.role === "user");
+    const turnId = await createTurn(tdb, userId, String(lastUser?.content ?? ""));
+    res.status(202).json({ type: "turn", turn_id: turnId });
+    // Opportunistic sweep, roughly one turn in fifty. Finished turns are kept a
+    // day, and anything stranded "running" for an hour (a process died mid-turn)
+    // is marked failed so a tab does not sit on it forever. A per-tenant timer
+    // would need a pool per tenant held open; this needs nothing.
+    if (Math.random() < 0.02) void sweepTurns(tdb).catch(() => {});
 
-    const done = appliedSummaries(outcome.applied);
-
-    // Write tool calls → user-confirmed proposals (one per call; the widget
-    // renders each with its own Confirm). Invalid calls turn into an honest
-    // reply instead of a proposal that would fail on confirm. Anything ALREADY
-    // auto-applied this turn rides along as `applied` (done-cards with Undo).
-    if (outcome.kind === "writes" && prefs.write_mode === "off") {
-      // Belt-and-braces: the model shouldn't have write tools when consent is
-      // off, but a hallucinated call must still never become a proposal.
-      res.json({ type: "reply", text: "Change proposals are turned off for this chat (see the toggles at the top). Flip “Propose changes” back on and ask again." });
-      return;
-    }
-    if (outcome.kind === "writes") {
-      const items: Array<{ summary: string; proposal: Record<string, unknown> }> = [];
-      const problems: string[] = [];
-      const kinds = await fetchKinds(wsApi).catch(() => [] as KindRec[]);
-      for (const call of outcome.calls) {
-        const built = await proposalOf(wsApi, kinds, call);
-        if ("error" in built) problems.push(built.error);
-        else items.push(built);
-      }
-      if (items.length === 0) {
-        res.json({
-          type: "reply",
-          text: problems.join(" ") || outcome.text || "I couldn't line that up — can you rephrase?",
-          ...(done.length ? { applied: done } : {}),
-          ...(escorts.length ? { escorts } : {}),
+    // Detached. The request is answered; this continues on its own. Every
+    // outcome - success, a refused provider, a thrown error - lands in the
+    // turn row and its event log, so nothing about it depends on a socket.
+    void (async () => {
+      try {
+        const result = await runTurn(req, parsed, system, c, orgId, async (ev) => {
+          await emitTurnEvent(tdb, turnId, ev.kind, ev as unknown as Record<string, unknown>);
         });
-        return;
+        await finishTurn(tdb, turnId, { ok: true, result });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!(err instanceof TurnError) || err.status === 502) console.error(`[core-ai] chat failed: ${msg}`);
+        await finishTurn(tdb, turnId, { ok: false, error: msg }).catch(() => {});
       }
-      if (items.length === 1) {
-        res.json({
-          type: "proposal",
-          text: outcome.text || undefined,
-          summary: items[0]!.summary,
-          proposal: items[0]!.proposal,
-          ...(done.length ? { applied: done } : {}),
-          ...(escorts.length ? { escorts } : {}),
-        });
-        return;
-      }
-      res.json({ type: "proposals", text: outcome.text || undefined, items, ...(done.length ? { applied: done } : {}), ...(escorts.length ? { escorts } : {}) });
+    })();
+  }),
+);
+
+// ── Turns: the persisted-turn read side ─────────────────────────────────────
+//
+// GET /chat/turns/open          → the user's running turn, if any. What a tab
+//                                 asks on open: "is something already going?"
+// GET /chat/turns/:id           → the turn row (status, prompt, result).
+// GET /chat/turns/:id/events    → SSE. Replays every event after ?after=N,
+//                                 then follows live until done/error. A
+//                                 reconnect passes the last seq it saw and
+//                                 misses nothing. Falls back to plain JSON
+//                                 (the same events array) if the client
+//                                 sends Accept: application/json, so a
+//                                 poller works where SSE cannot.
+//
+// A turn is private to the person who started it; every read checks the
+// row's user_id against the session.
+
+chatRouter.get(
+  "/turns/open",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const me = sessionUserId(req) ?? "";
+    const turn = await openTurnFor(tenantDb(req), me);
+    res.json({ turn: turn ?? null });
+  }),
+);
+
+chatRouter.get(
+  "/turns/:id",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const me = sessionUserId(req) ?? "";
+    const turn = await readTurn(tenantDb(req), req.params.id!);
+    if (!turn || turn.user_id !== me) {
+      res.status(404).json({ error: { code: "not_found", message: "no such turn" } });
+      return;
+    }
+    res.json({ turn });
+  }),
+);
+
+chatRouter.get(
+  "/turns/:id/events",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const me = sessionUserId(req) ?? "";
+    const db = tenantDb(req);
+    const turnId = req.params.id!;
+    const turn = await readTurn(db, turnId);
+    if (!turn || turn.user_id !== me) {
+      res.status(404).json({ error: { code: "not_found", message: "no such turn" } });
+      return;
+    }
+    const after = Math.max(0, parseInt(String(req.query.after ?? "0"), 10) || 0);
+    const wantsJson = String(req.headers.accept ?? "").includes("application/json");
+
+    if (wantsJson) {
+      const events = await eventsAfter(db, turnId, after);
+      res.json({ status: turn.status, events });
       return;
     }
 
-    const text = outcome.text;
+    res.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      "x-accel-buffering": "no",
+    });
+    res.write(": connected\n\n");
+    let last = after;
+    const send = (ev: { seq: number; kind: string; payload: unknown }) => {
+      if (ev.seq <= last) return; // replay + live can overlap by one; dedupe
+      last = ev.seq;
+      res.write(`id: ${ev.seq}\nevent: ${ev.kind}\ndata: ${JSON.stringify(ev.payload)}\n\n`);
+    };
 
-    const move = parseMove(text);
-    if (!move || move.type === "reply") {
-      res.json({ type: "reply", text: move?.text ?? text, ...(done.length ? { applied: done } : {}), ...(escorts.length ? { escorts } : {}) });
-      return;
+    // Subscribe FIRST, then replay: an event that lands between the two is
+    // delivered by the subscription and deduped by seq, so nothing is lost.
+    let closed = false;
+    const unsub = subscribe(turnId, (ev) => {
+      if (closed) return;
+      send(ev);
+      if (ev.kind === "done" || ev.kind === "error") end();
+    });
+    const hb = setInterval(() => !closed && res.write(": ping\n\n"), 25000);
+    // The listener map is per-process; if the loop runs elsewhere (a second
+    // api replica) the live push never arrives, so also poll the log. Cheap,
+    // and it is what makes this correct rather than merely fast.
+    const poll = setInterval(async () => {
+      if (closed) return;
+      try {
+        for (const ev of await eventsAfter(db, turnId, last)) {
+          send(ev);
+          if (ev.kind === "done" || ev.kind === "error") end();
+        }
+      } catch {
+        /* next tick */
+      }
+    }, 1500);
+    function end() {
+      if (closed) return;
+      closed = true;
+      clearInterval(hb);
+      clearInterval(poll);
+      unsub();
+      res.end();
     }
+    req.on("close", end);
 
-    // Consent gate for the LEGACY JSON-move protocol too (a tool-less provider
-    // never saw the filtered tool list, so it can still emit write moves).
-    if (prefs.write_mode === "off") {
-      res.json({ type: "reply", text: "Change proposals are turned off for this chat (see the toggles at the top). Flip “Propose changes” back on and ask again." });
-      return;
+    for (const ev of await eventsAfter(db, turnId, after)) {
+      send(ev);
+      if (ev.kind === "done" || ev.kind === "error") {
+        end();
+        return;
+      }
     }
-
-    if (move.type === "create") {
-      if (!move.entity_kind || !(await createPathFor(c, move.entity_kind))) {
-        res.json({ type: "reply", text: `I can't create "${move.entity_kind ?? "that"}" from chat yet.` });
-        return;
-      }
-      res.json({
-        type: "proposal",
-        summary: move.summary ?? `Create a ${move.entity_kind}`,
-        proposal: { kind: "create", entity_kind: move.entity_kind, fields: move.fields ?? {} },
-      });
-      return;
-    }
-
-    // build — design a whole workspace. The core-authoring design-workspace
-    // engine runs ~150s (enable modules + build fields/wires + auto-repair), so
-    // /build returns immediately with a "building" draft and we hand the draft
-    // id back to the client to POLL (GET .../drafts/:id). Blocking here would
-    // bust the chat request's own proxy timeout. The widget shows the preview +
-    // a confirm once the draft finishes.
-    if (move.type === "build") {
-      if (!move.intent || !move.intent.trim()) {
-        res.json({ type: "reply", text: "Tell me what you'd like your workspace to do and I'll set it up." });
-        return;
-      }
-      const br = await callApi(c, "POST", "/modules/core-authoring/build", {
-        intent: move.intent.trim(),
-        task: "design-workspace",
-      });
-      if (br.status === 409) {
-        res.json({ type: "reply", text: "Setting up a whole workspace needs AI enabled here: it isn't yet." });
-        return;
-      }
-      const b = br.body as { draft_id?: string };
-      if (!b.draft_id) {
-        res.json({ type: "reply", text: "I couldn't start the build just now. Give it another try in a moment." });
-        return;
-      }
-      // building: true → the widget polls the draft, then renders preview + confirm.
-      res.json({
-        type: "build-proposal",
-        building: true,
-        draft_id: b.draft_id,
-        summary: move.summary ?? "Designing your workspace…",
-      });
-      return;
-    }
-
-    // action — resolve the entity by name via search before proposing.
-    if (move.type === "action") {
-      if (!move.action_id || !move.entity_kind || !move.entity_query) {
-        res.json({ type: "reply", text: "I need a bit more to do that, which record exactly?" });
-        return;
-      }
-      const sr = await callApi(
-        c,
-        "GET",
-        `/modules/core-search/search?q=${encodeURIComponent(move.entity_query)}&kinds=${encodeURIComponent(move.entity_kind)}`,
-      );
-      const hits = ((sr.body.items as Array<{ id: string; kind?: string; title?: string }> | undefined) ?? []).filter(
-        (h) => !h.kind || h.kind === move.entity_kind,
-      );
-      if (hits.length === 0) {
-        res.json({ type: "reply", text: `I couldn't find a ${move.entity_kind} matching "${move.entity_query}".` });
-        return;
-      }
-      if (hits.length > 1) {
-        const names = hits.slice(0, 6).map((h) => `“${h.title ?? h.id}”`).join(", ");
-        res.json({ type: "reply", text: `I found a few matching "${move.entity_query}": ${names}. Which one?` });
-        return;
-      }
-      const hit = hits[0]!;
-      res.json({
-        type: "proposal",
-        summary: move.summary ?? `Run ${move.action_id} on “${hit.title ?? hit.id}”`,
-        proposal: {
-          kind: "action",
-          action_id: move.action_id,
-          entity_kind: move.entity_kind,
-          entity_id: hit.id,
-          entity_label: hit.title ?? hit.id,
-        },
-      });
-      return;
-    }
-
-    res.json({ type: "reply", text });
+    if (turn.status === "done" || turn.status === "failed") end();
   }),
 );
 
@@ -645,6 +821,7 @@ const PrefsBody = z.object({
   write_tools: z.boolean().optional(),
 });
 
+// AI-REACH: this module IS the assistant; its own configuration is not a thing it should reach into
 chatRouter.put(
   "/prefs",
   asyncHandler(async (req, res) => {
@@ -705,6 +882,7 @@ chatRouter.get(
   }),
 );
 
+// AI-REACH: this module IS the assistant; its own configuration is not a thing it should reach into
 chatRouter.post(
   "/writes/:id/undo",
   asyncHandler(async (req, res) => {
@@ -742,6 +920,7 @@ const ExecBody = z.object({
   ]),
 });
 
+// AI-REACH: this module IS the assistant; its own configuration is not a thing it should reach into
 chatRouter.post(
   "/execute",
   asyncHandler(async (req, res) => {

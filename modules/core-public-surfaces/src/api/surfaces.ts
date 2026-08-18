@@ -54,6 +54,7 @@ function metaDb(): MetaDbLike {
   return platform().db.meta as MetaDbLike;
 }
 
+// AI-REACH: authoring of a user-built surface; a whole-workspace build goes through the design flow, and records inside an app are reachable as records
 surfacesRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -220,6 +221,7 @@ const SurfaceUpdate = z.object({
 // Edit a live surface in place — rename, pause/resume, change the
 // expiry, or tweak config — without delete-and-recreate (which would
 // mint a new token and break any printed/shared URL).
+// AI-REACH: authoring of a user-built surface; a whole-workspace build goes through the design flow, and records inside an app are reachable as records
 surfacesRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -284,6 +286,7 @@ surfacesRouter.patch(
   }),
 );
 
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 surfacesRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {

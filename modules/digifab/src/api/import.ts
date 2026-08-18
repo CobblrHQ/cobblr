@@ -40,6 +40,7 @@ const Body = z
   })
   .refine((b) => b.connection_id || b.base_url, { message: "connection_id or base_url required" });
 
+// AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
 importRouter.post(
   "/fdm-monster",
   asyncHandler(async (req, res) => {

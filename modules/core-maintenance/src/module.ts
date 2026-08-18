@@ -62,7 +62,43 @@ export default defineModule({
       //  the sweeper only emits due-soon. Audit 2026-06-26 follow-up.)
     ],
     api: ["sweep"],
-    actions: [],
+    actions: [
+      {
+        id: "core-maintenance:log",
+        label: "Log service",
+        description:
+          "Record maintenance on this record: what was done and when, or schedule the next one. Pass `name` (what was done, e.g. \"oil change\"), and optionally `performed_at`, `scheduled_at`, `notes`, `cost_cents`, `recurrence_rule`. With neither date it logs as done now. Reading the history is list_maintenance.",
+        icon: "wrench",
+        // DELIBERATELY universal: anything a workspace owns can need
+        // servicing. A mower, a printer, a vehicle, a water filter, a lease.
+        // Scoping this to kinds would mean core-maintenance deciding which of
+        // a user's things are allowed to have a service history, which is
+        // exactly the judgement this module refuses to make (it declares no
+        // entity kind for the same reason).
+        appliesTo: { any: true },
+        invokeHandler: "core-maintenance.log",
+        argsSchema: {
+          name: { label: "What was done", type: "text" },
+          performed_at: { label: "When it was done (ISO date)", type: "text" },
+          scheduled_at: { label: "When it is next due (ISO date)", type: "text" },
+          notes: { label: "Notes", type: "text" },
+          cost_cents: { label: "Cost in cents", type: "number" },
+        },
+      },
+      {
+        id: "core-maintenance:complete",
+        label: "Mark service done",
+        description:
+          "Mark a SCHEDULED maintenance entry as done. Pass `entry_id` (list_maintenance returns ids) and optionally `performed_at`; it defaults to now.",
+        icon: "check",
+        scope: "workspace" as const,
+        invokeHandler: "core-maintenance.complete",
+        argsSchema: {
+          entry_id: { label: "The scheduled entry's id", type: "text" },
+          performed_at: { label: "When it was done (ISO date)", type: "text" },
+        },
+      },
+    ],
   },
 
   subscribes: [],

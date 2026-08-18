@@ -33,7 +33,8 @@ import {
 } from "@cobblr/platform-web";
 import { api, type Location } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { QuickCreateLocation } from "./LocationPicker";
+import { QuickCreateLocation } from "./QuickCreateLocation";
+import { LocationTreePicker } from "./LocationTreePicker";
 
 interface Props {
   value: string | null;
@@ -263,6 +264,12 @@ export function LocationChipPicker({ value, onChange, kind, excludeId, className
             onChange(loc.id);
             setCreateOpen(false);
           }}
+          // A drill-down, not a second chip grid: the chips are the outer
+          // picker's whole surface, and repeating them inside the create form
+          // reads as two pickers fighting over one answer.
+          parentField={(v, set) => (
+            <LocationTreePicker label="Parent" value={v} onChange={set} placeholder="(top-level)" size="sm" />
+          )}
         />
       )}
     </>

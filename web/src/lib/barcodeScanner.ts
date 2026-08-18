@@ -432,6 +432,14 @@ export async function setTorch(
   on: boolean,
 ): Promise<boolean> {
   if (!track) return false;
+  // Never LIGHT the torch on a backgrounded page. A hidden document still owns
+  // the camera, and lighting the lamp on a phone the user just locked and put
+  // in a pocket is the one torch action that can never be wanted. Off is always
+  // allowed - extinguishing must work from anywhere, including a teardown that
+  // runs after the page is already hidden.
+  if (on && typeof document !== "undefined" && document.visibilityState !== "visible") {
+    return false;
+  }
   try {
     await track.applyConstraints({
       advanced: [{ torch: on }],

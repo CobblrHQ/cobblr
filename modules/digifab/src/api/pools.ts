@@ -37,6 +37,7 @@ poolsRouter.get(
 
 const PoolCreate = z.object({ name: z.string().min(1).max(120) });
 
+// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 poolsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -53,6 +54,7 @@ poolsRouter.post(
   }),
 );
 
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 poolsRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -68,6 +70,7 @@ const MemberAdd = z.object({
   remote_device_id: z.string().min(1).max(200),
 });
 
+// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 poolsRouter.post(
   "/:id/members",
   asyncHandler(async (req, res) => {
@@ -84,6 +87,7 @@ poolsRouter.post(
   }),
 );
 
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 poolsRouter.delete(
   "/:id/members/:connectionId/:deviceId",
   asyncHandler(async (req, res) => {

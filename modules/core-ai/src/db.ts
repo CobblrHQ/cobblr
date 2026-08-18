@@ -66,6 +66,30 @@ export interface CoreAiDB {
   core_ai_basics: CoreAiBasicsTable;
   core_ai_chat_prefs: CoreAiChatPrefsTable;
   core_ai_chat_writes: CoreAiChatWritesTable;
+  core_ai_chat_turns: CoreAiChatTurnsTable;
+  core_ai_chat_turn_events: CoreAiChatTurnEventsTable;
+}
+
+/** One chat turn: persisted so it survives the request that started it. */
+export interface CoreAiChatTurnsTable {
+  id: Generated<string>;
+  user_id: string;
+  prompt: string;
+  status: Generated<"queued" | "running" | "done" | "failed">;
+  result: unknown | null;
+  error: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+  finished_at: Date | null;
+}
+
+/** Progress events for a turn, dense seq so a reconnect can resume. */
+export interface CoreAiChatTurnEventsTable {
+  turn_id: string;
+  seq: number;
+  kind: string;
+  payload: unknown;
+  created_at: Generated<Date>;
 }
 
 // Ask Cobb per-user tool consent: may the chat READ this user's workspace data

@@ -71,6 +71,18 @@ export default defineModule({
     ],
     api: [],
     actions: [
+      {
+        id: "core-tags:merge",
+        label: "Merge into another tag",
+        description:
+          "Fold this tag into another one: everything carrying this tag ends up carrying the other, and this tag is deleted. Pass `into_tag_id`, the id of the tag to KEEP (list the tags first to get it). Irreversible, so it always confirms.",
+        icon: "merge",
+        appliesTo: { kinds: ["core-tags:tag"] },
+        invokeHandler: "core-tags.merge",
+        argsSchema: {
+          into_tag_id: { label: "Id of the tag to keep", type: "text" },
+        },
+      },
       // Wire/AI-invokable tagging — the same attach/detach the /attachments
       // routes do, reachable through the actions surface (Ask Cobb + MCP hit
       // these via invoke_action; wires can label records on events). NOT

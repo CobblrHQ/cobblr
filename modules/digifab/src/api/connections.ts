@@ -107,6 +107,7 @@ connectionsRouter.get(
   }),
 );
 
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 connectionsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -144,6 +145,7 @@ connectionsRouter.get(
   }),
 );
 
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 connectionsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -177,6 +179,7 @@ connectionsRouter.patch(
   }),
 );
 
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 connectionsRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -214,6 +217,7 @@ connectionsRouter.delete(
 
 // ── driver operations (still here — they build a fabrication driver) ─────────
 
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 connectionsRouter.post(
   "/:id/test",
   asyncHandler(async (req, res) => {

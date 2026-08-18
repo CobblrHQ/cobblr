@@ -91,6 +91,15 @@ export default defineModule({
     api: [],
     actions: [
       {
+        id: "lists:clear-done",
+        label: "Clear done items",
+        description:
+          "Remove every ticked-off item from this list, leaving the unticked ones. Nothing else on the list changes. Irreversible, so it always confirms.",
+        icon: "eraser",
+        appliesTo: { kinds: ["lists:list"] },
+        invokeHandler: "lists.clear-done",
+      },
+      {
         id: "lists:add-item",
         label: "Add to a list",
         description:

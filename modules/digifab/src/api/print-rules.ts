@@ -58,6 +58,7 @@ printRulesRouter.get(
   }),
 );
 
+// AI-REACH: configures a notification channel, which can hold a webhook secret; configuration stays a person's
 printRulesRouter.post(
   "/channels",
   asyncHandler(async (req, res) => {
@@ -75,6 +76,7 @@ printRulesRouter.post(
   }),
 );
 
+// AI-REACH: edits a notification channel's config (see POST)
 printRulesRouter.patch(
   "/channels/:id",
   asyncHandler(async (req, res) => {
@@ -97,6 +99,7 @@ printRulesRouter.patch(
   }),
 );
 
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 printRulesRouter.delete(
   "/channels/:id",
   asyncHandler(async (req, res) => {
@@ -107,6 +110,7 @@ printRulesRouter.delete(
 );
 
 // Send a test post to a channel — confirms the webhook works.
+// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
 printRulesRouter.post(
   "/channels/:id/test",
   asyncHandler(async (req, res) => {
@@ -169,6 +173,7 @@ printRulesRouter.get(
 // pump stringifies its `report` for the same reason.
 const jb = <T>(v: T): T => JSON.stringify(v) as unknown as T;
 
+// AI-REACH: authors an automation rule; a rule is a small program with side effects the user should read before enabling
 printRulesRouter.post(
   "/rules",
   asyncHandler(async (req, res) => {
@@ -189,6 +194,7 @@ printRulesRouter.post(
   }),
 );
 
+// AI-REACH: edits an automation rule (see POST)
 printRulesRouter.patch(
   "/rules/:id",
   asyncHandler(async (req, res) => {
@@ -206,6 +212,7 @@ printRulesRouter.patch(
   }),
 );
 
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 printRulesRouter.delete(
   "/rules/:id",
   asyncHandler(async (req, res) => {
@@ -221,6 +228,7 @@ const SAMPLE: PrintFacts = {
   printer: "Bambi", model: "Cherry Blossom Crossbody Bag", event: "progress",
   percent: 90, remaining_min: 13, elapsed_min: 117, layer: 184, total_layers: 205, nozzle: 220, bed: 65,
 };
+// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
 printRulesRouter.post(
   "/preview",
   asyncHandler(async (req, res) => {
@@ -242,6 +250,7 @@ const TestFire = z.object({
   pre_actions: z.array(Step).max(8).optional(),
   post_actions: z.array(Step).max(8).optional(),
 });
+// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
 printRulesRouter.post(
   "/test-fire",
   asyncHandler(async (req, res) => {

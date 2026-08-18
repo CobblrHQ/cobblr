@@ -42,6 +42,7 @@ const ConfigBody = z.object({
   backend: z.enum(["auto", "edge", "llm", "detector"]).optional(),
   detector_id: z.string().uuid().nullable().optional(),
 });
+// AI-REACH: workspace configuration; the assistant changes config only through a workspace-scoped action, so a route with no action stays a person's
 failureRouter.put(
   "/config",
   asyncHandler(async (req, res) => {
@@ -84,6 +85,7 @@ failureRouter.get(
 );
 
 // ── manual "check now" — one sample, no state change ─────────────────────────
+// AI-REACH: workspace configuration; the assistant changes config only through a workspace-scoped action, so a route with no action stays a person's
 failureRouter.post(
   "/:connectionId/:deviceId/check",
   asyncHandler(async (req, res) => {
@@ -156,6 +158,7 @@ async function safeBaseUrl(res: import("express").Response, url: string): Promis
 }
 
 /** Create a detector. `key` must be a known external detector package. */
+// AI-REACH: workspace configuration; the assistant changes config only through a workspace-scoped action, so a route with no action stays a person's
 failureRouter.post(
   "/detectors",
   asyncHandler(async (req, res) => {
@@ -193,6 +196,7 @@ const DetectorPatch = z.object({
   enabled: z.boolean().optional(),
 });
 
+// AI-REACH: workspace configuration; the assistant changes config only through a workspace-scoped action, so a route with no action stays a person's
 failureRouter.patch(
   "/detectors/:id",
   asyncHandler(async (req, res) => {
@@ -220,6 +224,7 @@ failureRouter.patch(
   }),
 );
 
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 failureRouter.delete(
   "/detectors/:id",
   asyncHandler(async (req, res) => {
@@ -349,6 +354,7 @@ const RegisterPrinterBody = z.object({
 
 /** Register a printer in the detector service (which auto-registers its webcam),
  *  then optionally bind a monitor so it watches — the "Add to PrintGuard" flow. */
+// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
 failureRouter.post(
   "/detectors/:id/printers",
   asyncHandler(async (req, res) => {
@@ -383,6 +389,7 @@ const MirrorBody = z.object({
  *  the detector using the manifest's connectionMappings — the credential stays
  *  server-side (never sent to the client). Generic: any connection type with a
  *  mapping works; perDevice types (Bambu) need a device_id. */
+// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
 failureRouter.post(
   "/detectors/:id/printers/from-connection",
   asyncHandler(async (req, res) => {
@@ -460,6 +467,7 @@ failureRouter.get(
 );
 
 /** Reachability check — hit the detector's health endpoint (or its base URL). */
+// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
 failureRouter.post(
   "/detectors/:id/test",
   asyncHandler(async (req, res) => {

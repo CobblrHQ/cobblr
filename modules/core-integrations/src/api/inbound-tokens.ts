@@ -23,6 +23,7 @@ function newSlug(): string {
   return randomBytes(24).toString("base64url");
 }
 
+// AI-REACH: mints an inbound webhook token; credentials
 inboundTokensRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -96,6 +97,7 @@ inboundTokensRouter.get(
   }),
 );
 
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 inboundTokensRouter.post(
   "/:id/revoke",
   asyncHandler(async (req, res) => {
@@ -137,6 +139,7 @@ inboundTokensRouter.post(
   }),
 );
 
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 inboundTokensRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {

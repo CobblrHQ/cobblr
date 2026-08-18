@@ -1,0 +1,7 @@
+{
+  "match": "create a location called",
+  "rounds": [
+    { "tool_calls": [{ "name": "create_record", "args": { "kind": "core-locations:location", "fields": { "name": "Replay Shelf", "kind": "container" } } }] },
+    { "content": "Done: I created Replay Shelf." }
+  ]
+}

@@ -198,6 +198,7 @@ appsRouter.get(
 // reads. Only if the caller can open the app. The token acts AS the
 // member, so it's bounded by their capabilities + field-read-scope; it
 // can never exceed them.
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 appsRouter.post(
   "/:slug/token",
   asyncHandler(async (req, res) => {
@@ -266,6 +267,7 @@ appsRouter.get(
   }),
 );
 
+// AI-REACH: authoring of a user-built surface; a whole-workspace build goes through the design flow, and records inside an app are reachable as records
 appsRouter.put(
   "/:slug/data/:key",
   asyncHandler(async (req, res) => {
@@ -344,6 +346,7 @@ async function appReferentialErrors(orgId: string, pages: z.infer<typeof Pages>)
   return errors;
 }
 
+// AI-REACH: authoring of a user-built surface; a whole-workspace build goes through the design flow, and records inside an app are reachable as records
 appsRouter.post(
   "/validate",
   asyncHandler(async (req, res) => {
@@ -364,6 +367,7 @@ appsRouter.post(
 );
 
 // POST /apps — author a new app (admin/owner only).
+// AI-REACH: authoring of a user-built surface; a whole-workspace build goes through the design flow, and records inside an app are reachable as records
 appsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -399,6 +403,7 @@ appsRouter.post(
 );
 
 // PATCH /apps/:slug — edit (admin/owner only).
+// AI-REACH: authoring of a user-built surface; a whole-workspace build goes through the design flow, and records inside an app are reachable as records
 appsRouter.patch(
   "/:slug",
   asyncHandler(async (req, res) => {
@@ -427,6 +432,7 @@ appsRouter.patch(
 );
 
 // DELETE /apps/:slug — remove (admin/owner only).
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 appsRouter.delete(
   "/:slug",
   asyncHandler(async (req, res) => {

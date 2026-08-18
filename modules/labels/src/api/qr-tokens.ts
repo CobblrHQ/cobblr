@@ -67,6 +67,7 @@ interface MetaQrToken {
   expires_at: Date | null;
 }
 
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 qrTokensRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -203,6 +204,7 @@ qrTokensRouter.get(
   }),
 );
 
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 qrTokensRouter.post(
   "/:id/revoke",
   asyncHandler(async (req, res) => {

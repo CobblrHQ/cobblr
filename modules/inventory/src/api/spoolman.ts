@@ -74,6 +74,7 @@ const ConnCreate = z.object({
   base_url: z.string().url().max(500),
   api_key: z.string().max(500).optional(),
 });
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 spoolmanRouter.post(
   "/connections",
   asyncHandler(async (req, res) => {
@@ -89,6 +90,7 @@ spoolmanRouter.post(
     res.status(201).json(row);
   }),
 );
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 spoolmanRouter.delete(
   "/connections/:id",
   asyncHandler(async (req, res) => {
@@ -100,6 +102,7 @@ spoolmanRouter.delete(
 
 // ── sync: pull Spoolman spools → upsert parts (qty = remaining) ──
 const SyncBody = z.object({ connection_id: z.string().uuid(), instance: z.string().max(120).optional() });
+// AI-REACH: drives an external connector with its own credentials and rate limits; a person owns that
 spoolmanRouter.post(
   "/sync",
   asyncHandler(async (req, res) => {

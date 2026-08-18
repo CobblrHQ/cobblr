@@ -130,11 +130,21 @@ export async function receiptTrackingTick(
             from core_scan_batches b
             join core_scan_inbox_items i on i.scan_batch_id = b.id
            group by b.id
-          having count(i.id) filter (where i.status in ('pending','enriching')) > 0
-             and (
-               nullif(btrim(coalesce(b.tracking_number, '')), '') is not null
-               or max(i.suggested_metadata->>'expected_arrival') <= ${today}
-             )
+          having (
+                   -- still being triaged, and either followable or simply due
+                   count(i.id) filter (where i.status in ('pending','enriching')) > 0
+                   and (
+                     nullif(btrim(coalesce(b.tracking_number, '')), '') is not null
+                     or max(i.suggested_metadata->>'expected_arrival') <= ${today}
+                   )
+                 )
+                 -- or its lines are filed but the parcel is still in the air.
+                 -- Confirming items one at a time used to end the watch early:
+                 -- the receipt left the inbox and took its tracking with it.
+                 or (
+                   nullif(btrim(coalesce(b.tracking_number, '')), '') is not null
+                   and coalesce(b.shipment_state, '') <> 'delivered'
+                 )
         `.compile(tdb);
 
         let rows: TrackedRow[];

@@ -183,6 +183,7 @@ ordersRouter.delete(
 );
 
 // ── line items ─────────────────────────────────────────────────────
+// AI-ACTION: sales:add-line
 ordersRouter.post(
   "/:id/items",
   asyncHandler(async (req, res) => {
@@ -199,6 +200,7 @@ ordersRouter.post(
   }),
 );
 
+// AI-REACH: edits a line on a financial record; add-line is the door, edits and removals stay a person's
 ordersRouter.patch(
   "/:id/items/:itemId",
   asyncHandler(async (req, res) => {
@@ -221,6 +223,7 @@ ordersRouter.patch(
   }),
 );
 
+// AI-REACH: removing a line from a financial record is something a person watches happen; adding has an action
 ordersRouter.delete(
   "/:id/items/:itemId",
   asyncHandler(async (req, res) => {
@@ -236,6 +239,7 @@ ordersRouter.delete(
 );
 
 // ── fulfil ─────────────────────────────────────────────────────────
+// AI-ACTION: sales:fulfill-order
 ordersRouter.post(
   "/:id/fulfill",
   asyncHandler(async (req, res) => {

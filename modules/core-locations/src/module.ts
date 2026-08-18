@@ -59,11 +59,11 @@ export default defineModule({
           { name: "short_name", type: "text", role: "subtitle" },
           { name: "kind", type: "text" },
           { name: "parent_id", type: "text" },
-          { name: "depth", type: "number" },
+          { name: "depth", type: "number", readOnly: true },
           // Manual sibling order set by drag (the `position` column). Declared
           // so it can be exposed (exposableFields must reference declared
           // fields) — the Labels browser reads it to match the page's order.
-          { name: "position", type: "number" },
+          { name: "position", type: "number", readOnly: true },
           { name: "description", type: "text", role: "summary" },
           { name: "notes", type: "text" },
           { name: "image_path", type: "image-path", role: "image" },
@@ -115,7 +115,22 @@ export default defineModule({
       "core-locations.location.deleted",
     ],
     api: [],
-    actions: [],
+    actions: [
+      {
+        // Workspace-scoped: it orders a SET of siblings, not one record, so
+        // there is no single entity for it to hang off.
+        id: "core-locations:reorder",
+        label: "Reorder locations",
+        description:
+          "Set the order sibling locations appear in under the same parent. Pass `ids`: the location ids of ONE parent's children, in the order you want them (use list_records on core-locations:location to read them). This is the only way the order changes: `position` is maintained here, and an update that sets it is refused. The tree lists shallowest first, then this order, then alphabetically.",
+        icon: "arrow-up-down",
+        scope: "workspace" as const,
+        invokeHandler: "core-locations.reorder",
+        argsSchema: {
+          ids: { label: "Location ids, in the order they should appear", type: "text" },
+        },
+      },
+    ],
   },
 
   subscribes: [],

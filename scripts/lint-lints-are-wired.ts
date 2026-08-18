@@ -15,14 +15,16 @@
 //
 //   1. run-lints.mjs's discovery covers every lint:* (minus its own MANUAL list),
 //   2. something actually invokes run-lints.mjs — ci.yml and the pre-push hook,
-//   3. MANUAL carries no entry for a lint that no longer exists.
+//   3. MANUAL carries no entry for a lint that no longer exists,
+//   4. every lint FILE is actually run by some lint:* (or says why not).
 //
-// A new lint is now wired by existing. There is nothing to paste and nothing to
-// forget, which is the property that stops the orphan class coming back.
+// A new lint is wired by REGISTERING it in package.json — rule 4 is what makes
+// "just write the file" fail loudly instead of silently doing nothing, which is
+// the property that stops the orphan class coming back.
 //
 //   npx tsx scripts/lint-lints-are-wired.ts   (npm run lint:lints-are-wired)
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { MANUAL, discoverLints } from "./run-lints.mjs";
@@ -67,6 +69,41 @@ if (stale.length) {
     `MANUAL lists ${stale.length} lint(s) that no longer exist:\n` +
       stale.map((s) => `    - ${s}`).join("\n") +
       "\n    Remove them from MANUAL in scripts/run-lints.mjs.",
+  );
+}
+
+// 4. A lint FILE that no `lint:*` script runs. Rules 1-3 all reason about
+//    package.json entries, so a script that exists on disk with no entry is
+//    invisible to every one of them — and to the runner, whose discovery reads
+//    package.json. The file then sits in scripts/ looking exactly like a
+//    guardrail while guarding nothing.
+//
+//    That is not hypothetical: lint-module-purity.ts sat unrun (found
+//    2026-08-17 while adding lint-hooks-served.ts, which had silently done the
+//    same thing — the suite count simply did not move). A lint nobody runs is
+//    worse than no lint, because the tree looks protected.
+//
+//    Opt out deliberately with a `LINT-NOT-IN-SUITE:` header comment naming the
+//    reason (a helper, or one that needs arguments) — same shape as AI-REACH.
+const OPT_OUT = "LINT-NOT-IN-SUITE:";
+const scriptsDir = join(ROOT, "scripts");
+const lintFiles = readdirSync(scriptsDir).filter(
+  (f) => f.startsWith("lint-") && f.endsWith(".ts") && !f.endsWith(".test.ts"),
+);
+const pkgJson = readFileSync(join(ROOT, "package.json"), "utf8");
+const referenced = new Set(
+  [...pkgJson.matchAll(/scripts\/(lint-[a-z0-9-]+\.ts)/g)].map((m) => m[1]!),
+);
+const unrun = lintFiles.filter(
+  (f) => !referenced.has(f) && !readFileSync(join(scriptsDir, f), "utf8").includes(OPT_OUT),
+);
+if (unrun.length) {
+  problems.push(
+    `${unrun.length} lint script(s) exist but NOTHING runs them:\n` +
+      unrun.map((f) => `    - scripts/${f}`).join("\n") +
+      `\n    Discovery is by package.json, so a file alone never runs. Add a` +
+      `\n    "lint:<name>": "tsx scripts/${unrun[0]}" entry — or, if it is` +
+      `\n    deliberately out of the suite, put a ${OPT_OUT} <reason> comment in it.`,
   );
 }
 

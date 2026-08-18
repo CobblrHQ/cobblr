@@ -69,6 +69,7 @@ router.get(
 const PlaceBody = z.object({ containee: Ref, container: Ref, slot: z.string().max(120).nullish() });
 
 // POST /place { containee, container, slot? } — put a thing inside a container.
+// AI-REACH: covered by core-placement:place and :remove actions on the placed record
 router.post(
   "/place",
   wrap(async (req, res) => {
@@ -92,6 +93,7 @@ router.post(
 const RemoveBody = z.object({ containee: Ref });
 
 // POST /remove { containee } — take a thing out of its container.
+// AI-REACH: covered by core-placement:place and :remove actions on the placed record
 router.post(
   "/remove",
   wrap(async (req, res) => {

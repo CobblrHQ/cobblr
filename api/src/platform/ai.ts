@@ -306,6 +306,35 @@ function truncate(s: string, n = 200): string {
   return s.length <= n ? s : s.slice(0, n - 1) + "…";
 }
 
+/** What a person would recognise this call by, for the activity log.
+ *
+ *  This used to be the first 200 characters of `JSON.stringify(input)`. For a
+ *  chat those 200 characters are the SYSTEM PROMPT — the longest, most
+ *  repetitive, least identifying part — while the user's actual message sits at
+ *  the END of the messages array and never appeared at all. `input_full` is
+ *  capped and truncates from the same end, so the question was unrecoverable
+ *  from either field: the log recorded which preamble was used, not what anyone
+ *  asked. Found while reviewing chat records to see which questions repeat, a
+ *  review the log could not answer about itself (2026-08-18).
+ *
+ *  Prefer the last user message; fall back to a named text field; only then to
+ *  the old behaviour, so non-chat capabilities are unaffected. */
+export function summariseInput(input: Record<string, unknown>): string {
+  const raw = (input as { messages?: unknown }).messages;
+  const msgs = Array.isArray(raw) ? (raw as Array<{ role?: unknown; content?: unknown }>) : [];
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (m && m.role === "user" && typeof m.content === "string" && m.content.trim()) {
+      return truncate(m.content.trim());
+    }
+  }
+  for (const k of ["prompt", "text", "question"]) {
+    const v = (input as Record<string, unknown>)[k];
+    if (typeof v === "string" && v.trim()) return truncate(v.trim());
+  }
+  return truncate(JSON.stringify(input));
+}
+
 /** Would an AI call work for this workspace/user right now? The cheap,
  *  read-only twin of invoke()'s gauntlet — kill-switch → personal
  *  connection → workspace/managed provider → entitlement guard — so the
@@ -553,7 +582,7 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
         cost_cents: 0,
         duration_ms: ms,
         user_id: req.userId ?? null,
-        input_summary: truncate(JSON.stringify(req.input)),
+        input_summary: summariseInput(req.input),
         output_summary: truncate(JSON.stringify(hit.result)),
         input_full: fullText(await thumbnailImages(req.input)),
         output_full: fullText(hit.result),
@@ -605,7 +634,7 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
           cost_cents: 0,
           duration_ms: 0,
           user_id: req.userId ?? null,
-          input_summary: truncate(JSON.stringify(req.input)),
+          input_summary: summariseInput(req.input),
           output_summary: truncate(JSON.stringify(shared.result)),
           input_full: fullText(await thumbnailImages(req.input)),
           output_full: fullText(shared.result),
@@ -664,7 +693,7 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
     cost_cents: payload.cost_cents ?? null,
     duration_ms,
     user_id: req.userId ?? null,
-    input_summary: truncate(JSON.stringify(req.input)),
+    input_summary: summariseInput(req.input),
     output_summary: ok ? truncate(JSON.stringify(payload.result)) : null,
     input_full: fullText(await thumbnailImages(req.input)),
     output_full: ok ? fullText(payload.result) : null,

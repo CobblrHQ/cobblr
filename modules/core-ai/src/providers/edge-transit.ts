@@ -88,7 +88,35 @@ export async function edgeFetch(
     });
   }
   const bodyText = typeof res.body === "string" ? res.body : JSON.stringify(res.body ?? null);
-  return new Response(bodyText, { status: res.status || 502, headers: { "content-type": "application/json" } });
+  const status = res.status || 502;
+  // The edge target's body rides through verbatim, and it is NOT always JSON —
+  // a gateway in front of it answers "Bad Gateway" in plain text, and a relay
+  // that gave up answers with a bare note. Declaring `application/json` over
+  // that makes every caller fail at JSON.parse and report the parse failure
+  // instead of the reason, which is how a relay timeout surfaced to a user as
+  // "Non-JSON response (502)" with the real message nowhere (2026-08-18).
+  // So: pass real JSON through untouched, and wrap anything else in an error
+  // envelope that says the same thing in a shape callers can actually read.
+  const payload = isJsonText(bodyText)
+    ? bodyText
+    : JSON.stringify({
+        error: {
+          code: "edge_relay",
+          message:
+            bodyText.trim().slice(0, 300) ||
+            `the edge relay returned ${status} with no body`,
+        },
+      });
+  return new Response(payload, { status, headers: { "content-type": "application/json" } });
+}
+
+function isJsonText(s: string): boolean {
+  try {
+    JSON.parse(s);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function safeParse(s: string): unknown {

@@ -71,6 +71,7 @@ sizesRouter.get(
   }),
 );
 
+// AI-REACH: workspace configuration; the assistant changes config only through a workspace-scoped action, so a route with no action stays a person's
 sizesRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -94,6 +95,7 @@ sizesRouter.post(
   }),
 );
 
+// AI-REACH: workspace configuration; the assistant changes config only through a workspace-scoped action, so a route with no action stays a person's
 sizesRouter.put(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -120,6 +122,7 @@ sizesRouter.put(
   }),
 );
 
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 sizesRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {

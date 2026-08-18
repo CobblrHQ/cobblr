@@ -49,7 +49,10 @@ export default defineModule({
           { name: "description", type: "text", role: "summary" },
           { name: "source_url", type: "url" },
           { name: "puller_id", type: "text" },
-          { name: "entry_count", type: "number", role: "quantity" },
+          // Recomputed from COUNT(*) of the catalog's entries on every sync, so a
+          // caller setting it is overwritten without being told. Found by the
+          // no-silent-field-drop probe.
+          { name: "entry_count", type: "number", role: "quantity", readOnly: true },
         ],
         getEndpoint: "/catalogs/{id}",
         detailRoute: "/configuration/catalogs/{id}",
@@ -108,6 +111,15 @@ export default defineModule({
     ],
     api: [],
     actions: [
+      {
+        id: "core-catalogs:refresh",
+        label: "Refresh from source",
+        description:
+          "Re-fetch this catalog from its source URL and import what comes back, replacing the entries. Only works for a catalog that HAS a source URL: one built by importing a CSV has nothing to refresh from, and says so.",
+        icon: "refresh-cw",
+        appliesTo: { kinds: ["core-catalogs:catalog"] },
+        invokeHandler: "core-catalogs.refresh",
+      },
       {
         id: "core-catalogs:match-to-catalog",
         label: "Match to catalog",

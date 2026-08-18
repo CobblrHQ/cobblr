@@ -107,6 +107,7 @@ async function existingByKey(db: ReturnType<typeof tenantDb>, matchOn: string) {
   return byKey;
 }
 
+// AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
 locationsImportRouter.post(
   "/import",
   asyncHandler(async (req, res) => {

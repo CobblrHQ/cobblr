@@ -166,6 +166,7 @@ const MeasurementCreate = z.object({
   note: z.string().max(2000).optional(),
 });
 
+// AI-ACTION: tracking:log-measurement
 metricsRouter.post(
   "/metrics/:id/measurements",
   asyncHandler(async (req, res) => {

@@ -39,6 +39,7 @@ linksRouter.get(
   }),
 );
 
+// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 linksRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -68,6 +69,7 @@ linksRouter.post(
   }),
 );
 
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 linksRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {

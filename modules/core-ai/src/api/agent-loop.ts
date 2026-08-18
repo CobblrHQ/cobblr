@@ -45,7 +45,18 @@ export interface AgentLoopDeps {
   maxRounds?: number;
   /** Per-result clamp, chars of JSON. */
   maxResultChars?: number;
+  /** Progress, as it happens. Optional so every existing caller and test is
+   *  unchanged; the chat route passes one to feed the persisted turn log, which
+   *  is what lets a widget show "reading your locations…" instead of nothing
+   *  for the whole turn. Never awaited on the hot path for the model. */
+  onEvent?(ev: AgentLoopEvent): void | Promise<void>;
 }
+
+export type AgentLoopEvent =
+  | { kind: "thinking"; round: number }
+  | { kind: "tool"; name: string; args: Record<string, unknown>; write: boolean }
+  | { kind: "tool-result"; name: string; ok: boolean; summary: string }
+  | { kind: "applied"; name: string; summary: string };
 
 export type AgentLoopOutcome =
   | { kind: "reply"; text: string; applied: AppliedWrite[] }
@@ -70,7 +81,21 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
   const transcript: ChatTurn[] = [...turns];
   const applied: AppliedWrite[] = [];
 
+  const emit = (ev: AgentLoopEvent): void => {
+    if (!deps.onEvent) return;
+    // Fire-and-forget: a slow event sink must never slow the turn, and a
+    // failing one must never fail it. Both a synchronous throw and a rejected
+    // promise are swallowed - `Promise.resolve(fn())` alone lets a sync throw
+    // escape, because it happens before there is a promise to catch it on.
+    try {
+      void Promise.resolve(deps.onEvent(ev)).catch(() => {});
+    } catch {
+      /* a broken sink is the sink's problem */
+    }
+  };
+
   for (let round = 0; round < maxRounds; round++) {
+    emit({ kind: "thinking", round });
     const r = await deps.callModel(transcript);
     const calls = r.tool_calls ?? [];
 
@@ -82,17 +107,22 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
     for (const call of calls) {
       if (!deps.isWrite(call.name)) {
         // Read — always executes.
+        emit({ kind: "tool", name: call.name, args: call.args, write: false });
         let resultText: string;
+        let ok = true;
         try {
           resultText = clampJson(await deps.executeRead(call.name, call.args), maxChars);
         } catch (err) {
+          ok = false;
           resultText = clampJson({ ok: false, error: (err as Error)?.message ?? "tool failed" }, maxChars);
         }
+        emit({ kind: "tool-result", name: call.name, ok, summary: resultText.slice(0, 160) });
         turnResults.push({ call, text: resultText });
         continue;
       }
       // Write — auto-apply when allowed, else queue as a proposal.
       if (deps.executeWrite) {
+        emit({ kind: "tool", name: call.name, args: call.args, write: true });
         let result: unknown | null = null;
         try {
           result = await deps.executeWrite(call);
@@ -108,6 +138,7 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
         }
         if (result !== null) {
           applied.push({ call, result });
+          emit({ kind: "applied", name: call.name, summary: clampJson(result, 160) });
           turnResults.push({ call, text: clampJson(result, maxChars) });
           continue;
         }

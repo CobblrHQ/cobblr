@@ -46,6 +46,7 @@ driversRouter.get(
 
 // Install a declarative-HTTP driver (a manifest). Upserts on the key so
 // re-installing updates it. (Edge-adapter / sandboxed forms land later.)
+// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 driversRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -70,6 +71,7 @@ driversRouter.post(
   }),
 );
 
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 driversRouter.delete(
   "/:key",
   asyncHandler(async (req, res) => {

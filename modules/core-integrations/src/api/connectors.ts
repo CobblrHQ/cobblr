@@ -85,6 +85,7 @@ connectorsRouter.get(
   }),
 );
 
+// AI-REACH: creates a connector, which holds credentials; the assistant must never handle these
 connectorsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -134,6 +135,7 @@ connectorsRouter.post(
   }),
 );
 
+// AI-REACH: edits a connector's stored config, which can carry credentials
 connectorsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -186,6 +188,7 @@ connectorsRouter.patch(
   }),
 );
 
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 connectorsRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -217,6 +220,7 @@ connectorsRouter.delete(
 
 // ────────────────────────── test-connection ────────────────────────
 
+// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
 connectorsRouter.post(
   "/:id/test",
   asyncHandler(async (req, res) => {
@@ -262,6 +266,7 @@ connectorsRouter.post(
 
 // ─────────────────────────────── invoke ────────────────────────────
 
+// AI-REACH: invokes an external connector with the workspace's credentials; a person owns that call
 connectorsRouter.post(
   "/:id/invoke",
   asyncHandler(async (req, res) => {

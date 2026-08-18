@@ -61,6 +61,7 @@ unitsRouter.get(
   }),
 );
 
+// AI-ACTION: core-units:add-unit
 unitsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -98,6 +99,7 @@ unitsRouter.post(
   }),
 );
 
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 unitsRouter.delete(
   "/:code",
   asyncHandler(async (req, res) => {
@@ -120,6 +122,7 @@ unitsRouter.get(
   }),
 );
 
+// AI-REACH: workspace configuration; the assistant changes config only through a workspace-scoped action, so a route with no action stays a person's
 unitsRouter.put(
   "/settings",
   asyncHandler(async (req, res) => {

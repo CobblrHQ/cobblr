@@ -153,6 +153,45 @@ export const CAPABILITIES: Capability[] = [
     scope: ["web/src/pages/ScanPage.tsx"],
   },
   {
+    kind: "owns",
+    id: "location:one-picker",
+    what: "choosing a location, including choosing a PARENT for one",
+    why: "three pickers accumulated because each replacement was written as a drop-in and then applied only to the surface that prompted it. LocationPicker was superseded in 2026-08 and still rendered a native <select> on six call sites in Records/Assets/Machines, and two separate forms hand-rolled their own parent dropdown, one of them re-implementing the no-cycles closure beside it (2026-08-17)",
+    owner: "web/src/components/LocationTreePicker.tsx",
+    // The surfaces that PICK one. The chip picker is a peer implementation for
+    // the scan flow's density (documented in the 2026-08-07 audit, H7) and is
+    // deliberately out of scope rather than in breach.
+    scope: [
+      "web/src/pages/LocationsPage.tsx",
+      "web/src/pages/RecordsPage.tsx",
+      "web/src/pages/AssetsPage.tsx",
+      "web/src/pages/MachinesPage.tsx",
+      "web/src/components/FloorPlan.tsx",
+    ],
+    // Rendering a hierarchy's depth as indentation is the tell that someone is
+    // drawing a location tree into an <option> list by hand.
+    detect: /\.repeat\([^)]*\bdepth\b/,
+    use: "<LocationTreePicker> (drill-down; pass excludeSubtreeOf when choosing a parent, it computes the no-cycles closure itself), or <LocationChipPicker> for the scan flow's chip density",
+  },
+  {
+    kind: "owns",
+    id: "deploy:live-surface-sha",
+    what: "reading which core commit a deployed surface (canary or prod) is actually running",
+    why: "five hand-rolled probes accumulated, each re-deriving how to pick the web container, and they disagreed. `grep public-web | head -1` matched the canary slot and reported a false green while cobblr.me was 34 commits behind, because canary tracks :latest and therefore always looks current. Then the reverse on 2026-08-17: a scan fix was merged, checked against staging and reported done, while canary still ran the older api. The reporter retested there, saw the original bug, and reported it a second time",
+    owner: "scripts/lib/shippable.sh",
+    // Only the two scripts that answer "is my commit live on a surface".
+    // release-drift.sh compares surfaces to each other and
+    // verify-cobblr-deploy.sh audits one specific rollout; both read labels for
+    // their own reasons and are deliberately out of scope, not in breach.
+    scope: ["scripts/deploy-gap.sh", "scripts/canary-wait.sh"],
+    // Selecting the web CONTAINER by name filter is the exact trap and the only
+    // shape worth flagging. deploy-gap deliberately inspects the pinned IMAGE
+    // (cobblr-public-web:pin) for prod, which answers a different question --
+    // what is pinned, not what happens to be running -- and must keep doing it.
+    detect: /docker ps --filter name=cobblr-public-web/,
+    use: "live_pair <canary|prod> for the raw pair, or live_contains <surface> <commit> to ask whether it is already there (ancestry, both halves)",
+  },
+  {
     kind: "vocabulary",
     id: "location:one-name",
     what: 'one word for the thing a user sets, and one action name ("Set location")',

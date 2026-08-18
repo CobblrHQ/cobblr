@@ -751,6 +751,7 @@ const MintUnit = z.object({
 // what's on file, and them disagreeing is the reconciliation prompt's whole job
 // (one-record-substrate.md / within-instance-units.md). A unit is one physical
 // thing → qty 1, and a leaf.
+// AI-REACH: mints serialised units of a part; a labelling step done with the items in hand
 partsRouter.post(
   "/:id/units",
   asyncHandler(async (req, res) => {
@@ -1300,6 +1301,7 @@ partsRouter.delete(
   }),
 );
 
+// AI-ACTION: inventory:adjust-stock
 partsRouter.post(
   "/:id/stock-adjust",
   asyncHandler(async (req, res) => {

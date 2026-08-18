@@ -92,12 +92,88 @@ function appTokenPathAllowed(method: string, rel: string, appScope: string): boo
 // `aud: mcp-read:<slug>` carries the member's full identity, so — exactly like
 // the app-token clamp above — this server-side allowlist is the ONLY thing
 // keeping it from being a full session. DENY-by-default: GET only, pinned to the
-// grant's own workspace slug, and only the handful of read paths the hosted MCP
-// tools proxy to (entity-kinds, entities, registered-actions). A write
-// (POST /actions/invoke) or any other workspace is 403, so "read-only" is
-// enforced HERE, not just in the bridge's --allowed-tools. Keep this list as
-// narrow as the hosted-mcp tool set (cloud/src/hosted-mcp.ts) — widen only when
-// a new READ tool is added there.
+// grant's own workspace slug, and only the read paths the shared tool registry
+// actually fetches. A write (POST /actions/invoke) or any other workspace is
+// 403, so "read-only" is enforced HERE, not just in the bridge's
+// --allowed-tools.
+//
+// It stays an explicit list rather than "any GET in your own workspace": some
+// workspace GETs return things a relayed bridge has no business holding (an
+// integration's stored config, a member roster). Read-only is not the same as
+// harmless.
+//
+// THIS LIST AND THE TOOL REGISTRY MUST AGREE, and a comment used to be the only
+// thing saying so ("widen only when a new READ tool is added"). That is a
+// reminder, not a guarantee — and it failed: the tool surface went from six
+// tools to twenty-two while this list stayed at three path shapes, so sixteen
+// read tools 403'd with `mcp_read_out_of_scope` the moment Cobb reached for
+// them (2026-08-17). api/tests/mcp-read-grant.test.ts now DERIVES the
+// requirement by running every read tool against a recording stub and asserting
+// this clamp permits each path it fetches, so a new tool whose path the grant
+// cannot reach fails a test instead of a user.
+/** The GET paths the registry's READ tools fetch — kept beside the clamp so the
+ *  two are read together. Exact strings or anchored patterns; nothing broader
+ *  than a tool genuinely needs. */
+const MCP_READ_PATHS: Array<string | RegExp> = [
+  // records + the registry that describes them
+  "/entity-kinds",
+  "/registered-actions",
+  /^\/entities\//,
+  "/pairings",
+  // what needs me / what happened / what is coming
+  "/attention",
+  "/activity",
+  "/notifications",
+  "/calendar/events",
+  // how the workspace is set up
+  "/instances",
+  "/bindings",
+  "/modules/core-views/views",
+  "/modules/core-apps/apps",
+  "/modules/core-templates/templates",
+  "/modules/core-units/units",
+  // the capture queue + its put-away plan
+  /^\/modules\/core-scan\/inbox(\/stats)?$/,
+  "/modules/core-scan/organize/plan/latest",
+  // service history, cross-kind search, label codes
+  "/modules/core-maintenance/entries",
+  "/modules/core-search/search",
+  "/modules/labels/codes/groups",
+  // the user's own chat consent — the hosted MCP endpoint reads it to decide
+  // whether to advertise (and run) the write tools at all, so it must be
+  // reachable with the grant the relay actually carries.
+  "/modules/core-ai/chat/prefs",
+];
+
+// MCP WRITE-grant clamp. A separate, 60-second grant the hosted MCP endpoint
+// mints for ITSELF once it has confirmed the user's chat consent says writes
+// apply automatically (write_mode: auto). It is never handed to the bridge.
+//
+// Deny-by-default in the same spirit as the read clamp, but the allowed set is
+// a SHAPE rather than a list: a record's create/update/delete route is declared
+// by its own module (entity_kinds.endpoints), so it is always org-relative
+// `/modules/<module>/…` or `/instances/<instance>/…`. Nothing else is a record
+// route, which structurally excludes the platform families that would be an
+// escalation — /api-tokens, /members, /integrations, /settings, bare /modules
+// (enable/disable), and /actions/invoke (an action always confirms, and a
+// relayed chat has nowhere to ask).
+const MCP_WRITE_DENIED = /\/connections(\/|$)/; // credential-bearing module routes
+
+export function mcpWritePathAllowed(method: string, originalUrl: string, slug: string): boolean {
+  // Reads stay exactly as clamped for the read grant — a write tool resolves
+  // its route by GETting /entity-kinds first.
+  if (method === "GET") return mcpReadPathAllowed(method, originalUrl, slug);
+  const safeSlug = slug.replace(/[^a-z0-9-]/gi, "");
+  if (!safeSlug) return false;
+  const path = (originalUrl.split("?")[0] ?? "").replace(/\/+$/, "");
+  const prefix = `/api/v1/orgs/${safeSlug}`;
+  if (!path.startsWith(prefix + "/")) return false; // pinned to THIS workspace
+  const rel = path.slice(prefix.length);
+  if (rel.includes("..")) return false;
+  if (MCP_WRITE_DENIED.test(rel)) return false;
+  return /^\/(modules|instances)\/[a-z0-9_-]+\/.+/i.test(rel);
+}
+
 export function mcpReadPathAllowed(method: string, originalUrl: string, slug: string): boolean {
   if (method !== "GET") return false;
   const safeSlug = slug.replace(/[^a-z0-9-]/gi, "");
@@ -107,7 +183,7 @@ export function mcpReadPathAllowed(method: string, originalUrl: string, slug: st
   if (!path.startsWith(prefix + "/")) return false; // pinned to THIS workspace
   const rel = path.slice(prefix.length); // e.g. "/entity-kinds", "/entities/<kind>/<id>"
   if (rel.includes("..")) return false;
-  return rel === "/entity-kinds" || rel === "/registered-actions" || rel.startsWith("/entities/");
+  return MCP_READ_PATHS.some((p) => (typeof p === "string" ? rel === p : p.test(rel)));
 }
 
 // Augment Express's Request without leaking the field globally —
@@ -141,6 +217,7 @@ export async function requireAuth(
     let apiTokenId: string | null = null;
     let appScope: string | null = null;
     let mcpReadSlug: string | null = null;
+    let mcpWriteSlug: string | null = null;
     let tokenScopes: string[] | null = null;
     let tokenIssuedAt: number | null = null; // JWT iat (seconds), session/app only
     if (token.startsWith("cbt_")) {
@@ -159,6 +236,8 @@ export async function requireAuth(
         appScope = claims.aud.slice("app:".length);
       } else if (typeof claims.aud === "string" && claims.aud.startsWith("mcp-read:")) {
         mcpReadSlug = claims.aud.slice("mcp-read:".length);
+      } else if (typeof claims.aud === "string" && claims.aud.startsWith("mcp-write:")) {
+        mcpWriteSlug = claims.aud.slice("mcp-write:".length);
       }
     }
     if (!userId) {
@@ -217,6 +296,16 @@ export async function requireAuth(
         error: {
           code: "mcp_read_out_of_scope",
           message: "This read-grant may only GET workspace records in its own workspace.",
+        },
+      });
+      return;
+    }
+    // MCP write-grant — record routes in its own workspace, nothing else.
+    if (mcpWriteSlug !== null && !mcpWritePathAllowed(req.method, req.originalUrl, mcpWriteSlug)) {
+      res.status(403).json({
+        error: {
+          code: "mcp_write_out_of_scope",
+          message: "This write-grant may only read, and create/update/delete records, in its own workspace.",
         },
       });
       return;

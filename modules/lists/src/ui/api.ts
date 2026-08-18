@@ -1,6 +1,8 @@
 // Thin fetch wrapper for the lists REST surface. Auth via getToken().
 // Routes are mounted at /api/v1/orgs/:slug/modules/lists/...
 
+import { describeUnreadableBody } from "@cobblr/platform-web";
+
 export interface ListSummary {
   id: string;
   title: string;
@@ -59,10 +61,13 @@ export class ListsApi {
     });
     if (res.status === 204) return undefined as T;
     let parsed: unknown;
+    // TEXT first: res.json() CONSUMES the body, so once it throws the one
+    // thing that says what went wrong is gone. See describeUnreadableBody.
+    const raw = await res.text();
     try {
-      parsed = await res.json();
+      parsed = JSON.parse(raw);
     } catch {
-      throw new ListsApiError(res.status, "non_json", `Non-JSON response (${res.status})`);
+      throw new ListsApiError(res.status, "non_json", describeUnreadableBody(res.status, raw));
     }
     if (!res.ok) {
       const e = (parsed as { error?: { code?: string; message?: string } }).error;

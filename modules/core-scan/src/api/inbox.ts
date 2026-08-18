@@ -24,7 +24,7 @@ import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
 import { fileReceiptAs, type KnownShipment } from "../services/receipt-arrival.js";
-import { addOrderLine, cancelReceiptOrder, createReceiptOrder } from "../services/receipt-order.js";
+import { addOrderLine, cancelReceiptOrder, createReceiptOrder, lineUnitCost } from "../services/receipt-order.js";
 import {
   mapRoledFacts,
   planDecodeFill,
@@ -33,7 +33,7 @@ import {
   traitAxisValue,
   type DecodeFillTarget,
 } from "@cobblr/platform-contract";
-import { categoryDisplay } from "@cobblr/platform-contract/category-reconcile";
+import { displayed as displayedNote } from "../services/routing-note.js";
 import {
   matchesScanFacet,
   needsScanReview,
@@ -188,7 +188,20 @@ inboxRouter.get(
         eb.fn.countAll<number>().as("count"),
       ])
       .where("i.source_kind", "=", "receipt")
-      .where("i.status", "in", ["pending", "enriching"])
+      // Pending items OR a parcel still in the air. Filing the lines
+      // individually used to drop a tracked receipt off every surface at once
+      // — the group vanished, no order was created, and the tracking number
+      // went with it. A parcel you are still waiting for outlives the
+      // bookkeeping for its contents.
+      .where((eb) =>
+        eb.or([
+          eb("i.status", "in", ["pending", "enriching"]),
+          eb.and([
+            eb(sql<boolean>`nullif(btrim(coalesce(b.tracking_number, '')), '') is not null`, "=", true),
+            eb(sql<boolean>`coalesce(b.shipment_state, '') <> 'delivered'`, "=", true),
+          ]),
+        ]),
+      )
       .where(sql<boolean>`i.suggested_metadata->>'receipt_group_id' is not null`)
       .groupBy(sql`i.suggested_metadata->>'receipt_group_id'`)
       .execute();
@@ -234,6 +247,7 @@ const ScanBody = z.object({
   enrich_ms: z.number().int().positive().max(30_000).optional(),
 });
 
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
   "/scan",
   asyncHandler(async (req, res) => {
@@ -534,6 +548,7 @@ const NoteBody = z.object({
   target_location_id: z.string().uuid().optional(),
 });
 
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
   "/scan/note",
   asyncHandler(async (req, res) => {
@@ -738,6 +753,7 @@ const ReceiptBody = z.object({
   target_item_id: z.string().uuid().optional(),
 });
 
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
   "/scan/receipt",
   asyncHandler(async (req, res) => {
@@ -896,7 +912,8 @@ inboxRouter.post(
             orderId,
             description: line.description,
             qty: line.qty,
-            unitCost: line.unit_price,
+            unitCost: lineUnitCost(line.unit_price, line.line_total, line.qty),
+            lineAmount: line.line_total,
           });
         }
         // The item this paperwork was attached to now knows its purchase. A
@@ -1106,6 +1123,7 @@ const ReceiptGroupConfirm = z.object({
   location_id: z.string().uuid().optional(),
 });
 
+// AI-REACH: confirms a receipt group from the scanner review screen; a scan-flow step
 inboxRouter.post(
   "/receipt-group/:groupId/confirm",
   asyncHandler(async (req, res) => {
@@ -1500,6 +1518,7 @@ const PatchBody = z.object({
   photo_wanted: z.boolean().optional(),
 });
 
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.patch(
   "/inbox/:id",
   asyncHandler(async (req, res) => {
@@ -1721,6 +1740,7 @@ function resolveTargetKind(
   return { module: module!, kind: kind! };
 }
 
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
   "/inbox/:id/confirm",
   asyncHandler(async (req, res) => {
@@ -2319,6 +2339,7 @@ inboxRouter.post(
 // ("Bin 17") and is never overwritten. All writes ride core-locations' HTTP
 // surface with the caller's bearer, so role gating + isolation hold.
 
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
   "/inbox/:id/confirm-into-location",
   asyncHandler(async (req, res) => {
@@ -2469,6 +2490,7 @@ inboxRouter.post(
 
 // ─────────────────────── POST /inbox/:id/discard ──────────────────
 
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
   "/inbox/:id/discard",
   asyncHandler(async (req, res) => {
@@ -2535,6 +2557,7 @@ inboxRouter.post(
 // Un-discard a soft-deleted scan back into the pending queue (the "recently
 // deleted" undo). Only acts on a discarded row; its enriched data was preserved
 // by the soft delete, so it comes back exactly as it left.
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
   "/inbox/:id/restore",
   asyncHandler(async (req, res) => {
@@ -2652,10 +2675,7 @@ function withDisplayCategory<T extends { suggested_candidates?: unknown }>(row: 
     if (!c || typeof c !== "object") return c;
     const cand = c as { notes?: unknown };
     if (typeof cand.notes !== "string") return c;
-    const fixed = cand.notes.replace(
-      /(No specific table matched, so this went to .*? as )“([^”]+)”/,
-      (_m, lead: string, label: string) => `${lead}“${categoryDisplay(label)}”`,
-    );
+    const fixed = displayedNote(cand.notes);
     if (fixed === cand.notes) return c;
     touched = true;
     return { ...cand, notes: fixed };
@@ -2785,6 +2805,7 @@ const RerunBody = z.object({
   no_ai: z.boolean().optional(),
 });
 
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
   "/inbox/:id/rerun-ai",
   asyncHandler(async (req, res) => {
@@ -3428,11 +3449,47 @@ const CatalogImageBody = z.union([
   }),
 ]);
 
+/** The undo + lock bookkeeping every catalog-image change shares.
+ *
+ * Returns ONLY the suggested_metadata keys the catalog image owns: the user-set
+ * lock, the step pushed onto the undo stack, and what the new image came from.
+ *
+ * It deliberately returns no COLUMNS. Which column a caller writes differs
+ * legitimately (a stored file nulls the url; a picked web result records it),
+ * but what must never differ is that the slots an apply moves are the slots
+ * revert can put back. /photos/primary also wrote image_file_id and shuffled
+ * extra_photos, so one tap moved three things and revert restored one.
+ */
+function catalogMetaSet(
+  row: {
+    catalog_image_url: string | null;
+    catalog_image_file_id: string | null;
+    suggested_metadata: unknown;
+  },
+  source: CatalogSource,
+) {
+  const meta = (row.suggested_metadata ?? {}) as {
+    catalog_history?: CatalogStep[];
+    orig_catalog?: OrigCatalog;
+    catalog_source?: CatalogSource;
+  };
+  return {
+    catalog_image_user_set: true as const,
+    catalog_history: pushStep(
+      seedHistory(meta.catalog_history, meta.orig_catalog),
+      { url: row.catalog_image_url, file_id: row.catalog_image_file_id },
+      meta.catalog_source,
+    ),
+    catalog_source: source,
+  };
+}
+
 interface OrigCatalog {
   url: string | null;
   file_id: string | null;
 }
 
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
   "/inbox/:id/catalog-image",
   asyncHandler(async (req, res) => {
@@ -3482,15 +3539,7 @@ inboxRouter.post(
     // and what the CURRENT image came from (so the next push can label it).
     // Merged, not full-replaced — this write shares suggested_metadata with a dozen
     // other passes and used to drop all of theirs.
-    const catalogSet = (source: CatalogSource) => ({
-      catalog_image_user_set: true as const,
-      catalog_history: pushStep(
-        history,
-        { url: row.catalog_image_url, file_id: row.catalog_image_file_id },
-        baseMeta.catalog_source,
-      ),
-      catalog_source: source,
-    });
+    const catalogSet = (source: CatalogSource) => catalogMetaSet(row, source);
     const fresh = () =>
       db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", row.id).executeTakeFirstOrThrow();
 
@@ -3774,6 +3823,7 @@ export function preRerunRestore(snap: Record<string, unknown>): {
   };
 }
 
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
   "/inbox/:id/undo-rerun",
   asyncHandler(async (req, res) => {
@@ -3874,6 +3924,7 @@ inboxRouter.get(
 //     the entity is NEVER deleted; the row reopens and the response notes any
 //     quantity bump is yours to undo.
 
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
   "/inbox/:id/unconfirm",
   asyncHandler(async (req, res) => {
@@ -4079,6 +4130,7 @@ const AttachBody = z.object({
   location_id: z.string().optional(),
 });
 
+// AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
 inboxRouter.post(
   "/inbox/:id/attach",
   asyncHandler(async (req, res) => {
@@ -4413,6 +4465,7 @@ const BinAdjustBody = z.object({
   /** … or an absolute recount. Exactly one of delta/set. */
   set: z.number().int().min(0).max(1_000_000).optional(),
 });
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
   "/bin/:locationId/adjust",
   asyncHandler(async (req, res) => {
@@ -4493,6 +4546,7 @@ inboxRouter.post(
 // Rotate the item's OWN photo (a sideways phone shot). Writes a NEW file and
 // swaps it in; the original is kept in metadata.extra_photos — nothing lost.
 const RotateBody = z.object({ deg: z.union([z.literal(90), z.literal(180), z.literal(270)]) });
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
   "/inbox/:id/rotate",
   asyncHandler(async (req, res) => {
@@ -4557,6 +4611,7 @@ inboxRouter.post(
 // metadata.extra_photos (capped 8). Add / make-primary / remove.
 // `uploaded` = CHOSEN from the device, not taken just now. See the fork below.
 const PhotoBody = z.object({ file_id: z.string().uuid(), uploaded: z.boolean().optional() });
+// AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
 inboxRouter.post(
   "/inbox/:id/photos",
   asyncHandler(async (req, res) => {
@@ -4635,6 +4690,7 @@ inboxRouter.post(
   }),
 );
 
+// AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
 inboxRouter.post(
   "/inbox/:id/photos/primary",
   asyncHandler(async (req, res) => {
@@ -4645,7 +4701,7 @@ inboxRouter.post(
     const db = tenantDb(req);
     const row = await db
       .selectFrom("core_scan_inbox_items")
-      .select(["image_file_id", "suggested_metadata"])
+      .select(["image_file_id", "suggested_metadata", "catalog_image_file_id", "catalog_image_url"])
       .where("id", "=", id ?? "")
       .executeTakeFirst();
     if (!row) {
@@ -4658,16 +4714,33 @@ inboxRouter.post(
       res.status(400).json({ error: { code: "not_in_gallery", message: "that photo isn't in this item's gallery" } });
       return;
     }
+    // IT BECOMES THE DISPLAY IMAGE. That is the CATALOG slot, and only that.
+    //
+    // Three things live on an item and they are not interchangeable: the photo
+    // you scanned (image_file_id, the IDENTIFY photo), what the card displays
+    // (catalog_image_*), and the rest of your gallery (extra_photos).
+    // /catalog-image states the rule in its own schema — "a freshly-captured
+    // upload becomes the DISPLAY (catalog) image; the identify photo is
+    // untouched" — and all four of its branches obey it.
+    //
+    // This one did not. It also wrote image_file_id and moved the displaced
+    // identify photo into the gallery, so one tap moved THREE things and read
+    // as a swap of two pictures.
+    //
+    // The undo stack is what makes that indefensible: catalog_history records
+    // the catalog slot alone and revert pops exactly that, so an apply touching
+    // three could only ever be a third undone. Reported as "it replaced both
+    // images ... it undoes one instead of both" (2026-08-17).
+    //
+    // So: same write as the "use as catalog" door, via the same helper, and the
+    // picked photo STAYS in the gallery — removing it would make undo lopsided
+    // all over again, stepping the catalog back while the photo itself vanished.
     const updated = await db
       .updateTable("core_scan_inbox_items")
       .set({
-        image_file_id: parsed.data.file_id,
-        suggested_metadata: mergeMeta({
-          extra_photos: [
-            ...extras.filter((p) => p !== parsed.data.file_id),
-            ...(row.image_file_id ? [row.image_file_id] : []),
-          ].slice(-8),
-        }) as never,
+        catalog_image_file_id: parsed.data.file_id,
+        catalog_image_url: null,
+        suggested_metadata: mergeMeta(catalogMetaSet(row, "yours")) as never,
         updated_at: new Date(),
       })
       .where("id", "=", id ?? "")
@@ -4677,6 +4750,7 @@ inboxRouter.post(
   }),
 );
 
+// AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
 inboxRouter.delete(
   "/inbox/:id/photos/:fileId",
   asyncHandler(async (req, res) => {
@@ -4713,6 +4787,7 @@ inboxRouter.delete(
 // per distinct item), each region is cropped into its own photo, and each
 // becomes a child item that runs the normal matchmaker. The parent resolves
 // with a "split into N" note (restorable). scan-parity-final-mile.md Epic B.
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
   "/inbox/:id/split",
   asyncHandler(async (req, res) => {
@@ -4861,6 +4936,7 @@ inboxRouter.post(
 // so every future scan of this UPC — in any workspace — gets this clean entry
 // instead of a thin crowdsourced one. Barcode items only (BIdb is UPC-keyed).
 // Doesn't touch the item or commit it to inventory — that's the Confirm button.
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
   "/inbox/:id/confirm-barcode",
   asyncHandler(async (req, res) => {
@@ -4922,6 +4998,7 @@ const MergeBatchesBody = z.object({
   from_batch_id: z.string().min(1),
   into_batch_id: z.string().min(1),
 });
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
   "/inbox/merge-batches",
   asyncHandler(async (req, res) => {
@@ -4952,6 +5029,7 @@ const ReassignBatchBody = z.object({
   item_ids: z.array(z.string().min(1)).min(1),
   batch_id: z.string().min(1),
 });
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
   "/inbox/reassign-batch",
   asyncHandler(async (req, res) => {
@@ -4972,6 +5050,7 @@ inboxRouter.post(
 // Fill catalog images for pending items that have a real name but no catalog
 // art (image-search by name, same as a re-identify's refresh — honors the
 // user-picked-image lock). Detached per item; returns how many were queued.
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
   "/inbox/backfill-catalog-photos",
   asyncHandler(async (req, res) => {
@@ -5108,6 +5187,7 @@ const ApplyThemeBody = z.object({
   tag_item_ids: z.array(z.string().uuid()).max(200).default([]),
   category: z.object({ value: z.string().min(1).max(80), item_ids: z.array(z.string().uuid()).max(200) }).optional(),
 });
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
   "/inbox/apply-theme",
   asyncHandler(async (req, res) => {
@@ -5155,6 +5235,7 @@ const CombineBody = z.object({
   keep_id: z.string().optional(),
 });
 
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
   "/inbox/combine",
   asyncHandler(async (req, res) => {
@@ -5906,6 +5987,7 @@ function autoMatchWhenEnriched(opts: Omit<MatchItemOpts, "force">): void {
 // ──────────────────────── POST /inbox/:id/match ─────────────────────
 // Explicit re-rank (the web's rerun flow, scripts). Intake no longer
 // depends on this being called.
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
   "/inbox/:id/match",
   asyncHandler(async (req, res) => {
@@ -5936,6 +6018,7 @@ inboxRouter.post(
 
 // ──────────────────────── POST /batches ────────────────────────────
 
+// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
   "/batches",
   asyncHandler(async (req, res) => {

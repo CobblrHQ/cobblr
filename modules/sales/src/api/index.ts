@@ -27,3 +27,7 @@ router.use("/customers", customersRouter);
 export default router;
 
 export { ordersRouter as primaryRouter };
+
+// Side-effect: the assistant's door to adding a line to an existing order.
+import { registerSalesLineHandlers } from "./line-handlers.js";
+registerSalesLineHandlers();

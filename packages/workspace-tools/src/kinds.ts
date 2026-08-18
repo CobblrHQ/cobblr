@@ -18,7 +18,7 @@ export interface KindRec {
    *  (`<instance>:item`): endpoints are then relative to
    *  /instances/<instance_name>, not /modules/<module_name>. */
   instance_name?: string;
-  fields?: Array<{ name: string; type?: string; role?: string; required?: boolean }>;
+  fields?: Array<{ name: string; type?: string; role?: string; required?: boolean; readOnly?: boolean }>;
   /** This workspace's user-defined fields (module_field_defs). Values live in
    *  the record's metadata blob; the writers fold unknown body keys there, so
    *  these names are directly settable on create/update. */
@@ -94,9 +94,14 @@ export function summarizeKind(k: KindRec): Record<string, unknown> {
     id: k.id,
     name: k.display_name ?? k.id,
     module: k.module_name,
+    // Server-owned fields are described as READ-ONLY rather than dropped: the
+    // model still needs to know `position` exists to talk about ordering, it
+    // just must not try to set it. Offering them plainly is what got twelve
+    // racks "reordered" with every call returning 200 and nothing moving.
     fields: (k.fields ?? []).map((f) => ({
       name: f.name,
       type: f.type ?? "text",
+      ...(f.readOnly ? { read_only: true } : {}),
       ...(f.required || f.role === "title" ? { required: true } : {}),
       ...(f.role ? { role: f.role } : {}),
     })),

@@ -571,6 +571,7 @@ async function importCsvIntoCatalog(
   return { ok: true, imported: upserted, total: Number(count), schema_used: schemaConfig };
 }
 
+// AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
 catalogsRouter.post(
   "/:id/import-csv",
   asyncHandler(async (req, res) => {
@@ -609,6 +610,46 @@ catalogsRouter.post(
 // BOM (that one still uses the bulk seeder — it would OOM an in-request import).
 // See docs/architecture/invokable-flows-and-lego-redesign.md §C.5–C.6.
 const PULL_MAX_BYTES = 80 * 1024 * 1024; // 80 MB decompressed
+
+/** Fetch a catalog's source_url and import it. Shared with the
+ *  core-catalogs:refresh ACTION so refreshing by hand and asking the assistant
+ *  to refresh cannot diverge (the size cap, the gzip handling and the SSRF
+ *  guard are the same either way). */
+export async function pullCatalogFromSource(
+  db: ReturnType<typeof tenantDb>,
+  orgId: string,
+  catalog: { id: string; name?: string | null } & Record<string, unknown>,
+  url: string,
+): Promise<
+  | { ok: true; imported: number; total: number }
+  | { ok: false; status: number; code: string; message: string }
+> {
+  let csvText: string;
+  try {
+    const resp = await platform().egress.guardedFetch(orgId, url);
+    if (!resp.ok) {
+      return { ok: false, status: 502, code: "fetch_failed", message: `Source responded ${resp.status}.` };
+    }
+    const buf = Buffer.from(await resp.arrayBuffer());
+    const raw = url.endsWith(".gz") ? gunzipSync(buf) : buf;
+    if (raw.length > PULL_MAX_BYTES) {
+      return {
+        ok: false,
+        status: 413,
+        code: "too_large",
+        message: "This dataset is too large to pull in one request. Use the bulk CSV importer / seeder.",
+      };
+    }
+    csvText = raw.toString("utf8");
+  } catch {
+    return { ok: false, status: 502, code: "pull_failed", message: "Couldn't fetch or decompress the source file." };
+  }
+  const result = await importCsvIntoCatalog(db, orgId, catalog as never, csvText);
+  if (!result.ok) return { ok: false, status: 400, code: result.code, message: result.message };
+  return { ok: true, imported: result.imported, total: result.total };
+}
+
+// AI-ACTION: core-catalogs:refresh
 catalogsRouter.post(
   "/:id/pull",
   asyncHandler(async (req, res) => {
@@ -640,41 +681,12 @@ catalogsRouter.post(
       return;
     }
 
-    let csvText: string;
-    try {
-      const resp = await platform().egress.guardedFetch(ctx.org.id, url);
-      if (!resp.ok) {
-        res.status(502).json({
-          error: { code: "fetch_failed", message: `Source responded ${resp.status}.` },
-        });
-        return;
-      }
-      const buf = Buffer.from(await resp.arrayBuffer());
-      const raw = url.endsWith(".gz") ? gunzipSync(buf) : buf;
-      if (raw.length > PULL_MAX_BYTES) {
-        res.status(413).json({
-          error: {
-            code: "too_large",
-            message:
-              "This dataset is too large to pull in one request. Use the bulk CSV importer / seeder.",
-          },
-        });
-        return;
-      }
-      csvText = raw.toString("utf8");
-    } catch {
-      res.status(502).json({
-        error: { code: "pull_failed", message: "Couldn't fetch or decompress the source file." },
-      });
+    const outcome = await pullCatalogFromSource(db, ctx.org.id, catalog, url);
+    if (!outcome.ok) {
+      res.status(outcome.status).json({ error: { code: outcome.code, message: outcome.message } });
       return;
     }
-
-    const result = await importCsvIntoCatalog(db, ctx.org.id, catalog, csvText);
-    if (!result.ok) {
-      res.status(400).json({ error: { code: result.code, message: result.message } });
-      return;
-    }
-    res.json({ imported: result.imported, total: result.total, source_url: url });
+    res.json({ imported: outcome.imported, total: outcome.total, source_url: url });
   }),
 );
 
@@ -800,6 +812,7 @@ catalogsRouter.get(
 
 // Manual sync trigger. For CSV catalogs (no puller_id), no-op + 400.
 // For pullable catalogs (v0.3), kicks off a core-queue job.
+// AI-REACH: drives an external connector with its own credentials and rate limits; a person owns that
 catalogsRouter.post(
   "/:id/sync",
   asyncHandler(async (req, res) => {

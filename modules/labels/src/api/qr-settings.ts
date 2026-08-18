@@ -35,6 +35,7 @@ const SettingsUpdate = z
     message: "no settings fields provided",
   });
 
+// AI-REACH: workspace configuration; the assistant changes config only through a workspace-scoped action, so a route with no action stays a person's
 qrSettingsRouter.put(
   "/",
   asyncHandler(async (req, res) => {

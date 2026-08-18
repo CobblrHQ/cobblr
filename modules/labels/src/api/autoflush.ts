@@ -75,6 +75,7 @@ const PutBody = z.object({
   client_fired: z.boolean().default(false),
 });
 
+// AI-REACH: workspace configuration; the assistant changes config only through a workspace-scoped action, so a route with no action stays a person's
 autoflushRouter.put(
   "/",
   asyncHandler(async (req, res) => {

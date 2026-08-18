@@ -31,6 +31,7 @@ libraryRouter.get(
 );
 
 // POST / — upload a 3MF/gcode (multipart `file`). Stores bytes + extracts thumb.
+// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 libraryRouter.post(
   "/",
   upload.single("file"),
@@ -80,6 +81,7 @@ libraryRouter.post(
 );
 
 const Rename = z.object({ name: z.string().min(1).max(300).optional(), notes: z.string().max(2000).nullable().optional() });
+// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 libraryRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -95,6 +97,7 @@ libraryRouter.patch(
   }),
 );
 
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 libraryRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -112,6 +115,7 @@ const Send = z.object({
   target_device: z.string().max(200).nullable().optional(),
   target_pool: z.string().uuid().nullable().optional(),
 });
+// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 libraryRouter.post(
   "/:id/send",
   asyncHandler(async (req, res) => {

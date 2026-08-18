@@ -131,6 +131,7 @@ jobsRouter.get(
   }),
 );
 
+// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 jobsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -215,6 +216,7 @@ jobsRouter.patch(
 // ── SEND — uploads + places the job on the farm. Starts a real print. ──
 // The whole upload/place/persist body lives in sendJob (shared with the
 // assignment worker); this route is auth + result-mapping + the poll hand-off.
+// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 jobsRouter.post(
   "/:id/send",
   asyncHandler(async (req, res) => {
@@ -246,6 +248,7 @@ jobsRouter.post(
 // The job's already uploaded; this re-submits it to an explicit, validated
 // device so a stuck job recovers in place instead of delete-and-recreate.
 const AssignBody = z.object({ device_id: z.string().min(1).max(200) });
+// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 jobsRouter.post(
   "/:id/assign",
   asyncHandler(async (req, res) => {
@@ -279,6 +282,7 @@ jobsRouter.post(
 // machinery. A pool job goes back to the pool. The build link's consumed/reversed
 // stamps reset together: the fail/cancel already reversed the commit, so the
 // fresh send commits the materials again — one net commit per successful run.
+// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 jobsRouter.post(
   "/:id/retry",
   asyncHandler(async (req, res) => {
@@ -327,6 +331,7 @@ jobsRouter.post(
 // terminal-failed row in place): the source job's history stays untouched, and
 // the clone carries everything that made the print reproducible — file, routing,
 // material draw, build link (fresh commit stamps), priority, retry cap.
+// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 jobsRouter.post(
   "/:id/reprint",
   asyncHandler(async (req, res) => {
@@ -390,6 +395,7 @@ jobsRouter.post(
 // the poll loop. Best-effort tells the manager to abort where the driver supports
 // it; otherwise it's local-only (the physical print may keep running — stop it at
 // the machine). Refuses to "cancel" an already-terminal job.
+// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 jobsRouter.post(
   "/:id/cancel",
   asyncHandler(async (req, res) => {
@@ -447,6 +453,7 @@ async function controlJob(req: import("express").Request, res: import("express")
   await db.updateTable("digifab_jobs").set({ status, updated_at: new Date() }).where("id", "=", job.id).execute();
   res.json({ status });
 }
+// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 jobsRouter.post("/:id/pause", asyncHandler((req, res) => controlJob(req, res, "pause")));
 jobsRouter.post("/:id/resume", asyncHandler((req, res) => controlJob(req, res, "resume")));
 

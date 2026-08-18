@@ -7,7 +7,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "purchases",
-  version: "0.8.2",
+  version: "0.10.0",
   displayName: "Purchases",
   description:
     "Orders, line items, and cost rollup. Each order is a vendor purchase; line items can link to inventory parts and to whatever consumed them: printer mods, projects, anything.",
@@ -17,7 +17,10 @@ export default defineModule({
   // Purchases already writes ONTO inventory parts (draft-po, receipt roll-up),
   // so it declares that reach — which is also what earns it the price panel on
   // a part's own page (the manifest rejects a panel into an undeclared module).
-  operatesOn: ["inventory"],
+  // core-scan joined when a receipt attached to a scan item started creating
+  // this module's orders: contributing a panel into a module REQUIRES
+  // declaring you operate on it, which is what keeps this list honest.
+  operatesOn: ["inventory", "core-scan"],
 
   schema: {
     tablePrefix: "purchases_",
@@ -130,6 +133,21 @@ export default defineModule({
     api: [],
     actions: [
       {
+        id: "purchases:add-line",
+        label: "Add a line to this order",
+        description:
+          "Put another line on an order that already exists. Pass `qty` and either `description` (free text) or `part_id` for a part you already track, optionally `unit_cost`. Removing a line has no action on purpose: an order is a financial record, so deleting from it is done in the app.",
+        icon: "plus",
+        appliesTo: { kinds: ["purchases:order"] },
+        invokeHandler: "purchases.add-line",
+        argsSchema: {
+          qty: { label: "How many", type: "number" },
+          description: { label: "What it is", type: "text" },
+          part_id: { label: "Id of a tracked part (optional)", type: "text" },
+          unit_cost: { label: "Cost each (optional)", type: "number" },
+        },
+      },
+      {
         // "Stock that reorders itself": wire inventory.stock.low here (the
         // contributed default below does exactly that) and a low part lands
         // as a line on a DRAFT (status:"planned") purchase order for its
@@ -174,6 +192,17 @@ export default defineModule({
         surface: "entity-detail-panel" as const,
         target: "inventory:part",
         title: "Price history",
+      },
+      // The rest of the receipt. Attaching a receipt to one item records every
+      // line on the order, and the others are just sitting there unclaimed —
+      // this is what says so, on the card, where the decision belongs. The
+      // scan card names no contributor: it renders whatever declared into it
+      // and passes its own receipt group id as a hint.
+      {
+        id: "purchases:receipt-lines",
+        surface: "entity-detail-panel" as const,
+        target: "core-scan:item",
+        title: "From this receipt",
       },
     ],
     wires: [

@@ -201,3 +201,4 @@ export { AssortmentCard, type AssortmentCardProps, type AssortmentKind } from ".
 export { scrimAlpha, scrimAlphaFor, percentileLuma } from "./photo-scrim";
 export { HIDE_WHEN_OVERLAY_OPEN, OverlayFlag, useOverlayOpenFlag } from "./overlay-open";
 export { LiveSurfaceProvider, useOverLiveSurface } from "./live-surface";
+export { describeUnreadableBody } from "./unreadableBody";

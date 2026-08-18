@@ -92,6 +92,32 @@ export async function createReceiptOrder(input: ReceiptOrderInput): Promise<stri
   }
 }
 
+/** What one order line costs each, from what the parse actually read.
+ *
+ *  A receipt line arrives with EITHER a unit price or a line amount, and which
+ *  one depends on the receipt's own columns: the CSV mapper fills `unit_price`
+ *  only when there is a unit-price column, and `line_total` from a plain
+ *  "price"/"amount" column. Reading only `unit_price` drops the cost of every
+ *  receipt of the second kind — which is most of them, and which is exactly
+ *  what shipped and was caught by running it against staging rather than by
+ *  any test.
+ *
+ *  The amount is what must survive: qty × unit_cost has to reconstruct what the
+ *  line said, or the order totals a different number than the receipt. So a
+ *  line amount is divided back down rather than dropped or stored as if it were
+ *  per-unit. */
+export function lineUnitCost(
+  unitPrice: number | null,
+  lineTotal: number | null,
+  qty: number,
+): number | null {
+  if (unitPrice != null && Number.isFinite(unitPrice)) return unitPrice;
+  if (lineTotal == null || !Number.isFinite(lineTotal)) return null;
+  const n = Number.isFinite(qty) && qty > 0 ? qty : 1;
+  // Two decimals: money, and 12/3 must not become 3.9999999999999996.
+  return Math.round((lineTotal / n) * 100) / 100;
+}
+
 /** Record a parsed line on the order WITHOUT claiming anything was acquired.
  *
  *  A line on a receipt is not a thing you own — most of a grocery order is
@@ -106,6 +132,12 @@ export async function addOrderLine(args: {
   description: string;
   qty: number;
   unitCost: number | null;
+  /** What the receipt line actually said, when it stated an amount rather than
+   *  a per-unit price. Sent alongside the derived unit cost because the two are
+   *  not always reconcilable: 1.50 over qty 4 is 0.375, money is two decimals,
+   *  and 4 x 0.38 comes back as 1.52. The amount is the thing the receipt is
+   *  authority on, so it travels rather than being recomputed. */
+  lineAmount?: number | null;
 }): Promise<boolean> {
   try {
     const res = await fetch(
@@ -117,6 +149,7 @@ export async function addOrderLine(args: {
           description: args.description,
           qty: args.qty,
           unit_cost: args.unitCost ?? undefined,
+          line_amount: args.lineAmount ?? undefined,
         }),
       },
     );

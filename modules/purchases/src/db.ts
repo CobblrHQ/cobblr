@@ -46,6 +46,10 @@ export interface PurchasesOrderItemsTable {
   description: string | null;
   qty: ColumnType<string, number, number>;
   unit_cost: ColumnType<string | null, number | null | undefined, number | null | undefined>;
+  /** What the SOURCE line stated, when it stated an amount rather than a
+   *  per-unit price. unit_cost may be derived (amount / qty) and therefore
+   *  may not multiply back exactly; this does not. */
+  line_amount: ColumnType<string | null, number | null | undefined, number | null | undefined>;
   consumed_by_module: string | null;
   consumed_by_entity_type: string | null;
   consumed_by_entity_id: string | null;

@@ -258,7 +258,7 @@ export function ScanCameraPage() {
 
   // Scan area — stamped as `scan_area` (free text, the location's name) on
   // every item saved this session, barcode and photo alike. Picked via the
-  // Assign sheet (LocationPicker over core-locations).
+  // Assign sheet (LocationChipPicker over core-locations).
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const [areaId, setAreaId] = useState<string | null>(null);
@@ -300,8 +300,13 @@ export function ScanCameraPage() {
   //             ADDED alongside the catalog art rather than replacing anything
   //             about the identification)
   type ArmMode = "append" | "retake" | "catalog";
-  const [arm, setArm] = useState<{ id: string; name: string; mode: ArmMode } | null>(null);
-  const armRef = useRef<{ id: string; name: string; mode: ArmMode } | null>(null);
+  // `fromSheet` is where the shot should land you BACK. Without it an armed
+  // capture always ended in the mini drawer, because that is what the arm
+  // opened on its way out — so ＋ on the Scanned sheet felt like being dumped
+  // into a different scan (reported 2026-08-17).
+  type Arm = { id: string; name: string; mode: ArmMode; fromSheet?: boolean };
+  const [arm, setArm] = useState<Arm | null>(null);
+  const armRef = useRef<Arm | null>(null);
   armRef.current = arm;
   armedRef.current = !!arm;
   diagRef.current = diagOpen;
@@ -309,16 +314,17 @@ export function ScanCameraPage() {
   // strip ("taking another photo…") lives there, and the sheet is about to
   // close without restoring it.
   const armFromSheet = (it: ScanInboxItem, mode: ArmMode) => {
-    armFor(it, mode);
+    armFor(it, mode, true);
     setDrawerItem(it);
     setDrawerDismissed(false);
   };
   const armFor = useCallback(
-    (it: ScanInboxItem, mode: ArmMode) =>
+    (it: ScanInboxItem, mode: ArmMode, fromSheet = false) =>
       setArm({
         id: it.id,
         name: it.suggested_candidates?.[0]?.name ?? it.suggested_name ?? "this item",
         mode,
+        fromSheet,
       }),
     [],
   );
@@ -1244,6 +1250,25 @@ export function ScanCameraPage() {
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, []);
+  // Leaving the page with the lamp lit: put it out. Unlike the other lifecycle
+  // offs this one does not spare a MANUAL torch - those exist because the user
+  // is looking at the app, and a phone that just went dark and into a pocket is
+  // the opposite of that. Returning re-arms the auto machine from cold (with
+  // the release cooldown), so nothing relights behind the unlock either.
+  useEffect(() => {
+    function onHidden() {
+      if (document.visibilityState !== "hidden") return;
+      torchAutoRef.current = torchAutoRelease(torchAutoRef.current, Date.now());
+      if (!torchOwnerRef.current) return;
+      const track = streamRef.current?.getVideoTracks()[0] ?? null;
+      void setTorch(track, false);
+      recordTorchEvent(torchOwnerRef.current === "auto" ? "auto-off" : "manual-off");
+      torchOwnerRef.current = null;
+      setTorchOn(false);
+    }
+    document.addEventListener("visibilitychange", onHidden);
+    return () => document.removeEventListener("visibilitychange", onHidden);
+  }, []);
   useEffect(() => {
     if (!running) return;
     let cancelled = false;
@@ -1336,8 +1361,15 @@ export function ScanCameraPage() {
             if (cancelled) return;
             checkStreamAlive(video);
             // Same gating the native loop uses: never decode behind a sheet,
-            // while armed, or once a result is up.
+            // while armed, or once a result is up - plus HIDDEN, which the
+            // native loop gets for free and this one does not. requestAnimation
+            // Frame stops on a backgrounded page; setTimeout keeps firing, so
+            // without this the whole tick ran against a locked phone's black
+            // frames. That is not a wasted-cycles nit: the luma sampler reads
+            // black as the darkest room it has ever seen and lights the torch
+            // in the user's pocket.
             const idle =
+              document.visibilityState !== "visible" ||
               phaseRef.current !== "scanning" || armedRef.current || sheetOpenRef.current || reviewItemRef.current;
             if (!idle) {
               // Last attempt's verdict — this tick runs before the next one.
@@ -1514,6 +1546,10 @@ export function ScanCameraPage() {
    *  it makes each loop state what it can actually see — including `undefined`
    *  for "this decoder has no region signal", which is a real answer. */
   const autoTorchTick = useCallback((video: HTMLVideoElement, structure: boolean | undefined) => {
+    // Same first line as checkStreamAlive, and for the same reason: a hidden
+    // page delivers no frames, so anything measured off the video here is a
+    // black frame rather than a dark room.
+    if (document.visibilityState !== "visible") return;
     if (!autoTorchRef.current || autoSuppressedRef.current || !hasTorchRef.current) return;
     if (torchOwnerRef.current === "manual") return;
     const now = Date.now();
@@ -1717,6 +1753,11 @@ export function ScanCameraPage() {
                 : await api.addScanPhoto(activeSlug, targetId, rec.id);
           onSaved(updated);
           setDrawerItem(updated);
+          // Back to the sheet you tapped ＋ on, with the new photo in its strip.
+          // The mini drawer is where the ARM lives, not where the shot belongs:
+          // landing there reads as a different scan, and the way back was an
+          // expand tap nobody knew to look for.
+          if (armed.fromSheet) setReviewItem(updated);
           setLastFrame((prev) => (prev ? { ...prev, itemId: targetId } : prev));
           void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
           // The drawer reads its item from this key too. Without invalidating
@@ -2339,7 +2380,20 @@ export function ScanCameraPage() {
               label: params.get("label"),
             }}
             onRetake={(it) => armFromSheet(it, "retake")}
-            onAddPhoto={(it) => armFromSheet(it, it.source_kind === "photo" ? "append" : "catalog")}
+            onAddPhoto={(it) =>
+              // `catalog` for anything that is not already a photo scan, and
+              // that is SETTLED, not a guess: scan-photo-wanted.md records that
+              // "display image, or another angle?" was answered by the evidence
+              // model, and that re-posing it was itself the mistake. A photo you
+              // add becomes what you see; whether it may touch the NAME depends
+              // on the evidence basis, not on the gesture.
+              //
+              // Briefly changed to always-append here (2026-08-17) on a hand
+              // report that the shot "went to a different drawer". It does not
+              // belong to this decision — the photo is not lost, it becomes the
+              // lead image — and the change contradicted the spec.
+              armFromSheet(it, it.source_kind === "photo" ? "append" : "catalog")
+            }
             onEarly={handleEarly}
             onClose={(_outcome, _current) => {
               // Save & next / Discard / an arm are the only exits, and none of
@@ -2376,7 +2430,20 @@ export function ScanCameraPage() {
               label: params.get("label"),
             }}
             onRetake={(it) => armFromSheet(it, "retake")}
-            onAddPhoto={(it) => armFromSheet(it, it.source_kind === "photo" ? "append" : "catalog")}
+            onAddPhoto={(it) =>
+              // `catalog` for anything that is not already a photo scan, and
+              // that is SETTLED, not a guess: scan-photo-wanted.md records that
+              // "display image, or another angle?" was answered by the evidence
+              // model, and that re-posing it was itself the mistake. A photo you
+              // add becomes what you see; whether it may touch the NAME depends
+              // on the evidence basis, not on the gesture.
+              //
+              // Briefly changed to always-append here (2026-08-17) on a hand
+              // report that the shot "went to a different drawer". It does not
+              // belong to this decision — the photo is not lost, it becomes the
+              // lead image — and the change contradicted the spec.
+              armFromSheet(it, it.source_kind === "photo" ? "append" : "catalog")
+            }
             onClose={(outcome, current) => {
               setReviewItem(null);
               if (outcome === "handled") {

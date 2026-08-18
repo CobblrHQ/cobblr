@@ -59,10 +59,16 @@ function bridgeIdOf(req: Request): string | null {
 
 // ── The wire (spoken by the bridge, authed with a devices:edge token) ──
 
-edgeRouter.post("/register", (req, res) => {
+edgeRouter.post("/register", async (req, res, next) => {
   if (!requireRole(req, res, "owner", "admin", "member")) return;
-  platform().edge.relayTouch(channelKeyOf(req));
-  res.json({ ok: true });
+  // Express 4 does not forward a rejected promise, so an unhandled DB error
+  // here leaves the bridge's request open until something times it out.
+  try {
+    await platform().edge.relayTouch(channelKeyOf(req));
+    res.json({ ok: true });
+  } catch (e) {
+    next(e);
+  }
 });
 
 edgeRouter.get("/poll", async (req, res) => {
@@ -75,15 +81,20 @@ edgeRouter.get("/poll", async (req, res) => {
 });
 
 const Respond = z.object({ id: z.string().min(1), status: z.number().int(), body: z.unknown().optional() });
-edgeRouter.post("/respond", (req, res) => {
+edgeRouter.post("/respond", async (req, res, next) => {
   if (!requireRole(req, res, "owner", "admin", "member")) return;
   const parsed = Respond.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: { code: "bad_body", message: "id + numeric status required" } });
     return;
   }
-  platform().edge.relayRespond(channelKeyOf(req), parsed.data);
-  res.json({ ok: true });
+  try {
+    await platform().edge.relayRespond(channelKeyOf(req), parsed.data);
+    res.json({ ok: true });
+  } catch (e) {
+    next(e);
+    return;
+  }
 });
 
 // ── Pane of glass ──
@@ -97,7 +108,7 @@ edgeRouter.post("/respond", (req, res) => {
 edgeRouter.get("/status", async (req, res) => {
   if (!requireRole(req, res, "owner", "admin", "member")) return;
   const userId = req.session!.id;
-  const connected = platform().edge.hasChannel(userId);
+  const connected = await platform().edge.hasChannel(userId);
   let backs: string[] = [];
   if (connected) {
     const rows = await meta
@@ -109,7 +120,7 @@ edgeRouter.get("/status", async (req, res) => {
     backs = rows.map((r) => r.label || "Local AI (edge bridge)");
   }
   res.json({
-    agents: platform().edge.relayAgents(req.tenant!.org.id),
+    agents: await platform().edge.relayAgents(req.tenant!.org.id),
     personal: { connected, backs },
     stale_after_ms: 60_000,
   });

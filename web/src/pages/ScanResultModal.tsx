@@ -370,11 +370,22 @@ export function ScanResultModal({
             added with the + shutter - in one place, so a photo you just took
             never disappears into a different surface (reported 2026-08-03). Tap an
             own shot to make it the display photo; ＋ arms the shutter. */}
-        {item && (
-          <div className="flex items-center gap-1.5">
-            {item.catalog_image_file_id && (
+        {/* ALWAYS rendered, including while the ingest is still running. It used
+            to be gated on `item`, so for the ~3s of "Looking up…" there was no
+            strip and no ＋ at all, and then both appeared — the sheet reflowed
+            under your thumb and the ＋ arrived exactly where you were about to
+            tap. The shape is fixed from first paint now; only the contents
+            fill in. */}
+        <div className="flex items-center gap-1.5">
+          {!item && (
+            <div
+              className="w-11 h-11 shrink-0 rounded-lg border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 animate-pulse"
+              aria-hidden
+            />
+          )}
+            {item?.catalog_image_file_id && (
               <StripTile
-                src={`/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.catalog_image_file_id}/raw?variant=thumb`}
+                src={`/api/v1/orgs/${activeSlug}/modules/core-files/files/${item?.catalog_image_file_id}/raw?variant=thumb`}
                 active={lead.role === "catalog"}
                 checking={lead.pending}
                 label={
@@ -384,7 +395,7 @@ export function ScanResultModal({
                 }
               />
             )}
-            {!item.catalog_image_file_id && item.catalog_image_url && (
+            {item && !item.catalog_image_file_id && item.catalog_image_url && (
               <StripTile
                 src={item.catalog_image_url}
                 active={lead.role === "catalog"}
@@ -392,7 +403,7 @@ export function ScanResultModal({
                 label={lead.pending ? "Catalog photo - being checked against your photo" : "Catalog photo"}
               />
             )}
-            {item.image_file_id && (
+            {item?.image_file_id && (
               <StripTile
                 src={`/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.image_file_id}/raw?variant=thumb`}
                 active={lead.role === "yours"}
@@ -405,7 +416,7 @@ export function ScanResultModal({
                 busy={makeDisplay.isPending}
               />
             )}
-            {((item.suggested_metadata as { extra_photos?: string[] } | null)?.extra_photos ?? []).map((f) => (
+            {((item?.suggested_metadata as { extra_photos?: string[] } | null)?.extra_photos ?? []).map((f) => (
               <StripTile
                 key={f}
                 src={`/api/v1/orgs/${activeSlug}/modules/core-files/files/${f}/raw?variant=thumb`}
@@ -417,17 +428,27 @@ export function ScanResultModal({
             {onAddPhoto && (
               <button
                 type="button"
-                disabled={busy}
-                onClick={() => { onAddPhoto(item); onClose("dismissed", item); }}
+                // Present from the start so it never moves, disabled until
+                // there is a row to attach to. A button that appears late is
+                // worse than one that is visibly not ready yet.
+                disabled={busy || !item}
+                onClick={() => {
+                  if (!item) return;
+                  onAddPhoto(item);
+                  onClose("dismissed", item);
+                }}
                 aria-label="Add a photo - the shutter arms"
-                title="Add a photo - the shutter arms and your next shot attaches"
+                title={
+                  item
+                    ? "Add a photo - the shutter arms and your next shot attaches"
+                    : "Add a photo - available once the scan lands"
+                }
                 className="w-11 h-11 shrink-0 rounded-lg border border-dashed border-line dark:border-slate-600 text-faint grid place-items-center disabled:opacity-40"
               >
                 <Plus size={16} />
               </button>
             )}
-          </div>
-        )}
+        </div>
 
         {/* Quantity — the LOCKED stepper (shared with the drawer), not a
             circles-and-input variant of its own. */}

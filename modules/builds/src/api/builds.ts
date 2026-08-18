@@ -226,6 +226,7 @@ buildsRouter.delete(
 );
 
 // ───────────────────────── components ─────────────────────────
+// AI-REACH: part of the build workflow (components, operations, time) which is a designed multi-step surface; build-one and reverse-one are the doors
 buildsRouter.post(
   "/builds/:id/components",
   asyncHandler(async (req, res) => {
@@ -271,6 +272,7 @@ buildsRouter.post(
   }),
 );
 
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 buildsRouter.delete(
   "/builds/:id/components/:cid",
   asyncHandler(async (req, res) => {
@@ -301,6 +303,7 @@ buildsRouter.get(
   }),
 );
 
+// AI-REACH: part of the build workflow (components, operations, time) which is a designed multi-step surface; build-one and reverse-one are the doors
 buildsRouter.post(
   "/builds/:id/operations",
   asyncHandler(async (req, res) => {
@@ -343,6 +346,7 @@ buildsRouter.post(
   }),
 );
 
+// AI-REACH: part of the build workflow (components, operations, time) which is a designed multi-step surface; build-one and reverse-one are the doors
 buildsRouter.patch(
   "/builds/:id/operations/:opId",
   asyncHandler(async (req, res) => {
@@ -398,6 +402,7 @@ buildsRouter.patch(
   }),
 );
 
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 buildsRouter.delete(
   "/builds/:id/operations/:opId",
   asyncHandler(async (req, res) => {
@@ -435,6 +440,7 @@ async function operationOfBuild(db: ReturnType<typeof tenantDb>, buildId: string
 }
 
 // Log time against an operation.
+// AI-REACH: part of the build workflow (components, operations, time) which is a designed multi-step surface; build-one and reverse-one are the doors
 buildsRouter.post(
   "/builds/:id/operations/:opId/time",
   asyncHandler(async (req, res) => {
@@ -475,6 +481,7 @@ buildsRouter.post(
 );
 
 // Log a quantity (good / scrap / rework) at an operation.
+// AI-REACH: part of the build workflow (components, operations, time) which is a designed multi-step surface; build-one and reverse-one are the doors
 buildsRouter.post(
   "/builds/:id/operations/:opId/quantities",
   asyncHandler(async (req, res) => {
@@ -570,6 +577,7 @@ const BuildRunBody = z.object({
   input_lots: z.record(z.string().max(200)).optional(), // { [part_id]: lot_code }
 });
 
+// AI-ACTION: builds:build-one
 buildsRouter.post(
   "/builds/:id/build",
   asyncHandler(async (req, res) => {
@@ -783,6 +791,7 @@ const PlannedUpdate = z.object({
   notes: z.string().max(2_000).nullable().optional(),
 });
 
+// AI-REACH: part of the build workflow (components, operations, time) which is a designed multi-step surface; build-one and reverse-one are the doors
 buildsRouter.post(
   "/planned",
   asyncHandler(async (req, res) => {
@@ -813,6 +822,7 @@ buildsRouter.post(
   }),
 );
 
+// AI-REACH: part of the build workflow (components, operations, time) which is a designed multi-step surface; build-one and reverse-one are the doors
 buildsRouter.patch(
   "/planned/:pid",
   asyncHandler(async (req, res) => {
@@ -841,6 +851,7 @@ buildsRouter.patch(
   }),
 );
 
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 buildsRouter.delete(
   "/planned/:pid",
   asyncHandler(async (req, res) => {

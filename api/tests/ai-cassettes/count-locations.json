@@ -1,0 +1,7 @@
+{
+  "match": "how many locations",
+  "rounds": [
+    { "tool_calls": [{ "name": "list_records", "args": { "kind": "core-locations:location", "limit": 50 } }] },
+    { "content": "I checked your locations and counted them for you." }
+  ]
+}

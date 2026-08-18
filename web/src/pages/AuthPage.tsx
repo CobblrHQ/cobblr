@@ -55,12 +55,17 @@ export function AuthPage() {
   // resolves — if the server says signup is disabled, we both hide
   // the toggle AND snap any user already on signup back to login.
   const [signupEnabled, setSignupEnabled] = useState(true);
+  // Null until /auth/config says this surface can complete a hand-off. Defaulting to
+  // null (rather than showing the button optimistically) means we never offer a route
+  // that fails after the redirect, on a site that cannot explain what went wrong.
+  const [identityCfg, setIdentityCfg] = useState<{ authorize_url: string; deployment: string; name?: string } | null>(null);
   useEffect(() => {
     api
       .authConfig()
       .then((cfg) => {
         setSignupEnabled(cfg.signup_enabled);
         setCaptchaCfg(cfg.captcha ?? null);
+        setIdentityCfg(cfg.identity ?? null);
         if (!cfg.signup_enabled) setMode("login");
       })
       .catch(() => {
@@ -293,6 +298,26 @@ export function AuthPage() {
             {busy ? "…" : mode === "login" ? "Sign in" : "Create account"}
           </button>
 
+          {/* One account across every Cobblr surface. Shown only when this instance can
+              actually finish the hand-off, so the button never leads somewhere that
+              fails after the redirect. The account service brings you back to
+              /auth/callback with a one-time code. */}
+          {identityCfg && (
+            <>
+              <div className="flex items-center gap-3 py-1">
+                <div className="h-px flex-1 bg-mortar-200 dark:bg-mortar-700" />
+                <span className="text-[11px] uppercase tracking-wide text-muted">or</span>
+                <div className="h-px flex-1 bg-mortar-200 dark:bg-mortar-700" />
+              </div>
+              <a
+                href={`${identityCfg.authorize_url}?deployment=${encodeURIComponent(identityCfg.deployment)}&return_to=${encodeURIComponent(`${window.location.origin}/auth/callback`)}`}
+                className="block w-full text-center rounded-md border border-mortar-300 dark:border-mortar-600 hover:bg-mortar-100 dark:hover:bg-mortar-800 text-sm font-medium px-3 py-2 transition"
+              >
+                Continue with your {identityCfg.name ?? "Cobblr"} account
+              </a>
+            </>
+          )}
+
           {(signupEnabled || mode === "signup") && (
             <button
               type="button"
@@ -484,6 +509,77 @@ function MagicLinkPanel({ email }: { email: string }) {
  *  from the URL, consumes it for a session, and redirects in. Without this route
  *  the emailed link just hits the SPA catch-all → login screen and nothing
  *  consumes the token (the dev flow above only handles the inline dev_token). */
+/** Where account.cobblr.xyz sends you back to.
+ *
+ *  The account service mints a ONE-TIME CODE and redirects here with it; this trades
+ *  that code for a session on this instance. The identity token never travels in the
+ *  URL — the api redeems the code server to server — so nothing replayable is left in
+ *  browser history or a Referer header.
+ *
+ *  The failures are worth distinguishing, because they mean completely different things
+ *  to the person reading them: a spent code is "try again", no workspace here is "you
+ *  signed in fine, there is just nothing for you on this instance", and an unverified
+ *  address is a thing they can go and fix. */
+export function IdentityCallbackPage() {
+  usePageTitle("Signing in");
+  const [error, setError] = useState<string | null>(null);
+  const [detail, setDetail] = useState<string | null>(null);
+
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get("code");
+    if (!code) {
+      setError("This sign-in link is missing its code.");
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await api.identityCallback({ code });
+        if (cancelled) return;
+        setToken(res.token);
+        // Hard redirect so AuthContext re-reads the new session, same as the magic link.
+        window.location.href = "/";
+      } catch (err) {
+        if (cancelled) return;
+        const code = err instanceof ApiError ? err.code : "";
+        if (code === "no_local_account") {
+          setError("You are signed in, but there is no workspace for you here yet.");
+          setDetail("Ask whoever runs this instance for an invite, or try a different one.");
+        } else if (code === "email_unverified") {
+          setError("Confirm your email address on your Cobblr account first.");
+          setDetail("Open the link we sent you, then come back and try again.");
+        } else if (code === "account_disabled") {
+          setError("This account is disabled on this instance.");
+        } else {
+          setError(
+            err instanceof ApiError ? err.message : "That sign-in link has expired or was already used.",
+          );
+          setDetail("Sign-in links work once and expire after a minute.");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <div className="min-h-screen flex items-center justify-center p-6 text-center">
+      {error ? (
+        <div className="space-y-2 max-w-sm">
+          <div className="text-sm text-ember-500">{error}</div>
+          {detail ? <div className="text-xs text-muted">{detail}</div> : null}
+          <a href="/" className="text-xs text-accent underline">
+            Back to sign in
+          </a>
+        </div>
+      ) : (
+        <div className="text-sm text-muted">Signing you in…</div>
+      )}
+    </div>
+  );
+}
+
 export function MagicConsumePage() {
   usePageTitle("Signing in");
   const [error, setError] = useState<string | null>(null);

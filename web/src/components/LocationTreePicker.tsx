@@ -14,7 +14,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, ChevronRight, MapPin, Plus, Search, X } from "lucide-react";
 import { api, type Location } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { QuickCreateLocation } from "./LocationPicker";
+import { QuickCreateLocation } from "./QuickCreateLocation";
 import { OverlayFlag } from "@cobblr/platform-web";
 
 interface Props {
@@ -22,6 +22,9 @@ interface Props {
   onChange: (value: string | null) => void;
   /** Exclude one id (e.g. don't offer yourself as a parent). */
   excludeId?: string;
+  /** Exclude this location AND everything under it. For choosing a PARENT,
+   *  where a node may not become its own ancestor. */
+  excludeSubtreeOf?: string;
   /** Restrict PICKABLE rows to one kind ("area" rooms / "container" bins).
    *  Non-matching rows still show for navigation (you can drill THROUGH a room
    *  to reach its bins), they just can't be selected. */
@@ -40,6 +43,7 @@ export function LocationTreePicker({
   value,
   onChange,
   excludeId,
+  excludeSubtreeOf,
   kind,
   label,
   placeholder = "Select a location…",
@@ -60,7 +64,25 @@ export function LocationTreePicker({
     enabled: !!activeSlug,
   });
 
-  const all = useMemo(() => (list.data?.items ?? []).filter((i) => i.id !== excludeId), [list.data, excludeId]);
+  const all = useMemo(() => {
+    const rows = (list.data?.items ?? []).filter((i) => i.id !== excludeId);
+    if (!excludeSubtreeOf) return rows;
+    // Choosing a PARENT: a location cannot be its own ancestor, so the node and
+    // everything beneath it are out. Computed here, where the hierarchy already
+    // is, rather than by every caller that needs it — the one caller that did
+    // hand-rolled this closure next to a raw <select>.
+    const banned = new Set<string>([excludeSubtreeOf]);
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const r of rows) {
+        if (r.parent_id && banned.has(r.parent_id) && !banned.has(r.id)) {
+          banned.add(r.id);
+          grew = true;
+        }
+      }
+    }
+    return rows.filter((r) => !banned.has(r.id));
+  }, [list.data, excludeId, excludeSubtreeOf]);
   const byId = useMemo(() => new Map(all.map((l) => [l.id, l] as const)), [all]);
   const parentOf = (l: Location): string | null => (l.parent_id && byId.has(l.parent_id) ? l.parent_id : null);
   const childrenOf = (pid: string | null) => all.filter((l) => parentOf(l) === pid).sort(cmp);
@@ -307,6 +329,11 @@ export function LocationTreePicker({
             setCreateOpen(false);
             setOpen(false);
           }}
+          // The same drill-down, one level in. It offers no "+ New location…"
+          // of its own (no onCreate), so this cannot nest forever.
+          parentField={(v, set) => (
+            <LocationTreePicker label="Parent" value={v} onChange={set} placeholder="(top-level)" size="sm" />
+          )}
         />
       )}
     </>

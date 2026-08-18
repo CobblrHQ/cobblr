@@ -20,6 +20,7 @@ import { register as registerOpenAICompat } from "../providers/openai-compat.js"
 import { register as registerOpenRouter } from "../providers/openrouter.js";
 import { register as registerAnthropic } from "../providers/anthropic.js";
 import { register as registerEdgeBridge } from "../providers/edge-bridge.js";
+import { register as registerReplay } from "../providers/replay.js";
 import { edgeStatusRouter } from "./edge-status.js";
 
 let registered = false;
@@ -37,6 +38,9 @@ function registerBuiltins(): void {
   // edge channel (the proprietary relay registers channels into platform().edge).
   // Credential-less; inert until an edge agent connects — usable on self-host too.
   registerEdgeBridge();
+  // A recorded model for tests. Inert unless COBBLR_AI_REPLAY_DIR is set, so
+  // it registers nothing on any real instance.
+  registerReplay();
   // Edge-bridge consumer card for the generic Edge-bridges page: a personal
   // agent (set up in Your connections) routes AI capabilities to a model on
   // the user's own machine — Ollama, LM Studio, a local Claude bridge.

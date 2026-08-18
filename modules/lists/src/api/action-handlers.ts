@@ -9,7 +9,7 @@
 // hard-code the item name.
 
 import { sql, type Kysely } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, requireActionEntity } from "@cobblr/platform-contract";
 import type { ListsDB } from "../db.js";
 
 let registered = false;
@@ -77,5 +77,25 @@ export function registerListActionHandlers(): void {
       .executeTakeFirstOrThrow();
     void platform().events.emit("lists.item.added", { orgId: ctx.orgId, listId: row.list_id, itemId: row.id, viaWire: true });
     return { ok: true, added: true, itemId: row.id, listId };
+  });
+
+  // Clearing the ticked items had no door: add-item was the module's only
+  // action, so the assistant could fill a list and never tidy it.
+  platform().actions.registerHandler("lists.clear-done", async (ctx) => {
+    const entity = requireActionEntity(ctx);
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<ListsDB>;
+    const res = await db
+      .deleteFrom("lists_items")
+      .where("list_id", "=", entity.id)
+      .where("checked", "=", true)
+      .executeTakeFirst();
+    const removed = Number(res.numDeletedRows ?? 0n);
+    return {
+      ok: true,
+      result: {
+        removed,
+        note: removed ? `Cleared ${removed} done item(s).` : "Nothing was ticked off.",
+      },
+    };
   });
 }

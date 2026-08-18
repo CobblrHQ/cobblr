@@ -1,4 +1,5 @@
 // /scan — the inbox review queue, photo-inbox-grade.
+import { createPortal } from "react-dom";
 //
 // Layout (the author's spec):
 //   · ONE narrow header row — title + count + the intake buttons
@@ -51,10 +52,11 @@ import {
   Zap,
   Scissors,
 } from "lucide-react";
-import { Modal, useImageSrc, useToast, usePageTitle, colorSwatch, wantsSwatch } from "@cobblr/platform-web";
+import { Modal, useImageSrc, useOverlayOpenFlag, useToast, usePageTitle, colorSwatch, wantsSwatch } from "@cobblr/platform-web";
 import { ScanImportModal } from "../components/ScanImportModal";
 import { ExportInboxModal } from "../components/ExportInboxModal";
 import { CameraCaptureSheet } from "../components/CameraCaptureSheet";
+import { ContributedDetailPanels } from "../panels/registry";
 import { LocationChipPicker } from "../components/LocationChipPicker";
 import { SessionLocationModal } from "../components/SessionLocationModal";
 import { OrganizePlanSheet, SortingPlanView } from "../components/OrganizePlanSheet";
@@ -4242,6 +4244,15 @@ function InboxCard({
   // gallery-focus modal. Rendering every field of the top table on every
   // expand is what buried a tote under six empty vehicle boxes.
   const [formOpen, setFormOpen] = useState(false);
+  // Collapse ENDS editing, whichever control collapsed the card. The form's
+  // chips replace the header row's read-only chips while it is open, but the
+  // form itself lives in the expanded body — so a card collapsed mid-edit kept
+  // formOpen and showed NO chips at all: the read-only ones hidden, the
+  // editable ones unmounted. The edits were already lost on collapse (the form
+  // unmounts with the body); this makes the state say so.
+  useEffect(() => {
+    if (!expanded) setFormOpen(false);
+  }, [expanded]);
 
   function expandOnly() {
     setExpanded(true);
@@ -4294,6 +4305,68 @@ function InboxCard({
     .filter((c, i) => i === 0 || Object.keys(c.fields ?? {}).length > 0)
     .slice(0, 3);
   const topCand = candidates[0] ?? null;
+  // The destination is now CHOSEN, not just the top match: the split chip
+  // carries a picker, so the other candidates are options in it rather than
+  // chips of their own. Everything downstream reads `dest`, so the gates and
+  // the one-tap commit follow the choice instead of the ranking.
+  const [destKey, setDestKey] = useState<string | null>(null);
+  const [destOpen, setDestOpen] = useState(false);
+  // The picker's dismiss layer covers the whole app, so floating chrome (the
+  // Live pill, the feedback bubble) has to yield to it like any overlay.
+  useOverlayOpenFlag(destOpen);
+  // The menu PORTALS to body, positioned from the pill's rect. Anchored in
+  // place it was clipped by the card's own bounds - it opened below correctly
+  // and simply could not be seen past the second option.
+  const destBtnRef = useRef<HTMLButtonElement | null>(null);
+  const [destRect, setDestRect] = useState<{ top: number; left: number } | null>(null);
+  const openDest = () => {
+    const r = destBtnRef.current?.getBoundingClientRect();
+    if (r) setDestRect({ top: r.bottom + 4, left: r.left });
+    setDestOpen(true);
+  };
+  const closeDest = () => {
+    setDestOpen(false);
+    // Hand focus back to the pill, so Escape doesn't dump keyboard users at
+    // the document root. The native <select> this replaced did all of this
+    // for free — everything here is paying that debt back.
+    destBtnRef.current?.focus();
+  };
+  // The menu's position is measured ONCE at open, so a page that scrolls
+  // underneath would leave it floating detached from the pill. Close instead
+  // of chasing it: a scroll mid-pick means attention moved elsewhere.
+  useEffect(() => {
+    if (!destOpen) return;
+    const onScroll = () => setDestOpen(false);
+    window.addEventListener("scroll", onScroll, { capture: true, passive: true });
+    return () => window.removeEventListener("scroll", onScroll, { capture: true });
+  }, [destOpen]);
+  // EVERY table, not just the matchmaker's guesses. The old "add somewhere
+  // else…" existed because the chips only offered what the AI proposed; with a
+  // picker there is no reason to hide the rest. Candidates keep their extracted
+  // fields and lead the list; the remaining tables follow with none.
+  const destOptions = (() => {
+    const base = withRoutedInstances(menu && menu.length > 0 ? menu : FALLBACK_MENU, candidates);
+    const seen = new Set(candidates.map((c) => entryKey(c.module, c.instance)));
+    const rest = base
+      .filter((m) => !seen.has(entryKey(m.module, m.instance)))
+      // Same shape as a candidate, minus the things only the matchmaker knows
+      // (no extracted fields, no basis, no bundle to install).
+      .map(
+        (m) =>
+          ({
+            ...m,
+            instance: m.instance ?? null,
+            fields: {} as Record<string, string>,
+            // A table you picked yourself carries no matchmaker verdict: no
+            // extracted name, no confidence. Explicit rather than cast away.
+            name: item.suggested_name ?? "",
+            confidence: 0,
+          }) as (typeof candidates)[number],
+      );
+    return [...candidates, ...rest];
+  })();
+  const dest =
+    destOptions.find((c) => entryKey(c.module, c.instance) === destKey) ?? topCand ?? destOptions[0] ?? null;
   // Re-arm the OPEN form when a re-run lands a new answer. `formCtx` (which drives
   // ADD TO + the pre-filled fields) is only set by openForm() on a CLICK, so a
   // re-run updated the header chips and the Source panel while the form below kept
@@ -4388,6 +4461,10 @@ function InboxCard({
   // not clear it (see IDENTIFY_OWNED_KEYS in core-scan metadata.ts).
   const photoWanted =
     (item.suggested_metadata as { photo_wanted?: boolean } | null)?.photo_wanted === true;
+  // core-scan's OWN identifier for the receipt this item came off. Handed to
+  // contributed panels as a hint; what any of them make of it is theirs.
+  const receiptGroupId =
+    (item.suggested_metadata as { receipt_group_id?: string } | null)?.receipt_group_id ?? null;
   const [correcting, setCorrecting] = useState(false);
   // The photo cross-check flagged the barcode→name as wrong AND read the real
   // product off the label. Offer it as a one-tap fix: applying it renames the
@@ -4453,7 +4530,7 @@ function InboxCard({
   // → "Vehicles"). Surface the install right on the CLOSED card — most people
   // won't open the accordion. Owner/admin only (install changes composition).
   const canInstallBundle = activeOrg?.role === "owner" || activeOrg?.role === "admin";
-  const topBundle = canInstallBundle && topCand?.bundle_external_id ? topCand : null;
+  const topBundle = canInstallBundle && dest?.bundle_external_id ? dest : null;
   // Ready to one-tap confirm from the collapsed card. A not-installed-bundle top
   // match is only "ready" when the user can install it (else the green check
   // would try to file into a table that doesn't exist).
@@ -4470,7 +4547,7 @@ function InboxCard({
   // keyword hits — the tier that filed a storage tote into Vehicles. It renders
   // tentative (outline + "?") and gets no one-tap Add; isReadyToFile applies
   // the same bar to File all, so the card and the bulk sweep agree.
-  const tentativeRoute = topCand?.basis === "keywords";
+  const tentativeRoute = dest?.basis === "keywords";
   const cardAiStatus = useAiStatus();
   // The matchmaker fell to the keyword floor although this workspace HAS
   // working AI — the model call failed and the code silently downgraded. Say
@@ -4479,33 +4556,33 @@ function InboxCard({
   const aiDowngraded =
     !!topCand?.heuristic && !!cardAiStatus?.available && item.status === "pending";
   const quickConfirmReady =
-    !!topCand &&
+    !!dest &&
     !!item.suggested_name &&
     !alreadyTracked &&
     !tentativeRoute &&
-    (!topCand.bundle_external_id || !!topBundle);
+    (!dest.bundle_external_id || !!topBundle);
   const quickConfirm = useMutation({
     mutationFn: async () => {
-      if (!topCand || !item.suggested_name) throw new Error("not ready to confirm");
+      if (!dest || !item.suggested_name) throw new Error("not ready to confirm");
       // Install the bundle first (no item_ids = install-only) so its table
       // exists, then file into it — the same install-then-add the form's Confirm
       // runs, but with the scan's values as-is (open the card to edit them).
-      if (topCand.bundle_external_id) {
-        await api.materializeQuickstart(activeSlug, topCand.bundle_external_id, { item_ids: [] });
+      if (dest.bundle_external_id) {
+        await api.materializeQuickstart(activeSlug, dest.bundle_external_id, { item_ids: [] });
       }
       const meta = (item.suggested_metadata as Record<string, unknown> | null) ?? {};
       const serial = String((meta as { serial_number?: unknown }).serial_number ?? "");
       const extras = {
         ...(item.suggested_manufacturer ? { manufacturer: item.suggested_manufacturer } : {}),
         ...(serial ? { serial_number: serial } : {}),
-        ...(topCand.fields && Object.keys(topCand.fields).length ? { metadata: topCand.fields } : {}),
+        ...(dest.fields && Object.keys(dest.fields).length ? { metadata: dest.fields } : {}),
       };
       return api.confirmScanItem(activeSlug, item.id, {
-        target_module: topCand.module,
-        target_kind: baseKind(topCand.module),
-        instance: topCand.instance ?? undefined,
+        target_module: dest.module,
+        target_kind: baseKind(dest.module),
+        instance: dest.instance ?? undefined,
         name: item.suggested_name,
-        quantity: item.quantity ?? topCand.quantity ?? undefined,
+        quantity: item.quantity ?? dest.quantity ?? undefined,
         location_id: item.target_location_id ?? undefined,
         extras: Object.keys(extras).length ? extras : undefined,
       });
@@ -4693,16 +4770,45 @@ function InboxCard({
   // fetched by the PhotoOptions strip below and reported up via onItems.
   const [zoomIdx, setZoomIdx] = useState<number | null>(null);
   const [photoCandidates, setPhotoCandidates] = useState<ImageOption[]>([]);
-  const zoomItems: LightboxItem[] = [
+  // The search that produced those candidates, owned HERE so the same one can
+  // be driven from the inline picker or from inside the full-screen viewer.
+  // Refining while the viewer is open is the whole point: that is where you are
+  // actually comparing, so leaving it to retype a term was the detour.
+  const [photoTerm, setPhotoTerm] = useState("");
+  const [photoSearched, setPhotoSearched] = useState("");
+  const [zoomTerm, setZoomTerm] = useState("");
+  const zoomTermTouched = useRef(false);
+  // Keep the viewer's box showing what was actually searched until the user
+  // edits it, then leave their text alone.
+  useEffect(() => {
+    if (!zoomTermTouched.current) setZoomTerm(photoTerm || photoSearched);
+  }, [photoTerm, photoSearched]);
+  // YOUR photo leads, then the rest of what is already yours, then a divider,
+  // then the web results.
+  //
+  // The strip is a comparison surface: you are deciding which of fourteen
+  // candidates is a picture of the thing in front of you. The photo you took is
+  // the REFERENCE you compare against, so it belongs at the fixed left edge
+  // where the eye returns, not somewhere in the queue as tile three of fourteen
+  // (reported 2026-08-17). Mixed in, the one image you can identify at a glance
+  // becomes another one to hunt for.
+  const ownItems: LightboxItem[] = [
+    ...(yoursImg && yoursImg !== catalogImg ? [{ key: "yours", caption: "Your photo", url: yoursImg }] : []),
     ...(catalogImg ? [{ key: "catalog", caption: "Catalog image", url: catalogImg }] : []),
     ...(cropImg && cropImg !== catalogImg ? [{ key: "crop", caption: "From your screenshot", url: cropImg }] : []),
-    ...(yoursImg && yoursImg !== catalogImg ? [{ key: "yours", caption: "Your photo", url: yoursImg }] : []),
-    ...photoCandidates.map((o) => ({
+  ];
+  const zoomItems: LightboxItem[] = [
+    ...ownItems,
+    ...photoCandidates.map((o, i) => ({
       key: o.url,
       caption: `${o.title} · ${o.source}`,
       href: o.source,
       url: o.url,
       thumbUrl: o.thumb,
+      // The seam between what is yours and what the web offered. Only on the
+      // first one, and only when there is something to its left to separate it
+      // from.
+      ...(i === 0 && ownItems.length > 0 ? { dividerBefore: true } : {}),
     })),
   ];
   const openZoom = (key: "catalog" | "yours") => {
@@ -4874,6 +4980,11 @@ function InboxCard({
   });
   // Barcode editor: digits (spaces/dashes ok while typing) → Save re-runs the
   // lookup on the corrected code via rerun-ai {barcode}.
+  // The confirm form's buttons render HERE, in the same stack the closed
+  // state's commit pair uses, so the action anchor does not move when the
+  // form opens.
+  const [actionSlot, setActionSlot] = useState<HTMLDivElement | null>(null);
+  const [fieldSlot, setFieldSlot] = useState<HTMLElement | null>(null);
   const [editingBarcode, setEditingBarcode] = useState(false);
   const [barcodeDraft, setBarcodeDraft] = useState("");
   const barcodeDigits = barcodeDraft.replace(/[\s-]/g, "");
@@ -5227,6 +5338,24 @@ function InboxCard({
               </div>
             </div>
           )}
+          {/* Whatever OTHER modules declared into a scan item, rendered
+              without this page learning who they are or what they say. The
+              receipt-lines banner arrives through here; core-scan names no
+              contributor and hands over only its own receipt group id as a
+              hint, which is the contributor's to interpret. Same seam that
+              puts price history on a part page without inventory naming
+              purchases — see docs/architecture/module-coupling-census.md. */}
+          {receiptGroupId && (
+            <ContributedDetailPanels
+              target="core-scan:item"
+              ctx={{
+                slug: activeSlug,
+                entityId: item.id,
+                entityTitle: item.suggested_name ?? "this item",
+                hints: { receipt_group_id: receiptGroupId },
+              }}
+            />
+          )}
           {cantIdentify && <NameItInline slug={activeSlug} itemId={item.id} />}
           {/* One-tap correction: a barcode whose name looks wrong (always
               available, nudged for low-trust short codes). Renaming reports the
@@ -5311,38 +5440,39 @@ function InboxCard({
                   <span className="opacity-60 shrink-0">series</span>
                 </span>
               )}
-              {candidates.map((c, i) =>
-                i === 0 ? (
-                  // The PRIMARY route is a SPLIT chip (the location picker's
-                  // grammar): the body opens the review form; the emerald
-                  // "✓ Add" segment commits as-is into this table. The commit
-                  // used to be an unlabeled green checkmark in the card's icon
-                  // rail — unreadable, and hover-only context doesn't exist on
-                  // a phone (the author). Attached to its destination, labeled.
-                  <span
-                    key={`${c.module}:${c.instance ?? ""}:${i}`}
-                    className={
-                      // A keyword-basis guess must not wear a confident chip's
-                      // face: outline + "?" instead of the solid fill, and the
-                      // one-tap Add segment below is withheld for it.
-                      tentativeRoute
-                        ? "inline-flex max-w-full items-stretch rounded-full overflow-hidden border border-dashed border-cobble-500 text-content dark:text-mortar-100 text-xs font-medium"
-                        : "inline-flex max-w-full items-stretch rounded-full overflow-hidden border border-cobble-600 bg-cobble-600 text-white text-xs font-medium"
-                    }
-                  >
+              {/* ONE destination control. The route used to be a split chip
+                  whose left half opened the form, with the OTHER candidates as
+                  separate chips beside it - so the same commit was offered
+                  three ways and the alternatives looked like different actions
+                  rather than different answers to one question. Now: pick the
+                  table, press Add. */}
+              {dest && (
+                <span className="relative inline-flex max-w-full">
+                <span
+                  className={
+                    tentativeRoute
+                      ? "inline-flex max-w-full items-stretch rounded-full overflow-hidden border border-dashed border-cobble-500 text-content dark:text-mortar-100 text-xs font-medium"
+                      : "inline-flex max-w-full items-stretch rounded-full overflow-hidden border border-cobble-600 bg-cobble-600 text-white text-xs font-medium"
+                  }
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {/* A native <select> paints the OS popup ON TOP of the pill,
+                      covering the thing you are choosing. This is our own menu,
+                      anchored under it. */}
+                  <span className="relative inline-flex min-w-0 items-center">
                     <button
                       type="button"
+                      ref={destBtnRef}
                       onClick={(e) => {
                         e.stopPropagation();
-                        openForm(c);
+                        destOpen ? closeDest() : openDest();
                       }}
-                      title={
-                        tentativeRoute
-                          ? `A keyword guess (no AI) — open to review before filing into ${c.label}`
-                          : Object.keys(c.fields).length
-                            ? `Review & edit — fills: ${Object.entries(c.fields).map(([k, v]) => `${k}=${v}`).join(", ")}`
-                            : `Review & add to ${c.label}`
-                      }
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape" && destOpen) closeDest();
+                      }}
+                      title="Which table this gets filed into"
+                      aria-haspopup="listbox"
+                      aria-expanded={destOpen}
                       className={
                         "inline-flex min-w-0 items-center gap-1 pl-2.5 pr-2 py-1 transition " +
                         (tentativeRoute ? "hover:bg-cobble-600/10" : "hover:bg-cobble-700")
@@ -5350,51 +5480,114 @@ function InboxCard({
                     >
                       <Sparkles size={11} className="shrink-0" />
                       <span className="truncate">
-                        {c.label}
+                        {dest.label}
                         {tentativeRoute ? "?" : ""}
                       </span>
+                      {destOptions.length > 1 && <ChevronDown size={11} className="shrink-0 opacity-80" />}
                     </button>
-                    {quickConfirmReady && !topBundle && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          quickConfirm.mutate();
-                        }}
-                        disabled={quickConfirm.isPending}
-                        title={`Add to ${c.label} as shown — no need to open it`}
-                        className="inline-flex shrink-0 items-center gap-1 border-l border-white/25 bg-emerald-600 hover:bg-emerald-500 pl-2 pr-2.5 py-1 transition disabled:opacity-60"
-                      >
-                        <CheckCircle size={11} className={`shrink-0 ${quickConfirm.isPending ? "animate-pulse" : ""}`} />
-                        {quickConfirm.isPending ? "Adding…" : "Add"}
-                      </button>
-                    )}
-                    {/* A match doesn't get an action segment here: "Same one?"
-                        next to a TABLE name can't say same as WHAT (reported
-                        2026-07-16). It gets its own line above, which can name
-                        the record. The chip stays a plain route, and the
-                        duplicate-making one-tap Add simply isn't offered. */}
                   </span>
-                ) : (
-                  <button
-                    key={`${c.module}:${c.instance ?? ""}:${i}`}
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openForm(c);
-                    }}
-                    title={
-                      Object.keys(c.fields).length
-                        ? `Fills: ${Object.entries(c.fields).map(([k, v]) => `${k}=${v}`).join(", ")}`
-                        : `Add to ${c.label}`
-                    }
-                    className="max-w-full items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition border hidden sm:inline-flex bg-subtle dark:bg-slate-800 hover:bg-line dark:hover:bg-slate-700 text-content dark:text-mortar-200 border-line dark:border-slate-700"
-                  >
-                    <Sparkles size={11} className="shrink-0" />
-                    <span className="truncate">{c.label}</span>
-                  </button>
-                ),
+                  {quickConfirmReady && !topBundle ? (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        quickConfirm.mutate();
+                      }}
+                      disabled={quickConfirm.isPending}
+                      title={`Add to ${dest.label} as shown`}
+                      className="inline-flex shrink-0 items-center gap-1 border-l border-white/25 bg-emerald-600 hover:bg-emerald-500 pl-2 pr-2.5 py-1 transition disabled:opacity-60"
+                    >
+                      <CheckCircle size={11} className={`shrink-0 ${quickConfirm.isPending ? "animate-pulse" : ""}`} />
+                      {quickConfirm.isPending ? "Adding…" : "Add"}
+                    </button>
+                  ) : (
+                    // Withheld on purpose: a keyword-only guess, or a table that
+                    // has to be INSTALLED first. Both deserve the explaining
+                    // step, so they open the form instead of committing.
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openForm(dest);
+                      }}
+                      title={
+                        tentativeRoute
+                          ? `A keyword guess (no AI) - open to review before filing into ${dest.label}`
+                          : `Review before adding to ${dest.label}`
+                      }
+                      className={
+                        "inline-flex shrink-0 items-center gap-1 border-l pl-2 pr-2.5 py-1 transition " +
+                        (tentativeRoute
+                          ? "border-cobble-500/50 hover:bg-cobble-600/10"
+                          : "border-white/25 hover:bg-cobble-700")
+                      }
+                    >
+                      Review
+                    </button>
+                  )}
+                </span>
+                    {destOpen && destRect && createPortal(
+                      <>
+                        {/* click anywhere else to dismiss */}
+                        <div className="fixed inset-0 z-[60]" onClick={(e) => { e.stopPropagation(); closeDest(); }} />
+                        <div
+                          role="listbox"
+                          style={{ top: destRect.top, left: destRect.left }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Escape") {
+                              e.stopPropagation();
+                              closeDest();
+                              return;
+                            }
+                            if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+                            e.preventDefault();
+                            const opts = [...e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="option"]')];
+                            const at = opts.indexOf(document.activeElement as HTMLButtonElement);
+                            const next = e.key === "ArrowDown" ? Math.min(at + 1, opts.length - 1) : Math.max(at - 1, 0);
+                            opts[next]?.focus();
+                          }}
+                          className="fixed z-[61] min-w-[13rem] max-w-[18rem] rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg py-1 flex flex-col"
+                        >
+                          {destOptions.map((c) => {
+                            const k = entryKey(c.module, c.instance);
+                            const on = k === entryKey(dest.module, dest.instance);
+                            return (
+                              <button
+                                key={k}
+                                type="button"
+                                role="option"
+                                aria-selected={on}
+                                autoFocus={on}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDestKey(k);
+                                  closeDest();
+                                }}
+                                className={
+                                  "flex items-center gap-2 px-2.5 py-1.5 text-left text-xs transition " +
+                                  (on
+                                    ? "text-accent font-medium bg-subtle/60 dark:bg-slate-800/60"
+                                    : "text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800")
+                                }
+                              >
+                                <CheckCircle size={11} className={on ? "shrink-0" : "shrink-0 opacity-0"} />
+                                <span className="min-w-0 truncate">
+                                  {c.label}
+                                  {c.bundle_external_id ? " · installs on add" : ""}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </>,
+                      document.body,
+                    )}
+                </span>
               )}
+              {/* The editable chips land here while the form is open, in the
+                  SAME row as the destination pill - so the fields sit with the
+                  thing they are fields of. */}
+              {formOpen && <span ref={setFieldSlot} className="contents" />}
               {candidates.length > 1 && (
                 <button
                   type="button"
@@ -5452,7 +5645,7 @@ function InboxCard({
                           The chip stays a chip and gains the obvious gesture:
                           tap the value to open the form on this route with the
                           fields pre-filled. */}
-                      {shown.map(([k, v]) => (
+                      {!formOpen && shown.map(([k, v]) => (
                         <button
                           key={k}
                           type="button"
@@ -5479,17 +5672,19 @@ function InboxCard({
                           overflow — "+1" on a table with six hidden fields.
                           The count is gone. This says what it opens, which is a
                           form that now lists every field by name. */}
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openForm(topCand);
-                        }}
-                        className="text-[11px] text-faint shrink-0 px-1 underline decoration-dotted underline-offset-2 hover:text-accent transition"
-                        title={more > 0 ? moreTitle : "Open every field for this item"}
-                      >
-                        All fields
-                      </button>
+                      {!formOpen && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openForm(topCand);
+                          }}
+                          className="text-[11px] text-faint shrink-0 px-1 underline decoration-dotted underline-offset-2 hover:text-accent transition"
+                          title={more > 0 ? moreTitle : "Open every field for this item"}
+                        >
+                          All fields
+                        </button>
+                      )}
                     </>
                   );
                 })()}
@@ -5798,8 +5993,8 @@ function InboxCard({
           {item.status === "pending" && (
             <TrackedMatchBanner item={item} locationId={item.target_location_id} />
           )}
-          <div className="grid lg:grid-cols-2 gap-3 items-start">
-          <div className="space-y-2 min-w-0">
+          <div className="grid lg:grid-cols-2 gap-3 items-stretch">
+          <div className="space-y-2 min-w-0 flex flex-col">
           {/* Catalog vs YOUR photo, side by side (whichever exist). The catalog
               caption says when it is still being checked — it used to read a
               confident "✦ catalog" during the exact window the thumbnail above
@@ -5912,44 +6107,46 @@ function InboxCard({
               directly under the big images: a strip holding nothing but its own
               add-tile spent a whole row saying nothing (reported 2026-08-11).
               Adding a photo lives in the ⋯ menu when the strip is absent. */}
-          {extraPhotos.length > 0 && (
-          <div className="flex flex-wrap gap-1.5" onClick={(e) => e.stopPropagation()}>
-            {extraPhotos.map((pid) => (
-              <ExtraPhotoThumb
-                key={pid}
-                slug={activeSlug}
-                fileId={pid}
-                onMakePrimary={() => setPrimaryPhoto.mutate(pid)}
-                onRemove={() => removeExtraPhoto.mutate(pid)}
-                // "I added this pic to give you more info - get it right."
-                // Re-identifies from THIS photo; without it an added photo was
-                // inert for identification (reported 2026-08-03).
-                onReidentify={
-                  item.status === "pending" ? () => rerun.mutate({ imageFileId: pid }) : undefined
-                }
-                busy={setPrimaryPhoto.isPending || removeExtraPhoto.isPending || rerun.isPending}
-              />
-            ))}
-            <button
-              type="button"
-              disabled={addPhoto.isPending}
-              onClick={() => setCaptureSheet("add")}
-              title="Add another photo to this item"
-              className="w-14 h-14 rounded-md border border-dashed border-line dark:border-slate-700 flex flex-col items-center justify-center gap-0.5 text-faint hover:text-accent hover:border-accent transition disabled:opacity-50"
-            >
-              {addPhoto.isPending ? (
-                <Loader2 size={14} className="animate-spin" />
-              ) : (
-                <>
-                  <Camera size={14} />
-                  <span className="text-[9px] leading-none">add</span>
-                </>
-              )}
-            </button>
-          </div>
-          )}
           {zoomIdx !== null && zoomItems[zoomIdx] && (
             <ImageLightbox
+              searchSlot={
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    setPhotoTerm(zoomTerm.trim());
+                  }}
+                  className="flex items-center gap-1.5"
+                >
+                  <input
+                    value={zoomTerm}
+                    onChange={(e) => {
+                      zoomTermTouched.current = true;
+                      setZoomTerm(e.target.value);
+                    }}
+                    placeholder="search images…"
+                    className="flex-1 min-w-0 rounded border border-white/20 bg-white/10 px-2 py-1 text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-white/40"
+                  />
+                  <button
+                    type="submit"
+                    className="shrink-0 rounded border border-white/20 px-2 py-1 text-[11px] font-medium text-white/80 hover:text-white hover:border-white/40"
+                  >
+                    Search
+                  </button>
+                  {(photoTerm || zoomTermTouched.current) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        zoomTermTouched.current = false;
+                        setPhotoTerm("");
+                      }}
+                      className="shrink-0 rounded px-2 py-1 text-[11px] text-white/50 hover:text-white/80"
+                      title="Back to the automatic search"
+                    >
+                      Reset
+                    </button>
+                  )}
+                </form>
+              }
               items={zoomItems}
               index={zoomIdx}
               onIndex={setZoomIdx}
@@ -5976,9 +6173,8 @@ function InboxCard({
               }}
             />
           )}
-          <PhotoOptions item={item} onView={openZoomUrl} onItems={setPhotoCandidates} />
           </div>
-          <div className="space-y-3 min-w-0">
+          <div className="min-w-0 flex flex-col gap-2">
 
           {/* The AI's read — collapsed to its one-line header by default
               tap to reveal the reconciliation paragraph + per-field
@@ -6032,12 +6228,21 @@ function InboxCard({
                 )?.pre_rerun;
                 if (!snap || item.status !== "pending") return null;
                 return (
-                  <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-amber-300/60 dark:border-amber-700/40 bg-amber-50/60 dark:bg-amber-950/20 px-2.5 py-1.5">
-                    <span className="min-w-0 text-[11px] text-muted dark:text-slate-400">
+                  // ONE LINE, no panel. A bordered, tinted box with its own
+                  // padding spent roughly 70px on a sentence and a button, and
+                  // the sentence wrapped so the button fell below it. The amber
+                  // stays on the control, which is the part that acts.
+                  <div className="mt-1.5 flex items-center gap-2 min-w-0">
+                    <span className="min-w-0 truncate text-[11px] text-muted dark:text-slate-400">
                       {snap.name ? (
                         <>
-                          Before this {snap.kind === "replay" ? "replay" : "re-run"} it was{" "}
-                          <span className="font-medium text-content dark:text-mortar-100 break-words">{snap.name}</span>
+                          {/* The NAME is the thing you are deciding about, so the
+                              label gets out of its way. Which mechanism replaced
+                              it (replay vs re-run) is in the history below and
+                              does not need saying twice, and "revert" is not
+                              repeated because the button beside it says so. */}
+                          Previously:{" "}
+                          <span className="font-medium text-content dark:text-mortar-100">{snap.name}</span>
                         </>
                       ) : (
                         <>This {snap.kind === "replay" ? "replay" : "re-run"} replaced the previous answer</>
@@ -6047,10 +6252,10 @@ function InboxCard({
                       type="button"
                       onClick={() => undoRerun.mutate()}
                       disabled={undoRerun.isPending}
-                      className="shrink-0 inline-flex items-center gap-1 rounded-full border border-amber-400 dark:border-amber-700 text-amber-800 dark:text-amber-300 hover:bg-amber-100/70 dark:hover:bg-amber-900/30 px-2.5 py-1 text-[11px] font-medium transition disabled:opacity-50"
+                      className="shrink-0 inline-flex items-center gap-1 rounded-full border border-amber-400 dark:border-amber-700 text-amber-800 dark:text-amber-300 hover:bg-amber-100/70 dark:hover:bg-amber-900/30 px-2 py-0.5 text-[11px] font-medium transition disabled:opacity-50"
                     >
                       <RotateCcw size={11} className={undoRerun.isPending ? "animate-spin" : ""} />
-                      {undoRerun.isPending ? "Putting it back…" : "Put it back"}
+                      {undoRerun.isPending ? "Reverting…" : "Revert"}
                     </button>
                   </div>
                 );
@@ -6084,7 +6289,11 @@ function InboxCard({
                 return (
                   <div className="mt-2 border-t border-line dark:border-slate-700/60 pt-1.5">
                     <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">history</div>
-                    <ul className="space-y-0.5">
+                    {/* The LIST scrolls, the card does not grow. Nothing is
+                        dropped: an unbounded history is what makes this rail
+                        tall, and the rail's height is the card's height.
+                        Newest first, so the useful end needs no scrolling. */}
+                    <ul className="space-y-0.5 max-h-20 overflow-y-auto pr-1">
                       {[...hist].reverse().map((h, i) => {
                         // The verdict rides on the ENTRY, so it stays with the
                         // run it describes instead of hopping to whatever is
@@ -6184,6 +6393,108 @@ function InboxCard({
             </div>
           )}
 
+          {/* Research hint — re-run, confirm it's GOOD (lock into the barcode
+              DB), flag WRONG (re-derive), or ask for more DETAIL (keep product,
+              fill it in). */}
+          <HintBox
+            onSubmit={(h, opts) => rerun.mutate({ hint: h || undefined, ...opts })}
+            busy={aiWorking}
+            busyKind={aiWorking ? (replayNoAi ? "replay" : "ai") : null}
+            hasBarcode={!!item.barcode_text}
+            onConfirm={() => confirmBarcode.mutate()}
+            confirming={confirmBarcode.isPending}
+            // Only when the status has LOADED and says no. A null status means
+            // "not answered yet", and greying a working button during that
+            // window is worse than the button being live for a moment.
+            aiOff={cardAiStatus ? !cardAiStatus.available : false}
+            rowLeading={
+              <>
+              {editingBarcode ? (
+                <span className="inline-flex items-center gap-1 font-mono" onClick={(e) => e.stopPropagation()}>
+                  ▌▌
+                  <input
+                    autoFocus
+                    inputMode="numeric"
+                    value={barcodeDraft}
+                    onChange={(e) => setBarcodeDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") saveBarcode();
+                      else if (e.key === "Escape") setEditingBarcode(false);
+                    }}
+                    placeholder="digits from the label"
+                    className="w-36 rounded border border-accent bg-surface dark:bg-slate-900 px-1.5 py-0.5 font-mono text-content outline-none"
+                  />
+                  <button
+                    type="button"
+                    disabled={rerun.isPending || !barcodeDraftValid}
+                    onClick={saveBarcode}
+                    className="rounded bg-cobble-600 hover:bg-cobble-700 px-2 py-0.5 text-[11px] font-medium text-white transition disabled:opacity-50"
+                  >
+                    {rerun.isPending ? "Looking up…" : "Save & re-run"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingBarcode(false)}
+                    className="text-faint hover:text-content"
+                    aria-label="Cancel barcode edit"
+                  >
+                    <X size={12} />
+                  </button>
+                </span>
+              ) : item.barcode_text ? (
+                <span className="inline-flex items-center gap-1 font-mono text-content dark:text-mortar-200 bg-subtle dark:bg-slate-800 rounded px-2 py-0.5">
+                  ▌▌{item.barcode_text}
+                  {item.status === "pending" && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setBarcodeDraft(item.barcode_text ?? "");
+                        setEditingBarcode(true);
+                      }}
+                      title="Fix the barcode - saving re-runs the lookup on the corrected code"
+                      aria-label="Edit the barcode"
+                      className="text-faint hover:text-accent transition"
+                    >
+                      <Pencil size={11} />
+                    </button>
+                  )}
+                </span>
+              ) : item.status === "pending" ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setBarcodeDraft("");
+                    setEditingBarcode(true);
+                  }}
+                  title="Type the barcode off the label - it identifies the product exactly"
+                  className="inline-flex items-center gap-1 font-mono text-muted dark:text-slate-400 border border-dashed border-line dark:border-slate-700 rounded px-2 py-0.5 hover:border-accent hover:text-content transition"
+                >
+                  ▌▌ Add barcode
+                </button>
+              ) : null}
+              </>
+            }
+            rowTrailing={
+              <>
+              {flaggedForReview && (
+                <button
+                  type="button"
+                  disabled={markReviewed.isPending}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    markReviewed.mutate();
+                  }}
+                  title="A human looked - this one's fine; stop flagging it"
+                  className="inline-flex items-center gap-1 rounded border border-emerald-400/60 px-2 py-0.5 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition disabled:opacity-50"
+                >
+                  ✓ Looks fine
+                </button>
+              )}
+              </>
+            }
+          />
           {/* Identity row: barcode + area + sanity-check links. */}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
             {/* The barcode is EDITABLE while pending. The camera/vision can read
@@ -6192,71 +6503,6 @@ function InboxCard({
                 field it couldn't reach, so every re-run faithfully re-resolved
                 the misread code (reported 2026-08-03). Saving re-runs the lookup on
                 the corrected code. */}
-            {editingBarcode ? (
-              <span className="inline-flex items-center gap-1 font-mono" onClick={(e) => e.stopPropagation()}>
-                ▌▌
-                <input
-                  autoFocus
-                  inputMode="numeric"
-                  value={barcodeDraft}
-                  onChange={(e) => setBarcodeDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") saveBarcode();
-                    else if (e.key === "Escape") setEditingBarcode(false);
-                  }}
-                  placeholder="digits from the label"
-                  className="w-36 rounded border border-accent bg-surface dark:bg-slate-900 px-1.5 py-0.5 font-mono text-content outline-none"
-                />
-                <button
-                  type="button"
-                  disabled={rerun.isPending || !barcodeDraftValid}
-                  onClick={saveBarcode}
-                  className="rounded bg-cobble-600 hover:bg-cobble-700 px-2 py-0.5 text-[11px] font-medium text-white transition disabled:opacity-50"
-                >
-                  {rerun.isPending ? "Looking up…" : "Save & re-run"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEditingBarcode(false)}
-                  className="text-faint hover:text-content"
-                  aria-label="Cancel barcode edit"
-                >
-                  <X size={12} />
-                </button>
-              </span>
-            ) : item.barcode_text ? (
-              <span className="inline-flex items-center gap-1 font-mono text-content dark:text-mortar-200 bg-subtle dark:bg-slate-800 rounded px-2 py-0.5">
-                ▌▌{item.barcode_text}
-                {item.status === "pending" && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setBarcodeDraft(item.barcode_text ?? "");
-                      setEditingBarcode(true);
-                    }}
-                    title="Fix the barcode - saving re-runs the lookup on the corrected code"
-                    aria-label="Edit the barcode"
-                    className="text-faint hover:text-accent transition"
-                  >
-                    <Pencil size={11} />
-                  </button>
-                )}
-              </span>
-            ) : item.status === "pending" ? (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setBarcodeDraft("");
-                  setEditingBarcode(true);
-                }}
-                title="Type the barcode off the label - it identifies the product exactly"
-                className="inline-flex items-center gap-1 font-mono text-muted dark:text-slate-400 border border-dashed border-line dark:border-slate-700 rounded px-2 py-0.5 hover:border-accent hover:text-content transition"
-              >
-                ▌▌ Add barcode
-              </button>
-            ) : null}
             {item.scan_area && (
               <span className="inline-flex items-center gap-1 text-muted dark:text-slate-400">
                 <MapPin size={11} className="text-accent" /> {item.scan_area}
@@ -6279,71 +6525,107 @@ function InboxCard({
             )}
           </div>
 
-          {/* Research hint — re-run, confirm it's GOOD (lock into the barcode
-              DB), flag WRONG (re-derive), or ask for more DETAIL (keep product,
-              fill it in). */}
-          <HintBox
-            onSubmit={(h, opts) => rerun.mutate({ hint: h || undefined, ...opts })}
-            busy={aiWorking}
-            busyKind={aiWorking ? (replayNoAi ? "replay" : "ai") : null}
-            hasBarcode={!!item.barcode_text}
-            onConfirm={() => confirmBarcode.mutate()}
-            confirming={confirmBarcode.isPending}
-          />
-          {/* The commit summon sits at the BOTTOM of the intel column, not on a
-              full-width row under the grid: the photo column always runs taller,
-              so that row was buying nothing but height (reported 2026-08-08).
-              Below `lg` the grid is one column, so this still lands last. */}
-          {!planContext && !formOpen && (
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              {flaggedForReview && (
-                <button
-                  type="button"
-                  disabled={markReviewed.isPending}
-                  onClick={() => markReviewed.mutate()}
-                  title="A human looked - this one's fine; stop flagging it"
-                  className="mr-auto text-[11px] rounded border border-emerald-400/60 px-2 py-1 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition disabled:opacity-50"
-                >
-                  ✓ Looks fine
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => openForm(topCand ?? undefined)}
-                className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-xs font-semibold transition"
-              >
-                {topCand && !isUnidentified(item.suggested_name)
-                  ? `Add to ${topCand.label}…`
-                  : "Add to a table…"}
-              </button>
-              {topCand && !isUnidentified(item.suggested_name) && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setFormCtx({ selKey: null, prefill: {} });
-                    setFormOpen(true);
-                  }}
-                  className="text-[11px] text-muted hover:text-accent underline underline-offset-2"
-                >
-                  add somewhere else…
-                </button>
-              )}
-              {/* Close from where you FINISHED reading. The only collapse used to
-                  be the chevron in the top rail, so getting out of a long card
-                  meant scrolling back up past everything you had just read. */}
-              <button
-                type="button"
-                onClick={() => setExpanded(false)}
-                aria-label="Collapse this item"
-                title="Collapse"
-                className="shrink-0 rounded-md border border-line dark:border-slate-700 p-1.5 text-faint hover:text-accent hover:border-accent transition"
-              >
-                <ChevronDown size={14} className="rotate-180" />
-              </button>
+          </div>
+          </div>
+
+          {/* The strip and the commit controls are a FULL-WIDTH row under
+              both columns. The strip used to sit in the photo column and
+              reach right with a negative margin, which was only safe while
+              that column happened to be taller than the rail: on an item
+              with history and a long note the tiles ran straight under the
+              research-hint box. No CSS can know which column is taller, so
+              the strip stops borrowing the rail's space. */}
+          <div className="flex items-end gap-3 !mt-1.5">
+            <div className="flex-1 min-w-0">
+            {/* ONE strip: the item's own photos, a divider, then the web
+                candidates - all the same tile, all in ONE flex row and ONE
+                scroll container, because two adjacent rows with their own
+                wrappers and their own tile sizes read as two widgets no matter
+                how close together they sit. Its own full-width row under both
+                columns, beside the commit stack. */}
+            <div className="min-w-0" onClick={(e) => e.stopPropagation()}>
+              <PhotoOptions
+                item={item}
+                onView={openZoomUrl}
+                onItems={setPhotoCandidates}
+                term={photoTerm}
+                onTerm={setPhotoTerm}
+                onSearched={setPhotoSearched}
+                compact
+                // No add button here. It widened the strip's first column for a
+                // job the card's camera menu ("Add a photo") already does, and
+                // that width is exactly what the tiles want.
+                leadingLabel={
+                  <span className="text-xs font-medium text-content shrink-0">Your photos</span>
+                }
+                leading={
+                  <>
+                    {extraPhotos.map((pid) => (
+                      <ExtraPhotoThumb
+                        key={pid}
+                        slug={activeSlug}
+                        fileId={pid}
+                        onMakePrimary={() => setPrimaryPhoto.mutate(pid)}
+                        onRemove={() => removeExtraPhoto.mutate(pid)}
+                        onReidentify={
+                          item.status === "pending" ? () => rerun.mutate({ imageFileId: pid }) : undefined
+                        }
+                        busy={setPrimaryPhoto.isPending || removeExtraPhoto.isPending || rerun.isPending}
+                      />
+                    ))}
+                    {/* just a vertical line */}
+                    <div className="w-px self-stretch shrink-0 bg-line dark:bg-slate-700 mx-1.5" />
+                  </>
+                }
+              />
             </div>
-          )}
+            </div>
+            <div className="mt-auto flex flex-col gap-2">
+              {/* The commit summon sits at the BOTTOM of the intel column, not on a
+                  full-width row under the grid: the photo column always runs taller,
+                  so that row was buying nothing but height (reported 2026-08-08).
+                  Below `lg` the grid is one column, so this still lands last. */}
+              {!planContext && !formOpen && (
+                <div className="flex justify-end">
+                  <div className="flex flex-col items-end gap-1">
+                  {/* This is the ONE door into the fields: it opens the form on
+                      the table CHOSEN in the header pill (not the matchmaker's
+                      top guess - picking Assets up there and getting an
+                      Inventory form down here was a real bug). "add somewhere
+                      else…" is gone: the pill's picker lists every table, which
+                      is the whole of what that link used to do. */}
+                  <button
+                    type="button"
+                    onClick={() => openForm(dest ?? undefined)}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-xs font-semibold transition"
+                  >
+                    {dest && !isUnidentified(item.suggested_name)
+                      ? `Add to ${dest.label}…`
+                      : "Add to a table…"}
+                  </button>
+                  </div>
+                </div>
+              )}
+                {formOpen && <div ref={setActionSlot} className="flex justify-end" />}
+                {!formOpen && (
+                  <div className="flex justify-end">
+                  {/* Close from where you FINISHED reading. The only collapse used to
+                      be the chevron in the top rail, so getting out of a long card
+                      meant scrolling back up past everything you had just read. */}
+                  <button
+                    type="button"
+                    onClick={() => setExpanded(false)}
+                    aria-label="Collapse this item"
+                    title="Collapse"
+                    className="shrink-0 rounded-md border border-line dark:border-slate-700 p-1.5 text-faint hover:text-accent hover:border-accent transition"
+                    >
+                    <ChevronDown size={14} className="rotate-180" />
+                  </button>
+                </div>
+                )}
+            </div>
           </div>
-          </div>
+
 
           {/* The inline confirm form — full width below (the right-rail
               attempt collided labels at every width; reverted per the author).
@@ -6363,10 +6645,16 @@ function InboxCard({
               setFormOpen(false);
               setExpanded(false);
             }}
-            onCancel={() => {
-              setFormOpen(false);
-              setExpanded(false);
-            }}
+            // Cancel undoes the EDIT, not your place. It used to be identical to
+            // onDone - close the form AND collapse the card - so cancelling an edit
+            // slammed the accordion shut and landed you on the closed row's
+            // "Add to Inventory…", which read as the card doing something weird
+            // rather than as your edit being discarded. Now: the chips go back to
+            // read-only, and you are still looking at the card you opened.
+            onCancel={() => setFormOpen(false)}
+            onCollapse={() => setExpanded(false)}
+            actionSlot={actionSlot}
+            fieldSlot={fieldSlot}
           />}
         </div>
       )}
@@ -6446,13 +6734,13 @@ function ExtraPhotoThumb({
 }) {
   const src = useImageSrc(`/api/v1/orgs/${slug}/modules/core-files/files/${fileId}/raw?variant=thumb`);
   return (
-    <div className="relative w-14 h-14">
+    <div className="relative w-20 h-20 shrink-0">
       <button
         type="button"
         disabled={busy}
         onClick={onMakePrimary}
         title="Make this the primary photo"
-        className="w-14 h-14 rounded-md overflow-hidden border border-line dark:border-slate-700 bg-black flex items-center justify-center disabled:opacity-50"
+        className="w-20 h-20 rounded-md overflow-hidden border border-line dark:border-slate-700 bg-black flex items-center justify-center disabled:opacity-50"
       >
         {/* CONTAIN: this tile is how you decide WHICH of your photos should
             lead, so it has to show the whole shot rather than its middle. */}
@@ -6463,9 +6751,9 @@ function ExtraPhotoThumb({
         disabled={busy}
         onClick={onRemove}
         title="Remove this photo"
-        className="absolute -top-1.5 -right-1.5 rounded-full bg-slate-700 text-white p-0.5 hover:bg-ember-600 disabled:opacity-50"
+        className="absolute top-1 right-1 rounded bg-black/60 hover:bg-ember-600 text-white shadow-md w-6 h-6 flex items-center justify-center disabled:opacity-50"
       >
-        <X size={10} />
+        <X size={13} strokeWidth={2.5} />
       </button>
       {onReidentify && (
         <button
@@ -6474,9 +6762,9 @@ function ExtraPhotoThumb({
           onClick={onReidentify}
           title="Re-identify the item from this photo"
           aria-label="Re-identify from this photo"
-          className="absolute -bottom-1.5 -right-1.5 rounded-full bg-cobble-600 text-white p-0.5 hover:bg-cobble-700 disabled:opacity-50"
+          className="absolute bottom-1 right-1 rounded bg-black/60 hover:bg-cobble-600 text-white shadow-md w-6 h-6 flex items-center justify-center disabled:opacity-50"
         >
-          <RotateCcw size={10} />
+          <RotateCcw size={13} strokeWidth={2.5} />
         </button>
       )}
     </div>
@@ -6491,6 +6779,12 @@ function PhotoOptions({
   item,
   onView,
   onItems,
+  term,
+  onTerm,
+  onSearched,
+  compact,
+  leading,
+  leadingLabel,
 }: {
   item: ScanInboxItem;
   /** A tile's ⤢ opens the CALLER's full-screen viewer at this candidate (the
@@ -6500,6 +6794,21 @@ function PhotoOptions({
   /** Report the fetched candidates up so the caller can fold them into its own
    *  filmstrip. */
   onItems?: (items: ImageOption[]) => void;
+  /** The applied search term, owned by the caller so the SAME search can be
+   *  driven from here or from the full-screen viewer. Uncontrolled when
+   *  omitted. */
+  term?: string;
+  onTerm?: (t: string) => void;
+  /** What the server actually searched for, reported up so a caller's own box
+   *  can prefill with it rather than hiding it behind a placeholder. */
+  onSearched?: (q: string) => void;
+  /** Strip layout: one header line then the tiles, for sitting beside the
+   *  item's own photo strip as a single row. */
+  compact?: boolean;
+  /** Rendered inside the tile row before the web candidates - the item's own
+   *  photos and the divider, so the pair is one row. */
+  leading?: ReactNode;
+  leadingLabel?: ReactNode;
 }) {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
@@ -6507,7 +6816,9 @@ function PhotoOptions({
   // The term box itself lives in the shared ImageSearchPicker; it hands the
   // typed term back via onSearch and we re-run the item's own ranked query
   // with it (the server treats a user term as an outright override).
-  const [applied, setApplied] = useState("");
+  const [ownApplied, setOwnApplied] = useState("");
+  const applied = term ?? ownApplied;
+  const setApplied = (t: string) => (onTerm ? onTerm(t) : setOwnApplied(t));
   const options = useQuery({
     // ai_suggested_at is in the key on purpose: a re-run can change the NAME and
     // the resolved COLOUR, which changes the search phrase — but the old key was
@@ -6582,7 +6893,11 @@ function PhotoOptions({
   // into its filmstrip (open from the catalog image → see the web options too).
   useEffect(() => {
     onItems?.(options.data?.items ?? []);
-  }, [options.data, onItems]);
+    // What the server actually searched, so a caller's own box can PREFILL with
+    // it. A blank box behind a placeholder hides the one thing you need to know
+    // in order to change it.
+    onSearched?.(options.data?.query ?? "");
+  }, [options.data, onItems, onSearched]);
   // The search box, the grid, broken-thumb handling and the full-size preview
   // all live in the shared ImageSearchPicker now — this used to carry its own
   // copy of the box, which is exactly how the surfaces drifted apart. What
@@ -6608,6 +6923,9 @@ function PhotoOptions({
       pickingBest={pickBest.isPending}
       bestUrl={bestUrl}
       bestReason={bestReason}
+      compact={compact}
+      leading={leading}
+      leadingLabel={leadingLabel}
     />
   );
 }
@@ -6620,8 +6938,16 @@ function HintBox({
   hasBarcode,
   onConfirm,
   confirming,
+  rowLeading,
+  rowTrailing,
+  aiOff = false,
 }: {
   onSubmit: (hint: string, opts: { wrong?: boolean; enrich?: boolean; noAi?: boolean }) => void;
+  /** The workspace has NO AI provider. Every control here that calls a model is
+   *  then a button that cannot do its job, and pressing it teaches nothing: the
+   *  scan silently falls back to the keyword floor and the card looks unchanged.
+   *  Say so on the control instead. Replay is exempt - it is noAi by design. */
+  aiOff?: boolean;
   busy: boolean;
   /** WHICH action is in flight — only that button's icon animates ("both
    *  spinners going" made a free replay read as an AI call). */
@@ -6629,6 +6955,14 @@ function HintBox({
   hasBarcode: boolean;
   onConfirm: () => void;
   confirming: boolean;
+  /** Controls that share the action row rather than each taking a row of their
+   *  own. The barcode chip and the review-state toggle used to sit on separate
+   *  lines above this box; folding them in here is pure height back. */
+  rowLeading?: ReactNode;
+  /** Controls that sit WITH Replay / Re-run rather than at the barcode end.
+   *  Position is the only thing telling you what a control acts on, and
+   *  "Looks fine" judges the identification, not the barcode it sat beside. */
+  rowTrailing?: ReactNode;
 }) {
   const [hint, setHint] = useState("");
   // The three correction buttons below all write to the SHARED, cross-workspace
@@ -6651,15 +6985,14 @@ function HintBox({
         e.preventDefault();
         // The hint is OPTIONAL — submitting empty re-runs the AI as-is (matches
         // the inline re-run); with a hint it re-runs with that extra context.
+        if (aiOff) return;
         fire({});
       }}
-      className="rounded-md border border-dashed border-line dark:border-slate-700 p-2"
+      className="rounded-md border border-dashed border-line dark:border-slate-700 p-1.5"
     >
-      <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1 flex items-center gap-1">
-        <Sparkles size={10} className="text-accent" /> research hint
-      </div>
-      {/* Full-width textarea (single-line input cut the long placeholder off):
-          Enter submits, Shift+Enter inserts a newline. */}
+      {/* No caption row. It spent a line naming the box, which the box's own
+          placeholder already does. Full-width textarea (a single-line input cut
+          the placeholder off): Enter submits, Shift+Enter inserts a newline. */}
       <textarea
         value={hint}
         onChange={(e) => setHint(e.target.value)}
@@ -6670,10 +7003,18 @@ function HintBox({
           }
         }}
         rows={2}
-        placeholder="Anything that helps - a model number, a better name, the correct barcode… (Enter to submit, Shift+Enter for a newline)"
+        placeholder="Research hint: a model number, a better name, the correct barcode… (Enter to submit)"
         className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800 resize-none"
       />
-      <div className="mt-1.5 flex items-center justify-end gap-2">
+      {aiOff && (
+        <p className="mt-1 text-[11px] text-muted dark:text-slate-400">
+          Re-run needs an AI provider. Replay still re-applies the latest processing.
+        </p>
+      )}
+      <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs">
+        {rowLeading}
+        <span className="ml-auto" />
+        {rowTrailing}
         {/* Replay — no model call of any kind. It re-runs everything DOWNSTREAM
             of the identification (routing, field mapping, pack size, decoder
             role-fill, the split derivation, category) over the answer already
@@ -6688,17 +7029,18 @@ function HintBox({
             disabled={busy}
             onClick={() => fire({ noAi: true })}
             title="Free and instant: re-applies Cobblr's latest processing (routing, fields, pack size) to what the AI already found. It keeps the identification as-is - use Re-run AI for a fresh look."
-            className="rounded border border-line dark:border-slate-600 px-2.5 py-1.5 text-sm text-muted dark:text-slate-300 hover:bg-mortar-50 dark:hover:bg-slate-800 disabled:opacity-50 shrink-0 inline-flex items-center gap-1.5"
+            className="rounded border border-line dark:border-slate-600 px-2 py-0.5 text-xs text-muted dark:text-slate-300 hover:bg-mortar-50 dark:hover:bg-slate-800 disabled:opacity-50 shrink-0 inline-flex items-center gap-1"
           >
-            <RefreshCw size={13} className={busyKind === "replay" ? "animate-spin" : ""} /> Replay
+            <RefreshCw size={11} className={busyKind === "replay" ? "animate-spin" : ""} /> Replay
           </button>
         )}
         <button
           type="submit"
-          disabled={busy}
-          className="rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm font-medium disabled:opacity-50 shrink-0 inline-flex items-center gap-1.5"
+          disabled={busy || aiOff}
+          title={aiOff ? "Connect an AI provider under Configuration → AI to use this" : undefined}
+          className="rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2 py-0.5 text-xs font-medium disabled:opacity-50 disabled:cursor-not-allowed shrink-0 inline-flex items-center gap-1"
         >
-          <RotateCcw size={13} className={busyKind === "ai" ? "animate-spin" : ""} /> {hint.trim() ? "Re-run with hint" : "Re-run AI"}
+          <RotateCcw size={11} className={busyKind === "ai" ? "animate-spin" : ""} /> {hint.trim() ? "Re-run with hint" : "Re-run AI"}
         </button>
       </div>
       {/* Shared-barcode-DB curation — OPERATOR ONLY (see canCurateBarcodeDb).
@@ -6713,18 +7055,18 @@ function HintBox({
           <div className="mt-2 flex gap-2">
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || aiOff}
               onClick={() => fire({ wrong: true })}
-              title="Wrong product - re-check every source + the web, fix the name & photo, and correct the shared barcode database"
+              title={aiOff ? "Connect an AI provider under Configuration → AI to use this" : "Wrong product - re-check every source + the web, fix the name & photo, and correct the shared barcode database"}
               className="flex-1 min-w-0 rounded border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 px-2 py-1.5 text-sm font-medium disabled:opacity-50 inline-flex items-center justify-center gap-1.5"
             >
               <Flag size={13} className={busy ? "animate-pulse" : ""} /> This is wrong
             </button>
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || aiOff}
               onClick={() => fire({ enrich: true })}
-              title="The product is right but the listing is sparse - re-check every source + the web to fill in the proper name, size and photo"
+              title={aiOff ? "Connect an AI provider under Configuration → AI to use this" : "The product is right but the listing is sparse - re-check every source + the web to fill in the proper name, size and photo"}
               className="flex-1 min-w-0 rounded border border-amber-300 dark:border-amber-700/70 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 px-2 py-1.5 text-sm font-medium disabled:opacity-50 inline-flex items-center justify-center gap-1.5"
             >
               <Sparkles size={13} className={busy ? "animate-pulse" : ""} /> Right - needs detail
@@ -7128,6 +7470,9 @@ function ConfirmForm({
   prefill,
   onDone,
   onCancel,
+  onCollapse,
+  actionSlot,
+  fieldSlot,
 }: {
   item: ScanInboxItem;
   menu: ScanMenuEntry[] | null;
@@ -7140,6 +7485,18 @@ function ConfirmForm({
   prefill?: Record<string, unknown>;
   onDone: () => void;
   onCancel: () => void;
+  /** Collapse the whole card. Rendered beside Confirm so the control keeps
+   *  the same home it has when the form is closed. */
+  onCollapse?: () => void;
+  /** Where the commit pair renders. The card gives the form the SAME slot the
+   *  "Add to Inventory" pair uses when the form is closed, so the action anchor
+   *  never moves between the two states. Null renders them inline. */
+  actionSlot?: HTMLElement | null;
+  /** Where the FIELDS render. Given a slot, the chips join the card's own chip
+   *  row - the one that already shows them read-only - instead of being a
+   *  second copy of that row lower down. The form keeps all of its state and
+   *  submission; only the chips move. */
+  fieldSlot?: HTMLElement | null;
 }) {
   const { activeSlug, activeOrg } = useActiveOrg();
   const { user } = useAuth();
@@ -7485,21 +7842,140 @@ function ConfirmForm({
   // user just asked for it.
   const ALWAYS = new Set(["name", "quantity"]);
   const chipFields = all.filter((f) => f.value || ALWAYS.has(f.key) || addedFields.includes(f.key));
+    // Confirm leads, Cancel under it, collapse last: the same primary-first
+    // order as the closed state's "Add to Inventory… / collapse", so the corner
+    // reads the same way in both states.
   const chipAvailable = all.filter((f) => !chipFields.includes(f));
+
+  const formId = `confirm-${item.id}`;
+  const commitActions = (
+    // A vertical stack against the right edge, the same shape the closed state
+    // uses for "Add to Inventory / collapse", so the
+    // action corner looks identical whichever state the card is in.
+    <div className="flex flex-col items-end gap-1">
+            <button
+              type="submit"
+        form={formId}
+              disabled={confirmMut.isPending || (!name.trim() && !item.suggested_name)}
+              className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50 inline-flex items-center gap-1"
+            >
+              {willInstall ? <Download size={14} /> : <CheckCircle size={14} />}
+              {confirmMut.isPending
+                ? willInstall
+                  ? `Installing ${entry.label}…`
+                  : "Creating…"
+                : willInstall
+                  ? `Install ${entry.label} & add`
+                  : "Confirm"}
+            </button>
+            <button
+              type="button"
+              onClick={onCancel}
+              className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
+            >
+              Cancel
+            </button>
+            {onCollapse && (
+              <button
+                type="button"
+                onClick={onCollapse}
+                aria-label="Collapse this item"
+                title="Collapse"
+                className="shrink-0 rounded-md border border-line dark:border-slate-700 p-1.5 text-faint hover:text-accent hover:border-accent transition"
+              >
+                <ChevronDown size={14} className="rotate-180" />
+              </button>
+            )}
+    </div>
+  );
 
   const inputCls =
     "w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800";
-  const labelCls =
-    "text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1";
+
+  // Rendered ONCE and placed by branch below. The slotted branch (header row)
+  // and the inline branch (no slot) used to carry their own copies of both
+  // of these, ~60 lines apiece, which is exactly how the two would drift.
+  // The destination is a CHIP, not a labelled block. As its own block it read
+  // as a separate control sitting apart from the fields, when it is simply the
+  // first thing you choose about this item. Same shell, same label treatment.
+  const destinationChip = (
+    <label className="inline-flex items-baseline gap-1.5 max-w-full rounded-lg border px-2 py-1 cursor-pointer transition border-line/70 dark:border-slate-700/70 bg-subtle/50 dark:bg-slate-800/50 hover:border-cobble-400 dark:hover:border-cobble-600">
+      <span className="shrink-0 text-[10px] uppercase tracking-wide text-faint">Add to</span>
+      <select
+        value={selKey}
+        onChange={(e) => {
+          const k = e.target.value;
+          userPickedDest.current = true;
+          setSelKey(k);
+          // Switching to a table the matchmaker already extracted for →
+          // merge its field values in (typed values keep winning where
+          // the user edited a key the candidate also fills).
+          const cand = candidates.find((c) => entryKey(c.module, c.instance) === k);
+          if (cand && Object.keys(cand.fields).length) {
+            setCustomValues((prev) => ({ ...cand.fields, ...prev }));
+          }
+        }}
+        // Full width is a phone constraint, not a desktop one. A destination
+        // reads in a few words, so on a wide form it only needs to be as wide
+        // as its longest option; stretching it across the form makes it look
+        // like the page's main input, which it is not now that the fields
+        // beside it are chips.
+        className="bg-transparent border-0 p-0 pr-1 text-sm outline-none max-w-[16rem] cursor-pointer"
+      >
+        {entries.map((m) => {
+          const wi = (m as { bundle_external_id?: string }).bundle_external_id;
+          return (
+            <option key={entryKey(m.module, m.instance)} value={entryKey(m.module, m.instance)}>
+              {m.label}
+              {m.instance ? "" : ` (${m.noun})`}
+              {wi ? " · installs on confirm" : ""}
+            </option>
+          );
+        })}
+      </select>
+    </label>
+  );
+  const fieldChips = (dense: boolean) => (
+    <ChipFields
+      dense={dense}
+      fields={chipFields}
+      available={chipAvailable}
+      onChange={setChipValue}
+      renderEditor={(f) => {
+        const def = (entry.fields ?? []).find((x) => x.name === f.key);
+        if (!def) return null;
+        const rich = def.type === "boolean" || wantsSwatch({ ...def, display_label: f.label } as never) || !!def.help;
+        if (!rich) return null;
+        return (
+          <ScanFieldInput
+            def={{ name: def.name, display_label: def.label ?? def.name, type: def.type,
+                   help: def.help ?? null, choices: def.choices ?? null }}
+            value={customValues[def.name]}
+            onChange={(v) => setCustomValues((m) => ({ ...m, [def.name]: v }))}
+          />
+        );
+      }}
+      onAdd={(k) => setAddedFields((prev) => (prev.includes(k) ? prev : [...prev, k]))}
+      onDrop={(k) => setAddedFields((prev) => prev.filter((x) => x !== k))}
+    />
+  );
 
   return (
+    <>
     <form
+      id={formId}
       onSubmit={(e) => {
         e.preventDefault();
         if (!name.trim() && !item.suggested_name) return;
         confirmMut.mutate();
       }}
-      className="space-y-3"
+      // With the fields and the commit pair portalled up into the card, what
+      // is LEFT in this element is conditional: the install explainer, the AI-off
+      // hint, the location drawer, the admin eval box. For most users at most
+      // moments that is nothing - and an empty form still spent its spacing
+      // (measured: 61px below the strip on a card that showed no such thing).
+      // Its children carry their own gap, so it carries none.
+      className="empty:hidden [&>*+*]:mt-3"
     >
       {/* The selected destination is a bundle this workspace doesn't have yet
           (a scanned VIN → "Vehicles"). It's the DEFAULT + leads the picker, its
@@ -7515,41 +7991,6 @@ function ConfirmForm({
           </span>
         </div>
       )}
-      <label className="block">
-        <div className={labelCls}>Add to</div>
-        <select
-          value={selKey}
-          onChange={(e) => {
-            const k = e.target.value;
-            userPickedDest.current = true;
-            setSelKey(k);
-            // Switching to a table the matchmaker already extracted for →
-            // merge its field values in (typed values keep winning where
-            // the user edited a key the candidate also fills).
-            const cand = candidates.find((c) => entryKey(c.module, c.instance) === k);
-            if (cand && Object.keys(cand.fields).length) {
-              setCustomValues((prev) => ({ ...cand.fields, ...prev }));
-            }
-          }}
-          // Full width is a phone constraint, not a desktop one. A destination
-          // reads in a few words, so on a wide form it only needs to be as wide
-          // as its longest option; stretching it across the form makes it look
-          // like the page's main input, which it is not now that the fields
-          // beside it are chips.
-          className={`${inputCls} sm:w-auto sm:max-w-[22rem]`}
-        >
-          {entries.map((m) => {
-            const wi = (m as { bundle_external_id?: string }).bundle_external_id;
-            return (
-              <option key={entryKey(m.module, m.instance)} value={entryKey(m.module, m.instance)}>
-                {m.label}
-                {m.instance ? "" : ` (${m.noun})`}
-                {wi ? " · installs on confirm" : ""}
-              </option>
-            );
-          })}
-        </select>
-      </label>
       {parentConfig && (
         <ParentTypeCard
           slug={activeSlug}
@@ -7559,32 +8000,23 @@ function ConfirmForm({
           childNoun={entry.noun}
         />
       )}
-      {/* THE FIELDS, as chips. Was a column of ~72px labelled blocks, one per
-          field including every declared field the scan left empty — 14 of them
-          for a 3D printer, of which the scan fills two, which ran past a phone
-          screen and a half. A chip costs its own width and several share a row.
-          Layout arithmetic + the edit behaviour live in components/ChipFields. */}
-      <ChipFields
-        fields={chipFields}
-        available={chipAvailable}
-        onChange={setChipValue}
-        renderEditor={(f) => {
-          const def = (entry.fields ?? []).find((x) => x.name === f.key);
-          if (!def) return null;
-          const rich = def.type === "boolean" || wantsSwatch({ ...def, display_label: f.label } as never) || !!def.help;
-          if (!rich) return null;
-          return (
-            <ScanFieldInput
-              def={{ name: def.name, display_label: def.label ?? def.name, type: def.type,
-                     help: def.help ?? null, choices: def.choices ?? null }}
-              value={customValues[def.name]}
-              onChange={(v) => setCustomValues((m) => ({ ...m, [def.name]: v }))}
-            />
-          );
-        }}
-        onAdd={(k) => setAddedFields((prev) => (prev.includes(k) ? prev : [...prev, k]))}
-        onDrop={(k) => setAddedFields((prev) => prev.filter((x) => x !== k))}
-      />
+      {/* Destination and fields SHARE a row. Stacked, they used about a
+          third of a full-width form and left the rest of the panel empty,
+          while the card grew taller for content that already had room. It
+          WRAPS, which is why this is not the right-rail attempt that was
+          reverted: a full-width row can fall back to stacking, a fixed
+          rail cannot. */}
+      {fieldSlot ? createPortal(
+        // In the header row the destination is the card's own pill, so only
+        // the chips go up - at the pill row's chip scale, no wrapper.
+        <div className="contents">{fieldChips(true)}</div>,
+        fieldSlot,
+      ) : (
+        <div className="flex flex-wrap items-start gap-x-5 gap-y-3">
+          <div className="shrink-0">{destinationChip}</div>
+          <div className="flex-1 min-w-[18rem]">{fieldChips(false)}</div>
+        </div>
+      )}
       {/* The location DRAWER stays exactly as it was: its chip above is only the
           trigger. A picker is not a text box and forcing it into one would lose
           the rooms-and-bins grid the bulk bar and camera also use. */}
@@ -7629,30 +8061,11 @@ function ConfirmForm({
           </p>
         </div>
       )}
-      <div className="flex justify-end gap-2 pt-1">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
-        >
-          Cancel
-        </button>
-        <button
-          type="submit"
-          disabled={confirmMut.isPending || (!name.trim() && !item.suggested_name)}
-          className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50 inline-flex items-center gap-1"
-        >
-          {willInstall ? <Download size={14} /> : <CheckCircle size={14} />}
-          {confirmMut.isPending
-            ? willInstall
-              ? `Installing ${entry.label}…`
-              : "Creating…"
-            : willInstall
-              ? `Install ${entry.label} & add`
-              : "Confirm"}
-        </button>
-      </div>
     </form>
+      {actionSlot ? createPortal(commitActions, actionSlot) : (
+        <div className="flex justify-end pt-1">{commitActions}</div>
+      )}
+    </>
   );
 }
 

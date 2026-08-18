@@ -41,3 +41,7 @@ export default router;
 // Primary-entity router for instance-scoped item CRUD (projects are the
 // primary entity; tasks remain default-instance for now).
 export { projectsRouter as primaryRouter };
+
+// Side-effect: the assistant's door to task dependencies.
+import { registerDependencyHandlers } from "./dep-handlers.js";
+registerDependencyHandlers();

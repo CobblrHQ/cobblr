@@ -28,6 +28,7 @@ categoriesRouter.get(
   }),
 );
 
+// AI-ACTION: inventory:add-category
 categoriesRouter.post(
   "/",
   asyncHandler(async (req, res) => {

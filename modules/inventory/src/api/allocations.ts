@@ -71,6 +71,7 @@ const StatusChange = z.object({
   status: z.enum(["consumed", "released"]),
 });
 
+// AI-REACH: OPEN, deliberately: reserving stock is a real ask, but the transaction it shares with /status must be extracted with a test before an action can share it. Tracked in docs/design-decisions/ai-reach-route-gaps.md
 allocationsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -131,6 +132,7 @@ allocationsRouter.post(
   }),
 );
 
+// AI-REACH: OPEN, deliberately: consuming an allocation moves stock and writes a ledger withdrawal in one transaction; a second copy of that is how a balance drifts. Extract with a test first. Tracked in docs/design-decisions/ai-reach-route-gaps.md
 allocationsRouter.patch(
   "/:id/status",
   asyncHandler(async (req, res) => {

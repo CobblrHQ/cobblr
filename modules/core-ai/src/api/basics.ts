@@ -54,6 +54,7 @@ basicsRouter.get(
 );
 
 // POST /basics/answer — match a message → reply (chat's no-AI path + the tester).
+// AI-REACH: this module IS the assistant; its own configuration is not a thing it should reach into
 basicsRouter.post(
   "/answer",
   asyncHandler(async (req, res) => {
@@ -66,6 +67,7 @@ basicsRouter.post(
 );
 
 // POST /basics — create a custom rule, or override a built-in (builtin_key set).
+// AI-REACH: this module IS the assistant; its own configuration is not a thing it should reach into
 basicsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -112,6 +114,7 @@ basicsRouter.post(
 );
 
 // PATCH /basics/:id — edit a custom rule or an existing built-in override.
+// AI-REACH: this module IS the assistant; its own configuration is not a thing it should reach into
 basicsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -147,6 +150,7 @@ basicsRouter.patch(
 );
 
 // DELETE /basics/:id — remove a custom rule, or reset a built-in to its default.
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 basicsRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {

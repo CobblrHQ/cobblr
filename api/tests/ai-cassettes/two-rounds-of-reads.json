@@ -1,0 +1,8 @@
+{
+  "match": "what do i have going on",
+  "rounds": [
+    { "tool_calls": [{ "name": "list_record_kinds", "args": {} }] },
+    { "tool_calls": [{ "name": "get_attention", "args": {} }] },
+    { "content": "Here is what needs your attention, from two reads." }
+  ]
+}

@@ -79,6 +79,7 @@ templatesRouter.get(
   }),
 );
 
+// AI-REACH: authoring of a user-built surface; a whole-workspace build goes through the design flow, and records inside an app are reachable as records
 templatesRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -108,6 +109,7 @@ templatesRouter.post(
   }),
 );
 
+// AI-REACH: authoring of a user-built surface; a whole-workspace build goes through the design flow, and records inside an app are reachable as records
 templatesRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -150,6 +152,7 @@ templatesRouter.patch(
   }),
 );
 
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 templatesRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -182,6 +185,7 @@ templatesRouter.delete(
 // with (defaults ∪ overrides), then attaches default_tags via
 // core-tags' polymorphic attachments table. Returns the created
 // entity verbatim.
+// AI-REACH: authoring of a user-built surface; a whole-workspace build goes through the design flow, and records inside an app are reachable as records
 templatesRouter.post(
   "/:id/instantiate",
   asyncHandler(async (req, res) => {

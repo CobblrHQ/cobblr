@@ -30,6 +30,7 @@ capabilitiesRouter.get(
   }),
 );
 
+// AI-REACH: this module IS the assistant; its own configuration is not a thing it should reach into
 capabilitiesRouter.put(
   "/",
   asyncHandler(async (req, res) => {
@@ -78,6 +79,7 @@ capabilitiesRouter.put(
   }),
 );
 
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 capabilitiesRouter.delete(
   "/:capability",
   asyncHandler(async (req, res) => {

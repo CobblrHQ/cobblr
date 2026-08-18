@@ -103,6 +103,21 @@ export default defineModule({
     api: [],
     actions: [
       {
+        id: "sales:add-line",
+        label: "Add a line to this order",
+        description:
+          "Put another line on a sales order that already exists. Pass `qty` and either `description` or `part_id` for a part you track, optionally `unit_price`. Removing a line has no action on purpose: an order is a financial record, so deleting from it is done in the app.",
+        icon: "plus",
+        appliesTo: { kinds: ["sales:order"] },
+        invokeHandler: "sales.add-line",
+        argsSchema: {
+          qty: { label: "How many", type: "number" },
+          description: { label: "What is being sold", type: "text" },
+          part_id: { label: "Id of a tracked part (optional)", type: "text" },
+          unit_price: { label: "Price each (optional)", type: "number" },
+        },
+      },
+      {
         id: "sales:fulfill-order",
         label: "Fulfill order",
         description:

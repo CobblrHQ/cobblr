@@ -111,6 +111,30 @@ export default defineModule({
     api: ["getProjectById", "getTaskById", "createTask", "completeTask"],
     actions: [
       {
+        id: "projects:blocked-by",
+        label: "Mark as waiting on something",
+        description:
+          "Record that this task cannot start until something else is done. Pass EITHER `depends_on_task_id` (another task) OR `blocks_kind` + `blocks_id` (any record, e.g. a purchase order that has to arrive first). The task then shows as blocked until that dependency is satisfied.",
+        icon: "link",
+        appliesTo: { kinds: ["projects:task"] },
+        invokeHandler: "projects.blocked-by",
+        argsSchema: {
+          depends_on_task_id: { label: "Id of the task this waits on", type: "text" },
+          blocks_kind: { label: "Kind of record this waits on (e.g. purchases:order)", type: "text" },
+          blocks_id: { label: "Id of that record", type: "text" },
+        },
+      },
+      {
+        id: "projects:unblock",
+        label: "Remove a dependency",
+        description:
+          "Delete one dependency from a task, so it stops waiting on that thing. Pass `dependency_id` (reading a task's dependencies returns their ids). Removing the dependency does not mark anything done.",
+        icon: "unlink",
+        scope: "workspace" as const,
+        invokeHandler: "projects.unblock",
+        argsSchema: { dependency_id: { label: "Id of the dependency to remove", type: "text" } },
+      },
+      {
         id: "projects:set-dep-satisfied",
         label: "Mark task dependencies satisfied",
         description:

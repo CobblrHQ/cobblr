@@ -17,6 +17,6 @@ edgeStatusRouter.get(
   "/",
   asyncHandler(async (req, res) => {
     const userId = sessionUserId(req);
-    res.json({ connected: !!userId && platform().edge.hasChannel(userId) });
+    res.json({ connected: !!userId && (await platform().edge.hasChannel(userId)) });
   }),
 );

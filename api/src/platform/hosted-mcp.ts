@@ -22,6 +22,7 @@
 
 import { platform } from "@cobblr/platform-contract";
 import { WORKSPACE_TOOLS, jsonSchemaOf, mcpToolName, toolFromMcpName, type WorkspaceApi } from "@cobblr/workspace-tools";
+import { signMcpWriteGrant, verifySession } from "../auth/jwt.js";
 
 const SELF_BASE = `http://127.0.0.1:${process.env.API_PORT || "4000"}/api/v1`;
 const SERVER_INFO = { name: "cobblr", version: "0.1.0" };
@@ -130,13 +131,105 @@ function workspaceApiFor(token: string, slug: string): WorkspaceApi {
   };
 }
 
+// ── what the CALLER can actually do ─────────────────────────────────────────
+// A surface must never advertise a capability its caller cannot use. The relay
+// hands `claude -p` a READ grant, but this endpoint used to list all twenty-two
+// tools to everyone — so Cobb reached for create_record, hit the read clamp's
+// 403, and told the user to "reconnect the connector with write access", a
+// setting that does not exist. The user had already said yes (chat consent
+// "Changes: auto"); the answer read like a permissions problem of theirs
+// (2026-08-17, prod).
+//
+// So: a full API token (or a plain session) can do everything its bearer can.
+// A relay grant can read, and can additionally create/update/delete records
+// exactly when the user's OWN chat consent says writes apply automatically —
+// the same `write_mode` the in-app chat honours, read from the same endpoint.
+// Actions stay out: the consent model has them always confirm, and a relayed
+// chat has nowhere to ask.
+type Caller =
+  | { kind: "full" }
+  | { kind: "grant"; slug: string; userId: string };
+
+async function callerOf(token: string): Promise<Caller> {
+  if (token.startsWith("cbt_")) return { kind: "full" };
+  try {
+    const claims = await verifySession(token);
+    const aud = typeof claims.aud === "string" ? claims.aud : "";
+    if (aud.startsWith("mcp-read:") && claims.sub) {
+      return { kind: "grant", slug: aud.slice("mcp-read:".length), userId: String(claims.sub) };
+    }
+  } catch {
+    // Not a JWT we can read — let the api's own auth reject it per call.
+  }
+  return { kind: "full" };
+}
+
+export type McpWriteMode = "off" | "ask" | "auto";
+type WriteMode = McpWriteMode;
+
+/** The user's chat consent, read with their own grant. Unreachable/unknown =
+ *  "ask", which is the product default and the safe direction. */
+async function writeModeFor(token: string, slug: string): Promise<WriteMode> {
+  try {
+    const body = (await rest(token, "GET", `/orgs/${slug}/modules/core-ai/chat/prefs`)) as {
+      write_mode?: unknown;
+    } | null;
+    const m = body?.write_mode;
+    return m === "auto" || m === "off" ? m : "ask";
+  } catch {
+    return "ask";
+  }
+}
+
+/** Why this caller may not run this write tool, or null if they may. */
+export function writeRefusal(tool: string, mode: WriteMode): string | null {
+  if (tool === "invoke_action") {
+    return "Actions always need a confirmation step, and this connection has no way to show one. Ask the user to run it from Cobblr, or from a chat with a directly-connected AI provider.";
+  }
+  if (mode === "auto") return null;
+  return mode === "off"
+    ? 'Changes are turned off for this chat. The user can allow them in the chat\'s tool settings ("Changes" → Ask or Auto).'
+    : 'Changes are set to "Ask" for this chat, and this connection cannot show a confirmation prompt. The user can switch "Changes" to Auto in the chat\'s tool settings (every change stays tracked and undoable), or make this one in Cobblr directly.';
+}
+
+/** The tool list a relay grant sees at `write_mode`. Exported so the guardrail
+ *  test can assert advertise-equals-execute without going over HTTP. */
+export function toolsForWriteMode(mode: WriteMode): typeof HOSTED_MCP_TOOLS {
+  return HOSTED_MCP_TOOLS.filter((t) => {
+    const reg = toolFromMcpName(t.name);
+    if (!reg || reg.mode === "read") return true;
+    return writeRefusal(reg.name, mode) === null;
+  });
+}
+
+async function toolsFor(caller: Caller, token: string): Promise<typeof HOSTED_MCP_TOOLS> {
+  if (caller.kind === "full") return HOSTED_MCP_TOOLS;
+  return toolsForWriteMode(await writeModeFor(token, caller.slug));
+}
+
 async function callTool(name: string, args: Json, token: string, defaultSlug: string | null): Promise<unknown> {
   // The one non-workspace tool.
   if (name === "cobblr_list_workspaces") return rest(token, "GET", "/orgs");
 
   const tool = toolFromMcpName(name);
   if (!tool) throw new Error(`Unknown tool: ${name}`);
-  const result = await tool.execute(workspaceApiFor(token, slugOf(args, defaultSlug)), args);
+  const caller = await callerOf(token);
+  // A grant is pinned to ONE workspace server-side; honour that here too, so a
+  // `workspace` argument can never aim the call — or the write grant minted for
+  // it — at a different workspace than the one the user is chatting in.
+  const slug = caller.kind === "grant" ? caller.slug : slugOf(args, defaultSlug);
+
+  // A relay grant reads with the token it was given; a consented record write
+  // runs on a 60-second write grant minted here, for this call only, and never
+  // handed back to the bridge.
+  let execToken = token;
+  if (caller.kind === "grant" && tool.mode === "write") {
+    const refusal = writeRefusal(tool.name, await writeModeFor(token, caller.slug));
+    if (refusal) throw new Error(refusal);
+    execToken = await signMcpWriteGrant(caller.userId, caller.slug);
+  }
+
+  const result = await tool.execute(workspaceApiFor(execToken, slug), args);
   // A tool that declines (a refusal with a reason, not a transport failure)
   // must reach the model as an error, or it reports success for something that
   // did not happen — the same mistake the in-app chat made until #1938.
@@ -168,7 +261,7 @@ async function dispatch(msg: Json, token: string, defaultSlug: string | null): P
     case "ping":
       return rpcResult(id, {});
     case "tools/list":
-      return rpcResult(id, { tools: HOSTED_MCP_TOOLS });
+      return rpcResult(id, { tools: await toolsFor(await callerOf(token), token) });
     case "tools/call": {
       const name = params?.name as string;
       const args = (params?.arguments as Json) ?? {};

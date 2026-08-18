@@ -22,6 +22,7 @@ const AttachmentCreate = z.object({
   sort_order: z.number().int().min(0).optional(),
 });
 
+// AI-REACH: attaches an uploaded file; the assistant cannot carry a file
 attachmentsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -139,6 +140,7 @@ attachmentsRouter.get(
   }),
 );
 
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 attachmentsRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {

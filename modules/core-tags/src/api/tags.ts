@@ -20,6 +20,42 @@ const TagUpdate = TagCreate.partial();
 
 const TagMerge = z.object({ into_tag_id: z.string().uuid() });
 
+/** Move every assignment from one tag onto another and delete the source.
+ *  Shared with the core-tags:merge ACTION, so tidying tags by hand and asking
+ *  the assistant to do it cannot come to mean different things. Returns how
+ *  many assignments moved. */
+export async function mergeTagInto(
+  db: ReturnType<typeof tenantDb>,
+  id: string,
+  into: string,
+): Promise<number> {
+  const moved = await db.transaction().execute(async (trx) => {
+    // Drop source assignments that would collide with an existing target
+    // assignment on the same entity (would violate the unique key).
+    await sql`
+      delete from core_tags_assignments a
+      where a.tag_id = ${id}
+        and exists (
+          select 1 from core_tags_assignments b
+          where b.tag_id = ${into}
+            and b.source_module = a.source_module
+            and b.source_type = a.source_type
+            and b.source_id = a.source_id
+        )
+    `.execute(trx);
+    // Reassign the rest to the target.
+    const upd = await trx
+      .updateTable("core_tags_assignments")
+      .set({ tag_id: into })
+      .where("tag_id", "=", id)
+      .executeTakeFirst();
+    // Remove the now-empty source tag.
+    await trx.deleteFrom("core_tags_tags").where("id", "=", id).execute();
+    return Number(upd.numUpdatedRows ?? 0n);
+  });
+  return moved;
+}
+
 const AttachBody = z.object({
   tag_name: z.string().min(1).max(60).optional(),
   tag_id: z.string().uuid().optional(),
@@ -180,6 +216,7 @@ tagsRouter.delete(
 // an existing attachment on the target (the unique (tag_id, source_*) key)
 // are dropped rather than duplicated. Idempotent-ish: a second merge 404s
 // (source already gone). Consolidates accidental duplicate tags.
+// AI-ACTION: core-tags:merge
 tagsRouter.post(
   "/tags/:id/merge",
   asyncHandler(async (req, res) => {
@@ -211,30 +248,7 @@ tagsRouter.post(
       return;
     }
 
-    const moved = await db.transaction().execute(async (trx) => {
-      // Drop source assignments that would collide with an existing target
-      // assignment on the same entity (would violate the unique key).
-      await sql`
-        delete from core_tags_assignments a
-        where a.tag_id = ${id}
-          and exists (
-            select 1 from core_tags_assignments b
-            where b.tag_id = ${into}
-              and b.source_module = a.source_module
-              and b.source_type = a.source_type
-              and b.source_id = a.source_id
-          )
-      `.execute(trx);
-      // Reassign the rest to the target.
-      const upd = await trx
-        .updateTable("core_tags_assignments")
-        .set({ tag_id: into })
-        .where("tag_id", "=", id)
-        .executeTakeFirst();
-      // Remove the now-empty source tag.
-      await trx.deleteFrom("core_tags_tags").where("id", "=", id).execute();
-      return Number(upd.numUpdatedRows ?? 0n);
-    });
+    const moved = await mergeTagInto(db, id, into);
 
     await platform().events.emit("core-tags.tag.deleted", {
       orgId: ctx.org.id,
@@ -251,6 +265,7 @@ tagsRouter.post(
 
 // POST /attachments — attach a tag (by name or id) to a polymorphic
 // entity. Idempotent on (tag, entity) — re-attach returns the same row.
+// AI-ACTION: core-tags:tag-record
 tagsRouter.post(
   "/attachments",
   asyncHandler(async (req, res) => {
@@ -360,6 +375,7 @@ tagsRouter.get(
   }),
 );
 
+// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
 tagsRouter.delete(
   "/attachments/:id",
   asyncHandler(async (req, res) => {

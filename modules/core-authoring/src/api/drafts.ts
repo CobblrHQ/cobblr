@@ -197,6 +197,7 @@ draftsRouter.get(
 // configured (the caller then shows the full catalog). See
 // docs/architecture/templates-first-authoring.md.
 const MatchBody = z.object({ intent: z.string().min(1).max(4000) });
+// AI-REACH: a step of the design-a-workspace flow, which the assistant enters through the build move (chat.ts) and the user drives from the Build page
 draftsRouter.post(
   "/match-template",
   asyncHandler(async (req, res) => {
@@ -210,6 +211,7 @@ draftsRouter.post(
 
 // ── POST /context — preview the assembled context (+ warnings) ──
 const ContextBody = z.object({ selected_kinds: z.array(z.string()).optional() });
+// AI-REACH: a step of the design-a-workspace flow (see /build)
 draftsRouter.post(
   "/context",
   asyncHandler(async (req, res) => {
@@ -235,6 +237,7 @@ const CompileBody = z.object({
   task: z.string().optional(),
   base_template_id: z.string().optional(),
 });
+// AI-REACH: a step of the design-a-workspace flow (see /build)
 draftsRouter.post(
   "/compile",
   asyncHandler(async (req, res) => {
@@ -397,6 +400,7 @@ async function runBuild(
   }
 }
 
+// AI-REACH: the assistant enters this through the chat build move, not as a tool; a whole-workspace build always previews before applying
 draftsRouter.post(
   "/build",
   asyncHandler(async (req, res) => {
@@ -458,6 +462,7 @@ const RefineBody = z.object({
   intent: z.string().min(1).max(4000),
   run: z.boolean().optional(),
 });
+// AI-REACH: refines a draft the user is looking at on the Build page; a Build-page step
 draftsRouter.post(
   "/drafts/:id/refine",
   asyncHandler(async (req, res) => {
@@ -530,6 +535,7 @@ draftsRouter.post(
 
 // ── POST /drafts/:id/candidate — paste a manifest back → validate ──
 const CandidateBody = z.object({ manifest: z.unknown() });
+// AI-REACH: a Build-page step
 draftsRouter.post(
   "/drafts/:id/candidate",
   asyncHandler(async (req, res) => {
@@ -563,6 +569,7 @@ draftsRouter.post(
 );
 
 // ── POST /drafts/:id/repair-prompt — copy-paste repair prompt ──
+// AI-REACH: a Build-page step
 draftsRouter.post(
   "/drafts/:id/repair-prompt",
   asyncHandler(async (req, res) => {
@@ -589,6 +596,7 @@ draftsRouter.post(
 
 // ── POST /drafts/:id/apply — install the validated candidate ──
 const ApplyBody = z.object({ confirm: z.boolean().optional() });
+// AI-REACH: applies a previewed build; the confirm lives on the Build page and in the chat's build proposal card
 draftsRouter.post(
   "/drafts/:id/apply",
   asyncHandler(async (req, res) => {

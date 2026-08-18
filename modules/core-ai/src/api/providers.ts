@@ -56,6 +56,7 @@ providersRouter.get(
   }),
 );
 
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 providersRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -107,6 +108,7 @@ providersRouter.post(
   }),
 );
 
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 providersRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -163,6 +165,7 @@ providersRouter.patch(
   }),
 );
 
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 providersRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -192,6 +195,7 @@ providersRouter.delete(
   }),
 );
 
+// AI-REACH: holds or mints credentials; the assistant must never handle these
 providersRouter.post(
   "/:id/test",
   asyncHandler(async (req, res) => {
