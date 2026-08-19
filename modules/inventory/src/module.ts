@@ -156,6 +156,34 @@ export default defineModule({
     api: ["getPartById", "searchParts", "adjustStock", "allocate", "release"],
     actions: [
       {
+        id: "inventory:reserve-stock",
+        label: "Reserve stock for something",
+        description:
+          "Set aside some of this part for a project, build or order, without moving stock yet. Pass `qty`, and `for_kind` + `for_id` saying what it is reserved for (list_records gives you the id). Optionally `reason`, which becomes the line on the part's statement when it is consumed. Stock only moves when the reservation is CONSUMED (inventory:settle-allocation).",
+        icon: "bookmark",
+        appliesTo: { kinds: ["inventory:part"] },
+        invokeHandler: "inventory.reserve-stock",
+        argsSchema: {
+          qty: { label: "How much to reserve", type: "number" },
+          for_kind: { label: "Kind it is reserved for (e.g. projects:project)", type: "text" },
+          for_id: { label: "Id of that record", type: "text" },
+          reason: { label: "What it is for (shown on the statement)", type: "text" },
+        },
+      },
+      {
+        id: "inventory:settle-allocation",
+        label: "Consume or release a reservation",
+        description:
+          "Finish a reservation. `status: \"consumed\"` means the stock was actually used: on-hand drops by the reserved amount and a withdrawal appears on the part's statement. `status: \"released\"` means it was not used after all: nothing moves, the reservation just goes away. Pass `allocation_id`. Only a still-reserved allocation can be settled.",
+        icon: "check-circle",
+        scope: "workspace" as const,
+        invokeHandler: "inventory.settle-allocation",
+        argsSchema: {
+          allocation_id: { label: "The reservation's id", type: "text" },
+          status: { label: "consumed or released", type: "text" },
+        },
+      },
+      {
         id: "inventory:add-category",
         label: "Add a category",
         description:

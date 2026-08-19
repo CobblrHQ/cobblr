@@ -10,9 +10,10 @@
 //  module, bricklink-connector — it drives create-items + update-item.)
 
 import { sql, type Kysely } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, requireActionEntity } from "@cobblr/platform-contract";
 import type { InventoryDB } from "../db.js";
 import { recordConsumption } from "./stock-ledger.js";
+import { reserveAllocation, settleAllocation } from "./allocations.js";
 
 let registered = false;
 
@@ -726,5 +727,81 @@ export function registerInventoryActionHandlers(): void {
 
     return { ok: true, sourceId: partId, newId: created.id, newQty: srcQty - splitQty, splitQty, linkedToType };
   });
-}
 
+  // ── Allocations ──────────────────────────────────────────────────────────
+  //
+  // Reserving stock for a project, and later consuming or releasing that
+  // reservation, are ordinary things to ask for and had no door: inventory's
+  // twelve actions covered stock movement and not allocations. They were the
+  // last capability left open by the reach audit, held back because consuming
+  // one MOVES STOCK and writes a consumption ledger row in a single
+  // transaction - a second copy of that is how a running balance comes to
+  // disagree with reality (consumption-ledger.md §7.3 records that happening
+  // once already).
+  //
+  // So neither handler reimplements anything: both call the same
+  // reserveAllocation / settleAllocation the HTTP routes call.
+
+  platform().actions.registerHandler("inventory.reserve-stock", async (ctx) => {
+    const part = requireActionEntity(ctx);
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const qty = typeof args.qty === "number" ? args.qty : Number(args.qty);
+    if (!Number.isFinite(qty) || qty <= 0) return { ok: false, error: "say how much to reserve (a positive qty)" };
+
+    const forKind = typeof args.for_kind === "string" ? args.for_kind.trim() : "";
+    const forId = typeof args.for_id === "string" ? args.for_id.trim() : "";
+    if (!forKind || !forId) {
+      return {
+        ok: false,
+        error: "say what the stock is reserved FOR: for_kind (e.g. projects:project) and for_id, which list_records gives you",
+      };
+    }
+    // A kind id is "<module>:<type>"; the allocation stores those separately so
+    // a consumer module can find its own reservations without knowing ours.
+    const [targetModule, targetType] = forKind.includes(":")
+      ? [forKind.split(":")[0]!, forKind.split(":")[1]!]
+      : [forKind, forKind];
+
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
+    const out = await reserveAllocation(db as never, ctx.orgId, ctx.userId ?? "", {
+      part_id: part.id,
+      qty,
+      target_module: targetModule,
+      target_entity_type: targetType,
+      target_entity_id: forId,
+      reason: typeof args.reason === "string" && args.reason.trim() ? args.reason.trim() : null,
+    });
+    if (!out.ok) return { ok: false, error: "that part no longer exists" };
+    return {
+      ok: true,
+      allocation_id: out.row.id,
+      qty,
+      note: "Reserved. Stock does not move until the reservation is consumed.",
+    };
+  });
+
+  platform().actions.registerHandler("inventory.settle-allocation", async (ctx) => {
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const id = typeof args.allocation_id === "string" ? args.allocation_id.trim() : "";
+    const status = args.status === "released" ? "released" : args.status === "consumed" ? "consumed" : null;
+    if (!id) return { ok: false, error: "pass allocation_id - reading a part's allocations gives you the ids" };
+    if (!status) return { ok: false, error: 'pass status: "consumed" (the stock was used) or "released" (put it back)' };
+
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
+    const out = await settleAllocation(db as never, ctx.orgId, ctx.userId ?? "", id, status);
+    if (!out.ok) {
+      return out.code === "not_found"
+        ? { ok: false, error: `no allocation with id ${id}` }
+        : { ok: false, error: `that allocation is already ${out.status}, so there is nothing to settle` };
+    }
+    return {
+      ok: true,
+      allocation_id: out.next.id,
+      status: out.next.status,
+      note:
+        status === "consumed"
+          ? `Consumed ${out.qty}: stock is down by that much and the withdrawal is on the part's statement.`
+          : `Released ${out.qty} back: stock was never taken, the reservation is simply gone.`,
+    };
+  });
+}

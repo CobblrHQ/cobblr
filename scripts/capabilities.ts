@@ -154,6 +154,25 @@ export const CAPABILITIES: Capability[] = [
   },
   {
     kind: "owns",
+    id: "location:bottom-up-shelves",
+    what: "deciding which end of a rack numbering starts from, and which nouns that applies to",
+    why: "a house convention is only worth having if it is the same convention everywhere, and locations get created from more than one surface. The convention (shelf 1 is the bottom) is a suggestion the user can decline per range, which is exactly why a second surface quietly defaulting the other way would be invisible: both racks look deliberate, and you only find out standing in front of the wrong one",
+    owner: "web/src/lib/stacking.ts",
+    // The surfaces that CREATE a location. The scan flow files into places that
+    // already exist, so it is not in this rule.
+    scope: [
+      "web/src/pages/LocationsPage.tsx",
+      "web/src/components/QuickCreateLocation.tsx",
+      "web/src/components/LocationTreePicker.tsx",
+    ],
+    // A second list of stacking nouns. Matched on the ones that mean nothing
+    // else: "shelf" also appears in the page's area-vs-container word list,
+    // which is a different question about the same word.
+    detect: /["'`](tier|rung|layer)["'`]/i,
+    use: "STACKED_NOUNS / isStackedNoun / bottomUpDisplayOrder from lib/stacking.ts",
+  },
+  {
+    kind: "owns",
     id: "location:one-picker",
     what: "choosing a location, including choosing a PARENT for one",
     why: "three pickers accumulated because each replacement was written as a drop-in and then applied only to the surface that prompted it. LocationPicker was superseded in 2026-08 and still rendered a native <select> on six call sites in Records/Assets/Machines, and two separate forms hand-rolled their own parent dropdown, one of them re-implementing the no-cycles closure beside it (2026-08-17)",

@@ -55,6 +55,7 @@ import { queueLabelsBulk } from "../lib/queue-label";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ImportLocationsDialog } from "../components/ImportLocationsDialog";
 import { LocationTreePicker } from "../components/LocationTreePicker";
+import { bottomUpDisplayOrder, isStackedNoun } from "../lib/stacking";
 
 // The tree model + (position, then natural name) sort live in the shared
 // buildLocationForest — the SAME viewer the Labels browser uses, so the two
@@ -840,6 +841,10 @@ function LocationFormModal({
   // spawn siblings. Caps at 50 so a typo'd "Drawer 1-9999" doesn't
   // melt the server.
   const expansion = !editing ? parseRange(name) : null;
+  // Shelves get the house convention offered, pre-chosen but never imposed
+  // (see lib/stacking.ts). Anything else creates in the order you typed.
+  const stacked = !!expansion && expansion.names.length > 1 && isStackedNoun(expansion.prefix);
+  const [bottomUp, setBottomUp] = useState(true);
 
 
   return (
@@ -863,16 +868,26 @@ function LocationFormModal({
               // log stays clean and a single failure stops the rest.
               // Short_name is intentionally dropped for bulk — it's
               // per-location and wouldn't make sense duplicated.
-              let made = 0;
+              const created: string[] = [];
               for (const n of expansion.names) {
-                await api.createLocation(slug, {
+                const loc = await api.createLocation(slug, {
                   name: n,
                   kind,
                   parent_id: parentId || null,
                 });
-                made++;
+                created.push(loc.id);
               }
-              toast.success(`Created ${made} locations: ${expansion.names.join(", ")}`);
+              // Bottom-up numbering means the list must read the OTHER way, so
+              // the group on screen looks like the rack in the room. /reorder is
+              // the same door a drag uses, so this is an opening position, not a
+              // special case the sort has to know about.
+              if (stacked && bottomUp && created.length > 1) {
+                await api.reorderLocations(slug, bottomUpDisplayOrder(created));
+              }
+              toast.success(
+                `Created ${created.length} locations: ${expansion.names.join(", ")}` +
+                  (stacked && bottomUp ? ` (${expansion.names[0]} at the bottom)` : ""),
+              );
             } else {
               await api.createLocation(slug, {
                 name: name.trim(),
@@ -911,6 +926,61 @@ function LocationFormModal({
           {expansion && expansion.names.length > 1 && (
             <div className="text-[11px] text-accent dark:text-cobble-300 mt-1">
               → will create {expansion.names.length} locations: {expansion.preview}
+            </div>
+          )}
+          {stacked && expansion && (
+            <div className="mt-1.5 rounded-md border border-line dark:border-slate-700 bg-subtle/50 dark:bg-slate-800/40 px-2.5 py-2">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mr-1">
+                  Count from
+                </span>
+                {([
+                  { up: true, label: "the bottom", hint: "suggested" },
+                  { up: false, label: "the top", hint: "" },
+                ] as const).map((opt) => {
+                  const on = bottomUp === opt.up;
+                  return (
+                    <button
+                      key={opt.label}
+                      type="button"
+                      onClick={() => setBottomUp(opt.up)}
+                      aria-pressed={on}
+                      className={
+                        "rounded-full border px-2.5 py-0.5 text-[11px] transition " +
+                        (on
+                          ? "border-cobble-500 bg-cobble-50 dark:bg-cobble-900/30 text-content dark:text-mortar-100 ring-1 ring-cobble-400"
+                          : "border-line dark:border-slate-600 text-muted dark:text-slate-400 hover:bg-surface dark:hover:bg-slate-900")
+                      }
+                    >
+                      {opt.label}
+                      {opt.hint && <span className="ml-1 text-faint">· {opt.hint}</span>}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="mt-1.5 text-[10px] text-muted dark:text-slate-400 leading-snug">
+                {bottomUp ? (
+                  <>
+                    <span className="font-medium text-content dark:text-mortar-200">
+                      {expansion.names[0]}
+                    </span>{" "}
+                    is the bottom one and{" "}
+                    <span className="font-medium text-content dark:text-mortar-200">
+                      {expansion.names[expansion.names.length - 1]}
+                    </span>{" "}
+                    is the top. Counting from the floor means number 1 is at the same height on
+                    every rack, and adding one at the top renames nothing.
+                  </>
+                ) : (
+                  <>
+                    <span className="font-medium text-content dark:text-mortar-200">
+                      {expansion.names[0]}
+                    </span>{" "}
+                    is the top one. Fine if that is how the rack is already labelled - just note
+                    that adding a shelf above it later leaves the numbers out of order.
+                  </>
+                )}
+              </div>
             </div>
           )}
           {!editing && !expansion && (
@@ -1040,7 +1110,7 @@ function inferKind(raw: string): "area" | "container" | null {
 const RANGE_RE = /^(.*?)\s*(\d+)\s*[-–]\s*(\d+)\s*$/;
 const MAX_RANGE = 50;
 
-function parseRange(raw: string): { names: string[]; preview: string } | null {
+function parseRange(raw: string): { names: string[]; prefix: string; preview: string } | null {
   const m = raw.match(RANGE_RE);
   if (!m) return null;
   const prefix = (m[1] ?? "").trim();
@@ -1058,5 +1128,5 @@ function parseRange(raw: string): { names: string[]; preview: string } | null {
     names.length <= 4
       ? names.join(", ")
       : `${names[0]}, ${names[1]}, …, ${names[names.length - 1]}`;
-  return { names, preview };
+  return { names, prefix, preview };
 }
