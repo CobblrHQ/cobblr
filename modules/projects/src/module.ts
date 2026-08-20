@@ -11,7 +11,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "projects",
-  version: "0.2.0",
+  version: "0.2.3",
   displayName: "Projects",
   description:
     "Projects + tasks + dependencies. Tasks can wait on other tasks or on any module's entity, the platform brokers.",
@@ -112,6 +112,8 @@ export default defineModule({
     actions: [
       {
         id: "projects:blocked-by",
+        examples: ["this is waiting on that", "cannot start until the part arrives"],
+        undoable: true,
         label: "Mark as waiting on something",
         description:
           "Record that this task cannot start until something else is done. Pass EITHER `depends_on_task_id` (another task) OR `blocks_kind` + `blocks_id` (any record, e.g. a purchase order that has to arrive first). The task then shows as blocked until that dependency is satisfied.",
@@ -126,6 +128,8 @@ export default defineModule({
       },
       {
         id: "projects:unblock",
+        examples: ["it is not waiting on that any more", "remove that dependency"],
+        undoable: true,
         label: "Remove a dependency",
         description:
           "Delete one dependency from a task, so it stops waiting on that thing. Pass `dependency_id` (reading a task's dependencies returns their ids). Removing the dependency does not mark anything done.",
@@ -135,6 +139,7 @@ export default defineModule({
         argsSchema: { dependency_id: { label: "Id of the dependency to remove", type: "text" } },
       },
       {
+        // NO-PHRASING: flips flags for whatever entity triggered it, so without an event there is nothing to act on
         id: "projects:set-dep-satisfied",
         label: "Mark task dependencies satisfied",
         description:
@@ -149,7 +154,9 @@ export default defineModule({
         userInvokable: false,
       },
       {
+        // NO-PHRASING: acts on the task named by the event; asked without one there is no task to mark
         id: "projects:mark-task-done",
+        undoable: true,
         label: "Mark linked task done",
         description:
           "Set the task named by the event's linkedTaskId to done (e.g. when a linked print completes)",

@@ -27,6 +27,8 @@ export interface ModuleApiModule {
  *  can re-trigger mount safely without double-registering routes. */
 const mountedNames = new Set<string>();
 /** moduleName → its primary-entity router, for instance-scoped item CRUD. */
+import { applyComputedFields } from "../platform/computed-fields.js";
+
 const primaryRouters = new Map<string, Router>();
 let appRef: Application | null = null;
 
@@ -52,7 +54,69 @@ export function dispatchInstanceItems(
     });
     return;
   }
+
+  // COMPUTED FIELDS ON THE WAY OUT.
+  //
+  // A module's own list route is a second read path, and the platform's entity
+  // resolver is what applies computed fields — so an instance table, which reads
+  // through here, got raw columns and no computed values at all. A bundle could
+  // declare a column, the value would resolve correctly through
+  // /entities/<kind>/<id>, and the table it was declared for rendered it blank.
+  // (The same "second read path must not skip a platform step" note already
+  // exists on withFieldLabels in the contract; this is the same trap one step
+  // over.)
+  //
+  // Wrapping the response here rather than in each module's list route means
+  // every instance of every module gets it, including ones written later.
+  // The presentation kind for an instance is "<instance_name>:item" — the same
+  // string a bundle's field defs are registered under.
+  const kind = req.instance ? `${req.instance}:item` : undefined;
+  const orgId = req.tenant?.org.id;
+  if (kind && orgId) {
+    const sendJson = res.json.bind(res);
+    res.json = ((body: unknown) => {
+      void (async () => {
+        try {
+          sendJson(await withComputedFields(orgId, kind, body));
+        } catch (err) {
+          // Never fail a list because a computed template did: the raw rows are
+          // still the truth, the column just stays blank.
+          console.error("[instances] computed fields skipped:", (err as Error).message);
+          sendJson(body);
+        }
+      })();
+      return res;
+    }) as Response["json"];
+  }
+
   router(req, res, next);
+}
+
+/** Run a module list/detail payload through the computed-field resolver.
+ *  Handles the two shapes a module returns: `{ items: [...] }` and a bare
+ *  entity. Rows keep their own shape — computed values are merged into
+ *  `metadata`, which is where a table column reads them from. */
+async function withComputedFields(orgId: string, kind: string, body: unknown): Promise<unknown> {
+  if (!body || typeof body !== "object") return body;
+  const rows = Array.isArray((body as { items?: unknown }).items)
+    ? ((body as { items: Record<string, unknown>[] }).items)
+    : null;
+  const one = rows ? null : (body as Record<string, unknown>);
+  if (!rows && (!one || typeof one.id !== "string")) return body;
+
+  const apply = async (row: Record<string, unknown>) => {
+    if (typeof row.id !== "string") return row;
+    const resolved = await applyComputedFields(orgId, {
+      kind,
+      id: row.id,
+      title: String(row.name ?? ""),
+      fields: row,
+    } as Parameters<typeof applyComputedFields>[1]);
+    return { ...row, metadata: resolved.fields.metadata };
+  };
+
+  if (rows) return { ...(body as object), items: await Promise.all(rows.map(apply)) };
+  return await apply(one!);
 }
 
 /** Gate a module's data routes on the module being enabled for the

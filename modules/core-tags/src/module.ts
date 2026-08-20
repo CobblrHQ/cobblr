@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-tags",
-  version: "0.2.0",
+  version: "0.2.3",
   displayName: "Tags",
   description:
     "Cross-module polymorphic labels. Attach the same tag to a part, a task, a printer: they all show up under that tag.",
@@ -73,6 +73,7 @@ export default defineModule({
     actions: [
       {
         id: "core-tags:merge",
+        examples: ["merge these two tags", "we have the same tag twice"],
         label: "Merge into another tag",
         description:
           "Fold this tag into another one: everything carrying this tag ends up carrying the other, and this tag is deleted. Pass `into_tag_id`, the id of the tag to KEEP (list the tags first to get it). Irreversible, so it always confirms.",
@@ -90,6 +91,8 @@ export default defineModule({
       // record's detail page, not an every-kind button.
       {
         id: "core-tags:tag-record",
+        examples: ["tag this as fragile", "label it urgent"],
+        undoable: true,
         label: "Tag record",
         description:
           "Attach a tag (by name) to the targeted record, the tag is created on the fly if it doesn't exist yet. Idempotent: tagging an already-tagged record is a no-op. Args: { tag_name }.",
@@ -105,6 +108,8 @@ export default defineModule({
       },
       {
         id: "core-tags:untag-record",
+        examples: ["remove the fragile tag", "untag this one"],
+        undoable: true,
         label: "Remove tag from record",
         description:
           "Detach a tag (by name) from the targeted record. A no-op if the record isn't tagged with it. Args: { tag_name }.",

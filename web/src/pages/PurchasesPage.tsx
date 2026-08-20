@@ -14,7 +14,7 @@ import { useDetailRoute } from "../lib/useDetailRoute";
 import { ReceiptSourceViewer } from "../components/ReceiptSourceViewer";
 import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
 import { ModulePurposeHint } from "../components/ModulePurposeHint";
-import { usePublishChatContext } from "../lib/chat-context";
+import { usePublishChatContext, usePublishSelectedRecords } from "../lib/chat-context";
 import { BulkActionBar, EntityActionsBar, EntityThumb, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import { ContributedDetailPanels } from "../panels/registry";
 import { receiptGroupSummary } from "./receiptLabel";
@@ -280,6 +280,11 @@ export function PurchasesPage() {
   const [newOpen, setNewOpen] = useState(false);
   const [vendorsOpen, setVendorsOpen] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // What is ticked IS context: with the panel open, "delete these" means the
+  // ones on screen a person pointed at, and Cobb gets their ids rather than a
+  // count he has to go and re-find.
+  usePublishSelectedRecords(selected, rows, "purchases:order", "order");
   const qcP = useQueryClient();
   const toastP = useToast();
   const confirmP = useConfirm();

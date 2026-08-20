@@ -246,3 +246,24 @@ html.desktop-app .desktop-titlebar-pad {
 html.desktop-app .desktop-topnav-pad {
   padding-top: calc(0.5rem + 28px);
 }
+
+/* What Cobb has in context, still visible after the caret leaves it.
+   Clicking into the chat box clears the browser's own selection, so the range
+   is re-painted here instead: the highlight is what says WHICH thing "these"
+   means while you type the sentence about it.
+
+   A highlighter, deliberately — not a tint. The first attempt used the same
+   pale blue a browser uses for its own selection, which on the dark slate was
+   almost invisible against a row that is already a lighter blue-grey. Amber is
+   the complement of that slate, it is nobody else's colour here (ember is
+   errors, cobble is the accent), and it reads at a glance without being read
+   as a state. Dark text on it, because a highlighter that swallows the word is
+   not doing its job. */
+::highlight(cobb-selection) {
+  background-color: rgb(251 191 36 / 0.55); /* amber-400 */
+  color: #1c1711; /* cobble-900 — the words stay legible on the wash */
+}
+.dark ::highlight(cobb-selection) {
+  background-color: rgb(245 158 11 / 0.92); /* amber-500, nearly solid on slate */
+  color: #110d09; /* cobble-950 */
+}

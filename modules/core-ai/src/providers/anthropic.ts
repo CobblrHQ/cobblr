@@ -60,8 +60,23 @@ export function register(): void {
     id: "anthropic",
     label: "Anthropic (Claude)",
     describeCredentials: () => ({
-      api_key: { label: "Anthropic API key (sk-ant-…)", secret: true },
+      api_key: { label: "API key (usually starts with sk-ant-)", secret: true },
     }),
+    // Paid, so it sits below the two free options rather than above them.
+    rank: 30,
+    setup: {
+      summary:
+        "Paid, billed per use. Strong at reading labels and handwriting. " +
+        "A Claude.ai subscription is a different thing and does not work here: this needs " +
+        "an API key, which is topped up separately.",
+      steps: [
+        { text: "Open the Anthropic Console and sign in or sign up.", href: "https://console.anthropic.com/settings/keys" },
+        { text: 'Add credit under Billing first. A brand new account has none, and a key without credit fails on the first use.' },
+        { text: 'Go to API keys, click "Create Key", and give it any name.' },
+        { text: "Copy the key. It starts with sk-ant- and is shown once." },
+        { text: "Paste it below and save." },
+      ],
+    },
     capabilities: SUPPORTED,
     // The prompt this adapter INJECTS (absent from `input` for the image
     // capabilities) joins the cache key — so editing a prompt actually invalidates

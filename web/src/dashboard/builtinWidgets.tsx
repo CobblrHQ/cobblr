@@ -12,6 +12,7 @@
 // into.
 
 import { useQuery } from "@tanstack/react-query";
+import { glanceTotal, idsOf } from "./glanceTotal";
 import { Wrench, Sprout, ShoppingCart } from "lucide-react";
 import { DashboardTile, registerDashboardWidget } from "@cobblr/platform-web";
 import { api } from "../lib/api";
@@ -26,7 +27,7 @@ function MachinesWidget({ slug }: { slug: string }) {
     queryKey: ["dash-machines", slug],
     queryFn: () =>
       api
-        .request<{ items: Array<{ state: string }> }>("GET", `/orgs/${slug}/modules/machines/machines?limit=200`)
+        .request<{ items: Array<{ id?: string; state: string }> }>("GET", `/orgs/${slug}/modules/machines/machines?limit=200`)
         .catch(() => ({ items: [] })),
     staleTime: 30_000,
   });
@@ -42,9 +43,9 @@ function MachinesWidget({ slug }: { slug: string }) {
       Promise.all(
         instList.map((i) =>
           api
-            .request<{ items: unknown[] }>("GET", `/orgs/${slug}/instances/${encodeURIComponent(i.instance_name)}/items?limit=200`)
-            .then((r) => ({ name: i.instance_name, label: i.display_name, total: r.items.length }))
-            .catch(() => ({ name: i.instance_name, label: i.display_name, total: 0 })),
+            .request<{ items: Array<{ id?: string }> }>("GET", `/orgs/${slug}/instances/${encodeURIComponent(i.instance_name)}/items?limit=200`)
+            .then((r) => ({ name: i.instance_name, label: i.display_name, total: r.items.length, ids: idsOf(r.items, i.instance_name) }))
+            .catch(() => ({ name: i.instance_name, label: i.display_name, total: 0, ids: [] as string[] })),
         ),
       ),
     enabled: instList.length > 0,
@@ -52,7 +53,9 @@ function MachinesWidget({ slug }: { slug: string }) {
   });
   const items = q.data?.items ?? [];
   const rows = instData.data ?? [];
-  const total = items.length + rows.reduce((a, b) => a + b.total, 0);
+  // Distinct ids, NOT base + sum: the default instance returns the same rows as the
+  // base list, so adding them showed double. See glanceTotal.
+  const total = glanceTotal(idsOf(items, "base"), rows.map((r) => r.ids));
   const states = items.reduce<Record<string, number>>((acc, m) => {
     acc[m.state] = (acc[m.state] ?? 0) + 1;
     return acc;
@@ -83,7 +86,7 @@ function AssetsWidget({ slug }: { slug: string }) {
   // list showed "0" on those workspaces.
   const q = useQuery({
     queryKey: ["dash-assets", slug],
-    queryFn: () => api.request<{ items: Array<{ state: string }> }>("GET", `/orgs/${slug}/modules/assets/assets?limit=200`).catch(() => ({ items: [] })),
+    queryFn: () => api.request<{ items: Array<{ id?: string; state: string }> }>("GET", `/orgs/${slug}/modules/assets/assets?limit=200`).catch(() => ({ items: [] })),
     staleTime: 30_000,
   });
   const insts = useQuery({
@@ -97,9 +100,9 @@ function AssetsWidget({ slug }: { slug: string }) {
     queryFn: () =>
       Promise.all(
         instList.map((i) =>
-          api.request<{ items: unknown[] }>("GET", `/orgs/${slug}/instances/${encodeURIComponent(i.instance_name)}/items?limit=200`)
-            .then((r) => ({ name: i.instance_name, label: i.display_name, total: r.items.length }))
-            .catch(() => ({ name: i.instance_name, label: i.display_name, total: 0 })),
+          api.request<{ items: Array<{ id?: string }> }>("GET", `/orgs/${slug}/instances/${encodeURIComponent(i.instance_name)}/items?limit=200`)
+            .then((r) => ({ name: i.instance_name, label: i.display_name, total: r.items.length, ids: idsOf(r.items, i.instance_name) }))
+            .catch(() => ({ name: i.instance_name, label: i.display_name, total: 0, ids: [] as string[] })),
         ),
       ),
     enabled: instList.length > 0,
@@ -107,7 +110,9 @@ function AssetsWidget({ slug }: { slug: string }) {
   });
   const items = q.data?.items ?? [];
   const rows = instData.data ?? [];
-  const total = items.length + rows.reduce((a, b) => a + b.total, 0);
+  // Distinct ids, NOT base + sum: the default instance returns the same rows as the
+  // base list, so adding them showed double. See glanceTotal.
+  const total = glanceTotal(idsOf(items, "base"), rows.map((r) => r.ids));
   const states = items.reduce<Record<string, number>>((acc, m) => {
     const k = m.state ?? "—";
     acc[k] = (acc[k] ?? 0) + 1;

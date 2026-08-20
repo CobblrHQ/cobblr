@@ -1,0 +1,8 @@
+{
+  "match": "make me a location called harbour shelf",
+  "rounds": [
+    {
+      "content": "{\"type\":\"create\",\"entity_kind\":\"core-locations:location\",\"fields\":{\"name\":\"Harbour Shelf\"},\"summary\":\"Create a location called Harbour Shelf\"}"
+    }
+  ]
+}

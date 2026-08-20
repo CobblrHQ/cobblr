@@ -35,8 +35,7 @@ import {
   usePublishChatContext,
   makeAreaResolver,
   LOCATION_GROUP_KEY,
-  type EditableCellDef,
-} from "@cobblr/platform-web";
+  type EditableCellDef, usePublishSelectedRecords } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { QtyStepper } from "./QtyStepper";
 import { assortedQty, isAssorted } from "./assorted";
@@ -249,6 +248,10 @@ export function PartsListPage() {
   }
 
   const partItems = parts.data?.pages.flatMap((p) => p.items) ?? [];
+  // What is ticked IS context: with the panel open, "order more of these"
+  // means the parts on screen a person pointed at, and Cobb gets their ids
+  // rather than a count he has to go and re-find.
+  usePublishSelectedRecords(selected, partItems, "inventory:part", "part");
   // Tell Ask Cobb what's on this screen — `low_stock` is the module's own flag.
   const lowStock = partItems.filter((p) => p.low_stock).length;
   usePublishChatContext({

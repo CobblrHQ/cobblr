@@ -1,0 +1,8 @@
+{
+  "match": "teach this workspace a fathom",
+  "rounds": [
+    {
+      "content": "I'll add that unit for you.\n\n{\"type\":\"action\",\"action_id\":\"core-units:add-unit\",\"args\":{\"code\":\"fathom\",\"symbol\":\"ftm\",\"name\":\"fathom\",\"plural\":\"fathoms\",\"category\":\"length\"},\"summary\":\"Add the fathom unit\"}"
+    }
+  ]
+}

@@ -21,7 +21,15 @@ import { join } from "node:path";
 const PROVIDER_DIR = "modules/core-ai/src/providers";
 
 // Files whose provider IS that vendor — naming it in their own fields is correct.
-const VENDOR_EXEMPT = new Set(["anthropic.ts", "openai.ts", "openrouter.ts"]);
+// A provider that IS one vendor may name it: "Anthropic (Claude)" is the honest label
+// for the Anthropic provider, and hiding it would help nobody. The rule exists for the
+// GENERIC providers, whose copy must not assume which product you brought.
+const VENDOR_EXEMPT = new Set([
+  "anthropic.ts",
+  "openai.ts",
+  "openrouter.ts",
+  "google-ai-studio.ts",
+]);
 
 // Specific hosted-AI products/marketing that must never appear in a GENERIC
 // provider's user-facing field copy. NOT "OpenAI"/"Ollama"/"LM Studio" — those

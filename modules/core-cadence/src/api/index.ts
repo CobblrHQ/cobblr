@@ -8,6 +8,7 @@
 
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
+import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext, sessionUserId, loadEvents } from "../db.js";
 import { cadenceTick } from "../sweeper.js";
 import {
@@ -51,10 +52,26 @@ router.post("/events", async (req: Request, res: Response, next) => {
       return;
     }
     const b = parsed.data;
+    // NORMALISE THE KIND ON WRITE, once, here.
+    //
+    // Callers hold the PRESENTATION kind: "inventory:part" for a module's
+    // default instance but "<instance>:item" for a skinned one ("tea:item").
+    // core-scan passes whatever kind the commit targeted, the bundle wires pass
+    // the wire's source_kind, and those are not the same string for the same
+    // item — so one tea ended up with a ledger under two identities, four rows
+    // under one and one row under the other. Every reader then got a different
+    // answer depending on which it asked for, and none of them got the truth.
+    //
+    // Fixing the readers means every future reader has to remember. Fixing the
+    // writers means every future writer has to. There is one insert, so the
+    // ledger is normalised here and holds exactly one kind per entity.
+    const entityKind = await platform()
+      .entities.baseKindOf(tenantContext(req).org.id, b.entity_kind)
+      .catch(() => b.entity_kind);
     const row = await tenantDb(req)
       .insertInto("core_cadence_events")
       .values({
-        entity_kind: b.entity_kind,
+        entity_kind: entityKind,
         entity_id: b.entity_id,
         event_type: b.event_type,
         qty_delta: b.qty_delta,

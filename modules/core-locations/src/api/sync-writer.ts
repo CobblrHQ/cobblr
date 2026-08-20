@@ -5,7 +5,8 @@
 // user token. Depth is recomputed from the parent and the same module events
 // fire, so hierarchy + wires + views stay consistent with the HTTP path.
 
-import { platform } from "@cobblr/platform-contract";
+import { duplicateSiblingMessage, siblingNamed } from "./siblings.js";
+import { platform, restoreRow, snapshotRow } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { CoreLocationsDB } from "../db.js";
 
@@ -18,6 +19,25 @@ export function registerLocationsWriter(): void {
   platform().entities.registerWriter("core-locations:location", {
     async create(orgId, fields) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreLocationsDB>;
+      // Same rule as the REST route, because this is the door an assistant
+      // comes through. The THROW is the point: the agent loop feeds a failed
+      // write back to the model, so it learns the shelf is already there and
+      // says so, instead of quietly making a second one.
+      if (fields.allow_duplicate !== true) {
+        const parentId = asStr(fields.parent_id);
+        const name = String(fields.name ?? "Untitled");
+        const clash = await siblingNamed(db, parentId, name);
+        if (clash) {
+          const place = parentId
+            ? await db
+                .selectFrom("core_locations_locations")
+                .select("name")
+                .where("id", "=", parentId)
+                .executeTakeFirst()
+            : null;
+          throw new Error(duplicateSiblingMessage(name, place?.name ?? null));
+        }
+      }
       const inserted = await db
         .insertInto("core_locations_locations")
         .values({
@@ -84,6 +104,32 @@ export function registerLocationsWriter(): void {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreLocationsDB>;
       await db.deleteFrom("core_locations_locations").where("id", "=", id).execute();
       void platform().events.emit("core-locations.location.deleted", { orgId, locationId: id });
+    },
+
+    /** Put the row back exactly as it was, id and all (EntityWriter.restore).
+     *  Not a create: no name-clash rule, no re-derived id, no new row for
+     *  everything that pointed at the old one to miss. */
+    async restore(orgId, image) {
+      await restoreRow(await platform().tenants.getDb(orgId), "core_locations_locations", image);
+    },
+
+    /** Every column of one row — the state a change ledger keeps so an undo
+     *  has something real to put back (EntityWriter.snapshot). */
+    async snapshot(orgId, id) {
+      return snapshotRow(await platform().tenants.getDb(orgId), "core_locations_locations", id);
+    },
+
+    /** What a delete would take with it. The table cascades on parent_id, so
+     *  removing a rack removes its shelves — silently, and after any check the
+     *  caller made about the rack itself (EntityWriter.dependents). */
+    async dependents(orgId, id) {
+      const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreLocationsDB>;
+      const kids = await db
+        .selectFrom("core_locations_locations")
+        .select("name")
+        .where("parent_id", "=", id)
+        .execute();
+      return kids.map((k) => k.name);
     },
 
     // Existing locations, for the import preview's name-merge — so importing a

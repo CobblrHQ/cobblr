@@ -1,0 +1,13 @@
+{
+  "note": "A SECOND reply the identify pass gave for walmart.jpg on a different run. Kept because it is shaped differently from the current recording and the detector must handle both.",
+  "identify": {
+    "result": {
+      "text": "{\"name\": \"\", \"brand\": null, \"color\": null, \"category\": null, \"entity_type\": null, \"series\": null, \"barcode\": null, \"serial_number\": null, \"observations\": \"The photo shows a paper Walmart store receipt lying on a dark countertop, with several sections redacted with black boxes. The visible line item reads '16IN CHEESE 681131091290 F 6.97 N' with a subtotal and total of $6.97, dated 08/18/26.\", \"distinct_items\": 0, \"product_photo_box\": null, \"items\": [], \"confidence\": 0}"
+    },
+    "provider_id": "edge-bridge",
+    "model": "sonnet",
+    "cached": false,
+    "cost_cents": 0,
+    "duration_ms": 10825
+  }
+}

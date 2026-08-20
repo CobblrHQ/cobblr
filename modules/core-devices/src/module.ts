@@ -12,7 +12,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-devices",
-  version: "0.2.1",
+  version: "0.2.4",
   displayName: "Devices",
   description:
     "The device substrate. Link a physical device (a scale, an RFID reader, a relay) to the Cobblr thing it feeds, in one place. Plumbing under digifab, core-print, and edge firmware connectors.",
@@ -47,6 +47,7 @@ export default defineModule({
     api: [],
     actions: [
       {
+        // NO-PHRASING: fires on a DEVICE reading and self-locates the entity; nobody asks for it, they ask for what it does to the thing
         id: "core-devices:apply-to-linked-entity",
         label: "Apply a device event to its linked entity",
         description:
@@ -60,6 +61,7 @@ export default defineModule({
       },
       {
         id: "core-devices:run-command",
+        examples: ["open the valve for 30 seconds", "send that command to the controller"],
         label: "Run a device command",
         description:
           "Fire a parameterized command-and-forget at a connected actuator/controller (open a valve for N seconds, call a Home Assistant service, flip a relay. Wire-invokable: an entity's schedule (e.g. each plant's water_rrule) commands a device with THAT entity's own params. `connection` + `command` are fixed wire args; the rest pass through as the command's params. Reaches the device via platform().devices.getDriver) works for any connection kind (digifab fabrication drivers, edge-adapter, etc.).",
@@ -69,6 +71,12 @@ export default defineModule({
         // /actions if their use genuinely differs (that page exists for this).
         appliesTo: { traits: ["physical"] },
         invokeHandler: "core-devices.run-command",
+        argsSchema: {
+          // Those two are fixed; any further args pass through to the device as the
+          // command's own params, so they cannot be enumerated here.
+          connection: { label: "Which connection to send through, its id or name", type: "text" },
+          command: { label: "The command to run on the device", type: "text" },
+        },
         userInvokable: false,
       },
     ],

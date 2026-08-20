@@ -13,6 +13,11 @@ interface PlatformWebCtx {
    *  ("Cobblr for Yarn"). Lets shared/module UI trim platform-only chrome
    *  (e.g. the QR-label option) without importing the host's org context. */
   appMode: boolean;
+  /** Cobb's head, drawn by the host. The package owns the button that puts a
+   *  record in his context; the app owns what he looks like — the same split as
+   *  `flows`, and the reason module UIs can show him without this package
+   *  holding a copy of the artwork. */
+  cobbIcon?: ComponentType<{ size?: number; title?: string }>;
 }
 
 const Ctx = createContext<PlatformWebCtx | null>(null);
@@ -48,11 +53,13 @@ export function PlatformWebProvider({
   orgSlug,
   appMode = false,
   flows,
+  cobbIcon,
   children,
 }: {
   api: PlatformWebApi;
   orgSlug: string;
   appMode?: boolean;
+  cobbIcon?: ComponentType<{ size?: number; title?: string }>;
   /** id → flow component. Omit to disable flows (openFlow becomes a no-op). */
   flows?: FlowRegistry;
   children: ReactNode;
@@ -68,7 +75,7 @@ export function PlatformWebProvider({
   );
   const Active = active && flows ? flows[active.flow] : null;
   return (
-    <Ctx.Provider value={{ api, orgSlug, appMode }}>
+    <Ctx.Provider value={{ api, orgSlug, appMode, cobbIcon }}>
       <FlowCtx.Provider value={{ openFlow }}>
         {children}
         {active && Active && <Active args={active.args} onClose={() => setActive(null)} />}

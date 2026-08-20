@@ -7,7 +7,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "purchases",
-  version: "0.10.0",
+  version: "0.10.4",
   displayName: "Purchases",
   description:
     "Orders, line items, and cost rollup. Each order is a vendor purchase; line items can link to inventory parts and to whatever consumed them: printer mods, projects, anything.",
@@ -134,6 +134,8 @@ export default defineModule({
     actions: [
       {
         id: "purchases:add-line",
+        examples: ["add another line to that order", "put two more on the order"],
+        undoable: true,
         label: "Add a line to this order",
         description:
           "Put another line on an order that already exists. Pass `qty` and either `description` (free text) or `part_id` for a part you already track, optionally `unit_cost`. Removing a line has no action on purpose: an order is a financial record, so deleting from it is done in the app.",
@@ -157,11 +159,18 @@ export default defineModule({
         // wire restocks. Also user-invokable: a "Draft a purchase order"
         // button on any part.
         id: "purchases:draft-po",
+        examples: ["order more of these", "put that on a purchase order"],
+        undoable: true,
         label: "Draft a purchase order",
         description:
           "Add this part to a draft (planned) purchase order for its usual vendor at its usual quantity: derived from purchase history. Skips parts already on an open order. Args (all optional): { partId, qty, vendorId }.",
         appliesTo: { kinds: ["inventory:part"] },
         invokeHandler: "purchases.draft-po",
+        argsSchema: {
+          partId: { label: "Which part, defaults to the record this ran on", type: "text" },
+          qty: { label: "How many to order, defaults to the usual quantity", type: "number" },
+          vendorId: { label: "Which vendor, defaults to the usual one", type: "text" },
+        },
         userInvokable: true,
       },
       {
@@ -171,11 +180,16 @@ export default defineModule({
         // no-ops when the order is already arrived so a stale prompt answered
         // twice cannot double-count.
         id: "purchases:mark-arrived",
+        examples: ["that order turned up", "the parcel arrived"],
         label: "Mark arrived",
         description:
           "Record that a purchase order turned up: sets its status to arrived, stamps the arrival date, and releases the stock-receipt events for every line mapped to a part. Does nothing if the order is already arrived. Args (all optional): { orderId, arrivedOn }.",
         appliesTo: { kinds: ["purchases:order"] },
         invokeHandler: "purchases.mark-arrived",
+        argsSchema: {
+          orderId: { label: "Which order, defaults to the record this ran on", type: "text" },
+          arrivedOn: { label: "The date it arrived, defaults to today", type: "text" },
+        },
         userInvokable: true,
       },
     ],

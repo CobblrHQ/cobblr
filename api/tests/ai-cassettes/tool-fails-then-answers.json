@@ -1,0 +1,7 @@
+{
+  "match": "look up something that is not there",
+  "rounds": [
+    { "tool_calls": [{ "name": "get_record", "args": { "kind": "core-locations:location", "id": "00000000-0000-4000-8000-000000000000" } }] },
+    { "content": "I couldn't find that record, so there's nothing to report on it." }
+  ]
+}

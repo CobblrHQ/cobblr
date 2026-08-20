@@ -17,10 +17,13 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "typecheck": "pnpm -r --no-sort --workspace-concurrency=8 run --if-present typecheck",
+    "typecheck": "pnpm -r --no-sort --workspace-concurrency=${COBBLR_TSC_CONCURRENCY:-8} run --if-present typecheck",
     "verify:served": "node scripts/verify-served.mjs",
     "lint:all": "node scripts/run-lints.mjs",
     "lint:isolation": "tsx scripts/lint-module-isolation.ts",
+    "lint:overlay-safe-area": "tsx scripts/lint-overlay-safe-area.ts",
+    "lint:unreachable-file-input": "tsx scripts/lint-unreachable-file-input.ts",
+    "lint:locations-sibling-guard": "tsx scripts/lint-locations-sibling-guard.ts",
     "lint:manifests": "tsx scripts/lint-manifests.ts",
     "lint:panel-registry": "tsx scripts/lint-panel-registry.ts",
     "lint:dockerfile-modules": "tsx scripts/lint-dockerfile-modules.ts",
@@ -116,6 +119,7 @@
     "lint:registry-headers-sync": "tsx scripts/lint-registry-headers-sync.ts",
     "lint:authed-media": "tsx scripts/lint-authed-media.ts",
     "lint:action-predicates": "tsx scripts/lint-action-predicates.ts",
+    "lint:basics-ai-mode": "tsx scripts/lint-basics-ai-mode.ts",
     "lint:ai-reach": "tsx scripts/lint-ai-reach.ts",
     "lint:hooks-served": "tsx scripts/lint-hooks-served.ts",
     "lint:module-purity": "tsx scripts/lint-module-purity.ts",
@@ -152,6 +156,7 @@
     "prepare": "git config core.hooksPath scripts/git-hooks 2>/dev/null || true; git config merge.semver-version.driver 'node scripts/merge-semver-version.mjs %O %A %B' 2>/dev/null || true",
     "typecheck:fast": "pnpm -r run --if-present typecheck:fast",
     "embed:bridge": "node scripts/embed-bridge-bundle.mjs",
+    "pretest:unit": "node scripts/ensure-packages-built.mjs",
     "test:unit": "node scripts/run-unit-tests.mjs",
     "lint:native-field-labels": "node scripts/lint-native-field-labels.mjs",
     "lint:view-config-keys": "tsx scripts/lint-view-config-keys.ts",
@@ -182,10 +187,15 @@
     "lint:ci-runner-labels": "tsx scripts/lint-ci-runner-labels.ts",
     "lint:test-timeout-floor": "tsx scripts/lint-test-timeout-floor.ts",
     "lint:notification-deep-links": "tsx scripts/lint-notification-deep-links.ts",
+    "lint:selection-published": "tsx scripts/lint-selection-published.ts",
     "lint:scanner-sheet": "tsx scripts/lint-scanner-sheet.ts",
     "lint:error-body-kept": "tsx scripts/lint-error-body-kept.ts",
     "lint:server-owned-fields": "tsx scripts/lint-server-owned-fields.ts",
-    "lint:ai-reach-routes": "tsx scripts/lint-ai-reach-routes.ts"
+    "lint:ai-reach-routes": "tsx scripts/lint-ai-reach-routes.ts",
+    "lint:action-args-declared": "tsx scripts/lint-action-args-declared.ts",
+    "lint:ai-corpus-shape": "tsx scripts/lint-ai-corpus-shape.ts",
+    "lint:action-examples": "tsx scripts/lint-action-examples.ts",
+    "lint:computed-context-kind": "tsx scripts/lint-computed-context-kind.ts"
   },
   "devDependencies": {
     "jsdom": "^30.0.1",

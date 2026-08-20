@@ -1,0 +1,8 @@
+{
+  "match": "reorder something without saying how",
+  "rounds": [
+    {
+      "content": "{\"type\":\"action\",\"action_id\":\"core-locations:reorder\",\"summary\":\"Reorder the locations\"}"
+    }
+  ]
+}

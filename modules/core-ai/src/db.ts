@@ -64,6 +64,8 @@ export interface CoreAiDB {
   core_ai_calls: CoreAiCallsTable;
   core_ai_cache: CoreAiCacheTable;
   core_ai_basics: CoreAiBasicsTable;
+  core_ai_basics_misses: CoreAiBasicsMissesTable;
+  core_ai_commands: CoreAiCommandsTable;
   core_ai_chat_prefs: CoreAiChatPrefsTable;
   core_ai_chat_writes: CoreAiChatWritesTable;
   core_ai_chat_turns: CoreAiChatTurnsTable;
@@ -114,8 +116,20 @@ export interface CoreAiChatWritesTable {
   entity_id: string | null;
   entity_label: Generated<string>;
   before: unknown | null;
+  /** What this change PRODUCED, and a hash of it. Undo compares the record's
+   *  hash now against this: equal means the change is still the top of that
+   *  record's history and the revert is exact; different means something else
+   *  has touched it since, and that gets said rather than overwritten. */
+  after: unknown | null;
+  after_hash: string | null;
   payload: unknown | null;
   auto_applied: Generated<boolean>;
+  /** The message that asked for this write, when it came from a chat turn.
+   *  Half of a worked example; the payload above is the other half. */
+  prompt: string | null;
+  /** Which turn produced it, so one sentence's several writes group into ONE
+   *  example instead of several. */
+  turn_id: string | null;
   undone_at: Date | null;
   undo_of: string | null;
   created_at: Generated<Date>;
@@ -134,6 +148,32 @@ export interface CoreAiBasicsTable {
   position: Generated<number>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
+}
+
+/** A question basic mode had no answer for. See 0007_basics_misses.sql. */
+export interface CoreAiBasicsMissesTable {
+  id: Generated<string>;
+  normalized: string;
+  sample: string;
+  times: Generated<number>;
+  first_seen: Generated<Date>;
+  last_seen: Generated<Date>;
+  dismissed: Generated<boolean>;
+}
+
+/** A command the workspace adopted. See 0009_commands.sql. */
+export interface CoreAiCommandsTable {
+  id: Generated<string>;
+  template: string;
+  pattern: string;
+  slots: Generated<unknown>;
+  plan: unknown;
+  repeat_field: string | null;
+  repeat_shape: string | null;
+  enabled: Generated<boolean>;
+  times_used: Generated<number>;
+  created_at: Generated<Date>;
+  last_used_at: Date | null;
 }
 
 export type OrgRole = "owner" | "admin" | "member" | "guest";

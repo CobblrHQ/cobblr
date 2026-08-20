@@ -50,10 +50,53 @@ export function authHeadersFor(credentials: Record<string, unknown>): Record<str
 /** The model actually sent on the wire. An explicit capability-default from
  *  the AI config wins; else the connection's own `model` credential; else the
  *  "default" placeholder. Exported for tests. */
-export function effectiveModel(ctxModel: string | undefined, credentials: Record<string, unknown>): string {
+export function effectiveModel(
+  ctxModel: string | undefined,
+  credentials: Record<string, unknown>,
+  fallback?: string,
+): string {
   const connModel = typeof credentials.model === "string" ? credentials.model.trim() : "";
   if (ctxModel && ctxModel !== "default") return ctxModel;
-  return connModel || ctxModel || "default";
+  // `fallback` is a preset's own sensible default. Without one this returns the literal
+  // "default", which LM Studio understands (it serves whatever is loaded) and a hosted
+  // gateway does not — it is a guaranteed 4xx there. A preset that knows its provider's
+  // model name can therefore leave the field blank for the user instead of demanding it.
+  // `fallback` outranks ctxModel here because a ctxModel of "default" is the sentinel
+  // for "no preference", not a request for a model literally named default. Ordering it
+  // ahead of the fallback silently skipped the preset's model and sent "default" to a
+  // gateway that has none.
+  return connModel || fallback || ctxModel || "default";
+}
+
+// Free tiers fail transiently and often. Verifying the Google AI Studio preset against
+// the live API, a dozen calls produced several 503 "high demand" and a 429 before a clean
+// run. Without a retry those reach the user as a raw `provider: 503 [{"error":...}]`, and
+// someone scanning a ball band concludes Cobblr is broken rather than that the free tier
+// was busy for a second.
+//
+// Retries only what is worth retrying: 429 (rate limited) and 502/503/504 (upstream busy).
+// A 400 or 401 is a wrong key or a wrong model and will fail identically forever, so
+// retrying it just makes the error slower.
+const RETRY_STATUSES = new Set([429, 502, 503, 504]);
+const RETRY_ATTEMPTS = 3;
+const RETRY_BASE_MS = 700;
+// Total added latency is bounded because a person is usually waiting on this: at worst
+// 700ms + 1400ms before giving up. Long enough to ride out a spike, short enough that a
+// genuinely down provider still fails promptly.
+const RETRY_CAP_MS = 4000;
+
+/** How long to wait before retrying, or null to give up and surface the error. Honours
+ *  Retry-After when the provider sends one, since a server's own number beats a guess.
+ *  Pure, so the policy is testable without a network. */
+export function retryDelayMs(status: number, retryAfter: string | null, attempt: number): number | null {
+  if (!RETRY_STATUSES.has(status)) return null;
+  if (attempt >= RETRY_ATTEMPTS - 1) return null;
+  // Guard the STRING before converting: Number(null) is 0, not NaN, and Number("") is 0
+  // too. Either would have made "no Retry-After header" mean "retry immediately", which
+  // is a tight loop against a provider that just asked us to slow down.
+  const secs = typeof retryAfter === "string" && retryAfter.trim() !== "" ? Number(retryAfter) : NaN;
+  if (Number.isFinite(secs) && secs >= 0) return Math.min(secs * 1000, RETRY_CAP_MS);
+  return Math.min(RETRY_BASE_MS * 2 ** attempt, RETRY_CAP_MS);
 }
 
 export interface CompatPresetOpts {
@@ -65,6 +108,13 @@ export interface CompatPresetOpts {
   /** Gateways with no default model refuse early with a helpful message
    *  instead of relaying an opaque 4xx. */
   requireModel?: boolean;
+  /** A model to use when neither the call nor the connection names one. Lets a preset
+   *  with a known-good default ship a blank, optional model field. */
+  defaultModel?: string;
+  /** Step-by-step for getting this provider's credentials, shown in the UI. */
+  setup?: AiProviderDef["setup"];
+  /** Position in the picker; lower first, and first is the default. */
+  rank?: AiProviderDef["rank"];
   /** Extra request headers (e.g. OpenRouter's attribution headers). */
   extraHeaders?: Record<string, string>;
 }
@@ -76,6 +126,8 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
     id,
     label: opts.label,
     describeCredentials: opts.describeCredentials,
+    setup: opts.setup,
+    rank: opts.rank,
     capabilities: SUPPORTED,
     // The prompt this adapter INJECTS (absent from `input` for the image
     // capabilities) joins the cache key — so editing a prompt actually invalidates
@@ -83,7 +135,7 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
     promptFingerprint,
     invoke: async (ctx) => {
       const base = resolveBase(ctx.credentials);
-      const model = effectiveModel(ctx.model, ctx.credentials);
+      const model = effectiveModel(ctx.model, ctx.credentials, opts.defaultModel);
       if (opts.requireModel && (!model || model === "default")) {
         throw new Error(`${id}: set a model on the connection (e.g. anthropic/claude-sonnet-5)`);
       }
@@ -93,10 +145,30 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
       const bridged = viaBridge(ctx.credentials);
       const pin = bridged ? null : await assertSafeAiEndpoint(base, platform().ai.getEndpointPolicy());
       const headers = { "content-type": "application/json", ...extraHeaders, ...authHeadersFor(ctx.credentials) };
-      const call = (path: string, init: { method?: "GET" | "POST"; headers?: Record<string, string>; body?: string }): Promise<PinnedResponse> =>
+      const once = (path: string, init: { method?: "GET" | "POST"; headers?: Record<string, string>; body?: string }): Promise<PinnedResponse> =>
         bridged
           ? edgeFetch(edgeKeyFor(ctx.credentials, ctx.orgId), base, path, init)
           : pinnedFetch(`${base}${path}`, pin!, init);
+      // One seam, so every capability (chat, embed, the image ones) gets the retry
+      // rather than whichever call site remembered to ask for it. The body is untouched
+      // until after the last attempt, so retrying a streamed response is safe here.
+      const call = async (
+        path: string,
+        init: { method?: "GET" | "POST"; headers?: Record<string, string>; body?: string },
+      ): Promise<PinnedResponse> => {
+        let res = await once(path, init);
+        for (let attempt = 0; !res.ok; attempt++) {
+          // PinnedResponse deliberately exposes only ok/status/text/json, so there is no
+          // Retry-After to read. Widening that SSRF-facing type for a backoff hint is a
+          // bad trade; retryDelayMs still takes the parameter so honouring the header is
+          // a one-line change if the response type ever carries them.
+          const wait = retryDelayMs(res.status, null, attempt);
+          if (wait == null) return res;
+          await new Promise((r) => setTimeout(r, wait));
+          res = await once(path, init);
+        }
+        return res;
+      };
       switch (ctx.capability) {
         case "embed-text": {
           const res = await call("/embeddings", {
@@ -132,6 +204,13 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
           // once without them (graceful no-tools degrade for local models).
           const toolDefs = ctx.capability === "chat" ? toolsOf(ctx.input) : null;
           if (toolDefs) body.tools = openAiToolsOf(toolDefs);
+          // Stream when somebody is watching AND there are no tools in play:
+          // a tool call arrives as its own delta shape, and half-parsing one
+          // to show it typing is a way to run the wrong tool. A tool-using
+          // round is short anyway; it is the long prose answer that needs to
+          // show up as it is written.
+          const streamText = ctx.capability === "chat" && typeof ctx.onDelta === "function" && !toolDefs;
+          if (streamText) body.stream = true;
           // MCP tool relay (a Claude-subscription bridge behind the OpenAI wire):
           // forward the per-request grant so the bridge spawns `claude -p
           // --mcp-config`. A real OpenAI-compatible server ignores this field.
@@ -141,10 +220,41 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
           // The JSON-shaped prompts already instruct the model, and every
           // consumer robust-parses (parseJsonReply) — so omit it and stay
           // compatible with the widest server set.
+          // SSE arrives in chunks that do not respect line boundaries, so a
+          // partial line is held until the rest of it turns up.
+          let sseTail = "";
+          let streamedText = "";
+          const onChunk = streamText
+            ? (chunk: string) => {
+                sseTail += chunk;
+                const lines = sseTail.split("\n");
+                sseTail = lines.pop() ?? "";
+                for (const line of lines) {
+                  const t = line.trim();
+                  if (!t.startsWith("data:")) continue;
+                  const payload = t.slice(5).trim();
+                  if (!payload || payload === "[DONE]") continue;
+                  try {
+                    const frame = JSON.parse(payload) as {
+                      choices?: Array<{ delta?: { content?: string } }>;
+                    };
+                    const piece = frame.choices?.[0]?.delta?.content;
+                    if (typeof piece === "string" && piece) {
+                      streamedText += piece;
+                      ctx.onDelta?.(piece);
+                    }
+                  } catch {
+                    /* a frame we cannot read is a frame we do not need */
+                  }
+                }
+              }
+            : undefined;
+
           let res = await call("/chat/completions", {
             method: "POST",
             headers,
             body: JSON.stringify(body),
+            ...(onChunk ? { onChunk } : {}),
           });
           if (!res.ok && toolDefs) {
             const errText = await res.text();
@@ -153,6 +263,12 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
             res = await call("/chat/completions", { method: "POST", headers, body: JSON.stringify(body) });
           }
           if (!res.ok) throw new Error(`${id}: ${res.status} ${await res.text()}`);
+          if (streamText) {
+            // A streamed body is SSE frames, not one JSON object. Everything
+            // needed was collected on the way past.
+            if (!streamedText.trim()) throw new Error(`${id}: the stream carried no text`);
+            return { result: { role: "assistant", content: streamedText }, input_tokens: 0, output_tokens: 0 };
+          }
           const out = (await res.json()) as {
             choices: Array<{
               message: {

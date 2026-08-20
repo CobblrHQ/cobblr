@@ -29,12 +29,16 @@ export function SidePanel({
   width,
   panelRef,
   escapeExempt = false,
+  /** Marks this panel as the chat, so a highlight made INSIDE it is understood
+   *  as reading Cobb's own words back rather than pointing at the workspace. */
+  cobbPanel = false,
   children,
 }: {
   /** Desktop width. Mobile is always full-bleed. */
   width: string;
   panelRef?: Ref<HTMLDivElement>;
   escapeExempt?: boolean;
+  cobbPanel?: boolean;
   children: ReactNode;
 }) {
   useOverlayOpenFlag();
@@ -42,6 +46,7 @@ export function SidePanel({
     <div
       ref={panelRef}
       {...(escapeExempt ? { "data-modal-escape-exempt": true } : {})}
+      {...(cobbPanel ? { "data-cobb-panel": true } : {})}
       className={
         "fixed inset-x-0 bottom-0 top-[var(--app-header-bottom,3.5rem)] z-[60] flex flex-col " +
         "border-t border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-2xl " +

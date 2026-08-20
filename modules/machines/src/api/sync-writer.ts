@@ -7,7 +7,7 @@
 // side stays pure declarative data. Fires the module's own events so views,
 // wires, and the instance counters stay consistent with the HTTP path.
 
-import { platform } from "@cobblr/platform-contract";
+import { platform, restoreRow, snapshotRow } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { MachinesDB } from "../db.js";
 
@@ -78,6 +78,19 @@ export function registerMachinesWriter(): void {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<MachinesDB>;
       await db.deleteFrom("machines_machines").where("id", "=", id).execute();
       void platform().events.emit("machines.machine.deleted", { orgId, machineId: id });
+    },
+
+    /** Put the row back exactly as it was, id and all (EntityWriter.restore).
+     *  Not a create: no name-clash rule, no re-derived id, no new row for
+     *  everything that pointed at the old one to miss. */
+    async restore(orgId, image) {
+      await restoreRow(await platform().tenants.getDb(orgId), "machines_machines", image);
+    },
+
+    /** Every column of one row — the state a change ledger keeps so an undo
+     *  has something real to put back (EntityWriter.snapshot). */
+    async snapshot(orgId, id) {
+      return snapshotRow(await platform().tenants.getDb(orgId), "machines_machines", id);
     },
 
     // Existing machines, for the import preview's name-merge.

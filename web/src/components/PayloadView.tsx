@@ -18,7 +18,20 @@
 // "image sent, not stored" marker rather than the bare word "[image]".
 
 import { useMemo, useState, type ReactNode } from "react";
+import ReactMarkdown from "react-markdown";
 import { Braces, Image as ImageIcon, Text } from "lucide-react";
+
+/** Model output is markdown. Rendered raw it reads "- **Duplicate locations**
+ *  — full location list…", which is the formatting characters competing with
+ *  the sentence for the operator's attention. Same prose classes the chat uses,
+ *  so an answer looks the same wherever you read it. */
+export function Prose({ text }: { text: string }) {
+  return (
+    <div className="prose prose-sm dark:prose-invert max-w-none text-content dark:text-mortar-200 prose-p:my-1.5 prose-headings:my-2 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5 prose-pre:my-2 prose-pre:text-[11px] break-words">
+      <ReactMarkdown>{text}</ReactMarkdown>
+    </div>
+  );
+}
 
 const IMAGE_URL = /^(https?:\/\/[^\s"']+\.(?:png|jpe?g|gif|webp|avif)(?:\?[^\s"']*)?|data:image\/[a-z+]+;base64,[A-Za-z0-9+/=]+)$/i;
 /** What the server leaves behind when it strips image bytes from the log. */
@@ -88,12 +101,9 @@ function Value({ value }: { value: unknown }) {
           <Tree value={inner} />
         </div>
       );
-    // Escaped newlines are the main reason these blobs are unreadable.
-    return (
-      <span className="whitespace-pre-wrap break-words text-content dark:text-mortar-200">
-        {value}
-      </span>
-    );
+    // Escaped newlines are the main reason these blobs are unreadable, and the
+    // content is markdown, so render it as markdown.
+    return <Prose text={value} />;
   }
 
   return <Tree value={value} />;
@@ -169,15 +179,28 @@ export function PayloadView({
 }) {
   const [pretty, setPretty] = useState(true);
   const parsed = useMemo(() => parse(raw ?? ""), [raw]);
+  const box =
+    "text-xs bg-subtle dark:bg-slate-800 border border-line dark:border-slate-700 rounded p-3 max-h-80 overflow-auto";
+  // A payload that opens like JSON but will not parse is a TRUNCATED record,
+  // not free text. Say so, rather than showing a wall that stops mid-word and
+  // leaving the reader to work out why.
+  const looksJson = !!raw && (raw.trim()[0] === "{" || raw.trim()[0] === "[");
+  const broken = looksJson && !parsed.isJson;
 
   const body = !raw ? (
     <p className="text-xs text-faint">{emptyText}</p>
-  ) : pretty && parsed.isJson ? (
-    <div className="text-xs bg-subtle dark:bg-slate-800 border border-line dark:border-slate-700 rounded p-3 max-h-80 overflow-auto">
-      <Tree value={parsed.json} />
+  ) : pretty ? (
+    <div className={box}>
+      {broken && (
+        <p className="mb-2 text-[11px] text-faint italic">
+          This record was cut short when it was written, so it cannot be shown as a tree. Newer
+          calls shorten the long text inside instead and stay readable.
+        </p>
+      )}
+      {parsed.isJson ? <Tree value={parsed.json} /> : <Prose text={raw} />}
     </div>
   ) : (
-    <pre className="text-xs whitespace-pre-wrap break-words bg-subtle dark:bg-slate-800 border border-line dark:border-slate-700 rounded p-3 max-h-80 overflow-auto text-content dark:text-mortar-200">
+    <pre className={box + " whitespace-pre-wrap break-words text-content dark:text-mortar-200"}>
       {raw}
     </pre>
   );
@@ -194,9 +217,12 @@ export function PayloadView({
         {label && (
           <div className="text-[10px] font-mono uppercase tracking-widest text-accent">{label}</div>
         )}
-        {/* Only offer the toggle when there are two ways to see it. Plain text
-            has no pretty form, and pretending otherwise is a dead control. */}
-        {parsed.isJson && (
+        {/* Always offered. This used to appear only for parseable JSON, on the
+            theory that plain text has no pretty form — but it does (it is
+            markdown), and the payloads that most needed the toggle were the
+            long ones the log had truncated into unparseable text, which is
+            exactly when the control vanished. */}
+        {raw && (
           <div className="ml-auto flex items-center gap-0.5">
             <button type="button" onClick={() => setPretty(true)} className={btn(pretty)}>
               <Text size={11} /> Pretty

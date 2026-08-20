@@ -15,6 +15,7 @@
 import { z } from "zod";
 import { type WorkspaceApi, type ToolResult, toolOk, toolFail, apiErrorMessage } from "./api.js";
 import {
+  withKindsTitleField,
   fetchKinds,
   resolveCreatePath,
   resolveUpdatePath,
@@ -463,7 +464,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_actions",
     description:
-      "Discover the operations (actions) this workspace can run. Each item has a `scope`: an 'entity' action runs on a record (adjust stock, mark a task done, build one) (its matched_kinds lists which record kinds it applies to; a 'workspace' action is a config/admin operation that runs on the whole workspace (rename a label-code prefix, change a default) and is invoked WITHOUT a record. Optionally filter to one entity kind) workspace actions are always included. Use invoke_action to run one.",
+      "Discover the operations (actions) this workspace can run. Each item has a `scope`: an 'entity' action runs on a record (adjust stock, mark a task done, build one) and its matched_kinds lists which record kinds it applies to; a 'workspace' action is a config/admin operation that runs on the whole workspace (reorder locations, rename a label-code prefix, change a default) and is invoked WITHOUT a record. Each item also carries `args_schema`: the named arguments that action takes, which you pass as invoke_action's `args`, and `undoable`: whether running it by mistake can be put right inside the workspace. On a connection that cannot show a confirmation prompt, only the undoable ones will run; the rest refuse and say so, which is worth telling the user rather than claiming you have no way to act. Optionally filter to one entity kind; workspace actions are always included. Use invoke_action to run one.",
     mode: "read",
     params: {
       kind: z.string().optional().describe("Only entity actions applicable to this kind id (workspace actions still included)"),
@@ -471,14 +472,69 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     execute: async (api, args) => {
       const res = await api.request("GET", "/registered-actions");
       if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't list actions"));
-      const items = (res.body.items as Array<{ matched_kinds?: string[]; scope?: string }> | undefined) ?? [];
+      const items =
+        (res.body.items as
+          | Array<{
+              id?: string;
+              label?: string;
+              description?: string;
+              module_name?: string;
+              matched_kinds?: string[];
+              scope?: string;
+              args_schema?: Record<string, { label?: string; type?: string }> | null;
+              undoable?: boolean;
+              examples?: string[];
+            }>
+          | undefined) ?? [];
       const kind = typeof args.kind === "string" && args.kind.trim() ? args.kind.trim() : null;
       // When filtering by a record's kind, still surface workspace-level config
       // actions — they're not record-scoped but the user may want one from here.
+      const picked = kind
+        ? items.filter((a) => a.scope === "workspace" || (a.matched_kinds ?? []).includes(kind))
+        : items;
+      // Project to what a caller needs to actually RUN one. `args` is the
+      // decisive field: an action listed without its arguments is an action
+      // that cannot be invoked, and the honest-looking conclusion is "I have no
+      // way to run this" — which is what happened with core-locations:reorder
+      // and its `ids` (2026-08-19).
       return toolOk(
-        kind
-          ? items.filter((a) => a.scope === "workspace" || (a.matched_kinds ?? []).includes(kind))
-          : items,
+        picked.map((a) => ({
+          id: a.id,
+          label: a.label,
+          description: a.description,
+          // Which module it came from: dropped once in the projection below and
+          // caught only by a test that pins it, so it stays named here.
+          module_name: a.module_name,
+          scope: a.scope ?? "entity",
+          // Whether running it by mistake can be put right here. A connection
+          // with no way to show a confirmation may run only the undoable ones,
+          // so this is the difference between "I will do that" and a refusal
+          // the user can act on.
+          undoable: a.undoable === true,
+          // How a person asks for it, so a sentence can be matched to an action
+          // rather than guessed at from the id.
+          ...(a.examples?.length ? { said_like: a.examples } : {}),
+          ...(a.scope === "workspace" ? {} : { matched_kinds: a.matched_kinds ?? [] }),
+          args: a.args_schema && Object.keys(a.args_schema).length
+            ? Object.fromEntries(
+                Object.entries(a.args_schema).map(([name, spec]) => {
+                  const type = spec?.type ?? "text";
+                  return [
+                    name,
+                    {
+                      type,
+                      ...(spec?.label ? { describes: spec.label } : {}),
+                      // Spelling out the JSON shape for a list: "type: list"
+                      // alone was read as "a comma-separated string" often
+                      // enough to matter, and the order inside a list is
+                      // frequently the whole point of the call.
+                      ...(type === "list" ? { pass_as: 'a JSON array, in order — ["…", "…"]' } : {}),
+                    },
+                  ];
+                }),
+              )
+            : undefined,
+        })),
       );
     },
   },
@@ -909,9 +965,47 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       const kinds = await fetchKinds(api);
       const path = resolveCreatePath(kind, kinds);
       if (!path) return toolFail(`records of "${kind}" can't be created this way (no create route declared)`);
-      const res = await api.request("POST", `/${path}`, args.fields ?? {});
+      // "title" when the kind says "name" is the same value under a different
+      // word, and refusing it taught nobody anything (see withKindsTitleField).
+      const { fields } = withKindsTitleField(kind, kinds, (args.fields as Record<string, unknown>) ?? {});
+      const res = await api.request("POST", `/${path}`, fields);
       if (res.status >= 400) return toolFail(apiErrorMessage(res, "create failed"));
       return toolOk(res.body);
+    },
+  },
+  {
+    name: "create_records",
+    description:
+      "Create MANY records of one kind in ONE call. Use this whenever the user asks for a SET rather than a thing - \"shelf 1 to 5 in every rack\", \"bins A through H\" - instead of calling create_record over and over: it is one round trip instead of one per record, and the person watching sees one line instead of sixty. Same field names as create_record. Up to 200 at a time. Each record is created, tracked and undoable individually, and any that clash with something already there are REPORTED back to you, not forced - say so rather than trying again.",
+    mode: "write",
+    params: {
+      kind: z.string().describe("Entity kind id with can_create true"),
+      records: z
+        .array(z.record(z.unknown()))
+        .min(1)
+        .max(200)
+        .describe("One object per record, each using the kind's exact field names"),
+    },
+    execute: async (api, args) => {
+      const kind = String(args.kind ?? "");
+      const rows = Array.isArray(args.records) ? (args.records as Array<Record<string, unknown>>) : [];
+      if (rows.length === 0) return toolFail("no records given");
+      const kinds = await fetchKinds(api);
+      const path = resolveCreatePath(kind, kinds);
+      if (!path) return toolFail(`records of "${kind}" can't be created this way (no create route declared)`);
+      const created: unknown[] = [];
+      const failed: Array<{ index: number; error: string }> = [];
+      for (const [i, row] of rows.entries()) {
+        const { fields } = withKindsTitleField(kind, kinds, row);
+        const res = await api.request("POST", `/${path}`, fields);
+        if (res.status >= 400) failed.push({ index: i, error: apiErrorMessage(res, "create failed") });
+        else created.push(res.body);
+      }
+      // Partial success is the NORMAL outcome here ("each rack should have
+      // Shelf 1-5" against a rack that already has two of them), so it is
+      // reported rather than thrown: the model needs to tell the person what
+      // was already there instead of retrying into the same refusals.
+      return toolOk({ created: created.length, failed, records: created });
     },
   },
   {
@@ -929,7 +1023,8 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       const kinds = await fetchKinds(api);
       const path = resolveUpdatePath(kind, String(args.id ?? ""), kinds);
       if (!path) return toolFail(`records of "${kind}" can't be updated this way (no update route declared)`);
-      const res = await api.request("PATCH", `/${path}`, args.fields ?? {});
+      const { fields: patch } = withKindsTitleField(kind, kinds, (args.fields as Record<string, unknown>) ?? {});
+      const res = await api.request("PATCH", `/${path}`, patch);
       if (res.status >= 400) return toolFail(apiErrorMessage(res, "update failed"));
       return toolOk(res.body);
     },
@@ -968,7 +1063,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         .string()
         .optional()
         .describe("The record's id — required for an entity action, omit for a workspace action"),
-      args: z.record(z.unknown()).optional().describe("Action arguments (see the action's args schema from list_actions)"),
+      args: z.record(z.unknown()).optional().describe("Action arguments, by name, from the action's `args` in list_actions. Values may be any JSON — a string, a number, or a LIST (e.g. reorder takes ids: [\"…\",\"…\"])."),
     },
     execute: async (api, args) => {
       const entityKind = typeof args.entity_kind === "string" && args.entity_kind.trim() ? args.entity_kind.trim() : undefined;

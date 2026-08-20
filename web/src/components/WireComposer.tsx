@@ -251,7 +251,13 @@ export function WireComposer({
                     value={args[name] ?? ""}
                     onChange={(e) => setArgs((a) => ({ ...a, [name]: e.target.value }))}
                     onFocus={(e) => { activeRef.current = e.currentTarget; activeField.current = name; }}
-                    placeholder={spec.type === "number" ? "a number or {{token}}" : "a value or {{token}}"}
+                    placeholder={
+                      spec.type === "number"
+                        ? "a number or {{token}}"
+                        : spec.type === "list"
+                          ? "values separated by commas, or {{token}}"
+                          : "a value or {{token}}"
+                    }
                     className="input font-mono text-xs"
                   />
                 </label>

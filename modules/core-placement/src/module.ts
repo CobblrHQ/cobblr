@@ -20,7 +20,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-placement",
-  version: "0.2.0",
+  version: "0.2.3",
   displayName: "Placement",
   description:
     "The containment primitive: records which container each thing lives inside (a part in a machine, a component in a server, an item in a location). Exposed platform-wide via platform().placement; a Location is just one kind of container.",
@@ -51,6 +51,8 @@ export default defineModule({
       // record's detail page.
       {
         id: "core-placement:place",
+        examples: ["put this in bin 4", "it lives in the Garage now"],
+        undoable: true,
         label: "Place in container",
         description:
           "Put the targeted record inside a container (a location, a bin, a box: any container-trait record). Moves it if it's already somewhere else. Args: { container_kind, container_id, slot? }.",
@@ -65,6 +67,8 @@ export default defineModule({
       },
       {
         id: "core-placement:remove",
+        examples: ["take it out of the bin", "it is not in there any more"],
+        undoable: true,
         label: "Remove from container",
         description:
           "Take the targeted record out of whatever container it's in. A no-op if it isn't placed anywhere.",

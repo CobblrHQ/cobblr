@@ -4,7 +4,15 @@ import { useMemo, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Search, Trash2 } from "lucide-react";
-import { BulkActionBar, CustomFieldsPanel, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import {
+  BulkActionBar,
+  CustomFieldsPanel,
+  Modal,
+  useToast,
+  useConfirm,
+  usePageTitle,
+  usePublishSelectedRecords,
+} from "@cobblr/platform-web";
 import { useProjects } from "./context";
 import type { Project } from "./api";
 
@@ -142,6 +150,15 @@ export function ProjectsListPage() {
   }, [filtered]);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
+
+
+  // What is ticked IS context: with the panel open, "delete these" means the
+
+  // ones on screen a person pointed at, and Cobb gets their ids rather than a
+
+  // count he has to go and re-find.
+
+  usePublishSelectedRecords(selected, items, "projects:project", "project");
   const bulkDelete = useMutation({
     mutationFn: async (ids: string[]) => {
       for (const id of ids) {

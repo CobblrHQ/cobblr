@@ -44,6 +44,15 @@ function base(): string {
   return (env.IDENTITY_URL ?? "").replace(/\/+$/, "");
 }
 
+/** The identity service as a BROWSER must reach it, which is not always how the API
+ *  reaches it. `base()` is the server-to-server hop and may legitimately be a LAN
+ *  address; this one is handed out as a redirect target, so it has to resolve for a
+ *  stranger on the internet. Falls back to IDENTITY_URL, which is correct for the
+ *  single-URL case (self-host, dev) and is why the two were conflated to begin with. */
+export function browserBase(): string {
+  return ((env.IDENTITY_PUBLIC_URL || env.IDENTITY_URL) ?? "").replace(/\/+$/, "");
+}
+
 // Private / loopback / CGNAT-tailnet hosts — plain http to these is a trusted LAN hop, not
 // a cleartext-over-the-internet leak. (RFC1918 + loopback + Tailscale 100.64/10.)
 const PRIVATE_HOST = /^(localhost|127\.|::1|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/;
@@ -62,6 +71,23 @@ export function isInsecureIdentityUrl(url = env.IDENTITY_URL ?? ""): boolean {
   return !PRIVATE_HOST.test(host);
 }
 
+/** True when the URL handed to BROWSERS points at a private/loopback/CGNAT host, which
+ *  no outside visitor can resolve. The mirror image of isInsecureIdentityUrl: there a
+ *  private host is FINE (a trusted LAN hop for server-to-server backfill), here it is the
+ *  whole defect. try.cobblr.xyz shipped `http://192.168.1.138:8790/authorize` as its
+ *  public authorize_url, so every visitor who clicked "Continue with your Cobblr account"
+ *  was redirected into a dead end. Pure. */
+export function isUnreachableBrowserUrl(url = browserBase()): boolean {
+  if (!url) return false;
+  let host = "";
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return false;
+  }
+  return PRIVATE_HOST.test(host);
+}
+
 /** Log the federation config once at boot. A wrong IDENTITY_ISSUER/AUDIENCE makes EVERY
  *  exchange 401 indistinguishably from a bad token ("SSO just doesn't work"), so surface
  *  exactly what this surface is configured to verify + where. No-op unless enabled. */
@@ -71,6 +97,15 @@ export function logIdentityConfig(): void {
     `[identity] federation ON — url=${base()} deployment=${deploymentId()} ` +
       `issuer=${env.IDENTITY_ISSUER} audience=${env.IDENTITY_AUDIENCE} jwks=${base()}/.well-known/jwks.json`,
   );
+  // Loud, because the symptom appears on somebody else's site after a redirect, where
+  // nothing here can explain it, and the surface itself looks perfectly healthy.
+  if (identityCallbackEnabled() && isUnreachableBrowserUrl()) {
+    console.warn(
+      `[identity] WARNING: the sign-in button sends browsers to ${browserBase()}, a private ` +
+        "address no visitor can reach. Set IDENTITY_PUBLIC_URL to the account service's " +
+        "public https URL (IDENTITY_URL stays as the server-to-server hop).",
+    );
+  }
   if (isInsecureIdentityUrl()) {
     console.warn(
       "[identity] WARNING: IDENTITY_URL is plain http to a public host — user email + bcrypt " +

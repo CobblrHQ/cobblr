@@ -56,7 +56,8 @@ export type AgentLoopEvent =
   | { kind: "thinking"; round: number }
   | { kind: "tool"; name: string; args: Record<string, unknown>; write: boolean }
   | { kind: "tool-result"; name: string; ok: boolean; summary: string }
-  | { kind: "applied"; name: string; summary: string };
+  | { kind: "applied"; name: string; summary: string }
+  | { kind: "text-delta"; text: string };
 
 export type AgentLoopOutcome =
   | { kind: "reply"; text: string; applied: AppliedWrite[] }

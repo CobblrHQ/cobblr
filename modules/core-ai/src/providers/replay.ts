@@ -37,7 +37,10 @@
 //
 // Recording new cassettes: `COBBLR_AI_REPLAY_RECORD=<dir>` on an instance with a
 // real provider writes one file per turn with the rounds the model actually
-// produced. Copy the ones you want into the replay dir and edit the "match".
+// produced. Point it at the SAME directory as COBBLR_AI_REPLAY_DIR and the
+// scenario you just ran live replays immediately, with no restart — the
+// directory is read per call. That is the whole workflow: run it once against a
+// real model, then iterate on it for free.
 
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -119,8 +122,7 @@ export function register(): void {
     console.warn(`[ai:replay] COBBLR_AI_REPLAY_DIR=${dir} does not exist — provider not registered`);
     return;
   }
-  const cassettes = loadCassettes(dir);
-  console.log(`[ai:replay] provider registered with ${cassettes.length} cassette(s) from ${dir}`);
+  console.log(`[ai:replay] provider registered with ${loadCassettes(dir).length} cassette(s) from ${dir}`);
 
   platform().ai.registerProvider({
     id: REPLAY_PROVIDER_ID,
@@ -142,12 +144,26 @@ export function register(): void {
         case "chat": {
           const turns = turnsOf(ctx.input);
           const ask = lastUserMessage(turns).toLowerCase();
+          // Read the directory EVERY call, not once at registration. Recording
+          // and replaying are the same loop — you run a scenario against a real
+          // model with COBBLR_AI_REPLAY_RECORD, then run it again replayed —
+          // and a boot-time read makes the second step fail with "no cassette
+          // matches" until someone restarts the api. That reads as a broken
+          // cassette rather than a stale cache, and it cost a debugging session
+          // (2026-08-19). A handful of small files per call is nothing next to
+          // the model call this is standing in for.
+          const cassettes = loadCassettes(dir);
           const cassette =
             cassettes.find((c) => c.match !== "*" && ask.includes(c.match.toLowerCase())) ??
             cassettes.find((c) => c.match === "*");
           if (!cassette) {
+            // Say what IS there. "No cassette matches" with an empty directory
+            // is a different problem from one with the wrong `match`.
+            const have = cassettes.length
+              ? cassettes.map((c) => `${c.file} (match: ${JSON.stringify(c.match)})`).join(", ")
+              : "the directory holds none";
             throw new Error(
-              `replay: no cassette matches "${ask.slice(0, 60)}" and no "*" fallback in ${dir}`,
+              `replay: no cassette matches "${ask.slice(0, 60)}" and no "*" fallback in ${dir} — ${have}`,
             );
           }
           const n = roundIndex(turns);
@@ -183,9 +199,21 @@ export function register(): void {
 /** Recording, for building cassettes from a real model. Wrap a real provider's
  *  chat result: append this turn's round to <dir>/<slug>.json. Called by the
  *  chat route when COBBLR_AI_REPLAY_RECORD is set. */
-export function recordRound(turns: ChatTurn[], result: { content?: string; tool_calls?: ToolCall[] }): void {
+export function recordRound(
+  turns: ChatTurn[],
+  result: { content?: string; tool_calls?: ToolCall[] },
+  providerId?: string,
+): void {
   const dir = process.env.COBBLR_AI_REPLAY_RECORD?.trim();
   if (!dir) return;
+  // Never record a REPLAY. Recording into the directory being replayed is the
+  // documented workflow (run it live once, then iterate for free) — and it ate
+  // itself: the replayed answer was written back as a NEW cassette whose
+  // `match` was longer than the hand-written one, so the next run replayed
+  // stale ids and the whole scenario failed on data that no longer existed
+  // (2026-08-19). A fixture set that grows every time you use it is not a
+  // fixture set.
+  if (providerId === REPLAY_PROVIDER_ID) return;
   try {
     mkdirSync(dir, { recursive: true });
     const ask = lastUserMessage(turns);

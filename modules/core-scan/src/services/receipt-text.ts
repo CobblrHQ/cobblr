@@ -164,7 +164,7 @@ export function parseTextReceipt(text: string): TextReceiptParse | null {
     .filter((l) => l && !NOISE.test(l));
   if (lines.length < 4) return null;
 
-  const items: Array<{ description: string; qty: number; unit_price: number | null; line_total: number }> = [];
+  const items: Array<{ description: string; qty: number; unit_price: number | null; line_total: number; discount: number }> = [];
   let subtotal: number | null = null;
   let total: number | null = null;
   let grandTotal: number | null = null;
@@ -231,7 +231,20 @@ export function parseTextReceipt(text: string): TextReceiptParse | null {
       : qty > 1
         ? Math.round((hit.amount / qty) * 1000) / 1000
         : hit.amount;
-    items.push({ description, qty, unit_price, line_total: hit.amount });
+    // A NEGATIVE amount is money coming back off: a coupon, a member discount,
+    // a price override. It is not something anyone bought, so it never becomes
+    // an item — it attaches to the line above it, which is the one it discounts.
+    // (The noise filter cannot catch these: it matches on labels like "discount"
+    // and a real receipt prints "Lidl Points Coupon", which starts with a shop's
+    // name and looks exactly like an item until you notice the minus.)
+    if (hit.amount < 0) {
+      const prev = items[items.length - 1];
+      // Before any item, it discounts the whole order rather than a line. The
+      // grand total already accounts for it, so there is nothing to attach.
+      if (prev) prev.discount += Math.abs(hit.amount);
+      continue;
+    }
+    items.push({ description, qty, unit_price, line_total: hit.amount, discount: 0 });
   }
 
   if (items.length < 2) return null;
@@ -242,7 +255,7 @@ export function parseTextReceipt(text: string): TextReceiptParse | null {
   const expectedAgainst: "subtotal" | "total" = subtotal !== null ? "subtotal" : "total";
   const expected = subtotal ?? grandTotal ?? total;
   if (expected === null || expected === undefined) return null;
-  const sum = Math.round(items.reduce((s, i) => s + i.line_total, 0) * 100) / 100;
+  const sum = Math.round(items.reduce((s, i) => s + i.line_total - i.discount, 0) * 100) / 100;
   const delta = Math.round((sum - expected) * 100) / 100;
   const tolerance = Math.max(0.02, items.length * 0.01);
   if (Math.abs(delta) > tolerance) return null;
@@ -258,6 +271,7 @@ export function parseTextReceipt(text: string): TextReceiptParse | null {
       qty: i.qty,
       unit_price: i.unit_price,
       line_total: i.line_total,
+      discount: i.discount || null,
     })),
   });
   if (!receipt) return null;

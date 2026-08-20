@@ -18,7 +18,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-views",
-  version: "0.2.0",
+  version: "0.2.3",
   displayName: "Views",
   description:
     "Saved filtered/sorted views per entity kind. List today; kanban, calendar, table land as renderers ship. Removes the need for every module to invent its own list page.",
@@ -69,6 +69,8 @@ export default defineModule({
         // record. Rides invoke_action, so it inherits the confirm gate, the
         // permission check and the change ledger (labels:set-code precedent).
         id: "core-views:save-view",
+        examples: ["save this as a board", "make me a kanban of tasks"],
+        undoable: true,
         label: "Save a view",
         description:
           "Save a new view of one kind of record (a table, a list, a kanban board, a calendar or a gantt timeline), optionally pinned to the dashboard. Runs on the workspace, not a record. The view is shared with the whole workspace. Check what already exists with get_workspace_setup before adding another.",
@@ -76,6 +78,7 @@ export default defineModule({
         scope: "workspace",
         invokeHandler: "core-views.save-view",
         argsSchema: {
+          config: { label: "The view's configuration: columns, grouping, filters", type: "json" },
           entity_kind: { label: "Which kind of record (e.g. inventory:part)", type: "text" },
           name: { label: "What to call the view", type: "text" },
           view_type: { label: "table, list, kanban, calendar or gantt", type: "text" },

@@ -85,7 +85,24 @@ export {
 export { BackToTop } from "./BackToTop";
 export { CatalogTypeahead, type CatalogTypeaheadHit } from "./CatalogTypeahead";
 export { usePageTitle } from "./usePageTitle";
-export { usePublishChatContext, getChatPageContext, type ChatPageContext } from "./chat-context";
+export { AskCobbAbout } from "./AskCobbAbout";
+export {
+  usePublishChatContext,
+  getChatPageContext,
+  type ChatPageContext,
+  type ChatSelection,
+  getChatSelection,
+  publishRowSelection,
+  publishTextSelection,
+  clearChatSelection,
+  useChatSelection,
+  usePublishRowSelection,
+  usePublishSelectedRecords,
+  useSelectionResolver,
+  subscribeChatSelection,
+  resolveSelectionText,
+  type ResolvedSelection,
+} from "./chat-context";
 // Contributed detail panels — a module putting UI on another module's detail
 // page without either side importing the other. Host registers components,
 // manifests declare placement.

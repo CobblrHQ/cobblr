@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-maintenance",
-  version: "0.1.0",
+  version: "0.1.3",
   displayName: "Maintenance",
   description:
     "Service history + scheduled maintenance for any entity. Oil changes, firmware flashes, warranty renewals: log what's done, get pinged when something's due.",
@@ -65,6 +65,8 @@ export default defineModule({
     actions: [
       {
         id: "core-maintenance:log",
+        examples: ["changed the oil today", "log that I serviced it"],
+        undoable: true,
         label: "Log service",
         description:
           "Record maintenance on this record: what was done and when, or schedule the next one. Pass `name` (what was done, e.g. \"oil change\"), and optionally `performed_at`, `scheduled_at`, `notes`, `cost_cents`, `recurrence_rule`. With neither date it logs as done now. Reading the history is list_maintenance.",
@@ -78,6 +80,8 @@ export default defineModule({
         appliesTo: { any: true },
         invokeHandler: "core-maintenance.log",
         argsSchema: {
+          description: { label: "Longer description of the work (optional)", type: "text" },
+          recurrence_rule: { label: "How often it repeats, as an RRULE (optional)", type: "text" },
           name: { label: "What was done", type: "text" },
           performed_at: { label: "When it was done (ISO date)", type: "text" },
           scheduled_at: { label: "When it is next due (ISO date)", type: "text" },
@@ -87,6 +91,8 @@ export default defineModule({
       },
       {
         id: "core-maintenance:complete",
+        examples: ["that service is done"],
+        undoable: true,
         label: "Mark service done",
         description:
           "Mark a SCHEDULED maintenance entry as done. Pass `entry_id` (list_maintenance returns ids) and optionally `performed_at`; it defaults to now.",

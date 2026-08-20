@@ -159,6 +159,20 @@ async function boot() {
       registerResolver: entities.registerResolver,
       registerWriter: entities.registerEntityWriter,
       getWriter: (kind) => entities.getEntityWriter(kind) ?? null,
+      dependents: async (kind, orgId, id) => {
+        const w = entities.getEntityWriter(kind);
+        return w?.dependents ? await w.dependents(orgId, id) : null;
+      },
+      snapshot: async (kind, orgId, id) => {
+        const w = entities.getEntityWriter(kind);
+        return w?.snapshot ? await w.snapshot(orgId, id) : null;
+      },
+      restore: async (kind, orgId, image) => {
+        const w = entities.getEntityWriter(kind);
+        if (!w?.restore) return false;
+        await w.restore(orgId, image);
+        return true;
+      },
       registerListResolver: entities.registerListResolver,
       registerInstanceListResolver: entities.registerInstanceListResolver,
       registerInstanceResolver: entities.registerInstanceResolver,

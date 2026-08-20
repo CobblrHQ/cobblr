@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "digifab",
-  version: "0.35.0",
+  version: "0.35.1",
   displayName: "Digital Fabrication",
   description:
     "Send a design file to the software that runs your machine (FDM Monster, OctoPrint, and friends) and track the job to completion. Map a manager's printers to your machines and route files to them. Talks to each manager's REST API; it sends files, it never drives the hardware.",
@@ -156,6 +156,7 @@ export default defineModule({
         // I/O, not fabrication). This thin alias delegates to
         // core-devices:run-command so wires in ALREADY-INSTALLED bundles keep
         // working; new bundles should use core-devices:run-command.
+        // NO-PHRASING: a deprecated alias kept so installed wires keep working; phrasings here would compete with core-devices:run-command
         id: "digifab:run-command",
         label: "Run a device command (deprecated → core-devices:run-command)",
         description:

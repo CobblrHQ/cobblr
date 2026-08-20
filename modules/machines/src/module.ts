@@ -7,7 +7,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "machines",
-  version: "0.3.0",
+  version: "0.3.2",
   displayName: "Machines",
   description:
     "Physical machines you own. The base layer. Install a specialisation (3D Printers / Laser Cutters / CNC Machines) for type-specific fields.",
@@ -80,6 +80,8 @@ export default defineModule({
     actions: [
       {
         id: "machines:record-usage",
+        examples: ["that machine ran four hours", "log the usage on it"],
+        undoable: true,
         label: "Record machine usage",
         description:
           "Add to a machine's lifetime usage counters (print_count, print_hours). Wire it to digifab.print.completed to accrue usage as prints finish: the foundation for maintenance-by-usage ('nozzle due at 500 prints'). Args: { machineId, prints?, hours? }; machineId falls back to the event's linkedMachineId.",

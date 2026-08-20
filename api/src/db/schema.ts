@@ -547,6 +547,8 @@ export interface EntityKindsTable {
    *  deprecation logged on first cross-module read of this kind).
    *  See docs/architecture/entity-resolver.md. */
   exposable_fields: unknown | null;
+  /** Field that scopes duplicate detection, or "workspace"; null = never. */
+  duplicate_scope: string | null;
   /** Per-field read capability map (jsonb { field_name: capability }).
    *  Layered on exposable_fields: a gated field is omitted unless the
    *  viewer holds the capability (owner/admin + viewer-less system
@@ -589,6 +591,21 @@ export interface WorkspaceLinksTable {
   >;
 }
 
+/** A command a module ships. See 20260819-103-entity-commands.sql. */
+export interface EntityCommandsTable {
+  id: string;
+  module_name: string;
+  template: string;
+  description: string | null;
+  pattern: string;
+  slots: unknown;
+  plan: unknown;
+  repeat_field: string | null;
+  repeat_shape: string | null;
+  version: Generated<string>;
+  synced_at: Generated<Date>;
+}
+
 export interface EntityActionsTable {
   id: string;
   module_name: string;
@@ -610,6 +627,13 @@ export interface EntityActionsTable {
   /** Machine-readable arg shape { name: { label, type } } from the action
    *  manifest; null = none. Drives the wire composer's per-arg fields. */
   args_schema: unknown | null;
+  /** Can a mistaken run be put right inside the workspace? Decides whether an
+   *  AI connection with no way to show a confirmation may run it. Re-synced
+   *  from the manifest on every boot; false until it is. */
+  undoable: Generated<boolean>;
+  /** How a person asks for this, in their own words. Rides in the assistant's
+   *  prompt so a model can map a sentence to an action. */
+  examples: Generated<unknown>;
 }
 
 export interface EntityActionOrgOverridesTable {
@@ -907,6 +931,11 @@ export interface OrgEncryptionKeysTable {
   created_at: Generated<Date>;
 }
 
+/** Where a piece of feedback came from. Every value must name a way back to
+ *  the reporter in `reporterReplyRoute` — adding one here fails to compile
+ *  there until it does. */
+export type FeedbackOrigin = "in-app" | "discord" | "discord-dm";
+
 export interface FeedbackTable {
   id: Generated<string>;
   // Null for a discord-origin ticket (no platform user — see origin_ref).
@@ -920,7 +949,7 @@ export interface FeedbackTable {
   // Where it came from + how to reply (20260609-051). 'in-app' → notification +
   // email; 'discord' → the support bot posts into origin_ref.thread_id;
   // 'discord-dm' → a new item created straight from a bot DM (routes by intent).
-  origin: Generated<"in-app" | "discord" | "discord-dm">;
+  origin: Generated<FeedbackOrigin>;
   origin_ref: {
     channel_id: string;
     thread_id: string;
@@ -1025,6 +1054,7 @@ export interface MetaDB {
   browser_drive_grants: BrowserDriveGrantsTable;
   entity_kinds: EntityKindsTable;
   entity_actions: EntityActionsTable;
+  entity_commands: EntityCommandsTable;
   entity_action_org_overrides: EntityActionOrgOverridesTable;
   entity_action_bindings: EntityActionBindingsTable;
   wire_schedule_state: WireScheduleStateTable;

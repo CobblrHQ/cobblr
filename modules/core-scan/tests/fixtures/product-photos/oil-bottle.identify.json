@@ -1,0 +1,14 @@
+{
+  "fixture": "oil-bottle.jpg",
+  "image_sha256": "c42d0f8985c7b161e81c46a1d212222ba6c49d4c45d6e6c9b209c4954e0e1ba9",
+  "identify": {
+    "result": {
+      "text": "{\"name\": \"Kadoya Roasted Sesame Oil, 11 fl oz (327ml)\", \"brand\": \"Kadoya\", \"color\": null, \"category\": \"food\", \"entity_type\": \"part\", \"series\": null, \"barcode\": null, \"serial_number\": null, \"observations\": \"One loose plastic bottle of dark sesame oil with a yellow cap, standing on a countertop. Black label reads 'KADOYA', '100% Pure', 'Roasted Sesame Oil', 'Product of Japan', and '11 FL.OZ. (327ml)'.\", \"distinct_items\": 1, \"product_photo_box\": null, \"items\": [], \"confidence\": 0.9}"
+    },
+    "provider_id": "edge-bridge",
+    "model": "sonnet",
+    "cached": false,
+    "cost_cents": 0,
+    "duration_ms": 7047
+  }
+}

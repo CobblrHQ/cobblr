@@ -25,10 +25,12 @@ import {
 } from "./crosscheck-policy.js";
 import { evictBarcodeCaches, rememberLocalIdentity } from "./barcode-cache.js";
 import { searchImages, rankImageOptions, imageQuery, mediaSearchExtras } from "./ddg-images.js";
+import { curatedImageUrl } from "./curated-images.js";
 import { formFactorFromObservation } from "./form-factor.js";
 import { sql } from "kysely";
 import { cropRegion, parseProductRegion } from "./image-ops.js";
 import { seedHistory, pushStep, type CatalogSource } from "./catalog-history.js";
+import { looksLikeReceiptPhoto } from "./receipt-photo.js";
 
 /** Re-fetch the catalog image to match a (corrected) name. The card prefers the
  *  downloaded `catalog_image_file_id` over `catalog_image_url`, so a rename left
@@ -40,6 +42,12 @@ export async function refreshCatalogImageByName(
   itemId: string,
   name: string,
   brand?: string | null,
+  /** The SHOP it was bought from, for a line off a receipt. Folded into the
+   *  SEARCH phrase, not just the ranking: a receipt says "Croissant" and never
+   *  says who made it, and "Lidl Croissant" comes back with the thing that was
+   *  actually bought where "Croissant" comes back with a stock pastry. Verified
+   *  on a real receipt's four lines. */
+  soldBy?: string | null,
 ): Promise<void> {
   const db = (await platform().tenants.getDb(orgId)) as unknown as Kysely<CoreScanDB>;
   // A user who hand-picked a catalog image (photo-options strip / "use my photo")
@@ -64,18 +72,32 @@ export async function refreshCatalogImageByName(
     (cur?.suggested_metadata as { photo_observations?: string } | null)?.photo_observations,
   );
   const extra = [author, mediaWord, form].filter(Boolean).join(" ") || null;
-  const q = imageQuery(name, brand, extra);
-  const pool = await searchImages(q, 24).catch(() => []);
+  const q = imageQuery(name, brand || soldBy, extra);
+  // A hand-picked image WINS, before any searching. The curated manifest is an
+  // operator-configured URL read live, so an entry can be added without a
+  // deploy, and it existed only on the commit path (entity-image.ts): the scan
+  // inbox, which is where every tile a person actually looks at is filled, went
+  // straight to the search and could never be corrected except one row at a
+  // time. That asymmetry is the bug; the manifest was always meant to be the
+  // answer to "the search keeps getting this one wrong".
+  //
+  // FIRST rather than as a fallback, deliberately. The search almost never comes
+  // back empty — it comes back with a recipe blog or a joke — so a rule that
+  // only fired on nothing would almost never fire at all.
+  const curated = await curatedImageUrl(q).catch(() => null);
+  const pool = curated ? [] : await searchImages(q, 24).catch(() => []);
   // Try to DOWNLOAD the top candidates into core-files, falling through until one
   // stores. Storing just the top RAW url (as this did) left many tiles empty: a
   // product-page image often hotlink-blocks or 404s in the browser, and there was
   // no fallback to the next result (reported 2026-07-24). downloadCatalogImage handles
   // SSRF-guard + retries + size limits and stamps catalog_image_file_id. Dynamic
   // import because enrich.ts imports THIS module — a static import would cycle.
-  const candidates = rankImageOptions(pool, brand, q)
-    .map((r) => r.url)
-    .filter((u): u is string => !!u)
-    .slice(0, 4);
+  const candidates = curated
+    ? [curated]
+    : rankImageOptions(pool, brand || soldBy, q)
+        .map((r) => r.url)
+        .filter((u): u is string => !!u)
+        .slice(0, 4);
   if (!candidates.length) return;
   const { downloadCatalogImage } = await import("./enrich.js");
   for (const url of candidates) {
@@ -915,7 +937,7 @@ export async function crossCheckScanPhoto(
 }
 
 /** Why an enrich did nothing, so a caller can tell a real failure from a no-op. */
-export type EnrichOutcome = "identified" | "no-photo-bytes" | "not-identified";
+export type EnrichOutcome = "identified" | "no-photo-bytes" | "not-identified" | "is-receipt";
 
 /** Categories this workspace has recently used, most-used first.
  *
@@ -988,6 +1010,16 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOu
       "Photo couldn't be auto-identified (no vision provider configured, the model errored, or no single item was visible). Fill in manually.",
     );
     return "not-identified";
+  }
+
+  // You photographed a receipt, not a thing. Stop here rather than writing a
+  // product identity onto the row: the caller turns it into a receipt session
+  // instead, because that is where the line-materialising already lives. Saying
+  // so and returning is all this layer should do - a service that reached for the
+  // API's orchestration would own two jobs and be testable at neither.
+  if (looksLikeReceiptPhoto(identity)) {
+    await patchNote(ctx, "That looks like a receipt — reading its line items.");
+    return "is-receipt";
   }
 
   // The vision read a barcode off the package → capture it, but ONLY when the

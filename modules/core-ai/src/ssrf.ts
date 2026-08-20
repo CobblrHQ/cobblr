@@ -143,10 +143,32 @@ export interface PinnedResponse {
  * working. Does NOT follow redirects — a 3xx comes back as a non-ok response
  * (the caller treats it as an error), so an allowed host can't 302 inward.
  */
+/** How long a model call may take before we give up on it.
+ *
+ *  There was no limit at all, and node's http client waits forever by default.
+ *  A provider that accepts the connection and never answers — a busy queue in
+ *  front of a subscription CLI, a hung local model, a half-open socket after a
+ *  laptop sleeps — left the request pending for as long as the process lived.
+ *  The chat turn stayed `running`, so the widget sat on "Thinking…" with no
+ *  error, no retry and nothing in the log (2026-08-19).
+ *
+ *  Generous, because local models genuinely are slow: the same 120s budget the
+ *  edge-relay transit already used, so both paths give up at the same point. */
+export const AI_CALL_TIMEOUT_MS = 120_000;
+
 export function pinnedFetch(
   url: string,
   pinnedIp: string,
-  init: { method?: string; headers?: Record<string, string>; body?: string } = {},
+  init: {
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+    timeoutMs?: number;
+    /** Called with each chunk as it arrives, for a streaming response. The
+     *  whole body is still accumulated and returned, so a caller can stream
+     *  AND parse the finished thing. */
+    onChunk?: (text: string) => void;
+  } = {},
 ): Promise<PinnedResponse> {
   const requestFn = new URL(url).protocol === "https:" ? httpsRequest : httpRequest;
   // Override DNS resolution for this socket → connect ONLY to the validated IP.
@@ -157,27 +179,60 @@ export function pinnedFetch(
     if (opts.all) cb(null, [{ address: pinnedIp, family }]);
     else cb(null, pinnedIp, family);
   };
+  const timeoutMs = init.timeoutMs ?? AI_CALL_TIMEOUT_MS;
   return new Promise<PinnedResponse>((resolve, reject) => {
+    let settled = false;
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn();
+    };
     const req = requestFn(
       url,
       { method: init.method ?? "GET", headers: init.headers, lookup },
       (res) => {
         const chunks: Buffer[] = [];
-        res.on("data", (c: Buffer) => chunks.push(c));
-        res.on("error", reject);
+        res.on("data", (c: Buffer) => {
+          chunks.push(c);
+          if (init.onChunk) {
+            try {
+              init.onChunk(c.toString("utf8"));
+            } catch {
+              /* a broken listener must not break the response */
+            }
+          }
+        });
+        res.on("error", (e) => finish(() => reject(e)));
         res.on("end", () => {
           const data = Buffer.concat(chunks).toString("utf8");
           const status = res.statusCode ?? 0;
-          resolve({
-            ok: status >= 200 && status < 300,
-            status,
-            text: () => Promise.resolve(data),
-            json: () => Promise.resolve(JSON.parse(data) as unknown),
-          });
+          finish(() =>
+            resolve({
+              ok: status >= 200 && status < 300,
+              status,
+              text: () => Promise.resolve(data),
+              json: () => Promise.resolve(JSON.parse(data) as unknown),
+            }),
+          );
         });
       },
     );
-    req.on("error", reject);
+    // The whole call, not just the connect: a provider that accepts the socket
+    // and then goes quiet is the case that hangs, and a connect timeout would
+    // not see it. destroy() makes the pending 'error' fire, which `finish`
+    // swallows since we have already rejected with the clearer reason.
+    const timer = setTimeout(() => {
+      finish(() =>
+        reject(
+          new Error(
+            `the AI provider did not answer within ${Math.round(timeoutMs / 1000)}s (${new URL(url).host})`,
+          ),
+        ),
+      );
+      req.destroy();
+    }, timeoutMs);
+    req.on("error", (e) => finish(() => reject(e)));
     if (init.body) req.write(init.body);
     req.end();
   });

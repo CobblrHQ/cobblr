@@ -1482,6 +1482,16 @@ platformOrgRouter.get(
             overridden: !!ovr,
             overridden_at: ovr?.updated_at ?? null,
             matched_kinds: matchedKinds,
+            // The action's ARGUMENTS. Without these an action is listed and not
+            // callable: the assistant can see that core-locations:reorder
+            // exists and has no machine-readable way to learn it takes `ids`,
+            // so it reports that it cannot run it (2026-08-19). registry-sync
+            // has stored this all along; the response simply never carried it.
+            args_schema: a.args_schema ?? null,
+            // Whether a mistaken run can be put right here. A caller that
+            // cannot show a confirmation reads this to know what it may run.
+            undoable: a.undoable === true,
+            examples: (a.examples as string[] | null) ?? [],
           };
         }),
       });
@@ -1562,6 +1572,9 @@ platformOrgRouter.get(
             overridden: overrides.has(a.id),
             matched: reason.via !== null,
             match_reason: reason,
+            args_schema: a.args_schema ?? null,
+            undoable: a.undoable === true,
+            examples: (a.examples as string[] | null) ?? [],
           };
         }),
       });

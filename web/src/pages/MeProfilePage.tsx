@@ -29,7 +29,7 @@ export function MeProfilePage() {
   const toast = useToast();
 
   return (
-    <div className="space-y-6 max-w-xl">
+    <div className="space-y-6">
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
         <UserCog size={20} className="text-accent" />
         <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">

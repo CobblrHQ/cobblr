@@ -3,8 +3,10 @@
 
 import { Router } from "express";
 import { z } from "zod";
+import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
+import { DUPLICATE_SIBLING, duplicateSiblingMessage, siblingNamed } from "./siblings.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 
 export const locationsRouter = Router({ mergeParams: true });
@@ -13,6 +15,16 @@ const LocationCreate = z.object({
   name: z.string().min(1).max(160),
   short_name: z.string().max(60).nullable().optional(),
   parent_id: z.string().uuid().nullable().optional(),
+  // Two bins genuinely both called "Bin" is a real thing people have. Refusing
+  // that outright would be a rule about tidiness rather than correctness, so
+  // the duplicate is available on purpose — it just cannot happen by accident.
+  allow_duplicate: z.boolean().optional(),
+  // The parent BY NAME. A person says "in the Garage", not a uuid, and so does
+  // every sentence-shaped caller: a chat message, a shipped command, a CSV
+  // import. Without it, anything holding a name had to search first, and a
+  // caller who simply sent `parent` had it dropped by this schema and got a
+  // top-level location while being told it worked.
+  parent: z.string().min(1).max(160).optional(),
   kind: z.enum(["container", "area"]).optional(),
   metadata: z.record(z.unknown()).optional(),
   description: z.string().max(8_000).nullable().optional(),
@@ -157,6 +169,34 @@ locationsRouter.post(
     const ctx = tenantContext(req);
     const session = sessionUser(req);
 
+    // Resolve a parent given by name. Refused rather than ignored when it does
+    // not resolve: putting the thing at the top level and reporting success is
+    // the failure this whole seam keeps producing.
+    if (parsed.data.parent && !parsed.data.parent_id) {
+      const wanted = parsed.data.parent.trim();
+      const matches = await db
+        .selectFrom("core_locations_locations")
+        .select(["id", "name"])
+        .where(sql<boolean>`lower(name) = lower(${wanted})`)
+        .execute();
+      if (matches.length === 0) {
+        res.status(400).json({
+          error: { code: "unknown_parent", message: `There is no place called "${wanted}" to put this in.` },
+        });
+        return;
+      }
+      if (matches.length > 1) {
+        res.status(400).json({
+          error: {
+            code: "ambiguous_parent",
+            message: `More than one place is called "${wanted}", so I cannot tell which you mean. Use its id.`,
+          },
+        });
+        return;
+      }
+      parsed.data.parent_id = matches[0]!.id;
+    }
+
     // Depth = parent's depth + 1. Cheap lookup; avoids recursive
     // computation when rendering the tree.
     let depth = 0;
@@ -173,6 +213,29 @@ locationsRouter.post(
         return;
       }
       depth = parent.depth + 1;
+    }
+
+    if (!parsed.data.allow_duplicate) {
+      const clash = await siblingNamed(db, parsed.data.parent_id ?? null, parsed.data.name);
+      if (clash) {
+        let placeName: string | null = null;
+        if (parsed.data.parent_id) {
+          const p = await db
+            .selectFrom("core_locations_locations")
+            .select("name")
+            .where("id", "=", parsed.data.parent_id)
+            .executeTakeFirst();
+          placeName = p?.name ?? null;
+        }
+        res.status(409).json({
+          error: {
+            code: DUPLICATE_SIBLING,
+            message: duplicateSiblingMessage(parsed.data.name, placeName),
+            existing_id: clash.id,
+          },
+        });
+        return;
+      }
     }
 
     const inserted = await db
@@ -288,6 +351,36 @@ locationsRouter.patch(
       }
       patch.parent_id = parsed.data.parent_id;
       patch.depth = newDepth;
+    }
+
+    // A rename arrives at the same bad state from the other side: calling this
+    // one "Shelf 1" when its neighbour already is.
+    if (parsed.data.name !== undefined && !parsed.data.allow_duplicate) {
+      const self = await db
+        .selectFrom("core_locations_locations")
+        .select("parent_id")
+        .where("id", "=", id)
+        .executeTakeFirst();
+      const parentId =
+        parsed.data.parent_id !== undefined ? parsed.data.parent_id : (self?.parent_id ?? null);
+      const clash = await siblingNamed(db, parentId, parsed.data.name, id);
+      if (clash) {
+        const place = parentId
+          ? await db
+              .selectFrom("core_locations_locations")
+              .select("name")
+              .where("id", "=", parentId)
+              .executeTakeFirst()
+          : null;
+        res.status(409).json({
+          error: {
+            code: DUPLICATE_SIBLING,
+            message: duplicateSiblingMessage(parsed.data.name, place?.name ?? null),
+            existing_id: clash.id,
+          },
+        });
+        return;
+      }
     }
 
     const updated = await db

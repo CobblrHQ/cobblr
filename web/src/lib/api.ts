@@ -138,13 +138,18 @@ async function request<T>(
   }
 
   if (!res.ok) {
-    const err = (parsed as { error?: { code?: string; message?: string; details?: unknown } }).error;
-    throw new ApiError(
-      res.status,
-      err?.code ?? "unknown",
-      err?.message ?? `HTTP ${res.status}`,
-      err?.details,
-    );
+    const body = parsed as {
+      error?: { code?: string; message?: string; details?: unknown };
+      message?: string;
+    };
+    const err = body.error;
+    // A route that answers `{ok:false,message}` is still TELLING us why. Reading
+    // only `error.message` turned "a designs:item needs a name" into "HTTP 400"
+    // for the person who had just pressed Confirm, and for the assistant that
+    // could have corrected it. Take the reason from wherever it actually is.
+    const reason =
+      err?.message ?? (typeof body.message === "string" && body.message.trim() ? body.message : null);
+    throw new ApiError(res.status, err?.code ?? "unknown", reason ?? `HTTP ${res.status}`, err?.details);
   }
   return parsed as T;
 }
@@ -3198,6 +3203,10 @@ export const api = {
             currency: string | null;
             total: number | null;
             item_count: number;
+            /** What the parsed lines add up to, and whether that matches the
+             *  total charged. False means the receipt is only mostly read. */
+            lines_total: number;
+            lines_reconcile: boolean | null;
             method: "csv" | "pdf-table" | "ai-chat" | "ai-vision";
           };
           items: ScanInboxItem[];
@@ -3546,6 +3555,62 @@ export const api = {
     request<BasicRuleRaw>("PATCH", `/orgs/${slug}/modules/core-ai/basics/${id}`, body),
   deleteBasic: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/modules/core-ai/basics/${id}`),
+  // The questions basic mode had no answer for — the raw material for new
+  // rules, in the words people actually used.
+  listBasicMisses: (slug: string) =>
+    request<{ items: BasicMissRow[] }>("GET", `/orgs/${slug}/modules/core-ai/basics/misses`),
+  dismissBasicMiss: (slug: string, id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/modules/core-ai/basics/misses/${id}`),
+  // Learned commands: things the workspace can do with no AI, from having
+  // watched an AI do them once.
+  listCommandCandidates: (slug: string) =>
+    request<{ items: CommandCandidate[] }>("GET", `/orgs/${slug}/modules/core-ai/basics/learned`),
+  listCommands: (slug: string) =>
+    request<{ items: LearnedCommandRow[] }>("GET", `/orgs/${slug}/modules/core-ai/basics/commands`),
+  adoptCommand: (slug: string, body: Omit<CommandCandidate, "prompt" | "did" | "operations" | "last_used">) =>
+    request<LearnedCommandRow>("POST", `/orgs/${slug}/modules/core-ai/basics/commands`, body),
+  setCommandEnabled: (slug: string, id: string, enabled: boolean) =>
+    request<void>("PATCH", `/orgs/${slug}/modules/core-ai/basics/commands/${id}`, { enabled }),
+  deleteCommand: (slug: string, id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/modules/core-ai/basics/commands/${id}`),
+  // "Does anything this workspace already knows fit what is being typed?"
+  // Asked as the user types; writes nothing.
+  matchCommand: (slug: string, message: string, selectionIds?: string[]) =>
+    request<{ command: BasicCommandOffer | null }>(
+      "POST",
+      `/orgs/${slug}/modules/core-ai/basics/commands/match`,
+      { message, ...(selectionIds?.length ? { selection_ids: selectionIds } : {}) },
+    ),
+  // Answer a question that is still being typed, from the workspace, with no
+  // model involved. Null when it is not a question this can answer.
+  peekAnswer: (slug: string, message: string, aiOn: boolean) =>
+    request<{ answer: string | null; detail?: string; from?: "guide" }>(
+      "POST",
+      `/orgs/${slug}/modules/core-ai/basics/peek`,
+      { message, ai_on: aiOn },
+    ),
+  /** Put back everything ONE instruction did, in one request. The turn is the
+   *  unit a person asked in, so it is the unit they take back. */
+  aiChatUndoTurn: (slug: string, turnId: string, force = false) =>
+    request<{
+      ok: boolean;
+      undone: number;
+      total: number;
+      message: string;
+      /** What it would not take back on its own, and why — the panel offers
+       *  these by name rather than leaving a dead end. */
+      held?: Array<{ label: string; reason: string; detail?: string }>;
+      can_force?: boolean;
+    }>(
+      "POST",
+      `/orgs/${slug}/modules/core-ai/chat/undo-turn/${encodeURIComponent(turnId)}${force ? "?force=1" : ""}`,
+    ),
+  runCommand: (slug: string, id: string, message: string, selectionIds?: string[]) =>
+    request<{ ok: boolean; done: number; failed: number; message: string; ledger_ids?: string[] }>(
+      "POST",
+      `/orgs/${slug}/modules/core-ai/basics/commands/${id}/run`,
+      { message, ...(selectionIds?.length ? { selection_ids: selectionIds } : {}) },
+    ),
 
   // core-ai — provider config + capability defaults + usage. See
   // docs/modules/core-ai.md.
@@ -3648,11 +3713,15 @@ export const api = {
     slug: string,
     messages: { role: "user" | "assistant"; content: string }[],
     context?: { label: string; summary?: string },
+    /** What the user is pointing AT — ticked rows, or a highlight. The
+     *  difference between Cobb knowing you are on Locations and Cobb knowing
+     *  you mean these twelve racks. */
+    selection?: { label: string; kind?: string; ids?: string[]; text?: string },
   ) =>
     request<{ type: "turn"; turn_id: string }>(
       "POST",
       `/orgs/${slug}/modules/core-ai/chat?mode=turn`,
-      { messages, ...(context ? { context } : {}) },
+      { messages, ...(context ? { context } : {}), ...(selection ? { selection } : {}) },
     ),
   /** Is a turn already running for me in this workspace? A tab asks on open. */
   aiChatOpenTurn: (slug: string) =>
@@ -4279,6 +4348,14 @@ export interface AiStatus {
   source?: "personal" | "workspace" | "managed";
 }
 
+/** What the no-AI matcher offers to RUN, when a learned command fits. */
+export interface BasicCommandOffer {
+  id: string;
+  template: string;
+  operations: number;
+  summary: string;
+}
+
 /** Result of the no-AI basic-mode matcher (POST …/core-ai/basics/answer). */
 export interface BasicAnswer {
   matched: boolean;
@@ -4287,6 +4364,9 @@ export interface BasicAnswer {
   key: string | null;
   score: number;
   candidates: Array<{ key: string; intent: string; score: number }>;
+  /** Present when a learned command fits: an offer to RUN it, which the chat
+   *  turns into a confirm rather than doing on its own. */
+  command?: BasicCommandOffer;
 }
 
 /** One rule in the effective ruleset (GET …/core-ai/basics). */
@@ -4309,6 +4389,40 @@ export interface BasicRuleInput {
   keywords: string[];
   reply: string;
   enabled?: boolean;
+}
+
+/** One unanswered question (GET …/core-ai/basics/misses). */
+export interface BasicMissRow {
+  id: string;
+  sample: string;
+  times: number;
+  first_seen: string;
+  last_seen: string;
+}
+
+/** A command derived from a successful interaction, not yet adopted. */
+export interface CommandCandidate {
+  prompt: string;
+  did: string;
+  operations: number;
+  template: string;
+  pattern: string;
+  slots: Array<{ name: string; kind: string }>;
+  plan: Array<{ tool: string; entity_kind: string; action_id?: string | null; payload: Record<string, unknown> }>;
+  repeat_field?: string;
+  repeat_shape?: string;
+  last_used: string;
+}
+
+/** A command the workspace has adopted. */
+export interface LearnedCommandRow {
+  id: string;
+  template: string;
+  pattern: string;
+  enabled: boolean;
+  times_used: number;
+  last_used_at: string | null;
+  created_at: string;
 }
 
 /** A raw core_ai_basics row (returned by create/update). */
@@ -4346,6 +4460,14 @@ export interface AiProviderDef {
   kind?: string;
   /** One line under the picker, for a kind whose purpose isn't self-evident. */
   blurb?: string;
+  /** How a person GETS these credentials: numbered steps with links, shown above the
+   *  fields. Mirrors AiProviderSetup in the platform contract; the server serialises it
+   *  onto the catalogue. Absent for a provider that needs no credentials. */
+  setup?: {
+    summary: string;
+    steps: Array<{ text: string; href?: string }>;
+    caveat?: string;
+  };
 }
 
 /** How the personal-connections page introduces each kind. An unlisted kind
@@ -6184,7 +6306,7 @@ export interface PlatformAction {
   invoke_route: string | null;
   invoke_handler: string | null;
   /** Per-arg shape for the wire composer's structured "With" form; null if none. */
-  args_schema: Record<string, { label: string; type: "text" | "number" | "boolean" }> | null;
+  args_schema: Record<string, { label: string; type: "text" | "number" | "boolean" | "list" }> | null;
   version: string;
 }
 
@@ -6368,6 +6490,18 @@ export interface PlatformBundleManifest {
    *  `extended` = browsable but not suggested per-scan; `disabled` = hidden
    *  everywhere (existing installs keep working). See api lib/flagship-bundles.ts. */
   catalog?: "core" | "extended" | "disabled";
+  /** What this bundle's items are CALLED, for the scan router.
+   *
+   *  A bundle's suggestion has to be corroborated by the capture's own text
+   *  before it is trusted, so a model cannot sweep unrelated things into a
+   *  themed table. A bundle whose noun IS the word needs nothing here — a
+   *  "printer" table and a capture saying "printer" corroborate themselves. A
+   *  bundle whose members never share its name cannot corroborate at all, and
+   *  says its vocabulary instead: nothing called Tomatoes Roma contains the word
+   *  "grocery". Head nouns, and avoid a word with a strong meaning outside the
+   *  domain — a keyword is routing evidence, so a false hit files the wrong
+   *  thing here. */
+  scan_keywords?: string[];
   /** Release date of THIS version (ISO date), shown on the update prompt. */
   released_at?: string;
   /** Plain-language "what changed in this version" — shown prominently when

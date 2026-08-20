@@ -21,7 +21,10 @@ import type { Kysely } from "kysely";
 import { sql } from "kysely";
 import type { CoreAiDB } from "../db.js";
 
-export type TurnEventKind = "thinking" | "tool" | "tool-result" | "applied" | "text" | "done" | "error";
+/** "text-delta" is the answer arriving as it is written, one piece per event.
+ *  Dense like the rest, so a tab that joins late replays what it missed and
+ *  ends up with the same words. */
+export type TurnEventKind = "thinking" | "tool" | "tool-result" | "applied" | "text" | "text-delta" | "done" | "error";
 export interface TurnEvent {
   seq: number;
   kind: TurnEventKind;
@@ -93,7 +96,64 @@ export async function finishTurn(
   await emitTurnEvent(db, turnId, outcome.ok ? "done" : "error", outcome.ok ? { result: outcome.result } : { message: outcome.error });
 }
 
+/** How long a "running" turn may go untouched before it is certainly dead.
+ *
+ *  A turn runs INSIDE one api process. If that process goes away — a deploy, a
+ *  crash, a container replaced under a rolling update — the row keeps saying
+ *  "running" and nobody is ever going to finish it. The widget believes the
+ *  row, so it shows "Thinking…" for as long as the user leaves the tab open,
+ *  and reattaches to the same dead turn on every reload. A user watched one sit
+ *  there for an hour (2026-08-19).
+ *
+ *  The number is provable rather than a guess: emitTurnEvent bumps updated_at,
+ *  and a live turn cannot exceed the 5-minute deadline in chat.ts because that
+ *  deadline fails it. So anything untouched for longer than the deadline plus a
+ *  grace has no one working on it. Kept in step with TURN_DEADLINE_MS by the
+ *  test that pins both. */
+export const STRANDED_AFTER_MS = 6 * 60_000;
+
+export function isStranded(t: { status: string; updated_at: Date | string }): boolean {
+  if (t.status !== "running" && t.status !== "queued") return false;
+  const touched = t.updated_at instanceof Date ? t.updated_at.getTime() : Date.parse(String(t.updated_at));
+  return Number.isFinite(touched) && Date.now() - touched > STRANDED_AFTER_MS;
+}
+
+/** Mark a turn nobody is working on as failed, and say so honestly.
+ *
+ *  Healing on READ rather than only in the sweeper is the point: the sweeper
+ *  fires on roughly one turn in fifty IN THE SAME WORKSPACE, so a user whose
+ *  turn was stranded would have had to send fifty more messages to clear the
+ *  spinner they were stuck behind. The person looking at it is exactly the
+ *  person who should not have to wait. */
+async function healStranded(db: Kysely<CoreAiDB>, turnId: string): Promise<void> {
+  await db
+    .updateTable("core_ai_chat_turns")
+    .set({
+      status: "failed",
+      error: "the server restarted before this finished, so it was never completed. Nothing was changed - ask again.",
+      finished_at: new Date(),
+      updated_at: new Date(),
+    } as never)
+    .where("id", "=", turnId)
+    .where("status", "in", ["queued", "running"])
+    .execute();
+  // The event log is what a subscribed tab is reading, so it needs the ending
+  // too — otherwise an open stream keeps waiting on a turn the row has closed.
+  await emitTurnEvent(db, turnId, "error", {
+    message: "the server restarted before this finished, so it was never completed. Nothing was changed - ask again.",
+  }).catch(() => {
+    /* the row is what matters; a missing event just means the poll finds it */
+  });
+}
+
 export async function readTurn(db: Kysely<CoreAiDB>, turnId: string) {
+  const turn = await db
+    .selectFrom("core_ai_chat_turns")
+    .selectAll()
+    .where("id", "=", turnId)
+    .executeTakeFirst();
+  if (!turn || !isStranded(turn)) return turn;
+  await healStranded(db, turnId);
   return db.selectFrom("core_ai_chat_turns").selectAll().where("id", "=", turnId).executeTakeFirst();
 }
 
@@ -115,13 +175,21 @@ export async function eventsAfter(db: Kysely<CoreAiDB>, turnId: string, afterSeq
 /** The user's most recent turn that has not finished, if any. What a tab
  *  opening the chat asks first: "is something already running for me?" */
 export async function openTurnFor(db: Kysely<CoreAiDB>, userId: string) {
-  return db
+  const turn = await db
     .selectFrom("core_ai_chat_turns")
-    .select(["id", "prompt", "status", "created_at"])
+    .select(["id", "prompt", "status", "created_at", "updated_at"])
     .where("user_id", "=", userId)
     .where("status", "in", ["queued", "running"])
     .orderBy("created_at", "desc")
     .executeTakeFirst();
+  // This is what a freshly opened tab asks. Handing it a stranded turn is how
+  // a dead spinner outlives the process that created it, and how a reload
+  // reattaches to the same corpse rather than clearing it.
+  if (turn && isStranded(turn)) {
+    await healStranded(db, turn.id);
+    return undefined;
+  }
+  return turn;
 }
 
 export function subscribe(turnId: string, l: Listener): () => void {
@@ -139,12 +207,19 @@ export function subscribe(turnId: string, l: Listener): () => void {
  *  existing sweeper tick. */
 export async function sweepTurns(db: Kysely<CoreAiDB>): Promise<void> {
   const dayAgo = new Date(Date.now() - 24 * 3600 * 1000);
-  const hourAgo = new Date(Date.now() - 3600 * 1000);
+  // The same rule the read side heals by, so a turn cannot be "dead when you
+  // look at it, alive to the sweeper". It used to be an hour, which outlived
+  // any reason to wait.
+  const strandedBefore = new Date(Date.now() - STRANDED_AFTER_MS);
   await db
     .updateTable("core_ai_chat_turns")
-    .set({ status: "failed", error: "the server restarted before this turn finished", finished_at: new Date() } as never)
+    .set({
+      status: "failed",
+      error: "the server restarted before this finished, so it was never completed. Nothing was changed - ask again.",
+      finished_at: new Date(),
+    } as never)
     .where("status", "in", ["queued", "running"])
-    .where("updated_at", "<", hourAgo)
+    .where("updated_at", "<", strandedBefore)
     .execute();
   await db
     .deleteFrom("core_ai_chat_turns")

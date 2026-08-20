@@ -148,6 +148,13 @@ locationsImportRouter.post(
       return;
     }
 
+    // SIBLING-DUP-OK: an import matches on the user's OWN key (match_value),
+    // chosen on the mapping screen, and parents are linked in pass 2 — so at
+    // insert time a row has no parent to be a sibling under yet. Refusing on
+    // name here would drop rows the user can see in their own file and expects
+    // to arrive. Rows that collide by name are the import's business, and it
+    // reports created/updated counts for exactly that reason.
+    //
     // ── Commit. Pass 1: upsert every row (parent linked in pass 2 once all ids
     //    exist). Match key → id map grows as we go.
     const ctx = tenantContext(req);

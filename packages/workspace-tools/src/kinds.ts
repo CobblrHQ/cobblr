@@ -19,6 +19,9 @@ export interface KindRec {
    *  /instances/<instance_name>, not /modules/<module_name>. */
   instance_name?: string;
   fields?: Array<{ name: string; type?: string; role?: string; required?: boolean; readOnly?: boolean }>;
+  /** What "the same place" means for this kind when looking for duplicates:
+   *  a field name, or "workspace". Absent = this kind is never deduplicated. */
+  duplicate_scope?: string | null;
   /** This workspace's user-defined fields (module_field_defs). Values live in
    *  the record's metadata blob; the writers fold unknown body keys there, so
    *  these names are directly settable on create/update. */
@@ -122,4 +125,54 @@ export function summarizeKind(k: KindRec): Record<string, unknown> {
     can_update: !!k.endpoints?.update,
     can_delete: !!k.endpoints?.delete,
   };
+}
+
+// ── What this kind calls its title ──────────────────────────────────────────
+//
+// Grace asked Cobb to save a crochet pattern. He proposed it, she confirmed,
+// and got "✕ HTTP 400" twice. The call was well formed; it used the wrong WORD.
+// A "designs:item" (an inventory instance) calls its title `name`, the model
+// sent `title`, and the API — correctly — refused a body with no `name`.
+//
+// The tool description already says "use the kind's EXACT field names", which
+// is a rule enforced by hoping. Every kind DECLARES which of its fields is the
+// title (`role: "title"`), so the answer is knowable rather than guessable: if
+// the model reached for a title-ish word this kind does not have, and the field
+// this kind DOES call its title is missing, that is not a different value — it
+// is the same value under the name the model happened to pick.
+//
+// Deliberately narrow. Only the words that unambiguously mean "what this thing
+// is called", only when the kind's real title field is absent (never
+// overwriting a title the model got right), and only when the word the model
+// used is not itself a declared field of this kind (a `label` that means
+// something specific to a module stays untouched).
+
+// `filename` and `subject` come from the autopilot's take on this (PR #2126),
+// which had the wider list: a files kind really does call its title
+// `filename`, and a message-ish one `subject`.
+const TITLE_WORDS = ["title", "name", "label", "filename", "subject"] as const;
+
+/** The field this kind calls its title, from its manifest. */
+export function titleFieldOf(kind: string, kinds: KindRec[]): string | null {
+  const rec = kinds.find((k) => k.id === kind);
+  const declared = rec?.fields ?? [];
+  return declared.find((f) => f.role === "title")?.name ?? null;
+}
+
+/** Fields with a title-ish key moved to the name this kind actually uses.
+ *  Returns the fields unchanged when there is nothing to fix. */
+export function withKindsTitleField(
+  kind: string,
+  kinds: KindRec[],
+  fields: Record<string, unknown>,
+): { fields: Record<string, unknown>; movedFrom?: string } {
+  const target = titleFieldOf(kind, kinds);
+  if (!target) return { fields };
+  const has = (k: string) => typeof fields[k] === "string" && String(fields[k]).trim() !== "";
+  if (has(target)) return { fields };
+  const declared = new Set((kinds.find((k) => k.id === kind)?.fields ?? []).map((f) => f.name));
+  const wrong = TITLE_WORDS.find((w) => w !== target && has(w) && !declared.has(w));
+  if (!wrong) return { fields };
+  const { [wrong]: value, ...rest } = fields;
+  return { fields: { ...rest, [target]: value }, movedFrom: wrong };
 }

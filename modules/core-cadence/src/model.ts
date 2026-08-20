@@ -33,6 +33,9 @@ export interface CadenceState {
   on_hand_estimate: number;
   /** Units consumed per day. null while still learning. */
   cadence_rate: number | null;
+  /** Typical days between re-buys. null while still learning. The plain-language
+   *  half of the rate: "you replenish this every ~23 days". */
+  replenish_every_days: number | null;
   /** Days until on_hand hits zero at the current rate. null while learning. */
   days_until_runout: number | null;
   /** discarded / (consumed + discarded) over the window. 0 when nothing left. */
@@ -51,6 +54,19 @@ const CONTEXT_WEIGHT: Record<string, number> = {
 
 /** Recency weighting: the most recent interval counts most. */
 const EWMA_ALPHA = 0.5;
+
+/**
+ * Shorter than this and it is one shopping trip, not two.
+ *
+ * Both interval loops said "same-day top-up" in a comment and then tested
+ * `days <= 0`, which only catches purchases logged at the identical instant or
+ * out of order. Two shops the same afternoon are hours apart, so they produced a
+ * real interval of about 0.01 days — and at alpha 0.5 one of those HALVES the
+ * learned figure. A kitchen where every item had been bought once by a scan and
+ * once by a list check-off read "every 4 days" for things genuinely bought every
+ * 7. The comment was right; the test under it was not.
+ */
+const MIN_INTERVAL_DAYS = 1;
 const MS_PER_DAY = 86_400_000;
 
 /** Purchases that actually inform the rate, oldest first. */
@@ -77,11 +93,38 @@ export function cadenceRate(events: CadenceEvent[]): number | null {
     const prev = purchases[i - 1]!;
     const cur = purchases[i]!;
     const days = (cur.occurred_at.getTime() - prev.occurred_at.getTime()) / MS_PER_DAY;
-    if (days <= 0) continue; // same-day top-up: no interval to learn from
+    if (days < MIN_INTERVAL_DAYS) continue; // same-day top-up: no interval to learn from
     // The PREVIOUS lot is what got consumed over this interval.
     const weight = CONTEXT_WEIGHT[prev.context ?? "normal"] ?? 1;
     const rate = (Math.abs(prev.qty_delta) * weight) / days;
     ewma = ewma === null ? rate : EWMA_ALPHA * rate + (1 - EWMA_ALPHA) * ewma;
+  }
+  return ewma !== null && ewma > 0 ? ewma : null;
+}
+
+/**
+ * How often you re-buy this, in days.
+ *
+ * `cadenceRate` turns the same intervals into units/day, which answers "when do
+ * I run out". It does not answer the question people actually ask out loud —
+ * "how often do I replenish this?" — and dividing one by the other gets it wrong
+ * whenever pack sizes differ (a 40-bag box and an 80-bag box bought a month
+ * apart are one interval, not two). So the interval series is exposed directly,
+ * EWMA'd on the same alpha so both numbers move together when a habit changes.
+ *
+ * Null while learning, for the same cold-start reason: one purchase is not an
+ * interval, and a made-up "every 30 days" is worse than an honest blank.
+ */
+export function replenishEveryDays(events: CadenceEvent[]): number | null {
+  const purchases = ratePurchases(events);
+  if (purchases.length < 2) return null;
+
+  let ewma: number | null = null;
+  for (let i = 1; i < purchases.length; i++) {
+    const days =
+      (purchases[i]!.occurred_at.getTime() - purchases[i - 1]!.occurred_at.getTime()) / MS_PER_DAY;
+    if (days < MIN_INTERVAL_DAYS) continue; // a same-day top-up is one shop, not two
+    ewma = ewma === null ? days : EWMA_ALPHA * days + (1 - EWMA_ALPHA) * ewma;
   }
   return ewma !== null && ewma > 0 ? ewma : null;
 }
@@ -117,6 +160,7 @@ function confidenceOf(events: CadenceEvent[]): CadenceState["confidence"] {
 /** Everything derivable from one item's ledger. */
 export function cadenceState(events: CadenceEvent[]): CadenceState {
   const rate = cadenceRate(events);
+  const every = replenishEveryDays(events);
   const onHand = onHandEstimate(events);
   const confidence = confidenceOf(events);
   // No rate (or no stock) means no honest run-out date.
@@ -124,6 +168,7 @@ export function cadenceState(events: CadenceEvent[]): CadenceState {
   return {
     on_hand_estimate: onHand,
     cadence_rate: confidence === "learning" ? null : rate,
+    replenish_every_days: confidence === "learning" ? null : every,
     days_until_runout: runout,
     waste_ratio: wasteRatio(events),
     confidence,

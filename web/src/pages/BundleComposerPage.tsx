@@ -71,6 +71,8 @@ export function BundleComposerPage() {
 
   // Selection state — by default everything is checked, the user
   // un-checks to narrow.
+  // SELECTION-NOT-CONTEXT: wires being composed into a bundle, which do not exist as records until
+  //   the bundle is installed
   const [selectedWires, setSelectedWires] = useState<Set<string>>(new Set());
   const [selectedFields, setSelectedFields] = useState<Set<string>>(new Set());
 

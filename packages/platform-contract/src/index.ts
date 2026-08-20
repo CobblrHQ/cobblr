@@ -725,6 +725,17 @@ const EntityKind = z
     // Default behaviour when omitted: legacy — full ResolvedEntity.fields
     // is returned and a one-time deprecation warning is logged per kind.
     // New modules SHOULD declare exposableFields.
+    // What "the same place" means for this kind, when deciding whether two
+    // records are duplicates of each other. The field name that scopes it
+    // (`parent_id` for locations, `location_id` for parts), or "workspace" for
+    // a kind where two of the same title anywhere is a duplicate.
+    //
+    // ABSENT MEANS NOT DEDUPLICATED, deliberately. Two assets called "Drill"
+    // are usually two drills; two projects called "Kitchen" are usually a
+    // rename in progress. Guessing that same-title means same-thing is exactly
+    // the guess that deletes somebody's work, so a kind opts IN by saying how
+    // it should be read.
+    duplicateScope: z.union([z.literal("workspace"), z.string().min(1)]).optional(),
     exposableFields: z.array(z.string().min(1)).optional(),
     // Per-field read-scope (H2): map a field name to the capability
     // (action_id) a viewer must hold to read it. Layered ON TOP of
@@ -927,6 +938,96 @@ const ActionAppliesTo = z.union([
 
 export const ActionIdRegex = /^[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*$/;
 
+// A COMMAND a module ships: a sentence its users would type, and what to do
+// when they type it.
+//
+// The no-AI floor answers with text, so a workspace without a model can be told
+// how to add a location and never asked to add twelve. A workspace can teach
+// itself commands by watching an AI work (docs/…/learned commands), but that
+// only helps somebody who already had an AI. Shipping the common ones means a
+// brand-new workspace, with no AI at all, can already be asked for the handful
+// of things everyone wants.
+//
+// The author writes the SENTENCE, never a regex: `template` is compiled into
+// its pattern and slots. A hand-written expression is a way to get subtly wrong
+// something that writes to workspaces.
+const ModuleCommand = z.object({
+  // Stable id, <module>:<name>, so a workspace can turn one off by name.
+  id: z.string().regex(ActionIdRegex, "command id must be <module>:<name>"),
+  // What a user would type, with {blanks}: "make rack {from} through {to} in
+  // {parent}". `from`/`to` are the range pair by convention and the only slots
+  // that match digits.
+  template: z.string().min(3).max(300),
+  // One line for the settings list: what it does, in words.
+  description: z.string().max(300).optional(),
+  // What to do, with {slot} references. Same shape a learned command stores, so
+  // shipped and learned commands run through exactly one code path.
+  plan: z
+    .array(
+      z.object({
+        tool: z.enum(["create", "update", "delete", "action"]),
+        entityKind: z.string().default(""),
+        actionId: z.string().optional(),
+        payload: z.record(z.unknown()),
+      }),
+    )
+    .min(1)
+    .max(5),
+  // For a command that repeats over a range: which payload field counts, and
+  // the shape around the counter ("Rack {n}").
+  repeatField: z.string().optional(),
+  repeatShape: z.string().optional(),
+});
+export type ModuleCommandDecl = z.infer<typeof ModuleCommand>;
+
+/** One blank in a command template. */
+export interface CommandSlot {
+  name: string;
+  kind: "text" | "number" | "range";
+}
+
+function escapeCommandRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Compile a written template into the pattern and slots that bind it.
+ *
+ *   "make rack {from} through {to} in {parent}"
+ *     → ^\s*make rack (\d+) through (\d+) in (.+?)\s*$
+ *     → from:number, to:number, parent:text
+ *
+ * This is what lets a MODULE ship a command: an author writes the sentence
+ * their users would type and never writes a regex. Nobody should have to
+ * hand-author an anchored expression with the capture groups in slot order to
+ * contribute one, and a hand-written one is a way to get it subtly wrong in a
+ * thing that writes to workspaces.
+ *
+ * `from` and `to` are the range pair by convention, and are the only slots
+ * matched as digits — everything else is text.
+ */
+export function compileTemplate(template: string): { pattern: string; slots: CommandSlot[] } | null {
+  const text = template.trim();
+  if (!text) return null;
+  const slots: CommandSlot[] = [];
+  let pattern = "";
+  let last = 0;
+  for (const m of text.matchAll(/\{([a-z0-9_]+)\}/gi)) {
+    const name = m[1]!;
+    if (slots.some((s) => s.name === name)) return null; // one capture per slot
+    pattern += escapeCommandRegex(text.slice(last, m.index!));
+    const numeric = name === "from" || name === "to";
+    pattern += numeric ? "(\\d+)" : "(.+?)";
+    slots.push({ name, kind: numeric ? "number" : "text" });
+    last = m.index! + m[0]!.length;
+  }
+  if (slots.length === 0) return null; // a command with no blanks is a macro
+  pattern += escapeCommandRegex(text.slice(last));
+  return { pattern: `^\\s*${pattern}\\s*$`, slots };
+}
+
+
+
 const EntityAction = z.object({
   id: z
     .string()
@@ -951,6 +1052,30 @@ const EntityAction = z.object({
   // (event reactions) — they're still targetable by wires, just
   // not surfaced as a manual button.
   userInvokable: z.boolean().default(true),
+  // Can running this by mistake be put right again, INSIDE the workspace?
+  //
+  // This is what decides whether an AI connection that cannot show a
+  // confirmation prompt may run it. The rule was "records yes, actions never",
+  // which is not the real line: a relayed chat auto-applies create / update /
+  // DELETE on records because those are tracked and undoable, and it blocked
+  // reordering locations, which is undone by reordering them again. Cobb was
+  // left saying he had no tool for it at all (2026-08-19).
+  //
+  // Default FALSE, because the unsafe answers are the interesting ones: an
+  // action can command a device, send a message, place an order or destroy a
+  // set of rows, and none of those come back. Say `undoable: true` only when
+  // every effect stays in this workspace AND a person can put it back without
+  // help. When in doubt, leave it: the cost is a refusal that explains itself,
+  // not a silently missing capability.
+  undoable: z.boolean().default(false),
+  // How a PERSON asks for this, in their own words. One or two lines.
+  //
+  // The action list in the assistant's prompt is ids and labels, which tells a
+  // model what exists and not what a request for it sounds like. An example is
+  // the cheapest possible bridge between "someone typed a sentence" and "this
+  // is the action that answers it", and it doubles as the phrasing a command
+  // can be written from. Kept short: these ride in every chat prompt.
+  examples: z.array(z.string().min(3).max(120)).max(3).default([]),
   // UI route the platform navigates to when the user clicks the
   // action. {entityKind}, {entityId} placeholders.
   invokeRoute: z.string().optional(),
@@ -959,15 +1084,24 @@ const EntityAction = z.object({
   // can be route-only.
   invokeHandler: z.string().optional(),
   // Optional machine-readable arg shape. Keys are the arg names the
-  // invokeHandler reads from ctx.args; each has a label + a primitive
-  // type. The wire composer renders a labelled field per arg (each value
-  // a literal or a {{token}}); the wire engine renders string args at
-  // fire time. Absent → the composer falls back to a free template.
+  // invokeHandler reads from ctx.args; each has a label + a type. The wire
+  // composer renders a labelled field per arg (each value a literal or a
+  // {{token}}); the wire engine renders string args at fire time. Absent →
+  // the composer falls back to a free template.
+  //
+  // "list" is a sequence, not a scalar. It exists because core-locations:reorder
+  // takes `ids` and could only declare itself "text", so every caller that read
+  // the schema was told to send a string to a handler that required an array —
+  // and an assistant reading that concluded it could not run the action at all
+  // (2026-08-19). A "list" arg must be accepted by its handler BOTH as a real
+  // array and as a delimited string, since the wire composer's field is a text
+  // box and always will be. "json" is the same bargain for a structured value
+  // (an order's line items, a view's config): read it with readJsonArg.
   argsSchema: z
     .record(
       z.object({
         label: z.string().min(1),
-        type: z.enum(["text", "number", "boolean"]).default("text"),
+        type: z.enum(["text", "number", "boolean", "list", "json"]).default("text"),
       }),
     )
     .optional(),
@@ -1187,10 +1321,13 @@ const ModuleManifest = z.object({
       events: z.array(z.string()).default([]),
       api: z.array(z.string()).default([]),
       actions: z.array(EntityAction).default([]),
+      // Sentences this module's users would type, and what to do about them.
+      // Available with no AI connected at all. See ModuleCommand.
+      commands: z.array(ModuleCommand).default([]),
       // Live controls — ongoing session modes surfaced in the Live box.
       live: z.array(LiveControl).default([]),
     })
-    .default({ events: [], api: [], actions: [], live: [] }),
+    .default({ events: [], api: [], actions: [], commands: [], live: [] }),
   // Pillar A — entity kinds the module provides for the rest of
   // the platform to introspect.
   provides: z
@@ -1926,6 +2063,41 @@ export interface EntityWriter {
   /** Optional: read an entity's current fields, so an import preview can show the
    *  both-sides diff (what's there now vs what the source would write). */
   read?(orgId: string, id: string): Promise<Record<string, unknown> | null>;
+  /** Optional: put this exact row back, ID AND ALL.
+   *
+   *  Undo means the workspace returns to the state it was in, not that an
+   *  opposite operation is performed. Those differ in ways that matter: a
+   *  delete undone by CREATING a lookalike gives the record a new id, so every
+   *  shelf that was inside it, every label pointing at it and every part filed
+   *  under it are still pointing at something that no longer exists. It also
+   *  runs the forward-write rules again, so a restore can be REFUSED by a rule
+   *  the original write predates.
+   *
+   *  A restore is not a create. It writes the stored row back as it was, id
+   *  included, and skips the validation a new record would face — the state
+   *  being restored is by definition one this workspace already held.
+   *
+   *  Without this, undoing a delete falls back to recreating a copy, and says
+   *  so plainly rather than pretending. */
+  restore?(orgId: string, image: Record<string, unknown>): Promise<void>;
+  /** Optional: the record's WHOLE row, every column, for a change ledger to
+   *  keep as the state to come back to.
+   *
+   *  A resolved record is a curated view — the fields a kind chooses to
+   *  publish. Notes, descriptions and anything the resolver leaves out are
+   *  therefore invisible to an undo built on it: not restored, and not even
+   *  noticed as having changed. Restoring a view is not restoring the state. */
+  snapshot?(orgId: string, id: string): Promise<Record<string, unknown> | null>;
+  /** Optional: what would go WITH this record if it were deleted.
+   *
+   *  Undo needs this because a delete is not local. Locations cascade to their
+   *  children, so an undo that carefully spares a shelf you had edited, and
+   *  then removes the rack it was in, has deleted your shelf anyway — one step
+   *  later and with no message. Returning the names of what depends on this
+   *  record lets an undo stop and say which.
+   *
+   *  Names, not a count, so the refusal can say WHICH thing it protected. */
+  dependents?(orgId: string, id: string): Promise<string[]>;
 }
 
 export interface PlatformEntities {
@@ -1938,6 +2110,16 @@ export interface PlatformEntities {
   registerWriter(kind: string, writer: EntityWriter): void;
   /** Resolve a registered writer for a kind, or null. */
   getWriter(kind: string): EntityWriter | null;
+  /** Put a row back exactly as it was, id and all. True when the kind's writer
+   *  can do it; false when nothing here can, so the caller can fall back and
+   *  say what it actually did instead of claiming a restore. */
+  restore(kind: string, orgId: string, image: Record<string, unknown>): Promise<boolean>;
+  /** The whole row for a record, when its kind can produce one — what a change
+   *  ledger stores so an undo has real state to put back. */
+  snapshot(kind: string, orgId: string, id: string): Promise<Record<string, unknown> | null>;
+  /** What would be deleted along with this record. Empty when nothing would be;
+   *  null when the kind cannot say (and a caller must not read that as "safe"). */
+  dependents(kind: string, orgId: string, id: string): Promise<string[] | null>;
   /** Register a list-resolver for a kind. Optional — without one,
    *  list() returns an empty result. Modules opt in when they want
    *  their kind to appear in core-views, search results, etc. */
@@ -2222,6 +2404,9 @@ export interface EntityKindRecord {
    *  props (id/title/subtitle/image_path/detailUrl) are always exposable
    *  regardless of this list. See docs/architecture/entity-resolver.md. */
   exposable_fields: string[] | null;
+  /** Field that scopes duplicate detection for this kind, or "workspace";
+   *  null means it is never deduplicated (see the EntityKind manifest field). */
+  duplicate_scope?: string | null;
 }
 
 // ──────────────── Pillar B runtime — actions ───────────────────────
@@ -2332,6 +2517,69 @@ export function requireActionEntity(ctx: ActionInvokeContext): {
     );
   }
   return ctx.entity;
+}
+
+/** Read a `list`-typed action argument as an array of non-empty strings,
+ *  whatever shape the caller sent.
+ *
+ *  A handler must not care: the SAME argument arrives as a real JSON array from
+ *  invoke_action, and as a plain string from the wire composer, whose arg field
+ *  is a single text box and always will be. When core-locations:reorder read
+ *  `ctx.args.ids` with a bare `Array.isArray`, a caller who sent
+ *  "id-a, id-b" got an empty list and an unhelpful refusal — with no way to
+ *  tell from the schema which of the two forms was wanted (2026-08-19).
+ *
+ *  Accepts: an array (of strings, or of anything stringifiable), a JSON array
+ *  in a string, or a string delimited by commas / newlines / whitespace.
+ *  Returns [] when the arg is absent or empty — the caller decides whether
+ *  empty is an error. */
+export function readListArg(
+  args: Record<string, unknown> | undefined,
+  name: string,
+): string[] {
+  const raw = args?.[name];
+  if (raw == null) return [];
+  const clean = (xs: unknown[]): string[] =>
+    xs.map((v) => (typeof v === "string" ? v.trim() : String(v ?? "").trim())).filter(Boolean);
+  if (Array.isArray(raw)) return clean(raw);
+  if (typeof raw !== "string") return clean([raw]);
+  const text = raw.trim();
+  if (!text) return [];
+  if (text.startsWith("[")) {
+    try {
+      const parsed: unknown = JSON.parse(text);
+      if (Array.isArray(parsed)) return clean(parsed);
+    } catch {
+      // Not JSON after all; fall through to delimiter splitting.
+    }
+  }
+  return clean(text.split(/[\s,]+/));
+}
+
+/** Read a `json`-typed action argument as a structured value, whatever shape
+ *  the caller sent.
+ *
+ *  The twin of readListArg, for the same reason: invoke_action can send a real
+ *  object or array, and a wire's arg field can only ever send the text a person
+ *  typed into it. A handler that tests `typeof args.config === "object"` throws
+ *  away the second form silently.
+ *
+ *  Returns undefined when the arg is absent, blank, or is a string that is not
+ *  valid JSON - the caller decides whether that is an error. */
+export function readJsonArg<T = unknown>(
+  args: Record<string, unknown> | undefined,
+  name: string,
+): T | undefined {
+  const raw = args?.[name];
+  if (raw == null) return undefined;
+  if (typeof raw !== "string") return raw as T;
+  const text = raw.trim();
+  if (!text) return undefined;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return undefined;
+  }
 }
 
 export interface PlatformActions {
@@ -2668,7 +2916,8 @@ export interface PlatformIntegrations {
       id: string;
       label: string;
       description?: string;
-      argsSchema?: Record<string, { label: string; type: "text" | "number" | "boolean" }>;
+      argsSchema?: Record<string, { label: string; type: "text" | "number" | "boolean" | "list" | "json" }>;
+      undoable?: boolean;
     }>;
     invoke: (
       ctx: {
@@ -2725,7 +2974,8 @@ export interface PlatformIntegrations {
       id: string;
       label: string;
       description?: string;
-      argsSchema?: Record<string, { label: string; type: "text" | "number" | "boolean" }>;
+      argsSchema?: Record<string, { label: string; type: "text" | "number" | "boolean" | "list" | "json" }>;
+      undoable?: boolean;
     }>;
   }>;
   /** List registered inbound handlers. */
@@ -2744,7 +2994,8 @@ export interface PlatformIntegrations {
       id: string;
       label: string;
       description?: string;
-      argsSchema?: Record<string, { label: string; type: "text" | "number" | "boolean" }>;
+      argsSchema?: Record<string, { label: string; type: "text" | "number" | "boolean" | "list" | "json" }>;
+      undoable?: boolean;
     }>;
     testConnection?: (credentials: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>;
   } | null;
@@ -2816,10 +3067,44 @@ export interface AiCredentialField {
   choices?: Array<{ value: string; label: string }>;
 }
 
+/** One numbered instruction on the way to a working connection. `href` turns it into a
+ *  link, because "go to aistudio.google.com/apikey" as plain text is a URL somebody has
+ *  to retype by hand, and that is where non-technical people give up. */
+export interface AiSetupStep {
+  text: string;
+  href?: string;
+}
+
+/** How a person GETS the credentials this provider wants.
+ *
+ *  Without this the only place to explain "sign in, click Create API key, paste it here"
+ *  was inside a field label, which renders as one long unclickable parenthetical. The
+ *  fields say WHAT to paste; this says HOW to get it. */
+export interface AiProviderSetup {
+  /** One line on what this provider is and what it costs, before the steps. */
+  summary: string;
+  /** Ordered. Short enough to follow while switching between two tabs. */
+  steps: AiSetupStep[];
+  /** Anything true that a person should know before choosing it, e.g. what the free
+   *  tier does with their data. Rendered as a caveat, not buried in a step. */
+  caveat?: string;
+}
+
 export interface AiProviderDef {
   id: string;
   label: string;
   describeCredentials: () => Record<string, AiCredentialField>;
+  /** Step-by-step, shown in the UI when this provider is picked. Optional: a provider
+   *  needing no credentials (a managed one) has nothing to instruct. */
+  setup?: AiProviderSetup;
+  /** Where this sits in the picker. Lower sorts first, and the FIRST entry is what the
+   *  add form defaults to, so this decides what someone with no AI at all is offered.
+   *  Unset sorts last.
+   *
+   *  Explicit because it used to be import order in one file, which meant the default
+   *  provider could change as a side effect of adding an unrelated `register()` line
+   *  and nothing would say so. */
+  rank?: number;
   /** Map capability → models the provider supports for it. */
   capabilities: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>>;
   /** Whether a workspace that has configured NO provider may have this one
@@ -2879,6 +3164,11 @@ export interface AiProviderDef {
     credentials: Record<string, unknown>;
     input: Record<string, unknown>;
     config: Record<string, unknown>;
+    /** Called with each piece of the answer as it arrives, when the caller
+     *  wants to show words appearing rather than a spinner. Optional on both
+     *  sides: a caller may not care, and an adapter whose provider cannot
+     *  stream simply never calls it and returns the whole thing as before. */
+    onDelta?: (text: string) => void;
   }) => Promise<{
     result: unknown;
     input_tokens?: number;
@@ -2929,8 +3219,11 @@ export interface PlatformAi {
   listProviders(): Array<{
     id: string;
     label: string;
-    credentials: Record<string, { label: string; secret: boolean }>;
+    // AiCredentialField, not a narrower inline copy: `choices` was already missing here
+    // while the UI reads it, so the type was quietly lying about the payload.
+    credentials: Record<string, AiCredentialField>;
     capabilities: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>>;
+    setup?: AiProviderSetup;
   }>;
   getProvider(id: string): AiProviderDef | null;
   /** Single entry point for any module to use AI. Picks provider +
@@ -2970,6 +3263,11 @@ export interface PlatformAi {
     /** The user who initiated this call (for the AI activity log). Null/absent
      *  for system-initiated calls (e.g. a wire). */
     userId?: string | null;
+    /** Show the answer as it is written. Passed to the adapter, which streams
+     *  when its provider can and ignores it when it cannot — so a caller may
+     *  always pass it and simply see nothing until the end. A cached reply
+     *  never streams: there is nothing to watch, it is already written. */
+    onDelta?: (text: string) => void;
   }): Promise<{
     result: unknown;
     provider_id: string;
@@ -4285,4 +4583,90 @@ export function roledFactsPatch(mapped: readonly MappedValue[]): Record<string, 
     patch[m.key] = m.value;
   }
   return patch;
+}
+
+// ── Putting a row back exactly as it was ────────────────────────────────────
+//
+// Undo means the workspace returns to the state it held, not that an opposite
+// operation is performed. Those differ where it matters: a delete undone by
+// CREATING a lookalike gives the record a new id, so every child location,
+// every label and every part that pointed at it now points at nothing. And a
+// re-create runs the forward-write rules again, so a restore can be refused by
+// a rule the original write predates — undoing a deleted "Shelf 1" fails
+// because a "Shelf 1" exists, which is precisely the state being restored.
+
+/** Keep only the columns a table actually has. An image is a RESOLVED record
+ *  and may carry computed or joined keys the table would reject. */
+export function restorableColumns<T extends string>(
+  image: Record<string, unknown>,
+  columns: readonly T[],
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const c of columns) if (image[c] !== undefined) out[c] = image[c];
+  return out;
+}
+
+/** The id an image is for, or null when it carries none — nothing to restore
+ *  TO, so the caller recreates and says that is what it did. */
+export function imageId(image: Record<string, unknown>): string | null {
+  const id = (image as { id?: unknown }).id;
+  return typeof id === "string" && id ? id : null;
+}
+
+/** The whole of a module's `snapshot`: every column of one row, by id. */
+export async function snapshotRow(
+  db: unknown,
+  table: string,
+  id: string,
+): Promise<Record<string, unknown> | null> {
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const q = db as { selectFrom: (t: string) => any };
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+  const row = await q.selectFrom(table).selectAll().where("id", "=", id).executeTakeFirst();
+  return (row as Record<string, unknown> | undefined) ?? null;
+}
+
+/** The whole of a module's `restore`, so four modules do not keep four copies
+ *  of it in step — and so a column added by a migration is restored the day it
+ *  exists, instead of the day someone remembers to add it to a list here.
+ *
+ *  Idempotent by id (insert, or overwrite what is there), because a batch undo
+ *  that stopped halfway has to be pressable again. */
+export async function restoreRow(
+  // Structurally a Kysely instance. Typed loosely on purpose: the contract must
+  // not take a dependency on any module's generated DB types, and every caller
+  // hands it whatever `tenants.getDb` returned.
+  db: unknown,
+  table: string,
+  image: Record<string, unknown>,
+): Promise<void> {
+  const id = imageId(image);
+  if (!id) throw new Error("that change has no record to put back");
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const q = db as { selectFrom: (t: string) => any; insertInto: (t: string) => any };
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+  const cols: Array<{ column_name: string; data_type: string }> = (
+    await q
+      .selectFrom("information_schema.columns")
+      .select(["column_name", "data_type"])
+      .where("table_name", "=", table)
+      .execute()
+  ) as Array<{ column_name: string; data_type: string }>;
+  if (cols.length === 0) throw new Error(`unknown table ${table}`);
+  const json = new Set(cols.filter((c) => /json/i.test(c.data_type)).map((c) => c.column_name));
+  const row: Record<string, unknown> = {};
+  for (const c of cols) {
+    const v = image[c.column_name];
+    if (v === undefined || c.column_name === "id") continue;
+    // A jsonb column arrives from an image as a parsed object; hand the driver
+    // text and let Postgres cast it, or it stores the string "[object Object]".
+    row[c.column_name] = json.has(c.column_name) && v !== null && typeof v === "object" ? JSON.stringify(v) : v;
+  }
+  await q
+    .insertInto(table)
+    .values({ ...row, id })
+    .onConflict((oc: { column: (c: string) => { doUpdateSet: (r: unknown) => unknown } }) =>
+      oc.column("id").doUpdateSet(row),
+    )
+    .execute();
 }

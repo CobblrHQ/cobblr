@@ -101,8 +101,25 @@ function scanFile(path: string) {
     const { line } = sf.getLineAndCharacterOfPosition(node.getStart());
     violations.push({ file: relative(ROOT, path), line: line + 1, text: raw.replace(/\s+/g, " ").trim().slice(0, 90) });
   };
-  const strVal = (n: ts.Node): string | null =>
-    ts.isStringLiteralLike(n) ? n.text : ts.isNoSubstitutionTemplateLiteral(n) ? n.text : null;
+  /** The words in a node, whether or not it interpolates.
+   *
+   *  A template with a hole in it is still copy: `title={`Cobb is talking about
+   *  ${label} — click to stop`}` reads to a person exactly like the same
+   *  sentence in quotes, and used to sail past this lint because only literals
+   *  were read. The interpolations are dropped and the surrounding text is
+   *  checked, which is where a dash can actually be. */
+  const strVal = (n: ts.Node): string | null => {
+    if (ts.isStringLiteralLike(n)) return n.text;
+    if (ts.isNoSubstitutionTemplateLiteral(n)) return n.text;
+    if (ts.isTemplateExpression(n)) {
+      return n.head.text + n.templateSpans.map((sp) => sp.literal.text).join(" ");
+    }
+    // A ternary of copy is still copy: `x ? \`a — b\` : "c"`.
+    if (ts.isConditionalExpression(n)) {
+      return [strVal(n.whenTrue), strVal(n.whenFalse)].filter(Boolean).join(" ");
+    }
+    return null;
+  };
 
   const visit = (node: ts.Node) => {
     // 1) JSX text between tags — the most common user-facing surface.

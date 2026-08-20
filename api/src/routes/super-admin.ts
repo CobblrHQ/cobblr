@@ -32,12 +32,14 @@ import { announce, listAnnounceSettings, setAnnounceSetting, isComposable } from
 import { reporterCardFields } from "../platform/feedback-card.js";
 import {
   pokeDiscordResolved,
+  sendDiscordDm,
   pokeDiscordWaitlistCard,
   pokeDiscordFeedbackStage,
   type FeedbackStage,
 } from "../platform/discord-bot-trigger.js";
 import { pokeTriage } from "../platform/triage-trigger.js";
 import { isDmReply } from "../platform/feedback-dm-routing.js";
+import { reporterReplyRoute } from "../platform/feedback-reply-route.js";
 import { absoluteAppUrl } from "../platform/public-url.js";
 import { feedbackReplyAddress } from "../platform/feedback-reply.js";
 import {
@@ -1913,11 +1915,17 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
         .where("id", "=", row.id)
         .execute();
     }
-    // A discord-origin ticket has no platform user — its reply goes back into
-    // the Discord thread via the support bot (the API never touches Discord).
-    if (parsed.data.notify_reporter && row.origin === "discord") {
-      const ref = (row.origin_ref ?? null) as { thread_id?: string } | null;
-      if (ref?.thread_id) {
+    // Where the reply goes is decided in ONE place, for every origin
+    // (feedback-reply-route.ts) — an origin with no door is a reply that
+    // silently goes nowhere.
+    const replyRoute = reporterReplyRoute({
+      origin: row.origin,
+      user_id: row.user_id,
+      origin_ref: (row.origin_ref ?? null) as { thread_id?: string; user_id?: string } | null,
+    });
+    if (parsed.data.notify_reporter && replyRoute.via === "discord-thread") {
+      {
+        const ref = { thread_id: replyRoute.thread_id };
         const defaultMsg =
           parsed.data.status === "resolved"
             ? "Fixed — this is live now. 🎉"
@@ -1933,7 +1941,19 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
         notified = true;
       }
     }
-    if (parsed.data.notify_reporter && row.user_id) {
+    // A DM reporter with no account is reachable only through the DM they wrote
+    // from — before this route existed, their reply was written and dropped.
+    if (parsed.data.notify_reporter && replyRoute.via === "discord-dm") {
+      const text = parsed.data.reply_message?.trim() || parsed.data.public_summary?.trim();
+      if (text) {
+        const dm = await sendDiscordDm({
+          discord_user_id: replyRoute.discord_user_id,
+          text: parsed.data.status === "resolved" ? `Fixed, this is live now. \u{1F389}\n\n${text}` : text,
+        });
+        notified = dm.ok || notified;
+      }
+    }
+    if (parsed.data.notify_reporter && replyRoute.via === "account" && row.user_id) {
       try {
         // The reporter's workspace: the org they filed from, else their first.
         let orgId = row.org_id ?? null;

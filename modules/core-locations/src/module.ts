@@ -21,7 +21,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-locations",
-  version: "0.2.0",
+  version: "0.5.0",
   displayName: "Locations",
   description:
     "Workspace-wide hierarchical tree of physical places (rooms, shelves, bins). Every module's location-bearing entities reference rows here via polymorphic location_id.",
@@ -53,6 +53,9 @@ export default defineModule({
         deleteEndpoint: "/locations/{id}",
         displayName: "Location",
         displayNamePlural: "Locations",
+        // Two "Shelf 1"s in the same rack are one shelf entered twice; the same
+        // two in different racks are two shelves.
+        duplicateScope: "parent_id",
         icon: "map-pin",
         fields: [
           { name: "name", type: "text", role: "title" },
@@ -115,11 +118,45 @@ export default defineModule({
       "core-locations.location.deleted",
     ],
     api: [],
+    // Sentences people say to a locations module on day one, before they have
+    // connected any AI at all. Numbering a run of shelves or bins is the single
+    // most common bulk ask there is, and the one an AI was previously required
+    // for. `from`/`to` are the range pair; `n` is the counter inside a name.
+    commands: [
+      {
+        id: "core-locations:number-a-run",
+        template: "make {label} {from} through {to} in {parent}",
+        description: "Create a numbered run of places inside another one.",
+        plan: [
+          {
+            tool: "create" as const,
+            entityKind: "core-locations:location",
+            payload: { name: "{label} {n}", kind: "container", parent: "{parent}" },
+          },
+        ],
+        repeatField: "name",
+        repeatShape: "{label} {n}",
+      },
+      {
+        id: "core-locations:add-place",
+        template: "add a place called {name} in {parent}",
+        description: "Create one place inside another.",
+        plan: [
+          {
+            tool: "create" as const,
+            entityKind: "core-locations:location",
+            payload: { name: "{name}", kind: "container", parent: "{parent}" },
+          },
+        ],
+      },
+    ],
     actions: [
       {
         // Workspace-scoped: it orders a SET of siblings, not one record, so
         // there is no single entity for it to hang off.
         id: "core-locations:reorder",
+        examples: ["put the racks in order", "sort the shelves under Den"],
+        undoable: true,
         label: "Reorder locations",
         description:
           "Set the order sibling locations appear in under the same parent. Pass `ids`: the location ids of ONE parent's children, in the order you want them (use list_records on core-locations:location to read them). This is the only way the order changes: `position` is maintained here, and an update that sets it is refused. The tree lists shallowest first, then this order, then alphabetically.",
@@ -127,7 +164,7 @@ export default defineModule({
         scope: "workspace" as const,
         invokeHandler: "core-locations.reorder",
         argsSchema: {
-          ids: { label: "Location ids, in the order they should appear", type: "text" },
+          ids: { label: "Location ids, in the order they should appear", type: "list" as const },
         },
       },
     ],

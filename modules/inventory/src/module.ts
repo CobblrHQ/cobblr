@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "inventory",
-  version: "0.20.0",
+  version: "0.21.0",
   displayName: "Inventory",
   description:
     "Parts, locations, categories, stock tracking, polymorphic allocations. The generalised toolkit you'd otherwise Frankenstein from a spreadsheet.",
@@ -33,6 +33,10 @@ export default defineModule({
     entityKinds: [
       {
         id: "inventory:part",
+        // Two "M3 bolt" rows in the SAME bin are one part counted twice;
+        // the same name in two bins is two piles of bolts, which is how
+        // people actually store them.
+        duplicateScope: "location_id",
         primary: true,
         listEndpoint: "/parts",
         createEndpoint: "/parts",
@@ -157,6 +161,8 @@ export default defineModule({
     actions: [
       {
         id: "inventory:reserve-stock",
+        examples: ["set aside four for that project", "reserve some of these"],
+        undoable: true,
         label: "Reserve stock for something",
         description:
           "Set aside some of this part for a project, build or order, without moving stock yet. Pass `qty`, and `for_kind` + `for_id` saying what it is reserved for (list_records gives you the id). Optionally `reason`, which becomes the line on the part's statement when it is consumed. Stock only moves when the reservation is CONSUMED (inventory:settle-allocation).",
@@ -172,6 +178,8 @@ export default defineModule({
       },
       {
         id: "inventory:settle-allocation",
+        examples: ["we used the reserved ones", "release that reservation"],
+        undoable: true,
         label: "Consume or release a reservation",
         description:
           "Finish a reservation. `status: \"consumed\"` means the stock was actually used: on-hand drops by the reserved amount and a withdrawal appears on the part's statement. `status: \"released\"` means it was not used after all: nothing moves, the reservation just goes away. Pass `allocation_id`. Only a still-reserved allocation can be settled.",
@@ -185,6 +193,8 @@ export default defineModule({
       },
       {
         id: "inventory:add-category",
+        examples: ["add a Fasteners category", "we need a new category"],
+        undoable: true,
         label: "Add a category",
         description:
           "Create an inventory category (the grouping a part belongs to, e.g. \"Fasteners\"). Pass `name`, optionally `color` as a hex code. Asking for one that already exists returns the existing one rather than failing.",
@@ -198,6 +208,8 @@ export default defineModule({
       },
       {
         id: "inventory:use-one",
+        examples: ["used one", "I just took one out"],
+        undoable: true,
         label: "Use one",
         description:
           "Knock a single unit off a part's on-hand qty: the zero-friction 'I took one out' tap. Binary, no number entry (that's Adjust stock). Decrements through the same path as adjust-stock, so it writes the usage ledger and trips 'running low → shopping list' when it crosses the reorder threshold. partId falls back to the targeted entity.",
@@ -207,6 +219,8 @@ export default defineModule({
       },
       {
         id: "inventory:use-up",
+        examples: ["that is all gone", "finished the last one"],
+        undoable: true,
         label: "Used up",
         description:
           "Mark a part gone: drives on-hand to 0 in one tap (tossing the empty), no 'how many left?' guess. Same ledger + low-stock path as adjust-stock, so it reorders if a threshold is set. No-op if already empty. partId falls back to the targeted entity.",
@@ -216,6 +230,8 @@ export default defineModule({
       },
       {
         id: "inventory:replaced",
+        examples: ["replaced the filter", "swapped that one out"],
+        undoable: true,
         label: "Replaced",
         description:
           "One tap at a scheduled swap (furnace filter, water filter, printer nozzle): resets the replace-clock (stamps metadata.last_replaced_at = now, so it won't nag again until the next interval) AND consumes one spare from on-hand, which reorders if that leaves you short. Set metadata.replace_every_days on the part to arm the clock. partId falls back to the targeted entity.",
@@ -225,6 +241,8 @@ export default defineModule({
       },
       {
         id: "inventory:adjust-stock",
+        examples: ["add 5 to the M3 screws", "take 2 off that spool"],
+        undoable: true,
         label: "Adjust part stock",
         description:
           "Add or subtract from a part's on-hand qty. Wire it to purchases.order_item.received for auto-bump-on-arrival, or fire it from any other event source. Args: { partId, delta, reason? }.",
@@ -244,10 +262,14 @@ export default defineModule({
           partId: { label: "Part id", type: "text" },
           delta: { label: "Change in qty (+ adds, − subtracts)", type: "number" },
           reason: { label: "Reason (optional)", type: "text" },
+          sourceKind: { label: "Record kind this adjustment came from (optional)", type: "text" },
+          sourceId: { label: "Record id this adjustment came from (optional)", type: "text" },
         },
       },
       {
         id: "inventory:set-stock",
+        examples: ["there are 40 left", "set the count to 12"],
+        undoable: true,
         label: "Set part stock",
         description:
           "Set a part's on-hand qty to an ABSOLUTE value (not a delta). The natural op for a scale ('grams remaining'), a stocktake, or a recount. Reached from core-devices.device.reading via a device→part link, or any source. Args: { partId, qty, reason? }.",
@@ -262,15 +284,23 @@ export default defineModule({
       },
       {
         id: "inventory:set-status",
+        examples: ["mark it as built", "set that to missing pieces"],
+        undoable: true,
         label: "Set status",
         description:
           "Set a part's `metadata.status` (e.g. a Lego set's Built / Unbuilt / Missing pieces). A member-appropriate, user-invokable action: grant it and a worker can update status from their app: the canonical write a custom (Tier B) app block performs. Args: { partId?, status }; partId falls back to the targeted entity.",
         appliesTo: { kinds: ["inventory:part"] },
         invokeHandler: "inventory.set-status",
+        argsSchema: {
+          partId: { label: "Which part, defaults to the record this ran on", type: "text" },
+          status: { label: "The status to set", type: "text" },
+        },
         userInvokable: true,
       },
       {
         id: "inventory:create-item",
+        examples: ["add a box of screws", "I have got a new spool"],
+        undoable: true,
         label: "Add an item",
         description:
           "Create an inventory item in an instance (name + custom fields (metadata) + an optional location / brand / qty. The canonical CREATE a custom (Tier B) app block performs (there was no invokable create before) only set-status / adjust-stock). Generic: the caller composes the name + fields and decides what to make. User-invokable so a granted worker can run it. Args: { instance, name, fields?, location_id?, manufacturer?, qty?, unit? }.",
@@ -284,6 +314,7 @@ export default defineModule({
       },
       {
         id: "inventory:create-items",
+        examples: ["add these five things", "add a batch of items"],
         label: "Add items (bulk)",
         description:
           "Bulk-create N inventory items in one INSERT (a kit BOM, a CSV import, a batch from another module). Returns the new ids in input order so the caller can wire pairings. Does NOT fan out per-item created events. Generic. Args: { items: [{ name, instance?, fields?, qty?, unit?, image_path?, manufacturer?, location_id? }] }.",
@@ -293,6 +324,8 @@ export default defineModule({
       },
       {
         id: "inventory:update-item",
+        examples: ["rename that part", "change its brand"],
+        undoable: true,
         label: "Update an item",
         description:
           "Set a part's name / brand / location and/or MERGE metadata fields (e.g. mark a kit's metadata.lifecycle='parted-out'). The companion to create-item: lets a Tier-B app or another module edit an item through inventory's public interface. Generic. Args: { id, name?, manufacturer?, location_id?, fields? }.",
@@ -302,6 +335,7 @@ export default defineModule({
       },
       {
         id: "inventory:lift-to-type",
+        examples: ["turn these items into types", "dedupe these into product types"],
         label: "Lift items into types",
         description:
           "Bundle-migration engine: lift each item in a SOURCE instance into a TYPE in another instance (deduped by key fields, copying the type-defining fields up, linked via a pairing, optionally converting the qty unit. How a flat single-instance bundle upgrades into a type→instances model on a version bump. Idempotent (skips already-linked items). Generic) the bundle's migration declares the params. Args: { source_instance, type_instance, key_fields[], copy_fields?[], relationship_kind?, convert_qty?: { from_unit, to_unit, factor } }.",
@@ -312,6 +346,7 @@ export default defineModule({
       },
       {
         id: "inventory:field-to-location",
+        examples: ["move the Room field into Location", "turn that place field into real locations"],
         label: "Move a place field into Location",
         description:
           "Bundle-migration engine: retire a bundle's bespoke place field (e.g. a 'Room' text field) into the platform's canonical Location: for each item with a value, find-or-create a matching Location AREA, file the item into it (location_id), then clear the field. How a bundle drops a location-shaped custom field for the real Location on a version bump. Idempotent + safe: never invents a place, never overwrites an already-filed item, re-uses an existing same-named area. Args: { field, instance }.",
@@ -322,6 +357,7 @@ export default defineModule({
       },
       {
         id: "inventory:split-lot",
+        examples: ["split one off that lot", "I opened one of the pack"],
         label: "Split one off",
         description:
           "Split units off a lot's quantity into a NEW separate item (default 1 (the 'I entered 5 spools as one lot and just opened one' move). The new item inherits the lot's instance, fields, manufacturer, location, image, and parent pairing(s) so type rollups still count it; the lot's qty drops by the split amount. Generic) works on any inventory item with a numeric qty, in any instance. The lot must keep ≥1. Args: { quantity?: number (default 1) }.",

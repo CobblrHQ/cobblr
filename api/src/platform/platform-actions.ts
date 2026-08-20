@@ -32,6 +32,12 @@ export interface PlatformActionDecl {
   scope: "workspace";
   invoke_handler: string;
   user_invokable: boolean;
+  /** Can a mistaken run be put right inside the workspace? See EntityAction's
+   *  `undoable` in the contract — this is the same decision, for the kernel's
+   *  own actions, and it is deliberately not optional here. */
+  undoable: boolean;
+  /** How a person asks for it. See EntityAction.examples in the contract. */
+  examples?: string[];
   args_schema: Record<string, { label: string; type: "text" | "boolean" | "number" }>;
   version: string;
 }
@@ -46,6 +52,9 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     scope: "workspace",
     invoke_handler: "platform.add-field",
     user_invokable: true,
+    // a field cannot be removed by this rail (its own description says added-only), so a wrong one stays
+    undoable: false,
+    examples: ["add a Purchase Date field to parts", "track a colour on every physical thing"],
     args_schema: {
       entity_kind: { label: "Which kind of record (or a trait scope like @physical)", type: "text" },
       display_label: { label: "The field's label (e.g. Purchase Date)", type: "text" },
@@ -66,6 +75,9 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     scope: "workspace",
     invoke_handler: "platform.create-instance",
     user_invokable: true,
+    // a whole list, its nav entry and its label-code group; undoing it is not one step
+    undoable: false,
+    examples: ["make a separate list for CNC machines", "I want 3D printers and laser cutters kept apart"],
     args_schema: {
       module_name: { label: "The module to make a list from (e.g. machines)", type: "text" },
       display_name: { label: "What to call the list (e.g. CNC Machines)", type: "text" },
@@ -82,6 +94,9 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     scope: "workspace",
     invoke_handler: "platform.set-wire-enabled",
     user_invokable: true,
+    // a toggle: setting it back is the whole undo
+    undoable: true,
+    examples: ["stop the low stock wire from firing", "turn that automation back on"],
     args_schema: {
       wire_id: { label: "The automation's id", type: "text" },
       enabled: { label: "On (true) or off (false)", type: "boolean" },

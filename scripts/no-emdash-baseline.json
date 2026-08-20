@@ -1,1 +1,582 @@
-[]
+[
+  {
+    "file": "modules/bricklink-connector/src/api/action-handlers.ts",
+    "text": "No BOM rows for set . Either the set isn't in the BOM dump or your BOM data predates the s"
+  },
+  {
+    "file": "modules/builds/src/ui/index.tsx",
+    "text": "Built — components consumed from stock"
+  },
+  {
+    "file": "modules/builds/src/ui/index.tsx",
+    "text": "More than current stock supports — stock can go negative"
+  },
+  {
+    "file": "modules/builds/src/ui/index.tsx",
+    "text": "Status: — click to advance"
+  },
+  {
+    "file": "modules/core-ai/src/api/basics.ts",
+    "text": "\"\" already has an override — edit it instead"
+  },
+  {
+    "file": "modules/core-ai/src/api/chat-ledger.ts",
+    "text": "still has in it, so it was left alone — removing it would have taken with it."
+  },
+  {
+    "file": "modules/core-ai/src/api/chat.ts",
+    "text": "(Applied immediately — every change is tracked and undoable.) (This PROPOSES the change — "
+  },
+  {
+    "file": "modules/core-ai/src/api/chat.ts",
+    "text": "Delete “” — permanent"
+  },
+  {
+    "file": "modules/core-authoring/src/api/drafts.ts",
+    "text": "Your output was not valid JSON. Return ONLY one JSON object: { \"interpretation\": \"...\", \"\""
+  },
+  {
+    "file": "modules/core-cadence/src/sweeper.ts",
+    "text": "About % of this keeps going bad — worth buying less of it."
+  },
+  {
+    "file": "modules/core-locations/src/api/floorplan.ts",
+    "text": "No AI provider resolves for this workspace — draw the plan by hand, or connect AI."
+  },
+  {
+    "file": "modules/core-scan/src/api/inbox.ts",
+    "text": "is not a scan target — its module marks the kind scannable via platform().entities.registe"
+  },
+  {
+    "file": "modules/core-scan/src/api/organize.ts",
+    "text": "Everything selected already has a location. Nothing identified to organize yet — identify "
+  },
+  {
+    "file": "modules/core-scan/src/api/organize.ts",
+    "text": "Organize plans cap at items — select fewer."
+  },
+  {
+    "file": "modules/core-scan/src/services/organize-plan.ts",
+    "text": "Grouped by category — start a \"\" bin for these. Start a \"\" bin for this."
+  },
+  {
+    "file": "modules/core-units/src/api/handlers.ts",
+    "text": "\"\" is already a built-in unit ( ) — it can be used as-is."
+  },
+  {
+    "file": "modules/core-views/src/api/handlers.ts",
+    "text": "\"\" is not a view type — use one of: table, list, kanban, calendar, gantt"
+  },
+  {
+    "file": "modules/core-views/src/api/handlers.ts",
+    "text": "this workspace has no \"\" to build a view of — check the record kinds first"
+  },
+  {
+    "file": "modules/digifab/src/api/failure.ts",
+    "text": "no mapping for a \"\" connection — use the form"
+  },
+  {
+    "file": "modules/inventory/src/ui/PartDetailPage.tsx",
+    "text": "Kept ~ left — back in the pool."
+  },
+  {
+    "file": "modules/inventory/src/ui/PartDetailPage.tsx",
+    "text": "Track each on its own — a by-state count with the open one's remaining"
+  },
+  {
+    "file": "modules/inventory/src/ui/PartsListPage.tsx",
+    "text": "Imported from Ravelry — Ravelry: nothing new to import"
+  },
+  {
+    "file": "modules/inventory/src/ui/PartsListPage.tsx",
+    "text": "Queued label — open Labels → Queue to print."
+  },
+  {
+    "file": "modules/inventory/src/ui/PartsListPage.tsx",
+    "text": "Synced spool — new, updated"
+  },
+  {
+    "file": "modules/inventory/src/ui/SettingsPage.tsx",
+    "text": "— label when off"
+  },
+  {
+    "file": "modules/inventory/src/ui/SettingsPage.tsx",
+    "text": "— label when on"
+  },
+  {
+    "file": "modules/labels/src/label-sizes.ts",
+    "text": "Label roll — × mm"
+  },
+  {
+    "file": "modules/labels/src/ui/CodesPanel.tsx",
+    "text": "Code will show in the QR — applies on the next print. Code hidden from the QR — applies on"
+  },
+  {
+    "file": "modules/labels/src/ui/QueuePage.tsx",
+    "text": "connected — you're ready to print."
+  },
+  {
+    "file": "modules/labels/src/ui/QueuePage.tsx",
+    "text": "Connected in this tab Not connected — printing will pair it"
+  },
+  {
+    "file": "modules/labels/src/ui/QueuePage.tsx",
+    "text": "Print the queue to over Bluetooth Render + send straight to the printer (CUPS) — no print "
+  },
+  {
+    "file": "modules/labels/src/ui/QueuePage.tsx",
+    "text": "QR prints about mm per module — . Under ~0.2 mm a phone can't read it; 0.3 mm and up is co"
+  },
+  {
+    "file": "modules/sales/src/ui/index.tsx",
+    "text": "Fulfilled — part drawn from stock"
+  },
+  {
+    "file": "modules/tracking/src/api/record.ts",
+    "text": "🎯 Goal reached — hit"
+  },
+  {
+    "file": "web/src/components/AppLayout.tsx",
+    "text": "Auto-hiding — click to pin the sidebar open Pinned — click to auto-hide the sidebar"
+  },
+  {
+    "file": "web/src/components/AppLayout.tsx",
+    "text": "Hide the top bar — everything moves into the sidebar Show the top bar again"
+  },
+  {
+    "file": "web/src/components/AppLayout.tsx",
+    "text": "You are on the environment — not production. Click: fire a sample toast."
+  },
+  {
+    "file": "web/src/components/BinAdjustModal.tsx",
+    "text": ": counted (was ) — now in"
+  },
+  {
+    "file": "web/src/components/BundleDetailModal.tsx",
+    "text": "already some of these fields. Replace with \" \"? This removes fields, views and automations"
+  },
+  {
+    "file": "web/src/components/BundleDetailModal.tsx",
+    "text": "That version no longer fits this workspace (modules or kinds changed) — nothing was altere"
+  },
+  {
+    "file": "web/src/components/BundleDetailModal.tsx",
+    "text": "Updated to v . Installed v — wire(s), field def(s)."
+  },
+  {
+    "file": "web/src/components/CapabilityMatrix.tsx",
+    "text": "Inherited from the \"\" role — edit it in that column."
+  },
+  {
+    "file": "web/src/components/ChatWidget.tsx",
+    "text": "Cobb — cycle the full-body pose below: (dev only)"
+  },
+  {
+    "file": "web/src/components/ChatWidget.tsx",
+    "text": "I couldn't set that up just now — mind trying again, or describe the main things you want "
+  },
+  {
+    "file": "web/src/components/ChipFields.tsx",
+    "text": ": — tap to edit"
+  },
+  {
+    "file": "web/src/components/ExportInboxModal.tsx",
+    "text": "Exported item — import it via ‘Import’"
+  },
+  {
+    "file": "web/src/components/FeedbackWidget.tsx",
+    "text": "Thanks — your feedback was (couldn't attach screenshot ). Thanks — your feedback was ."
+  },
+  {
+    "file": "web/src/components/FieldDefDetail.tsx",
+    "text": "Choices updated. Dropdown removed — it's a plain text box now."
+  },
+  {
+    "file": "web/src/components/FloorPlan.tsx",
+    "text": "— open its plan"
+  },
+  {
+    "file": "web/src/components/FloorPlan.tsx",
+    "text": "bins placed — print their labels from the Labels page"
+  },
+  {
+    "file": "web/src/components/FloorPlan.tsx",
+    "text": "Plan drafted — zone . Drag things to true it up."
+  },
+  {
+    "file": "web/src/components/FloorPlan.tsx",
+    "text": "Stopped after of : — created bins are kept; re-run with fewer."
+  },
+  {
+    "file": "web/src/components/GlobalScanWedge.tsx",
+    "text": "Scan failed —"
+  },
+  {
+    "file": "web/src/components/GlobalScanWedge.tsx",
+    "text": "Scanned a label — auto-jump is off."
+  },
+  {
+    "file": "web/src/components/ImageSearchPicker.tsx",
+    "text": "AI's pick — ( ) Use this image — ( )"
+  },
+  {
+    "file": "web/src/components/ImportLocationsDialog.tsx",
+    "text": "Imported — created, updated"
+  },
+  {
+    "file": "web/src/components/LiveSortSheet.tsx",
+    "text": "Created . Number your containers with a marker to match — QR labels can come later."
+  },
+  {
+    "file": "web/src/components/LiveSortSheet.tsx",
+    "text": "Resumed your sort session — already sorted."
+  },
+  {
+    "file": "web/src/components/LiveSortSheet.tsx",
+    "text": "Scan failed — try again."
+  },
+  {
+    "file": "web/src/components/MembersModal.tsx",
+    "text": "Invite sent to — link copied too. Invite link copied — share it however you like."
+  },
+  {
+    "file": "web/src/components/MembersModal.tsx",
+    "text": "Invite to start their own Cobblr sent to — link copied too. “Start their own Cobblr” link "
+  },
+  {
+    "file": "web/src/components/ModulePickerModal.tsx",
+    "text": "Beta — usable, but still changing Experimental — rough, narrow, and may change or be remov"
+  },
+  {
+    "file": "web/src/components/NavCustomizeMenu.tsx",
+    "text": "In “more” — click to put back in the bar Always show in “more”"
+  },
+  {
+    "file": "web/src/components/OrganizePlanSheet.tsx",
+    "text": "Expand to fix a wrong name, photo, or identification — right here, no new window"
+  },
+  {
+    "file": "web/src/components/ScanResolversTab.tsx",
+    "text": "Couldn't save — check the manifest."
+  },
+  {
+    "file": "web/src/components/TokenManager.tsx",
+    "text": "Restricted token —"
+  },
+  {
+    "file": "web/src/components/TrackedMatchBanner.tsx",
+    "text": "+ → Moved Updated — added already had everything — nothing to add Barcode linked to"
+  },
+  {
+    "file": "web/src/components/TraitFingerprint.tsx",
+    "text": "Uncertain — the module author flagged =' ' as a judgment call rather than a definitive ass"
+  },
+  {
+    "file": "web/src/components/useNavModules.ts",
+    "text": "— from"
+  },
+  {
+    "file": "web/src/components/UserMenu.tsx",
+    "text": "— account menu"
+  },
+  {
+    "file": "web/src/components/UserMenu.tsx",
+    "text": "— account menu"
+  },
+  {
+    "file": "web/src/components/WhatToDoPanel.tsx",
+    "text": "Saved to — it's in your navbar."
+  },
+  {
+    "file": "web/src/components/WorkspaceSwitcher.tsx",
+    "text": "Default workspace — click to unset. Make the default a fresh device opens into"
+  },
+  {
+    "file": "web/src/features/digifab/fleet.tsx",
+    "text": "— open details"
+  },
+  {
+    "file": "web/src/features/digifab/fleet.tsx",
+    "text": "AI failure watch — rolling score"
+  },
+  {
+    "file": "web/src/features/digifab/fleet.tsx",
+    "text": "AI failure watch — rolling score over sample"
+  },
+  {
+    "file": "web/src/features/digifab/fleet.tsx",
+    "text": "AI failure watch is live — rolling score ; auto-pause trips when it crosses your threshold"
+  },
+  {
+    "file": "web/src/features/digifab/fleet.tsx",
+    "text": "cleared — scrapped, filament & usage restored cleared — ready for the next job"
+  },
+  {
+    "file": "web/src/features/digifab/fleet.tsx",
+    "text": "Last printed —"
+  },
+  {
+    "file": "web/src/features/digifab/fleet.tsx",
+    "text": "On the printer's SD card — printable now Known to the cloud print history — name, picture "
+  },
+  {
+    "file": "web/src/features/digifab/fleet.tsx",
+    "text": "Sent \"\" — the print is starting."
+  },
+  {
+    "file": "web/src/features/digifab/fleet.tsx",
+    "text": "Sent to — printing"
+  },
+  {
+    "file": "web/src/features/digifab/fleet.tsx",
+    "text": "Webcam wall — every machine's camera Compact cards (fit more machines) Full cards"
+  },
+  {
+    "file": "web/src/pages/AdminConsole.tsx",
+    "text": "Approved — now the answer for every workspace Rejected"
+  },
+  {
+    "file": "web/src/pages/AdminConsole.tsx",
+    "text": "Hard-deletes workspace ( member ): its tenant database is DROPPED and every entity in it i"
+  },
+  {
+    "file": "web/src/pages/AdminConsole.tsx",
+    "text": "Invite emailed to . Invite minted — copy the link below."
+  },
+  {
+    "file": "web/src/pages/AdminConsole.tsx",
+    "text": "Invite emailed to . Invite minted — copy the link below."
+  },
+  {
+    "file": "web/src/pages/ApiRecipesPage.tsx",
+    "text": "Scoped token \"\" created — copy it now, it won't be shown again."
+  },
+  {
+    "file": "web/src/pages/BuildPage.tsx",
+    "text": "\"Your app\" — pages from your trackers."
+  },
+  {
+    "file": "web/src/pages/BuildPage.tsx",
+    "text": "Applied — your fields/wires are live, plus starter record created. Applied — your fields/w"
+  },
+  {
+    "file": "web/src/pages/BuildPage.tsx",
+    "text": "e.g. A yarn & crochet tracker. I design patterns (wearables, toys, blankets), each links t"
+  },
+  {
+    "file": "web/src/pages/BundlesPage.tsx",
+    "text": "Cobblr hasn't reviewed this — from"
+  },
+  {
+    "file": "web/src/pages/BundlesPage.tsx",
+    "text": "Cobblr hasn't reviewed this — from"
+  },
+  {
+    "file": "web/src/pages/BundlesPage.tsx",
+    "text": "Installed v — wire(s), field def(s)."
+  },
+  {
+    "file": "web/src/pages/Dashboard.tsx",
+    "text": "Installed — filed ."
+  },
+  {
+    "file": "web/src/pages/Dashboard.tsx",
+    "text": "Marked good — printer freed. Scrapped — effects reversed."
+  },
+  {
+    "file": "web/src/pages/DigifabPage.tsx",
+    "text": "— completed"
+  },
+  {
+    "file": "web/src/pages/DigifabPage.tsx",
+    "text": "detected by probe — change to override your choice guessed from the name/URL — change if w"
+  },
+  {
+    "file": "web/src/pages/DigifabPage.tsx",
+    "text": "Mock connection \"\" — no hardware is touched. Uploads + places the job through the mock dri"
+  },
+  {
+    "file": "web/src/pages/DigifabPage.tsx",
+    "text": "Queued to the pool — auto-assigns to a free printer Job queued"
+  },
+  {
+    "file": "web/src/pages/DigifabPage.tsx",
+    "text": "Queued to the pool — auto-assigns to a free printer Sent —"
+  },
+  {
+    "file": "web/src/pages/DigifabPage.tsx",
+    "text": "Removes it from the queue before it starts. Marks it cancelled and stops Cobblr tracking i"
+  },
+  {
+    "file": "web/src/pages/LocationsPage.tsx",
+    "text": "Deleted some; failed — refresh and retry."
+  },
+  {
+    "file": "web/src/pages/LocationsPage.tsx",
+    "text": "Queued label — open Labels → Queue to print."
+  },
+  {
+    "file": "web/src/pages/MaintenancePage.tsx",
+    "text": "— removed from the service log permanently."
+  },
+  {
+    "file": "web/src/pages/MaintenancePage.tsx",
+    "text": "Edit —"
+  },
+  {
+    "file": "web/src/pages/MeNotificationChannelsPage.tsx",
+    "text": "Test at priority= didn't deliver — check config or threshold."
+  },
+  {
+    "file": "web/src/pages/PlanPrintPage.tsx",
+    "text": "— plan Plan"
+  },
+  {
+    "file": "web/src/pages/PortalPlanPage.tsx",
+    "text": "— plan Plan"
+  },
+  {
+    "file": "web/src/pages/PresentationPage.tsx",
+    "text": "Fields —"
+  },
+  {
+    "file": "web/src/pages/PrintPage.tsx",
+    "text": "Detected — review and save."
+  },
+  {
+    "file": "web/src/pages/PrintPage.tsx",
+    "text": "Sent — job ( )"
+  },
+  {
+    "file": "web/src/pages/PrintUpdatesPanel.tsx",
+    "text": "Sent to — check the channel"
+  },
+  {
+    "file": "web/src/pages/RecordsPage.tsx",
+    "text": "Couldn't read — that's a bug on our side, not your data."
+  },
+  {
+    "file": "web/src/pages/RecordsPage.tsx",
+    "text": "Nothing to look up — these s need a name first."
+  },
+  {
+    "file": "web/src/pages/ScanPage.tsx",
+    "text": "— review below"
+  },
+  {
+    "file": "web/src/pages/ScanPage.tsx",
+    "text": ": — tap to edit"
+  },
+  {
+    "file": "web/src/pages/ScanPage.tsx",
+    "text": "Combined into one —"
+  },
+  {
+    "file": "web/src/pages/ScanPage.tsx",
+    "text": "Filed in — filing into Filing into"
+  },
+  {
+    "file": "web/src/pages/ScanPage.tsx",
+    "text": "Filing into — scan the new item"
+  },
+  {
+    "file": "web/src/pages/ScanPage.tsx",
+    "text": "Installed — added Added"
+  },
+  {
+    "file": "web/src/pages/ScanPage.tsx",
+    "text": "item couldn't be sent back — open to see why."
+  },
+  {
+    "file": "web/src/pages/ScanPage.tsx",
+    "text": "Lookup updated: Re-ran — still no match. Fill it in manually."
+  },
+  {
+    "file": "web/src/pages/ScanPage.tsx",
+    "text": "of these have no location yet - this asks where they go, then files all Add all to their d"
+  },
+  {
+    "file": "web/src/pages/ScanPage.tsx",
+    "text": "photos added as one batch — AI is identifying them"
+  },
+  {
+    "file": "web/src/pages/ScanPage.tsx",
+    "text": "Purchase order created — item Confirmed item (enable Purchases to group them into an order"
+  },
+  {
+    "file": "web/src/pages/ScanPage.tsx",
+    "text": "Renamed to \"\" — fix reported to the barcode DB."
+  },
+  {
+    "file": "web/src/pages/ScanPage.tsx",
+    "text": "Sent back to the inbox — the created entry was removed. Sent back to the inbox."
+  },
+  {
+    "file": "web/src/pages/ScanPage.tsx",
+    "text": "Tagged — applied when you confirm each."
+  },
+  {
+    "file": "web/src/pages/ScanPage.tsx",
+    "text": "Tagged as \" \" — applied when you confirm each."
+  },
+  {
+    "file": "web/src/pages/ScanPage.tsx",
+    "text": "You already imported this receipt — item already in your inbox."
+  },
+  {
+    "file": "web/src/pages/SurfacesPage.tsx",
+    "text": "— the public URL will 404 immediately."
+  },
+  {
+    "file": "web/src/pages/SurfacesPage.tsx",
+    "text": "Edit —"
+  },
+  {
+    "file": "web/src/pages/SurfacesPage.tsx",
+    "text": "Stats —"
+  },
+  {
+    "file": "web/src/pages/SyncConnectionsSection.tsx",
+    "text": "\"\" re-activated — back in the list. Re-enable a sync to resume mirroring."
+  },
+  {
+    "file": "web/src/pages/SyncConnectionsSection.tsx",
+    "text": "Edit section —"
+  },
+  {
+    "file": "web/src/pages/SyncConnectionsSection.tsx",
+    "text": "Imported — created, merged, updated. Live sync is on."
+  },
+  {
+    "file": "web/src/pages/SyncConnectionsSection.tsx",
+    "text": "preview —"
+  },
+  {
+    "file": "web/src/pages/SyncConnectionsSection.tsx",
+    "text": "Source updated — connections pick up the change. Source installed — add a connection throu"
+  },
+  {
+    "file": "web/src/pages/SyncConnectionsSection.tsx",
+    "text": "Synced — new, updated, removed"
+  },
+  {
+    "file": "web/src/pages/TagsPage.tsx",
+    "text": "— its attachments are removed (cascade); any child tags become top-level."
+  },
+  {
+    "file": "web/src/pages/TagsPage.tsx",
+    "text": "Edit —"
+  },
+  {
+    "file": "web/src/pages/TagsPage.tsx",
+    "text": "Merged into \"\" — moved attachment"
+  },
+  {
+    "file": "web/src/pages/TemplatesPage.tsx",
+    "text": "— entities already created from it stay; only the template definition is removed."
+  },
+  {
+    "file": "web/src/pages/ViewsPage.tsx",
+    "text": "Edit view —"
+  }
+]

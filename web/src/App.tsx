@@ -9,6 +9,7 @@
 
 import { lazy, Suspense , useEffect } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
+import { CobbHead } from "./components/Cobb";
 import { PlatformWebProvider, type FlowRegistry } from "@cobblr/platform-web";
 import { OrganizeFlow } from "./flows/OrganizeFlow";
 import { Boxes, FolderKanban } from "lucide-react";
@@ -55,7 +56,8 @@ import { ViewsPage } from "./pages/ViewsPage";
 import { SavedViewPage } from "./pages/SavedViewPage";
 import { ConfigurationPage } from "./pages/ConfigurationPage";
 import { ConfigurationLayout } from "./components/ConfigurationLayout";
-import { ConfigMembersPage, ConfigModulesPage, ConfigNewThingPage } from "./pages/ConfigLauncherPages";
+import { AccountLayout } from "./components/AccountLayout";
+import { ConfigInvitePage, ConfigMembersPage, ConfigModulesPage, ConfigNewThingPage } from "./pages/ConfigLauncherPages";
 // Lazy: rarely-visited admin / drill-down pages. Splitting these
 // out keeps the dashboard's initial bundle smaller. Each becomes
 // its own chunk; the chunk loads on first navigation.
@@ -450,6 +452,9 @@ function ActiveOrgScopedRoutes() {
       orgSlug={activeSlug}
       appMode={!!appMode}
       flows={WORKSPACE_FLOWS}
+      // The app owns what Cobb looks like; the package owns the button that
+      // hands him a record.
+      cobbIcon={CobbHead}
       api={{
         listActions: (slug, kind) => api.listActions(slug, kind),
         invokeAction: (slug, body) => api.invokeAction(slug, body),
@@ -600,6 +605,7 @@ function ActiveOrgScopedRoutes() {
             {/* Launcher PAGES (settings-cohesion): the dialogs, in-flow. */}
             <Route path="/configuration/modules" element={<ConfigModulesPage />} />
             <Route path="/configuration/members" element={<ConfigMembersPage />} />
+            <Route path="/configuration/members/invite" element={<ConfigInvitePage />} />
             <Route path="/configuration/new-thing" element={<ConfigNewThingPage />} />
             {/* Merged into Fields & forms — same act, one page, two tabs. */}
             <Route
@@ -730,17 +736,23 @@ function ActiveOrgScopedRoutes() {
               chrome kept. */}
           <Route path="/changelog" element={<ChangelogPage />} />
           <Route path="/search" element={<SearchPage />} />
-          <Route path="/me/activity" element={<MeActivityPage />} />
-          <Route path="/me/notifications" element={<MeNotificationsPage />} />
-          <Route path="/me/notification-channels" element={<MeNotificationChannelsPage />} />
-          <Route path="/me/communication" element={<CommunicationPreferencesPage />} />
-          <Route path="/me/feedback" element={<MyFeedbackPage />} />
-          <Route path="/me/app-settings" element={<AppSettingsPage />} />
-          <Route path="/me/drive" element={<DriveSettingsPage />} />
-          {/* /me is canonical; /me/profile redirects so old bookmarks keep working. */}
+          {/* Every /me page renders inside AccountLayout, which owns the
+              reading column. Pages used to set their own and drifted to five
+              widths and three alignments. See lib/account-nav.ts. */}
+          <Route element={<AccountLayout />}>
+            <Route path="/me/activity" element={<MeActivityPage />} />
+            <Route path="/me/notifications" element={<MeNotificationsPage />} />
+            <Route path="/me/notification-channels" element={<MeNotificationChannelsPage />} />
+            <Route path="/me/communication" element={<CommunicationPreferencesPage />} />
+            <Route path="/me/feedback" element={<MyFeedbackPage />} />
+            <Route path="/me/app-settings" element={<AppSettingsPage />} />
+            <Route path="/me/drive" element={<DriveSettingsPage />} />
+            <Route path="/me" element={<MeProfilePage />} />
+            <Route path="/me/connections" element={<ConnectionsPage />} />
+          </Route>
+          {/* /me is canonical; /me/profile redirects so old bookmarks keep
+              working. Outside the layout: a redirect renders no content. */}
           <Route path="/me/profile" element={<Navigate to="/me" replace />} />
-          <Route path="/me" element={<MeProfilePage />} />
-          <Route path="/me/connections" element={<ConnectionsPage />} />
           {/* Module-name aliases, now REDIRECTS not second mounts. Two live
               URLs for one page is the defect that made Locations bounce users
               into the settings shell; these were the same shape. The nav reads

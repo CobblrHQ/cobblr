@@ -154,9 +154,19 @@ const MCP_READ_PATHS: Array<string | RegExp> = [
 // by its own module (entity_kinds.endpoints), so it is always org-relative
 // `/modules/<module>/…` or `/instances/<instance>/…`. Nothing else is a record
 // route, which structurally excludes the platform families that would be an
-// escalation — /api-tokens, /members, /integrations, /settings, bare /modules
-// (enable/disable), and /actions/invoke (an action always confirms, and a
-// relayed chat has nowhere to ask).
+// escalation — /api-tokens, /members, /integrations, /settings and bare
+// /modules (enable/disable).
+//
+// The ONE platform path added to that shape is `/actions/invoke`. It was
+// excluded on the reasoning that an action always confirms and a relayed chat
+// has nowhere to ask — which held until the confirmation question moved to the
+// action itself (`undoable` in the manifest). By the time this clamp is
+// reached, hosted-mcp has already established that the user's chat consent is
+// "auto" AND that this particular action can be put right again; the grant is
+// 60 seconds, minted in-process, never handed to the bridge, and the invoke
+// route still applies requireCapability. Widening the SHAPE to admit it would
+// have admitted every other platform route too, so it is named exactly.
+const MCP_WRITE_PLATFORM_PATHS = new Set(["/actions/invoke"]);
 const MCP_WRITE_DENIED = /\/connections(\/|$)/; // credential-bearing module routes
 
 export function mcpWritePathAllowed(method: string, originalUrl: string, slug: string): boolean {
@@ -171,10 +181,26 @@ export function mcpWritePathAllowed(method: string, originalUrl: string, slug: s
   const rel = path.slice(prefix.length);
   if (rel.includes("..")) return false;
   if (MCP_WRITE_DENIED.test(rel)) return false;
+  if (MCP_WRITE_PLATFORM_PATHS.has(rel)) return true;
   return /^\/(modules|instances)\/[a-z0-9_-]+\/.+/i.test(rel);
 }
 
+/** The ONE write a read grant may do, and it is not a write to the workspace:
+ *  appending a step to the chat turn its own user is watching. The relay does
+ *  the model's tool calls inside one long request, so without this the panel
+ *  learns nothing between "thinking" and "done" — sixty locations appeared in
+ *  a workspace over two minutes with the panel showing a spinner (prod,
+ *  2026-08-20). The endpoint behind it can only touch the caller's own OPEN
+ *  turn and only step-shaped events: no finishing a turn, no failing one, no
+ *  words in Cobb's mouth. */
+const MCP_NARRATE_PATH = "/modules/core-ai/chat/turns/open/steps";
+
 export function mcpReadPathAllowed(method: string, originalUrl: string, slug: string): boolean {
+  if (method === "POST") {
+    const safe = slug.replace(/[^a-z0-9-]/gi, "");
+    const p = (originalUrl.split("?")[0] ?? "").replace(/\/+$/, "");
+    return !!safe && p === `/api/v1/orgs/${safe}${MCP_NARRATE_PATH}`;
+  }
   if (method !== "GET") return false;
   const safeSlug = slug.replace(/[^a-z0-9-]/gi, "");
   if (!safeSlug) return false;

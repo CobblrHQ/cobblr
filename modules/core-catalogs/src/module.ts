@@ -19,7 +19,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-catalogs",
-  version: "0.2.1",
+  version: "0.2.2",
   displayName: "Catalogs",
   description:
     "Import reference datasets (parts catalogs, ingredient databases, etc.) and MATCH your own entities to entries inside them. v0.1 supports CSV upload; live-API pullers + auto-match deferred.",
@@ -113,6 +113,7 @@ export default defineModule({
     actions: [
       {
         id: "core-catalogs:refresh",
+        examples: ["refresh this catalog", "pull the latest from the source"],
         label: "Refresh from source",
         description:
           "Re-fetch this catalog from its source URL and import what comes back, replacing the entries. Only works for a catalog that HAS a source URL: one built by importing a CSV has nothing to refresh from, and says so.",
@@ -122,6 +123,7 @@ export default defineModule({
       },
       {
         id: "core-catalogs:match-to-catalog",
+        examples: ["match this to the catalog", "which catalogue entry is this"],
         label: "Match to catalog",
         description:
           "Link this entity to a row in an imported reference catalog. Opens a picker over installed catalogs; on confirm, writes an entity_pairings row with relationship_kind='matches'.",

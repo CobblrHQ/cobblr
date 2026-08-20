@@ -27,6 +27,28 @@ export function useAiStatus(): AiStatus | null {
  *  matching, and building); the shell, icon, and connect-link are shared. */
 export function AiOffNotice({ status, compact, children }: { status: AiStatus | null; compact?: boolean; children?: ReactNode }) {
   if (!status || status.available) return null;
+  // Off BECAUSE SOMEONE TURNED IT OFF is a different sentence from off because nothing
+  // is connected, and it wants a different verb on the link. This one caught a real
+  // case: AI switched off for a workspace showed "AI isn't connected - Connect AI",
+  // sending an owner to add a provider they had already added.
+  const reasonCopy =
+    status.reason === "workspace_disabled" ? (
+      <>
+        <strong>AI is turned off for this workspace.</strong> Turn it back on to identify
+        things from a photo and to use the builder.{" "}
+      </>
+    ) : status.reason === "not_entitled" ? (
+      <>
+        <strong>This workspace's plan doesn't include AI.</strong> Everything else works;
+        scanning files things by keyword.{" "}
+      </>
+    ) : null;
+  const cta =
+    status.reason === "workspace_disabled"
+      ? { to: "/configuration/ai", label: "Turn AI on \u2192" }
+      : status.reason === "not_entitled"
+        ? null
+        : { to: "/configuration/ai", label: "Connect AI \u2192" };
   return (
     <div
       className={
@@ -40,7 +62,12 @@ export function AiOffNotice({ status, compact, children }: { status: AiStatus | 
           do that here" instead of a system warning about a feature. */}
       <CobbHead size={compact ? 18 : 22} sleeping className="shrink-0 mt-0.5" title="Cobb is resting" />
       <div>
-        {children ?? (
+        {/* A reason the SURFACE cannot speak to overrides its copy. Every caller passes
+            children explaining what basic mode means there ("scans run in basic mode"),
+            and all of that copy assumes nothing is connected. When AI is connected and
+            merely switched off, or the plan excludes it, "connect a model" is wrong
+            advice and the link points at the wrong action. */}
+        {reasonCopy ?? children ?? (
           <>
             <strong>AI isn't connected - scans run in basic mode.</strong> Known
             barcodes still get a catalog name + photo, but unknown ones won't be
@@ -52,11 +79,11 @@ export function AiOffNotice({ status, compact, children }: { status: AiStatus | 
           <span className="text-muted dark:text-slate-400">
             (AI is switched off for this whole server.)
           </span>
-        ) : (
-          <Link to="/configuration/ai" className="text-accent hover:underline">
-            Connect AI →
+        ) : cta ? (
+          <Link to={cta.to} className="text-accent hover:underline">
+            {cta.label}
           </Link>
-        )}
+        ) : null}
       </div>
     </div>
   );

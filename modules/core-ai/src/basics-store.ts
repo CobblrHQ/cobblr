@@ -69,7 +69,21 @@ export async function loadEffectiveRules(db: Kysely<CoreAiDB>): Promise<Effectiv
 export function toMatchable(rules: EffectiveRule[]): BasicRule[] {
   return rules
     .filter((r) => r.enabled)
-    .map((r) => ({ key: r.key, intent: r.intent, keywords: r.keywords, reply: r.reply }));
+    .map((r) => {
+      // A workspace that rewrote a built-in owns its wording, and with it which
+      // world the wording is true in — so the built-in's mode fields survive
+      // only while the words are still the built-in's, character for character.
+      const src = BUILTIN_BASICS.find((b) => b.key === r.key);
+      const builtin = src && src.reply === r.reply ? src : undefined;
+      return {
+        key: r.key,
+        intent: r.intent,
+        keywords: r.keywords,
+        reply: r.reply,
+        ...(builtin?.notBeforeSend ? { notBeforeSend: builtin.notBeforeSend } : {}),
+        ...(builtin?.replyWhenAiOn ? { replyWhenAiOn: builtin.replyWhenAiOn } : {}),
+      };
+    });
 }
 
 /** Default position for a NEW custom rule: after everything that exists. */

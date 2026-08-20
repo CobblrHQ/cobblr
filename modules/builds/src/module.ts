@@ -17,7 +17,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "builds",
-  version: "0.4.0",
+  version: "0.4.3",
   displayName: "Builds",
   description:
     "Light bill-of-materials: define a build as a recipe of inventory parts, see how many you can build right now (and the limiting component), and consume the parts from stock when you build one. For makers assembling things from tracked parts.",
@@ -89,6 +89,8 @@ export default defineModule({
     actions: [
       {
         id: "builds:build-one",
+        examples: ["built one of those", "make two of these"],
+        undoable: true,
         label: "Build one",
         description:
           "Record building N of a build: decrement each component from inventory stock (via inventory:adjust-stock), log a build run, and (if the build has an output part) increment that. Generic capability; a bundle/app composes it. Args: { build_id, qty? }.",
@@ -102,11 +104,17 @@ export default defineModule({
       },
       {
         id: "builds:reverse-one",
+        examples: ["that build failed", "undo the last build"],
+        undoable: true,
         label: "Reverse a build",
         description:
           "Undo a recorded build of N: put each component back into inventory stock and (if the build has an output part) decrement that. The failure leg of builds:build-one (a scrapped/failed fabrication run). Args: { build_id, qty? }.",
         appliesTo: { kinds: ["builds:build"] },
         invokeHandler: "builds.reverse-one",
+        argsSchema: {
+          build_id: { label: "Which build to reverse, defaults to the record this ran on", type: "text" },
+          qty: { label: "How many to reverse, defaults to 1", type: "number" },
+        },
         userInvokable: false,
       },
     ],

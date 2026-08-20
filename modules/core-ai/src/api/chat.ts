@@ -8,9 +8,12 @@
 // identical. Providers without tool support (e.g. a bridge target that
 // ignores the field) degrade to the legacy one-JSON-move protocol below.
 
-import { Router } from "express";
+import { Router, type Response } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
+import { matchCommand } from "./basics.js";
+import { selectionLine } from "../selection-line.js";
+import { suggestionLine } from "../suggestion-line.js";
 import { tenantContext, sessionUserId, sessionDisplayName, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import {
@@ -28,10 +31,34 @@ import {
 import { runAgentLoop, type AgentLoopDeps, type AgentLoopOutcome, type AppliedWrite } from "./agent-loop.js";
 import { createTurn, emitTurnEvent, finishTurn, readTurn, eventsAfter, openTurnFor, subscribe, sweepTurns } from "./turns.js";
 import { recordRound } from "../providers/replay.js";
-import { performWrite, undoWrite, undoableOf, type WriteRequest, type WriteOutcome } from "./chat-ledger.js";
+import { performWrite, performWrites, undoWrite, undoableOf, type WriteRequest, type WriteOutcome } from "./chat-ledger.js";
 import type { ToolCall, ChatTurn } from "../providers/tool-wire.js";
 
 /** ToolCall → the ledgered write request shape (null = not a known write). */
+/** The writes a tool call MEANS — one for a single write, many for a bulk one.
+ *  Both write paths (the in-app loop and the relayed one) go through here, so
+ *  neither can learn about a new write tool without the other. */
+function writeRequestsOf(call: ToolCall): WriteRequest[] {
+  const a = call.args ?? {};
+  if (call.name === "create_records") {
+    const kind = typeof a.kind === "string" ? a.kind : "";
+    const rows = Array.isArray(a.records) ? (a.records as Array<Record<string, unknown>>) : [];
+    if (!kind || rows.length === 0) return [];
+    // The tool's own schema caps this too; enforced again here because this is
+    // the side that actually writes, and a cap that lives only in a schema the
+    // model is asked to respect is a suggestion.
+    return rows.slice(0, BULK_RECORD_CAP).map((fields) => ({ tool: "create" as const, entity_kind: kind, fields }));
+  }
+  const one = writeRequestOf(call);
+  return one ? [one] : [];
+}
+
+/** One deliberate instruction may carry many records; a LOOP that keeps
+ *  deciding to write is the thing AUTO_WRITE_CAP is for. So a bulk call counts
+ *  as one write against that cap, and its own size is capped here — the same
+ *  200 a learned command is allowed. */
+const BULK_RECORD_CAP = 200;
+
 function writeRequestOf(call: ToolCall): WriteRequest | null {
   const a = call.args ?? {};
   const kind = typeof a.kind === "string" ? a.kind : typeof a.entity_kind === "string" ? a.entity_kind : "";
@@ -72,7 +99,7 @@ const WRITE_NAMES = new Set(WRITE_TOOLS.map((t) => t.name));
 
 /** The registry's transport seam, bound to this request's workspace + auth —
  *  read tools run with exactly the caller's permissions. */
-function chatWorkspaceApi(c: Ctx): WorkspaceApi {
+export function chatWorkspaceApi(c: Ctx): WorkspaceApi {
   return {
     async request(method, path, body) {
       return callApi(c, method, path, body);
@@ -145,7 +172,7 @@ interface Ctx {
    *  override; we just state who this is. */
   userName: string | null;
 }
-function ctxOf(req: Parameters<typeof tenantContext>[0]): Ctx {
+export function ctxOf(req: Parameters<typeof tenantContext>[0]): Ctx {
   const org = tenantContext(req).org;
   return {
     slug: org.slug,
@@ -179,6 +206,7 @@ interface Move {
   fields?: Record<string, unknown>;
   action_id?: string;
   entity_query?: string;
+  args?: Record<string, unknown>;
   intent?: string;
   summary?: string;
 }
@@ -190,13 +218,44 @@ async function buildSystemPrompt(c: Ctx): Promise<string> {
   const kinds = ((kindsRes.body.items as KindRec[] | undefined) ?? []);
   const kindLines = kinds.map((k) => `- ${k.id} (${k.display_name ?? k.id})`).join("\n") || "(none)";
 
-  // Actions per kind (a few in-process inspect calls).
-  const actionLines: string[] = [];
-  for (const k of kinds) {
-    const insp = await callApi(c, "GET", `/actions/inspect?kind=${encodeURIComponent(k.id)}`);
-    const acts = (insp.body.actions as Array<{ id: string; label: string; description?: string }> | undefined) ?? [];
-    for (const a of acts) actionLines.push(`- ${a.id} (on ${k.id}) — ${a.label}${a.description ? `: ${a.description}` : ""}`);
-  }
+  // Every action, in ONE call, carrying the two things the old per-kind
+  // inspect loop dropped: which run on the WORKSPACE rather than a record, and
+  // what ARGUMENTS each takes.
+  //
+  // Without those, a tool-less provider cannot express "reorder these ids".
+  // Asked to order twelve racks, the model was given a shape with no `args`
+  // field and an action list that pretended core-locations:reorder ran on a
+  // record, so it proposed the action against the parent location with no ids —
+  // uninvokable, and the user was told it could not be done (2026-08-19).
+  const reg = await callApi(c, "GET", "/registered-actions");
+  const allActions =
+    (reg.body.items as
+      | Array<{
+          id: string;
+          label: string;
+          description?: string;
+          scope?: string;
+          matched_kinds?: string[];
+          args_schema?: Record<string, { label?: string; type?: string }> | null;
+          examples?: string[];
+        }>
+      | undefined) ?? [];
+  // How a person asks for it. The list above says what EXISTS; an example says
+  // what a request for it sounds like, which is the part a model has to guess
+  // at otherwise.
+  const saidLike = (a: { examples?: string[] }): string =>
+    a.examples?.length ? ` — said like: ${a.examples.map((e) => `"${e}"`).join(", ")}` : "";
+  const argsHint = (a: { args_schema?: Record<string, { label?: string; type?: string }> | null }): string => {
+    const entries = Object.entries(a.args_schema ?? {});
+    if (!entries.length) return "";
+    return ` — args: ${entries.map(([n, spec]) => `${n} (${spec?.type ?? "text"}${spec?.label ? `, ${spec.label}` : ""})`).join("; ")}`;
+  };
+  const actionLines = allActions
+    .filter((a) => a.scope !== "workspace" && (a.matched_kinds?.length ?? 0) > 0)
+    .map((a) => `- ${a.id} (on ${a.matched_kinds!.join(", ")}) — ${a.label}${a.description ? `: ${a.description}` : ""}${argsHint(a)}${saidLike(a)}`);
+  const workspaceActionLines = allActions
+    .filter((a) => a.scope === "workspace")
+    .map((a) => `- ${a.id} — ${a.label}${a.description ? `: ${a.description}` : ""}${argsHint(a)}${saidLike(a)}`);
   // Createable = exactly what resolveCreatePath will accept at execute time —
   // the prompt never advertises a create that would 404 on confirm.
   const createableKinds = kinds.filter((k) => resolveCreatePath(k.id, kinds) !== null);
@@ -248,12 +307,16 @@ ${createFieldLines.join("\n") || "(none)"}
 ACTIONS you can run on existing records:
 ${actionLines.join("\n") || "(none)"}
 
+ACTIONS that run on the WORKSPACE (no record — omit entity_kind/entity_query):
+${workspaceActionLines.join("\n") || "(none)"}
+
 TOOLS: when tools are available to you, PREFER them over the JSON shapes below. Use the read tools (search_records, list_records, get_record, list_record_kinds, list_actions, get_putaway_plan) to look at the user's ACTUAL data before answering questions about it — never guess what they have. get_putaway_plan is the live put-away/organize state — reach for it whenever the user mentions putting things away, bins, or their plan. After creating/renaming locations for them, call replan_putaway ONCE (non-destructive; their open plan refreshes itself) — optionally with a hint distilling the conversation. Use the write tools (create_record, update_record, delete_record, invoke_action) to act; they only PROPOSE — the user confirms every change. You can chain: read first, then write. The JSON shapes below are the fallback for when you cannot call tools.
 
 Reply with ONE JSON object and nothing else, in ONE of these shapes:
 - Chat/answer/ask:   {"type":"reply","text":"<your full, helpful answer or question>"}
 - Create a record:   {"type":"create","entity_kind":"<id>","fields":{"name":"<...>", ...},"summary":"<one line, e.g. Create a part called Widget>"}
-- Run an action:     {"type":"action","action_id":"<id>","entity_kind":"<id>","entity_query":"<the record's name to find it>","summary":"<one line>"}
+- Run an action:     {"type":"action","action_id":"<id>","entity_kind":"<id>","entity_query":"<the record's name to find it>","args":{...},"summary":"<one line>"}
+- Workspace action:  {"type":"action","action_id":"<id>","args":{...},"summary":"<one line>"}
 - Build a whole app:  {"type":"build","intent":"<the user's FULL description of the workspace/app to set up>","summary":"<one line, e.g. Set up a yarn & crochet tracker>"}
 
 Rules:
@@ -261,8 +324,23 @@ Rules:
 - Only use create/action when the user clearly wants to save or change something in the workspace.
 - Use entity_kind / action_id values EXACTLY from the lists above. Never invent ids. If a needed kind/action isn't listed, use "reply" to answer and say what you can't save yet.
 - create: use the kind's field names from the list above (its required/title field at minimum); add other obvious fields the user gave.
-- action: entity_query is the name/text to find the existing record — the system looks it up.
+- action: entity_query is the name/text to find the existing record — the system looks it up. For an action in the WORKSPACE list, omit entity_kind and entity_query entirely.
+- action args: pass every argument the action lists, under "args", by name. A "list" arg is a JSON array in the order you mean, e.g. {"ids":["<id-a>","<id-b>"]} — read the ids first and pass the real ones, never a name. An action whose args you cannot fill is one to ASK about, not to guess at.
 - Use "build" only when the user wants to SET UP or DESIGN a whole new app/workspace (several kinds/modules at once). Put their full description in "intent". Never use "build" for a single record.`;
+}
+
+/** Does this action run on the WORKSPACE rather than a record? Read from the
+ *  registry, not guessed from whether the model bothered to name an entity —
+ *  the model naming one is exactly the mistake to survive (it invented a parent
+ *  location to satisfy a shape that demanded a record). */
+async function isWorkspaceAction(c: Ctx, actionId: string): Promise<boolean> {
+  try {
+    const reg = await callApi(c, "GET", "/registered-actions");
+    const items = (reg.body.items as Array<{ id: string; scope?: string }> | undefined) ?? [];
+    return items.find((a) => a.id === actionId)?.scope === "workspace";
+  } catch {
+    return false; // unknown → treat as record-scoped, the stricter path
+  }
 }
 
 /** Best-effort display label for a record (falls back to the id). */
@@ -282,6 +360,7 @@ async function labelOf(wsApi: WorkspaceApi, kind: string, id: string): Promise<s
 /** Turn one WRITE tool call into a user-facing proposal — or an honest error
  *  when the call couldn't succeed on confirm (undeclared kind, missing args). */
 async function proposalOf(
+  c: Ctx,
   wsApi: WorkspaceApi,
   kinds: KindRec[],
   call: ToolCall,
@@ -324,7 +403,17 @@ async function proposalOf(
     case "invoke_action": {
       const actionId = String(a.action_id ?? "");
       const id = String(a.entity_id ?? "");
-      if (!actionId || !kind || !id) return { error: "I need the action and the exact record to run it on." };
+      if (!actionId) return { error: "I need to know which action to run." };
+      const args = a.args && typeof a.args === "object" ? { args: a.args } : {};
+      // A workspace action HAS no record. Demanding one here refused the whole
+      // class from chat, which is how reordering locations became something
+      // Cobb could describe and not do.
+      if (!kind || !id) {
+        if (!(await isWorkspaceAction(c, actionId))) {
+          return { error: "I need the action and the exact record to run it on." };
+        }
+        return { summary: `Run ${actionId}`, proposal: { kind: "action", action_id: actionId, ...args } };
+      }
       const label = await labelOf(wsApi, kind, id);
       return {
         summary: `Run ${actionId} on “${label}”`,
@@ -334,7 +423,7 @@ async function proposalOf(
           entity_kind: kind,
           entity_id: id,
           entity_label: label,
-          ...(a.args && typeof a.args === "object" ? { args: a.args } : {}),
+          ...args,
         },
       };
     }
@@ -362,6 +451,16 @@ const ChatBody = z.object({
   // web/src/lib/chat-context.ts.
   context: z
     .object({ label: z.string().min(1).max(120), summary: z.string().max(600).optional() })
+    .optional(),
+  // What the user is POINTING AT: rows they ticked, or a highlight. Bounded the
+  // same way as the context above — a client cannot stuff the prompt.
+  selection: z
+    .object({
+      label: z.string().min(1).max(200),
+      kind: z.string().max(120).optional(),
+      ids: z.array(z.string().max(64)).max(200).optional(),
+      text: z.string().max(2000).optional(),
+    })
     .optional(),
 });
 
@@ -393,12 +492,16 @@ async function runTurn(
   c: Ctx,
   orgId: string,
   onEvent?: AgentLoopDeps["onEvent"],
+  /** The persisted turn this run belongs to, so a write can be traced back to
+   *  the sentence that asked for it. Absent for the blocking (non-turn) path. */
+  turnId?: string,
 ): Promise<Record<string, unknown>> {
   // The agent loop: read tools auto-run (through THIS caller's permissions,
   // via chatWorkspaceApi); write tool calls stop the loop and become the
   // proposals below. Tool-less providers never emit tool_calls, so the loop
   // degrades to exactly one model call → the legacy JSON-move parse.
   const wsApi = chatWorkspaceApi(c);
+  const askedFor = [...parsed.data.messages].reverse().find((m) => m.role === "user")?.content ?? "";
   // The user's tool consent gates everything downstream: which tool defs the
   // model sees, and (below) whether legacy JSON-move writes may propose.
   const prefs = await chatPrefsOf(req);
@@ -431,6 +534,10 @@ async function runTurn(
         const r = await platform().ai.invoke({
           orgId,
           capability: "chat",
+          // Show the answer being written. Only when somebody is listening to
+          // this turn (the persisted-turn path); the blocking POST has nobody
+          // to show it to.
+          ...(onEvent ? { onDelta: (text: string) => void onEvent({ kind: "text-delta", text }) } : {}),
           // system rides as a first-class field (Anthropic drops a
           // "system"-role message); tools are the neutral defs every adapter
           // translates to its native dialect (tool-wire.ts).
@@ -444,8 +551,9 @@ async function runTurn(
         if (typeof result === "string") return { content: result };
         const round = { content: result?.content ?? result?.text ?? "", tool_calls: result?.tool_calls };
         // Cassette recording (COBBLR_AI_REPLAY_RECORD): capture what a REAL
-        // model said, per round, to build replay fixtures. No-op unless set.
-        recordRound(turns, round);
+        // model said, per round, to build replay fixtures. No-op unless set,
+        // and the provider id is what keeps a replay from recording itself.
+        recordRound(turns, round, r.provider_id);
         return round;
       },
       executeRead: async (name, args) => {
@@ -466,11 +574,28 @@ async function runTurn(
       ...(prefs.write_mode === "auto"
         ? {
             executeWrite: async (call: ToolCall) => {
-              const w = writeRequestOf(call);
+              const ws = writeRequestsOf(call);
+              const w = ws[0];
               // Actions keep the confirm gate (irreversible); over-cap too.
               if (!w || w.tool === "action" || autoWrites >= AUTO_WRITE_CAP) return null;
               autoWrites++;
-              return performWrite(wsApi, ldb, userId, w, { auto: true });
+              if (ws.length > 1) {
+                return performWrites(wsApi, ldb, userId, ws, {
+                  auto: true,
+                  orgId,
+                  prompt: askedFor,
+                  ...(turnId ? { turnId } : {}),
+                });
+              }
+              return performWrite(wsApi, ldb, userId, w, {
+                auto: true,
+                orgId,
+                // Half of a worked example: what was asked, beside what was
+                // done. Without it the ledger records twelve racks appearing
+                // and no record of anyone asking for them.
+                prompt: askedFor,
+                ...(turnId ? { turnId } : {}),
+              });
             },
           }
         : {}),
@@ -502,7 +627,7 @@ async function runTurn(
     const problems: string[] = [];
     const kinds = await fetchKinds(wsApi).catch(() => [] as KindRec[]);
     for (const call of outcome.calls) {
-      const built = await proposalOf(wsApi, kinds, call);
+      const built = await proposalOf(c, wsApi, kinds, call);
       if ("error" in built) problems.push(built.error);
       else items.push(built);
     }
@@ -581,9 +706,27 @@ async function runTurn(
     };
   }
 
-  // action — resolve the entity by name via search before proposing.
+  // action — resolve the entity by name via search before proposing, unless the
+  // action runs on the WORKSPACE, in which case there is no record to resolve.
   if (move.type === "action") {
-    if (!move.action_id || !move.entity_kind || !move.entity_query) {
+    if (!move.action_id) {
+      return { type: "reply", text: "I need a bit more to do that, which record exactly?" };
+    }
+    const args = (move.args && typeof move.args === "object" ? move.args : undefined) as
+      | Record<string, unknown>
+      | undefined;
+    if (await isWorkspaceAction(c, move.action_id)) {
+      return {
+        type: "proposal",
+        summary: move.summary ?? `Run ${move.action_id}`,
+        proposal: {
+          kind: "action",
+          action_id: move.action_id,
+          ...(args ? { args } : {}),
+        },
+      };
+    }
+    if (!move.entity_kind || !move.entity_query) {
       return { type: "reply", text: "I need a bit more to do that, which record exactly?" };
     }
     const sr = await callApi(
@@ -611,11 +754,27 @@ async function runTurn(
         entity_kind: move.entity_kind,
         entity_id: hit.id,
         entity_label: hit.title ?? hit.id,
+        ...(args ? { args } : {}),
       },
     };
   }
 
   return { type: "reply", text };
+}
+
+/** Answer a write outcome so BOTH contracts can read it.
+ *
+ *  These routes said `{ok:false,message:"…"}`; every client wrapper in the repo
+ *  reads `error.message` first and falls back to the bare status. Grace
+ *  confirmed a save that failed for a perfectly nameable reason and the panel
+ *  showed "HTTP 400" - the sentence existed the whole time, one key away from
+ *  where anybody was looking. Same class as lint:error-body-kept, one layer up:
+ *  there the body was unreadable, here it was readable and in the wrong shape.
+ */
+function sendOutcome(res: Response, out: { ok: boolean; message: string }): void {
+  res
+    .status(out.ok ? 200 : 400)
+    .json(out.ok ? out : { ...(out as object), error: { code: "write_failed", message: out.message } });
 }
 
 // AI-REACH: this module IS the assistant; its own configuration is not a thing it should reach into
@@ -636,6 +795,30 @@ chatRouter.post(
     }
     // Situational awareness: what screen is the user on right now?
     system += pageContextLine(parsed.data.context);
+    system += selectionLine(parsed.data.selection);
+    // What the free path would have done, if anything. Asked here rather than
+    // sent by the client: the client's offer may be stale by now, and this is
+    // the same match the offer strip uses.
+    try {
+      const hit = await matchCommand(
+        tenantDb(req),
+        String([...parsed.data.messages].reverse().find((m) => m.role === "user")?.content ?? ""),
+        tenantContext(req).org.id,
+        {
+          wsApi: chatWorkspaceApi(c),
+          ...(parsed.data.selection?.ids?.length ? { selectionIds: parsed.data.selection.ids } : {}),
+        },
+      );
+      if (hit) {
+        system += suggestionLine({
+          template: hit.template,
+          summary: hit.summary ?? `${hit.operations.length} changes`,
+          operations: hit.operations.length,
+        });
+      }
+    } catch {
+      // A suggestion is a nicety; a turn must not fail for want of one.
+    }
 
     // ── The turn ─────────────────────────────────────────────────────────
     // `?mode=turn` (the widget from now on): create a persisted turn, run the
@@ -672,9 +855,21 @@ chatRouter.post(
     // turn row and its event log, so nothing about it depends on a socket.
     void (async () => {
       try {
-        const result = await runTurn(req, parsed, system, c, orgId, async (ev) => {
-          await emitTurnEvent(tdb, turnId, ev.kind, ev as unknown as Record<string, unknown>);
-        });
+        const result = await withDeadline(
+          runTurn(
+            req,
+            parsed,
+            system,
+            c,
+            orgId,
+            async (ev) => {
+              await emitTurnEvent(tdb, turnId, ev.kind, ev as unknown as Record<string, unknown>);
+            },
+            turnId,
+          ),
+          TURN_DEADLINE_MS,
+          `this took longer than ${Math.round(TURN_DEADLINE_MS / 60000)} minutes, so I stopped waiting. Nothing was changed. If your AI is a local model or a bridge it may be busy or wedged; try again, or check Configuration → AI.`,
+        );
         await finishTurn(tdb, turnId, { ok: true, result });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -684,6 +879,30 @@ chatRouter.post(
     })();
   }),
 );
+
+/** A turn must never sit "running" forever.
+ *
+ *  The sweeper below fails turns stranded for an HOUR, which is the right
+ *  backstop for a process that died mid-turn and the wrong one for a user
+ *  watching a spinner: Cobb sat on "Thinking…" indefinitely when the provider
+ *  accepted the connection and never answered (2026-08-19). pinnedFetch now
+ *  bounds each model call, and this bounds the whole turn — including any wait
+ *  that is not a model call at all — so the widget always gets an answer,
+ *  even when the answer is that we gave up.
+ *
+ *  Well above a slow multi-round turn (each model call is capped at 120s) and
+ *  well below the stranded-turn sweep. */
+const TURN_DEADLINE_MS = 5 * 60_000;
+
+function withDeadline<T>(work: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: NodeJS.Timeout;
+  return Promise.race([
+    work.finally(() => clearTimeout(timer)),
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new TurnError(504, message)), ms);
+    }),
+  ]);
+}
 
 // ── Turns: the persisted-turn read side ─────────────────────────────────────
 //
@@ -708,6 +927,140 @@ chatRouter.get(
     const me = sessionUserId(req) ?? "";
     const turn = await openTurnFor(tenantDb(req), me);
     res.json({ turn: turn ?? null });
+  }),
+);
+
+// POST /chat/turns/open/steps   → record ONE step against my own open turn.
+//
+// The gap this fills: when the assistant is a personal connection reached over
+// the MCP relay, the tool calls happen INSIDE the model's own turn, on the
+// other side of one long request. The in-process agent loop narrates itself
+// (thinking → tool → applied), but the relay narrated nothing, so a chat that
+// created sixty locations over two minutes recorded exactly two events —
+// `thinking`, then `done` — and the panel sat on "Thinking" the whole time
+// while the work was visibly happening in the access log.
+//
+// Deliberately narrow. It writes to the caller's OWN open turn or nothing at
+// all, and only step-shaped kinds: a caller cannot finish a turn, fail one, or
+// put words in Cobb's mouth. The worst it can do is add a step to a panel its
+// own user is looking at.
+// POST /chat/writes            → apply ONE write from a relayed assistant, the
+//                                 same way an in-app one is applied.
+//
+// The invariant one screen down says every chat write goes through
+// performWrite → the change ledger, before-image captured, undo available. A
+// relayed assistant broke it without anyone noticing: its tool calls go
+// straight at the module's REST route, so sixty locations arrived in a
+// workspace with ZERO ledger rows — no undo beside the answer, and no record
+// of what was asked for, which is also what the workspace learns commands
+// from. "Changes: auto is safe because everything is tracked" was not true
+// for that connection.
+//
+// So the relay comes here instead. Consent is checked again on this side:
+// the relay checks it too, but a rule that only holds because the caller
+// remembered to check is not a rule.
+//
+// AI-REACH: exempt — the door an assistant's write comes THROUGH, not a
+// capability it chooses; the tools it fronts are the reachable ones.
+chatRouter.post(
+  "/writes",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const body = z
+      .object({ tool: z.string().min(1).max(60), args: z.record(z.unknown()).default({}) })
+      .safeParse(req.body);
+    if (!body.success) return badBody(res, body.error);
+
+    const ws = writeRequestsOf({
+      id: "relay",
+      name: body.data.tool,
+      args: body.data.args as Record<string, unknown>,
+    });
+    if (ws.length === 0) {
+      res.status(400).json({
+        error: { code: "not_a_write", message: `${body.data.tool} is not a record write` },
+      });
+      return;
+    }
+
+    const prefs = await chatPrefsOf(req);
+    if (prefs.write_mode !== "auto") {
+      res.status(403).json({
+        error: {
+          code: "writes_not_auto",
+          message:
+            'Changes are not set to apply automatically for this chat, and a relayed connection cannot show a confirmation. The user can switch "Changes" to Auto, or make this one in Cobblr directly.',
+        },
+      });
+      return;
+    }
+
+    const db = tenantDb(req);
+    const userId = sessionUserId(req) ?? "";
+    // The turn gives the write its two halves of a worked example — the
+    // sentence that asked for it, and the turn it belongs to — so a relayed
+    // change teaches the workspace exactly as an in-app one does.
+    const turn = await openTurnFor(db, userId);
+    const opts = {
+      auto: true,
+      orgId: tenantContext(req).org.id,
+      ...(turn?.prompt ? { prompt: turn.prompt } : {}),
+      ...(turn?.id ? { turnId: turn.id } : {}),
+    };
+    const wsApi = chatWorkspaceApi(ctxOf(req));
+    const out =
+      ws.length > 1
+        ? await performWrites(wsApi, db, userId, ws, opts)
+        : await performWrite(wsApi, db, userId, ws[0]!, opts);
+    // Carry the ledger handle onto the turn, because that is what the panel
+    // builds an Undo out of. Without it the change is tracked and the person
+    // watching still has no way to reach it.
+    if (turn && out.ok) {
+      const ids = "ledger_ids" in out ? out.ledger_ids : out.ledger_id ? [out.ledger_id] : [];
+      await emitTurnEvent(db, turn.id, "applied", {
+        name: body.data.tool,
+        summary: out.message,
+        ...(ids.length === 1 ? { ledger_id: ids[0] } : {}),
+        // A bulk write is ONE thing the person asked for, so it is one card
+        // with one Undo — which presses every handle it made.
+        ...(ids.length > 1 ? { ledger_ids: ids, count: "count" in out ? out.count : ids.length } : {}),
+        undoable: out.undoable === true,
+      }).catch(() => {});
+    }
+    sendOutcome(res, out);
+  }),
+);
+
+// AI-REACH: exempt — this is the assistant TELLING the panel what it is doing,
+// not a capability for it to choose. It writes no workspace data; the whole of
+// it is a progress line on the caller's own open turn.
+chatRouter.post(
+  "/turns/open/steps",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const body = z
+      .object({
+        kind: z.enum(["tool", "tool-result", "applied"]),
+        name: z.string().trim().min(1).max(80),
+        write: z.boolean().optional(),
+        ok: z.boolean().optional(),
+        summary: z.string().max(400).optional(),
+        args: z.record(z.unknown()).optional(),
+      })
+      .safeParse(req.body);
+    if (!body.success) return badBody(res, body.error);
+    const db = tenantDb(req);
+    const turn = await openTurnFor(db, sessionUserId(req) ?? "");
+    // No open turn is the normal case for a connector used outside the chat
+    // panel. Say so plainly rather than erroring: the caller is not at fault
+    // and has nothing to fix.
+    if (!turn) {
+      res.json({ recorded: false });
+      return;
+    }
+    const { kind, ...payload } = body.data;
+    await emitTurnEvent(db, turn.id, kind, payload);
+    res.json({ recorded: true });
   }),
 );
 
@@ -779,6 +1132,11 @@ chatRouter.get(
           send(ev);
           if (ev.kind === "done" || ev.kind === "error") end();
         }
+        // A tab already attached to a turn whose process died would otherwise
+        // sit here forever: no new events are coming, and nothing else on this
+        // request re-reads the row. readTurn heals a stranded turn and emits
+        // its ending, which the next tick above then delivers.
+        if (!closed) await readTurn(db, turnId);
       } catch {
         /* next tick */
       }
@@ -876,6 +1234,10 @@ chatRouter.get(
         undone_at: r.undone_at,
         undo_of: r.undo_of,
         created_at: r.created_at,
+        // What was asked for. Stored since the ledger learned to pair a write
+        // with its message, and worth showing: "you asked for X" is the only
+        // thing that makes a list of changes readable a week later.
+        prompt: r.prompt,
         undoable: undoableOf(r, kinds),
       })),
     });
@@ -893,13 +1255,98 @@ chatRouter.post(
       res.status(401).json({ error: { code: "no_session", message: "Sign in first." } });
       return;
     }
-    const out = await undoWrite(chatWorkspaceApi(c), tenantDb(req), userId, String(req.params.id));
-    res.status(out.ok ? 200 : 400).json(out);
+    const out = await undoWrite(chatWorkspaceApi(c), tenantDb(req), userId, String(req.params.id), tenantContext(req).org.id);
+    sendOutcome(res, out);
+  }),
+);
+
+// ── POST /chat/undo-turn — put back everything ONE instruction did ──
+//
+// An instruction is the unit a person thinks in: "each rack should have Shelf 1
+// through 5" is one thing they asked for, so it is one thing to take back. The
+// changes it made are already grouped by the turn that made them, so the client
+// names THAT, not the sixty ids it happens to have.
+//
+// Newest first, because a later change can depend on an earlier one still being
+// there (a shelf inside a rack goes before the rack does). Failures do not stop
+// the sweep: a partial undo is reported and can be pressed again — every step
+// is idempotent by id.
+//
+// AI-REACH: exempt — putting a change back is a person's decision about the
+// assistant's work, never the assistant's own move.
+chatRouter.post(
+  "/undo-turn/:turnId",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const userId = sessionUserId(req);
+    if (!userId) {
+      res.status(401).json({ error: { code: "no_session", message: "Sign in first." } });
+      return;
+    }
+    const db = tenantDb(req);
+    const rows = await db
+      .selectFrom("core_ai_chat_writes")
+      .select(["id"])
+      .where("turn_id", "=", String(req.params.turnId))
+      .where("undone_at", "is", null)
+      .where("undo_of", "is", null)
+      .orderBy("created_at", "desc")
+      .execute();
+    if (rows.length === 0) {
+      res.json({ ok: false, undone: 0, total: 0, message: "Nothing left to put back." });
+      return;
+    }
+    const wsApi = chatWorkspaceApi(ctxOf(req));
+    const orgId = tenantContext(req).org.id;
+    // Going through with the ones held back is a SECOND press, by a person who
+    // has been told what is in the way — never the first one's fallback.
+    const force = req.query.force === "1";
+    let undone = 0;
+    const held: Array<{ label: string; reason: string; detail?: string }> = [];
+    for (const r of rows) {
+      const out = await undoWrite(wsApi, db, userId, r.id, orgId, force);
+      if (out.ok) undone++;
+      else if (out.held && out.held !== "deleted-since") {
+        held.push({
+          label: out.label ?? "a record",
+          reason: out.held,
+          ...(out.detail ? { detail: out.detail } : {}),
+        });
+      }
+    }
+    const names = held.map((h) => h.label);
+    res.json({
+      ok: undone > 0,
+      undone,
+      total: rows.length,
+      // What is still there, and why — the client turns this into an offer
+      // rather than a dead end.
+      held,
+      can_force: held.length > 0,
+      message:
+        undone === rows.length
+          ? `Put back all ${undone}.`
+          : held.length > 0
+            ? `Put back ${undone} of ${rows.length}. Left ${names.slice(0, 3).join(", ")}${names.length > 3 ? ` and ${names.length - 3} more` : ""} alone, because ${
+                held[0]!.reason === "has-contents"
+                  ? names.length === 1
+                    ? "there are still things inside it"
+                    : "there are still things inside them"
+                  : names.length === 1
+                    ? "you have changed it since"
+                    : "you have changed them since"
+              }.`
+            : `Put back ${undone} of ${rows.length}.`,
+    });
   }),
 );
 
 // ── POST /chat/execute — run a confirmed proposal ──
 const ExecBody = z.object({
+  // What the user asked, so a CONFIRMED write is a worked example too. The
+  // widget knows it; the server cannot, because a proposal arrives on its own
+  // request. Optional, and only ever used as a label on the ledger row.
+  prompt: z.string().max(2000).optional(),
   proposal: z.union([
     z.object({ kind: z.literal("create"), entity_kind: z.string(), fields: z.record(z.unknown()) }),
     z.object({
@@ -912,8 +1359,10 @@ const ExecBody = z.object({
     z.object({
       kind: z.literal("action"),
       action_id: z.string(),
-      entity_kind: z.string(),
-      entity_id: z.string(),
+      // Optional: a workspace-scoped action runs on the workspace, not a
+      // record. Requiring them here rejected the proposal at the confirm step.
+      entity_kind: z.string().optional(),
+      entity_id: z.string().optional(),
       args: z.record(z.unknown()).optional(),
     }),
     z.object({ kind: z.literal("build"), draft_id: z.string() }),
@@ -945,9 +1394,9 @@ chatRouter.post(
           ...(p.kind !== "create" ? { entity_id: p.entity_id } : {}),
           ...(p.kind !== "delete" ? { fields: p.fields } : {}),
         },
-        { auto: false },
+        { auto: false, orgId: tenantContext(req).org.id, ...(parsed.data.prompt ? { prompt: parsed.data.prompt } : {}) },
       );
-      res.status(out.ok ? 200 : 400).json(out);
+      sendOutcome(res, out);
       return;
     }
 
@@ -977,9 +1426,9 @@ chatRouter.post(
       chatWorkspaceApi(c),
       tenantDb(req),
       sessionUserId(req) ?? "",
-      { tool: "action", entity_kind: p.entity_kind, entity_id: p.entity_id, action_id: p.action_id, args: p.args },
-      { auto: false },
+      { tool: "action", entity_kind: p.entity_kind ?? "", entity_id: p.entity_id, action_id: p.action_id, args: p.args },
+      { auto: false, ...(parsed.data.prompt ? { prompt: parsed.data.prompt } : {}) },
     );
-    res.status(out.ok ? 200 : 400).json(out);
+    sendOutcome(res, out);
   }),
 );

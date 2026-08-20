@@ -12,6 +12,7 @@ import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { CoreScanDB } from "../db.js";
 import { enrichPhotoItem } from "../services/enrich-photo.js";
+import { routeScannedReceiptPhoto } from "../services/receipt-photo.js";
 import { autoRankCatalogPhoto, readPhotoRankEnabled } from "../services/auto-rank.js";
 
 let registered = false;
@@ -35,7 +36,39 @@ export function registerScanHandlers(): void {
     if (row.barcode_text || !row.image_file_id || row.ai_suggested_at) {
       return { ok: true, skipped: "not an un-enriched photo-only scan" };
     }
-    await enrichPhotoItem({ db, orgId: ctx.orgId, itemId, imageFileId: row.image_file_id, userId: ctx.userId });
+    const outcome = await enrichPhotoItem({
+      db,
+      orgId: ctx.orgId,
+      itemId,
+      imageFileId: row.image_file_id,
+      userId: ctx.userId,
+    });
+    // You photographed a receipt. Hand it to the receipt parser instead of
+    // filing the paper as a thing you own — the same route an uploaded receipt
+    // takes, so the batch, the line items and the purchases order are all
+    // created by the one code path. No enriched event: nothing was identified,
+    // and the lines raise their own.
+    if (outcome === "is-receipt") {
+      const r = await routeScannedReceiptPhoto({
+        orgId: ctx.orgId,
+        itemId,
+        fileId: row.image_file_id,
+        userId: ctx.userId,
+      });
+      if (r.routed) return { ok: true, receipt: true, items: r.items };
+      // Called it a receipt and could not read it. The row is still there, so
+      // say why on it rather than leaving a nameless photo and no explanation.
+      await db
+        .updateTable("core_scan_inbox_items")
+        .set({
+          ai_notes: `That looked like a receipt, but its line items could not be read (${r.reason}). Re-run to identify it as an item instead.`,
+          ai_suggested_at: new Date(),
+          updated_at: new Date(),
+        })
+        .where("id", "=", itemId)
+        .execute();
+      return { ok: true, receipt: false, skipped: r.reason };
+    }
     void platform().events.emit("core-scan.scan.enriched", { orgId: ctx.orgId, itemId });
     return { ok: true, identified: true };
   });

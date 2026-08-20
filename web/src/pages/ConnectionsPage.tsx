@@ -6,6 +6,8 @@
 // list shows which keys are set, never the values.
 
 import { useMemo, useState } from "react";
+import { CredentialInput } from "../components/CredentialInput";
+import { ProviderSetupSteps } from "../components/ProviderSetupSteps";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Pencil, Plug, Plus, Trash2, X } from "lucide-react";
@@ -58,7 +60,7 @@ export function ConnectionsPage() {
   });
 
   return (
-    <div className="space-y-5 max-w-2xl">
+    <div className="space-y-5">
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
         <Link to="/me" className="text-sm text-muted hover:text-accent inline-flex items-center gap-1">
           <ArrowLeft size={14} /> Profile
@@ -320,41 +322,42 @@ function ConnectionForm({
         />
       </label>
 
-      {credFields.map(([key, def]) => (
-        <label key={key} className="block">
-          <div className="text-xs text-muted mb-1">
-            {def.label}
-            {isEdit && def.secret && existing?.credential_keys.includes(key) && (
-              <span className="text-faint"> · set (leave blank to keep)</span>
-            )}
-          </div>
-          {def.choices ? (
-            <>
-              <select
-                value={creds[key] ?? ""}
-                onChange={(e) => setCreds((m) => ({ ...m, [key]: e.target.value }))}
-                className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-              >
-                {def.choices.map((c) => (
-                  <option key={c.value} value={c.value}>
-                    {c.label}
-                  </option>
-                ))}
-              </select>
-              {key === "transit" && (creds[key] ?? "").startsWith("bridge") && <PersonalAgentHint />}
-            </>
-          ) : (
-            <input
-              type={def.secret ? "password" : "text"}
+      {provider?.setup && <ProviderSetupSteps setup={provider.setup} />}
+
+      {credFields.map(([key, def]) =>
+        def.choices ? (
+          <label key={key} className="block">
+            <div className="text-xs text-muted mb-1">{def.label}</div>
+            <select
               value={creds[key] ?? ""}
               onChange={(e) => setCreds((m) => ({ ...m, [key]: e.target.value }))}
-              autoComplete="off"
-              placeholder={isEdit && existing?.credential_keys.includes(key) ? "•••••• (unchanged)" : ""}
-              className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900 font-mono"
-            />
-          )}
-        </label>
-      ))}
+              className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+            >
+              {def.choices.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+            {key === "transit" && (creds[key] ?? "").startsWith("bridge") && <PersonalAgentHint />}
+          </label>
+        ) : (
+          // The SAME component the workspace forms use. This page missed the paste
+          // recovery and the visible-while-typing key when those shipped, which is the
+          // worst place to miss them: /me/connections is where an individual user or a
+          // self-hoster adds their own key.
+          <CredentialInput
+            key={key}
+            fieldKey={key}
+            label={def.label}
+            secret={!!def.secret}
+            value={creds[key] ?? ""}
+            onChange={(v) => setCreds((m) => ({ ...m, [key]: v }))}
+            note={isEdit && def.secret && existing?.credential_keys.includes(key) ? "· set (leave blank to keep)" : undefined}
+            placeholder={isEdit && existing?.credential_keys.includes(key) ? "\u2022\u2022\u2022\u2022\u2022\u2022 (unchanged)" : undefined}
+          />
+        ),
+      )}
       {credFields.length === 0 && (
         <div className="text-[11px] text-faint italic">
           This provider needs no credentials - it routes to a device you connect (e.g. the edge bridge).

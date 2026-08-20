@@ -8,23 +8,12 @@
 // /configuration/locations, which meant clicking any row from the
 // navbar entry bounced you into the settings shell.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { readBound } from "../lib/floorplanGeometry";
 import { LocationFloorPlanTab } from "../components/LocationFloorPlanTab";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Plus,
-  Printer,
-  Trash2,
-  Pencil,
-  Box as BoxIcon,
-  MapPin as AreaIcon,
-  Upload,
-  Download,
-  GripVertical,
-  CheckSquare,
-} from "lucide-react";
+import { Plus, Printer, Trash2, Pencil, Box as BoxIcon, MapPin as AreaIcon, Upload, Download, GripVertical, CheckSquare, ChevronRight, Search, ChevronsDownUp, ChevronsUpDown, Layers } from "lucide-react";
 import {
   DndContext,
   type DragEndEvent,
@@ -46,6 +35,8 @@ import {
   useToast,
   useConfirm,
   usePageTitle,
+  usePublishRowSelection,
+  useSelectionResolver,
   buildLocationForest,
   type LocationNode as SharedLocationNode,
 } from "@cobblr/platform-web";
@@ -55,12 +46,29 @@ import { queueLabelsBulk } from "../lib/queue-label";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ImportLocationsDialog } from "../components/ImportLocationsDialog";
 import { LocationTreePicker } from "../components/LocationTreePicker";
+import {
+  filterForest,
+  foldAll,
+  isOpen,
+  subtreeSize,
+  toggleFold,
+  useFoldOverrides,
+  groupRuns,
+  isRunOpen,
+  toggleRun,
+  plural,
+  type FoldOverrides,
+  type Run,
+} from "../lib/tree-fold";
 import { bottomUpDisplayOrder, isStackedNoun } from "../lib/stacking";
 
 // The tree model + (position, then natural name) sort live in the shared
 // buildLocationForest — the SAME viewer the Labels browser uses, so the two
 // surfaces can never disagree on structure or order ("Bin 2" before "Bin 10").
 type LocationNode = SharedLocationNode<Location>;
+
+/** Direct children a closed row shows as chips before it says "+N more". */
+const CHIP_CAP = 8;
 
 const LOCATION_ACCESSORS = {
   id: (l: Location) => l.id,
@@ -80,7 +88,13 @@ export function LocationsPage() {
   const [createParentId, setCreateParentId] = useState<string | null>(null);
   const [editTarget, setEditTarget] = useState<Location | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+
   const [importOpen, setImportOpen] = useState(false);
+  // Fold + filter (lib/tree-fold.ts). Filtering wins: while a query is typed
+  // every surviving node is open and fold memory is left alone.
+  const [q, setQ] = useState("");
+  const [fold, setFold] = useFoldOverrides(activeSlug);
+  const filtering = q.trim().length > 0;
   const exportCsv = async () => {
     const url = await fetchAuthBlobUrl(api.exportLocationsPath(activeSlug));
     if (!url) { toast.error("Couldn't export"); return; }
@@ -172,8 +186,59 @@ export function LocationsPage() {
   const usageByLocation = useLocationUsage(activeSlug);
 
   const items = useMemo(() => list.data?.items ?? [], [list.data]);
+
+  // Ticked rows ARE context: with the panel open, "delete duplicates" means
+  // these twelve racks and not a hunt across the workspace. Published as ids,
+  // so Cobb can act on them rather than only read a count.
+  const selectedNames = useMemo(
+    () => items.filter((r) => selected.has(r.id)).map((r) => r.name),
+    [items, selected],
+  );
+  // Highlighting "Rack 1" should mean the rack, not the words. Exact match, and
+  // only when exactly one place answers to that name: a guess that resolves to
+  // the wrong record is worse than sending the text.
+  const resolveSelection = useCallback(
+    (text: string) => {
+      const wanted = text.trim().toLowerCase();
+      if (!wanted) return null;
+      const hits = items.filter((l) => l.name.trim().toLowerCase() === wanted);
+      const one = hits.length === 1 ? hits[0] : undefined;
+      return one ? { kind: "core-locations:location", id: one.id, label: one.name } : null;
+    },
+    [items],
+  );
+  useSelectionResolver(resolveSelection);
+
+  usePublishRowSelection(
+    selected.size > 0
+      ? {
+          label: selected.size === 1 ? (selectedNames[0] ?? "1 location") : `${selected.size} locations`,
+          kind: "core-locations:location",
+          ids: [...selected],
+          ...(selectedNames.length ? { text: selectedNames.slice(0, 40).join(", ") } : {}),
+        }
+      : null,
+  );
   // Shared model → the areas tree + loose-container roots, sorted.
   const forest = useMemo(() => buildLocationForest(items, LOCATION_ACCESSORS), [items]);
+  const shown = useMemo(
+    () => ({ areas: filterForest(forest.areas, q), containers: filterForest(forest.containers, q) }),
+    [forest, q],
+  );
+  // A CLOSED node's chip has to count everything it hides, so the subtree
+  // totals are computed once here rather than re-walked per card.
+  const subtreeUsageById = useMemo(() => {
+    const m = new Map<string, number>();
+    const walk = (n: LocationNode): number => {
+      let t = totalUsage(usageByLocation.get(n.id));
+      for (const c of n.children) t += walk(c);
+      m.set(n.id, t);
+      return t;
+    };
+    for (const r of forest.areas) walk(r);
+    for (const r of forest.containers) walk(r);
+    return m;
+  }, [forest, usageByLocation]);
 
   // "Floor Plan" is the default surface (that's the whole discoverability fix),
   // but fall back to "List" when nothing has a layout drawn yet, so a fresh
@@ -286,42 +351,49 @@ export function LocationsPage() {
   // containers (loose bins not placed in any area) — keeps unsorted storage
   // in its own section. The big onDelete handler is shared by
   // both sections via this helper rather than duplicated.
-  const rootAreas = forest.areas;
-  const looseContainers = forest.containers;
+  const rootAreas = shown.areas;
+  const looseContainers = shown.containers;
+  const foldProps = {
+    depth: 0,
+    fold,
+    filtering,
+    subtreeUsageById,
+    onToggleFold: (node: LocationNode, depth: number) => setFold(toggleFold(fold, node, depth)),
+    onToggleRun: (runId: string) => setFold(toggleRun(fold, runId)),
+  };
+  const cardHandlers = {
+    usageByLocation,
+    selected,
+    onToggleSelect: toggle,
+    onAddChild: (parentId: string) => {
+      // You are about to put something in here; make sure you will see it.
+      if (fold[parentId] !== true) setFold({ ...fold, [parentId]: true });
+      setCreateParentId(parentId);
+      setCreateOpen(true);
+    },
+    onEdit: (loc: Location) => setEditTarget(loc),
+    onDelete: async (loc: LocationNode) => {
+      const subtree = subtreeUsage(loc);
+      const subtreeTotal = subtree.machines + subtree.assets + subtree.parts;
+      const childPart =
+        loc.children.length > 0 ? ` and its ${loc.children.length} child location(s)` : "";
+      const usagePart =
+        subtreeTotal > 0
+          ? ` ${subtreeTotal} item(s) currently point at ${
+              loc.children.length > 0 ? "this subtree" : "this location"
+            } (${subtree.machines} machine(s), ${subtree.assets} asset(s), ${subtree.parts} part(s)) and will end up location-less.`
+          : "";
+      const ok = await confirm({
+        title: "Delete location?",
+        message: `${loc.name}${childPart} will be removed (cascade).${usagePart}`,
+        confirmLabel: "Delete",
+        destructive: true,
+      });
+      if (ok) del.mutate(loc.id);
+    },
+  };
   const renderCard = (n: LocationNode) => (
-    <LocationCard
-      key={n.id}
-      node={n}
-      usageByLocation={usageByLocation}
-      selected={selected}
-      onToggleSelect={toggle}
-      onAddChild={(parentId) => {
-        setCreateParentId(parentId);
-        setCreateOpen(true);
-      }}
-      onEdit={(loc) => setEditTarget(loc)}
-      onDelete={async (loc) => {
-        const subtree = subtreeUsage(loc);
-        const subtreeTotal = subtree.machines + subtree.assets + subtree.parts;
-        const childPart =
-          loc.children.length > 0
-            ? ` and its ${loc.children.length} child location(s)`
-            : "";
-        const usagePart =
-          subtreeTotal > 0
-            ? ` ${subtreeTotal} item(s) currently point at ${
-                loc.children.length > 0 ? "this subtree" : "this location"
-              } (${subtree.machines} machine(s), ${subtree.assets} asset(s), ${subtree.parts} part(s)) and will end up location-less.`
-            : "";
-        const ok = await confirm({
-          title: "Delete location?",
-          message: `${loc.name}${childPart} will be removed (cascade).${usagePart}`,
-          confirmLabel: "Delete",
-          destructive: true,
-        });
-        if (ok) del.mutate(loc.id);
-      }}
-    />
+    <LocationCard key={n.id} node={n} {...foldProps} {...cardHandlers} />
   );
 
   return (
@@ -338,6 +410,32 @@ export function LocationsPage() {
         <span className="text-sm text-muted dark:text-slate-400">
           {items.length} {items.length === 1 ? "place" : "places"}
         </span>
+        {/* Floor Plan / List as a segmented control in the title row. They are
+            two views of one page, not two pages, and a tab strip of their own
+            cost a full line of the screen for two words. */}
+        <div
+          role="tablist"
+          aria-label="View"
+          className="inline-flex self-center rounded-md border border-line dark:border-slate-600 p-0.5 text-xs"
+        >
+          {(["plan", "list"] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              role="tab"
+              aria-selected={tab === t}
+              onClick={() => chooseTab(t)}
+              className={
+                "px-2 py-0.5 rounded transition " +
+                (tab === t
+                  ? "bg-cobble-600 text-white"
+                  : "text-muted hover:text-content dark:hover:text-mortar-100")
+              }
+            >
+              {t === "plan" ? "Floor Plan" : "List"}
+            </button>
+          ))}
+        </div>
         <div className="flex-1 basis-full sm:basis-0" />
         {items.length > 0 && (
           <button
@@ -380,26 +478,6 @@ export function LocationsPage() {
       </div>
       {importOpen && <ImportLocationsDialog slug={activeSlug} onClose={() => setImportOpen(false)} />}
 
-      {/* Tabs — Floor Plan is the default surface (the discoverability fix); List
-          is the tree that used to be the whole page. */}
-      <div className="flex gap-4 border-b border-line dark:border-slate-700">
-        {(["plan", "list"] as const).map((t) => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => chooseTab(t)}
-            className={
-              "px-1 pb-2 -mb-px text-sm font-medium border-b-2 transition " +
-              (tab === t
-                ? "border-accent text-accent"
-                : "border-transparent text-muted hover:text-content dark:hover:text-mortar-100")
-            }
-          >
-            {t === "plan" ? "Floor Plan" : "List"}
-          </button>
-        ))}
-      </div>
-
       {list.isLoading && (
         <div className="text-sm text-muted">Loading…</div>
       )}
@@ -410,11 +488,6 @@ export function LocationsPage() {
 
       {tab === "list" && (
         <>
-      <p className="text-sm text-content dark:text-mortar-200">
-        Hierarchical tree of physical places - rooms, shelves, bins. Anything
-        tangible in the workspace (machines, assets, parts) can point at a row
-        here via its <code>location_id</code> field.
-      </p>
       {items.length === 0 && !list.isLoading && (
         <div className="text-sm italic text-muted dark:text-slate-400">
           No locations yet. Add a top-level area (a room, a workshop, a garage)
@@ -423,17 +496,60 @@ export function LocationsPage() {
       )}
 
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+        {items.length > 0 && (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <label className="relative flex-1 min-w-[12rem] max-w-md">
+              <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-faint pointer-events-none" />
+              <input
+                type="search"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Find a place - Bin 87, shelf, garage…"
+                aria-label="Filter locations"
+                className="w-full pl-7 pr-2 py-1.5 text-sm rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900"
+              />
+            </label>
+            <span className="hidden md:inline text-xs text-muted dark:text-slate-400 truncate min-w-0">
+              {filtering
+                ? "Showing matches and the path to them. Drag is off while filtering."
+                : "Rooms, shelves, bins. Anything tangible in the workspace can point at a place here."}
+            </span>
+          </div>
+        )}
+        {filtering && rootAreas.length === 0 && looseContainers.length === 0 && (
+          <div className="text-sm italic text-muted dark:text-slate-400">No place matches "{q.trim()}".</div>
+        )}
         {rootAreas.length > 0 && (
-          <div className="flex items-baseline gap-2 mb-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-1">
             <h2 className="text-xs font-mono uppercase tracking-widest text-faint dark:text-slate-500">
               Areas
             </h2>
             <span className="text-xs text-muted dark:text-slate-400">
               {rootAreas.length}
             </span>
-            <span className="text-xs text-muted dark:text-slate-400">
+            <span className="hidden sm:inline text-xs text-muted dark:text-slate-400 truncate min-w-0">
                - rooms &amp; regions; containers nest inside. Drag to set your order.
             </span>
+            {!filtering && (
+              <div className="flex items-center gap-1 ml-auto">
+                <button
+                  type="button"
+                  onClick={() => setFold(foldAll([...forest.areas, ...forest.containers], true))}
+                  title="Open every rack and bin"
+                  className="inline-flex items-center gap-1 rounded text-muted hover:text-content dark:hover:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 px-1.5 py-0.5 text-xs transition"
+                >
+                  <ChevronsUpDown size={13} /> Expand all
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFold(foldAll([], false))}
+                  title="Back to rooms open, everything inside them closed"
+                  className="inline-flex items-center gap-1 rounded text-muted hover:text-content dark:hover:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 px-1.5 py-0.5 text-xs transition"
+                >
+                  <ChevronsDownUp size={13} /> Collapse all
+                </button>
+              </div>
+            )}
           </div>
         )}
         <div className="space-y-2">
@@ -458,7 +574,12 @@ export function LocationsPage() {
             </p>
             <div className="space-y-2">
               <SortableContext items={looseContainers.map((n) => n.id)} strategy={verticalListSortingStrategy}>
-                {looseContainers.map(renderCard)}
+                <SiblingList
+                  siblings={looseContainers}
+                  parentId={null}
+                  {...cardHandlers}
+                  {...foldProps}
+                />
               </SortableContext>
             </div>
           </div>
@@ -524,6 +645,12 @@ export function LocationsPage() {
 
 function LocationCard({
   node,
+  depth,
+  fold,
+  filtering,
+  subtreeUsageById,
+  onToggleFold,
+  onToggleRun,
   usageByLocation,
   selected,
   onToggleSelect,
@@ -532,6 +659,12 @@ function LocationCard({
   onDelete,
 }: {
   node: LocationNode;
+  depth: number;
+  fold: FoldOverrides;
+  filtering: boolean;
+  subtreeUsageById: Map<string, number>;
+  onToggleFold: (node: LocationNode, depth: number) => void;
+  onToggleRun: (runId: string) => void;
   usageByLocation: Map<string, UsageCounts>;
   selected: Set<string>;
   onToggleSelect: (id: string) => void;
@@ -541,10 +674,15 @@ function LocationCard({
 }) {
   const KindIcon = node.kind === "container" ? BoxIcon : AreaIcon;
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: node.id });
+    useSortable({ id: node.id, disabled: filtering });
   const style = { transform: CSS.Transform.toString(transform), transition };
   const usage = usageByLocation.get(node.id);
   const usageTotal = totalUsage(usage);
+  const hasChildren = node.children.length > 0;
+  // Filtering shows the path to a match, so everything on it is open.
+  const open = filtering || isOpen(fold, node, depth);
+  const hidden = hasChildren && !open ? subtreeSize(node).nodes : 0;
+  const hiddenItems = hasChildren && !open ? (subtreeUsageById.get(node.id) ?? 0) : 0;
   return (
     <div
       ref={setNodeRef}
@@ -570,8 +708,29 @@ function LocationCard({
           aria-label={`Select ${node.name}`}
           title="Select for bulk actions"
         />
+        {/* The fold control. A leaf keeps the slot so names line up, but has
+            nothing to open, so it draws nothing clickable. */}
+        {hasChildren ? (
+          <button
+            type="button"
+            onClick={() => onToggleFold(node, depth)}
+            disabled={filtering}
+            aria-expanded={open}
+            aria-label={open ? `Collapse ${node.name}` : `Expand ${node.name}`}
+            title={filtering ? "Clear the search to fold" : open ? "Collapse" : "Expand"}
+            className="shrink-0 -ml-1 p-0.5 rounded text-muted hover:text-content dark:hover:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 disabled:opacity-40 transition"
+          >
+            <ChevronRight size={15} className={"transition-transform " + (open ? "rotate-90" : "")} />
+          </button>
+        ) : (
+          <span className="w-4 shrink-0" aria-hidden />
+        )}
         <KindIcon size={16} className="text-accent shrink-0" />
-        <div className="flex-1 min-w-0">
+        {/* The name sizes to itself (min-w-0 so a long one still truncates)
+            rather than claiming the free width. What matters next — what is
+            inside this place — then reads immediately after it, and the spacer
+            below pushes the meta and actions to the right edge. */}
+        <div className="min-w-0 shrink">
           <Link
             to={`/locations/${node.id}`}
             className="font-medium text-content dark:text-mortar-100 hover:text-accent truncate block"
@@ -584,19 +743,68 @@ function LocationCard({
             </div>
           )}
         </div>
+        {/* What is inside, right after the name: the second most important
+            thing on the row, so it reads with the name instead of across a gap
+            at the far edge. Each chip opens that place; a chip with contents of
+            its own carries a small count. Capped so a bin with forty drawers
+            does not become a paragraph; the overflow opens the node. Phones
+            keep the count in the trailing cluster, since chips would wrap
+            under the name. */}
+        {hidden > 0 && (
+          <span className="hidden sm:flex flex-wrap items-center gap-1 min-w-0">
+            {node.children.slice(0, CHIP_CAP).map((c) => (
+              <Link
+                key={c.id}
+                to={`/locations/${c.id}`}
+                title={c.children.length > 0 ? `${c.name} · ${c.children.length} inside` : c.name}
+                className="rounded-full border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-0.5 text-[11px] text-muted hover:text-accent hover:border-cobble-400 dark:text-slate-300 transition whitespace-nowrap"
+              >
+                {c.short_name ?? c.name}
+                {c.children.length > 0 && (
+                  <span className="ml-1 text-faint dark:text-slate-500">{c.children.length}</span>
+                )}
+              </Link>
+            ))}
+            {node.children.length > CHIP_CAP && (
+              <button
+                type="button"
+                onClick={() => onToggleFold(node, depth)}
+                className="rounded-full px-2 py-0.5 text-[11px] text-muted hover:text-accent dark:text-slate-300 transition whitespace-nowrap"
+                title="Expand"
+              >
+                +{node.children.length - CHIP_CAP} more
+              </button>
+            )}
+          </span>
+        )}
+        <div className="flex-1 min-w-[0.5rem]" />
         {/* Trailing meta + actions: their own wrap group so that on a narrow
             (mobile) card — or a deeply-nested one where indentation eats the
             width — the cluster drops to its own line and, if still tight, its
             chips wrap, instead of forcing the page to scroll sideways. min-w-0
             lets it shrink; on desktop there's room and it stays inline. */}
-        <div className="flex flex-wrap items-center gap-2 min-w-0 ml-auto">
-          {usageTotal > 0 && (
-            <span
-              className="text-[10px] font-mono text-accent dark:text-cobble-400"
-              title={`${usage?.machines ?? 0} machine(s) · ${usage?.assets ?? 0} asset(s) · ${usage?.parts ?? 0} part(s) point here`}
+        <div className="flex flex-wrap items-center gap-2 min-w-0 shrink-0">
+          {/* Closed: what is hidden, as a button that opens it, so a summary is
+              never a dead end. Open: the node's own count as before. */}
+          {hidden > 0 ? (
+            <button
+              type="button"
+              onClick={() => onToggleFold(node, depth)}
+              className="text-[10px] font-mono text-muted hover:text-accent dark:text-slate-400 transition whitespace-nowrap"
+              title="Expand"
             >
-              {usageTotal} item{usageTotal === 1 ? "" : "s"}
-            </span>
+              <span className="sm:hidden">{hidden} inside{hiddenItems > 0 ? ` · ` : ""}</span>
+              {hiddenItems > 0 ? `${hiddenItems} item${hiddenItems === 1 ? "" : "s"}` : ""}
+            </button>
+          ) : (
+            usageTotal > 0 && (
+              <span
+                className="text-[10px] font-mono text-accent dark:text-cobble-400"
+                title={`${usage?.machines ?? 0} machine(s) · ${usage?.assets ?? 0} asset(s) · ${usage?.parts ?? 0} part(s) point here`}
+              >
+                {usageTotal} item{usageTotal === 1 ? "" : "s"}
+              </span>
+            )
           )}
           {/* Hidden on a phone: the name is what you are looking for, and the
               KindIcon to its left already distinguishes area from container.
@@ -630,7 +838,7 @@ function LocationCard({
           </button>
         </div>
       </div>
-      {node.children.length > 0 && (
+      {hasChildren && open && (
         <div className="p-2 pl-3 sm:p-3 sm:pl-6 space-y-2 bg-subtle/50 dark:bg-slate-900/40">
           {/* Child AREAS are zones — subdivisions of this space, not things
               inside it — so they render as dashed annotations (ZoneCard), never
@@ -644,6 +852,12 @@ function LocationCard({
               <ZoneCard
                 key={c.id}
                 node={c}
+                depth={depth + 1}
+                fold={fold}
+                filtering={filtering}
+                subtreeUsageById={subtreeUsageById}
+                onToggleFold={onToggleFold}
+                onToggleRun={onToggleRun}
                 usageByLocation={usageByLocation}
                 selected={selected}
                 onToggleSelect={onToggleSelect}
@@ -652,18 +866,22 @@ function LocationCard({
                 onDelete={onDelete}
               />
             ))}
-            {node.children.filter((c) => c.kind !== "area").map((c) => (
-              <LocationCard
-                key={c.id}
-                node={c}
-                usageByLocation={usageByLocation}
-                selected={selected}
-                onToggleSelect={onToggleSelect}
-                onAddChild={onAddChild}
-                onEdit={onEdit}
-                onDelete={onDelete}
-              />
-            ))}
+            <SiblingList
+              siblings={node.children.filter((c) => c.kind !== "area")}
+              parentId={node.id}
+              depth={depth + 1}
+              fold={fold}
+              filtering={filtering}
+              subtreeUsageById={subtreeUsageById}
+              onToggleFold={onToggleFold}
+              onToggleRun={onToggleRun}
+              usageByLocation={usageByLocation}
+              selected={selected}
+              onToggleSelect={onToggleSelect}
+              onAddChild={onAddChild}
+              onEdit={onEdit}
+              onDelete={onDelete}
+            />
           </SortableContext>
         </div>
       )}
@@ -680,6 +898,12 @@ function LocationCard({
  *  before — this is purely a different drawing of `kind === "area"` children. */
 function ZoneCard({
   node,
+  depth,
+  fold,
+  filtering,
+  subtreeUsageById,
+  onToggleFold,
+  onToggleRun,
   usageByLocation,
   selected,
   onToggleSelect,
@@ -688,6 +912,12 @@ function ZoneCard({
   onDelete,
 }: {
   node: LocationNode;
+  depth: number;
+  fold: FoldOverrides;
+  filtering: boolean;
+  subtreeUsageById: Map<string, number>;
+  onToggleFold: (node: LocationNode, depth: number) => void;
+  onToggleRun: (runId: string) => void;
   usageByLocation: Map<string, UsageCounts>;
   selected: Set<string>;
   onToggleSelect: (id: string) => void;
@@ -696,7 +926,7 @@ function ZoneCard({
   onDelete: (loc: LocationNode) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: node.id });
+    useSortable({ id: node.id, disabled: filtering });
   const style = { transform: CSS.Transform.toString(transform), transition };
   const usage = usageByLocation.get(node.id);
   const usageTotal = totalUsage(usage);
@@ -782,6 +1012,12 @@ function ZoneCard({
               <ZoneCard
                 key={c.id}
                 node={c}
+                depth={depth + 1}
+                fold={fold}
+                filtering={filtering}
+                subtreeUsageById={subtreeUsageById}
+                onToggleFold={onToggleFold}
+                onToggleRun={onToggleRun}
                 usageByLocation={usageByLocation}
                 selected={selected}
                 onToggleSelect={onToggleSelect}
@@ -790,21 +1026,157 @@ function ZoneCard({
                 onDelete={onDelete}
               />
             ))}
-            {node.children.filter((c) => c.kind !== "area").map((c) => (
-              <LocationCard
-                key={c.id}
-                node={c}
-                usageByLocation={usageByLocation}
-                selected={selected}
-                onToggleSelect={onToggleSelect}
-                onAddChild={onAddChild}
-                onEdit={onEdit}
-                onDelete={onDelete}
-              />
-            ))}
+            <SiblingList
+              siblings={node.children.filter((c) => c.kind !== "area")}
+              parentId={node.id}
+              depth={depth + 1}
+              fold={fold}
+              filtering={filtering}
+              subtreeUsageById={subtreeUsageById}
+              onToggleFold={onToggleFold}
+              onToggleRun={onToggleRun}
+              usageByLocation={usageByLocation}
+              selected={selected}
+              onToggleSelect={onToggleSelect}
+              onAddChild={onAddChild}
+              onEdit={onEdit}
+              onDelete={onDelete}
+            />
           </SortableContext>
         )}
       </div>
+    </div>
+  );
+}
+
+/** One sibling group of containers, drawn with its runs folded. The
+ *  SortableContext above still lists every sibling id, run members included,
+ *  so drag works across and inside runs unchanged; a run is purely how the rows
+ *  are grouped on screen. */
+function SiblingList({
+  siblings,
+  parentId,
+  ...card
+}: {
+  siblings: LocationNode[];
+  parentId: string | null;
+  depth: number;
+  fold: FoldOverrides;
+  filtering: boolean;
+  subtreeUsageById: Map<string, number>;
+  onToggleFold: (node: LocationNode, depth: number) => void;
+  onToggleRun: (runId: string) => void;
+  usageByLocation: Map<string, UsageCounts>;
+  selected: Set<string>;
+  onToggleSelect: (id: string) => void;
+  onAddChild: (parentId: string) => void;
+  onEdit: (loc: Location) => void;
+  onDelete: (loc: LocationNode) => void;
+}) {
+  // A search shows the matches plainly: a run would hide the very rows you
+  // asked for.
+  const entries = card.filtering
+    ? siblings.map((node) => ({ kind: "node" as const, node }))
+    : groupRuns(siblings, parentId);
+  return (
+    <>
+      {entries.map((e) =>
+        e.kind === "node" ? (
+          <LocationCard key={e.node.id} node={e.node} {...card} />
+        ) : (
+          <RunCard key={e.run.id} run={e.run} {...card} />
+        ),
+      )}
+    </>
+  );
+}
+
+/** "Rack 1 – 7 · 7 racks · 35 inside" as one row. Closed by default; opens to
+ *  the member cards, which keep their own drag / select / edit / delete. The
+ *  checkbox selects or clears every member, so bulk print and bulk delete
+ *  still work on a rack you never unfolded. */
+function RunCard({
+  run,
+  ...card
+}: {
+  run: Run<LocationNode>;
+  depth: number;
+  fold: FoldOverrides;
+  filtering: boolean;
+  subtreeUsageById: Map<string, number>;
+  onToggleFold: (node: LocationNode, depth: number) => void;
+  onToggleRun: (runId: string) => void;
+  usageByLocation: Map<string, UsageCounts>;
+  selected: Set<string>;
+  onToggleSelect: (id: string) => void;
+  onAddChild: (parentId: string) => void;
+  onEdit: (loc: Location) => void;
+  onDelete: (loc: LocationNode) => void;
+}) {
+  const open = isRunOpen(card.fold, run.id);
+  const count = run.members.length;
+  const inside = run.members.reduce((t, m) => t + subtreeSize(m).nodes, 0);
+  const items = run.members.reduce((t, m) => t + (card.subtreeUsageById.get(m.id) ?? 0), 0);
+  const allSelected = run.members.every((m) => card.selected.has(m.id));
+  const someSelected = !allSelected && run.members.some((m) => card.selected.has(m.id));
+  const noun = plural(run.prefix.toLowerCase(), count);
+  const label = `${run.prefix} ${run.lo} – ${run.hi}`;
+  const toggleAll = () => {
+    const target = !allSelected;
+    for (const m of run.members) if (card.selected.has(m.id) !== target) card.onToggleSelect(m.id);
+  };
+  return (
+    <div className="rounded-xl border border-dashed border-line dark:border-slate-700 overflow-hidden">
+      <div className="px-4 py-2 bg-subtle/70 dark:bg-slate-800/40 flex flex-wrap items-center gap-2">
+        <span className="w-[15px] shrink-0 -ml-1.5" aria-hidden />
+        <input
+          type="checkbox"
+          checked={allSelected}
+          ref={(el) => {
+            if (el) el.indeterminate = someSelected;
+          }}
+          onChange={toggleAll}
+          className="accent-cobble-600 shrink-0"
+          aria-label={`Select all ${count} ${noun}`}
+          title={`Select all ${count} ${noun}`}
+        />
+        <button
+          type="button"
+          onClick={() => card.onToggleRun(run.id)}
+          aria-expanded={open}
+          aria-label={open ? `Collapse ${label}` : `Expand ${label}`}
+          className="shrink-0 -ml-1 p-0.5 rounded text-muted hover:text-content dark:hover:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition"
+        >
+          <ChevronRight size={15} className={"transition-transform " + (open ? "rotate-90" : "")} />
+        </button>
+        <Layers size={16} className="text-accent shrink-0" />
+        <button
+          type="button"
+          onClick={() => card.onToggleRun(run.id)}
+          className="font-medium text-content dark:text-mortar-100 hover:text-accent truncate text-left"
+        >
+          {label}
+        </button>
+        <div className="flex flex-wrap items-center gap-2 min-w-0 ml-auto">
+          <button
+            type="button"
+            onClick={() => card.onToggleRun(run.id)}
+            className="text-[10px] font-mono text-muted hover:text-accent dark:text-slate-400 transition"
+            title={open ? "Collapse" : "Expand"}
+          >
+            {count} {noun}
+            {inside > 0 ? ` · ${inside} inside` : ""}
+            {items > 0 ? ` · ${items} item${items === 1 ? "" : "s"}` : ""}
+          </button>
+        </div>
+      </div>
+      {open && (
+        <div className="p-2 space-y-2 bg-subtle/30 dark:bg-slate-900/30">
+          {run.members.map((m) => (
+            <LocationCard key={m.id} node={m} {...card} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

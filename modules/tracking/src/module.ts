@@ -14,7 +14,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "tracking",
-  version: "0.3.0",
+  version: "0.3.3",
   displayName: "Tracking",
   description:
     "Log a number over time toward a goal, and see the trend. Weight, runs, habits, budgets, mood, any measurement with a target. Ships a trend-chart view.",
@@ -81,6 +81,8 @@ export default defineModule({
     actions: [
       {
         id: "tracking:log-measurement",
+        examples: ["weighed in at 82", "record 15 for today"],
+        undoable: true,
         label: "Log a measurement",
         description:
           "Record a number against a metric (by id, or by name: created on miss). Wire it to an event to feed a metric automatically (e.g. an order arriving → a 'Grocery spend' trend). Value comes from a static arg, a named event-payload key, or the wire template.",
@@ -89,6 +91,16 @@ export default defineModule({
         // value comes from args/payload, not the source entity's kind.
         appliesTo: { any: true },
         invokeHandler: "tracking.log-measurement",
+        argsSchema: {
+          value: { label: "The number to log", type: "number" },
+          valueKey: { label: "Instead of value: which key to read from the event payload", type: "text" },
+          metricId: { label: "Which metric, by id", type: "text" },
+          metricName: { label: "Which metric, by name; created if it does not exist yet", type: "text" },
+          unit: { label: "Unit, when a metric is being created", type: "text" },
+          goalValue: { label: "Goal, when a metric is being created", type: "number" },
+          goalDirection: { label: "Whether higher or lower is better, for a new metric", type: "text" },
+          note: { label: "Optional note on the reading", type: "text" },
+        },
         userInvokable: false,
       },
     ],

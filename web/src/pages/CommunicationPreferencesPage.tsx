@@ -112,7 +112,7 @@ export function CommunicationPreferencesPage() {
   const visibleColumns = columns.filter((c) => c !== "discord_dm" || verified);
 
   return (
-    <div className="space-y-6 max-w-3xl mx-auto">
+    <div className="space-y-6">
       <AreaTabs tabs={NOTIFICATION_TABS} area="notifications" />
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
         <Bell size={20} className="text-accent" />

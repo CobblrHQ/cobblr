@@ -10,7 +10,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "sales",
-  version: "0.2.0",
+  version: "0.2.3",
   displayName: "Sales",
   description:
     "Outbound order management: customers, sales orders, and line items. Fulfilling an order decrements the sold inventory parts from stock, closing the sale → fulfil → decrement → reorder loop. For makers and small shops selling finished goods.",
@@ -104,6 +104,8 @@ export default defineModule({
     actions: [
       {
         id: "sales:add-line",
+        examples: ["add a line to that order", "they want two more"],
+        undoable: true,
         label: "Add a line to this order",
         description:
           "Put another line on a sales order that already exists. Pass `qty` and either `description` or `part_id` for a part you track, optionally `unit_price`. Removing a line has no action on purpose: an order is a financial record, so deleting from it is done in the app.",
@@ -119,6 +121,7 @@ export default defineModule({
       },
       {
         id: "sales:fulfill-order",
+        examples: ["that order went out", "mark it shipped"],
         label: "Fulfill order",
         description:
           "Mark a sales order fulfilled: decrement each line item's inventory part from stock (via inventory:adjust-stock) and stamp fulfilled_at. Generic capability a bundle/app composes. Args: { order_id }.",
@@ -131,15 +134,22 @@ export default defineModule({
       },
       {
         id: "sales:create-order",
+        examples: ["a new order came in", "record an order from the shop"],
         label: "Create order",
         description:
           "Create a sales order programmatically (e.g. importing an order from a connected store). Optionally upserts the customer by email and adds line items. Args: { order_number?, status?, order_date?, notes?, metadata?, customer?: {name,email,phone,address}, items?: [{part_id?, description?, qty, unit_price?, metadata?}] }.",
         appliesTo: { kinds: ["sales:order"] },
         invokeHandler: "sales.create-order",
-        userInvokable: false,
         argsSchema: {
-          order_number: { label: "Order number", type: "text" },
+          order_number: { label: "Your reference for the order, generated if you leave it out", type: "text" },
+          customer: { label: "The customer: name, email, phone, address", type: "json" },
+          items: { label: "The line items to order", type: "json" },
+          status: { label: "Order status", type: "text" },
+          order_date: { label: "The date of the order, ISO date", type: "text" },
+          notes: { label: "Notes on the order (optional)", type: "text" },
+          metadata: { label: "Any extra fields to store on the order", type: "json" },
         },
+        userInvokable: false,
       },
     ],
   },

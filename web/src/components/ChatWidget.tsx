@@ -7,13 +7,28 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { X, Send, Check, Eye, PencilLine, Trash2 } from "lucide-react";
-import { api, ApiError, type AiChatProposal, type AiChatResponse, type BundleValidationPreview } from "../lib/api";
+import { X, Send, Check, Eye, PencilLine, Trash2, Wand2 } from "lucide-react";
+import { api, ApiError, type AiChatProposal, type AiChatResponse, type BasicCommandOffer, type BundleValidationPreview } from "../lib/api";
 import { readSse } from "../lib/sse";
 import { Cobb, CobbBust, CobbHead, COBB_POSES, type CobbPose } from "./Cobb";
 import { useNavigate } from "react-router-dom";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { getChatPageContext } from "../lib/chat-context";
+import { getChatPageContext, getChatSelection, clearChatSelection, useChatSelection } from "../lib/chat-context";
+import { useSelectionCapture } from "../lib/use-selection-capture";
+import { localAnswerFor } from "../lib/local-answers";
+import { describeTool } from "../lib/chat-progress";
+import {
+  caretOnFirstLine,
+  caretOnLastLine,
+  emptyHistory,
+  loadHistory,
+  recallNewer,
+  recallOlder,
+  remember,
+  saveHistory,
+  stopBrowsing,
+  type HistoryState,
+} from "../lib/input-history";
 import { useDetailRoute } from "../lib/useDetailRoute";
 import { useAiStatus, AiOffNotice } from "./AiStatusNotice";
 import { SidePanel } from "./SidePanel";
@@ -43,10 +58,25 @@ interface Msg {
   buildDraftId?: string; // matches the polled draft (stable across new messages)
   resolved?: boolean; // proposal confirmed or cancelled
   ledgerId?: string; // an EXECUTED write's change-ledger row — the Undo handle
+  /** A bulk write made many rows. One card, one Undo, every handle pressed. */
+  ledgerIds?: string[];
+  /** The instruction those rows came from. Undoing names THIS, so the server
+   *  puts the whole thing back in one request instead of the client posting
+   *  sixty ids it happens to be holding. */
+  undoTurnId?: string;
+  /** An undo that stopped short, and the instruction it stopped short of.
+   *  Offering the rest is a second press by a person who has been told what is
+   *  in the way — the undo itself never decides to go through. */
+  offerForceTurnId?: string;
+  offerForceCount?: number;
   undoable?: boolean;
   undone?: boolean; // this write was undone from the chat
   entityKind?: string; // an executed CREATE's entity — powers a "View it" link
   entityId?: string;
+  /** A learned command that fits what was typed, offered for confirmation. The
+   *  message rides along because the SERVER re-binds it: the browser never
+   *  sends the operations, only what the user said. */
+  command?: { id: string; template: string; operations: number; summary: string; message: string };
 }
 
 const kindLabel = (id: string) => id.split(":")[1] ?? id;
@@ -261,13 +291,44 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
     if (sessionStart != null && open) dividerRef.current?.scrollIntoView({ block: "start" });
   }, [sessionStart, open]);
 
-  // Auto-grow the input with its content (up to a cap), then shrink back.
+  // Auto-grow the input with its content (up to a cap), then shrink back — and
+  // place the caret at the end of a message just recalled from history.
+  //
+  // Both belong in the SAME layout effect, and the caret cannot be deferred to
+  // a requestAnimationFrame: a fast typist (or Playwright) gets a character in
+  // before the frame runs, and the queued setSelectionRange then yanks the
+  // caret back behind it. That produced "third thingplus more " from a recall
+  // followed by typing " plus more" — the space landed last. A layout effect
+  // runs synchronously with the commit that rendered the new value, so there is
+  // no window to type into.
+  const caretToEndRef = useRef(false);
   useLayoutEffect(() => {
     const el = taRef.current;
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+    if (caretToEndRef.current) {
+      caretToEndRef.current = false;
+      el.setSelectionRange(el.value.length, el.value.length);
+    }
   }, [input, open]);
+
+  // ── Up/Down recall of what you sent ───────────────────────────────────────
+  // Its own store, not the conversation cache: clearing the chat clears what
+  // was SAID and should not also forget what you TYPED, the same way a shell's
+  // history outlives `clear`.
+  const [history, setHistory] = useState<HistoryState>(emptyHistory);
+  useEffect(() => {
+    setHistory({ entries: loadHistory(activeSlug), index: null, draft: "" });
+  }, [activeSlug]);
+
+  /** Put the caret at the end of a recalled message, as a shell does — you are
+   *  almost always about to add to it or resend it, never to edit its start.
+   *  The move itself happens in the layout effect above; see the race there. */
+  function showRecalled(value: string) {
+    caretToEndRef.current = true;
+    setInput(value);
+  }
 
   // ── Per-workspace history cache (survives a page refresh) ──────────────────
   // Tracks which workspace the in-state `messages` belong to. The PERSIST effect
@@ -308,10 +369,26 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
     setSessionStart(null); // a different workspace's history — the old index is meaningless
   }, [activeSlug]);
 
+  /** Cobb changed the workspace: tell the app, and make the screens behind the
+   *  panel actually show it.
+   *
+   *  Dispatching the event alone was not enough — one component listens to it,
+   *  and every list on screen is a cached query that has no idea anything
+   *  happened. So a rack whose duplicate shelves Cobb had just deleted still
+   *  showed them, which reads as "it did not work" and is worse than the
+   *  original problem. Invalidating refetches only what is on screen. */
+  function workspaceChanged() {
+    window.dispatchEvent(new CustomEvent("cobblr:workspace-changed", { detail: { via: "cobb" } }));
+    void qc.invalidateQueries();
+  }
+
   function clearChat() {
     setMessages([]);
     setError(null);
     setSessionStart(null);
+    // A new conversation starts on nothing in particular. (Sending does NOT do
+    // this — the context belongs to the conversation, not to one message.)
+    clearChatSelection();
     const key = chatStoreKey(activeSlug);
     if (key) {
       try {
@@ -339,7 +416,7 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
       // AUTO mode: writes already applied this turn — one "✓ done" card each,
       // with an Undo where the ledger says it's reversible.
       if ((r.applied ?? []).length > 0) {
-        window.dispatchEvent(new CustomEvent("cobblr:workspace-changed", { detail: { via: "cobb" } }));
+        workspaceChanged();
       }
       // Tier-1.5 escort: Cobb walks the user to a screen he cannot operate
       // (members, tokens, backup, …). Navigation only — the page reads any
@@ -383,10 +460,180 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
     }
   }
 
+  /** Run a learned command the user just confirmed. The server binds the
+   *  message against the stored pattern and writes through the same ledger an
+   *  AI write uses, so it is recorded and undoable in the usual way. */
+  async function runCommand(i: number) {
+    const m = messages[i];
+    if (!m?.command || busy) return;
+    setBusy(true);
+    try {
+      const out = await api.runCommand(activeSlug, m.command.id, m.command.message, getChatSelection()?.ids);
+      setMessages((prev) => {
+        const copy = [...prev];
+        const at = copy[i];
+        if (at) copy[i] = { ...at, resolved: true };
+        return [...copy, { role: "assistant", content: (out.ok ? "✓ " : "✗ ") + out.message }];
+      });
+    } catch (e) {
+      const msg = e instanceof ApiError ? e.message : "That didn't work.";
+      setMessages((prev) => {
+        const copy = [...prev];
+        const at = copy[i];
+        if (at) copy[i] = { ...at, resolved: true };
+        return [...copy, { role: "assistant", content: `✗ ${msg}` }];
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ── A command this workspace already knows, offered while you type ────────
+  //
+  // The clean split between a learned command and a real AI: the AI path is
+  // untouched (enter still sends), and this appears BESIDE the sentence before
+  // it is sent, so taking the free one is a choice rather than something that
+  // happened to you. It works whether or not AI is connected — a workspace with
+  // a model still has no reason to spend a call on something it already knows.
+  const [suggestion, setSuggestion] = useState<BasicCommandOffer | null>(null);
+  /** The answer to what is being typed, when the workspace can answer it
+   *  itself. A read is safe to just do, so this is the answer rather than an
+   *  offer to go and get it. */
+  const [peek, setPeek] = useState<{ answer: string; detail?: string; from: "page" | "workspace" | "guide" } | null>(null);
+  // Whether this workspace has taught itself ANYTHING. Checked once, because a
+  // workspace with no commands must not send a request per keystroke forever.
+  const knowsCommands = useQuery({
+    queryKey: ["commands-any", activeSlug],
+    queryFn: () => api.listCommands(activeSlug),
+    enabled: open && !!activeSlug,
+    staleTime: 5 * 60_000,
+  });
+  const hasCommands = (knowsCommands.data?.items ?? []).some((c) => c.enabled);
+
+  useEffect(() => {
+    if (!hasCommands || !open) {
+      setSuggestion(null);
+      return;
+    }
+    const text = input.trim();
+    // Short enough to be mid-word is too short to match anything meaningful,
+    // and asking on every keystroke of a long message is a request per letter.
+    if (text.length < 8) {
+      setSuggestion(null);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(() => {
+      void api
+        .matchCommand(activeSlug, text, getChatSelection()?.ids)
+        .then((r) => {
+          if (!cancelled) setSuggestion(r.command);
+        })
+        .catch(() => {
+          if (!cancelled) setSuggestion(null);
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [input, hasCommands, open, activeSlug]);
+
+  // A question the workspace can answer itself, answered while it is typed.
+  // Separate from the command lookup because it has nothing to do with what
+  // this workspace has been taught: every workspace can count its own records.
+  useEffect(() => {
+    if (!open) {
+      setPeek(null);
+      return;
+    }
+    const text = input.trim();
+    if (text.length < 8) {
+      setPeek(null);
+      return;
+    }
+    // The tab first. "What page am I on?" is a fact this browser is already
+    // holding, so asking the server for it is one request more than the right
+    // number, and asking a model is a great deal more than that.
+    const local = localAnswerFor(text, getChatPageContext());
+    if (local) {
+      setPeek({ ...local, from: "page" });
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(() => {
+      void api
+        .peekAnswer(activeSlug, text, !aiOff)
+        .then((r) => {
+          if (!cancelled)
+            setPeek(
+              r.answer
+                ? { answer: r.answer, ...(r.detail ? { detail: r.detail } : {}), from: r.from === "guide" ? "guide" : "workspace" }
+                : null,
+            );
+        })
+        .catch(() => {
+          if (!cancelled) setPeek(null);
+        });
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [input, open, activeSlug, aiOff]);
+
+  /** Take the free path: run what the workspace already knows, and never ask a
+   *  model. The sent message still appears in the conversation, because what
+   *  you asked for is part of the history whoever ran it. */
+  async function acceptSuggestion() {
+    const s = suggestion;
+    const text = input.trim();
+    if (!s || !text || busy) return;
+    setInput("");
+    setSuggestion(null);
+    setPeek(null);
+    setHistory((h) => {
+      const entries = remember(h.entries, text);
+      saveHistory(activeSlug, entries);
+      return { entries, index: null, draft: "" };
+    });
+    const next: Msg[] = [...messages, { role: "user", content: text }];
+    setMessages(next);
+    setBusy(true);
+    try {
+      const out = await api.runCommand(activeSlug, s.id, text, getChatSelection()?.ids);
+      if (out.ok) workspaceChanged();
+      setMessages([
+        ...next,
+        {
+          role: "assistant",
+          content: (out.ok ? "✓ " : "✗ ") + out.message,
+          // The free path writes to the workspace like any other path, so it
+          // owes the same undo. Without this, the ONE way of changing things
+          // that never involves a model was also the only one you could not
+          // take back.
+          ...(out.ledger_ids?.length
+            ? { resolved: true, ledgerIds: out.ledger_ids, undoable: true }
+            : {}),
+        },
+      ]);
+    } catch (e) {
+      const msg = e instanceof ApiError ? e.message : "That didn't work.";
+      setMessages([...next, { role: "assistant", content: `✗ ${msg}` }]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function send() {
     const text = input.trim();
     if (!text || busy) return;
     setInput("");
+    setHistory((h) => {
+      const entries = remember(h.entries, text);
+      saveHistory(activeSlug, entries);
+      return { entries, index: null, draft: "" };
+    });
     setSeedPlaceholder(null);
     setError(null);
     const next: Msg[] = [...messages, { role: "user", content: text }];
@@ -400,7 +647,17 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
       setBusy(true);
       try {
         const r = await api.answerBasic(activeSlug, text);
-        setMessages([...next, { role: "assistant", content: r.reply }]);
+        setMessages([
+          ...next,
+          {
+            role: "assistant",
+            content: r.reply,
+            // A learned command is an OFFER. Basic mode answers a keystroke; it
+            // must never write to the workspace on its own, however sure the
+            // match is.
+            ...(r.command ? { command: { ...r.command, message: text } } : {}),
+          },
+        ]);
       } catch {
         setMessages([...next, { role: "assistant", content: BASIC_FALLBACK }]);
       } finally {
@@ -420,7 +677,13 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
         activeSlug,
         next.map((m) => ({ role: m.role, content: m.content })),
         getChatPageContext() ?? undefined,
+        getChatSelection() ?? undefined,
       );
+      // NOT cleared on send. A conversation stays about the thing it is about:
+      // Cobb asks which shelves you mean, you answer, and an answer with no
+      // context is how he ends up asking the same question twice. It goes when
+      // you drop it, when you tick something else, or when the page it came
+      // from does.
       rememberOpenTurn(started.turn_id);
       await followTurn(started.turn_id, next);
     } catch (e) {
@@ -449,31 +712,164 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
   }
 
   const followingRef = useRef<{ id: string; abort: () => void } | null>(null);
-  const [progress, setProgress] = useState<string | null>(null);
+  /** What has happened so far, oldest first. A LIST, not one line.
+   *
+   *  The panel used to show a single replaced string, so a ninety-second turn
+   *  read as the word "Thinking" for a minute and a half: every step scrolled
+   *  past invisibly and the one thing left on screen was the least informative.
+   *  Keeping them means the wait shows its work. */
+  const [steps, setSteps] = useState<Array<{ text: string; state: "doing" | "done" | "failed" }>>([]);
+  /** Ledgered writes a relayed assistant made during this turn, waiting for the
+   *  answer they belong beside. Each one is an Undo the person can press. */
+  const relayApplied = useRef<Msg[]>([]);
+  const selection = useChatSelection();
 
-  function describeEvent(kind: string, data: Record<string, unknown>): string | null {
-    switch (kind) {
-      case "thinking":
-        return (data.round as number) > 0 ? "Thinking about what it found…" : "Thinking…";
-      case "tool": {
-        const name = String(data.name ?? "");
-        const pretty = name.replace(/_/g, " ");
-        return data.write ? `Making a change: ${pretty}…` : `Reading: ${pretty}…`;
-      }
-      case "tool-result":
-        return data.ok ? null : "That didn't work, trying another way…";
-      case "applied":
-        return "Applied a change…";
-      default:
-        return null;
+  // A half-written question is work. Reloading the page (or being reloaded by a
+  // deploy) threw it away, which is the kind of small loss that teaches people
+  // not to type anything long in the box. Per workspace, on this device.
+  const draftKey = `cobblr.chat.draft.${activeSlug}`;
+  useEffect(() => {
+    if (!activeSlug) return;
+    try {
+      const saved = localStorage.getItem(draftKey);
+      if (saved) setInput((cur) => (cur ? cur : saved));
+    } catch {
+      /* private mode */
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSlug]);
+  useEffect(() => {
+    if (!activeSlug) return;
+    try {
+      if (input.trim()) localStorage.setItem(draftKey, input);
+      else localStorage.removeItem(draftKey);
+    } catch {
+      /* private mode */
+    }
+  }, [input, activeSlug, draftKey]);
+  // Only while the panel is open: watching every selection change in the app
+  // otherwise is work nobody asked for.
+  useSelectionCapture(open);
+  /** The turn currently being followed — the id an "undo all" names. */
+  const turnIdRef = useRef<string | null>(null);
+  /** Which card is being put back, and how far along. */
+  const [undoing, setUndoing] = useState<{ idx: number; done: number; total: number } | null>(null);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  /** The answer as it is being written. Rendered under the steps, so the words
+   *  appear where the reply will end up rather than in a separate place that
+   *  then vanishes. */
+  const [streaming, setStreaming] = useState("");
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    if (startedAt == null) return;
+    const t = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => clearInterval(t);
+  }, [startedAt]);
+
+  /** Fold one event into the step list. */
+  function applyEvent(kind: string, data: Record<string, unknown>): void {
+    setSteps((prev) => {
+      switch (kind) {
+        case "thinking":
+          // Only the FIRST think is a step of its own; the later ones are the
+          // gap between tools and would otherwise fill the list with the word.
+          return (data.round as number) > 0 ? prev : [...prev, { text: "Thinking", state: "doing" as const }];
+        case "tool": {
+          const done = prev.map((x) => (x.state === "doing" ? { ...x, state: "done" as const } : x));
+          return [...done, { text: describeTool(String(data.name ?? ""), (data.args as Record<string, unknown>) ?? {}), state: "doing" as const }];
+        }
+        case "tool-result": {
+          const copy = [...prev];
+          for (let i = copy.length - 1; i >= 0; i--) {
+            if (copy[i]!.state === "doing") {
+              copy[i] = { ...copy[i]!, state: data.ok ? "done" : "failed" };
+              break;
+            }
+          }
+          return copy;
+        }
+        case "applied": {
+          // A step that carries a ledger id is a change the person can put
+          // back. The in-app path builds those cards from the turn's result;
+          // a relayed assistant's writes are applied one at a time, from the
+          // far side of the model call, so THIS is where they arrive.
+          // A relayed assistant's writes arrive HERE rather than in the turn's
+          // result, so this is the only place that knows the workspace just
+          // changed.
+          workspaceChanged();
+          const bulkIds = Array.isArray(data.ledger_ids)
+            ? (data.ledger_ids as unknown[]).filter((x): x is string => typeof x === "string")
+            : [];
+          if (bulkIds.length > 1) {
+            const key = bulkIds.join(",");
+            if (!relayApplied.current.some((m) => (m.ledgerIds ?? []).join(",") === key)) {
+              relayApplied.current.push({
+                role: "assistant",
+                content: String(data.summary ?? `Made ${bulkIds.length} changes.`),
+                resolved: true,
+                ledgerIds: bulkIds,
+                ...(turnIdRef.current ? { undoTurnId: turnIdRef.current } : {}),
+                undoable: data.undoable === true,
+              });
+            }
+          } else if (typeof data.ledger_id === "string") {
+            // Held aside rather than pushed into the conversation now: the
+            // turn's final render is built from the message list as it was
+            // when the turn STARTED, so anything appended mid-turn is
+            // discarded when the answer lands. These are handed to that
+            // render instead, and arrive with the answer, exactly where the
+            // in-app path puts them.
+            // One ledger row is one card, however many times its event is
+            // seen: a follower that reconnects replays, a second tab follows
+            // the same turn, and React mounts an effect twice in development.
+            // Undo is idempotent, but showing the same change twice tells the
+            // person their shelf was created twice.
+            const id = String(data.ledger_id);
+            if (relayApplied.current.some((m) => m.ledgerId === id)) return prev;
+            relayApplied.current.push({
+              role: "assistant",
+              content: String(data.summary ?? "Done."),
+              resolved: true,
+              ledgerId: id,
+              undoable: data.undoable === true,
+            });
+          }
+          // Resolve the step that was already saying what it was doing, rather
+          // than adding a line. "Adding a location" followed by `Applied:
+          // {"id":"8943a0b0-0ff9-41dd…","short_name":null,"depth":0}` tells a
+          // person nothing they wanted and buries the steps that do.
+          const name = typeof data.summary === "string" && data.summary.length <= 60 && !data.summary.startsWith("{")
+            ? data.summary
+            : null;
+          const copy = [...prev];
+          for (let i = copy.length - 1; i >= 0; i--) {
+            const at = copy[i];
+            if (at && at.state === "doing") {
+              copy[i] = { ...at, state: "done" as const, ...(name ? { text: `${at.text}: ${name}` } : {}) };
+              return copy;
+            }
+          }
+          return [...copy, { text: name ? `Done: ${name}` : "Done", state: "done" as const }];
+        }
+        case "text-delta":
+          // The answer has started arriving, so the step list has done its job.
+          return prev.map((x) => (x.state === "doing" ? { ...x, state: "done" as const } : x));
+        default:
+          return prev;
+      }
+    });
   }
 
   async function followTurn(turnId: string, next: Msg[]) {
+    turnIdRef.current = turnId;
     // One follower at a time; a newer turn supersedes an older subscription.
     followingRef.current?.abort();
     setBusy(true);
-    setProgress("Starting…");
+    setSteps([]);
+    setStartedAt(Date.now());
+    setElapsed(0);
+    setStreaming("");
 
     // Catch up first: if the turn already finished (a refresh that came back
     // late), there is nothing to stream — just render its result.
@@ -518,8 +914,11 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
         failFollow(String((data as { message?: string }).message ?? "Something went wrong."));
         return;
       }
-      const line = describeEvent(ev.event, data);
-      if (line) setProgress(line);
+      if (ev.event === "text-delta") {
+        const piece = String((data as { text?: string }).text ?? "");
+        if (piece) setStreaming((prev) => prev + piece);
+      }
+      applyEvent(ev.event, data);
     };
 
     // Read the stream; on a transport drop, reconnect from the last seq we
@@ -557,13 +956,23 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
 
   function finishFollow(next: Msg[], r: AiChatResponse) {
     rememberOpenTurn(null);
-    setProgress(null);
+    setSteps([]);
+    setStartedAt(null);
+    setStreaming("");
     setBusy(false);
-    applyResponse(next, r);
+    // A relayed assistant's writes were applied one at a time from inside the
+    // model call, so they are not in `r.applied` — they arrived as events. Put
+    // their cards in front of the answer, where the in-app ones go.
+    const relayCards = relayApplied.current;
+    relayApplied.current = [];
+    applyResponse(relayCards.length ? [...next, ...relayCards] : next, r);
   }
   function failFollow(msg: string) {
     rememberOpenTurn(null);
-    setProgress(null);
+    relayApplied.current = [];
+    setSteps([]);
+    setStartedAt(null);
+    setStreaming("");
     setBusy(false);
     setError(/no provider|not entitled|not available|no_ai/i.test(msg) ? "AI isn't enabled for this workspace yet." : msg);
   }
@@ -697,7 +1106,7 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
       if (r.ok) {
         // Anything open alongside the chat (the put-away plan, pickers) can
         // react — Cobb just changed the workspace.
-        window.dispatchEvent(new CustomEvent("cobblr:workspace-changed", { detail: { via: "cobb" } }));
+        workspaceChanged();
       }
       // The executed write carries its change-ledger id — the Undo handle.
       setMessages((prev) => [
@@ -724,17 +1133,67 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
     setMessages((prev) => [...prev, { role: "assistant", content: "Okay, left it alone." }]);
   }
 
-  async function undoWrite(idx: number) {
+  async function undoWrite(idx: number, force = false) {
     const m = messages[idx];
-    if (!m?.ledgerId || m.undone || busy) return;
+    const handles = m?.ledgerIds ?? (m?.ledgerId ? [m.ledgerId] : []);
+    // `undone` marks a card whose undo has run. A FORCED press is the second
+    // half of that same undo — the part the first press deliberately held back
+    // and told the person about — so it is not blocked by it.
+    if (!m || handles.length === 0 || (m.undone && !force) || busy) return;
     try {
-      const r = await undoMut.mutateAsync(m.ledgerId);
+      // One press, every row the instruction made. Reversed newest-first so a
+      // later change never depends on an earlier one still being there, and
+      // counted rather than narrated: sixty "↩ Deleted Shelf 3." lines is not
+      // a report, it is the same wall of text the cards were meant to replace.
+      // ONE instruction, one request. The server holds the changes that turn
+      // made and puts them back newest-first; the client does not post sixty
+      // ids and hope its list is the same list.
+      if (m.undoTurnId && handles.length > 1) {
+        setUndoing({ idx, done: 0, total: handles.length });
+        const r = await api.aiChatUndoTurn(activeSlug, m.undoTurnId, force);
+        setUndoing(null);
+        setMessages((prev) => {
+          const copy = [...prev];
+          if (copy[idx]) copy[idx] = { ...copy[idx]!, undone: r.ok };
+          return [
+            ...copy,
+            {
+              role: "assistant",
+              content: (r.ok ? "↩ " : "✗ ") + r.message,
+              // The dead end becomes a choice: it names what it left and lets
+              // the person say "those too". Nothing happens until they do.
+              ...(r.can_force && !force
+                ? { offerForceTurnId: m.undoTurnId, offerForceCount: (r.held ?? []).length }
+                : {}),
+            },
+          ];
+        });
+        return;
+      }
+      const outcomes = [];
+      const total = handles.length;
+      for (const h of [...handles].reverse()) {
+        // No turn to name (an older card, or a single change): press the
+        // handles this card holds, counting out loud — a button that only
+        // greys out for a minute is the same "is it stuck?" as before.
+        if (total > 1) setUndoing({ idx, done: outcomes.length, total });
+        outcomes.push(await undoMut.mutateAsync(h));
+      }
+      setUndoing(null);
+      const ok = outcomes.filter((o) => o.ok).length;
+      const message =
+        outcomes.length === 1
+          ? (outcomes[0]!.ok ? "↩ " : "✗ ") + outcomes[0]!.message
+          : ok === outcomes.length
+            ? `↩ Put back all ${ok}.`
+            : `↩ Put back ${ok} of ${outcomes.length}. ${outcomes.find((o) => !o.ok)?.message ?? ""}`;
       setMessages((prev) => {
         const copy = [...prev];
-        if (copy[idx]) copy[idx] = { ...copy[idx]!, undone: r.ok };
-        return [...copy, { role: "assistant", content: (r.ok ? "↩ " : "✗ ") + r.message }];
+        if (copy[idx]) copy[idx] = { ...copy[idx]!, undone: ok > 0 };
+        return [...copy, { role: "assistant", content: message }];
       });
     } catch (e) {
+      setUndoing(null);
       const msg = e instanceof ApiError ? e.message : "Couldn't undo that.";
       setMessages((prev) => [...prev, { role: "assistant", content: "✗ " + msg }]);
     }
@@ -755,7 +1214,7 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
   if (!activeSlug || !open) return null;
 
   return (
-    <SidePanel width="sm:w-[min(100vw,440px)]" escapeExempt>
+    <SidePanel width="sm:w-[min(100vw,440px)]" escapeExempt cobbPanel>
           <header className="flex items-center justify-between px-4 py-3 border-b border-line dark:border-slate-700 shrink-0">
             <div className="flex items-center gap-2 text-sm font-semibold text-content dark:text-mortar-100">
               {/* The bust is always the wave — it takes no pose (see CobbBust).
@@ -838,7 +1297,18 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
           )}
 
           <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-            {messages.length === 0 && (
+            {/* The big Cobb is the EMPTY panel — nothing said, nothing typed.
+                He steps aside the moment there is something to show, so his
+                first answer arrives exactly where every later one does: inline,
+                on the left, at reply size. Otherwise the first reply appears
+                UNDER a full-size Cobb, with a second small Cobb beside it, and
+                the panel has two of him in it.
+
+                Keyed off the composer having text rather than off the answer
+                itself, so he leaves once, when you start typing, instead of
+                flickering in and out as a half-typed sentence stops and starts
+                matching. Clear the box and he comes back. */}
+            {messages.length === 0 && !peek && !busy && !input.trim() && (
               <div className="mt-6 px-4 flex flex-col items-center text-center">
                 <Cobb pose={devPose} size={150} title="Cobb" className="cobb-lift" />
                 <p className="text-xs text-faint dark:text-slate-500 leading-relaxed mt-2">
@@ -949,6 +1419,34 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
                       </button>
                     </div>
                   )}
+                  {/* A command this workspace taught itself. No AI was asked;
+                      the sentence matched something it already knows how to do,
+                      and it still waits to be told to go ahead. */}
+                  {m.command && !m.resolved && (
+                    <div className="mt-2">
+                      <div className="text-[11px] text-muted dark:text-slate-400">
+                        {m.command.summary} · learned from “{m.command.template}”
+                      </div>
+                      <div className="mt-1.5 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void runCommand(i)}
+                          disabled={busy}
+                          className="inline-flex items-center gap-1 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium px-2.5 py-1 transition disabled:opacity-50"
+                        >
+                          <Check size={13} /> Do it
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => cancel(i)}
+                          disabled={busy}
+                          className="rounded-md border border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 text-xs font-medium px-2.5 py-1 transition disabled:opacity-50"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {/* Take-me-there: after a create, offer a jump to the new
                       record instead of leaving the user to go hunt for it. Only
                       when the entity kind has a detail route. */}
@@ -972,7 +1470,25 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
                   {/* An EXECUTED write (confirmed or auto-applied): the change-
                       ledger makes it reversible — Undo restores the before-image
                       (a recreated delete gets a new id, said honestly). */}
-                  {m.ledgerId && m.undoable && !m.undone && (
+                  {/* The offer. It appears only after an undo has already told
+                      the person what it left and why, and it names the count so
+                      the second press is a decision, not a repeat of the first. */}
+                  {m.offerForceTurnId && !m.undone && (
+                    <div className="mt-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const at = messages.findIndex((x) => x.undoTurnId === m.offerForceTurnId);
+                          if (at >= 0) void undoWrite(at, true);
+                        }}
+                        disabled={undoMut.isPending}
+                        className="rounded-md border border-line dark:border-slate-600 text-muted dark:text-slate-400 hover:text-ember-500 hover:border-ember-400 text-[11px] font-medium px-2 py-0.5 transition disabled:opacity-50"
+                      >
+                        {m.offerForceCount === 1 ? "Take that one back too" : `Take those ${m.offerForceCount} back too`}
+                      </button>
+                    </div>
+                  )}
+                  {(m.ledgerId || (m.ledgerIds?.length ?? 0) > 0) && m.undoable && !m.undone && (
                     <div className="mt-1.5">
                       <button
                         type="button"
@@ -980,7 +1496,13 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
                         disabled={undoMut.isPending}
                         className="rounded-md border border-line dark:border-slate-600 text-muted dark:text-slate-400 hover:text-ember-500 hover:border-ember-400 text-[11px] font-medium px-2 py-0.5 transition disabled:opacity-50"
                       >
-                        ↩ Undo
+                        {undoing?.idx === i
+                          ? m.undoTurnId
+                            ? `Putting back ${undoing.total}…`
+                            : `Putting back ${undoing.done + 1} of ${undoing.total}…`
+                          : (m.ledgerIds?.length ?? 0) > 1
+                            ? `↩ Undo all ${m.ledgerIds!.length}`
+                            : "↩ Undo"}
                       </button>
                     </div>
                   )}
@@ -1013,19 +1535,95 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
                 wait, instead of a generic dot. Deliberately small and static —
                 he shows up because something is happening, and leaves when it
                 stops. */}
+            {/* Cobb, answering before the question was even sent.
+                It is HIM talking, in his own bubble, where his answers appear —
+                not a widget bolted to the composer. Green because it has to be
+                tellable apart from a real reply at a glance: this one came from
+                the workspace itself, costs nothing, and is already true, so a
+                reader should never have to wonder which kind of answer they are
+                looking at. */}
+            {peek && !busy && (
+              <div className="flex items-end gap-3">
+                <Cobb pose="idea" size={46} title="Cobb already knows" className="cobb-lift shrink-0" />
+                <div className="cobb-bubble cobb-bubble-sm relative rounded-lg px-3 py-2 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900">
+                  {/* The guide's answers are written as prose with bullets and
+                      bold, the way his real replies are; the other two are one
+                      short line, and marching them through a markdown renderer
+                      would only cost them their crispness. */}
+                  {peek.from === "guide" ? (
+                    <div className="prose prose-sm dark:prose-invert max-w-none prose-p:my-1.5 prose-ul:my-1.5 prose-li:my-0.5 break-words text-emerald-800 dark:text-emerald-300 prose-strong:text-emerald-900 dark:prose-strong:text-emerald-200">
+                      <ReactMarkdown>{peek.answer}</ReactMarkdown>
+                    </div>
+                  ) : (
+                    <div className="text-sm font-medium text-emerald-800 dark:text-emerald-300">{peek.answer}</div>
+                  )}
+                  {peek.detail && (
+                    <div className="text-[11px] text-emerald-700/80 dark:text-emerald-400/70">{peek.detail}</div>
+                  )}
+                  {/* Say which, honestly: the page's own state and a read of
+                      your records are different claims, and one of them is not
+                      about your data at all. */}
+                  <div className="mt-0.5 text-[10px] text-emerald-700/60 dark:text-emerald-400/50">
+                    {peek.from === "page"
+                      ? "from the page you are on, no AI used"
+                      : peek.from === "guide"
+                        ? "from what Cobb already knows, no AI used"
+                        : "straight from your workspace, no AI used"}
+                  </div>
+                </div>
+              </div>
+            )}
             {busy && (
               <div className="flex items-center gap-3">
                 <Cobb pose="working" size={52} title="Cobb, at work" className="cobb-lift shrink-0" />
                 {/* The "…" is HIS speech bubble (tail pointing back at him), not
                     a widget that happens to sit nearby — same device as the
                     Build greeting, in miniature. */}
-                {/* What he is doing, not just that he is doing something. The
-                    persisted turn streams progress ("Reading: list records…"),
-                    so a 90-second turn reads as work rather than as a hang.
-                    Falls back to "…" for the first instant before the first
-                    event and for the basic (no-AI) path. */}
-                <div className="cobb-bubble cobb-bubble-sm relative rounded-lg px-3 py-2 bg-subtle dark:bg-slate-800 text-faint text-sm" aria-live="polite">
-                  {progress ?? "…"}
+                {/* Everything he has done, not just the latest word for it.
+                    A single replaced line meant a 90-second turn showed
+                    "Thinking" for a minute and a half while every step that
+                    would have explained the wait scrolled past invisibly. The
+                    list keeps them, the last one ticks along with the clock,
+                    and the oldest fall off so it cannot grow past the panel. */}
+                <div className="cobb-bubble cobb-bubble-sm relative rounded-lg px-3 py-2 bg-subtle dark:bg-slate-800 text-sm min-w-0" aria-live="polite">
+                  {steps.length === 0 ? (
+                    <span className="text-faint">…</span>
+                  ) : (
+                    <ul className="space-y-0.5">
+                      {steps.slice(-5).map((st, i, shown) => (
+                        <li key={`${st.text}-${i}`} className="flex items-baseline gap-1.5 leading-snug">
+                          <span
+                            className={
+                              st.state === "done"
+                                ? "text-emerald-600 dark:text-emerald-400 shrink-0"
+                                : st.state === "failed"
+                                  ? "text-ember-500 shrink-0"
+                                  : "text-faint shrink-0"
+                            }
+                          >
+                            {st.state === "done" ? "✓" : st.state === "failed" ? "✗" : "›"}
+                          </span>
+                          <span className={st.state === "doing" ? "text-content dark:text-mortar-200" : "text-faint"}>
+                            {st.text}
+                            {/* The clock rides the CURRENT step only, and only
+                                once a wait is long enough to wonder about. */}
+                            {st.state === "doing" && i === shown.length - 1 && elapsed >= 3 && (
+                              <span className="ml-1 text-[10px] font-mono text-faint">{elapsed}s</span>
+                            )}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {/* The answer, as it is written. Once words are arriving the
+                      steps have said all they can, and this is the thing the
+                      person was waiting for. */}
+                  {streaming && (
+                    <div className="mt-1.5 pt-1.5 border-t border-line/60 dark:border-slate-700/60 text-content dark:text-mortar-200 whitespace-pre-wrap">
+                      {streaming}
+                      <span className="inline-block w-1.5 h-3.5 ml-0.5 align-[-1px] bg-cobble-500 animate-pulse" />
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -1034,19 +1632,117 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
             )}
           </div>
 
+          {/* Something this workspace already knows how to do fits what is
+              being typed. Offered, not taken: enter still sends to the AI, and
+              this is the cheaper door standing open beside it. */}
+          {suggestion && !busy && (
+            <div className="border-t border-line dark:border-slate-700 px-3 pt-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => void acceptSuggestion()}
+                className="w-full text-left rounded-md border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-2.5 py-1.5 hover:bg-cobble-100 dark:hover:bg-cobble-900/50 transition"
+              >
+                <span className="flex items-center gap-2">
+                  <Wand2 size={13} className="text-accent shrink-0" />
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-xs text-content dark:text-mortar-200 truncate">
+                      {/* A computed command's summary is a sentence and ends
+                          like one; a bound one is a fragment. Either way this
+                          reads as one line, not "…of each., no AI needed". */}
+                      {suggestion.summary.replace(/\.\s*$/, "")}, no AI needed
+                    </span>
+                    <span className="block text-[10px] font-mono text-faint dark:text-slate-500 truncate">
+                      {suggestion.template}
+                    </span>
+                  </span>
+                  <kbd className="shrink-0 text-[10px] font-mono text-faint dark:text-slate-500 border border-line dark:border-slate-600 rounded px-1">
+                    tab
+                  </kbd>
+                </span>
+              </button>
+            </div>
+          )}
+
+          {/* What you are pointing at, held where you can see it — and drop it.
+              A highlight is gone the moment the caret enters this box, so it is
+              captured as a chip instead of being read back at send-time. */}
+          {selection && (
+            <div className="border-t border-line dark:border-slate-700 px-3 pt-2 shrink-0">
+              <div className="inline-flex items-center gap-1.5 rounded-md border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-950/40 px-2 py-1 text-[11px] text-cobble-800 dark:text-cobble-200 max-w-full">
+                {/* Not "In context" — that is the vocabulary of the tool, not
+                    of the person using it. What the chip means is "this is what
+                    my next message is about". */}
+                <span className="shrink-0 opacity-70">About:</span>
+                <span className="truncate font-medium" title={selection.text ?? selection.label}>
+                  {selection.label}
+                  {/* The words, only when they add something. A highlight that
+                      resolved to a record already reads as its name. */}
+                  {selection.text && selection.text.trim() !== selection.label
+                    ? ` — “${selection.text.slice(0, 60)}${selection.text.length > 60 ? "…" : ""}”`
+                    : ""}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => clearChatSelection()}
+                  className="shrink-0 opacity-60 hover:opacity-100"
+                  title="Don't include this"
+                  aria-label="Remove from context"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="border-t border-line dark:border-slate-700 p-3 flex items-end gap-2 shrink-0">
             <textarea
               ref={taRef}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                setInput(e.target.value);
+                // Typing ends the walk through history: what is in the box is
+                // yours again, and Down should not drag an old draft back over it.
+                setHistory(stopBrowsing);
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
                   void send();
+                  return;
+                }
+                // Tab takes the free path when one is on offer. Only then: tab
+                // is how you leave a text box, and stealing it when there is
+                // nothing to accept would trap the keyboard.
+                if (e.key === "Tab" && suggestion && !e.shiftKey) {
+                  e.preventDefault();
+                  void acceptSuggestion();
+                  return;
+                }
+                // Up/Down recall the messages you sent. Only with a plain,
+                // collapsed caret: Shift+Up is a selection, Alt/Meta+Up is the
+                // platform's own word/document jump, and a caret mid-message
+                // must still move a line at a time.
+                const plain = !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey;
+                const el = e.currentTarget;
+                const collapsed = el.selectionStart === el.selectionEnd;
+                if (!plain || !collapsed) return;
+                if (e.key === "ArrowUp" && caretOnFirstLine(input, el.selectionStart)) {
+                  const back = recallOlder(history, input);
+                  if (!back) return; // nothing older — leave the key alone
+                  e.preventDefault();
+                  setHistory(back.state);
+                  showRecalled(back.value);
+                } else if (e.key === "ArrowDown" && caretOnLastLine(input, el.selectionStart)) {
+                  const forward = recallNewer(history);
+                  if (!forward) return;
+                  e.preventDefault();
+                  setHistory(forward.state);
+                  showRecalled(forward.value);
                 }
               }}
               rows={1}
               placeholder={seedPlaceholder ?? "Ask or tell me to do something… (Shift+Enter for a new line)"}
+              title="Enter sends, Shift+Enter starts a new line, ↑ and ↓ bring back what you sent before"
               // text-base (16px) on mobile so iOS Safari doesn't auto-zoom the
               // page on focus (any input <16px triggers the zoom, which then
               // strands you zoomed-in + cut off). sm:text-sm keeps the desktop look.

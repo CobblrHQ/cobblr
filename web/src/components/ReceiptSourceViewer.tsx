@@ -8,8 +8,9 @@
 // we then read that blob's content-type to pick the renderer.
 
 import { useEffect, useState } from "react";
+import { OverlayCloseButton } from "./OverlayCloseButton";
 import { createPortal } from "react-dom";
-import { X } from "lucide-react";
+
 import { useImageSrc, OverlayFlag } from "@cobblr/platform-web";
 import { api } from "../lib/api";
 
@@ -71,26 +72,37 @@ export function ReceiptSourceViewer({
       aria-label="Original receipt"
     >
       <OverlayFlag />
-      <button
-        onClick={onClose}
-        className="absolute z-10 top-3 right-3 p-2 rounded-full bg-black/50 text-white/90 hover:bg-black/70 hover:text-white transition"
-        title="Close (Esc)"
-        aria-label="Close"
-      >
-        <X size={20} />
-      </button>
-      <div className="flex-1 min-h-0 p-4 sm:p-6 flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+      <OverlayCloseButton onClose={onClose} />
+      {/* The dark surround closes; the DOCUMENT does not. This block used to
+          swallow the click itself, and it is flex-1 over the full width, so
+          "outside the receipt" was inside it and nothing but the X ever closed
+          the viewer (reported 2026-08-19). Each rendered document stops the
+          click on its own, which is the only part that should. */}
+      <div className="flex-1 min-h-0 p-4 sm:p-6 flex items-center justify-center">
         {rendered.kind === "loading" && (
           <div className="text-white/50 text-sm">Loading…</div>
         )}
         {rendered.kind === "image" && (
-          <img src={rendered.url} alt="Original receipt" className="max-w-full max-h-full object-contain rounded shadow-2xl" />
+          <img
+            src={rendered.url}
+            alt="Original receipt"
+            onClick={(e) => e.stopPropagation()}
+            className="max-w-full max-h-full object-contain rounded shadow-2xl"
+          />
         )}
         {rendered.kind === "pdf" && (
-          <iframe src={rendered.url} title="Original receipt" className="w-full h-full rounded bg-white" />
+          <iframe
+            src={rendered.url}
+            title="Original receipt"
+            onClick={(e) => e.stopPropagation()}
+            className="w-full h-full rounded bg-white"
+          />
         )}
         {rendered.kind === "text" && (
-          <pre className="w-full h-full overflow-auto rounded bg-white text-slate-800 text-xs leading-relaxed p-4 whitespace-pre-wrap break-words">
+          <pre
+            onClick={(e) => e.stopPropagation()}
+            className="w-full h-full overflow-auto rounded bg-white text-slate-800 text-xs leading-relaxed p-4 whitespace-pre-wrap break-words"
+          >
             {rendered.text}
           </pre>
         )}

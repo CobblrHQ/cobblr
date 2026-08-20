@@ -132,7 +132,7 @@ export function ConfigurationPage() {
                     blurb={meta.blurb}
                     count={items.length}
                     leaves={items}
-                    action={meta.action?.label}
+                    action={meta.action}
                   />
                 ))}
                 {panels.length > 0 && (
@@ -175,7 +175,10 @@ export function ConfigurationPage() {
 /** A section card. The leaf names are LINKS, not decoration: a frequent
  *  destination stays one click from the hub instead of becoming
  *  hub → section → leaf. */
-function SectionCard({
+/** Exported for ConfigurationPage.render.test.tsx, which renders the REAL card
+ *  to prove the action is a link. A test that mirrors the call site instead
+ *  would assert only its own markup. */
+export function SectionCard({
   to,
   icon,
   label,
@@ -190,19 +193,37 @@ function SectionCard({
   blurb: string;
   count: number;
   leaves: Array<{ label: string; to: string }>;
-  action?: string;
+  /** This section's one primary DO. Rendered as a real link in the header,
+   *  opposite the count — never in the leaf line below, which is a list of
+   *  places you GO (rule 3 in configuration-nav.ts). */
+  action?: { label: string; to: string };
 }) {
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 hover:border-cobble-300 dark:hover:border-cobble-700 transition">
-      <Link to={to} className="flex items-center gap-2.5">
-        <span className="w-8 h-8 rounded-lg bg-accent/10 text-accent grid place-items-center shrink-0">
-          {icon}
-        </span>
-        <div className="font-medium text-content dark:text-mortar-100">{label}</div>
-        <span className="ml-auto text-[11px] font-mono text-faint dark:text-slate-500">
+      <div className="flex items-center gap-2.5">
+        <Link to={to} className="flex items-center gap-2.5 min-w-0">
+          <span className="w-8 h-8 rounded-lg bg-accent/10 text-accent grid place-items-center shrink-0">
+            {icon}
+          </span>
+          <div className="font-medium text-content dark:text-mortar-100 truncate">{label}</div>
+        </Link>
+        {/* Beside the TITLE, not out at the right edge. It acts on this
+            section, so it reads as "Build → new category"; floated right it
+            competed with the count for the same corner and belonged to
+            neither. Amber fill because it is the one thing on this card you
+            DO — the border-only version sat back far enough to be missed. */}
+        {action && (
+          <Link
+            to={action.to}
+            className="shrink-0 rounded-md bg-amber-100 dark:bg-amber-500/20 text-amber-800 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-500/30 px-2 py-0.5 text-xs font-medium transition"
+          >
+            {action.label}
+          </Link>
+        )}
+        <span className="ml-auto text-[11px] font-mono text-faint dark:text-slate-500 shrink-0">
           {count}
         </span>
-      </Link>
+      </div>
       <Link to={to} className="block">
         <p className="mt-2 text-sm text-content dark:text-mortar-200">{blurb}</p>
       </Link>
@@ -215,11 +236,6 @@ function SectionCard({
             </Link>
           </span>
         ))}
-        {action && (
-          <span className="ml-1.5 inline-block rounded bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 text-[10px] font-semibold align-middle">
-            {action}
-          </span>
-        )}
       </div>
     </div>
   );

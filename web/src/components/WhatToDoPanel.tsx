@@ -693,6 +693,22 @@ export function WhatToDoPanel({
         )}
       </div>
 
+      {/* OUTSIDE the collapsible body on purpose. This used to sit inside `showBody`,
+          so on any workspace with content the panel starts collapsed and the AI notice
+          vanished entirely: a workspace with AI switched off said nothing at all on the
+          dashboard. Whether AI is on is status, not onboarding, so it does not collapse
+          with the guided flow. */}
+      <AiOffNotice status={aiStatus} compact>
+        {/* Situation, then the ask. Two earlier versions failed differently: the
+            original opened on "AI isn't connected, matching runs in basic mode", which
+            reads as a broken install; the replacement was accurate but four sentences of
+            reassurance nobody finishes. Reassure in the first clause, ask in the second,
+            and keep "free" in the sentence because it is the fact most likely to change
+            someone's mind. */}
+        <strong>Scanning already works without AI.</strong>{" "}
+        Connect a free model to identify anything from a photo, and to use the builder
+        below.{" "}
+      </AiOffNotice>
       {showBody && (<>
       {/* Capture-first: the reactive add/capture surface is the hero, a short
           tracker strip sits under it, and the two browse columns (building
@@ -971,11 +987,6 @@ export function WhatToDoPanel({
         </div>
       )}
 
-      {/* One shared AI-honesty pattern (redesign A1): say basic-mode up front. */}
-      <AiOffNotice status={aiStatus} compact>
-        <strong>AI isn't connected - matching runs in basic mode.</strong>{" "}
-        Common things still find a home by keywords; connect AI to identify anything (and to use the builder below).{" "}
-      </AiOffNotice>
 
       <Link to="/bundles" className="inline-block text-xs text-faint dark:text-slate-400 hover:text-accent transition">
         browse all bundles →

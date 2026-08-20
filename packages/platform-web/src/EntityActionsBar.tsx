@@ -5,10 +5,14 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { usePlatformWeb, useFlowHost } from "./context";
+import { AskCobbAbout } from "./AskCobbAbout";
 import { printDirectiveOf, runPrintDirective } from "./print-directive";
 import type { PlatformAction, PlatformActionBinding } from "./types";
 
 interface Props {
+  /** What this record is called, for the "ask Cobb about it" chip. Without it
+   *  the button still works; the chip just says the kind. */
+  entityLabel?: string;
   entityKind: string;
   entityId: string;
   className?: string;
@@ -20,7 +24,7 @@ interface Props {
   excludeActionIds?: string[];
 }
 
-export function EntityActionsBar({ entityKind, entityId, className, excludeActionIds }: Props) {
+export function EntityActionsBar({ entityKind, entityId, entityLabel, className, excludeActionIds }: Props) {
   const { api, orgSlug } = usePlatformWeb();
   const { data } = useQuery({
     queryKey: ["platform-actions", orgSlug, entityKind],
@@ -44,9 +48,17 @@ export function EntityActionsBar({ entityKind, entityId, className, excludeActio
       !excluded.has(a.id),
   );
   const visibleBindings = bindings.filter((b) => !excluded.has(b.action_id));
-  if (actions.length === 0 && visibleBindings.length === 0) return null;
+  // The Cobb button rides in the SAME cluster as the record's other actions,
+  // and rides alone when there are none: a detail page with no actions is
+  // still a record you might want to ask about, and it is the one place a
+  // checkbox cannot say "this one" for you.
+  const ask = <AskCobbAbout kind={entityKind} id={entityId} label={entityLabel ?? "this"} />;
+  if (actions.length === 0 && visibleBindings.length === 0) {
+    return <div className={`flex flex-wrap gap-2 ${className ?? ""}`}>{ask}</div>;
+  }
   return (
     <div className={`flex flex-wrap gap-2 ${className ?? ""}`}>
+      {ask}
       {actions.map((a) => (
         <ActionButton
           key={a.id}

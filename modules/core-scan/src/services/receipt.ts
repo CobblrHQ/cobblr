@@ -41,13 +41,35 @@ const SCHEMA_INSTRUCTION =
   "Reply with ONLY a JSON object, no prose:\n" +
   '{"vendor":<string|null>,"order_ref":<string|null>,"date":<"YYYY-MM-DD"|null>,"currency":<ISO-4217 code|null>,' +
   '"total":<number|null grand total>,"items":[{"description":<string>,"qty":<number>,' +
-  '"unit_price":<number|null>,"line_total":<number|null>}]}\n' +
-  "One entry per PURCHASED line item. Skip subtotal / tax / shipping / discount / " +
-  "total rows — capture the grand total in \"total\" instead. qty defaults to 1 when " +
+  '"unit_price":<number|null>,"line_total":<number|null>,"discount":<number|null>,' +
+  '"code":<string|null>}]}\n' +
+  "One entry per PURCHASED line item. Skip subtotal / tax / shipping / total rows — " +
+  "capture the grand total in \"total\" instead. qty defaults to 1 when " +
   "no count is shown. Prices are numbers only (strip currency symbols and thousands " +
   'separators). "order_ref" is the order/invoice/confirmation number if the receipt ' +
   "states one (the bare identifier only, e.g. \"384602\" not \"Order #384602\"). " +
-  "Use null for anything not printed on the receipt.";
+  "Use null for anything not printed on the receipt.\n" +
+  // A coupon is not a thing anyone owns, so it must never become an item of its
+  // own; but dropping it silently records the shopper paying the pre-coupon
+  // price, which is simply wrong. It belongs to the line it discounts.
+  "A COUPON or DISCOUNT line printed beneath an item (\"Points Coupon -0.49\", " +
+  '"Member Savings -1.00") belongs to THAT item: add its amount to that item\'s ' +
+  '"discount" as a positive number, and never give it an entry of its own. Two ' +
+  "coupons under one item add together. Leave \"line_total\" as the price the item " +
+  "was rung up at, before the coupon. A discount applying to the WHOLE order " +
+  "rather than to one item is not an item either — leave it out; the grand total " +
+  "already accounts for it.\n" +
+  "The items you return, each less its own discount, should add up to the " +
+  "subtotal printed on the receipt. If they do not, you have missed a line or a " +
+  "coupon — re-read it.\n" +
+  // Supermarket tills print the product's own UPC beside the description. It is
+  // the single most useful thing on the line — it resolves to a real catalog
+  // name and picture — and it was being thrown away.
+  '"code" is the product number printed ON that line (a UPC/EAN/PLU, digits ' +
+  "only, no spaces), when the receipt shows one. Read it verbatim, never guess " +
+  "or complete a partial one, and leave it null when the line shows no code. Do " +
+  "NOT put the receipt's own transaction, store, terminal or survey numbers " +
+  "here: those belong to the visit, not to an item.";
 
 /** Shape a model's (possibly messy) JSON reply into a ParsedReceipt. Pure +
  *  tolerant (first JSON object, price coercion, blank-line drop) so it's
@@ -95,6 +117,17 @@ async function chatExtract(orgId: string, text: string, sourceId: string, userId
   return aiText(r);
 }
 
+/** The exact instruction the image tier sends to the model.
+ *
+ *  Exported because the recorded receipt fixtures are captured against it: the
+ *  recorder sends THIS string and the replay test asserts its cassette was
+ *  recorded from THIS string. Editing the prompt then fails the test with
+ *  "re-record" rather than silently replaying an answer to a question that is
+ *  no longer being asked. One definition, two readers. */
+export const RECEIPT_VISION_PROMPT =
+  "This is a photo of a purchase receipt or invoice. Read it and extract its line items. " +
+  SCHEMA_INSTRUCTION;
+
 async function visionExtract(
   orgId: string,
   imageB64: string,
@@ -109,9 +142,7 @@ async function visionExtract(
     input: {
       image_b64: imageB64,
       image_media_type: mediaType,
-      prompt:
-        "This is a photo of a purchase receipt or invoice. Read it and extract its line items. " +
-        SCHEMA_INSTRUCTION,
+      prompt: RECEIPT_VISION_PROMPT,
     },
     source: { kind: "core-scan:receipt", id: sourceId },
   });

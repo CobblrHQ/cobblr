@@ -1,0 +1,5 @@
+# Cassettes a test writes at run time (its ids are per-run, so it cannot be a
+# committed fixture). Ignored so a run that dies mid-test cannot leave one
+# behind to be committed, where every later run would read it as a fixture and
+# nobody would know where it came from.
+runtime-*.json

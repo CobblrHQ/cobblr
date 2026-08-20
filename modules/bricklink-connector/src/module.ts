@@ -44,7 +44,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "bricklink-connector",
-  version: "0.2.0",
+  version: "0.2.1",
   displayName: "BrickLink",
   description:
     "Import BrickLink wanted-list XML + order CSVs; diff a wanted list against your Lego inventory. Built for the Lego workspace use case.",
@@ -69,6 +69,7 @@ export default defineModule({
     actions: [
       {
         id: "bricklink:disassemble-kit",
+        examples: ["break that set into its parts", "part out this kit"],
         label: "Disassemble into parts",
         description:
           "Expand a Lego kit (an inventory:part matched to a Rebrickable set) into its constituent parts. Reads the lego.bom / lego.part catalogs (semantic types), creates one part per BOM row via inventory:create-items, writes a `matches` pairing to each Rebrickable part entry + a `derived-from` pairing back to the kit, and flips the kit's metadata.lifecycle to 'parted-out' via inventory:update-item. Requires the BOM catalog loaded (node scripts/seed-rebrickable.mjs --include-bom). Lives in the Lego domain module, not generic inventory.",

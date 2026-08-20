@@ -3,7 +3,7 @@
 // invites with copy-link/revoke. A small form at the bottom mints
 // a new invite link.
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, Plus, Trash2, X } from "lucide-react";
 import {
@@ -22,12 +22,17 @@ interface Props {
   open: boolean;
   onClose: () => void;
   slug: string;
+  /** Arrive with a particular part of this page as the subject. "invite"
+   *  focuses and scrolls to the create-invite form, which is what a
+   *  "+ Invite someone" entry point means — the list is still above it, so
+   *  the invite you just made appears where you are already looking. */
+  focus?: "invite";
 }
 
 const ROLES: OrgMembership["role"][] = ["owner", "admin", "editor", "member", "guest"];
 const INVITE_ROLES: OrgMembership["role"][] = ["admin", "editor", "member", "guest"];
 
-export function MembersModal({ open, onClose, slug, inline, chromeless }: Props) {
+export function MembersModal({ open, onClose, slug, inline, chromeless, focus }: Props) {
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
@@ -70,6 +75,17 @@ export function MembersModal({ open, onClose, slug, inline, chromeless }: Props)
   // Platform invite: optionally seed the invitee's brand-new workspace with a
   // copy of THIS workspace's setup (its blueprint — config only, no data).
   const [seedFromHere, setSeedFromHere] = useState(false);
+  const inviteRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!open || focus !== "invite") return;
+    // After the lists paint, or the scroll lands on a shorter page than the
+    // one that exists a tick later.
+    const t = setTimeout(() => {
+      inviteRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+      inviteRef.current?.focus();
+    }, 120);
+    return () => clearTimeout(t);
+  }, [open, focus]);
 
   const createInvite = useMutation({
     mutationFn: () =>
@@ -348,6 +364,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless }: Props)
                   Email {inviteKind === "platform" ? "(optional)" : "hint (optional)"}
                 </span>
                 <input
+                  ref={inviteRef}
                   type="email"
                   value={inviteEmail}
                   onChange={(e) => setInviteEmail(e.target.value)}

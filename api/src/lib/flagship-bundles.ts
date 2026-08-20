@@ -72,6 +72,7 @@ export interface BundleTarget {
 interface RawManifest {
   id?: string;
   name?: string;
+  scan_keywords?: unknown;
   field_defs?: Array<Record<string, unknown>>;
   provides_instances?: Array<Record<string, unknown>>;
   [k: string]: unknown;
@@ -194,6 +195,28 @@ function fieldRoleAxes(defs: Array<Record<string, unknown>> | undefined): {
   };
 }
 
+/** The words a bundle says its items are called.
+ *
+ *  A bundle's pick has to be lexically corroborated before it is trusted (see
+ *  demoteUncorroboratedBundlePick): the capture's text must plausibly match the
+ *  entry's noun, keywords, field names or choices, so a model cannot sweep
+ *  unrelated things into a themed table on a whim. That works for a bundle whose
+ *  noun IS the word — a "printer" table and a capture saying "printer" — and
+ *  fails completely for a category whose members never share its name. Nothing
+ *  called Tomatoes Roma, Croissant or 16in Cheese Pizza contains the word
+ *  "grocery", so every one of them was demoted to plain Inventory with "nothing
+ *  in the item text ties it to Groceries" (reported 2026-08-19).
+ *
+ *  The type has carried `scan_keywords` all along and nothing ever filled it:
+ *  the only writer was a per-workspace override somebody had to configure by
+ *  hand. A bundle knows its own vocabulary, so it says so, and the words stay in
+ *  the bundle where the domain belongs rather than in core. */
+function keywordsOf(src: unknown): string[] | undefined {
+  if (!Array.isArray(src)) return undefined;
+  const out = src.filter((k): k is string => typeof k === "string" && k.trim() !== "").map((k) => k.trim());
+  return out.length ? out : undefined;
+}
+
 export function flagshipBundleMenu(): BundleMenuEntry[] {
   const out: BundleMenuEntry[] = [];
   // "suggested" = core only. An `extended` bundle stays installable from the
@@ -215,8 +238,11 @@ export function flagshipBundleMenu(): BundleMenuEntry[] {
           noun: String(pi.item_noun || pi.display_name || instName).toLowerCase(),
           label: String(pi.display_name || m.name || instName),
           fields: mapFields(pi.field_defs as Array<Record<string, unknown>> | undefined),
-          ...(Array.isArray(pi.scan_keywords) && pi.scan_keywords.length
-            ? { scan_keywords: (pi.scan_keywords as unknown[]).map(String) }
+          // The instance's own words, else the bundle's. Only the first half
+          // existed, which is why a bundle that SKINS a module default rather
+          // than providing an instance — Groceries — had no way to say them.
+          ...(keywordsOf(pi.scan_keywords) ?? keywordsOf(m.scan_keywords)
+            ? { scan_keywords: (keywordsOf(pi.scan_keywords) ?? keywordsOf(m.scan_keywords))! }
             : {}),
           ...fieldRoleAxes(pi.field_defs as Array<Record<string, unknown>> | undefined),
           bundle_external_id: id,
@@ -241,6 +267,7 @@ export function flagshipBundleMenu(): BundleMenuEntry[] {
         kind,
         noun: String(m.name ?? moduleName).toLowerCase(),
         label: String(m.name ?? kind),
+        ...(keywordsOf(m.scan_keywords) ? { scan_keywords: keywordsOf(m.scan_keywords)! } : {}),
         fields: mapFields(defs),
         ...fieldRoleAxes(defs),
         bundle_external_id: id,

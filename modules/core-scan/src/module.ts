@@ -16,7 +16,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-scan",
-  version: "0.47.5",
+  version: "0.47.7",
   displayName: "Scan",
   description:
     "Scan a barcode or take a photo of a thing; end up with a draft inventory row, pre-filled with the resolved name + brand + catalog photo. One tap to commit.",
@@ -104,6 +104,7 @@ export default defineModule({
     ],
     actions: [
       {
+        // NO-PHRASING: the scan pipeline's own step; a person asking to identify something means core-scan:identify
         id: "core-scan:identify-photo",
         label: "Identify a scanned photo",
         description:
@@ -117,6 +118,7 @@ export default defineModule({
         userInvokable: false,
       },
       {
+        // NO-PHRASING: an internal ranking step between enrichment and the draft; there is no sentence for it
         id: "core-scan:rank-catalog-photo",
         label: "Pick the best catalog photo",
         description:
@@ -131,6 +133,7 @@ export default defineModule({
       },
       {
         id: "core-scan:identify",
+        examples: ["what is this thing", "identify this for me"],
         label: "Identify a thing",
         description:
           "PURE 'what is this?': from a photo and/or captured measurements + observations. Returns the suggestion ({ name, brand, category, confidence }); writes nothing. A capture app calls it and decides whether to use the suggestion or keep its own name. User-invokable. Args: { image_file_id?, measurements?, observations? }.",

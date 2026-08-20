@@ -207,6 +207,7 @@ export function ApiRecipesPage() {
     isInstanceKind(k) ? k.display_name : (moduleName.get(k.module_name) ?? k.module_name);
 
   // Nothing selected by default — you pick what your script touches.
+  // SELECTION-NOT-CONTEXT: documentation snippets, not workspace records
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [kindFilter, setKindFilter] = useState("");
   const [lang, setLang] = useState<Lang>("curl");

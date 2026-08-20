@@ -22,6 +22,8 @@
 //     switch. They live here now, next to everything else about AI.
 
 import { useMemo, useState } from "react";
+import { CredentialInput } from "../components/CredentialInput";
+import { ProviderSetupSteps } from "../components/ProviderSetupSteps";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Info, Pencil, Play, Plus, Sparkles, Trash2 } from "lucide-react";
@@ -102,7 +104,7 @@ export function AiPage() {
           providers configured" on a workspace whose AI was working, powered by
           a shared personal connection. Reading the canonical status means this
           page cannot contradict the rest of the app again. */}
-      <AiAvailabilityBanner />
+      <AiAvailabilityBanner onAdd={() => setAdding(true)} />
 
       {/* ONE list of everything that can power AI here, whatever it came from.
           Splitting workspace keys from shared personal connections made the
@@ -403,10 +405,28 @@ function ProviderAddModal({
         credentials: creds,
         monthly_budget_cents: budget.trim() === "" ? null : Math.round(Number(budget) * 100),
       }),
-    onSuccess: () => {
-      toast.success("Provider added.");
+    // Test it immediately, rather than leaving the person to find the unlabelled play
+    // icon on the row. A key is only wrong in ways you cannot see: a real user pasted a
+    // whole curl command in, it saved happily, and the first sign of trouble would have
+    // been a failed scan much later with a provider error nobody can read.
+    onSuccess: async (created) => {
       void qc.invalidateQueries({ queryKey: ["ai-providers", activeSlug] });
       onClose();
+      const id = (created as { id?: string } | undefined)?.id;
+      if (!id) {
+        toast.success("Provider added.");
+        return;
+      }
+      toast.success("Provider added. Testing the connection...");
+      try {
+        const r = await api.testAiProvider(activeSlug, id);
+        // The provider IS saved either way; a failed test is a fixable detail, not a
+        // reason to have thrown the credentials away.
+        if (r.ok) toast.success(r.note ?? "Connection works.");
+        else toast.error(`Saved, but the test failed: ${r.error ?? "unknown error"}. Edit it to fix the key.`);
+      } catch (e) {
+        toast.error(`Saved, but the test could not run: ${e instanceof ApiError ? e.message : String(e)}`);
+      }
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -451,12 +471,13 @@ function ProviderAddModal({
             className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
           />
         </div>
+        {picked?.setup && <ProviderSetupSteps setup={picked.setup} />}
         {picked &&
           Object.entries(picked.credentials).map(([key, d]) => (
             <div key={key}>
-              <label className="block text-sm font-medium mb-1">{d.label}</label>
               {d.choices ? (
                 <>
+                  <label className="block text-sm font-medium mb-1">{d.label}</label>
                   <select
                     value={creds[key] ?? ""}
                     onChange={(e) => setCreds({ ...creds, [key]: e.target.value })}
@@ -471,11 +492,12 @@ function ProviderAddModal({
                   {key === "transit" && (creds[key] ?? "").startsWith("bridge") && <WorkspaceBridgeHint />}
                 </>
               ) : (
-                <input
-                  type={d.secret ? "password" : "text"}
+                <CredentialInput
+                  fieldKey={key}
+                  label={d.label}
+                  secret={!!d.secret}
                   value={creds[key] ?? ""}
-                  onChange={(e) => setCreds({ ...creds, [key]: e.target.value })}
-                  className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900 font-mono"
+                  onChange={(v) => setCreds({ ...creds, [key]: v })}
                 />
               )}
             </div>
@@ -591,9 +613,9 @@ function ProviderEditModal({
         {updateCreds &&
           Object.entries(def.credentials).map(([key, d]) => (
             <div key={key}>
-              <label className="block text-sm font-medium mb-1">{d.label}</label>
               {d.choices ? (
                 <>
+                  <label className="block text-sm font-medium mb-1">{d.label}</label>
                   <select
                     value={creds[key] ?? ""}
                     onChange={(e) => setCreds({ ...creds, [key]: e.target.value })}
@@ -608,11 +630,12 @@ function ProviderEditModal({
                   {key === "transit" && (creds[key] ?? "").startsWith("bridge") && <WorkspaceBridgeHint />}
                 </>
               ) : (
-                <input
-                  type={d.secret ? "password" : "text"}
+                <CredentialInput
+                  fieldKey={key}
+                  label={d.label}
+                  secret={!!d.secret}
                   value={creds[key] ?? ""}
-                  onChange={(e) => setCreds({ ...creds, [key]: e.target.value })}
-                  className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900 font-mono"
+                  onChange={(v) => setCreds({ ...creds, [key]: v })}
                 />
               )}
             </div>
@@ -815,7 +838,7 @@ function CapabilityDefaultModal({
  *  scan / match / build surfaces tell the same user. `reason` distinguishes an
  *  operator kill-switch and an entitlement problem from "nothing set up", which
  *  matters because only the last one is fixable on this page. */
-function AiAvailabilityBanner() {
+function AiAvailabilityBanner({ onAdd }: { onAdd?: () => void }) {
   const { activeSlug, activeOrg } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
@@ -855,7 +878,10 @@ function AiAvailabilityBanner() {
         ? "An operator has turned AI off for this whole server."
         : status.reason === "not_entitled"
           ? "This workspace's plan does not include AI."
-          : "Nothing is connected yet. Add a workspace key below, or share a personal connection from your account.";
+          : "Everything else still works: scanning files things by keyword, and nothing " +
+            "else in the workspace depends on AI. Connecting a model adds identifying an " +
+            "item from a photo, chat, and the app builder. Add a key for the whole " +
+            "workspace below, or share a personal connection from your account.";
   // When it's off but AI WOULD work if re-enabled (the plan or a connected
   // workspace key would serve it), say so plainly so the switch reads as a
   // choice, not a dead end.
@@ -882,6 +908,20 @@ function AiAvailabilityBanner() {
               <Sparkles className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
               {enableHint}
             </p>
+          )}
+          {/* The door, in the place that just said the room is empty. "Add a key below"
+              asked someone to go looking for a form further down a long page. */}
+          {canEdit && onAdd && status.reason !== "operator_disabled" && !enableHint && (
+            <button
+              type="button"
+              onClick={onAdd}
+              className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-line dark:border-slate-600
+                         bg-surface dark:bg-slate-900 px-3 py-1.5 text-xs font-medium
+                         hover:border-accent transition"
+            >
+              <Plus className="h-3.5 w-3.5" /> Connect a model
+              <span className="text-muted font-normal">- the first option is free</span>
+            </button>
           )}
         </div>
       )}

@@ -10,7 +10,7 @@
 // Shares ViewCreate with the HTTP route, so what counts as a valid view cannot
 // mean one thing when a person saves one and another when the assistant does.
 
-import { platform } from "@cobblr/platform-contract";
+import { platform, readJsonArg } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import { ViewCreate } from "./views.js";
 import type { CoreViewsDB } from "../db.js";
@@ -45,9 +45,13 @@ export function registerViewsHandlers(): void {
       entity_kind: typeof args.entity_kind === "string" ? args.entity_kind.trim() : "",
       name: typeof args.name === "string" ? args.name.trim() : "",
       view_type: viewType,
-      ...(args.config && typeof args.config === "object"
-        ? { config: args.config as Record<string, unknown> }
-        : {}),
+      // readJsonArg, not a typeof check: the same `config` arrives as an
+      // object from invoke_action and as JSON text from a wire's arg field,
+      // and the typeof check silently discarded the second.
+      ...(() => {
+        const config = readJsonArg<Record<string, unknown>>(args, "config");
+        return config && typeof config === "object" ? { config } : {};
+      })(),
       ...(typeof args.pinned === "boolean" ? { pinned: args.pinned } : {}),
       // A view made on request is for the workspace, not squirrelled away as the
       // private view of whoever happened to be talking to the assistant.

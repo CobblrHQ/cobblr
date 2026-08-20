@@ -159,7 +159,14 @@ const Schema = z.object({
   //    POST /admin/backfill); required for the backfill pass to run.
   //  • COBBLR_DEPLOYMENT — this surface's stable id in the identity map
   //    (deployment_links), e.g. "try" or the hosted deployment. Defaults to COBBLR_ENV.
+  //  • IDENTITY_PUBLIC_URL — the identity service as a BROWSER must reach it. Optional;
+  //    defaults to IDENTITY_URL. These differ whenever the account service is reachable
+  //    on a LAN address from the api but only over its public hostname from a visitor's
+  //    browser, which is the normal hosted shape — and getting it wrong sends every
+  //    visitor who clicks "Continue with your … account" to an address that does not
+  //    resolve for them.
   IDENTITY_URL: z.string().optional(),
+  IDENTITY_PUBLIC_URL: z.string().optional(),
   IDENTITY_ISSUER: z.string().default("cobblr-identity"),
   IDENTITY_AUDIENCE: z.string().default("cobblr"),
   IDENTITY_ADMIN_TOKEN: z.string().optional(),

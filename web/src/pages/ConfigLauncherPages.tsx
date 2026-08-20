@@ -12,15 +12,21 @@
 
 import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { Boxes, FolderPlus, Users } from "lucide-react";
+import { FolderPlus } from "lucide-react";
 import { ModulePickerModal } from "../components/ModulePickerModal";
 import { MembersModal } from "../components/MembersModal";
 import { NewThingFunnelModal } from "../components/NewThingFunnelModal";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { usePageTitle } from "@cobblr/platform-web";
 
-/** Shared heading so these three match the pages either side of them in their
- *  section. The breadcrumb above them comes from ConfigurationLayout. */
+/** A heading for a launcher route the settings shell does NOT know about.
+ *
+ *  ConfigPageHeader draws the header for every route in CONFIG_DESTINATIONS,
+ *  which is why a page must not draw its own — Modules and Members both did,
+ *  and both printed their title twice (caught 2026-08-20, and the exact defect
+ *  ConfigPageHeader's own comment says it was written to end). Use this ONLY on
+ *  a route with no registry entry, like /configuration/new-thing.
+ *  ConfigurationPage.render.test.tsx enforces that. */
 function PageHead({ icon, title, blurb }: { icon: ReactNode; title: string; blurb: string }) {
   return (
     <div className="border-b border-line dark:border-slate-700 pb-3 mb-4">
@@ -37,11 +43,6 @@ export function ConfigModulesPage() {
   const navigate = useNavigate();
   return (
     <div className="max-w-4xl mx-auto">
-      <PageHead
-        icon={<Boxes size={22} />}
-        title="Modules"
-        blurb="Turn capabilities on and off for this workspace."
-      />
       <ModulePickerModal
         open
         inline
@@ -52,26 +53,29 @@ export function ConfigModulesPage() {
   );
 }
 
-export function ConfigMembersPage() {
-  usePageTitle("Members");
+export function ConfigMembersPage({ focus }: { focus?: "invite" } = {}) {
+  usePageTitle(focus === "invite" ? "Invite someone" : "Members");
   const navigate = useNavigate();
   const { activeSlug } = useActiveOrg();
   return (
     <div className="max-w-4xl mx-auto">
-      <PageHead
-        icon={<Users size={22} />}
-        title="Members & invites"
-        blurb="Invite people to this workspace, change roles, revoke access."
-      />
       <MembersModal
         open
         inline
         chromeless
+        focus={focus}
         slug={activeSlug ?? ""}
         onClose={() => navigate("/configuration/s/people")}
       />
     </div>
   );
+}
+
+/** Same page, arriving at the invite form. A section's action must land
+ *  somewhere its leaf does not (see configuration-revamp.md, "Section
+ *  actions"), and "Members & invites" is already the leaf for the list. */
+export function ConfigInvitePage() {
+  return <ConfigMembersPage focus="invite" />;
 }
 
 export function ConfigNewThingPage() {

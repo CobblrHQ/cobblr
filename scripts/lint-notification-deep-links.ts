@@ -44,14 +44,19 @@ function walk(dir: string, out: string[] = []): string[] {
 
 /** Predates the rule. Each is a settings/list surface where there may be no
  *  single record to point at — left alone rather than guessed at from outside
- *  the module that owns it. New code does not get this. */
+ *  the module that owns it. New code does not get this.
+ *
+ *  Keyed by file + the route itself, NOT by line number: a line-keyed baseline
+ *  silently un-exempts its own entries the moment anyone inserts code above
+ *  them, and then fails a PR that never touched the notification (it did,
+ *  2026-08-21, on a 20-line insertion two hundred lines higher). A route that
+ *  is genuinely new in one of these files still gets caught, because the key
+ *  carries the route. */
 const BASELINE = new Set([
-  "modules/digifab/src/notify.ts:82",
-  "api/src/platform/notifications.ts:218",
-  "api/src/routes/me.ts:1011",
-  "api/src/routes/me.ts:1224",
-  "api/src/routes/super-admin.ts:2038",
-  "api/src/routes/super-admin.ts:2273",
+  "modules/digifab/src/notify.ts:/configuration/farm",
+  "api/src/platform/notifications.ts:/me/notification-channels",
+  "api/src/routes/me.ts:/configuration/links",
+  "api/src/routes/super-admin.ts:/me/feedback",
 ]);
 
 const findings: string[] = [];
@@ -64,7 +69,7 @@ for (const file of walk(".") .concat(DIRS.flatMap((d) => walk(d)))) {
     // An explicit, reasoned exemption on the line above.
     const prev = (lines[i - 1] ?? "") + (lines[i - 2] ?? "");
     if (prev.includes("PAGE-LINK:")) return;
-    if (BASELINE.has(`${file}:${i + 1}`)) return;
+    if (BASELINE.has(`${file}:${m[1]}`)) return;
     findings.push(`  ${file}:${i + 1}  links to the page "${m[1]}", not to the record`);
   });
 }

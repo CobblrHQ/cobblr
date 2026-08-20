@@ -12,7 +12,8 @@
 //
 // Rule: a file under web/src/pages/ must not import from a sibling module
 // whose basename matches *Page (e.g. "./DigifabPage", "../pages/ScanPage").
-// Non-page co-located files (e.g. ./PrintUpdatesPanel) are fine.
+// Non-page co-located files (e.g. ./PrintUpdatesPanel) are fine, and so are
+// co-located *.test.tsx files — see the skip in the loop below.
 //
 // Baseline: scripts/page-imports-baseline.json freezes the KNOWN existing
 // imports (each is either deliberate page composition, like InstancePage
@@ -60,6 +61,13 @@ const IMPORT_RE = /from\s+["']([^"']+)["']/g;
 
 for (const f of readdirSync(PAGES_DIR)) {
   if (!/\.(ts|tsx)$/.test(f)) continue;
+  // A TEST is not a page. The defect this lint exists for is a page dragging
+  // another page's bundle into the app at runtime; a *.test.tsx ships nowhere
+  // and bundles nothing, and a test importing the page it tests is the normal
+  // way to render the real component instead of a copy of it. Blocking that
+  // pushes tests into asserting on their own mirrored markup, which is how you
+  // get a green suite that proves nothing.
+  if (/\.test\.(ts|tsx)$/.test(f)) continue;
   const path = join(PAGES_DIR, f);
   const lines = readFileSync(path, "utf8").split("\n");
   lines.forEach((l, i) => {

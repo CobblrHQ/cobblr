@@ -136,6 +136,7 @@ services:
       #   COBBLR_DEPLOYMENT            its name there (falls back to COBBLR_ENV)
       # See docs/architecture/central-identity.md.
       IDENTITY_URL: ${IDENTITY_URL:-}
+      IDENTITY_PUBLIC_URL: ${IDENTITY_PUBLIC_URL:-}
       IDENTITY_ISSUER: ${IDENTITY_ISSUER:-}
       IDENTITY_AUDIENCE: ${IDENTITY_AUDIENCE:-}
       IDENTITY_ADMIN_TOKEN: ${IDENTITY_ADMIN_TOKEN:-}

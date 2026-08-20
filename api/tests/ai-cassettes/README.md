@@ -28,6 +28,23 @@ One file per scenario:
 model says on the Nth call of that turn. `"match": "*"` is the fallback for
 anything a test does not care to script.
 
+## Keep both transports covered
+
+Not every provider does tool-calling. A subscription bridge behind an OpenAI
+wire ignores the `tools` field, so the loop falls back to a JSON **move** the
+model writes in its reply. Those are two different code paths and both ship:
+
+| round shape | path it drives |
+|---|---|
+| `{"tool_calls": [...]}` | native tool-calling (a first-party API key) |
+| `{"content": "{\"type\":\"action\", ...}"}` | the tool-less move (a bridge, a small local model) |
+| `{"content": "plain English"}` | a plain answer — most of what a model says |
+
+Every cassette here once used `tool_calls`, so the tool-less path had no
+coverage at all, and three stacked defects shipped on it. `lint:ai-corpus-shape`
+now fails if either transport, plain prose, or a failure scenario disappears
+from the corpus.
+
 To record from a real model: run an instance with `COBBLR_AI_REPLAY_RECORD=<dir>`
 and a real provider, have the conversation, then copy the files here and set
 `match`.

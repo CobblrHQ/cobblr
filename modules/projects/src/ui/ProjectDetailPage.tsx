@@ -129,7 +129,12 @@ export function ProjectDetailPage() {
             failed={updateProject.isError}
             className="mt-2 shrink-0"
           />
-          <EntityActionsBar entityKind="projects:project" entityId={project.data.id} className="mt-1" />
+          <EntityActionsBar
+            entityKind="projects:project"
+            entityId={project.data.id}
+            entityLabel={project.data.name}
+            className="mt-1"
+          />
         </div>
         <div className="flex gap-4 items-center flex-wrap">
           {!fp.hidden("status") && (

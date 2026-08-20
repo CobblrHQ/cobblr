@@ -33,26 +33,36 @@ export function ReceiptLinesPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
   });
 
 
+  // The host says whether the rest of the receipt is already on screen as its
+  // own inbox rows. When it is, this has nothing to add: it would count the
+  // cards either side of it, once per card.
+  if (ctx.hints?.siblings_visible === "yes") return null;
   if (!groupId || q.isLoading || !q.data) return null;
   // Unclaimed = recorded on the order, not yet anything you own.
   const unclaimed = (q.data.items ?? []).filter((l) => !l.part_id);
   if (unclaimed.length === 0) return null;
 
   return (
-    <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-900/30 px-3 py-2">
+    // A CHIP, not a row. This used to be a full-width bordered box saying one
+    // short sentence, which is a lot of a card to spend on a line you mostly do
+    // not need — and it is repeated on every line of the same receipt, so a
+    // four-line receipt spent four rows telling you about itself (reported
+    // 2026-08-19). It still expands to the same list.
+    <div>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 text-left text-xs text-muted hover:text-content dark:hover:text-mortar-100"
+        title={open ? "Hide the rest of this receipt" : "Show the rest of this receipt"}
+        className="inline-flex items-center gap-1.5 rounded-full border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-900/30 px-2 py-0.5 text-[11px] text-muted hover:text-content dark:hover:text-mortar-100 transition"
       >
-        <Receipt size={13} className="shrink-0 text-faint" />
-        <span className="flex-1 min-w-0 truncate">
-          This receipt lists {unclaimed.length} other item{unclaimed.length === 1 ? "" : "s"}
+        <Receipt size={11} className="shrink-0 text-faint" />
+        <span>
+          +{unclaimed.length} more on this receipt
         </span>
-        <span className="shrink-0 text-faint">{open ? "hide" : "look"}</span>
+        <span className="text-faint">{open ? "▴" : "▾"}</span>
       </button>
       {open && (
-        <ul className="mt-2 space-y-1 border-t border-line/60 dark:border-slate-700/60 pt-2">
+        <ul className="mt-1.5 space-y-1 rounded-lg border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-900/30 px-3 py-2">
           {unclaimed.map((l) => (
             <li key={l.id} className="flex items-center gap-2 text-[13px]">
               <span className="flex-1 min-w-0 truncate text-content dark:text-mortar-100">

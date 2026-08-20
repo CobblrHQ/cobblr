@@ -20,38 +20,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type React
 import { RepurchaseControls } from "../components/RepurchaseControls";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Camera,
-  CheckCircle,
-  ChevronDown,
-  Download,
-  ExternalLink,
-  FileText,
-  Flag,
-  Image as ImageIcon,
-  ImagePlus,
-  LayoutGrid,
-  Library,
-  List,
-  Loader2,
-  MapPin,
-  MonitorSmartphone,
-  MoreHorizontal,
-  RefreshCw,
-  Pencil,
-  Truck,
-  RotateCcw,
-  ScanLine,
-  Search,
-  Sparkles,
-  Tag,
-  Trash2,
-  Upload,
-  Wand2,
-  X,
-  Zap,
-  Scissors,
-} from "lucide-react";
+import { Camera, CheckCircle, ChevronDown, Download, ExternalLink, FileText, Flag, Image as ImageIcon, ImagePlus, LayoutGrid, Library, List, Loader2, MapPin, MonitorSmartphone, MoreHorizontal, Pencil, ReceiptText, RefreshCw, RotateCcw, ScanLine, Scissors, Search, Sparkles, Tag, Trash2, Truck, Upload, Wand2, X, Zap } from "lucide-react";
 import { Modal, useImageSrc, useOverlayOpenFlag, useToast, usePageTitle, colorSwatch, wantsSwatch } from "@cobblr/platform-web";
 import { ScanImportModal } from "../components/ScanImportModal";
 import { ExportInboxModal } from "../components/ExportInboxModal";
@@ -748,7 +717,20 @@ export function ScanPage() {
     }
     const n = out.receipt.item_count;
     const from = out.receipt.vendor ? ` from ${out.receipt.vendor}` : "";
-    toast.success(`${force ? "Imported" : "Found"} ${n} item${n === 1 ? "" : "s"}${from} — review below`);
+    const found = `${force ? "Imported" : "Found"} ${n} item${n === 1 ? "" : "s"}${from}`;
+    // Lines that do not add up to what was charged are the dangerous kind of
+    // nearly-right: each one looks plausible on its own. Say both numbers and
+    // let the reader judge, rather than a cheerful count that hides a dropped
+    // line or a coupon that never got applied.
+    if (out.receipt.lines_reconcile === false && out.receipt.total != null) {
+      toast.info(
+        `${found}, but they add up to ${out.receipt.lines_total.toFixed(2)} and the receipt says ` +
+          `${out.receipt.total.toFixed(2)}. Check for a discount, or a line that did not come through.`,
+        { duration: 12000 },
+      );
+    } else {
+      toast.success(`${found} — review below`);
+    }
     void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
   }
 
@@ -1666,9 +1648,25 @@ export function ScanPage() {
   // this routing gets smarter it has to get smarter in one place. (It needs
   // to: an IMAGE of a receipt is filed as a product today - see
   // docs/design-decisions/receipt-from-a-photo.md.)
+  // The same paste arriving twice must not become two items. This handler is
+  // bound to the input AND to the label around it (deliberately - the box is a
+  // collapsed icon until you click it, so a paste aimed at the control has to
+  // land somewhere), and preventDefault does not stop the event bubbling from
+  // one to the other. That doubling is fixed at the source below, but the guard
+  // lives HERE because every intake door shares this function: a double-tapped
+  // upload button or a drop that fires twice would cost the same duplicate, and
+  // one of those is exactly how a receipt turned into two inbox sessions
+  // seconds apart (reported 2026-08-19).
+  const lastTakeRef = useRef<{ key: string; at: number }>({ key: "", at: 0 });
   const takeFiles = (files: File[]) => {
     const intent = classifyFiles(files);
     if (!intent) return;
+    // Name + size + mtime identifies a file well enough for a window this
+    // short, and a second later the same file is a deliberate re-add.
+    const key = files.map((f) => `${f.name}:${f.size}:${f.lastModified}`).join("|");
+    const now = Date.now();
+    if (key === lastTakeRef.current.key && now - lastTakeRef.current.at < 1000) return;
+    lastTakeRef.current = { key, at: now };
     if (intent.kind === "photos") void uploadPhotos(intent.files);
     else void uploadReceipt(intent.file);
   };
@@ -1689,6 +1687,10 @@ export function ScanPage() {
     const files = clipboardImages(e.clipboardData);
     if (!files.length) return;
     e.preventDefault();
+    // ...and stop it reaching the copy of this handler on the label outside.
+    // preventDefault only cancels the browser's own behaviour; the event still
+    // bubbles, so without this one paste into the focused field ran intake twice.
+    e.stopPropagation();
     takeFiles(files);
   };
 
@@ -1715,6 +1717,8 @@ export function ScanPage() {
   // Bulk triage: select N items, then confirm / discard the whole selection at
   // once (each confirm routes to its own matchmaker top candidate, fields and
   // all). Loops the existing per-item endpoints — no server change.
+  // SELECTION-NOT-CONTEXT: scan-inbox rows are not workspace records yet — they are pending things
+  //   waiting to BECOME records, and their ids mean nothing to the tools
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const toggleSelected = (id: string) =>
@@ -2644,6 +2648,24 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                     .catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)));
                 }}
               />
+              {/* The one case the paperclip's type-routing cannot decide. A JPEG
+                  is a picture of a thing far more often than it is a receipt,
+                  so images go to the photo pipeline and that default is right -
+                  but a PHOTOGRAPH of a paper receipt is how most people capture
+                  one, and with no way to say so it came back named after
+                  whatever the vision pass read off it (reported 2026-08-19: a
+                  Walmart receipt landed as "Walmart 16in Cheese Pizza" and went
+                  looking for pizza pictures). The parser has always accepted
+                  images; only this door was missing. */}
+              <MenuItem
+                icon={<ReceiptText size={14} />}
+                label="Upload a receipt photo"
+                hint="A picture of a paper receipt, split into its line items"
+                onClick={() => {
+                  close();
+                  receiptRef.current?.click();
+                }}
+              />
               <MenuItem
                 icon={<Download size={14} />}
                 label="Export…"
@@ -3370,7 +3392,14 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         "Receipt · KC To..." (reported 2026-07-30). The full label is
                         always on the tooltip. */}
                     <span
-                      className="font-medium text-content dark:text-mortar-100 truncate"
+                      // The title takes what is left and is the LAST thing to
+                      // give way. It used to be the only thing that gave way:
+                      // it alone carried `truncate` while every control after it
+                      // was shrink-0, so "Receipt · Lidl #141…" was clipped to
+                      // make room for "+ Tracking #" (reported 2026-08-19). A
+                      // session's name is the one thing on this row you cannot
+                      // work out from anything else on it.
+                      className="font-medium text-content dark:text-mortar-100 truncate min-w-0 flex-1"
                       title={g.label ?? `Session · ${formatSessionTime(g.latest)}`}
                     >
                       {g.label ?? `Session · ${formatSessionTime(g.latest)}`}
@@ -3432,17 +3461,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       shift column depending on whether a session came from a
                       receipt or a scan. */}
                   {g.sourceFileId && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setViewSource(g.sourceFileId);
-                      }}
-                      title="View the original receipt this was parsed from"
-                      className="shrink-0 inline-flex items-center gap-1 text-faint hover:text-accent"
-                    >
-                      <FileText size={11} /> Original
-                    </button>
+                    <span className="hidden" />
                   )}
                   {/* Edit the order/invoice #. Purchase-only — see isReceiptSession. */}
                   {isReceiptSession &&
@@ -3490,10 +3509,16 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                           setPoInput(g.orderRef ?? "");
                           setEditingPo(g.batchId!);
                         }}
-                        title={g.orderRef ? "Edit the order / invoice number" : "Add an order / invoice number"}
-                        className="shrink-0 inline-flex items-center gap-1 text-faint hover:text-accent"
+                        title="Edit the order / invoice number"
+                        // Only once there IS one. A number is state worth seeing
+                        // at a glance; "add one" is a rare action and lives in
+                        // the ... menu with the other rare ones.
+                        className={
+                          "shrink-0 inline-flex items-center gap-1 text-faint hover:text-accent " +
+                          (g.orderRef ? "" : "hidden")
+                        }
                       >
-                        <Pencil size={11} /> {g.orderRef ? "PO#" : "+ PO#"}
+                        <Pencil size={11} /> PO#
                       </button>
                     ))}
                   {/* Tracking number — beside the order number because they
@@ -3548,7 +3573,11 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         // popover on any other row would count as "outside"
                         // and dismiss it.
                         ref={trackingPopover === g.batchId ? trackingPopRef : undefined}
-                        className="relative shrink-0 inline-flex"
+                        // Present only once a parcel IS being followed. Then its
+                        // label is the delivery status and belongs in the row.
+                        // "Follow a parcel" is a rare action and sits in the ...
+                        // menu instead, which is where the row got its width back.
+                        className={"relative shrink-0 inline-flex " + (g.trackingNumber ? "" : "hidden")}
                       >
                         <button
                           type="button"
@@ -3631,20 +3660,95 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         )}
                       </span>
                     ))}
-                  {g.sourceFileId && g.batchId && (
-                    <button
-                      type="button"
-                      disabled={reparse.isPending && reparseBatch === g.batchId}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        reparse.mutate(g.batchId!);
-                      }}
-                      title="Re-run the parser on the original receipt (replaces the pending lines)"
-                      className="shrink-0 inline-flex items-center gap-1 text-faint hover:text-accent disabled:opacity-50"
-                    >
-                      <RotateCcw size={11} className={reparse.isPending && reparseBatch === g.batchId ? "animate-spin" : ""} /> Re-parse
-                    </button>
+
+                  {/* Everything a RECEIPT session can do that you do once, if
+                      ever: read the paper it came from, re-read it, give it an
+                      order number, follow its parcel. Four controls, each with
+                      an icon and a label, sitting between the session's NAME and
+                      its actions — so the name was the thing that got clipped
+                      (reported 2026-08-19). Behind one glyph they cost a slot,
+                      and the row can spend its width on what it is called and
+                      what you came here to do.
+
+                      What does NOT move: a PO number and a parcel's status. Once
+                      those exist they are facts about the session, and a fact
+                      you have to open a menu to read is a fact you will not
+                      read. Only the "add one" affordances are in here. */}
+                  {isReceiptSession && g.batchId && (
+                    <span onClick={(e) => e.stopPropagation()} className="shrink-0">
+                      <HeaderMenu
+                        width={252}
+                        align="left"
+                        trigger={({ toggle }) => (
+                          <button
+                            type="button"
+                            onClick={toggle}
+                            aria-label="More for this receipt"
+                            title="Original, re-parse, order number, tracking"
+                            className="inline-flex items-center text-faint hover:text-accent transition"
+                          >
+                            <MoreHorizontal size={13} />
+                          </button>
+                        )}
+                      >
+                        {({ close }) => (
+                          <>
+                            <MenuHead>This receipt</MenuHead>
+                            {g.sourceFileId && (
+                              <MenuItem
+                                icon={<FileText size={14} />}
+                                label="View the original"
+                                hint="The photo or file its lines were read from"
+                                onClick={() => {
+                                  close();
+                                  setViewSource(g.sourceFileId);
+                                }}
+                              />
+                            )}
+                            {g.sourceFileId && (
+                              <MenuItem
+                                icon={<RotateCcw size={14} />}
+                                label={
+                                  reparse.isPending && reparseBatch === g.batchId ? "Re-parsing…" : "Re-parse it"
+                                }
+                                hint="Read the original again, replacing the lines still pending"
+                                disabled={reparse.isPending && reparseBatch === g.batchId}
+                                onClick={() => {
+                                  close();
+                                  reparse.mutate(g.batchId!);
+                                }}
+                              />
+                            )}
+                            {!g.orderRef && (
+                              <MenuItem
+                                icon={<Pencil size={14} />}
+                                label="Add an order number"
+                                hint="Tells two receipts from the same shop apart"
+                                onClick={() => {
+                                  close();
+                                  setPoInput("");
+                                  setEditingPo(g.batchId!);
+                                }}
+                              />
+                            )}
+                            {!g.trackingNumber && (
+                              <MenuItem
+                                icon={<Truck size={14} />}
+                                label="Follow a parcel"
+                                hint="Its status then reads on this row until it lands"
+                                onClick={() => {
+                                  close();
+                                  setTrackingInput("");
+                                  setEditingTracking(g.batchId!);
+                                }}
+                              />
+                            )}
+                          </>
+                        )}
+                      </HeaderMenu>
+                    </span>
                   )}
+
                   {/* The session's PLACE, stated in the header rather than
                       discovered by pressing File. Filing needs a category and a
                       location; the category was already visible here while the
@@ -3755,8 +3859,14 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         <>
                           <CheckCircle size={11} /> File<span className="hidden sm:inline">&nbsp;all</span> {readyIds.length}
                           {sessionCat.suggestion ? (
+                            // "as", the same word the other branch uses. The two
+                            // said "as Mugs" and "into Figurine" for the very
+                            // same thing — the CATEGORY these get filed as — so
+                            // the pair read like two different operations when
+                            // the only real difference is whether it still has
+                            // to ask you where (reported 2026-08-20).
                             <span className="hidden sm:inline max-w-[9rem] truncate opacity-80">
-                              into {sessionCat.suggestion}
+                              as {sessionCat.suggestion}
                             </span>
                           ) : null}
                         </>
@@ -5109,6 +5219,12 @@ function InboxCard({
               never replace a known title with a status line. Status renders as
               a subtle chip beside it; the pulse only owns the title slot when
               there's genuinely nothing to show yet. */}
+          {/* Title and subtitle share ONE flex row that wraps. A short name with a
+              short subtitle ("Baby Carrots" / "from Lidl") then reads as one
+              line instead of spending two on eleven characters, and a long name
+              or a busy subtitle still gets its own line — the wrap decides,
+              rather than a width guess that is wrong on somebody's phone. */}
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 min-w-0">
           <div className="font-medium text-content dark:text-mortar-100 flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
             {item.suggested_name ? (
               <>
@@ -5185,7 +5301,7 @@ function InboxCard({
               </span>
             )}
           </div>
-          <div className="text-[11px] font-mono text-faint dark:text-slate-500 truncate">
+          <div className="text-[11px] font-mono text-faint dark:text-slate-500 truncate min-w-0">
             {(() => {
               // Build the subtitle from the fields that are PRESENT and join them
               // with " · ". An absent field (a photo-identified book has no
@@ -5215,6 +5331,14 @@ function InboxCard({
               const brand = item.suggested_manufacturer?.trim() || null;
               const cb = [creator, brand].filter((p, i, a): p is string => !!p && a.indexOf(p) === i);
               if (cb.length) segs.push(cb.join(" · "));
+              // Where it was BOUGHT, for a line off a receipt. A receipt names
+              // the shop and never the maker, so without this a line reads
+              // "Croissant" with nothing to say which croissant. Deliberately
+              // not written into the brand field: the shop is where you bought
+              // it, and a tin of branded beans from the same receipt would then
+              // claim the supermarket made it.
+              const boughtFrom = (item.suggested_metadata as { receipt_vendor?: string } | null)?.receipt_vendor;
+              if (!brand && boughtFrom?.trim()) segs.push(`from ${boughtFrom.trim()}`);
               if (item.suggested_sku) segs.push(item.suggested_sku);
               // Where it's being FILED — the bin set by "Set location" (bulk or
               // per-item). This is target_location_id, the authoritative
@@ -5260,6 +5384,7 @@ function InboxCard({
                 </Fragment>
               ));
             })()}
+          </div>
           </div>
           {/* Routine provenance ("Identified via go-upc.") no longer costs the
               closed card a line - it lives in the Source data box. This line is
@@ -5352,7 +5477,16 @@ function InboxCard({
                 slug: activeSlug,
                 entityId: item.id,
                 entityTitle: item.suggested_name ?? "this item",
-                hints: { receipt_group_id: receiptGroupId },
+                hints: {
+                  receipt_group_id: receiptGroupId,
+                  // A line that came OFF this receipt sits in the inbox beside
+                  // its siblings, so a panel counting them is describing the
+                  // rows immediately above and below it. The panel that earns
+                  // its place is the other case: a receipt attached to an item
+                  // you already had, where the rest of the order is nowhere on
+                  // screen. Say which case this is and let the panel decide.
+                  siblings_visible: item.source_kind === "receipt" ? "yes" : "no",
+                },
               }}
             />
           )}
@@ -5447,7 +5581,13 @@ function InboxCard({
                   rather than different answers to one question. Now: pick the
                   table, press Add. */}
               {dest && (
-                <span className="relative inline-flex max-w-full">
+                // FIRST on the row, whatever else the item has. A series chip
+                // rendered ahead of it on the one card that had one, so the pill
+                // sat in a different place there than on every other card and
+                // the eye had to hunt for it (reported 2026-08-20). `order-first`
+                // rather than moving the markup: the series stays next to the
+                // name it qualifies for a reader, and only the layout changes.
+                <span className="relative inline-flex max-w-full order-first">
                 <span
                   className={
                     tentativeRoute
@@ -5486,7 +5626,7 @@ function InboxCard({
                       {destOptions.length > 1 && <ChevronDown size={11} className="shrink-0 opacity-80" />}
                     </button>
                   </span>
-                  {quickConfirmReady && !topBundle ? (
+                  {quickConfirmReady ? (
                     <button
                       type="button"
                       onClick={(e) => {
@@ -5494,11 +5634,31 @@ function InboxCard({
                         quickConfirm.mutate();
                       }}
                       disabled={quickConfirm.isPending}
-                      title={`Add to ${dest.label} as shown`}
+                      title={
+                        topBundle
+                          ? `Install ${dest.label} and add this to it, with the scan's values as shown`
+                          : `Add to ${dest.label} as shown`
+                      }
                       className="inline-flex shrink-0 items-center gap-1 border-l border-white/25 bg-emerald-600 hover:bg-emerald-500 pl-2 pr-2.5 py-1 transition disabled:opacity-60"
                     >
-                      <CheckCircle size={11} className={`shrink-0 ${quickConfirm.isPending ? "animate-pulse" : ""}`} />
-                      {quickConfirm.isPending ? "Adding…" : "Add"}
+                      {/* A table that has to be INSTALLED first commits from
+                          here too. It used to be suppressed so a second brown
+                          button could carry the same mutation on its own, which
+                          left the pill offering Review while the real commit sat
+                          outside it (reported 2026-08-19). The word changes; the
+                          action is the one this button always ran. */}
+                      {topBundle ? (
+                        <Download size={11} className={`shrink-0 ${quickConfirm.isPending ? "animate-pulse" : ""}`} />
+                      ) : (
+                        <CheckCircle size={11} className={`shrink-0 ${quickConfirm.isPending ? "animate-pulse" : ""}`} />
+                      )}
+                      {quickConfirm.isPending
+                        ? topBundle
+                          ? "Installing…"
+                          : "Adding…"
+                        : topBundle
+                          ? "Install & add"
+                          : "Add"}
                     </button>
                   ) : (
                     // Withheld on purpose: a keyword-only guess, or a table that
@@ -5731,21 +5891,15 @@ function InboxCard({
           {candidates.length === 0 && serverMatching && (
             <div className="text-[11px] text-faint italic mt-1">finding the best table…</div>
           )}
-          {/* Install CTA on the CLOSED card — the top match is a bundle you don't
-              have (a scanned VIN → Vehicles), and most people won't open the
-              accordion. One tap installs its table + files this in (scan values
-              as-is); "edit fields first" opens the form to adjust. */}
+          {/* The top match is a bundle you don't have (a scanned VIN → Vehicles).
+              Installing + filing lives in the destination pill above, which is
+              where every other commit already lives — this used to be a SECOND
+              brown button running the identical mutation, which meant the pill
+              beside it had to offer "Review" instead of committing, and the real
+              action sat outside the control that names the destination.
+              What remains is the quiet way in: adjust the fields first. */}
           {topBundle && (
-            <div className="mt-2 flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
-              <button
-                type="button"
-                onClick={() => quickConfirm.mutate()}
-                disabled={quickConfirm.isPending}
-                className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-xs font-semibold transition disabled:opacity-50"
-              >
-                <Download size={13} />
-                {quickConfirm.isPending ? `Installing ${topBundle.label}…` : `Install ${topBundle.label} & add`}
-              </button>
+            <div className="mt-2" onClick={(e) => e.stopPropagation()}>
               <button
                 type="button"
                 onClick={() => openForm(topCand ?? undefined)}

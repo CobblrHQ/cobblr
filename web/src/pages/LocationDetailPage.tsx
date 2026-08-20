@@ -10,11 +10,8 @@ import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { BinAdjustModal } from "../components/BinAdjustModal";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronRight, MapPin, Save, Trash2 } from "lucide-react";
-import { EntityActionsBar,
-  EntityThumb,
-  Modal,
-  useConfirm,
-  useToast, usePageTitle } from "@cobblr/platform-web";
+
+import { EntityActionsBar, EntityThumb, Modal, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
 import { ApiError, api, type Location } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { EntityAttachments } from "../components/EntityAttachments";
@@ -202,7 +199,7 @@ export function LocationDetailPage() {
               was squeezed to three lines, and the two drew on top of each
               other. */}
           <div className="order-last w-full shrink-0 flex flex-wrap items-center gap-1 sm:order-none sm:w-auto sm:justify-end">
-            <EntityActionsBar entityKind="core-locations:location" entityId={l.id} />
+            <EntityActionsBar entityKind="core-locations:location" entityId={l.id} entityLabel={l.name} />
             <button
               type="button"
               onClick={() => setEditing(true)}

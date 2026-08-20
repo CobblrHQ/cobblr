@@ -98,11 +98,18 @@ export function setEndpointPolicy(p: AiEndpointPolicy): void {
 }
 
 export function listProviders(): ReturnType<PlatformAi["listProviders"]> {
-  return Array.from(providers.values()).map((p) => ({
+  // Sorted by rank, so the picker's order (and therefore its default) is a decision
+  // rather than a consequence of which register() call came first. Unranked providers
+  // keep their registration order after the ranked ones.
+  return Array.from(providers.values())
+    .map((p, i) => ({ p, i }))
+    .sort((a, b) => (a.p.rank ?? Number.MAX_SAFE_INTEGER) - (b.p.rank ?? Number.MAX_SAFE_INTEGER) || a.i - b.i)
+    .map(({ p }) => ({
     id: p.id,
     label: p.label,
     credentials: p.describeCredentials(),
     capabilities: p.capabilities,
+    setup: p.setup,
   }));
 }
 
@@ -677,6 +684,10 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
       // Per-call knobs win over the workspace row: the calling surface knows
       // its own output size / determinism needs best.
       config: { ...(row.config ?? {}), ...(req.config ?? {}) },
+      // Only reached here, past the cache: a cached reply has nothing to
+      // watch arrive, and streaming one would be a lie about where it came
+      // from.
+      ...(req.onDelta ? { onDelta: req.onDelta } : {}),
     });
     ok = true;
   } catch (err) {

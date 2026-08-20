@@ -7,7 +7,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "assets",
-  version: "0.4.0",
+  version: "0.4.3",
   displayName: "Assets",
   description:
     "Physical things you own that aren't fungible stock and aren't machines. Appliances, tools, collections, anything you'd want to track individually.",
@@ -99,6 +99,7 @@ export default defineModule({
     actions: [
       {
         id: "assets:update-fields",
+        examples: ["update the mileage on it", "set a field on that asset"],
         label: "Update an asset's fields",
         description:
           "Set metadata fields on an asset from a wire (the inbound-telemetry shape. Canonical use: an inbound webhook (OBD dongle, Home Assistant, telematics) fires core-integrations.inbound.received and a target:\"none\" wire invokes this with template-rendered args. `asset` (id or name) is the one control arg; every other arg is a metadata field to set ({ asset: \"{{event.body.vehicle}}\", mileage: \"{{event.body.odometer}}\" }). Metadata only) native columns aren't wire-writable.",
@@ -107,11 +108,17 @@ export default defineModule({
         // locates the asset from args. Scoping would break that pattern.
         appliesTo: { any: true },
         invokeHandler: "assets.update-fields",
+        argsSchema: {
+          // Only the control arg is declarable: every OTHER arg is a metadata field
+          // name to set, which is open by design (the inbound-telemetry shape).
+          asset: { label: "Which asset: its id or its name", type: "text" },
+        },
         // Wire-driven (telemetry shape) — not a per-row button.
         userInvokable: false,
       },
       {
         id: "assets:field-to-location",
+        examples: ["move the Room field into Location", "turn that place field into real locations"],
         label: "Move a place field into Location",
         description:
           "Bundle-migration engine (the assets mirror of inventory:field-to-location): retire a bundle's bespoke place field (e.g. a 'Location' text field) into the platform's canonical Location: for each asset with a value, find-or-create a matching Location AREA, file the asset into it (location_id), then clear the field. Idempotent + safe: never invents a place, never overwrites an already-filed asset, re-uses an existing same-named area. Args: { field, instance }.",

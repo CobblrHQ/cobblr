@@ -1,0 +1,41 @@
+{
+  "note": "Identities the LIVE pipeline produced for photographed receipts, read back from real inbox rows. Kept because they differ from the recorded cassettes in the field that a first version of the detector relied on: entity_type is \"part\" here and null there. A rule has to satisfy every one of these.",
+  "shapes": [
+    {
+      "label": "Lidl grocery store receipt",
+      "name": "Lidl grocery store receipt",
+      "brand": "Lidl",
+      "entity_type": "part",
+      "category": "receipt",
+      "observations": "One printed paper receipt from Lidl (191 E Hanover Ave, Morristown), dated 08/18/26, total due $4.74, paid by Visa card. Line items include Croissant, Baby Carrots, Tomatoes Roma, and Cucumbers Long, with a total savings of $0.98 noted.",
+      "distinct": 1
+    },
+    {
+      "label": "Lidl Grocery Receipt",
+      "name": "Lidl Grocery Receipt",
+      "brand": "Lidl",
+      "entity_type": "part",
+      "category": "receipt",
+      "observations": "One printed paper receipt from Lidl (191 E Hanover Ave, Morristown), dated 08/18/26, total due $4.74, paid by Visa card. Line items include Croissant, Baby Carrots, Tomatoes Roma, and Cucumbers Long, with a total savings of $0.98 noted.",
+      "distinct": 1
+    },
+    {
+      "label": "Walmart Receipt - 16in Cheese Pizza, White",
+      "name": "Walmart Receipt - 16in Cheese Pizza, White",
+      "brand": "Walmart",
+      "entity_type": "part",
+      "category": "receipt",
+      "observations": "A single printed Walmart Supercenter receipt lying on a dark countertop. It shows one item sold: '16IN CHEESE' priced at $6.97, with subtotal and total of $6.97 paid by Mastercard. Store location is Ledgewood, NJ, dated 08/18/26.",
+      "distinct": 1
+    },
+    {
+      "label": "Lidl Receipt",
+      "name": "Lidl Receipt",
+      "brand": "Lidl",
+      "entity_type": "part",
+      "category": "receipt",
+      "observations": "A single printed paper receipt from a Lidl store (191 E Hanover Ave, Morristown) lying on a dark countertop. Itemized purchases include croissant, baby carrots, Roma tomatoes, and long cucumbers, with a total due of $4.74 paid by Visa card. A barcode is printed near the bottom but the digits are not legible.",
+      "distinct": 1
+    }
+  ]
+}

@@ -69,8 +69,17 @@ function scoreRule(msg: string[], rule: BasicRule): number {
  * `rules` is passed in (built-ins today; built-ins overlaid with per-workspace
  * overrides + custom rows later) so this function stays pure + storage-agnostic.
  */
-export function matchBasics(message: string, rules: BasicRule[]): BasicMatch {
+export function matchBasics(
+  message: string,
+  rules: BasicRule[],
+  opts: { aiOn?: boolean; offering?: boolean } = {},
+): BasicMatch {
   const msg = tokens(message);
+  // Offering an answer to a half-typed sentence is a different act from
+  // replying to one somebody sent: a rule that declines ("that needs AI
+  // connected") is a fine reply and a terrible offer. Both default off, so
+  // /basics/answer behaves exactly as it did.
+  if (opts.offering) rules = rules.filter((r) => !r.notBeforeSend);
   const candidates: RuleCandidate[] = [];
   let winner: { rule: BasicRule; score: number; idx: number } | null = null;
 
@@ -90,7 +99,7 @@ export function matchBasics(message: string, rules: BasicRule[]): BasicMatch {
   const w = winner as { rule: BasicRule; score: number; idx: number };
   return {
     matched: true,
-    reply: w.rule.reply,
+    reply: (opts.aiOn && w.rule.replyWhenAiOn) || w.rule.reply,
     intent: w.rule.intent,
     key: w.rule.key,
     score: w.score,

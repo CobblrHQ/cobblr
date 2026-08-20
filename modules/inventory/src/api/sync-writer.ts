@@ -18,7 +18,7 @@
 // reactor + the sync engine's own upsert, so silence is correct. Add an opt-in
 // emit if a future sync TARGET needs the downstream cascade.)
 
-import { platform } from "@cobblr/platform-contract";
+import { platform, restoreRow, snapshotRow } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { InventoryDB } from "../db.js";
 
@@ -56,6 +56,19 @@ export function registerInventoryWriter(): void {
     async delete(orgId, id) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
       await db.deleteFrom("inventory_parts").where("id", "=", id).execute();
+    },
+
+    /** Put the row back exactly as it was, id and all (EntityWriter.restore).
+     *  Not a create: no name-clash rule, no re-derived id, no new row for
+     *  everything that pointed at the old one to miss. */
+    async restore(orgId, image) {
+      await restoreRow(await platform().tenants.getDb(orgId), "inventory_parts", image);
+    },
+
+    /** Every column of one row — the state a change ledger keeps so an undo
+     *  has something real to put back (EntityWriter.snapshot). */
+    async snapshot(orgId, id) {
+      return snapshotRow(await platform().tenants.getDb(orgId), "inventory_parts", id);
     },
 
     async read(orgId, id) {

@@ -154,15 +154,726 @@ function machineBundleChangelog(noun: string, tab: string, fields: string): stri
 
 export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
+    glyph: "🧂",
+    blurb:
+      "Your spice cabinet as its own table. Which jar is open, which are still sealed, and how often you actually re-buy each one.",
+    manifest: {
+          "id": "cobblr.flagship.spice-rack",
+          "version": "0.1.0",
+          "released_at": "2026-08-20",
+          "name": "Spice Rack",
+          "author": "Cobblr",
+          "description": "Your spices and seasonings as their own table: what is on the rack, which jar is open, and how often you actually re-buy each one.",
+          "changelog": "First release. Spices get their own table rather than rows in generic Inventory, with the fields a spice cabinet needs and none it does not. Each jar can be tracked open versus sealed, so \"four jars of paprika, one of them open\" is something the app can say. Two columns learn from ordinary shopping: how often you re-buy something, and how long the current stock will last.",
+          "requires": [
+                {
+                      "module": "inventory"
+                },
+                {
+                      "module": "lists"
+                },
+                {
+                      "module": "core-cadence"
+                }
+          ],
+          "wires": [
+                {
+                      "source_kind": "inventory:part",
+                      "action_id": "lists:add-item",
+                      "trigger_type": "event",
+                      "trigger_event": "inventory.stock.low",
+                      "args": {
+                            "listTitle": "Shopping list"
+                      }
+                },
+                {
+                      "source_kind": "inventory:part",
+                      "action_id": "lists:add-item",
+                      "trigger_type": "event",
+                      "trigger_event": "inventory.stock.predicted-low",
+                      "args": {
+                            "listTitle": "Shopping list"
+                      }
+                },
+                {
+                      "source_kind": "inventory:part",
+                      "action_id": "lists:add-item",
+                      "trigger_type": "event",
+                      "trigger_event": "core-cadence.reorder.due",
+                      "args": {
+                            "listTitle": "Shopping list"
+                      }
+                },
+                {
+                      "source_kind": "inventory:part",
+                      "action_id": "inventory:adjust-stock",
+                      "trigger_type": "event",
+                      "trigger_event": "lists.item.checked",
+                      "args": {
+                            "delta": 1,
+                            "reason": "Restocked, checked off the shopping list"
+                      }
+                },
+                {
+                      "source_kind": "inventory:part",
+                      "action_id": "core-cadence:record-event",
+                      "trigger_type": "event",
+                      "trigger_event": "lists.item.checked",
+                      "args": {
+                            "event_type": "purchase",
+                            "qty_delta": 1,
+                            "source": "list"
+                      }
+                }
+          ],
+          "field_defs": [],
+          "provides_instances": [
+                {
+                      "module": "inventory",
+                      "instance_name": "spices",
+                      "display_name": "Spices",
+                      "item_noun": "spice",
+                      "glyph": "🧂",
+                      "qty_unit": "jar",
+                      "scan_keywords": [
+                            "spice",
+                            "seasoning",
+                            "herb",
+                            "peppercorn",
+                            "paprika",
+                            "cumin",
+                            "oregano",
+                            "cinnamon",
+                            "turmeric",
+                            "chili powder",
+                            "garlic powder",
+                            "onion powder",
+                            "curry",
+                            "basil",
+                            "thyme",
+                            "rosemary",
+                            "bay leaf",
+                            "nutmeg",
+                            "cardamom",
+                            "coriander",
+                            "vanilla extract",
+                            "baking powder",
+                            "baking soda",
+                            "cocoa"
+                      ],
+                      "field_defs": [
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "form",
+                                  "display_label": "Form",
+                                  "type": "text",
+                                  "position": 1,
+                                  "choices": [
+                                        "Ground",
+                                        "Whole",
+                                        "Blend",
+                                        "Flake",
+                                        "Salt",
+                                        "Extract",
+                                        "Leaf"
+                                  ]
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "net_weight_g",
+                                  "display_label": "Net weight (g)",
+                                  "type": "number",
+                                  "unit": "g",
+                                  "position": 2,
+                                  "help": "Grams in a full jar, off the label. Used to gauge how much is left in the open one, so you never type a capacity."
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "capacity",
+                                  "display_label": "Full jar",
+                                  "type": "computed",
+                                  "template": "{{ net_weight_g }}",
+                                  "position": 3,
+                                  "help": "Grams in one full jar, from the weight above. Each opened jar's gauge is measured against this."
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "rack_area",
+                                  "display_label": "Where",
+                                  "type": "text",
+                                  "position": 4,
+                                  "choices": [
+                                        "Rack",
+                                        "Cabinet floor",
+                                        "Drawer",
+                                        "Pantry",
+                                        "Fridge"
+                                  ]
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "opened_on",
+                                  "display_label": "Opened",
+                                  "type": "date",
+                                  "position": 5
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "expires_on",
+                                  "display_label": "Best before",
+                                  "type": "date",
+                                  "position": 6,
+                                  "field_role": "expiry"
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "replenish_every",
+                                  "display_label": "You re-buy every (days)",
+                                  "type": "computed",
+                                  "template": "{{ cadence.replenish_every_days }}",
+                                  "position": 7,
+                                  "help": "Learned from how often you actually buy it. Blank until it has seen two shops."
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "runs_out_in",
+                                  "display_label": "Runs out in (days)",
+                                  "type": "computed",
+                                  "template": "{{ cadence.days_until_runout }}",
+                                  "position": 8,
+                                  "help": "At the rate you have been going through it. Blank while it is still learning."
+                            }
+                      ],
+                      "field_overrides": [
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "manufacturer",
+                                  "display_label": "Brand"
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "consumable"
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "min_qty",
+                                  "display_label": "Re-buy when down to"
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "warranty",
+                                  "hidden": true
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "serial_number",
+                                  "hidden": true
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "model_number",
+                                  "hidden": true
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "maintenance",
+                                  "hidden": true
+                            }
+                      ],
+                      "saved_views": [
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "On the rack",
+                                  "view_type": "table",
+                                  "pinned": true,
+                                  "config": {
+                                        "group_by": "rack_area",
+                                        "visible_fields": [
+                                              "title",
+                                              "manufacturer",
+                                              "form",
+                                              "qty",
+                                              "replenish_every",
+                                              "runs_out_in"
+                                        ]
+                                  }
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "Re-buy soonest",
+                                  "view_type": "table",
+                                  "config": {
+                                        "sort_by": "runs_out_in",
+                                        "sort_dir": "asc",
+                                        "visible_fields": [
+                                              "title",
+                                              "qty",
+                                              "runs_out_in",
+                                              "replenish_every",
+                                              "min_qty"
+                                        ]
+                                  }
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "How often you re-buy",
+                                  "view_type": "table",
+                                  "config": {
+                                        "sort_by": "replenish_every",
+                                        "sort_dir": "asc",
+                                        "visible_fields": [
+                                              "title",
+                                              "replenish_every",
+                                              "runs_out_in",
+                                              "qty"
+                                        ]
+                                  }
+                            }
+                      ]
+                }
+          ]
+    } as unknown as PlatformBundleManifest,
+  },
+  {
+    glyph: "🍵",
+    blurb:
+      "Your tea cupboard as its own table. Which box is open, which are still sealed, and how often you actually re-buy each one.",
+    manifest: {
+          "id": "cobblr.flagship.tea",
+          "version": "0.1.0",
+          "released_at": "2026-08-20",
+          "name": "Tea",
+          "author": "Cobblr",
+          "description": "Your teas as their own table: what is in the cupboard, which box is open, and how often you actually re-buy each one.",
+          "changelog": "First release. Tea gets its own table rather than rows in generic Inventory, counted in boxes with the fields a tea cupboard needs. A box can be tracked open versus sealed, so \"three boxes of Earl Grey, one open\" is something the app can say. Two columns learn from ordinary shopping: how often you re-buy a tea, and how long the current stock will last.",
+          "requires": [
+                {
+                      "module": "inventory"
+                },
+                {
+                      "module": "lists"
+                },
+                {
+                      "module": "core-cadence"
+                }
+          ],
+          "wires": [
+                {
+                      "source_kind": "inventory:part",
+                      "action_id": "lists:add-item",
+                      "trigger_type": "event",
+                      "trigger_event": "inventory.stock.low",
+                      "args": {
+                            "listTitle": "Shopping list"
+                      }
+                },
+                {
+                      "source_kind": "inventory:part",
+                      "action_id": "lists:add-item",
+                      "trigger_type": "event",
+                      "trigger_event": "inventory.stock.predicted-low",
+                      "args": {
+                            "listTitle": "Shopping list"
+                      }
+                },
+                {
+                      "source_kind": "inventory:part",
+                      "action_id": "lists:add-item",
+                      "trigger_type": "event",
+                      "trigger_event": "core-cadence.reorder.due",
+                      "args": {
+                            "listTitle": "Shopping list"
+                      }
+                },
+                {
+                      "source_kind": "inventory:part",
+                      "action_id": "inventory:adjust-stock",
+                      "trigger_type": "event",
+                      "trigger_event": "lists.item.checked",
+                      "args": {
+                            "delta": 1,
+                            "reason": "Restocked, checked off the shopping list"
+                      }
+                },
+                {
+                      "source_kind": "inventory:part",
+                      "action_id": "core-cadence:record-event",
+                      "trigger_type": "event",
+                      "trigger_event": "lists.item.checked",
+                      "args": {
+                            "event_type": "purchase",
+                            "qty_delta": 1,
+                            "source": "list"
+                      }
+                }
+          ],
+          "field_defs": [],
+          "provides_instances": [
+                {
+                      "module": "inventory",
+                      "instance_name": "tea",
+                      "display_name": "Tea",
+                      "item_noun": "tea",
+                      "glyph": "🍵",
+                      "qty_unit": "box",
+                      "scan_keywords": [
+                            "tea",
+                            "tea bags",
+                            "teabag",
+                            "herbal tea",
+                            "infusion",
+                            "chamomile",
+                            "peppermint",
+                            "earl grey",
+                            "english breakfast",
+                            "green tea",
+                            "black tea",
+                            "white tea",
+                            "oolong",
+                            "pekoe",
+                            "rooibos",
+                            "chai",
+                            "matcha",
+                            "jasmine",
+                            "hibiscus",
+                            "zinger",
+                            "loose leaf"
+                      ],
+                      "field_defs": [
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "tea_type",
+                                  "display_label": "Type",
+                                  "type": "text",
+                                  "position": 1,
+                                  "choices": [
+                                        "Black",
+                                        "Green",
+                                        "White",
+                                        "Oolong",
+                                        "Herbal",
+                                        "Rooibos",
+                                        "Chai",
+                                        "Matcha",
+                                        "Fruit"
+                                  ]
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "bags_per_box",
+                                  "display_label": "Bags per box",
+                                  "type": "number",
+                                  "unit": "bags",
+                                  "position": 2,
+                                  "help": "Off the label. Used to gauge how much is left in the open box, so you never type a capacity."
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "capacity",
+                                  "display_label": "Full box",
+                                  "type": "computed",
+                                  "template": "{{ bags_per_box }}",
+                                  "position": 3,
+                                  "help": "Bags in one full box, from the count above. The open box's gauge is measured against this."
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "caffeine",
+                                  "display_label": "Caffeine",
+                                  "type": "text",
+                                  "position": 4,
+                                  "choices": [
+                                        "Caffeinated",
+                                        "Decaf",
+                                        "Naturally caffeine free"
+                                  ]
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "opened_on",
+                                  "display_label": "Opened",
+                                  "type": "date",
+                                  "position": 5
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "expires_on",
+                                  "display_label": "Best before",
+                                  "type": "date",
+                                  "position": 6,
+                                  "field_role": "expiry"
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "replenish_every",
+                                  "display_label": "You re-buy every (days)",
+                                  "type": "computed",
+                                  "template": "{{ cadence.replenish_every_days }}",
+                                  "position": 7,
+                                  "help": "Learned from how often you actually buy it. Blank until it has seen two shops."
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "runs_out_in",
+                                  "display_label": "Runs out in (days)",
+                                  "type": "computed",
+                                  "template": "{{ cadence.days_until_runout }}",
+                                  "position": 8,
+                                  "help": "At the rate you have been going through it. Blank while it is still learning."
+                            }
+                      ],
+                      "field_overrides": [
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "manufacturer",
+                                  "display_label": "Brand"
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "consumable"
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "min_qty",
+                                  "display_label": "Re-buy when down to"
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "warranty",
+                                  "hidden": true
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "serial_number",
+                                  "hidden": true
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "model_number",
+                                  "hidden": true
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "maintenance",
+                                  "hidden": true
+                            }
+                      ],
+                      "saved_views": [
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "The cupboard",
+                                  "view_type": "table",
+                                  "pinned": true,
+                                  "config": {
+                                        "group_by": "tea_type",
+                                        "visible_fields": [
+                                              "title",
+                                              "manufacturer",
+                                              "tea_type",
+                                              "qty",
+                                              "replenish_every",
+                                              "runs_out_in"
+                                        ]
+                                  }
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "Re-buy soonest",
+                                  "view_type": "table",
+                                  "config": {
+                                        "sort_by": "runs_out_in",
+                                        "sort_dir": "asc",
+                                        "visible_fields": [
+                                              "title",
+                                              "qty",
+                                              "runs_out_in",
+                                              "replenish_every",
+                                              "min_qty"
+                                        ]
+                                  }
+                            },
+                            {
+                                  "entity_kind": "inventory:part",
+                                  "name": "How often you re-buy",
+                                  "view_type": "table",
+                                  "config": {
+                                        "sort_by": "replenish_every",
+                                        "sort_dir": "asc",
+                                        "visible_fields": [
+                                              "title",
+                                              "replenish_every",
+                                              "runs_out_in",
+                                              "qty"
+                                        ]
+                                  }
+                            }
+                      ]
+                }
+          ]
+    } as unknown as PlatformBundleManifest,
+  },
+  {
     glyph: "🥬",
     blurb:
       "Track the fridge/pantry with expiry + storage, and auto-build a shopping list when something runs low or is about to expire. Check an item off → it restocks.",
     manifest: {
       id: "cobblr.flagship.groceries",
-      version: "0.3.2",
+      version: "0.4.0",
+      // What its items are actually CALLED. A bundle's suggestion has to be
+      // corroborated by the capture's own text before it is trusted, and a
+      // category whose members never share its name can never corroborate:
+      // nothing called Tomatoes Roma or Croissant contains the word "grocery",
+      // so every one of them was demoted to plain Inventory (reported
+      // 2026-08-19). Head nouns a till or a package actually prints.
+      //
+      // Words with a strong non-food sense are deliberately absent — oil
+      // (motor), cream (shaving), chip (silicon), bar, roll, paper, towel,
+      // soap, water, salt, stock, mix, spread, wrap. A keyword scores as
+      // routing evidence, so a false hit files a non-grocery in here.
+      scan_keywords: [
+        "tomato",
+        "tomatoes",
+        "carrot",
+        "carrots",
+        "cucumber",
+        "cucumbers",
+        "lettuce",
+        "spinach",
+        "broccoli",
+        "cauliflower",
+        "potato",
+        "potatoes",
+        "onion",
+        "onions",
+        "garlic",
+        "mushroom",
+        "courgette",
+        "zucchini",
+        "aubergine",
+        "celery",
+        "cabbage",
+        "kale",
+        "avocado",
+        "apple",
+        "apples",
+        "banana",
+        "bananas",
+        "orange",
+        "oranges",
+        "lemon",
+        "lime",
+        "grape",
+        "grapes",
+        "strawberry",
+        "strawberries",
+        "blueberry",
+        "blueberries",
+        "raspberry",
+        "melon",
+        "peach",
+        "pear",
+        "plum",
+        "mango",
+        "pineapple",
+        "bread",
+        "loaf",
+        "baguette",
+        "croissant",
+        "bagel",
+        "brioche",
+        "tortilla",
+        "pitta",
+        "pita",
+        "muffin",
+        "scone",
+        "pastry",
+        "doughnut",
+        "donut",
+        "milk",
+        "yogurt",
+        "yoghurt",
+        "cheese",
+        "cheddar",
+        "mozzarella",
+        "parmesan",
+        "feta",
+        "butter",
+        "margarine",
+        "egg",
+        "eggs",
+        "hummus",
+        "tofu",
+        "chicken",
+        "beef",
+        "pork",
+        "lamb",
+        "bacon",
+        "sausage",
+        "sausages",
+        "ham",
+        "turkey",
+        "mince",
+        "steak",
+        "salmon",
+        "tuna",
+        "prawn",
+        "prawns",
+        "shrimp",
+        "pasta",
+        "spaghetti",
+        "penne",
+        "noodle",
+        "noodles",
+        "rice",
+        "cereal",
+        "porridge",
+        "oats",
+        "flour",
+        "sugar",
+        "honey",
+        "jam",
+        "marmalade",
+        "ketchup",
+        "mustard",
+        "mayonnaise",
+        "vinegar",
+        "soup",
+        "sauce",
+        "salsa",
+        "pesto",
+        "beans",
+        "lentils",
+        "chickpeas",
+        "couscous",
+        "quinoa",
+        "biscuit",
+        "biscuits",
+        "cookie",
+        "cookies",
+        "cracker",
+        "crackers",
+        "crisps",
+        "popcorn",
+        "chocolate",
+        "candy",
+        "sweets",
+        "coffee",
+        "tea",
+        "juice",
+        "lemonade",
+        "cola",
+        "soda",
+        "beer",
+        "wine",
+        "cider",
+        "pizza",
+        "ice cream",
+        "frozen peas",
+        "ready meal",
+      ],
       released_at: "2026-08-09",
       changelog:
-        "Marks the expiry date as an expiry field, so re-buying something that already went off is recorded as waste rather than as something you used up. Fixes the status dots on the What's on hand view, which never showed anything about expiry. Adds a What's on hand app: a vending-machine view of the kitchen with a quantity badge and a status dot per item, plus a use-it-or-lose-it list sorted by expiry. Answers what do we actually have without opening the fridge. Learns your cadence from ordinary shopping. Checking an item off the shopping list now also records a purchase in the consumption ledger (when the Cadence capability is on), so the system can start predicting when you will run out instead of only reacting to a low-stock threshold. Same fields, same restock behaviour.",
+        "Scanning a grocery now suggests this bundle. The scanner would pick it and then quietly file the item under plain Inventory instead, because a bundle's suggestion has to be corroborated by the item's own text and nothing called Tomatoes Roma or Croissant contains the word grocery. The bundle now says what its items are called. Marks the expiry date as an expiry field, so re-buying something that already went off is recorded as waste rather than as something you used up. Fixes the status dots on the What's on hand view, which never showed anything about expiry. Adds a What's on hand app: a vending-machine view of the kitchen with a quantity badge and a status dot per item, plus a use-it-or-lose-it list sorted by expiry. Answers what do we actually have without opening the fridge. Learns your cadence from ordinary shopping. Checking an item off the shopping list now also records a purchase in the consumption ledger (when the Cadence capability is on), so the system can start predicting when you will run out instead of only reacting to a low-stock threshold. Same fields, same restock behaviour.",
       name: "Groceries",
       description:
         "Turn inventory + lists into a kitchen system: track food with expiry + storage fields, an auto grocery list on low-stock/expiry, restock on check-off.",

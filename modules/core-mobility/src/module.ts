@@ -53,7 +53,7 @@ const fieldDefsFor = (kind: string) => [
 
 export default defineModule({
   name: "core-mobility",
-  version: "0.1.0",
+  version: "0.1.3",
   displayName: "Mobility",
   description:
     "Home vs current location with drift detection. Give a tool or bin a home, mark it mobile, and it shows 'away · 3d' when it wanders, with one-tap Return home. Fixtures opt out.",
@@ -93,7 +93,10 @@ export default defineModule({
     api: [],
     actions: [
       {
+        // NO-PHRASING: recomputes a flag from an update delta; it is bookkeeping
+        // after a move, not something anybody asks for
         id: "core-mobility:recompute-away",
+        undoable: true,
         label: "Recompute away-from-home",
         description:
           "Re-evaluate a mobile item's away_since from the update delta: stamp on first drift from home, preserve the age across unrelated edits, clear on return / when set to fixed. Wire-driven; not user-invoked.",
@@ -103,6 +106,8 @@ export default defineModule({
       },
       {
         id: "core-mobility:return-home",
+        examples: ["it is back home", "put it back where it lives"],
+        undoable: true,
         label: "Return home",
         description:
           "Snap a mobile item's current location back to its home and clear the away flag. Errors if the item is fixed or has no home set.",

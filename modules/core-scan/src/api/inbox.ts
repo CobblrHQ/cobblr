@@ -89,6 +89,8 @@ import { lookupBookIsbn } from "../services/book-lookup.js";
 import { resolvePaintColorFromText } from "../services/paint-code.js";
 import { resolvePaintCodeViaWeb } from "../services/paint-code-websearch.js";
 import { parseReceipt } from "../services/receipt.js";
+import { lineNet } from "../services/receipt-shared.js";
+import { looksLikeReceiptPhoto, routeScannedReceiptPhoto } from "../services/receipt-photo.js";
 import { cleanOrderRef, receiptDedupKey, receiptSessionLabel, vendorFromLabel, type ParsedReceipt, type ParseMethod } from "../services/receipt-shared.js";
 import { reportBarcodeCorrection, meaningfullyChanged } from "../services/barcode-corrections.js";
 import { normalizeBarcode, barcodeFromHint } from "../services/barcode-correction.js";
@@ -698,12 +700,23 @@ async function materializeReceiptLines(opts: {
         source_kind: "receipt",
         scan_batch_id: opts.batchId,
         suggested_name: line.description.slice(0, 300),
+        // The product number the till printed beside the description. Stamped as
+        // the row's barcode so the line resolves the way a scanned one does — a
+        // catalog name and a real picture — instead of living forever as the
+        // till's abbreviation. Marked AI-read below, since it was OCR'd off
+        // paper and deserves the lower trust that carries.
+        ...(line.code ? { barcode_text: line.code } : {}),
         quantity: Math.max(1, Math.round(line.qty || 1)),
         suggested_metadata: JSON.stringify({
           ...baseMeta,
           description: line.description,
           unit_price: line.unit_price,
           line_total: line.line_total,
+          // Same flag the photo path uses for a code it read rather than
+          // scanned, so the card shows "(read from photo)" and nothing treats
+          // it as a hardware scan.
+          ...(line.code ? { barcode_source: "ai-photo" } : {}),
+          ...(line.discount ? { line_discount: line.discount, line_net: lineNet(line) } : {}),
         }) as never,
         created_by_user_id: opts.userId,
       })
@@ -716,6 +729,26 @@ async function materializeReceiptLines(opts: {
       barcode: null,
       sourceKind: "receipt",
     });
+    // A receipt line has its NAME from the moment it exists, so it can go
+    // looking for a picture straight away. Nothing did: the catalog-photo pick
+    // is wired to scan.ENRICHED, which a receipt line never emits (that event
+    // means "a name exists now", and for a photo scan it arrives after the
+    // vision pass; for these it was true at insert and simply never announced).
+    // So a receipt turned into four rows with no pictures at all.
+    //
+    // The shop rides along to RANK the results, not to search them: a receipt
+    // says "Croissant" and never who made it, and searching "Lidl Croissant"
+    // drags the pool into that shop's packaged own-brand catalogue, which
+    // fetched a tin of cherry tomatoes for a line of fresh Roma tomatoes.
+    void refreshCatalogImageByName(
+      opts.orgId,
+      inserted.id,
+      line.description,
+      null,
+      opts.receipt.vendor,
+    ).catch((err) =>
+      console.error("[core-scan] receipt line catalog photo failed:", (err as Error).message),
+    );
   }
   // Route each line against the menu, detached — no enrichment to wait for.
   if (opts.token) {
@@ -912,8 +945,16 @@ inboxRouter.post(
             orderId,
             description: line.description,
             qty: line.qty,
-            unitCost: lineUnitCost(line.unit_price, line.line_total, line.qty),
-            lineAmount: line.line_total,
+            // NET of the coupon printed under it: the order records what was
+            // paid, not the shelf price. Without this a receipt's lines sum to
+            // more than its own total and the order silently disagrees with the
+            // paper it came from.
+            unitCost: lineUnitCost(
+              line.discount ? null : line.unit_price,
+              lineNet(line),
+              line.qty,
+            ),
+            lineAmount: lineNet(line),
           });
         }
         // The item this paperwork was attached to now knows its purchase. A
@@ -942,6 +983,11 @@ inboxRouter.post(
         currency: receipt.currency,
         total: receipt.total,
         item_count: rows.length,
+        // Travels with the result so the importer can SAY the lines do not add
+        // up. A parse that is 95% right is the dangerous kind: every field looks
+        // reasonable and the purchase it records is quietly wrong.
+        lines_total: receipt.lines_total,
+        lines_reconcile: receipt.lines_reconcile,
         method,
       },
       items: rows,
@@ -1018,7 +1064,7 @@ inboxRouter.post(
     });
 
     res.json({
-      receipt: { vendor: receipt.vendor, date: receipt.date, currency: receipt.currency, total: receipt.total, item_count: rows.length, method },
+      receipt: { vendor: receipt.vendor, date: receipt.date, currency: receipt.currency, total: receipt.total, item_count: rows.length, lines_total: receipt.lines_total, lines_reconcile: receipt.lines_reconcile, method },
       items: rows,
     });
   }),
@@ -2916,6 +2962,44 @@ inboxRouter.post(
       row.image_file_id = attachedPhoto;
     }
 
+    // A RECEIPT beats a barcode, and it has to be decided before this branch.
+    //
+    // Photographing a receipt makes the vision pass read the UPCs printed on its
+    // line items — that is the "photograph it, recover the barcode" feature
+    // working exactly as designed on the wrong kind of paper. The number sticks
+    // to the row, and from then on every re-run takes the barcode LOOKUP path
+    // below, which never reaches the receipt route: a Walmart receipt kept
+    // coming back as "Walmart Receipt - 16in Cheese Pizza" no matter how many
+    // times it was re-run (reported 2026-08-19).
+    //
+    // A number printed on a receipt identifies a line ON the document, never the
+    // document. So when the row's own stored identity says receipt, the receipt
+    // route wins. It costs no model call: `photo_observations` and `category`
+    // are already on the row, and they are the two fields the rule reads — which
+    // also means a row filed wrongly BEFORE any of this shipped is repaired by
+    // pressing re-run, rather than needing to be deleted and rephotographed.
+    const storedMeta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
+    if (
+      row.image_file_id &&
+      looksLikeReceiptPhoto({
+        observations: typeof storedMeta.photo_observations === "string" ? storedMeta.photo_observations : "",
+        category: typeof storedMeta.category === "string" ? storedMeta.category : null,
+      })
+    ) {
+      const routed = await routeScannedReceiptPhoto({
+        orgId: ctx.org.id,
+        itemId: id,
+        fileId: row.image_file_id,
+        userId: sessionUser(req).id,
+      });
+      if (routed.routed) {
+        res.json({ ok: true, receipt: true, items: routed.items });
+        return;
+      }
+      // Could not read its lines after all — fall through to the ordinary
+      // re-run rather than leaving the row half-processed.
+    }
+
     if ((!row.barcode_text || attachedPhoto) && !correctedBarcode) {
       // Photo-only path → re-run the vision identify. The vision+match pass runs
       // tens of seconds over the edge relay, so we DON'T hold the request for it
@@ -3076,7 +3160,7 @@ inboxRouter.post(
             .where("id", "=", id)
             .execute();
         } else {
-          await enrichPhotoItem({
+          const outcome = await enrichPhotoItem({
             db: workDb,
             orgId: ctx.org.id,
             itemId: id,
@@ -3086,6 +3170,24 @@ inboxRouter.post(
             hint: photoHint,
             hints: effectiveHints,
           });
+          // A re-run is exactly when someone looks at a row that was filed as a
+          // thing, sees it is a receipt, and presses the button. It has to reach
+          // the receipt parser like a fresh scan does, or the only way out of a
+          // wrongly-filed receipt is to delete it and photograph it again.
+          if (outcome === "is-receipt") {
+            const routed = await routeScannedReceiptPhoto({
+              orgId: ctx.org.id,
+              itemId: id,
+              fileId: imageFileId,
+              userId: uid,
+            });
+            if (routed.routed) {
+              res.json({ ok: true, receipt: true, items: routed.items });
+              return;
+            }
+            // Could not read it after all: fall through, so the row keeps the
+            // ordinary re-run behaviour rather than being left half-done.
+          }
           // Identity actually (re)landed → let the wires react.
           void platform().events.emit("core-scan.scan.enriched", { orgId: ctx.org.id, itemId: id });
         }

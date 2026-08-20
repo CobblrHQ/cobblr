@@ -6,7 +6,32 @@ export interface ReceiptLine {
   description: string;
   qty: number;
   unit_price: number | null;
+  /** What the line was rung up at, BEFORE any coupon printed under it. */
   line_total: number | null;
+  /** The product number printed on the line (a UPC/EAN/PLU), digits only, or
+   *  null. A till prints it beside the description and it is the most useful
+   *  thing there: it resolves to a real catalog name and picture, where the
+   *  till's own abbreviation ("16IN CHEESE") resolves to a guess.
+   *
+   *  OCR'd, so it carries the same lower trust a code read off a photo does —
+   *  the row stamps it as AI-read rather than pretending it was scanned. */
+  code: string | null;
+  /** Money taken off this line by a coupon or discount printed beneath it, as a
+   *  POSITIVE number. Null when there was none.
+   *
+   *  Kept apart from `line_total` rather than folded into it because the two are
+   *  different facts and a purchase record wants both: the croissants were rung
+   *  up at 0.98 and cost nothing. Folding would also make "what did this
+   *  normally cost" unrecoverable, which is the number worth knowing next time.
+   *
+   *  A discount is never its own line. Nobody owns a coupon, and an inbox row
+   *  called "Lidl Points Coupon" is not a thing to put on a shelf. */
+  discount: number | null;
+}
+
+/** What a line actually cost: rung-up price less anything taken off it. */
+export function lineNet(l: ReceiptLine): number {
+  return (l.line_total ?? 0) - (l.discount ?? 0);
 }
 
 /** Title for the inbox session a parsed receipt becomes: the vendor when known
@@ -57,6 +82,21 @@ export interface ParsedReceipt {
   /** ISO date the receipt says it should arrive. This is what turns a receipt
    *  into an ORDER with an ETA rather than a thing you supposedly already own. */
   expected_arrival: string | null;
+  /** What the parsed lines add up to, each NET of its own discount — the number
+   *  that should equal what was charged. */
+  lines_total: number;
+  /** Do those lines add up to the total that was actually charged? Null when
+   *  the receipt states no total to check against.
+   *
+   *  A DIFFERENT question from `totals.reconciled`, which asks whether the money
+   *  components (net + tax + shipping) land on the amount charged. This one asks
+   *  whether the ITEMS do, and a receipt can fail either alone. The case that
+   *  found it: a supermarket receipt with two per-item coupon lines. The prompt
+   *  tells the model to skip discount rows, correctly, so the items come back at
+   *  their pre-coupon prices and sum to 5.72 against a printed 4.74. Every field
+   *  is individually right and the set of them is wrong, and until this flag
+   *  existed the only tier that would have noticed was the text one. */
+  lines_reconcile: boolean | null;
   items: ReceiptLine[];
 }
 
@@ -126,32 +166,58 @@ export function buildReceipt(parts: {
   seller?: unknown;
   totals?: ReceiptTotals | null;
   expected_arrival?: unknown;
-  items: Array<{ description?: unknown; qty?: unknown; unit_price?: unknown; line_total?: unknown }>;
+  items: Array<{
+    description?: unknown;
+    qty?: unknown;
+    unit_price?: unknown;
+    line_total?: unknown;
+    discount?: unknown;
+    code?: unknown;
+  }>;
 }): ParsedReceipt | null {
   const items: ReceiptLine[] = [];
   for (const it of parts.items) {
     const description = str(it.description);
     if (!description) continue;
+    const discount = num(it.discount);
+    // Digits only, and long enough to be a product code rather than a quantity
+    // or a shelf tag. A till abbreviates wildly but never invents digits, so the
+    // conservative floor is worth more than catching a 4-digit PLU.
+    const rawCode = str(it.code)?.replace(/\D/g, "") ?? "";
     items.push({
       description: description.slice(0, 300),
       qty: num(it.qty) ?? 1,
       unit_price: num(it.unit_price),
       line_total: num(it.line_total),
+      // Printed with a minus, reported either way round by different models.
+      // What it MEANS is "this much came off", so store the magnitude.
+      discount: discount === null ? null : Math.abs(discount),
+      code: rawCode.length >= 8 && rawCode.length <= 14 ? rawCode : null,
     });
   }
   if (items.length === 0) return null;
   const currency = str(parts.currency);
+  const total = num(parts.total);
+  const lines_total = money(items.reduce((s, i) => s + lineNet(i), 0));
   return {
     vendor: str(parts.vendor),
     order_ref: cleanOrderRef(str(parts.order_ref)),
     date: isoDate(parts.date),
     currency: currency ? currency.toUpperCase().slice(0, 3) : null,
-    total: num(parts.total),
+    total,
     seller: str(parts.seller),
     totals: parts.totals ?? null,
     expected_arrival: isoDate(parts.expected_arrival),
+    lines_total,
+    // A cent of rounding is not a discrepancy; anything above it is.
+    lines_reconcile: total === null ? null : Math.abs(lines_total - total) <= 0.01,
     items,
   };
+}
+
+/** Two decimal places, because summing floats does not stay money for long. */
+function money(n: number): number {
+  return Math.round(n * 100) / 100;
 }
 
 /**

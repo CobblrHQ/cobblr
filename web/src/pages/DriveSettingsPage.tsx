@@ -39,7 +39,7 @@ export function DriveSettingsPage() {
   const current: DriveMode = grant.data?.mode ?? "off";
 
   return (
-    <div className="space-y-6 max-w-2xl">
+    <div className="space-y-6">
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
         <Monitor size={20} className="text-accent" />
         <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">browser driving</h1>

@@ -1,0 +1,14 @@
+{
+  "fixture": "spice-jar.jpg",
+  "image_sha256": "18ae5008bf5f47222fa91c62f607081c78e1fae9a13ba9b333824ddc8a8227ce",
+  "identify": {
+    "result": {
+      "text": "{\"name\": \"McCormick Dark Chili Powder, 7.5 oz\", \"brand\": \"McCormick\", \"color\": \"red\", \"category\": \"spice\", \"entity_type\": \"part\", \"series\": null, \"barcode\": null, \"serial_number\": null, \"observations\": \"One loose plastic bottle with a red cap is shown. The label reads 'Dark Chili Powder', 'Non GMO', '3X More Than Our 2.5 OZ Size', and 'NET WT 7.5 OZ (212g)'. A small barcode is visible on the label but the digits are not legible.\", \"distinct_items\": 1, \"product_photo_box\": null, \"items\": [], \"confidence\": 0.95}"
+    },
+    "provider_id": "edge-bridge",
+    "model": "sonnet",
+    "cached": false,
+    "cost_cents": 0,
+    "duration_ms": 7544
+  }
+}

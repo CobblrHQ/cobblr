@@ -18,7 +18,9 @@
 //   1. Group by the ACT, not the audience.
 //   2. Leaves keep the product's existing nouns; only section names are new.
 //   3. A destination is a place you GO. A button is a thing you DO — actions
-//      like "+ New thing" belong on a section, never in this list.
+//      like "+ New thing" belong on a section's `action`, never in this list.
+//      What a section action must satisfy, and where it renders, is
+//      docs/design-decisions/configuration-revamp.md § "Section actions".
 //   4. Never merge two pages just to make a count look smaller.
 
 import type { LucideIcon } from "lucide-react";
@@ -142,6 +144,7 @@ export const CONFIG_SECTIONS: Record<ConfigSection, ConfigSectionMeta> = {
     label: "People",
     blurb: "Who gets in, what they can do, and what they land on.",
     icon: Users,
+    action: { label: "+ Invite someone", to: "/configuration/members/invite" },
   },
   connections: {
     label: "Connections",

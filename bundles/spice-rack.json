@@ -1,0 +1,278 @@
+{
+  "manifest": {
+    "id": "cobblr.flagship.spice-rack",
+    "version": "0.1.0",
+    "released_at": "2026-08-20",
+    "name": "Spice Rack",
+    "author": "Cobblr",
+    "description": "Your spices and seasonings as their own table: what is on the rack, which jar is open, and how often you actually re-buy each one.",
+    "changelog": "First release. Spices get their own table rather than rows in generic Inventory, with the fields a spice cabinet needs and none it does not. Each jar can be tracked open versus sealed, so \"four jars of paprika, one of them open\" is something the app can say. Two columns learn from ordinary shopping: how often you re-buy something, and how long the current stock will last.",
+    "requires": [
+      {
+        "module": "inventory"
+      },
+      {
+        "module": "lists"
+      },
+      {
+        "module": "core-cadence"
+      }
+    ],
+    "wires": [
+      {
+        "source_kind": "inventory:part",
+        "action_id": "lists:add-item",
+        "trigger_type": "event",
+        "trigger_event": "inventory.stock.low",
+        "args": {
+          "listTitle": "Shopping list"
+        }
+      },
+      {
+        "source_kind": "inventory:part",
+        "action_id": "lists:add-item",
+        "trigger_type": "event",
+        "trigger_event": "inventory.stock.predicted-low",
+        "args": {
+          "listTitle": "Shopping list"
+        }
+      },
+      {
+        "source_kind": "inventory:part",
+        "action_id": "lists:add-item",
+        "trigger_type": "event",
+        "trigger_event": "core-cadence.reorder.due",
+        "args": {
+          "listTitle": "Shopping list"
+        }
+      },
+      {
+        "source_kind": "inventory:part",
+        "action_id": "inventory:adjust-stock",
+        "trigger_type": "event",
+        "trigger_event": "lists.item.checked",
+        "args": {
+          "delta": 1,
+          "reason": "Restocked, checked off the shopping list"
+        }
+      },
+      {
+        "source_kind": "inventory:part",
+        "action_id": "core-cadence:record-event",
+        "trigger_type": "event",
+        "trigger_event": "lists.item.checked",
+        "args": {
+          "event_type": "purchase",
+          "qty_delta": 1,
+          "source": "list"
+        }
+      }
+    ],
+    "field_defs": [],
+    "provides_instances": [
+      {
+        "module": "inventory",
+        "instance_name": "spices",
+        "display_name": "Spices",
+        "item_noun": "spice",
+        "glyph": "🧂",
+        "qty_unit": "jar",
+        "scan_keywords": [
+          "spice",
+          "seasoning",
+          "herb",
+          "peppercorn",
+          "paprika",
+          "cumin",
+          "oregano",
+          "cinnamon",
+          "turmeric",
+          "chili powder",
+          "garlic powder",
+          "onion powder",
+          "curry",
+          "basil",
+          "thyme",
+          "rosemary",
+          "bay leaf",
+          "nutmeg",
+          "cardamom",
+          "coriander",
+          "vanilla extract",
+          "baking powder",
+          "baking soda",
+          "cocoa"
+        ],
+        "field_defs": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "form",
+            "display_label": "Form",
+            "type": "text",
+            "position": 1,
+            "choices": [
+              "Ground",
+              "Whole",
+              "Blend",
+              "Flake",
+              "Salt",
+              "Extract",
+              "Leaf"
+            ]
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "net_weight_g",
+            "display_label": "Net weight (g)",
+            "type": "number",
+            "unit": "g",
+            "position": 2,
+            "help": "Grams in a full jar, off the label. Used to gauge how much is left in the open one, so you never type a capacity."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "capacity",
+            "display_label": "Full jar",
+            "type": "computed",
+            "template": "{{ net_weight_g }}",
+            "position": 3,
+            "help": "Grams in one full jar, from the weight above. Each opened jar's gauge is measured against this."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "rack_area",
+            "display_label": "Where",
+            "type": "text",
+            "position": 4,
+            "choices": [
+              "Rack",
+              "Cabinet floor",
+              "Drawer",
+              "Pantry",
+              "Fridge"
+            ]
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "opened_on",
+            "display_label": "Opened",
+            "type": "date",
+            "position": 5
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "expires_on",
+            "display_label": "Best before",
+            "type": "date",
+            "position": 6,
+            "field_role": "expiry"
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "replenish_every",
+            "display_label": "You re-buy every (days)",
+            "type": "computed",
+            "template": "{{ cadence.replenish_every_days }}",
+            "position": 7,
+            "help": "Learned from how often you actually buy it. Blank until it has seen two shops."
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "runs_out_in",
+            "display_label": "Runs out in (days)",
+            "type": "computed",
+            "template": "{{ cadence.days_until_runout }}",
+            "position": 8,
+            "help": "At the rate you have been going through it. Blank while it is still learning."
+          }
+        ],
+        "field_overrides": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "manufacturer",
+            "display_label": "Brand"
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "consumable"
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "min_qty",
+            "display_label": "Re-buy when down to"
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "warranty",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "serial_number",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "model_number",
+            "hidden": true
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "maintenance",
+            "hidden": true
+          }
+        ],
+        "saved_views": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "On the rack",
+            "view_type": "table",
+            "pinned": true,
+            "config": {
+              "group_by": "rack_area",
+              "visible_fields": [
+                "title",
+                "manufacturer",
+                "form",
+                "qty",
+                "replenish_every",
+                "runs_out_in"
+              ]
+            }
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "Re-buy soonest",
+            "view_type": "table",
+            "config": {
+              "sort_by": "runs_out_in",
+              "sort_dir": "asc",
+              "visible_fields": [
+                "title",
+                "qty",
+                "runs_out_in",
+                "replenish_every",
+                "min_qty"
+              ]
+            }
+          },
+          {
+            "entity_kind": "inventory:part",
+            "name": "How often you re-buy",
+            "view_type": "table",
+            "config": {
+              "sort_by": "replenish_every",
+              "sort_dir": "asc",
+              "visible_fields": [
+                "title",
+                "replenish_every",
+                "runs_out_in",
+                "qty"
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

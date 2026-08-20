@@ -23,6 +23,7 @@
 import { platform } from "@cobblr/platform-contract";
 import { WORKSPACE_TOOLS, jsonSchemaOf, mcpToolName, toolFromMcpName, type WorkspaceApi } from "@cobblr/workspace-tools";
 import { signMcpWriteGrant, verifySession } from "../auth/jwt.js";
+import { meta } from "../db/meta.js";
 
 const SELF_BASE = `http://127.0.0.1:${process.env.API_PORT || "4000"}/api/v1`;
 const SERVER_INFO = { name: "cobblr", version: "0.1.0" };
@@ -95,6 +96,28 @@ async function rest(token: string, method: string, path: string, body?: unknown)
     throw new Error(typeof err === "string" ? err : JSON.stringify(err));
   }
   return parsed;
+}
+
+/** One string argument, if the caller sent one. */
+function argString(args: Json, name: string): string {
+  const v = args[name];
+  return typeof v === "string" ? v.trim() : "";
+}
+
+/** What the registry says about an action's safety. Read straight from
+ *  cobblr_meta rather than over REST: the decision must not depend on the
+ *  caller's own token, and registry-sync keeps the row current from the
+ *  manifest on every boot. */
+async function actionSafety(
+  actionId: string,
+): Promise<{ id: string; label: string | null; undoable: boolean } | null> {
+  if (!actionId) return null;
+  const row = await meta
+    .selectFrom("entity_actions")
+    .select(["id", "label", "undoable"])
+    .where("id", "=", actionId)
+    .executeTakeFirst();
+  return row ? { id: row.id, label: row.label, undoable: row.undoable === true } : null;
 }
 
 function slugOf(args: Json, defaultSlug: string | null): string {
@@ -181,15 +204,39 @@ async function writeModeFor(token: string, slug: string): Promise<WriteMode> {
   }
 }
 
-/** Why this caller may not run this write tool, or null if they may. */
-export function writeRefusal(tool: string, mode: WriteMode): string | null {
-  if (tool === "invoke_action") {
-    return "Actions always need a confirmation step, and this connection has no way to show one. Ask the user to run it from Cobblr, or from a chat with a directly-connected AI provider.";
-  }
+/** Why this caller may not run this write tool, or null if they may.
+ *
+ *  TOOL granularity. invoke_action used to be refused here in every mode, on
+ *  the reasoning that actions always confirm and a relay cannot ask - which
+ *  removed the tool from the list entirely, so the assistant reported having no
+ *  way to run ANY action rather than a reason (2026-08-19). But the real line
+ *  was never actions-vs-records: a relay auto-applies create / update / DELETE
+ *  on records because those are tracked and undoable, and reordering locations
+ *  is undone by reordering them again. So the tool follows the same consent as
+ *  every other write, and the per-ACTION judgement moves to actionRefusal
+ *  below, where it can name the action and say what to do instead.
+ *
+ *  Every write tool now answers the same way, so `_tool` is unused - the
+ *  parameter stays because the seam is per tool and a future rule will want it,
+ *  and because callers read better naming what they are asking about. */
+export function writeRefusal(_tool: string, mode: WriteMode): string | null {
   if (mode === "auto") return null;
   return mode === "off"
     ? 'Changes are turned off for this chat. The user can allow them in the chat\'s tool settings ("Changes" → Ask or Auto).'
     : 'Changes are set to "Ask" for this chat, and this connection cannot show a confirmation prompt. The user can switch "Changes" to Auto in the chat\'s tool settings (every change stays tracked and undoable), or make this one in Cobblr directly.';
+}
+
+/** Why this caller may not run this PARTICULAR action, or null if they may.
+ *
+ *  An action that cannot be put right again needs a person in front of it, and
+ *  this connection cannot show one a confirmation. Actions declare that for
+ *  themselves (`undoable` in the manifest), defaulting to false, so a new
+ *  action is cautious until someone decides otherwise. */
+export function actionRefusal(action: { id: string; label?: string | null; undoable?: boolean } | null): string | null {
+  if (!action) return null; // unknown id — let the invoke route give its own error
+  if (action.undoable) return null;
+  const name = action.label ? `"${action.label}"` : action.id;
+  return `${name} cannot be undone from inside the workspace, so it needs a person to confirm it, and this connection has no way to show a confirmation. Run it from Cobblr, where the confirm step appears. Actions that CAN be undone run from here normally - list_actions marks each one.`;
 }
 
 /** The tool list a relay grant sees at `write_mode`. Exported so the guardrail
@@ -205,6 +252,36 @@ export function toolsForWriteMode(mode: WriteMode): typeof HOSTED_MCP_TOOLS {
 async function toolsFor(caller: Caller, token: string): Promise<typeof HOSTED_MCP_TOOLS> {
   if (caller.kind === "full") return HOSTED_MCP_TOOLS;
   return toolsForWriteMode(await writeModeFor(token, caller.slug));
+}
+
+/** Tell the user's open chat turn what this relayed call is doing.
+ *
+ *  Fire-and-forget in both directions: a turn that is not open, a slow write, a
+ *  failed one — none of it may delay or fail the tool the model is waiting on.
+ *  Narration is worth exactly nothing if it can break the thing it narrates. */
+/** The one human-readable thing in a tool result: what the record is called. */
+function nameOf(data: unknown): string {
+  if (data && typeof data === "object") {
+    const n = (data as Record<string, unknown>).name;
+    if (typeof n === "string" && n.trim()) return n.trim();
+  }
+  return "";
+}
+
+/** The writes the chat ledger knows how to record and undo. Exported because a
+ *  write tool that is NOT in here bypasses the ledger silently — no undo beside
+ *  the answer, no record of what was asked for — which is exactly how this bug
+ *  arrived. A test holds this set against the registry's write tools. */
+export const LEDGERED_TOOLS = new Set([
+  "create_record",
+  "create_records",
+  "update_record",
+  "delete_record",
+  "invoke_action",
+]);
+
+function narrate(token: string, slug: string, step: Record<string, unknown>): void {
+  void rest(token, "POST", `/orgs/${slug}/modules/core-ai/chat/turns/open/steps`, step).catch(() => {});
 }
 
 async function callTool(name: string, args: Json, token: string, defaultSlug: string | null): Promise<unknown> {
@@ -226,10 +303,47 @@ async function callTool(name: string, args: Json, token: string, defaultSlug: st
   if (caller.kind === "grant" && tool.mode === "write") {
     const refusal = writeRefusal(tool.name, await writeModeFor(token, caller.slug));
     if (refusal) throw new Error(refusal);
+    if (tool.name === "invoke_action") {
+      const actionRefused = actionRefusal(await actionSafety(argString(args, "action_id")));
+      if (actionRefused) throw new Error(actionRefused);
+    }
     execToken = await signMcpWriteGrant(caller.userId, caller.slug);
   }
 
+  // Only a relay grant narrates: that is the caller that IS an in-app chat turn
+  // the user is watching. A full API token is a script or a connector with no
+  // panel in front of it.
+  const write = tool.mode === "write";
+  if (caller.kind === "grant") narrate(token, slug, { kind: "tool", name: tool.name, write, args });
+
+  // A RECORD write goes through the chat's own write endpoint, not straight at
+  // the module route, so it lands in the change ledger with a before-image and
+  // an undo — the same treatment an in-app write gets. Doing it here rather
+  // than at the module route is the point: the ledger is a property of "the
+  // assistant changed something", not of any one module.
+  if (caller.kind === "grant" && write && LEDGERED_TOOLS.has(tool.name)) {
+    const led = (await rest(execToken, "POST", `/orgs/${slug}/modules/core-ai/chat/writes`, {
+      tool: tool.name,
+      args,
+    })) as { ok?: boolean; message?: string; entity?: unknown } | null;
+    // The endpoint narrates its own result (it is the one that knows the ledger
+    // id, which is what an Undo is made of), so nothing more is said here.
+    if (!led?.ok) throw new Error(led?.message ?? "the change could not be made");
+    return led;
+  }
+
   const result = await tool.execute(workspaceApiFor(execToken, slug), args);
+  if (caller.kind === "grant") {
+    narrate(token, slug, {
+      kind: write && result.ok ? "applied" : "tool-result",
+      name: tool.name,
+      ok: result.ok,
+      // A NAME, not the record. The panel is showing a person what is
+      // happening; a serialised row with its uuid and its nulls is noise
+      // wearing the clothes of detail.
+      summary: (result.ok ? nameOf(result.data) : (result.error ?? "")).slice(0, 160),
+    });
+  }
   // A tool that declines (a refusal with a reason, not a transport failure)
   // must reach the model as an error, or it reports success for something that
   // did not happen — the same mistake the in-app chat made until #1938.

@@ -3,7 +3,7 @@
 // fulfilled. Shares the decrement logic with the route (fulfilment.ts).
 
 import { type Kysely } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, readJsonArg } from "@cobblr/platform-contract";
 import type { SalesDB, SalesOrderStatus } from "../db.js";
 import { decrementForFulfilment } from "../fulfilment.js";
 
@@ -55,7 +55,16 @@ export function registerSalesActionHandlers(): void {
   // Optionally upserts the customer (by email), creates the order + line items,
   // and emits sales.order.created. Mirrors the POST / route's insert shape.
   platform().actions.registerHandler("sales.create-order", async (ctx) => {
-    const args = (ctx.args as CreateOrderArgs | null) ?? {};
+    // customer / items / metadata are structured args, and a wire's arg field
+    // can only send text — so read them through readJsonArg rather than
+    // trusting they arrived already parsed.
+    const raw = (ctx.args ?? {}) as Record<string, unknown>;
+    const args: CreateOrderArgs = {
+      ...(raw as CreateOrderArgs),
+      customer: readJsonArg<CreateOrderArgs["customer"]>(raw, "customer"),
+      items: readJsonArg<CreateOrderArgs["items"]>(raw, "items"),
+      metadata: readJsonArg<CreateOrderArgs["metadata"]>(raw, "metadata"),
+    };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<SalesDB>;
     const instance = "sales";
 

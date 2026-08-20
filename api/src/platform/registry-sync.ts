@@ -9,6 +9,7 @@ import { meta } from "../db/meta.js";
 import { listEntries } from "../modules/registry.js";
 import { clearExposableFieldsCache } from "./entities.js";
 import { PLATFORM_ACTIONS, PLATFORM_ACTION_OWNER } from "./platform-actions.js";
+import { compileTemplate } from "@cobblr/platform-contract";
 
 export async function syncManifestRegistries(): Promise<{
   kinds: number;
@@ -29,6 +30,7 @@ export async function syncManifestRegistries(): Promise<{
     profile: string | null;
     label_code_overlay_default: boolean | null;
     exposable_fields: string[] | null;
+    duplicate_scope: string | null;
     field_read_scopes: Record<string, string> | null;
     is_primary: boolean;
   }> = [];
@@ -44,6 +46,8 @@ export async function syncManifestRegistries(): Promise<{
     invoke_handler: string | null;
     user_invokable: boolean;
     args_schema: unknown;
+    undoable: boolean;
+    examples: string[];
     version: string;
   }> = [];
 
@@ -75,6 +79,7 @@ export async function syncManifestRegistries(): Promise<{
         profile: k.profile ?? null,
         label_code_overlay_default: k.labelCodeOverlayDefault ?? null,
         exposable_fields: k.exposableFields ?? null,
+        duplicate_scope: k.duplicateScope ?? null,
         field_read_scopes: k.fieldReadScopes ?? null,
       });
     }
@@ -112,6 +117,8 @@ export async function syncManifestRegistries(): Promise<{
         invoke_handler: a.invokeHandler ?? null,
         user_invokable: userInvokable,
         args_schema: a.argsSchema ?? null,
+        undoable: a.undoable ?? false,
+        examples: a.examples ?? [],
         version: a.version ?? m.version,
       });
     }
@@ -135,8 +142,53 @@ export async function syncManifestRegistries(): Promise<{
       invoke_handler: a.invoke_handler,
       user_invokable: a.user_invokable,
       args_schema: a.args_schema,
+      undoable: a.undoable ?? false,
+      examples: a.examples ?? [],
       version: a.version,
     });
+  }
+
+  // Commands a module ships, compiled here so an author never writes a regex.
+  // A template that cannot compile is a manifest bug and is skipped loudly
+  // rather than stored as something that will never match.
+  const commandRows: Array<{
+    id: string;
+    module_name: string;
+    template: string;
+    description: string | null;
+    pattern: string;
+    slots: unknown;
+    plan: unknown;
+    repeat_field: string | null;
+    repeat_shape: string | null;
+    version: string;
+  }> = [];
+  for (const entry of listEntries()) {
+    const m = entry.manifest;
+    for (const c of m.exposes?.commands ?? []) {
+      const compiled = compileTemplate(c.template);
+      if (!compiled) {
+        console.warn(`[registry-sync] ${m.name}: command ${c.id} has a template with no {blanks} or a repeated one — skipped`);
+        continue;
+      }
+      commandRows.push({
+        id: c.id,
+        module_name: m.name,
+        template: c.template,
+        description: c.description ?? null,
+        pattern: compiled.pattern,
+        slots: compiled.slots,
+        plan: c.plan.map((op) => ({
+          tool: op.tool,
+          entity_kind: op.entityKind ?? "",
+          ...(op.actionId ? { action_id: op.actionId } : {}),
+          payload: op.payload,
+        })),
+        repeat_field: c.repeatField ?? null,
+        repeat_shape: c.repeatShape ?? null,
+        version: m.version,
+      });
+    }
   }
 
   await meta.transaction().execute(async (trx) => {
@@ -163,6 +215,7 @@ export async function syncManifestRegistries(): Promise<{
           traits: k.traits ? sql`${JSON.stringify(k.traits)}::jsonb` : null,
           profile: k.profile,
           label_code_overlay_default: k.label_code_overlay_default,
+          duplicate_scope: k.duplicate_scope,
           exposable_fields: k.exposable_fields
             ? sql`${JSON.stringify(k.exposable_fields)}::jsonb`
             : null,
@@ -186,6 +239,7 @@ export async function syncManifestRegistries(): Promise<{
             traits: k.traits ? sql`${JSON.stringify(k.traits)}::jsonb` : null,
             profile: k.profile,
             label_code_overlay_default: k.label_code_overlay_default,
+            duplicate_scope: k.duplicate_scope,
             exposable_fields: k.exposable_fields
               ? sql`${JSON.stringify(k.exposable_fields)}::jsonb`
               : null,
@@ -211,6 +265,8 @@ export async function syncManifestRegistries(): Promise<{
           invoke_handler: a.invoke_handler,
           user_invokable: a.user_invokable,
           args_schema: a.args_schema ? sql`${JSON.stringify(a.args_schema)}::jsonb` : null,
+          undoable: a.undoable,
+          examples: sql`${JSON.stringify(a.examples)}::jsonb`,
           version: a.version,
         })
         .onConflict((b) =>
@@ -225,10 +281,50 @@ export async function syncManifestRegistries(): Promise<{
             invoke_handler: a.invoke_handler,
             user_invokable: a.user_invokable,
             args_schema: a.args_schema ? sql`${JSON.stringify(a.args_schema)}::jsonb` : null,
+            undoable: a.undoable,
+            examples: sql`${JSON.stringify(a.examples)}::jsonb`,
             version: a.version,
           }),
         )
         .execute();
+    }
+
+    for (const c of commandRows) {
+      await trx
+        .insertInto("entity_commands")
+        .values({
+          id: c.id,
+          module_name: c.module_name,
+          template: c.template,
+          description: c.description,
+          pattern: c.pattern,
+          slots: sql`${JSON.stringify(c.slots)}::jsonb`,
+          plan: sql`${JSON.stringify(c.plan)}::jsonb`,
+          repeat_field: c.repeat_field,
+          repeat_shape: c.repeat_shape,
+          version: c.version,
+        })
+        .onConflict((b) =>
+          b.column("id").doUpdateSet({
+            module_name: c.module_name,
+            template: c.template,
+            description: c.description,
+            pattern: c.pattern,
+            slots: sql`${JSON.stringify(c.slots)}::jsonb`,
+            plan: sql`${JSON.stringify(c.plan)}::jsonb`,
+            repeat_field: c.repeat_field,
+            repeat_shape: c.repeat_shape,
+            version: c.version,
+            synced_at: new Date(),
+          }),
+        )
+        .execute();
+    }
+    const presentCommandIds = commandRows.map((c) => c.id);
+    if (presentCommandIds.length > 0) {
+      await trx.deleteFrom("entity_commands").where("id", "not in", presentCommandIds).execute();
+    } else {
+      await trx.deleteFrom("entity_commands").execute();
     }
 
     // Delete rows for kinds/actions whose IDs aren't present in the

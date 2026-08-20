@@ -17,6 +17,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { CustomFieldsPanel,
   EntityActionsBar,
+  usePublishSelectedRecords,
   Modal,
   useToast,
   useConfirm, usePageTitle } from "@cobblr/platform-web";
@@ -170,6 +171,11 @@ export function AssetsPage({
   // click-to-open semantics). Tracks the IDs as a Set so toggle is
   // O(1) and selectAll is one Set replacement.
   const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // What is ticked IS context: with the panel open, "delete these" means the
+  // ones on screen a person pointed at, and Cobb gets their ids rather than a
+  // count he has to go and re-find.
+  usePublishSelectedRecords(selected, rows, "assets:asset", "asset");
   const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
   const qc = useQueryClient();
   const toast = useToast();

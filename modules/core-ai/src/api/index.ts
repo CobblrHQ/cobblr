@@ -18,6 +18,7 @@ import { register as registerOllama } from "../providers/ollama.js";
 import { register as registerOpenAI } from "../providers/openai.js";
 import { register as registerOpenAICompat } from "../providers/openai-compat.js";
 import { register as registerOpenRouter } from "../providers/openrouter.js";
+import { register as registerGoogleAiStudio } from "../providers/google-ai-studio.js";
 import { register as registerAnthropic } from "../providers/anthropic.js";
 import { register as registerEdgeBridge } from "../providers/edge-bridge.js";
 import { register as registerReplay } from "../providers/replay.js";
@@ -28,6 +29,7 @@ function registerBuiltins(): void {
   if (registered) return;
   registered = true;
   registerOllama();
+  registerGoogleAiStudio();
   registerOpenAI();
   registerOpenAICompat();
   // Shaped preset over the compat machinery: fixed base URL, required

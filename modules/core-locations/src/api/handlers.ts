@@ -13,22 +13,23 @@
 // It shares ReorderIds + applyOrder with the HTTP route, so dragging in the
 // tree and asking for an order cannot come to mean different things.
 
-import { platform } from "@cobblr/platform-contract";
+import { platform, readListArg } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import { ReorderIds, applyOrder } from "./locations.js";
 import type { CoreLocationsDB } from "../db.js";
 
 export function registerLocationsHandlers(): void {
   platform().actions.registerHandler("core-locations.reorder", async (ctx) => {
-    const args = (ctx.args ?? {}) as Record<string, unknown>;
-    const raw = Array.isArray(args.ids) ? args.ids : [];
-    const ids = raw.filter((v): v is string => typeof v === "string").map((v) => v.trim());
+    // `ids` is a list arg: a real array from invoke_action, a delimited string
+    // from a wire's text field. readListArg makes those the same thing — an
+    // Array.isArray check here silently ignored the second form.
+    const ids = readListArg(ctx.args, "ids");
     const parsed = ReorderIds.safeParse(ids);
     if (!parsed.success) {
       return {
         ok: false,
         error:
-          "Pass `ids`: the location ids of ONE parent's children, in the order you want them. Use list_records on core-locations:location to read them, keeping only the children of the parent being ordered.",
+          "Pass `ids`: the location ids of ONE parent's children, in the order you want them, as a list, e.g. [\"<id-a>\", \"<id-b>\"]. Use list_records on core-locations:location to read them, keeping only the children of the parent being ordered.",
       };
     }
 

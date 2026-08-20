@@ -16,8 +16,9 @@
 // their own src through <Frame>, so a filmstrip of authed files is fine.
 
 import { Fragment, useEffect, useState } from "react";
+import { OverlayCloseButton } from "./OverlayCloseButton";
 import { createPortal } from "react-dom";
-import { X } from "lucide-react";
+
 import { useImageSrc, OverlayFlag } from "@cobblr/platform-web";
 import { api } from "../lib/api";
 
@@ -165,14 +166,7 @@ export function ImageLightbox({
       aria-label={`Image ${index + 1} of ${items.length}`}
     >
       <OverlayFlag />
-      <button
-        onClick={onClose}
-        className="absolute z-10 top-3 right-3 p-2 rounded-full bg-black/50 text-white/90 hover:bg-black/70 hover:text-white transition"
-        title="Close (Esc)"
-        aria-label="Close"
-      >
-        <X size={20} />
-      </button>
+      <OverlayCloseButton onClose={onClose} />
 
       {/* Main image. Fit-to-screen, or natural-size + scroll when zoomed. */}
       <div
@@ -200,7 +194,13 @@ export function ImageLightbox({
 
       {/* Footer: caption + action + filmstrip. stopPropagation so using the
           controls doesn't dismiss the viewer. */}
-      <div className="shrink-0 w-full max-w-3xl mx-auto p-4 space-y-2" onClick={stop}>
+      <div
+        className="shrink-0 w-full max-w-3xl mx-auto p-4 space-y-2"
+        // Mirror of the close button's inset: without it the action row sits in
+        // the home-indicator gesture strip, where a swipe-up beats the tap.
+        style={{ paddingBottom: "max(1rem, calc(env(safe-area-inset-bottom) + 0.5rem))" }}
+        onClick={stop}
+      >
         {searchSlot}
         <div className="flex items-center justify-between gap-3">
           {current.caption ? (

@@ -9,7 +9,7 @@
 // to the same asset; an emit here would re-fire the wire. Same reasoning as
 // inventory's writer (see modules/inventory/src/api/sync-writer.ts).
 
-import { platform } from "@cobblr/platform-contract";
+import { platform, restoreRow, snapshotRow } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { AssetsDB } from "../db.js";
 
@@ -51,6 +51,19 @@ export function registerAssetsWriter(): void {
     async delete(orgId, id) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<AssetsDB>;
       await db.deleteFrom("assets_assets").where("id", "=", id).execute();
+    },
+
+    /** Put the row back exactly as it was, id and all (EntityWriter.restore).
+     *  Not a create: no name-clash rule, no re-derived id, no new row for
+     *  everything that pointed at the old one to miss. */
+    async restore(orgId, image) {
+      await restoreRow(await platform().tenants.getDb(orgId), "assets_assets", image);
+    },
+
+    /** Every column of one row — the state a change ledger keeps so an undo
+     *  has something real to put back (EntityWriter.snapshot). */
+    async snapshot(orgId, id) {
+      return snapshotRow(await platform().tenants.getDb(orgId), "assets_assets", id);
     },
 
     async read(orgId, id) {

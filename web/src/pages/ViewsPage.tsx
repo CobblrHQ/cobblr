@@ -249,6 +249,8 @@ export function SavedViewBody({
   // Generic — the planner files whatever the kind's writer accepts a location on;
   // a non-locatable kind just yields nothing to file.
   const { openFlow } = useFlowHost();
+  // SELECTION-NOT-CONTEXT: saved views are configuration, not records; the rows a view SHOWS are
+  //   published by the list pages themselves
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const toggle = (id: string) =>
     setSelected((s) => {

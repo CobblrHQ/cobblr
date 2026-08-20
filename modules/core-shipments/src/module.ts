@@ -21,7 +21,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-shipments",
-  version: "0.6.0",
+  version: "0.6.2",
   displayName: "Shipments",
   description:
     "Tells you where a parcel is. Paste a tracking number and Cobblr works out the carrier from the number itself, links you straight to their page, and (once a carrier is connected) follows the parcel so an order marks itself arrived instead of asking you.",
@@ -74,11 +74,22 @@ export default defineModule({
         // Workspace-scoped: it acts on a NUMBER, not on a record, and
         // core-shipments has no business naming whose record it came from.
         id: "core-shipments:track",
+        examples: ["where is my parcel", "track this number"],
         label: "Check a tracking number",
         description:
           "Ask the configured carrier or tracking service where a parcel is. Returns its state and scan history, the better of the carrier's arrival estimate and the one you passed in, and when to check again. Never marks anything arrived: a carrier says a parcel was delivered, only a person can say they took it in. Args: { number, currentEta?, currentEtaSource?, lastState?, lastCheckedAt?, force? }.",
         scope: "workspace" as const,
         invokeHandler: "core-shipments.track",
+        argsSchema: {
+          confirmed: { label: "Whether a person has confirmed they received it", type: "boolean" },
+          deliveredAt: { label: "When the carrier said it was delivered, ISO timestamp", type: "text" },
+          number: { label: "The tracking number", type: "text" },
+          currentEta: { label: "The arrival date you already hold, if any", type: "text" },
+          currentEtaSource: { label: "Where that date came from", type: "text" },
+          lastState: { label: "The last state you recorded", type: "text" },
+          lastCheckedAt: { label: "When you last checked, ISO timestamp", type: "text" },
+          force: { label: "Check now even if it is not due yet", type: "boolean" },
+        },
         userInvokable: false,
       },
     ],

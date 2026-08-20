@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "labels",
-  version: "0.25.6",
+  version: "0.25.8",
   displayName: "Labels",
   description:
     "QR codes, label templates, per-user print queue, scan-to-navigate/scan-to-action tokens. Polymorphic, any module's entity can have a label.",
@@ -69,6 +69,7 @@ export default defineModule({
     actions: [
       {
         id: "labels:print",
+        examples: ["print a label for this", "sticker it"],
         label: "Print label",
         description: "Queue a printable label for this entity",
         icon: "tag",
@@ -88,6 +89,7 @@ export default defineModule({
         // (frozen) group keeps the printed stickers valid and only changes new
         // labels (keep_existing), so it's always safe to run.
         id: "labels:set-code",
+        examples: ["change the code prefix", "stop printing codes on those labels"],
         label: "Change label codes",
         description:
           "Rename a code group's prefix (e.g. p1, p2 for 3D printers), remove a list's code entirely to free that letter, or toggle whether THAT group's code prints inside the QR (per instance, so 3d printers can show it and cnc can hide it). Runs on the workspace, not a record.",

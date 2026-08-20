@@ -18,6 +18,16 @@ export interface BasicRule {
   keywords: string[];
   /** the answer, in Cobb's voice */
   reply: string;
+  /** Some replies do not ANSWER the message, they decline it: "that needs AI
+   *  connected", "there is nothing waiting for a yes from me". Those are a
+   *  reply to something a person chose to send, never something to volunteer
+   *  while they are still typing — half a sentence has not asked for anything
+   *  yet, and an unprompted "I can't help with that" is worse than silence.
+   *  Also keeps them out of connected workspaces, where they are false. */
+  notBeforeSend?: true;
+  /** ...unless the question is still worth answering with AI on, just worded
+   *  for that world. Wins over `reply` whenever a provider is available. */
+  replyWhenAiOn?: string;
 }
 
 const CAPABILITIES = `Right now AI chat isn't connected, so I can't search your data or make changes for you — but I can point you to the right place:
@@ -29,6 +39,17 @@ const CAPABILITIES = `Right now AI chat isn't connected, so I can't search your 
 
 Connect AI and I can do these *for* you from here — just ask.`;
 
+// The same question in a workspace that HAS a provider. Asking "what can you
+// do?" with AI connected used to get nothing back, because the only answer on
+// file opened by saying AI was not connected.
+const CAPABILITIES_AI = `Ask me about your workspace and I will go and look, or tell me to do something and I will do it:
+
+- **Questions** — "how many parts do I have?", "what's low on stock?", "where is the label printer?"
+- **Changes** — "add a part called Widget", "make racks 1-8 in the Garage", "move the drill to Shelf B".
+- **Getting set up** — the **Build** page turns a plain-English description into fields and modules.
+
+Every change I make is tracked, so you can undo it. Ask, and I will show you what I am about to do first.`;
+
 // Order is the tie-breaker when two rules score equally: earlier wins. Keep the
 // specific intents above the loose greeting so "how do I add…" isn't swallowed
 // by a bare "hi".
@@ -38,6 +59,7 @@ export const BUILTIN_BASICS: BasicRule[] = [
     intent: "capabilities / help",
     keywords: ["what can you do", "what do you do", "how do you work", "help", "capabilities", "commands", "options"],
     reply: CAPABILITIES,
+    replyWhenAiOn: CAPABILITIES_AI,
   },
   {
     key: "what-is-cobblr",
@@ -73,6 +95,9 @@ export const BUILTIN_BASICS: BasicRule[] = [
     keywords: ["scan", "barcode", "qr code", "qr", "camera"],
     reply:
       "Open **Scan** from the nav to add items by barcode or photo. Known barcodes fill in a name and picture automatically; the rest you can name yourself. (Auto-naming unknown items needs AI connected.)",
+    // Same directions, minus a caveat that does not apply to this workspace.
+    replyWhenAiOn:
+      "Open **Scan** from the nav to add items by barcode or photo. Known barcodes fill in a name and picture automatically, and I can name and describe the ones that aren't in any catalog from the photo itself.",
   },
   {
     key: "build",
@@ -80,6 +105,77 @@ export const BUILTIN_BASICS: BasicRule[] = [
     keywords: ["build my workspace", "set up my workspace", "what should i track", "describe what", "build page", "make an app", "build"],
     reply:
       "Head to the **Build** page: describe what you want to track in plain English and it'll propose the fields and modules, then set them up once you confirm.",
+  },
+  {
+    // The single most-sent phrase in a real workspace's chat history, and it
+    // used to fall through to the generic "I only handle the basics". Someone
+    // saying "try again" has already been let down once; the answer has to say
+    // what is actually in the way.
+    key: "retry",
+    intent: "try again / retry",
+    keywords: [
+      "try again",
+      "try it again",
+      "do it again",
+      "retry",
+      "one more time",
+      "again please",
+      "can you retry",
+    ],
+    reply:
+      "Trying again will land in the same place, I am afraid: without AI connected I cannot act on your workspace, so there is nothing to retry. Connect AI using the link at the top and ask me again, and I will actually do it. If it already failed WITH AI connected, tell me what you asked for and I will say what went wrong.",
+    notBeforeSend: true,
+  },
+  {
+    // A bare confirmation with nothing to confirm. Basic mode proposes nothing,
+    // so "yes" arriving here means the user thinks a change is queued up.
+    key: "confirm-yes",
+    intent: "yes / go ahead / do it",
+    // NOT a bare "confirm": confirming a scan is a real thing people ask how to
+    // do, and this rule would answer "there is nothing waiting for a yes".
+    keywords: ["yes do it", "go ahead", "do it", "yes please", "yes go", "sounds good", "yep"],
+    reply:
+      "There is nothing waiting for a yes from me: with no AI connected I answer questions but never queue up a change. Connect AI using the link at the top and I will propose the change first, then do it once you confirm.",
+    notBeforeSend: true,
+  },
+  {
+    key: "stop-cancel",
+    intent: "stop / cancel / never mind",
+    keywords: ["stop", "cancel", "never mind", "nevermind", "forget it", "wait no"],
+    reply:
+      "Nothing is running, so there is nothing to stop. With no AI connected I only answer from a fixed set of replies. If a change already ran and you want it back, open the record and edit it, or use the undo on the change if one is offered.",
+    notBeforeSend: true,
+  },
+  {
+    key: "undo",
+    intent: "undo / revert",
+    keywords: ["undo", "undo that", "revert", "put it back", "take that back"],
+    reply:
+      "I cannot undo anything from here: without AI connected I have not changed anything to undo. When AI IS connected, every change I make shows an undo right in the chat, and you can undo an undo. A change you made yourself is edited or deleted on the record itself.",
+    notBeforeSend: true,
+  },
+  {
+    // The whole class of "questions about MY data". These are the ones a
+    // no-AI workspace most wants answered and least can be, so the reply says
+    // where to look instead of only saying no.
+    key: "my-data",
+    intent: "how many / what do I have / where is it",
+    keywords: [
+      "how many",
+      "what do i have",
+      "what have i got",
+      "where is my",
+      "where are my",
+      "how much do i have",
+      "what is low",
+      "what's low",
+      "running low",
+      "what needs my attention",
+      "show me my",
+    ],
+    reply:
+      "Questions about your own records need AI connected, because answering them means reading your workspace. Connect AI using the link at the top and I will search and answer properly. In the meantime the search box at the top finds anything by name, and each list has filters and a low-stock view where the module offers one.",
+    notBeforeSend: true,
   },
   {
     key: "find-search",
@@ -161,7 +257,9 @@ export const BUILTIN_BASICS: BasicRule[] = [
   {
     key: "feedback-support",
     intent: "feedback / report a bug",
-    keywords: ["feedback", "report a bug", "bug", "contact support", "support", "something's broken", "something is broken", "suggestion"],
+    // NOT a bare "support": "do you support kanban swimlanes" is a question
+    // about a feature, and it was getting the report-a-bug answer.
+    keywords: ["feedback", "report a bug", "bug", "contact support", "get support", "support ticket", "something's broken", "something is broken", "suggestion"],
     reply:
       "Found a bug or have an idea? Use **feedback** in your **account menu** (top-right): it goes straight to whoever runs this Cobblr.",
   },

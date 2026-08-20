@@ -12,7 +12,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "lists",
-  version: "0.2.1",
+  version: "0.2.4",
   displayName: "Lists",
   description:
     "Lightweight checklists: a list + check-off-able items. Shopping lists, to-do, packing. Other modules can auto-add items via a wire (e.g. 'running low' → shopping list).",
@@ -92,6 +92,7 @@ export default defineModule({
     actions: [
       {
         id: "lists:clear-done",
+        examples: ["clear the ticked ones", "tidy up this list"],
         label: "Clear done items",
         description:
           "Remove every ticked-off item from this list, leaving the unticked ones. Nothing else on the list changes. Irreversible, so it always confirms.",
@@ -101,6 +102,8 @@ export default defineModule({
       },
       {
         id: "lists:add-item",
+        examples: ["put milk on the shopping list", "add that to my list"],
+        undoable: true,
         label: "Add to a list",
         description:
           "Append an item to a list. Wire it to an event (e.g. inventory.stock.low) to auto-build a shopping list. Dedupes by title within the list (won't pile up duplicates).",
@@ -108,6 +111,13 @@ export default defineModule({
         // on a list. The one honest any:true among the entity-bound actions.
         appliesTo: { any: true },
         invokeHandler: "lists.add-item",
+        argsSchema: {
+          title: { label: "What to add, defaults to the source record's title", type: "text" },
+          listId: { label: "Which list, by id", type: "text" },
+          listTitle: { label: "Which list, by name; created if it does not exist yet", type: "text" },
+          qty: { label: "How many", type: "number" },
+          note: { label: "Optional note on the item", type: "text" },
+        },
         userInvokable: false,
       },
     ],

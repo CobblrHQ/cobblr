@@ -21,7 +21,7 @@ export function AppSettingsPage() {
   const surfaces = allTops.filter((t) => !t.name.startsWith(HEADING_PREFIX));
 
   return (
-    <div className="mx-auto max-w-2xl px-4 py-8">
+    <div className="space-y-6">
       <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
         Settings
       </h1>

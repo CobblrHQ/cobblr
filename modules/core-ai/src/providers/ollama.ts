@@ -47,6 +47,23 @@ export function register(): void {
   platform().ai.registerProvider({
     id: "ollama",
     label: "Ollama (local)",
+    // Free and private, but needs hardware, so it follows the one that needs none.
+    rank: 20,
+    setup: {
+      summary:
+        "Free, and nothing leaves your machine. Needs a computer that can run the model, " +
+        "which for reading photos means a reasonably modern one with plenty of memory.",
+      steps: [
+        { text: "Install Ollama on the machine that runs Cobblr, or one on the same network.", href: "https://ollama.com/download" },
+        { text: "Pull a model that can read images. In a terminal: ollama pull qwen2.5vl" },
+        { text: "Make sure Ollama is reachable from Cobblr. On the same machine that is http://localhost:11434; in Docker it is usually http://ollama:11434." },
+        { text: "Put that address below and save. No key is needed." },
+      ],
+      caveat:
+        "A local model is usually less accurate at identifying products than a hosted one, " +
+        "and slower on a machine without a graphics card. The trade is that your photos " +
+        "never leave your network.",
+    },
     describeCredentials: () => ({
       base_url: {
         label: "Ollama base URL (e.g. http://ollama:11434)",

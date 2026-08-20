@@ -144,9 +144,17 @@ export async function deriveRankContext(
     ...cands.map((c) => c.fields ?? {}).reverse(),
     ...(color ? [{ color }] : []),
   );
+  // A line off a receipt has no manufacturer — a receipt names the shop and
+  // never the maker — so the shop stands in. "Lidl Croissant" finds the thing
+  // that was actually bought where "Croissant" finds a stock pastry, and it is
+  // the same phrase the auto-fetch used, so the strip offers alternatives to
+  // the picture that was chosen rather than the results of a different search
+  // (reported 2026-08-19: the card's own web strip searched the bare name while
+  // the tile beside it had been filled from the shop-scoped one).
+  const boughtFrom = typeof meta.receipt_vendor === "string" ? meta.receipt_vendor.trim() : "";
   const query = deriveImageQuery({
     name: row.suggested_name ?? null,
-    brand: row.suggested_manufacturer ?? null,
+    brand: row.suggested_manufacturer ?? (boughtFrom || null),
     fields: candidateFields,
     override: opts?.queryOverride ?? null,
     // Costs nothing and sends nothing: the observation is already on the row,

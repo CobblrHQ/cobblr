@@ -301,6 +301,9 @@ floorplanRouter.post(
           .where("id", "=", existing.id)
           .execute();
         zoneIds.push({ name: zone.name, id: existing.id, created: false });
+        // SIBLING-DUP-OK: this path already reuses a zone of the same name
+        // instead of adding one (that is what created:false above means), so a
+        // duplicate cannot come out of it.
       } else {
         const inserted = await db
           .insertInto("core_locations_locations")

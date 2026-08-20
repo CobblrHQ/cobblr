@@ -33,8 +33,25 @@ export function toolFail(error: string): ToolResult {
   return { ok: false, error };
 }
 
-/** Extract a useful message from a Cobblr error body. */
+/** Extract a useful message from a Cobblr error body.
+ *
+ *  Including WHICH FIELD, when the body says so. A validation failure answers
+ *  `details: [{path:["name"], message:"Required"}]`, and "Bad request body
+ *  (invalid_body)" throws that away — leaving the model to guess which of the
+ *  fields it sent was wrong, and the person reading the chat none the wiser.
+ *  Naming the field is the difference between a retry that can work and the
+ *  same call sent twice. */
 export function apiErrorMessage(res: WorkspaceApiResponse, fallback: string): string {
-  const err = res.body?.error as { message?: string; code?: string } | undefined;
-  return err?.message ? `${err.message}${err.code ? ` (${err.code})` : ""}` : `${fallback} (status ${res.status})`;
+  const err = res.body?.error as
+    | { message?: string; code?: string; details?: Array<{ path?: unknown[]; message?: string }> }
+    | undefined;
+  if (!err?.message) return `${fallback} (status ${res.status})`;
+  const fields = (Array.isArray(err.details) ? err.details : [])
+    .map((d) => {
+      const field = Array.isArray(d?.path) ? d.path.filter((p) => typeof p === "string").join(".") : "";
+      return field ? `${field}${d?.message ? ` (${d.message.toLowerCase()})` : ""}` : "";
+    })
+    .filter(Boolean);
+  const which = fields.length ? `: ${fields.slice(0, 4).join(", ")}` : "";
+  return `${err.message}${which}${err.code ? ` (${err.code})` : ""}`;
 }

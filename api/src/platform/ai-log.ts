@@ -88,15 +88,39 @@ export function looksLikeBlob(s: string): boolean {
   return /^[A-Za-z0-9+/=_-]+$/.test(head);
 }
 
-// Full text for the activity log. Blobs get clamped, prose is kept whole, and
-// the payload is capped — so a vision call cannot balloon the log while the
-// prompt you actually wanted to read survives.
+/** Shorten one long string from the MIDDLE, keeping both ends.
+ *
+ *  A system prompt's identity is at the top ("You are Cobb…") and the thing
+ *  that changed is usually near the bottom. Cutting the tail keeps the least
+ *  useful half of both. */
+function elide(s: string, keep: number): string {
+  if (s.length <= keep) return s;
+  const head = Math.ceil(keep * 0.7);
+  const tail = keep - head;
+  const cut = s.length - keep;
+  return `${s.slice(0, head)}\n\n…[${cut.toLocaleString()} characters elided]…\n\n${s.slice(s.length - tail)}`;
+}
+
+// Full text for the activity log. Blobs get clamped, prose is kept whole where
+// it fits, and the payload is capped — so a vision call cannot balloon the log
+// while the prompt you actually wanted to read survives.
 //
 // The cap is generous because an entry may now carry a small image thumbnail
 // (see thumbnailImages): a row stays bounded and is tiny next to the call it
 // describes.
+//
+// WHEN IT DOES NOT FIT, the shortening happens INSIDE the strings, never to the
+// serialised JSON. Slicing the JSON was the old behaviour and it cost the whole
+// feature: the stored text was no longer parseable, so the viewer's pretty
+// renderer silently fell back to raw and its Pretty/Raw toggle disappeared
+// (it only offers the choice when there are two ways to see it). An operator
+// opening a long Cobb chat got one wall of escaped JSON, cut mid-word, with no
+// control to fix it — the exact thing the pretty view exists to prevent
+// (2026-08-20). Trimming the strings keeps the envelope — the roles, the turn
+// boundaries, the small fields — structurally intact, so the record is still a
+// record.
 export function fullText(obj: unknown, cap = 40_000): string {
-  const json = JSON.stringify(obj, (k, v) => {
+  const replacer = (k: string, v: unknown): unknown => {
     // A thumbnail this code made is small on purpose — keep it, so the viewer
     // can show what was sent. Anything else under an image key is the original
     // bytes and must not be stored.
@@ -109,7 +133,26 @@ export function fullText(obj: unknown, cap = 40_000): string {
       return `${v.slice(0, 120)}…[${v.length.toLocaleString()} chars of data]`;
     }
     return v;
-  });
+  };
+
+  const json = JSON.stringify(obj, replacer);
   if (!json) return "";
-  return json.length <= cap ? json : json.slice(0, cap) + "…[truncated]";
+  if (json.length <= cap) return json;
+
+  // Over budget. Shrink the longest strings until it fits, sharing the budget
+  // between them rather than sacrificing whichever happened to serialise last.
+  // Converges because each pass halves the allowance; the floor stops it from
+  // spinning on a payload made entirely of tiny fields.
+  for (let allowance = 8_000; allowance >= 250; allowance = Math.floor(allowance / 2)) {
+    const shrunk = JSON.stringify(obj, (k, v) => {
+      const out = replacer(k, v);
+      return typeof out === "string" ? elide(out, allowance) : out;
+    });
+    if (shrunk && shrunk.length <= cap) return shrunk;
+  }
+
+  // Nothing but structure left (thousands of keys, no long strings). Slicing is
+  // now the only lever, and the viewer handles unparseable text by rendering it
+  // as prose — it just cannot offer the tree.
+  return json.slice(0, cap) + "…[truncated]";
 }

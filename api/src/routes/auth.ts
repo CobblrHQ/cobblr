@@ -40,6 +40,7 @@ import {
   verifyIdentityToken,
   redeemIdentityCode,
   fetchIdentityProfile,
+  browserBase,
 } from "../auth/identity-client.js";
 import { isPlatformAdmin, requireAuth } from "../auth/middleware.js";
 import { publicSignupEnabled, managedAppSignupEnabled, selfServeInvitesEnabled } from "../auth/signup-gate.js";
@@ -332,7 +333,7 @@ authRouter.get("/config", (_req, res) => {
     // account service knows which secret to expect back.
     identity: identityCallbackEnabled()
       ? {
-          authorize_url: `${(process.env.IDENTITY_URL ?? "").replace(/\/+$/, "")}/authorize`,
+          authorize_url: `${browserBase()}/authorize`,
           deployment: deploymentId(),
           // Whose account it is. Configurable because nothing else in this feature is
           // Cobblr-specific: point IDENTITY_URL at your own service and the button

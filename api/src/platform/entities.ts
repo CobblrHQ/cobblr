@@ -1078,6 +1078,7 @@ function rowToKindRecord(row: {
   profile: string | null;
   label_code_overlay_default: boolean | null;
   exposable_fields: unknown | null;
+  duplicate_scope?: string | null;
 }): EntityKindRecord {
   return {
     id: row.id,
@@ -1095,5 +1096,6 @@ function rowToKindRecord(row: {
     profile: row.profile,
     label_code_overlay_default: row.label_code_overlay_default ?? null,
     exposable_fields: (row.exposable_fields as string[] | null) ?? null,
+    duplicate_scope: row.duplicate_scope ?? null,
   };
 }
