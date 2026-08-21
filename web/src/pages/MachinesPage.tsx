@@ -54,7 +54,7 @@ import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { ContentsPanel } from "../components/ContentsPanel";
 import { CustomFieldsPanel,
   EntityActionsBar,
-  usePublishSelectedRecords,
+  useAskCobbAboutSelection,
   Modal,
   useToast,
   useConfirm, usePageTitle } from "@cobblr/platform-web";
@@ -341,7 +341,7 @@ export function MachinesPage({
   // What is ticked IS context: with the panel open, "delete these" means the
   // ones on screen a person pointed at, and Cobb gets their ids rather than a
   // count he has to go and re-find.
-  usePublishSelectedRecords(selected, rows, "machines:machine", "machine");
+  const askCobb = useAskCobbAboutSelection(selected, rows, "machines:machine", "machine");
   const toastM = useToast();
   const confirmM = useConfirm();
   const qcM = useQueryClient();
@@ -680,6 +680,7 @@ export function MachinesPage({
         }}
       />
       <BulkActionBar
+        onAskCobb={askCobb}
         count={selected.size}
         onClear={() => setSelected(new Set())}
         actions={

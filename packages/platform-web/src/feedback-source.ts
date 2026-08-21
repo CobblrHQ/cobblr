@@ -30,6 +30,9 @@ export interface FeedbackSourceItem {
   origin: string;
   origin_ref: { thread_id?: string; username?: string } | null;
   followups: Array<{ at: string; from: string; text: string; role?: string }>;
+  /** Per-channel outcome of the last reply we sent this reporter. Null on an
+   *  item nobody has replied to (or one replied to before we recorded it). */
+  reply_delivery?: Partial<Record<"in_app" | "email" | "discord_dm", string>> | null;
   attachments: Array<{ file_id: string; name?: string; content_type?: string }>;
   triage_priority: "urgent" | "high" | "medium" | "low" | null;
   triage_summary: string | null;

@@ -61,7 +61,13 @@ const at = (needle: string) => src.indexOf(needle);
 // Renamed 2026-08-01 (feedback: shorten this row rather than let it wrap): the
 // unset chip says the ACTION now, and the verbs drop their long half below sm.
 const LOCATION = at('"Set location"');
-const FILE_ALL = at("File<span className=\"hidden sm:inline\">&nbsp;all</span> {readyIds.length}");
+// Anchored on BEHAVIOUR, not on the label. This used to look for the exact
+// markup of the words inside the button, so rewording it — "Place & file all" to
+// "File all", then splitting the label into one text node to kill a double
+// space — broke a LAYOUT lint twice, each time reporting the button as missing
+// rather than as renamed. `setPlacingMode("file")` is what this button does and
+// nothing else on the row does it.
+const FILE_ALL = at('setPlacingMode("file")');
 const OPEN = at("open →");
 
 for (const [name, idx] of [

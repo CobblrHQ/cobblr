@@ -29,6 +29,16 @@ export interface ToolCall {
   id: string;
   name: string;
   args: Record<string, unknown>;
+  /** Provider bookkeeping that must be echoed back VERBATIM on the next turn,
+   *  carried opaquely so the wire never has to understand it.
+   *
+   *  Gemini's thinking models return a `thought_signature` alongside each call
+   *  and REFUSE the next request if the replayed call has lost it ("Function
+   *  call is missing a thought_signature in functionCall parts"), which broke
+   *  every follow-up question the moment Cobb used a tool. Rebuilding a call
+   *  from {id,name,args} is exactly how it went missing, so anything else the
+   *  provider attached rides along here instead of being dropped. */
+  extra?: Record<string, unknown>;
 }
 
 export interface ChatTurn {
@@ -60,6 +70,26 @@ export function turnsOf(input: Record<string, unknown>): ChatTurn[] {
   return ((input.messages as ChatTurn[]) ?? []).filter((m) => !!m && typeof m.role === "string");
 }
 
+/** Some models narrate their reasoning INTO the reply.
+ *
+ *  Gemma (via the OpenAI-compat endpoint) opens with a `<thought>` block and
+ *  works through the problem in it — including quoting the system prompt back
+ *  verbatim, which hands the user our instructions along with their answer.
+ *  Rendered as-is it is both a leak and unreadable.
+ *
+ *  Strips the block and returns what is left. A reply that was ONLY reasoning
+ *  comes back empty on purpose: the agent loop already knows how to ask again
+ *  for plain words rather than showing a blank bubble. */
+export function stripLeakedReasoning(text: string): string {
+  if (!text.includes("<thought")) return text;
+  return text
+    // closed block, anywhere
+    .replace(/<thought>[\s\S]*?<\/thought>/gi, "")
+    // unclosed block: the model ran out of room mid-thought, so the rest is all reasoning
+    .replace(/<thought>[\s\S]*$/i, "")
+    .trim();
+}
+
 // ── OpenAI dialect (openai, openai-compat, OpenRouter) ──────────────────
 
 export function openAiToolsOf(defs: ToolDef[]): unknown[] {
@@ -79,6 +109,7 @@ export function openAiMessagesOf(turns: ChatTurn[]): unknown[] {
           id: c.id,
           type: "function",
           function: { name: c.name, arguments: JSON.stringify(c.args ?? {}) },
+          ...(c.extra ?? {}),
         })),
       };
     }
@@ -89,16 +120,27 @@ export function openAiMessagesOf(turns: ChatTurn[]): unknown[] {
   });
 }
 
+/** Fields on a returned tool call that are NOT ours to interpret, and must go
+ *  back untouched. `extra_content` is where Gemini puts its thought signature. */
+const PASSTHROUGH_CALL_FIELDS = ["extra_content"] as const;
+
 export function parseOpenAiToolCalls(msg: {
-  tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: unknown } }>;
+  tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: unknown } } & Record<string, unknown>>;
 }): ToolCall[] | undefined {
   const raw = msg.tool_calls;
   if (!Array.isArray(raw) || raw.length === 0) return undefined;
-  return raw.map((c, i) => ({
-    id: c.id || `call_${i}`,
-    name: c.function?.name ?? "",
-    args: safeParseArgs(c.function?.arguments),
-  }));
+  return raw.map((c, i) => {
+    const extra: Record<string, unknown> = {};
+    for (const key of PASSTHROUGH_CALL_FIELDS) {
+      if (c[key] !== undefined) extra[key] = c[key];
+    }
+    return {
+      id: c.id || `call_${i}`,
+      name: c.function?.name ?? "",
+      args: safeParseArgs(c.function?.arguments),
+      ...(Object.keys(extra).length ? { extra } : {}),
+    };
+  });
 }
 
 // ── Ollama dialect (ollama, edge-bridge) ────────────────────────────────

@@ -394,7 +394,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
       {/* Configuration lives HERE, not behind the account flyout — the flyout
           detour (open menu → Configuration → back into the sidebar) was the
           exact loop the author flagged. */}
-      {/* Profile is a first-class row (the author) — the account row below keeps
+      {/* Your account is a first-class row (the author) — the account row below keeps
           only the menu (feedback / what's new / sign out). */}
       <NavLink
         to="/me"
@@ -406,7 +406,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
         }
       >
         <UserRound size={16} className="shrink-0" />
-        Profile
+        Your account
       </NavLink>
       {!isFocused(activeOrg) && (
         <NavLink

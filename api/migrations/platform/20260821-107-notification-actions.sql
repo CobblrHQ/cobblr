@@ -1,0 +1,11 @@
+-- What a person can DO about a notification, carried on the row.
+--
+-- A notification that says a parcel arrived and offers no way to say "yes, I
+-- have it" makes the reader go and find the record themselves — having already
+-- been told the answer. The actions live HERE rather than only in the rendered
+-- message because a button press comes back from a client and must be resolved
+-- against the server's own copy: the presser supplies an id, never an action.
+--
+-- Nullable and additive. A notification without actions is every notification
+-- that exists today and renders exactly as it does now.
+alter table notifications add column if not exists actions jsonb;

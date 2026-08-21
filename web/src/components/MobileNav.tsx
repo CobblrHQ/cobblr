@@ -390,7 +390,7 @@ export function MobileNav() {
 
                 <NavLink to="/me" onClick={() => setOpen(false)} className={footItem}>
                   <UserCog size={18} />
-                  <span className={footLabel}>profile</span>
+                  <span className={footLabel}>account</span>
                 </NavLink>
 
                 <NavLink to="/configuration" onClick={() => setOpen(false)} className={footItem}>

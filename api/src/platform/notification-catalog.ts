@@ -50,8 +50,36 @@ export function isPrefChannel(c: string): c is PrefChannel {
   return c === "in_app" || c === "discord_dm" || c === "email";
 }
 
-/** Default enablement when a user has no explicit pref row:
- *  in_app ON, email ON, discord_dm OFF (hidden until connected). */
-export function defaultEnabled(channel: PrefChannel): boolean {
-  return channel === "in_app" || channel === "email";
+/** Default enablement when a user has no explicit pref row.
+ *
+ *  in_app and email are always on. Discord follows the connection: OFF for
+ *  someone who has not linked an account, ON once they have VERIFIED one.
+ *
+ *  That last part was the other way round, and it was wrong. Linking Discord
+ *  here is not a general identity link with notifications as one possible use —
+ *  it exists for this and nothing else, and `verified` only flips true after
+ *  the person confirms a test DM. Someone who completes an OAuth flow and then
+ *  confirms the DM has said "send me things here" as clearly as it can be said.
+ *  Making them say it again in a different screen is ceremony, not consent, and
+ *  in practice it meant a connected account that silently received nothing.
+ *
+ *  EXCEPT tier 1. Sign-in links, password resets, 2FA changes and billing keep
+ *  their existing channels: a credential is not something to put in a chat DM
+ *  by default, and unlike everything else here, tier 1 cannot be turned off
+ *  afterwards. The opt-in someone gave was for being told things, not for
+ *  moving their auth. */
+export function defaultEnabled(
+  channel: PrefChannel,
+  ctx?: { discordVerified?: boolean; tier?: 1 | 2 },
+): boolean {
+  if (channel === "in_app" || channel === "email") return true;
+  if (channel === "discord_dm") return !!ctx?.discordVerified && ctx.tier !== 1;
+  return false;
+}
+
+/** The tier a notification type belongs to, for `defaultEnabled`. Unknown
+ *  types are treated as tier 2: a module's own notification is ordinary news,
+ *  not a credential. */
+export function tierOf(key: string): 1 | 2 {
+  return BY_KEY.get(key)?.tier === 1 ? 1 : 2;
 }

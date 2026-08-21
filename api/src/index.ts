@@ -29,6 +29,7 @@ import { signAppToken, signSession } from "./auth/jwt.js";
 import { loadAllModules } from "./modules/loader.js";
 import { loadAllSandboxedModules } from "./sandbox/loader.js";
 import { syncTenantMigrations, reconcileDefaultModules } from "./modules/enable.js";
+import { startDeliverySweeper } from "./platform/delivery-sweeper.js";
 import { mountModules } from "./modules/mount.js";
 import { registerBuiltinResolvables } from "./platform/resolvable-providers.js";
 import { registerResolvable, resolveValue } from "./platform/resolvables.js";
@@ -981,6 +982,13 @@ async function boot() {
   // trigger_event), so repeated boots are safe.
   const seeded = await T("backfillDefaultBindings", backfillDefaultBindings());
   console.log(`[cobblr-api] default bindings backfilled: ${seeded} added`);
+
+  // The one sweeper that flushes windowed notification channels. Every module
+  // that wants a digest gets it from here rather than growing its own timer:
+  // four modules each with a private digest is four "combined" messages a day,
+  // which is the failure this exists to prevent. Costs nothing on a box where
+  // nobody has set a window (one indexed "any pending?" read per tick).
+  startDeliverySweeper();
 
   // Put back scan names a Replay truncated before 2026-08-12 (a cache miss
   // degraded to the keyword heuristic, whose candidate name then overwrote the

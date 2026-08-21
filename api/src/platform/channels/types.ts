@@ -3,6 +3,7 @@
 // etc.). The dispatcher fans out to enabled channels per user.
 
 import type {
+  NotificationAction,
   NotificationChannel as ChannelName,
   NotificationPriority,
 } from "../../db/schema.js";
@@ -23,6 +24,10 @@ export interface ChannelEvent {
   // Optional structured payload — channel implementations decide
   // whether to use it (in-app stores it, email might format it).
   payload?: unknown;
+  /** What the reader can DO about this, if the channel can render it. A
+   *  channel that cannot MUST still deliver: the message stands alone and the
+   *  link_url is the fallback route to the same place. */
+  actions?: NotificationAction[] | null;
 }
 
 export interface Channel {

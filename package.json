@@ -26,6 +26,7 @@
     "lint:locations-sibling-guard": "tsx scripts/lint-locations-sibling-guard.ts",
     "lint:manifests": "tsx scripts/lint-manifests.ts",
     "lint:panel-registry": "tsx scripts/lint-panel-registry.ts",
+    "lint:platform-affordances": "tsx scripts/lint-platform-affordances.ts",
     "lint:dockerfile-modules": "tsx scripts/lint-dockerfile-modules.ts",
     "lint:pg-readiness": "tsx scripts/lint-pg-readiness.ts",
     "lint:qr-token-parser": "tsx scripts/lint-qr-token-parser.ts",
@@ -101,6 +102,7 @@
     "lint:camera-no-toast": "tsx scripts/lint-camera-no-toast.ts",
     "lint:scan-export-fidelity": "tsx scripts/lint-scan-export-fidelity.ts",
     "lint:jsonb-array-writes": "tsx scripts/lint-jsonb-array-writes.ts",
+    "lint:poll-budget": "tsx scripts/lint-poll-budget.ts",
     "lint:metadata-merge": "tsx scripts/lint-metadata-merge.ts",
     "lint:dead-route-parsers": "tsx scripts/lint-dead-route-parsers.ts",
     "lint:lints-are-wired": "tsx scripts/lint-lints-are-wired.ts",
@@ -195,7 +197,8 @@
     "lint:action-args-declared": "tsx scripts/lint-action-args-declared.ts",
     "lint:ai-corpus-shape": "tsx scripts/lint-ai-corpus-shape.ts",
     "lint:action-examples": "tsx scripts/lint-action-examples.ts",
-    "lint:computed-context-kind": "tsx scripts/lint-computed-context-kind.ts"
+    "lint:computed-context-kind": "tsx scripts/lint-computed-context-kind.ts",
+    "lint:notification-channels-parity": "tsx scripts/lint-notification-channels-parity.ts"
   },
   "devDependencies": {
     "jsdom": "^30.0.1",

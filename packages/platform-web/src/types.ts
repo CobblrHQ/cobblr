@@ -23,9 +23,15 @@ export interface PlatformActionBinding {
   action_id: string;
   template: string | null;
   label: string;
+  /** What it does, in the module's words — the row's tooltip, since a label
+   *  alone does not say WHEN ("Print label" vs "Queue a printable label"). */
+  description?: string | null;
   icon: string | null;
   invoke_route: string | null;
   invoke_handler: string | null;
+  /** False (the default) = a mistaken run cannot be put right, so a surface
+   *  that fires it from a list row asks first. */
+  undoable?: boolean;
 }
 
 export interface PlatformResolvedEntity {

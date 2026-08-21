@@ -11,6 +11,7 @@
 
 import { useState } from "react";
 import { AreaTabs, NOTIFICATION_TABS } from "../components/AreaTabs";
+import { DiscordUnsubscribedCallout } from "../components/DiscordUnsubscribedCallout";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, Plus, Send, Trash2, Zap } from "lucide-react";
 import {
@@ -74,6 +75,12 @@ const CHANNEL_OPTIONS: Array<{
         placeholder: "https://discord.com/api/webhooks/<id>/<token>",
       },
     ],
+  },
+  {
+    channel: "discord_dm",
+    label: "Discord DM",
+    hint: "A direct message to your own Discord account. No setup here. Connect Discord under your profile first, and this sends to whatever you linked.",
+    fields: [],
   },
   {
     channel: "slack",
@@ -276,6 +283,10 @@ function WorkspaceBindings({ orgId }: { orgId: string }) {
 
   return (
     <div className="space-y-3">
+      {/* A verified Discord link with nothing routed to it is invisible from
+          both ends: the connect screen says success, and the bell keeps
+          working. Say it here, where the fix is. */}
+      <DiscordUnsubscribedCallout orgId={orgId} bindings={q.data?.items} />
       <div className="flex items-center gap-2">
         <button
           onClick={() => setAddOpen(true)}

@@ -40,6 +40,7 @@ import {
 import { pokeTriage } from "../platform/triage-trigger.js";
 import { isDmReply } from "../platform/feedback-dm-routing.js";
 import { reporterReplyRoute } from "../platform/feedback-reply-route.js";
+import type { DeliveryOutcomes } from "@cobblr/platform-contract/delivery-outcome";
 import { absoluteAppUrl } from "../platform/public-url.js";
 import { feedbackReplyAddress } from "../platform/feedback-reply.js";
 import {
@@ -1480,6 +1481,7 @@ superAdminRouter.get("/feedback", async (req, res, next) => {
         "f.origin",
         "f.origin_ref",
         "f.followups",
+        "f.reply_delivery",
         "f.created_at",
         "f.updated_at",
         "u.email as user_email",
@@ -1905,6 +1907,9 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
     // fixed". Best-effort: a failed notification must not fail the triage update.
     let notified = false;
     let emailed = false;
+    // WHY each channel did or didn't land — `emailed: false` alone can't tell an
+    // operator "they opted out" from "our sender is down".
+    let delivery: DeliveryOutcomes = {};
     // Record our reply on the item itself so it shows in the reporter's in-app
     // thread (/me/feedback) — the notification channels are just the ping.
     if (parsed.data.notify_reporter && parsed.data.reply_message?.trim()) {
@@ -1939,6 +1944,9 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
           text: parsed.data.status === "resolved" && did ? `Fixed — this is live now. 🎉\n\n${did}` : did || defaultMsg,
         });
         notified = true;
+        // Fire-and-forget by design (the bot owns the Discord connection), so
+        // "handed to the bot" is the most we can honestly claim.
+        delivery.discord_dm = "sent";
       }
     }
     // A DM reporter with no account is reachable only through the DM they wrote
@@ -1951,6 +1959,7 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
           text: parsed.data.status === "resolved" ? `Fixed, this is live now. \u{1F389}\n\n${text}` : text,
         });
         notified = dm.ok || notified;
+        delivery.discord_dm = dm.ok ? "sent" : dm.deliverable ? "send-failed" : "blocked";
       }
     }
     if (parsed.data.notify_reporter && replyRoute.via === "account" && row.user_id) {
@@ -2048,7 +2057,7 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
               };
             }
           }
-          const { deliveredVia } = await notifyAccount({
+          const { deliveredVia, outcomes } = await notifyAccount({
             userId: row.user_id,
             representativeOrgId: orgId,
             notificationType: "platform.feedback.replied",
@@ -2060,6 +2069,7 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
           });
           notified = deliveredVia.length > 0 || notified;
           emailed = deliveredVia.includes("email");
+          delivery = outcomes;
         }
       } catch (err) {
         console.error("[super-admin] feedback-reply notification failed:", err);
@@ -2093,7 +2103,16 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
       });
     }
 
-    res.json({ ...row, notified, emailed });
+    // Keep the outcome ON the item: the PATCH response is gone by the next page
+    // load, and "why didn't this person hear from us" is asked later, not now.
+    if (Object.keys(delivery).length > 0) {
+      await meta
+        .updateTable("feedback")
+        .set({ reply_delivery: sql`${JSON.stringify(delivery)}::jsonb` })
+        .where("id", "=", row.id)
+        .execute();
+    }
+    res.json({ ...row, notified, emailed, reply_delivery: delivery });
   } catch (err) {
     next(err);
   }

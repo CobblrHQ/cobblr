@@ -166,30 +166,38 @@ export function useSelectionResolver(fn: ((text: string) => ResolvedSelection | 
   }, [fn]);
 }
 
-/** The one-liner every list uses to publish what is ticked.
+/** Point Cobb at what is ticked — WHEN ASKED, not because it is ticked.
  *
- *  Wrapping `usePublishRowSelection` rather than leaving each page to build the
- *  object keeps the wording the same everywhere ("12 parts", not "12 selected"
- *  on one screen and "parts: 12" on the next), and means a page adopts this in
- *  one line instead of ten. The KIND is the part a page must get right: it is
- *  what turns a chip into something Cobb can act on. */
-export function usePublishSelectedRecords(
+ *  This used to publish continuously: tick two racks to print their labels and
+ *  the assistant silently took them as the subject of your next message, and
+ *  their Cobb buttons lit up as if you had pressed them. A checkbox and the Cobb
+ *  button are not the same instruction. One says "do this to these"; the other
+ *  says "let us talk about this". Conflating them meant you could not do the
+ *  first without the second happening to you.
+ *
+ *  So a list ticks for its own bulk actions, and offers "Ask Cobb" beside them.
+ *  Returns the callback that hands the selection over, or null when nothing is
+ *  ticked. The wording stays here so it is the same on every screen ("12
+ *  parts", never "12 selected" on one and "parts: 12" on the next), and the
+ *  KIND is the part a page must get right: it is what turns a chip into
+ *  something Cobb can act on. */
+export function useAskCobbAboutSelection(
   selected: ReadonlySet<string>,
   rows: ReadonlyArray<{ id: string; name?: string | null; title?: string | null }>,
   kind: string,
   /** What one of them is called, in a person's words: "part", "asset". */
   noun: string,
-): void {
+): (() => void) | null {
   const ids = [...selected];
   const names = rows.filter((r) => selected.has(r.id)).map((r) => r.title ?? r.name ?? "");
-  usePublishRowSelection(
-    ids.length
-      ? {
-          label: ids.length === 1 ? (names[0] || `1 ${noun}`) : `${ids.length} ${noun}s`,
-          kind,
-          ids,
-          ...(names.some(Boolean) ? { text: names.filter(Boolean).slice(0, 40).join(", ") } : {}),
-        }
-      : null,
-  );
+  if (ids.length === 0) return null;
+  return () => {
+    publishRowSelection({
+      label: ids.length === 1 ? (names[0] || `1 ${noun}`) : `${ids.length} ${noun}s`,
+      kind,
+      ids,
+      ...(names.some(Boolean) ? { text: names.filter(Boolean).slice(0, 40).join(", ") } : {}),
+    });
+    window.dispatchEvent(new CustomEvent("cobblr:open-chat", { detail: {} }));
+  };
 }

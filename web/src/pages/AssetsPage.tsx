@@ -17,7 +17,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { CustomFieldsPanel,
   EntityActionsBar,
-  usePublishSelectedRecords,
+  useAskCobbAboutSelection,
   Modal,
   useToast,
   useConfirm, usePageTitle } from "@cobblr/platform-web";
@@ -175,7 +175,7 @@ export function AssetsPage({
   // What is ticked IS context: with the panel open, "delete these" means the
   // ones on screen a person pointed at, and Cobb gets their ids rather than a
   // count he has to go and re-find.
-  usePublishSelectedRecords(selected, rows, "assets:asset", "asset");
+  const askCobb = useAskCobbAboutSelection(selected, rows, "assets:asset", "asset");
   const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
   const qc = useQueryClient();
   const toast = useToast();
@@ -360,6 +360,7 @@ export function AssetsPage({
       />
 
       <BulkActionBar
+        onAskCobb={askCobb}
         count={selected.size}
         onClear={() => setSelected(new Set())}
         actions={

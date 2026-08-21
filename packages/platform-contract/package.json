@@ -13,7 +13,8 @@
     "./edge-bridge-client": "./src/edge-bridge-client.ts",
     "./outbound-identity": "./src/outbound-identity.ts",
     "./receipt-totals": "./src/receipt-totals.ts",
-    "./scan-triage": "./src/scan-triage.ts"
+    "./scan-triage": "./src/scan-triage.ts",
+    "./delivery-outcome": "./src/delivery-outcome.ts"
   },
   "types": "src/index.ts",
   "scripts": {

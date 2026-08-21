@@ -75,6 +75,9 @@ const MeActivityPage = lazy(() => import("./pages/MeActivityPage").then((m) => (
 const MeNotificationsPage = lazy(() => import("./pages/MeNotificationsPage").then((m) => ({ default: m.MeNotificationsPage })));
 const MeNotificationChannelsPage = lazy(() => import("./pages/MeNotificationChannelsPage").then((m) => ({ default: m.MeNotificationChannelsPage })));
 const MeProfilePage = lazy(() => import("./pages/MeProfilePage").then((m) => ({ default: m.MeProfilePage })));
+const AccountSectionPage = lazy(() => import("./pages/AccountSectionPage").then((m) => ({ default: m.AccountSectionPage })));
+const MeIdentityPage = lazy(() => import("./pages/MeProfilePage").then((m) => ({ default: m.MeIdentityPage })));
+const MeAppearancePage = lazy(() => import("./pages/MeProfilePage").then((m) => ({ default: m.MeAppearancePage })));
 const AppSettingsPage = lazy(() => import("./pages/AppSettingsPage").then((m) => ({ default: m.AppSettingsPage })));
 const CommunicationPreferencesPage = lazy(() => import("./pages/CommunicationPreferencesPage").then((m) => ({ default: m.CommunicationPreferencesPage })));
 const MyFeedbackPage = lazy(() => import("./pages/MyFeedbackPage").then((m) => ({ default: m.MyFeedbackPage })));
@@ -748,7 +751,11 @@ function ActiveOrgScopedRoutes() {
             <Route path="/me/app-settings" element={<AppSettingsPage />} />
             <Route path="/me/drive" element={<DriveSettingsPage />} />
             <Route path="/me" element={<MeProfilePage />} />
+            <Route path="/me/s/:section" element={<AccountSectionPage />} />
+            <Route path="/me/identity" element={<MeIdentityPage />} />
+            <Route path="/me/appearance" element={<MeAppearancePage />} />
             <Route path="/me/connections" element={<ConnectionsPage />} />
+            <Route path="/me/connections/new" element={<ConnectionsPage startAdding />} />
           </Route>
           {/* /me is canonical; /me/profile redirects so old bookmarks keep
               working. Outside the layout: a redirect renders no content. */}

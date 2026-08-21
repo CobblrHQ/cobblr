@@ -4,7 +4,12 @@
 
 import { getImpersonationToken } from "./impersonation";
 import type { ResolveOutcome as RegistryResolveOutcome } from "@cobblr/platform-contract/resolvables";
-import type { LiveControlPublic, FieldRole, FieldDefType } from "@cobblr/platform-contract";
+import type {
+  LiveControlPublic,
+  FieldRole,
+  FieldDefType,
+  AiConnectionTest,
+} from "@cobblr/platform-contract";
 import { describeUnreadableBody } from "@cobblr/platform-web";
 
 const TOKEN_KEY = "cobblr.token";
@@ -154,6 +159,13 @@ async function request<T>(
   return parsed as T;
 }
 
+export interface CommunityLink {
+  id: "chat" | "forum" | "issues" | "docs";
+  label: string;
+  url: string;
+  blurb: string;
+}
+
 export interface ChangelogEntry {
   type: "feature" | "improvement" | "fix" | "change";
   scope: string | null;
@@ -191,6 +203,9 @@ export interface SessionUser {
   /** The community Discord invite (DISCORD_INVITE_URL), or null when unset.
    *  Signed-in only; rendered in the account menu + feedback modal. */
   discord_invite_url?: string | null;
+  /** Every place this deployment offers for questions. Older servers do not
+   *  send it, hence optional; the widget falls back to discord_invite_url. */
+  community_links?: CommunityLink[];
 }
 
 export interface OrgMembership {
@@ -1105,12 +1120,20 @@ export const api = {
   getMyEdgeAgent: () => request<{ connected: boolean }>("GET", "/me/edge-agent"),
   connectionCatalogue: () =>
     request<{ items: AiProviderDef[] }>("GET", "/me/connections/catalogue"),
+  /** Check personal credentials without saving them (twin of testAiCredentials). */
+  testConnection: (body: { provider_id: string; credentials: Record<string, string> }) =>
+    request<AiConnectionTest>("POST", "/me/connections/test", body),
   addConnection: (body: UserConnectionInput) =>
     request<{ id: string }>("POST", "/me/connections", body),
   updateConnection: (id: string, body: Partial<UserConnectionInput>) =>
     request<void>("PATCH", `/me/connections/${id}`, body),
   deleteConnection: (id: string) =>
     request<void>("DELETE", `/me/connections/${id}`),
+  /** The order of MY connections in a workspace, first to last. Only meaningful
+   *  when more than one of mine is routed there; without it the newest edit
+   *  quietly wins. `capability` narrows the order to one kind of work. */
+  setConnectionOrder: (body: { org_id: string; credential_ids: string[]; capability?: string | null }) =>
+    request<{ ok: true }>("POST", "/me/connections/order", body),
 
   // Workspace owner: review + approve members' AI-share offers.
   listAiShares: (slug: string) =>
@@ -3647,6 +3670,14 @@ export const api = {
   ) => request<AiProvider>("PATCH", `/orgs/${slug}/modules/core-ai/providers/${id}`, body),
   deleteAiProvider: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/modules/core-ai/providers/${id}`),
+  /** Test credentials that have not been saved yet, and get back what the provider says
+   *  it can serve. One request answers both "is this key good" and "which models". */
+  testAiCredentials: (slug: string, body: { provider_id: string; credentials: Record<string, unknown> }) =>
+    request<AiConnectionTest>(
+      "POST",
+      `/orgs/${slug}/modules/core-ai/providers/test-credentials`,
+      body,
+    ),
   testAiProvider: (slug: string, id: string) =>
     request<{ ok: boolean; error?: string; note?: string }>(
       "POST",
@@ -4491,6 +4522,8 @@ export type ConnRouteScope = "sole_member" | "owner" | "all_mine" | "explicit";
 export interface ConnRoute {
   org_id: string;
   mode: ConnRouteMode;
+  /** The one that serves this workspace when you have several routed there. */
+  primary?: boolean;
 }
 
 /** A personal credential the user configured once + routed to workspaces. */
@@ -6037,6 +6070,10 @@ export type NotificationChannelName =
   | "browser_push"
   | "email"
   | "discord"
+  /** A DM to your own verified Discord account, as opposed to `discord`, which
+   *  posts to a server channel via a webhook. No config: the destination is
+   *  your linked identity. */
+  | "discord_dm"
   | "webhook"
   | "slack"
   | "sms";

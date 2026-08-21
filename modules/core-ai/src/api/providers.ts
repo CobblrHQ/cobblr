@@ -27,6 +27,47 @@ const ProviderUpdate = z.object({
   monthly_budget_cents: z.number().int().positive().nullable().optional(),
 });
 
+// Test credentials that have NOT been saved. The existing /:id/test needs a stored row,
+// which forces save-then-test: a bad key gets persisted and only then reported, and the
+// person is left with a broken connection to go and edit. This tests what is currently
+// typed, so nothing wrong is ever written down.
+//
+// It also returns the provider's model list, because validating a key IS a model-list
+// request for every OpenAI-compatible provider. That list is what lets the form offer a
+// dropdown instead of asking someone to type an exact model name.
+//
+// Nothing is stored: the credentials live for the length of this request.
+//
+// AI-REACH: exempt credentials - it takes a raw API key, which the assistant must never handle
+providersRouter.post(
+  "/test-credentials",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const Body = z.object({
+      provider_id: z.string().min(1).max(80),
+      credentials: z.record(z.unknown()),
+    });
+    const parsed = Body.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "provider_id + credentials required" } });
+      return;
+    }
+    const def = platform().ai.getProvider(parsed.data.provider_id);
+    if (!def) {
+      res.status(404).json({ error: { code: "not_found", message: "unknown provider" } });
+      return;
+    }
+    if (!def.testConnection) {
+      res.json({ ok: true, note: "provider has no test implementation; assumed ok" });
+      return;
+    }
+    const ctx = tenantContext(req);
+    // Same org injection as /:id/test, so a bridge-transit provider can derive its key.
+    const result = await def.testConnection({ ...parsed.data.credentials, __org_id: ctx.org.id });
+    res.json(result);
+  }),
+);
+
 providersRouter.get(
   "/catalogue",
   asyncHandler(async (_req, res) => {

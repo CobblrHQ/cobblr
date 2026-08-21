@@ -366,6 +366,23 @@ export async function arrivalTick(opts: { orgId?: string; now?: Date } = {}): Pr
                 // entityType/entityId, it passes link_url straight through.
                 link_url: orderLink(row.id),
                 payload: { expectedArrival: askedAbout, nudge: decision === "nudge" },
+                // The answer to the question the message asks, offered in the
+                // message. `mark-arrived` is idempotent, so pressing it twice
+                // (two devices, a stale card) is harmless.
+                //
+                // Only here, and NOT on core-scan's parcel notification: that
+                // one is about a receipt still in the inbox, which has no
+                // order to mark. An action whose subject does not exist yet
+                // returns "no order in scope" and looks like a dead button.
+                actions: [
+                  {
+                    id: "arrived",
+                    label: "Yes, it turned up",
+                    action: "purchases:mark-arrived",
+                    args: { orderId: row.id },
+                    style: "primary" as const,
+                  },
+                ],
               });
             } catch (err) {
               console.error("[purchases] arrival notify failed:", (err as Error).message);

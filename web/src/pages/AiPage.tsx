@@ -22,7 +22,7 @@
 //     switch. They live here now, next to everything else about AI.
 
 import { useMemo, useState } from "react";
-import { CredentialInput } from "../components/CredentialInput";
+import { CredentialFields } from "../components/CredentialFields";
 import { ProviderSetupSteps } from "../components/ProviderSetupSteps";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -473,35 +473,14 @@ function ProviderAddModal({
         </div>
         {picked?.setup && <ProviderSetupSteps setup={picked.setup} />}
         {picked &&
-          Object.entries(picked.credentials).map(([key, d]) => (
-            <div key={key}>
-              {d.choices ? (
-                <>
-                  <label className="block text-sm font-medium mb-1">{d.label}</label>
-                  <select
-                    value={creds[key] ?? ""}
-                    onChange={(e) => setCreds({ ...creds, [key]: e.target.value })}
-                    className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
-                  >
-                    {d.choices.map((c) => (
-                      <option key={c.value} value={c.value}>
-                        {c.label}
-                      </option>
-                    ))}
-                  </select>
-                  {key === "transit" && (creds[key] ?? "").startsWith("bridge") && <WorkspaceBridgeHint />}
-                </>
-              ) : (
-                <CredentialInput
-                  fieldKey={key}
-                  label={d.label}
-                  secret={!!d.secret}
-                  value={creds[key] ?? ""}
-                  onChange={(v) => setCreds({ ...creds, [key]: v })}
-                />
-              )}
-            </div>
-          ))}
+          <CredentialFields
+            fields={picked.credentials}
+            creds={creds}
+            onChange={(k, v) => setCreds({ ...creds, [k]: v })}
+            scope={{ kind: "workspace", slug: activeSlug }}
+            providerId={picked.id}
+            hintFor={(k, v) => k === "transit" && v.startsWith("bridge") && <WorkspaceBridgeHint />}
+          />}
         <div>
           <label className="block text-sm font-medium mb-1">
             Monthly budget USD (optional)
@@ -611,35 +590,14 @@ function ProviderEditModal({
           Replace credentials
         </label>
         {updateCreds &&
-          Object.entries(def.credentials).map(([key, d]) => (
-            <div key={key}>
-              {d.choices ? (
-                <>
-                  <label className="block text-sm font-medium mb-1">{d.label}</label>
-                  <select
-                    value={creds[key] ?? ""}
-                    onChange={(e) => setCreds({ ...creds, [key]: e.target.value })}
-                    className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
-                  >
-                    {d.choices.map((c) => (
-                      <option key={c.value} value={c.value}>
-                        {c.label}
-                      </option>
-                    ))}
-                  </select>
-                  {key === "transit" && (creds[key] ?? "").startsWith("bridge") && <WorkspaceBridgeHint />}
-                </>
-              ) : (
-                <CredentialInput
-                  fieldKey={key}
-                  label={d.label}
-                  secret={!!d.secret}
-                  value={creds[key] ?? ""}
-                  onChange={(v) => setCreds({ ...creds, [key]: v })}
-                />
-              )}
-            </div>
-          ))}
+          <CredentialFields
+            fields={def.credentials}
+            creds={creds}
+            onChange={(k, v) => setCreds({ ...creds, [k]: v })}
+            scope={{ kind: "workspace", slug: activeSlug }}
+            providerId={def.id}
+            hintFor={(k, v) => k === "transit" && v.startsWith("bridge") && <WorkspaceBridgeHint />}
+          />}
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"
@@ -920,7 +878,10 @@ function AiAvailabilityBanner({ onAdd }: { onAdd?: () => void }) {
                          hover:border-accent transition"
             >
               <Plus className="h-3.5 w-3.5" /> Connect a model
-              <span className="text-muted font-normal">- the first option is free</span>
+              {/* Not "the first option is free": that points at a position in a list the
+                  reader cannot see yet, so it is a note about UI ordering rather than a
+                  reason to click. */}
+              <span className="text-muted font-normal">free tier available</span>
             </button>
           )}
         </div>

@@ -61,7 +61,7 @@ export const DASHBOARD_TOUR: TourStep[] = [
     kind: "spotlight",
     target: '[data-tour="account"]',
     title: "Your account",
-    body: "Profile, feedback, and settings live here, and you can replay this tour whenever you like.",
+    body: "Your account, feedback, and settings live here, and you can replay this tour whenever you like.",
   },
   {
     kind: "done",

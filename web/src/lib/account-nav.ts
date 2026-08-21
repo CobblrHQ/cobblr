@@ -14,6 +14,9 @@
 // decision every new page gets to make again, and re-making it is how the drift
 // happened the first time.
 
+import type { LucideIcon } from "lucide-react";
+import { Bell, History, LayoutList, MessageSquare, Monitor, Moon, Plug, UserCog } from "lucide-react";
+
 /** The reading column. Same measure as Configuration, so moving between
  *  "your account" and "this workspace" does not move the text. */
 export const ACCOUNT_COLUMN = "w-full max-w-4xl mx-auto";
@@ -35,7 +38,12 @@ export type AccountPage = { to: string } & AccountWidth;
  *  required — the lookup below prefers the longest match, so /me does not
  *  swallow /me/activity. */
 export const ACCOUNT_PAGES: AccountPage[] = [
+  // "/me/s/<section>" needs no entry: the longest-prefix lookup gives it the
+  // "/me" column, which is the inheritance the tests pin.
   { to: "/me" },
+  { to: "/me/identity" },
+  { to: "/me/appearance" },
+  { to: "/me/app-settings" },
   { to: "/me/connections" },
   { to: "/me/communication" },
   { to: "/me/notification-channels" },
@@ -53,6 +61,109 @@ export const ACCOUNT_PAGES: AccountPage[] = [
     wideBecause: "a list of notifications with their own timestamps and per-row actions, read by scanning rather than by reading",
   },
 ];
+
+/** The sections of "Your account", mirroring Configuration's five cards.
+ *
+ *  The old /me was three big open forms (identity, password, appearance) with
+ *  five one-line links underneath. The forms took the whole screen for settings
+ *  you change once a year, and the links - the things people actually came for
+ *  - were a row of small text at the bottom that nobody found. Configuration
+ *  had the same problem and solved it with sections you navigate into; this is
+ *  the same fix, so the two halves of settings work the same way.
+ *
+ *  Same rules as configuration-nav: a destination is a place you GO, leaves
+ *  keep the product's existing nouns, and grouping is by the ACT. */
+export type AccountSection = "you" | "notifications" | "connections" | "history";
+
+export interface AccountSectionMeta {
+  label: string;
+  /** One line: what act this section serves. */
+  blurb: string;
+  icon: LucideIcon;
+  /** This section's ONE primary do, if it has earned one. Same {label,to} shape
+   *  as the card prop deliberately - see configuration-revamp.md § Section
+   *  actions, where typing it as a bare string is what left Configuration's
+   *  first action rendering a control that went nowhere. */
+  action?: { label: string; to: string };
+}
+
+export const ACCOUNT_SECTIONS: Record<AccountSection, AccountSectionMeta> = {
+  you: {
+    label: "You",
+    blurb: "Who you are, how you sign in, and how the app looks.",
+    icon: UserCog,
+  },
+  notifications: {
+    label: "Notifications",
+    blurb: "What reaches you, and by which route.",
+    icon: Bell,
+  },
+  connections: {
+    label: "Connections",
+    blurb: "Services and devices of your own that follow you between workspaces.",
+    icon: Plug,
+    // The one account section with a standing "I want to add one" intent: you
+    // arrive meaning to plug in your own AI key. Notifications has an add flow
+    // too (Add binding) and deliberately does NOT get a button — a per-workspace
+    // routing table is something you go and manage, not something you arrive
+    // wanting to create. The bar is the four tests in the design doc, and
+    // "it has a create form" is not one of them.
+    action: { label: "+ Add a connection", to: "/me/connections/new" },
+  },
+  history: {
+    label: "History",
+    blurb: "What you have done, and what you have asked for.",
+    icon: History,
+  },
+};
+
+export interface AccountDestination {
+  label: string;
+  description: string;
+  to: string;
+  section: AccountSection;
+  icon: LucideIcon;
+  /** Hidden inside a locked managed app ("Cobblr for Yarn"), which hides the
+   *  platform: a single-app consumer needs their name, their password and how
+   *  they are reached, not cross-workspace history or BYO-AI keys. Declared per
+   *  destination rather than as a block of JSX around half the list, so adding
+   *  a leaf means answering the question. */
+  platformOnly?: boolean;
+}
+
+/** Every leaf under "Your account". Identity, password and appearance are
+ *  destinations now rather than forms stacked on the hub. */
+export const ACCOUNT_DESTINATIONS: AccountDestination[] = [
+  { label: "Identity & password", description: "Your display name, the address you sign in with, and your password.", to: "/me/identity", section: "you", icon: UserCog },
+  { label: "Appearance", description: "Light or dark, for your account and for this device.", to: "/me/appearance", section: "you", icon: Moon },
+  { label: "Menu & surfaces", description: "Hide the parts of the app you do not use.", to: "/me/app-settings", platformOnly: true, section: "you", icon: LayoutList },
+  { label: "Communication preferences", description: "Whether Cobblr reaches you in-app, by Discord DM, or by email.", to: "/me/communication", section: "notifications", icon: Bell },
+  { label: "Notification channels", description: "Per-workspace Discord, Slack, email, SMS and webhook routes.", to: "/me/notification-channels", platformOnly: true, section: "notifications", icon: Bell },
+  { label: "Your notifications", description: "Everything Cobblr has sent you.", to: "/me/notifications", platformOnly: true, section: "notifications", icon: Bell },
+  { label: "Connections", description: "Your own AI keys and edge bridge, shared with the workspaces you choose.", to: "/me/connections", platformOnly: true, section: "connections", icon: Plug },
+  { label: "Browser driving", description: "Let the assistant drive the app you have open. Per workspace, off by default.", to: "/me/drive", platformOnly: true, section: "connections", icon: Monitor },
+  { label: "Your activity", description: "What you have done, across every workspace you belong to.", to: "/me/activity", platformOnly: true, section: "history", icon: History },
+  { label: "Your feedback", description: "What you have reported, and where it got to.", to: "/me/feedback", platformOnly: true, section: "history", icon: MessageSquare },
+];
+
+export const ACCOUNT_SECTION_ORDER: AccountSection[] = ["you", "notifications", "connections", "history"];
+
+/** The destinations a given user can see, grouped into their sections, with
+ *  empty sections dropped — so a locked managed app shows two cards rather than
+ *  four, two of them empty. */
+export function accountSections(opts: { appMode: boolean }): Array<{
+  id: AccountSection;
+  meta: AccountSectionMeta;
+  items: AccountDestination[];
+}> {
+  return ACCOUNT_SECTION_ORDER.map((id) => ({
+    id,
+    meta: ACCOUNT_SECTIONS[id],
+    items: ACCOUNT_DESTINATIONS.filter(
+      (d) => d.section === id && !(opts.appMode && d.platformOnly),
+    ),
+  })).filter((s) => s.items.length > 0);
+}
 
 /** The column for a path under /me. Longest declared prefix wins, so a nested
  *  route inherits its parent's choice instead of silently reverting. */

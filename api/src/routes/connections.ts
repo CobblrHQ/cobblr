@@ -21,6 +21,7 @@ import {
   addUserCredential,
   updateUserCredential,
   deleteUserCredential,
+  setMyConnectionOrder,
   listUserCredentials,
   listWorkspaceAiOffers,
   approveWorkspaceAiOffer,
@@ -163,6 +164,41 @@ connectionsRouter.get("/me/connections/catalogue", requireAuth, (_req, res) => {
   });
 });
 
+// Check credentials someone has just typed, WITHOUT saving them.
+//
+// The personal twin of the workspace route (core-ai providers /test-credentials).
+// This page is where an individual user or a self-hoster adds their own key, so a
+// capability that only reaches the workspace form is a capability most of them
+// never see. That has already happened once here.
+//
+// Nothing is stored: the credentials live for the length of this request. The reply
+// carries the provider's model list, because for an OpenAI-compatible provider
+// "is this key good" IS a model-list request, and the list is what lets the form
+// offer a dropdown instead of asking for an exact model name.
+connectionsRouter.post("/me/connections/test", requireAuth, async (req, res) => {
+  const Body = z.object({
+    provider_id: z.string().min(1).max(80),
+    credentials: z.record(z.unknown()),
+  });
+  const parsed = Body.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: { code: "invalid_body", message: "provider_id + credentials required" } });
+    return;
+  }
+  const def = aiImpl.getProvider(parsed.data.provider_id);
+  if (!def?.testConnection) {
+    res.json({ ok: true, note: "provider has no test implementation; assumed ok" });
+    return;
+  }
+  // The personal routing context, so a bridge-transit provider resolves to THIS
+  // user's edge agent rather than failing for want of an org.
+  const result = await def.testConnection({
+    ...parsed.data.credentials,
+    __connection_user_id: req.session!.id,
+  });
+  res.json(result);
+});
+
 // Is MY personal edge agent connected right now? Drives the transit hint in
 // the add-a-connection dialog (a bridge-transit provider routes through it).
 connectionsRouter.get("/me/edge-agent", requireAuth, async (req, res) => {
@@ -266,6 +302,39 @@ connectionsRouter.delete("/me/connections/:id", requireAuth, async (req, res, ne
       return;
     }
     res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The ORDER of my connections in a workspace, first to last. Without it the
+// answer was "whichever I edited last", which changed when I touched the OTHER
+// one for an unrelated reason. `capability` narrows the order to one kind of
+// work; omit it for the workspace's general order.
+connectionsRouter.post("/me/connections/order", requireAuth, async (req, res, next) => {
+  try {
+    const body = z
+      .object({
+        org_id: z.string().uuid(),
+        credential_ids: z.array(z.string().uuid()).max(20),
+        capability: z.string().min(1).max(64).nullable().optional(),
+      })
+      .safeParse(req.body);
+    if (!body.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: "org_id and credential_ids required" } });
+      return;
+    }
+    const ok = await setMyConnectionOrder(
+      req.session!.id,
+      body.data.org_id,
+      body.data.credential_ids,
+      body.data.capability ?? null,
+    );
+    if (!ok) {
+      res.status(404).json({ error: { code: "not_found", message: "That connection is not yours." } });
+      return;
+    }
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }

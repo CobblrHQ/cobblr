@@ -35,7 +35,8 @@ import {
   useToast,
   useConfirm,
   usePageTitle,
-  usePublishRowSelection,
+  useAskCobbAboutSelection,
+  RecordRow,
   useSelectionResolver,
   buildLocationForest,
   type LocationNode as SharedLocationNode,
@@ -187,13 +188,6 @@ export function LocationsPage() {
 
   const items = useMemo(() => list.data?.items ?? [], [list.data]);
 
-  // Ticked rows ARE context: with the panel open, "delete duplicates" means
-  // these twelve racks and not a hunt across the workspace. Published as ids,
-  // so Cobb can act on them rather than only read a count.
-  const selectedNames = useMemo(
-    () => items.filter((r) => selected.has(r.id)).map((r) => r.name),
-    [items, selected],
-  );
   // Highlighting "Rack 1" should mean the rack, not the words. Exact match, and
   // only when exactly one place answers to that name: a guess that resolves to
   // the wrong record is worse than sending the text.
@@ -209,16 +203,9 @@ export function LocationsPage() {
   );
   useSelectionResolver(resolveSelection);
 
-  usePublishRowSelection(
-    selected.size > 0
-      ? {
-          label: selected.size === 1 ? (selectedNames[0] ?? "1 location") : `${selected.size} locations`,
-          kind: "core-locations:location",
-          ids: [...selected],
-          ...(selectedNames.length ? { text: selectedNames.slice(0, 40).join(", ") } : {}),
-        }
-      : null,
-  );
+  // Ticking is for THIS page's bulk actions. Handing the ticked rows to Cobb is
+  // a separate instruction, offered beside them rather than done for you.
+  const askCobb = useAskCobbAboutSelection(selected, items, "core-locations:location", "location");
   // Shared model → the areas tree + loose-container roots, sorted.
   const forest = useMemo(() => buildLocationForest(items, LOCATION_ACCESSORS), [items]);
   const shown = useMemo(
@@ -617,6 +604,7 @@ export function LocationsPage() {
       <BulkActionBar
         count={selected.size}
         onClear={() => setSelected(new Set())}
+        onAskCobb={askCobb}
         actions={
           <>
             <button
@@ -783,7 +771,12 @@ function LocationCard({
             width — the cluster drops to its own line and, if still tight, its
             chips wrap, instead of forcing the page to scroll sideways. min-w-0
             lets it shrink; on desktop there's room and it stays inline. */}
-        <div className="flex flex-wrap items-center gap-2 min-w-0 shrink-0">
+        <RecordRow
+          kind="core-locations:location"
+          id={node.id}
+          label={node.name}
+          className="flex flex-wrap items-center gap-2 min-w-0 shrink-0"
+        >
           {/* Closed: what is hidden, as a button that opens it, so a summary is
               never a dead end. Open: the node's own count as before. */}
           {hidden > 0 ? (
@@ -836,7 +829,7 @@ function LocationCard({
           >
             <Trash2 size={14} />
           </button>
-        </div>
+        </RecordRow>
       </div>
       {hasChildren && open && (
         <div className="p-2 pl-3 sm:p-3 sm:pl-6 space-y-2 bg-subtle/50 dark:bg-slate-900/40">
@@ -972,7 +965,12 @@ function ZoneCard({
             </span>
           )}
         </div>
-        <div className="absolute -top-3 right-3 inline-flex items-center rounded-full border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1 py-0.5">
+        <RecordRow
+          kind="core-locations:location"
+          id={node.id}
+          label={node.name}
+          className="absolute -top-3 right-3 inline-flex items-center rounded-full border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1 py-0.5"
+        >
           <button
             type="button"
             onClick={() => onAddChild(node.id)}
@@ -997,7 +995,7 @@ function ZoneCard({
           >
             <Trash2 size={12} />
           </button>
-        </div>
+        </RecordRow>
         {node.children.length === 0 && (
           <div className="text-xs text-faint dark:text-slate-500 italic px-1 py-1">
             empty - scan or file into it

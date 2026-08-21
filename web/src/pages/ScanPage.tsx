@@ -2045,6 +2045,33 @@ export function ScanPage() {
     agreedLocationId?: string | null,
   ) => {
     const byId = new Map(items.map((i) => [i.id, i]));
+    // INSTALL what these items are routed to, before confirming any of them.
+    //
+    // A top candidate can be a bundle the workspace does not have — the card
+    // shows those as "Install & add", and the pill installs before it commits.
+    // This sweep did not: it posted a confirm naming an instance that does not
+    // exist, and the API answered, correctly, 404 "No instance 'groceries' in
+    // this workspace." A whole receipt of groceries failed on every line
+    // (reported 2026-08-21).
+    //
+    // Once per BUNDLE, not once per item: four lines routed to Groceries need
+    // one install between them.
+    const needed = new Map<string, string>();
+    for (const id of ids) {
+      const cand = byId.get(id)?.suggested_candidates?.[0] as
+        | { bundle_external_id?: string; label?: string }
+        | undefined;
+      if (cand?.bundle_external_id) needed.set(cand.bundle_external_id, cand.label ?? "a table");
+    }
+    for (const [bundleId, label] of needed) {
+      try {
+        await api.materializeQuickstart(activeSlug, bundleId, { item_ids: [] });
+      } catch {
+        // Leave the confirms to fail and be counted; a toast per bundle on top
+        // of the summary would say the same thing twice.
+        console.error(`[scan] could not install ${label} before filing`);
+      }
+    }
     let ok = 0;
     let skipped = 0;
     let failed = 0;
@@ -3293,6 +3320,19 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
             // "File all" will commit to their own candidate. Pending items that
             // still need a manual look aren't counted here.
             const readyIds = g.items.filter(isReadyToFile).map((it) => it.id);
+            // Tables these items are routed to that the workspace does not have
+            // yet. Filing installs them (see confirmItemsToTheirCandidate); the
+            // tooltip says so, because installing a table is not something to
+            // discover after the fact.
+            const willInstallLabels = [
+              ...new Set(
+                g.items
+                  .filter(isReadyToFile)
+                  .map((it) => it.suggested_candidates?.[0] as { bundle_external_id?: string; label?: string } | undefined)
+                  .filter((c) => c?.bundle_external_id)
+                  .map((c) => c!.label ?? "a table"),
+              ),
+            ];
                 const readyItems = g.items.filter(isReadyToFile);
                 const filing = sessionFilingReadiness(readyItems, { activeBin: fileBin || null });
                 // Filing into the standing bin without SAYING so is how the two
@@ -3372,18 +3412,27 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                     }
                     onClick={(e) => e.stopPropagation()}
                     aria-label="Select this whole session"
-                    className="shrink-0 h-3.5 w-3.5 accent-cobble-600 cursor-pointer"
+                    // Out to the left, clear of the chevron. It selects the whole
+                    // SECTION, where everything after it acts on the row, and
+                    // sitting flush against the chevron read as one cluster of
+                    // two unrelated jobs.
+                    className="shrink-0 -ml-1 mr-1 h-3.5 w-3.5 accent-cobble-600 cursor-pointer"
                   />
+                  {/* The CHEVRON collapses, and nothing else does. The name
+                      used to be inside the collapse button, so reading the
+                      session's title and folding it away were the same gesture —
+                      and a control that hides what you are reading when you tap
+                      it is a control you learn to avoid. */}
                   <button
                     type="button"
                     onClick={() => toggleSession(g.key)}
-                    // overflow-hidden: at phone width the filing trio squeezes
-                    // this button below its content size, and its shrink-0
-                    // children were PAINTING OVER the End control ("1 itemEnd",
-                    // reported 2026-08-03). Clipping inside beats bleeding out.
-                    className="flex flex-1 min-w-0 items-center gap-2 overflow-hidden text-left"
+                    aria-label={collapsed ? "Expand this session" : "Collapse this session"}
+                    aria-expanded={!collapsed}
+                    title={collapsed ? "Expand" : "Collapse"}
+                    className="shrink-0 text-faint hover:text-accent transition"
                   >
-                    <ChevronDown size={13} className={`shrink-0 transition ${collapsed ? "-rotate-90" : ""}`} />
+                    <ChevronDown size={13} className={`transition ${collapsed ? "-rotate-90" : ""}`} />
+                  </button>
                     {/* The NAME wins the row. Every span after it either fits
                         whole or is not rendered - none of them truncate. A
                         `truncate` on the trimmings spends the same width to say
@@ -3399,15 +3448,71 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       // make room for "+ Tracking #" (reported 2026-08-19). A
                       // session's name is the one thing on this row you cannot
                       // work out from anything else on it.
-                      className="font-medium text-content dark:text-mortar-100 truncate min-w-0 flex-1"
+                      className="font-medium text-content dark:text-mortar-100 truncate min-w-0"
                       title={g.label ?? `Session · ${formatSessionTime(g.latest)}`}
                     >
-                      {g.label ?? `Session · ${formatSessionTime(g.latest)}`}
+                      {/* Without the order number — that is the control beside
+                          it, so tapping the number edits it. */}
+                      {sessionName(g) ?? `Session · ${formatSessionTime(g.latest)}`}
                     </span>
-                    {g.label && (
-                      <span className="hidden md:inline shrink-0 whitespace-nowrap text-faint">
+                  {/* The receipt's own number, edited where it is READ. A separate
+                      "PO#" control said the same thing twice: the number was
+                      already in the name, and the pencil beside it was a second
+                      way to reach it (reported 2026-08-20). */}
+                  {isReceiptSession && g.batchId && g.orderRef && editingPo !== g.batchId && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPoInput(g.orderRef ?? "");
+                        setEditingPo(g.batchId!);
+                      }}
+                      title="Edit the order / invoice number"
+                      className="shrink-0 font-medium text-muted hover:text-accent transition"
+                    >
+                      #{g.orderRef}
+                    </button>
+                  )}
+                  {/* ...and the offer to add one takes the SAME slot when there
+                      is none. They are one fact in one place: an "+ #" sitting
+                      over with the actions, while the number it creates appears
+                      next to the name, made the two look like different things
+                      (reported 2026-08-21). */}
+                  {isReceiptSession && g.batchId && !g.orderRef && editingPo !== g.batchId && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPoInput("");
+                        setEditingPo(g.batchId!);
+                      }}
+                      title="Add an order / invoice number, which tells two receipts from the same shop apart"
+                      className="shrink-0 inline-flex items-center gap-1 text-faint hover:text-accent transition"
+                    >
+                      <Pencil size={11} /> + #
+                    </button>
+                  )}
+                  {/* What this session IS, reading as one phrase beside its name
+                      rather than scattered across the row. None of it collapses
+                      the session any more: only the name does, which is the part
+                      that looks like a heading. */}
+                  {g.label && (
+                      <span
+                        className="hidden md:inline shrink-0 whitespace-nowrap text-faint"
+                        // A receipt's date is the date ON THE RECEIPT. This said
+                        // when the photo was uploaded, which is a fact about the
+                        // scanning and not about the purchase — "Aug 19, 6:28 PM"
+                        // beside a receipt dated the 18th (reported 2026-08-20).
+                        // The upload time is still worth having, so it moves to
+                        // the tooltip rather than the row.
+                        title={
+                          receiptDateOf(g)
+                            ? `Uploaded ${formatSessionTime(g.latest)}`
+                            : undefined
+                        }
+                      >
                         {g.origin === "email" ? "emailed " : ""}
-                        {formatSessionTime(g.latest)}
+                        {receiptDateOf(g) ?? formatSessionTime(g.latest)}
                       </span>
                     )}
                     {isActiveSession && (
@@ -3431,10 +3536,15 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                     {g.area && (
                       <span className="hidden lg:inline shrink-0 whitespace-nowrap text-muted">· {g.area}</span>
                     )}
-                    <span className="ml-auto hidden sm:inline shrink-0 whitespace-nowrap text-faint">
-                      {g.items.length} item{g.items.length === 1 ? "" : "s"}
-                    </span>
-                  </button>
+                    {/* Left-aligned with the name and the date. These three say
+                        WHAT this session is, so they read as one phrase; pushing
+                        the count to the far right made it look like a control
+                        (reported 2026-08-20). */}
+                  <span className="hidden sm:inline shrink-0 whitespace-nowrap text-faint">
+                    {g.items.length} item{g.items.length === 1 ? "" : "s"}
+                  </span>
+                  {/* Everything after this is an ACTION, and actions sit right. */}
+                  <span className="flex-1" />
                   {/* The session's action slot — its state used to be a passive
                       "All set" check that read as "committed" but only collapsed
                       the row on click (a user filed nothing and thought they had,
@@ -3502,25 +3612,48 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         </button>
                       </span>
                     ) : (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setPoInput(g.orderRef ?? "");
-                          setEditingPo(g.batchId!);
-                        }}
-                        title="Edit the order / invoice number"
-                        // Only once there IS one. A number is state worth seeing
-                        // at a glance; "add one" is a rare action and lives in
-                        // the ... menu with the other rare ones.
-                        className={
-                          "shrink-0 inline-flex items-center gap-1 text-faint hover:text-accent " +
-                          (g.orderRef ? "" : "hidden")
-                        }
-                      >
-                        <Pencil size={11} /> PO#
-                      </button>
+                      <span className="hidden" />
                     ))}
+                  {/* Out on the row, not behind a glyph, and BEFORE the parcel
+                      control: these two read the document, and following a parcel
+                      or adding a number are things you do once. Rare last.
+
+                      They were tucked into
+                      a ... menu when the row was crowded, and the row is not
+                      crowded any more: the name lost its duplicate number, the
+                      date lost its clock, and filing lost a verb. A control you
+                      can see is one you know exists. */}
+                  {isReceiptSession && g.batchId && g.sourceFileId && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setViewSource(g.sourceFileId);
+                      }}
+                      title="The photo or file its lines were read from"
+                      className="shrink-0 inline-flex items-center gap-1 text-faint hover:text-accent transition"
+                    >
+                      <FileText size={11} /> Original
+                    </button>
+                  )}
+                  {isReceiptSession && g.batchId && g.sourceFileId && (
+                    <button
+                      type="button"
+                      disabled={reparse.isPending && reparseBatch === g.batchId}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        reparse.mutate(g.batchId!);
+                      }}
+                      title="Read the original again, replacing the lines still pending"
+                      className="shrink-0 inline-flex items-center gap-1 text-faint hover:text-accent transition disabled:opacity-50"
+                    >
+                      <RotateCcw
+                        size={11}
+                        className={reparse.isPending && reparseBatch === g.batchId ? "animate-spin" : ""}
+                      />{" "}
+                      Re-parse
+                    </button>
+                  )}
                   {/* Tracking number — beside the order number because they
                       arrive together, off the same receipt, in the same glance.
                       And gated the same way, for the same reason: a parcel is
@@ -3573,11 +3706,10 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         // popover on any other row would count as "outside"
                         // and dismiss it.
                         ref={trackingPopover === g.batchId ? trackingPopRef : undefined}
-                        // Present only once a parcel IS being followed. Then its
-                        // label is the delivery status and belongs in the row.
-                        // "Follow a parcel" is a rare action and sits in the ...
-                        // menu instead, which is where the row got its width back.
-                        className={"relative shrink-0 inline-flex " + (g.trackingNumber ? "" : "hidden")}
+                        // Always present now the menu is gone. With a number its
+                        // label IS the delivery status; without one it offers to
+                        // follow a parcel.
+                        className="relative shrink-0 inline-flex"
                       >
                         <button
                           type="button"
@@ -3661,94 +3793,6 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       </span>
                     ))}
 
-                  {/* Everything a RECEIPT session can do that you do once, if
-                      ever: read the paper it came from, re-read it, give it an
-                      order number, follow its parcel. Four controls, each with
-                      an icon and a label, sitting between the session's NAME and
-                      its actions — so the name was the thing that got clipped
-                      (reported 2026-08-19). Behind one glyph they cost a slot,
-                      and the row can spend its width on what it is called and
-                      what you came here to do.
-
-                      What does NOT move: a PO number and a parcel's status. Once
-                      those exist they are facts about the session, and a fact
-                      you have to open a menu to read is a fact you will not
-                      read. Only the "add one" affordances are in here. */}
-                  {isReceiptSession && g.batchId && (
-                    <span onClick={(e) => e.stopPropagation()} className="shrink-0">
-                      <HeaderMenu
-                        width={252}
-                        align="left"
-                        trigger={({ toggle }) => (
-                          <button
-                            type="button"
-                            onClick={toggle}
-                            aria-label="More for this receipt"
-                            title="Original, re-parse, order number, tracking"
-                            className="inline-flex items-center text-faint hover:text-accent transition"
-                          >
-                            <MoreHorizontal size={13} />
-                          </button>
-                        )}
-                      >
-                        {({ close }) => (
-                          <>
-                            <MenuHead>This receipt</MenuHead>
-                            {g.sourceFileId && (
-                              <MenuItem
-                                icon={<FileText size={14} />}
-                                label="View the original"
-                                hint="The photo or file its lines were read from"
-                                onClick={() => {
-                                  close();
-                                  setViewSource(g.sourceFileId);
-                                }}
-                              />
-                            )}
-                            {g.sourceFileId && (
-                              <MenuItem
-                                icon={<RotateCcw size={14} />}
-                                label={
-                                  reparse.isPending && reparseBatch === g.batchId ? "Re-parsing…" : "Re-parse it"
-                                }
-                                hint="Read the original again, replacing the lines still pending"
-                                disabled={reparse.isPending && reparseBatch === g.batchId}
-                                onClick={() => {
-                                  close();
-                                  reparse.mutate(g.batchId!);
-                                }}
-                              />
-                            )}
-                            {!g.orderRef && (
-                              <MenuItem
-                                icon={<Pencil size={14} />}
-                                label="Add an order number"
-                                hint="Tells two receipts from the same shop apart"
-                                onClick={() => {
-                                  close();
-                                  setPoInput("");
-                                  setEditingPo(g.batchId!);
-                                }}
-                              />
-                            )}
-                            {!g.trackingNumber && (
-                              <MenuItem
-                                icon={<Truck size={14} />}
-                                label="Follow a parcel"
-                                hint="Its status then reads on this row until it lands"
-                                onClick={() => {
-                                  close();
-                                  setTrackingInput("");
-                                  setEditingTracking(g.batchId!);
-                                }}
-                              />
-                            )}
-                          </>
-                        )}
-                      </HeaderMenu>
-                    </span>
-                  )}
-
                   {/* The session's PLACE, stated in the header rather than
                       discovered by pressing File. Filing needs a category and a
                       location; the category was already visible here while the
@@ -3828,9 +3872,14 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         }
                       }}
                       title={
+                        // Says what the label CANNOT. It used to restate the
+                        // label back at you ("...then files all 4"), which is
+                        // the one thing you can already read (reported
+                        // 2026-08-21). What is worth knowing is where they land
+                        // and whether a table gets created on the way.
                         filing.reason === "location"
-                          ? `${filing.missingLocation.length} of these have no location yet - this asks where they go, then files all ${readyIds.length}${
-                              sessionCat.suggestion ? ` as “${sessionCat.suggestion}”` : ""
+                          ? `Asks where they go first${
+                              willInstallLabels.length ? `, and installs ${willInstallLabels.join(" and ")}` : ""
                             }`
                           : sessionCat.suggestion
                           ? `Add all ${readyIds.length} to their destinations, filed under “${sessionCat.suggestion}”${
@@ -3838,7 +3887,9 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                                 ? ""
                                 : ` (the items suggested ${sessionCat.seen.join(", ")} - this files them as one)`
                             }${fallbackClause}`
-                          : `Add all ${readyIds.length} to their destinations — each goes where the AI matched it${fallbackClause}`
+                          : `Each goes where the AI matched it${
+                              willInstallLabels.length ? `, installing ${willInstallLabels.join(" and ")} on the way` : ""
+                            }${fallbackClause}`
                       }
                       className="shrink-0 inline-flex items-center gap-1 rounded-md bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 px-2 py-1 text-[11px] font-medium text-white"
                     >
@@ -3848,7 +3899,19 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                           has to admit the question is coming (reported 2026-07-30). */}
                       {filing.reason === "location" ? (
                         <>
-                          <MapPin size={11} /> Place<span className="hidden sm:inline">&nbsp;&amp; file all</span> {readyIds.length}
+                          {/* The same verb as the other branch. The pin says
+                              a location is still to be chosen; saying "Place &"
+                              as well made one action look like two (reported
+                              2026-08-20). Tapping it still opens the picker. */}
+                          <MapPin size={11} />
+                          {/* ONE text node. Each of these used to be its own
+                              flex child, so the container's gap-1 landed between
+                              "File", "all" and the count on top of the spaces
+                              already in them — a visible double space
+                              (reported 2026-08-21). */}
+                          <span>
+                            File<span className="hidden sm:inline"> all</span> {readyIds.length}
+                          </span>
                           {sessionCat.suggestion ? (
                             <span className="hidden sm:inline max-w-[9rem] truncate opacity-80">
                               as {sessionCat.suggestion}
@@ -3857,7 +3920,15 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         </>
                       ) : (
                         <>
-                          <CheckCircle size={11} /> File<span className="hidden sm:inline">&nbsp;all</span> {readyIds.length}
+                          <CheckCircle size={11} />
+                          {/* ONE text node. Each of these used to be its own
+                              flex child, so the container's gap-1 landed between
+                              "File", "all" and the count on top of the spaces
+                              already in them — a visible double space
+                              (reported 2026-08-21). */}
+                          <span>
+                            File<span className="hidden sm:inline"> all</span> {readyIds.length}
+                          </span>
                           {sessionCat.suggestion ? (
                             // "as", the same word the other branch uses. The two
                             // said "as Mugs" and "into Figurine" for the very
@@ -7407,6 +7478,39 @@ function ParentTypeCard({
 // the series in one tap. The series comes from the vision identify
 // (suggested_metadata.series); tagging reuses the apply-theme loop, so the tag
 // rides to each entity at confirm — books to Bookshelf, all carrying the series.
+/** The date printed ON a receipt, when its lines carry one.
+ *
+ *  Every line of a parsed receipt is stamped with the receipt's own date, so the
+ *  session can say when the shopping happened rather than when the photo was
+ *  taken. Null for an ordinary scan session, which has no date but its own. */
+function receiptDateOf(g: { items: ScanInboxItem[] }): string | null {
+  for (const it of g.items) {
+    const d = (it.suggested_metadata as { receipt_date?: unknown } | null)?.receipt_date;
+    if (typeof d !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
+    // Parsed as a plain date, not a timestamp: `new Date("2026-08-18")` is UTC
+    // midnight, which renders as the 17th anywhere west of Greenwich.
+    const [y, m, day] = d.split("-").map(Number);
+    return new Date(y!, m! - 1, day!).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+  return null;
+}
+
+/** A session's name WITHOUT its order number. The number is rendered beside it
+ *  as its own control so it can be edited where it is read, and the two would
+ *  otherwise both show it: "Receipt · Lidl #141483 #141483". */
+function sessionName(g: { label?: string | null; orderRef?: string | null }): string | null {
+  const label = g.label ?? null;
+  if (!label) return label;
+  // By SHAPE, and ALWAYS — not only when a ref is stored. The two can disagree:
+  // a label built before the number was edited, a ref of "141483" against a
+  // label reading "#141483/02", or a ref later cleared while the label kept its
+  // suffix. Stripping only when a ref exists meant a cleared one showed the old
+  // number in the name AND a "+ #" offering to add one, which contradict.
+  // `order_ref` is the source of truth; the label is a rendering of it.
+  // receiptSessionLabel only ever appends " #<ref>", so the shape is exact.
+  return label.replace(/\s+#\S+$/, "");
+}
+
 function seriesOf(it: ScanInboxItem): string | null {
   const s = (it.suggested_metadata as { series?: unknown } | null)?.series;
   return typeof s === "string" && s.trim() ? s.trim() : null;

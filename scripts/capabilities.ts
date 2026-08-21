@@ -65,6 +65,43 @@ export interface VocabularyCapability extends Base {
 export const CAPABILITIES: Capability[] = [
   {
     kind: "owns",
+    id: "credentials:provider-form",
+    what: "rendering the credential fields for an AI/connection provider - the input, the paste recovery, the check-as-you-type verdict and the model dropdown it populates",
+    why: "the same field loop was pasted into three forms, so every capability added to it landed on some and was missed on the rest: the paste recovery and the visible-while-typing key both shipped to the two workspace forms and skipped /me/connections, which is the form an individual user or self-hoster actually uses (2026-08-21)",
+    owner: "web/src/components/CredentialFields.tsx",
+    // The three forms that ask someone for provider credentials. Any future one
+    // belongs here too; nothing else on these pages is this rule's business.
+    scope: ["web/src/pages/AiPage.tsx", "web/src/pages/ConnectionsPage.tsx"],
+    // A hand-rolled copy renders the input directly instead of the field set.
+    detect: /<CredentialInput\b/,
+    use: "render <CredentialFields fields={...} creds={...} onChange={...} scope={...} providerId={...} /> - it renders every field, including the choices and model cases",
+  },
+  {
+    kind: "owns",
+    id: "notifications:delivery-schedule",
+    what: "deciding WHEN a user-facing message is delivered - batching, digests, quiet windows, any timer whose purpose is to send someone fewer messages",
+    why: "the Discord DM spec shipped a DM_FLOOR and nothing that coalesced above it, so forty tracked consumables each perfectly debounced by core_cadence_signals still meant forty DMs a day; a per-item debounce is not a volume control, and the fix only works if there is exactly one place that holds a person's mail (2026-08-21)",
+    owner: "api/src/platform/delivery-sweeper.ts",
+    // The modules that emit the most user-facing signals, which is where a
+    // private digest would be written. The platform's own dispatcher and
+    // sweeper are the owner and are not this rule's business.
+    scope: [
+      "modules/core-cadence/src/sweeper.ts",
+      "modules/core-notifications/src/module.ts",
+      "modules/inventory/src/burn-rate.ts",
+      "modules/lists/src/expiry-sweeper.ts",
+      "modules/core-maintenance/src/sweeper.ts",
+    ],
+    // The tell is batching language ATTACHED TO A MESSAGE, not batching
+    // language on its own. A bare `coalesce` is SQL and matched burn-rate's
+    // jsonb merge on the first draft of this rule - the registry's own header
+    // warns that an over-broad detector is the usual way these fail, and it
+    // was right within a minute of writing it.
+    detect: /\b(notif\w*|message|dm|digest)[A-Za-z_]*(digest|batch|queue|buffer|window)\b|\b(digest|batch|buffer)[A-Za-z_]*(notif\w*|message|dm)\b|\bquiet[_ ]?hours\b/i,
+    use: "emit the notification as normal and let dispatch() defer it - a delivery window is per (person, channel) and lives in api/src/platform/delivery-windows.ts",
+  },
+  {
+    kind: "owns",
     id: "catalog-hit:field-normalization",
     what: "cleaning a barcode provider's raw fields (the brand synonym list, the name-language choice) before anything downstream stores them",
     why: 'the Open*Facts adapter split OFF\'s comma-separated `brands` and the resolver tier twenty lines below it passed the same field through whole, so a Lidl item carried "Belbake, Dolciando, Elbake, Lidl" into its own title (2026-08-14)',
@@ -151,6 +188,29 @@ export const CAPABILITIES: Capability[] = [
     component: "InboxCard",
     required: ["sessionCategoryLabel"],
     scope: ["web/src/pages/ScanPage.tsx"],
+  },
+  {
+    kind: "vocabulary",
+    id: "account:one-name",
+    what: 'the name of /me, which is "Your account"',
+    why: 'the rename from "Profile" was DECIDED and WRITTEN DOWN (configuration-revamp.md § Naming: the pair was asymmetric, "Configuration" names an act and "Profile" names a document about you) and still only reached half the app. The user menu said "Your account", the sidebar said "Profile", the mobile nav said "profile" and the Connections back-link said "Profile" - four surfaces, three names, for one page. A comment in ConfigurationPage even said "until /me is relabelled (P5)", so the gap was known and stayed open. A decision recorded in a doc reminds whoever reads the doc; nobody reads it while renaming a nav row (2026-08-21)',
+    scope: [
+      "web/src/components/AppLayout.tsx",
+      "web/src/components/MobileNav.tsx",
+      "web/src/components/UserMenu.tsx",
+      "web/src/pages/ConnectionsPage.tsx",
+      "web/src/tour/tour.config.ts",
+    ],
+    terms: [
+      {
+        // The bare word as a user-visible label. Not "profile" inside an
+        // identifier, a route, or a sentence about someone else's app (the
+        // Homebox importer legitimately says "Homebox → Profile → API tokens").
+        phrase: /(?:^|[>\s"'`])[Pp]rofile(?=[<\s"'`.,]|$)/,
+        use: '"Your account" — the name /me carries everywhere else',
+        as: "label",
+      },
+    ],
   },
   {
     kind: "owns",

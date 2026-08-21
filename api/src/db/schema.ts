@@ -273,6 +273,14 @@ export interface UserCredentialOrgsTable {
   /** The one approved workspace-default AI the owner chose as the workspace
    *  default (at most one active per org). */
   active: Generated<boolean>;
+  /** Where this connection sits in the workspace's order (1 first). Null =
+   *  unranked: it sorts after everything ranked and falls back to recency,
+   *  which is how every route behaved before ranking existed. (20260821-107) */
+  rank: number | null;
+  /** Which capability this ranking is for — "chat", "identify", … Null = the
+   *  workspace's general order, used by any capability with no order of its
+   *  own. One model is rarely right for a live camera scan AND for chat. */
+  capability: string | null;
 }
 
 export interface PlatformAnnounceSettingsTable {
@@ -442,6 +450,27 @@ export type NotificationChannel =
 
 export type NotificationPriority = "low" | "normal" | "high" | "urgent";
 
+/** One thing a person can do about a notification, straight from the message.
+ *
+ *  Channel-agnostic on purpose: Discord renders these as buttons, email could
+ *  render links, the bell renders them inline. A channel that cannot render
+ *  them ignores them, so the message text must still stand on its own.
+ *
+ *  `action` + `args` are what actually runs, and they are read from the stored
+ *  row rather than from whatever came back off the wire. */
+export interface NotificationAction {
+  /** Stable within one notification. This is what a client sends back. */
+  id: string;
+  label: string;
+  /** A registered action id, e.g. "purchases:mark-arrived". */
+  action: string;
+  args?: Record<string, unknown>;
+  /** A hint, not a guarantee — channels that have no notion of emphasis
+   *  ignore it. `danger` marks something a person should not press by
+   *  accident. */
+  style?: "primary" | "secondary" | "danger";
+}
+
 export interface NotificationsTable {
   id: Generated<string>;
   org_id: string;
@@ -453,6 +482,9 @@ export interface NotificationsTable {
   message: string;
   link_url: string | null;
   priority: Generated<NotificationPriority>;
+  /** What the reader can DO about it. Resolved server-side when a button comes
+   *  back, so a client supplies an action ID and never an action. */
+  actions: Generated<NotificationAction[] | null>;
   delivered_via: Generated<NotificationChannel[]>;
   read_at: Date | null;
   created_at: Generated<Date>;
@@ -934,6 +966,8 @@ export interface OrgEncryptionKeysTable {
 /** Where a piece of feedback came from. Every value must name a way back to
  *  the reporter in `reporterReplyRoute` — adding one here fails to compile
  *  there until it does. */
+import type { DeliveryOutcomes } from "@cobblr/platform-contract/delivery-outcome";
+
 export type FeedbackOrigin = "in-app" | "discord" | "discord-dm";
 
 export interface FeedbackTable {
@@ -950,6 +984,9 @@ export interface FeedbackTable {
   // email; 'discord' → the support bot posts into origin_ref.thread_id;
   // 'discord-dm' → a new item created straight from a bot DM (routes by intent).
   origin: Generated<FeedbackOrigin>;
+  /** Per-channel outcome of the LAST reply we sent (20260821-106). Null for an
+   *  item nobody has replied to, or one replied to before the column existed. */
+  reply_delivery: DeliveryOutcomes | null;
   origin_ref: {
     channel_id: string;
     thread_id: string;
@@ -1050,6 +1087,8 @@ export interface MetaDB {
   notifications: NotificationsTable;
   notification_subscriptions: NotificationSubscriptionsTable;
   notification_account_prefs: NotificationAccountPrefsTable;
+  notification_delivery_windows: NotificationDeliveryWindowsTable;
+  notification_deferred: NotificationDeferredTable;
   discord_connections: DiscordConnectionsTable;
   browser_drive_grants: BrowserDriveGrantsTable;
   entity_kinds: EntityKindsTable;
@@ -1236,4 +1275,35 @@ export interface SharedCacheTable {
   expires_at: Date | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
+}
+
+/** When a channel is allowed to interrupt this person. Per (user, channel) —
+ *  deliberately NOT per event type like the two tables above it, because the
+ *  point is one message across every event. */
+export interface NotificationDeliveryWindowsTable {
+  user_id: string;
+  channel: string;
+  mode: "immediate" | "daily";
+  /** Minutes past LOCAL midnight. */
+  deliver_at_minute: Generated<number>;
+  /** IANA zone. */
+  timezone: Generated<string>;
+  /** Idempotency for the sweeper: one flush per window per local day. */
+  last_delivered_at: ColumnType<Date | null, Date | null | undefined, Date | null>;
+  updated_at: Generated<Date>;
+}
+
+/** What a windowed channel still owes someone. The notification itself is
+ *  already in `notifications` — this is only the undelivered push copy. */
+export interface NotificationDeferredTable {
+  id: Generated<string>;
+  user_id: string;
+  channel: string;
+  notification_id: string;
+  org_id: string | null;
+  event_type: string;
+  message: string;
+  link_url: string | null;
+  priority: Generated<string>;
+  queued_at: Generated<Date>;
 }

@@ -238,26 +238,24 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
   //             prefill: it puts the words in Cobb's mouth, not the user's.
   // seed only shows while empty; prefill never clobbers text you've already typed.
   const [seedPlaceholder, setSeedPlaceholder] = useState<string | null>(null);
-  // When the chat is opened programmatically for a NEW task (a modal's "Ask
-  // Cobb", a deep-link) on top of an existing conversation, park the prior turns
-  // behind a divider and scroll to it — the old chat isn't deleted, just scrolled
-  // up out of the way (scroll back up to read it). `sessionStart` is the message
-  // index where the current session begins; null = no divider.
-  const [sessionStart, setSessionStart] = useState<number | null>(null);
-  // Live message count so the open-event listener (stable, empty-deps) reads the
-  // length at fire time without going stale.
-  const msgCountRef = useRef(0);
+  // Opening the chat FOR something (a row's Cobb button, a modal, a deep-link)
+  // used to park the prior turns behind an "↑ Earlier" divider, with a 70dvh
+  // spacer under it, and scroll the divider to the top. Three separate things
+  // moved the view for a person who had only pressed a button beside a rack.
+  //
+  // What they pressed says all of it already: the chip above the box reads
+  // "About: Rack 12". So the context is a property of the NEXT message, shown
+  // where the next message is typed, and the conversation stays exactly where
+  // it was.
   useEffect(() => {
     const onOpen = (e: Event) => {
       const d = (e as CustomEvent<{ seed?: string; prefill?: string; opener?: string }>).detail ?? {};
       setOpen(true);
       if (d.seed) setSeedPlaceholder(d.seed);
       if (d.prefill) setInput((cur) => (cur.trim() ? cur : d.prefill!));
-      // Park whatever's already there behind a divider for this fresh task.
-      setSessionStart(msgCountRef.current > 0 ? msgCountRef.current : null);
       // A Cobb OPENER: a canned greeting that frames the screen you came from,
-      // added as an assistant turn below the divider. It tells you what Cobb can
-      // do here AND grounds the model for your reply (it's part of the chat context).
+      // added as an assistant turn. It tells you what Cobb can do here AND
+      // grounds the model for your reply (it's part of the chat context).
       if (d.opener) setMessages((cur) => [...cur, { role: "assistant", content: d.opener! }]);
     };
     window.addEventListener("cobblr:open-chat", onOpen);
@@ -275,21 +273,10 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
   const [devPose, setDevPose] = useState<CobbPose>("idle");
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
-  const dividerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages, busy]);
-  // Keep the count the open-listener reads in sync with what's rendered.
-  useEffect(() => {
-    msgCountRef.current = messages.length;
-  }, [messages]);
-  // On a fresh-task open, bring the session divider to the top so the prior
-  // history scrolls up out of the way (still there — scroll back up). Before
-  // paint, so there's no flash of the old scroll position.
-  useLayoutEffect(() => {
-    if (sessionStart != null && open) dividerRef.current?.scrollIntoView({ block: "start" });
-  }, [sessionStart, open]);
 
   // Auto-grow the input with its content (up to a cap), then shrink back — and
   // place the caret at the end of a message just recalled from history.
@@ -366,7 +353,6 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
     }
     msgsSlugRef.current = activeSlug ?? null;
     setMessages(loaded);
-    setSessionStart(null); // a different workspace's history — the old index is meaningless
   }, [activeSlug]);
 
   /** Cobb changed the workspace: tell the app, and make the screens behind the
@@ -385,7 +371,6 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
   function clearChat() {
     setMessages([]);
     setError(null);
-    setSessionStart(null);
     // A new conversation starts on nothing in particular. (Sending does NOT do
     // this — the context belongs to the conversation, not to one message.)
     clearChatSelection();
@@ -1199,18 +1184,6 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
     }
   }
 
-  // The line that separates a parked earlier conversation (above it, scrolled
-  // out of view on open) from the current session (below). Rendered exactly once
-  // — at the session boundary — so its ref is unambiguous for the open-scroll.
-  const sessionDivider = (
-    <div ref={dividerRef} className="relative py-2 select-none" aria-hidden="true">
-      <div className="border-t border-line dark:border-slate-700" />
-      <span className="absolute left-1/2 -translate-x-1/2 -top-2 bg-surface dark:bg-slate-900 px-2 text-[10px] font-medium uppercase tracking-wider text-faint dark:text-slate-500">
-        ↑ Earlier
-      </span>
-    </div>
-  );
-
   if (!activeSlug || !open) return null;
 
   return (
@@ -1509,27 +1482,8 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
                   {m.undone && <div className="mt-1 text-[11px] text-faint">↩ undone</div>}
                 </div>
               );
-              // Drop the session divider in front of the first message of the
-              // current session; the parked earlier turns render above it.
-              return sessionStart != null && i === sessionStart ? (
-                <div key={i}>
-                  {sessionDivider}
-                  {el}
-                </div>
-              ) : (
-                el
-              );
+              return el;
             })}
-            {/* Fresh session opened with nothing new typed yet — the divider
-                trails the parked history, and a spacer below gives it room to pin
-                to the top so the old conversation fully scrolls out of view (the
-                first reply fills the space). */}
-            {sessionStart != null && sessionStart === messages.length && messages.length > 0 && (
-              <>
-                {sessionDivider}
-                <div className="min-h-[70dvh] shrink-0" aria-hidden="true" />
-              </>
-            )}
             {/* Waiting on a reply. Cobb's poses are STATES, not decoration, so
                 the wait is where `working` belongs: he's at the bench while you
                 wait, instead of a generic dot. Deliberately small and static —
@@ -1666,35 +1620,44 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
           {/* What you are pointing at, held where you can see it — and drop it.
               A highlight is gone the moment the caret enters this box, so it is
               captured as a chip instead of being read back at send-time. */}
-          {selection && (
-            <div className="border-t border-line dark:border-slate-700 px-3 pt-2 shrink-0">
-              <div className="inline-flex items-center gap-1.5 rounded-md border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-950/40 px-2 py-1 text-[11px] text-cobble-800 dark:text-cobble-200 max-w-full">
-                {/* Not "In context" — that is the vocabulary of the tool, not
-                    of the person using it. What the chip means is "this is what
-                    my next message is about". */}
-                <span className="shrink-0 opacity-70">About:</span>
-                <span className="truncate font-medium" title={selection.text ?? selection.label}>
-                  {selection.label}
-                  {/* The words, only when they add something. A highlight that
-                      resolved to a record already reads as its name. */}
-                  {selection.text && selection.text.trim() !== selection.label
-                    ? ` — “${selection.text.slice(0, 60)}${selection.text.length > 60 ? "…" : ""}”`
-                    : ""}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => clearChatSelection()}
-                  className="shrink-0 opacity-60 hover:opacity-100"
-                  title="Don't include this"
-                  aria-label="Remove from context"
-                >
-                  <X className="w-3 h-3" />
-                </button>
+          <div className="relative border-t border-line dark:border-slate-700 p-3 flex items-end gap-2 shrink-0">
+            {selection && (
+              // ANCHORED to the top of the box, not a row above it. As a row it
+              // had its own divider and, worse, its own HEIGHT: the transcript
+              // lost that many pixels the moment you pointed Cobb at something,
+              // so the last thing said slid out of view. scrollTop stayed the
+              // same number, which is why measuring only scrollTop said this was
+              // fine — the pixels that moved were clientHeight.
+              //
+              // Absolute, so the conversation above it is not resized at all. It
+              // carries its own background and border, so it reads as a chip
+              // sitting on the box's edge rather than a strip of chrome.
+              <div className="absolute -top-3 left-3 right-3 z-10 flex">
+                <div className="inline-flex items-center gap-1.5 rounded-md border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-950/40 px-2 py-1 text-[11px] text-cobble-800 dark:text-cobble-200 max-w-full shadow-sm">
+                  {/* Not "In context" — that is the vocabulary of the tool, not
+                      of the person using it. What the chip means is "this is what
+                      my next message is about". */}
+                  <span className="shrink-0 opacity-70">About:</span>
+                  <span className="truncate font-medium" title={selection.text ?? selection.label}>
+                    {selection.label}
+                    {/* The words, only when they add something. A highlight that
+                        resolved to a record already reads as its name. */}
+                    {selection.text && selection.text.trim() !== selection.label
+                      ? ` — “${selection.text.slice(0, 60)}${selection.text.length > 60 ? "…" : ""}”`
+                      : ""}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => clearChatSelection()}
+                    className="shrink-0 opacity-60 hover:opacity-100"
+                    title="Don't include this"
+                    aria-label="Remove from context"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
-
-          <div className="border-t border-line dark:border-slate-700 p-3 flex items-end gap-2 shrink-0">
+            )}
             <textarea
               ref={taRef}
               value={input}

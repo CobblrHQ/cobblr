@@ -12,6 +12,7 @@
 // screenshots are instead of rendering a broken image.
 
 import { useState } from "react";
+import { describeDelivery, isOurFault, type ChannelOutcome, type DeliveryChannel } from "@cobblr/platform-contract/delivery-outcome";
 import { Modal } from "./Modal";
 import { useImageSrc } from "./useImageSrc";
 import { isForeign, type FeedbackSource, type FeedbackSourceItem, type FeedbackUpdate } from "./feedback-source";
@@ -112,6 +113,11 @@ export function FeedbackCard({
   // returns its own rows. A source with no `update` at all is read-only and the controls
   // are hidden rather than offered and failing.
   const canAct = !!source.update;
+  // "emailed: false" reads the same whether they opted out or our sender is
+  // down, so the card says WHICH — and colours it only when it is our fault.
+  const delivery = (f.reply_delivery ?? {}) as Partial<Record<DeliveryChannel, ChannelOutcome>>;
+  const deliveryLine = describeDelivery(delivery);
+  const deliveryFault = Object.values(delivery).some((o) => o && isOurFault(o));
   return (
     <li className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 text-sm space-y-2">
       <div className="flex items-center gap-2 flex-wrap text-xs">
@@ -261,6 +267,17 @@ export function FeedbackCard({
               notify reporter
             </button>
           </div>
+          {deliveryLine && (
+            <p
+              className={
+                "font-mono text-[10px] " +
+                (deliveryFault ? "text-ember-600 dark:text-ember-200" : "text-muted dark:text-mortar-300")
+              }
+              title="What happened to the last reply we sent, per channel"
+            >
+              last reply: {deliveryLine}
+            </p>
+          )}
           {/* Public "what we fixed" note — third-person; posted to the Discord feedback
               channel when you set status → resolved. Not sent to the reporter. */}
           <input

@@ -302,9 +302,19 @@ platformOrgRouter.get(
           "b.action_id",
           "b.template",
           "a.label",
+          // What it actually does, in the module's own words. A row shows the
+          // LABEL, and "Print label" does not say whether paper comes out now
+          // or a line joins the queue; the description does ("Queue a
+          // printable label for this entity").
+          "a.description",
           "a.icon",
           "a.invoke_route",
           "a.invoke_handler",
+          // Whether a mistaken run can be put right. A binding rendered on a
+          // LIST row is one thumb away from firing by accident, so the surface
+          // needs to know which ones deserve a second tap. Printing a label is
+          // the motivating case: nothing breaks, but a label comes out.
+          "a.undoable",
         ])
         .where("b.org_id", "=", req.tenant!.org.id)
         .where("b.source_kind", "=", kind)

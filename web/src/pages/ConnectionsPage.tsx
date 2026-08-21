@@ -6,7 +6,8 @@
 // list shows which keys are set, never the values.
 
 import { useMemo, useState } from "react";
-import { CredentialInput } from "../components/CredentialInput";
+import { incumbentConnection } from "../lib/incumbent-connection";
+import { CredentialFields } from "../components/CredentialFields";
 import { ProviderSetupSteps } from "../components/ProviderSetupSteps";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -35,14 +36,18 @@ const SCOPE_LABEL: Record<ConnRouteScope, string> = {
   explicit: "Specific workspaces",
 };
 
-export function ConnectionsPage() {
+/** `startAdding` opens the add form on arrival — the "+ Add a connection"
+ *  action on the account hub lands here, and landing on the list you were
+ *  already one click from would make the button a second link to a page rather
+ *  than a thing you do (configuration-revamp.md § Section actions). */
+export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean } = {}) {
   usePageTitle("Connections");
   const qc = useQueryClient();
   const toast = useToast();
   const conns = useQuery({ queryKey: ["connections"], queryFn: api.listConnections });
   const catalogue = useQuery({ queryKey: ["conn-catalogue"], queryFn: api.connectionCatalogue });
   const me = useQuery({ queryKey: ["me"], queryFn: api.me });
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState(startAdding);
   const [editing, setEditing] = useState<UserConnection | null>(null);
 
   const orgs = me.data?.orgs ?? [];
@@ -63,7 +68,7 @@ export function ConnectionsPage() {
     <div className="space-y-5">
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
         <Link to="/me" className="text-sm text-muted hover:text-accent inline-flex items-center gap-1">
-          <ArrowLeft size={14} /> Profile
+          <ArrowLeft size={14} /> Your account
         </Link>
         <h1 className="text-2xl font-semibold text-content dark:text-mortar-100 flex items-center gap-2">
           <Plug size={20} className="text-accent" /> Connections
@@ -86,10 +91,21 @@ export function ConnectionsPage() {
 
       <div className="space-y-2">
         {(conns.data?.items ?? []).map((c) => (
+          // An accordion, not a form that opens somewhere else. Editing used to
+          // append a panel at the FOOT of the page, so the thing you pressed
+          // stayed where it was and the thing that answered appeared past the
+          // end of the list — with several connections you had to scroll away
+          // from the one you were editing to edit it.
           <div
             key={c.id}
-            className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 flex items-start gap-3"
+            className={
+              "rounded-xl border bg-surface dark:bg-slate-900 " +
+              (editing?.id === c.id
+                ? "border-cobble-500 dark:border-cobble-600"
+                : "border-line dark:border-slate-700")
+            }
           >
+          <div className="p-3 flex items-start gap-3">
             <div className="flex-1 min-w-0">
               <div className="font-medium text-content dark:text-mortar-100">
                 {c.label || providerLabel(c.provider_id)}
@@ -138,11 +154,15 @@ export function ConnectionsPage() {
               <button
                 type="button"
                 onClick={() => {
-                  setEditing(c);
+                  setEditing((cur) => (cur?.id === c.id ? null : c));
                   setAdding(false);
                 }}
-                className="text-faint hover:text-accent p-1.5"
-                title="Edit routing"
+                className={
+                  "p-1.5 transition " +
+                  (editing?.id === c.id ? "text-accent" : "text-faint hover:text-accent")
+                }
+                title={editing?.id === c.id ? "Close" : "Edit routing"}
+                aria-expanded={editing?.id === c.id}
               >
                 <Pencil size={14} />
               </button>
@@ -156,24 +176,38 @@ export function ConnectionsPage() {
               </button>
             </div>
           </div>
+          {editing?.id === c.id && (
+            <div className="border-t border-line dark:border-slate-700 p-3">
+              <ConnectionForm
+                key={c.id}
+                providers={providers}
+                orgs={orgs}
+                others={(conns.data?.items ?? []).filter((o) => o.id !== c.id)}
+                existing={c}
+                onDone={() => {
+                  setEditing(null);
+                  void qc.invalidateQueries({ queryKey: ["connections"] });
+                }}
+                onCancel={() => setEditing(null)}
+              />
+            </div>
+          )}
+          </div>
         ))}
       </div>
 
-      {adding || editing ? (
+      {adding ? (
         <ConnectionForm
-          key={editing?.id ?? "new"}
+          key="new"
           providers={providers}
           orgs={orgs}
-          existing={editing}
+          others={conns.data?.items ?? []}
+          existing={null}
           onDone={() => {
             setAdding(false);
-            setEditing(null);
             void qc.invalidateQueries({ queryKey: ["connections"] });
           }}
-          onCancel={() => {
-            setAdding(false);
-            setEditing(null);
-          }}
+          onCancel={() => setAdding(false)}
         />
       ) : (
         <button
@@ -191,12 +225,16 @@ export function ConnectionsPage() {
 function ConnectionForm({
   providers,
   orgs,
+  others,
   existing,
   onDone,
   onCancel,
 }: {
   providers: AiProviderDef[];
   orgs: Array<{ id: string; name: string; role: string }>;
+  /** My OTHER connections, so a workspace that already has one can say so
+   *  BEFORE this one silently takes over by being the more recently saved. */
+  others: UserConnection[];
   existing: UserConnection | null;
   onDone: () => void;
   onCancel: () => void;
@@ -213,6 +251,20 @@ function ConnectionForm({
   // Per-workspace routing: org_id → mode. Absence = "Off". Seeded from the
   // connection's saved routes; a dynamic-scope (legacy) connection seeds from
   // its global mode applied to whichever workspaces it currently reaches.
+  // Workspaces where THIS connection should be the one that serves. Only asked
+  // about when another of mine is already routed there — otherwise there is
+  // nothing to choose between and no question worth putting on screen.
+  const [takeOver, setTakeOver] = useState<Record<string, boolean>>({});
+  const incumbentFor = (orgId: string) => incumbentConnection(others, orgId);
+  // Yours and other people's are different decisions: routing a key into a
+  // workspace you own is between you and yourself; offering it to someone
+  // else's is a share they have to accept. The workspace switcher splits them
+  // with these exact words, so this uses them rather than inventing a second
+  // vocabulary for the same distinction.
+  const orgSections = [
+    { label: "your workspaces", items: orgs.filter((o) => o.role === "owner") },
+    { label: "shared with you", items: orgs.filter((o) => o.role !== "owner") },
+  ].filter((g) => g.items.length > 0);
   const [perWs, setPerWs] = useState<Record<string, ConnRouteMode>>(() => {
     if (existing?.routes?.length) return Object.fromEntries(existing.routes.map((r) => [r.org_id, r.mode]));
     if (!existing) return {};
@@ -244,6 +296,27 @@ function ConnectionForm({
         }
       }
       const routes = Object.entries(perWs).map(([org_id, mode]) => ({ org_id, mode }));
+      // Workspaces where you said "use this one" over the connection already
+      // serving them. Applied after the save, because a new connection has no
+      // id until then.
+      const claiming = Object.entries(takeOver)
+        .filter(([orgId, yes]) => yes && perWs[orgId])
+        .map(([orgId]) => orgId);
+      const claimAll = async (credentialId: string) => {
+        // One failure must not lose the save that already succeeded, so each is
+        // reported and the rest continue.
+        for (const org_id of claiming) {
+          try {
+            // This one first, then whatever else of mine is already here.
+            const rest = others
+              .filter((c) => (c.routes ?? []).some((r) => r.org_id === org_id))
+              .map((c) => c.id);
+            await api.setConnectionOrder({ org_id, credential_ids: [credentialId, ...rest] });
+          } catch (e) {
+            toast.error(e instanceof ApiError ? e.message : String(e));
+          }
+        }
+      };
       if (isEdit) {
         // On edit, only send credentials the user actually re-entered (blank = keep).
         await api.updateConnection(existing!.id, {
@@ -251,6 +324,7 @@ function ConnectionForm({
           ...(Object.keys(cleanCreds).length ? { credentials: cleanCreds } : {}),
           routes,
         });
+        await claimAll(existing!.id);
         return;
       }
       const body: UserConnectionInput = {
@@ -259,7 +333,8 @@ function ConnectionForm({
         credentials: cleanCreds,
         routes,
       };
-      await api.addConnection(body);
+      const made = await api.addConnection(body);
+      if (made?.id) await claimAll(made.id);
     },
     onSuccess: () => {
       toast.success(isEdit ? "Connection updated." : "Connection added.");
@@ -324,40 +399,21 @@ function ConnectionForm({
 
       {provider?.setup && <ProviderSetupSteps setup={provider.setup} />}
 
-      {credFields.map(([key, def]) =>
-        def.choices ? (
-          <label key={key} className="block">
-            <div className="text-xs text-muted mb-1">{def.label}</div>
-            <select
-              value={creds[key] ?? ""}
-              onChange={(e) => setCreds((m) => ({ ...m, [key]: e.target.value }))}
-              className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-            >
-              {def.choices.map((c) => (
-                <option key={c.value} value={c.value}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
-            {key === "transit" && (creds[key] ?? "").startsWith("bridge") && <PersonalAgentHint />}
-          </label>
-        ) : (
-          // The SAME component the workspace forms use. This page missed the paste
-          // recovery and the visible-while-typing key when those shipped, which is the
-          // worst place to miss them: /me/connections is where an individual user or a
-          // self-hoster adds their own key.
-          <CredentialInput
-            key={key}
-            fieldKey={key}
-            label={def.label}
-            secret={!!def.secret}
-            value={creds[key] ?? ""}
-            onChange={(v) => setCreds((m) => ({ ...m, [key]: v }))}
-            note={isEdit && def.secret && existing?.credential_keys.includes(key) ? "· set (leave blank to keep)" : undefined}
-            placeholder={isEdit && existing?.credential_keys.includes(key) ? "\u2022\u2022\u2022\u2022\u2022\u2022 (unchanged)" : undefined}
-          />
-        ),
-      )}
+      <CredentialFields
+        fields={provider?.credentials ?? {}}
+        creds={creds}
+        onChange={(k, v) => setCreds((m) => ({ ...m, [k]: v }))}
+        scope={{ kind: "personal" }}
+        providerId={providerId}
+        selectClassName="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+        hintFor={(k, v) => k === "transit" && v.startsWith("bridge") && <PersonalAgentHint />}
+        noteFor={(k, d) =>
+          isEdit && d.secret && existing?.credential_keys.includes(k) ? "· set (leave blank to keep)" : undefined
+        }
+        placeholderFor={(k) =>
+          isEdit && existing?.credential_keys.includes(k) ? "•••••• (unchanged)" : undefined
+        }
+      />
       {credFields.length === 0 && (
         <div className="text-[11px] text-faint italic">
           This provider needs no credentials - it routes to a device you connect (e.g. the edge bridge).
@@ -368,7 +424,12 @@ function ConnectionForm({
         <div className="text-xs text-muted mb-1">Use this connection in each workspace</div>
         <div className="rounded border border-line dark:border-slate-700 divide-y divide-line dark:divide-slate-700">
           {orgs.length === 0 && <div className="text-[11px] text-faint p-2">No workspaces.</div>}
-          {orgs.map((o) => {
+          {orgSections.map((section) => (
+            <div key={section.label}>
+              <div className="px-2 pt-2 pb-1 text-[9px] font-mono uppercase tracking-widest text-muted dark:text-slate-500">
+                {section.label}
+              </div>
+              {section.items.map((o) => {
             const cur = perWs[o.id]; // undefined = off
             const owns = o.role === "owner";
             const set = (m: ConnRouteMode | null) =>
@@ -385,6 +446,40 @@ function ConnectionForm({
                   {cur === "workspace-default" && !owns && (
                     <div className="text-[10px] text-amber-600 dark:text-amber-500">
                       Shared - the owner approves before others can use it. Your own calls work right away.
+                    </div>
+                  )}
+                  {cur && incumbentFor(o.id) && (
+                    <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px]">
+                      <span className="text-muted dark:text-slate-400">
+                        <span className="font-medium text-content dark:text-mortar-200">
+                          {incumbentFor(o.id)!.label || incumbentFor(o.id)!.provider_id}
+                        </span>{" "}
+                        is already powering this workspace.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setTakeOver((p) => ({ ...p, [o.id]: true }))}
+                        className={
+                          "rounded px-1.5 py-0.5 border transition " +
+                          (takeOver[o.id]
+                            ? "border-cobble-500 bg-cobble-600 text-white font-medium"
+                            : "border-line dark:border-slate-600 text-muted hover:text-accent hover:border-cobble-400")
+                        }
+                      >
+                        Use this one first
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTakeOver((p) => ({ ...p, [o.id]: false }))}
+                        className={
+                          "rounded px-1.5 py-0.5 border transition " +
+                          (!takeOver[o.id]
+                            ? "border-cobble-500 bg-cobble-600 text-white font-medium"
+                            : "border-line dark:border-slate-600 text-muted hover:text-accent hover:border-cobble-400")
+                        }
+                      >
+                        Keep {incumbentFor(o.id)!.label || "the other"} first
+                      </button>
                     </div>
                   )}
                 </div>
@@ -414,7 +509,9 @@ function ConnectionForm({
                 </div>
               </div>
             );
-          })}
+              })}
+            </div>
+          ))}
         </div>
         <p className="text-[11px] text-faint mt-1">
           <span className="font-medium">Just me</span> = only your own work here uses it.{" "}

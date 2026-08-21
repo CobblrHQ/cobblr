@@ -110,6 +110,10 @@ export function listProviders(): ReturnType<PlatformAi["listProviders"]> {
     credentials: p.describeCredentials(),
     capabilities: p.capabilities,
     setup: p.setup,
+    // Carried, not just sorted by. A consumer that re-merges these with another
+    // registry (the connections catalogue does) has to be able to re-sort, and
+    // a picker whose default is providers[0] should be able to say WHY.
+    rank: p.rank,
   }));
 }
 
@@ -369,6 +373,8 @@ export async function checkAvailability(
     orgId,
     userId,
     (pid) => !!providers.get(pid)?.capabilities[capability],
+    "ai-provider",
+    capability,
   ).catch(() => null);
   if (personal) return { available: true, reason: "ok", source: "personal" };
   // Workspace opted out of shared/managed AI (the personal check above already
@@ -429,6 +435,8 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
       req.orgId,
       req.userId ?? null,
       (pid) => !!providers.get(pid)?.capabilities[req.capability],
+      "ai-provider",
+      req.capability,
     );
     if (personal) {
       const pdef = providers.get(personal.providerId);

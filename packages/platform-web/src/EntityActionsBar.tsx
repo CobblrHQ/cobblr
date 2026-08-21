@@ -1,12 +1,10 @@
 // Generic actions bar — drop onto any entity-detail page; renders
 // platform-registered + user-bound actions for the kind.
 
-import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
-import { usePlatformWeb, useFlowHost } from "./context";
+import { useQuery } from "@tanstack/react-query";
+import { usePlatformWeb } from "./context";
+import { useInvokeEntityAction } from "./use-invoke-action";
 import { AskCobbAbout } from "./AskCobbAbout";
-import { printDirectiveOf, runPrintDirective } from "./print-directive";
 import type { PlatformAction, PlatformActionBinding } from "./types";
 
 interface Props {
@@ -88,77 +86,7 @@ function ActionButton({
   entityId: string;
   action: PlatformAction;
 }) {
-  const { api, orgSlug } = usePlatformWeb();
-  const { openFlow } = useFlowHost();
-  const navigate = useNavigate();
-  const qc = useQueryClient();
-  const [flash, setFlash] = useState<"ok" | "err" | null>(null);
-  // Walk-up print feedback. Its own line rather than the flash chip, because
-  // it lands a second or two later and says more than "done".
-  const [note, setNote] = useState<string | null>(null);
-
-  const invoke = useMutation({
-    mutationFn: () =>
-      api.invokeAction(orgSlug, { actionId: action.id, entityKind, entityId }),
-    onSuccess: (data) => {
-      setFlash("ok");
-      setTimeout(() => setFlash(null), 1200);
-      void qc.invalidateQueries({ queryKey: ["labels-queue"] });
-      // An action result may carry a `ui` directive asking the shell to open a
-      // first-party flow (e.g. disassemble → the organize planner over the
-      // spawned parts). Honored generically; a flow this shell doesn't host is
-      // a no-op. See docs/architecture/invokable-flows-and-lego-redesign.md.
-      const ui = (data as { result?: { ui?: { flow?: string; args?: Record<string, unknown> } } })
-        ?.result?.ui;
-      if (ui && typeof ui.flow === "string") openFlow(ui.flow, ui.args ?? {});
-
-      // …or a `ui.print` directive: "here is something printable". Only a
-      // browser-driven printer needs the browser's help, since the server can
-      // reach every other kind itself, so this is a no-op unless one is the
-      // default. That is what lets a module return the directive every time
-      // without knowing what hardware the workspace has.
-      const directive = printDirectiveOf((data as { result?: unknown })?.result);
-      if (directive && api.listPrinters && api.postToModulePath) {
-        const listPrinters = api.listPrinters.bind(api);
-        const post = api.postToModulePath.bind(api);
-        void runPrintDirective(directive, {
-          listPrinters: () => listPrinters(orgSlug),
-          post: (path, body) => post(orgSlug, path, body),
-        })
-          .then((r) => {
-            if (!r.printed) return;          // no browser printer: the queue still has it
-            void qc.invalidateQueries({ queryKey: ["labels-queue"] });
-            setNote(
-              r.recordError
-                ? "Printed, but the queue could not be updated. Refresh before printing again."
-                : `Printed to ${r.deviceName}`,
-            );
-            setTimeout(() => setNote(null), 3000);
-          })
-          .catch((e: unknown) => {
-            // It did NOT print. The row is still queued, so the fallback is
-            // intact; say what went wrong rather than failing silently.
-            setNote(e instanceof Error ? e.message : String(e));
-            setTimeout(() => setNote(null), 5000);
-          });
-      }
-    },
-    onError: () => {
-      setFlash("err");
-      setTimeout(() => setFlash(null), 2400);
-    },
-  });
-
-  function go() {
-    if (action.invoke_handler) {
-      invoke.mutate();
-    } else if (action.invoke_route) {
-      const r = action.invoke_route
-        .replace("{entityKind}", encodeURIComponent(entityKind))
-        .replace("{entityId}", encodeURIComponent(entityId));
-      navigate(r);
-    }
-  }
+  const { run, flash, note, pending } = useInvokeEntityAction({ entityKind, entityId });
 
   return (
     <>
@@ -167,9 +95,9 @@ function ActionButton({
         onClick={(e) => {
           e.stopPropagation();
           e.preventDefault();
-          go();
+          run({ actionId: action.id, invokeRoute: action.invoke_route, invokeHandler: action.invoke_handler });
         }}
-        disabled={invoke.isPending}
+        disabled={pending}
         title={action.description ?? action.label}
         className={
           "rounded-md border text-[10px] font-mono uppercase tracking-widest px-2 py-1 transition flex items-center gap-1 " +
@@ -180,17 +108,9 @@ function ActionButton({
             : "border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:bg-subtle dark:hover:bg-slate-800/70 hover:text-accent dark:hover:text-cobble-300")
         }
       >
-        {flash === "ok"
-          ? "done"
-          : flash === "err"
-          ? "err"
-          : invoke.isPending
-          ? "…"
-          : action.label}
+        {flash === "ok" ? "done" : flash === "err" ? "err" : pending ? "…" : action.label}
       </button>
-      {note && (
-        <span className="self-center text-[10px] text-muted dark:text-slate-400">{note}</span>
-      )}
+      {note && <span className="self-center text-[10px] text-muted dark:text-slate-400">{note}</span>}
     </>
   );
 }
@@ -204,53 +124,30 @@ function BindingButton({
   entityId: string;
   binding: PlatformActionBinding;
 }) {
-  const { api, orgSlug } = usePlatformWeb();
-  const qc = useQueryClient();
-  const [flash, setFlash] = useState<"ok" | "err" | null>(null);
-  const invoke = useMutation({
-    mutationFn: () =>
-      api.invokeAction(orgSlug, {
-        actionId: binding.action_id,
-        entityKind,
-        entityId,
-        bindingId: binding.binding_id,
-      }),
-    onSuccess: () => {
-      setFlash("ok");
-      setTimeout(() => setFlash(null), 1200);
-      void qc.invalidateQueries({ queryKey: ["labels-queue"] });
-    },
-    onError: () => {
-      setFlash("err");
-      setTimeout(() => setFlash(null), 2400);
-    },
-  });
+  const { run, flash, note, pending } = useInvokeEntityAction({ entityKind, entityId });
   return (
-    <button
-      type="button"
-      onClick={(e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        invoke.mutate();
-      }}
-      disabled={invoke.isPending}
-      title={`${binding.label} (custom template)`}
-      className={
-        "rounded-md border text-[10px] font-mono uppercase tracking-widest px-2 py-1 transition flex items-center gap-1 " +
-        (flash === "ok"
-          ? "border-moss-200 bg-moss-50 text-moss-600"
-          : flash === "err"
-          ? "border-ember-200 bg-ember-50 text-ember-600"
-          : "border-cobble-200 dark:border-cobble-700 text-accent dark:text-cobble-300 hover:bg-cobble-50 dark:hover:bg-slate-800/70")
-      }
-    >
-      {flash === "ok"
-        ? "done"
-        : flash === "err"
-        ? "err"
-        : invoke.isPending
-        ? "…"
-        : binding.label}
-    </button>
+    <>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          run({ actionId: binding.action_id, bindingId: binding.binding_id });
+        }}
+        disabled={pending}
+        title={binding.label}
+        className={
+          "rounded-md border text-[10px] font-mono uppercase tracking-widest px-2 py-1 transition flex items-center gap-1 " +
+          (flash === "ok"
+            ? "border-moss-200 bg-moss-50 text-moss-600"
+            : flash === "err"
+            ? "border-ember-200 bg-ember-50 text-ember-600"
+            : "border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:bg-subtle dark:hover:bg-slate-800/70 hover:text-accent dark:hover:text-cobble-300")
+        }
+      >
+        {flash === "ok" ? "done" : flash === "err" ? "err" : pending ? "…" : binding.label}
+      </button>
+      {note && <span className="self-center text-[10px] text-muted dark:text-slate-400">{note}</span>}
+    </>
   );
 }

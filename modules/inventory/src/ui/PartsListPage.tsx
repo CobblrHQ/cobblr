@@ -35,7 +35,7 @@ import {
   usePublishChatContext,
   makeAreaResolver,
   LOCATION_GROUP_KEY,
-  type EditableCellDef, usePublishSelectedRecords } from "@cobblr/platform-web";
+  type EditableCellDef, useAskCobbAboutSelection } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { QtyStepper } from "./QtyStepper";
 import { assortedQty, isAssorted } from "./assorted";
@@ -96,9 +96,15 @@ export function PartsListPage() {
     queryFn: () => api.listFieldDefs(entityKind, true),
     staleTime: 60_000,
   });
-  const allCustomCols = (fieldDefs.data?.items ?? [])
-    .filter((d) => d.type !== "computed")
-    .sort((a, b) => a.position - b.position);
+  const allCustomCols = (fieldDefs.data?.items ?? []).sort((a, b) => a.position - b.position);
+  // Computed fields stay out of the DEFAULT six. They are derived, they cost a
+  // resolve, and a table that silently fills with them is not what anyone asked
+  // for. But a saved view that NAMES one is asking for it explicitly, and until
+  // now the exclusion applied to both — so the Tea and Spices tables shipped a
+  // "How often you re-buy" view whose two columns could never render. (The
+  // exclusion was correct when the list route did not resolve computed values at
+  // all; that changed, and this did not.)
+  const defaultCols = allCustomCols.filter((d) => d.type !== "computed");
 
   // Saved views for inventory:part — bundles ship pinned ones ("My yarn
   // stash"). When `?view=<id>` is set, the list renders AS that view: its
@@ -129,7 +135,7 @@ export function PartsListPage() {
   // otherwise show the first 6 (the prior behaviour).
   const customCols = viewFields
     ? allCustomCols.filter((c) => viewFields.includes(c.name))
-    : allCustomCols.slice(0, 6);
+    : defaultCols.slice(0, 6);
   function selectView(id: string | null) {
     setParams(
       (p) => {
@@ -251,7 +257,7 @@ export function PartsListPage() {
   // What is ticked IS context: with the panel open, "order more of these"
   // means the parts on screen a person pointed at, and Cobb gets their ids
   // rather than a count he has to go and re-find.
-  usePublishSelectedRecords(selected, partItems, "inventory:part", "part");
+  const askCobb = useAskCobbAboutSelection(selected, partItems, "inventory:part", "part");
   // Tell Ask Cobb what's on this screen — `low_stock` is the module's own flag.
   const lowStock = partItems.filter((p) => p.low_stock).length;
   usePublishChatContext({
@@ -715,6 +721,7 @@ export function PartsListPage() {
         />
       )}
       <BulkActionBar
+        onAskCobb={askCobb}
         count={selected.size}
         onClear={() => setSelected(new Set())}
         actions={

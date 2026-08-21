@@ -8,6 +8,7 @@
 // See docs/design-decisions/no-ai-chat-training.md.
 
 import { Router } from "express";
+import { groupWritesByRequest } from "./group-writes.js";
 import { z } from "zod";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
@@ -341,14 +342,10 @@ basicsRouter.get(
       .limit(400)
       .execute();
 
-    // One sentence, all of its writes: twelve racks are ONE example.
-    const byTurn = new Map<string, typeof rows>();
-    for (const r of rows) {
-      const key = r.turn_id ?? `${r.prompt}|${new Date(r.created_at).toISOString().slice(0, 16)}`;
-      const group = byTurn.get(key) ?? [];
-      group.push(r);
-      byTurn.set(key, group);
-    }
+    // One sentence, all of its writes: twelve racks are ONE example. The rule
+    // is in group-writes.ts — it used to key on the wall-clock MINUTE, which
+    // split any request unlucky enough to straddle :59.
+    const groups = groupWritesByRequest(rows);
 
     const items: Array<{
       prompt: string;
@@ -362,7 +359,7 @@ basicsRouter.get(
       repeat_shape?: string;
       last_used: string;
     }> = [];
-    for (const group of byTurn.values()) {
+    for (const group of groups) {
       const first = group[0]!;
       const ops: Operation[] = group.map((r) => ({
         tool: r.tool,

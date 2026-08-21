@@ -36,11 +36,41 @@ function read(rel: string): string | null {
 
 /** Is the phrase acting as a control LABEL - a short standalone string - rather
  *  than a clause inside a sentence? */
+/** Every short piece of USER-VISIBLE text on this line.
+ *
+ *  String literals (`label="Bin"`, `title="…"`) AND bare JSX text nodes. The
+ *  literals-only version missed the commonest React label there is — the text
+ *  between the tags:
+ *
+ *      <NavLink to="/me">
+ *        <UserRound size={16} />
+ *        Profile              ← not a string literal, so invisible to the lint
+ *      </NavLink>
+ *
+ *  which is how a nav row kept a name the app had already renamed, while a
+ *  vocabulary rule watching that exact file stayed green (2026-08-21). */
+function visibleText(line: string): string[] {
+  const out = stringLiterals(line).map((l) => l.trim());
+  const bare = line.trim();
+  // A line that is only text — no tags, no braces, no code punctuation — is a
+  // JSX text node. Deliberately conservative: `>Label<` on a line with tags is
+  // picked up by the second pattern instead.
+  if (bare && !/[<>{}();=]/.test(bare)) out.push(bare);
+  for (const m of line.matchAll(/>([^<>{}]+)</g)) {
+    const t = m[1]!.trim();
+    if (t) out.push(t);
+  }
+  // Text that follows a tag and runs to the end of the line, the closing tag
+  // being on the next one:  `<ArrowLeft size={14} /> Profile`
+  const trailing = line.match(/>([^<>{}]+)$/);
+  if (trailing?.[1]?.trim()) out.push(trailing[1].trim());
+  return out;
+}
+
 function usedAsLabel(line: string, phrase: RegExp): boolean {
-  return stringLiterals(line).some((lit) => {
-    const inner = lit.trim();
-    return phrase.test(inner.toLowerCase()) && inner.replace(/[….?!]/g, "").length <= 24;
-  });
+  return visibleText(line).some(
+    (t) => phrase.test(t.toLowerCase()) && t.replace(/[….?!]/g, "").length <= 24,
+  );
 }
 
 for (const cap of CAPABILITIES) {

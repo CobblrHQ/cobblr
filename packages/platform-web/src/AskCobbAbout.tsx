@@ -16,6 +16,7 @@
 import { MessageSquare } from "lucide-react";
 import { usePlatformWeb } from "./context";
 import { publishRowSelection, useChatSelection } from "./chat-context";
+import { toggleRecordInContext } from "./toggle-record-context";
 
 export function AskCobbAbout({
   kind,
@@ -39,18 +40,27 @@ export function AskCobbAbout({
     <button
       type="button"
       aria-pressed={inContext}
-      title={inContext ? `Cobb is talking about ${label}. Click to stop.` : `Ask Cobb about ${label}`}
-      aria-label={inContext ? `Stop talking about ${label}` : `Ask Cobb about ${label}`}
+      title={
+        inContext
+          ? `Cobb is talking about ${label}. Click to drop it.`
+          : selection?.kind === kind && (selection.ids?.length ?? 0) > 0
+            ? `Add ${label} to what Cobb is talking about`
+            : `Ask Cobb about ${label}`
+      }
+      aria-label={inContext ? `Drop ${label}` : `Ask Cobb about ${label}`}
       onClick={() => {
-        if (inContext) {
-          publishRowSelection(null);
-          return;
-        }
-        publishRowSelection({ label, kind, ids: [id], text: label });
+        // A toggle into the SET, not a replace: press Rack 5 then Rack 6 and
+        // Cobb has both. Pressing a lit one drops just that one. (The rule,
+        // including what a different kind does, is in toggle-record-context.)
+        const next = toggleRecordInContext(selection, { kind, id, label });
+        publishRowSelection(next);
+        if (!next) return;
         // Opening it is the point: you pressed this because you have something
         // to ask. Whatever conversation was already there is kept.
         window.dispatchEvent(
-          new CustomEvent("cobblr:open-chat", { detail: { seed: `Ask about ${label}…` } }),
+          new CustomEvent("cobblr:open-chat", {
+            detail: { seed: `Ask about ${next.label}…` },
+          }),
         );
       }}
       className={

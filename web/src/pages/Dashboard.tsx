@@ -25,6 +25,7 @@ import { useBundleUpdates, type BundleUpdate } from "../lib/useBundleUpdates";
 import { classifyBundleUpdate, tierAutoApplies, updateMayTeardownCatalogs } from "../lib/bundleUpdateTier";
 import { useDetailRoute } from "../lib/useDetailRoute";
 import { useSetupCards, dismissSetup } from "../lib/setupCards";
+import { bucketEvents, dayKey, relativeDay, upNextWindow } from "../lib/up-next";
 import { EntityThumb,
   usePageTitle, useToast, useImageSrc,
   useDashboardWidgets, TileCollapseContext, type DashboardWidgetSpec } from "@cobblr/platform-web";
@@ -53,6 +54,7 @@ import {
   type OrgModuleListItem,
   type QuickstartSuggestion,
   type SavedView,
+  type CalendarEvent,
 } from "../lib/api";
 import { useWorkspaceContentProbe } from "../lib/workspaceContent";
 import { ParcelsInFlight } from "../components/ParcelsInFlight";
@@ -369,6 +371,133 @@ function AttentionFeed({ slug }: { slug: string }) {
         ))}
       </ul>
     </section>
+  );
+}
+
+/** "Up next" — what is late, what is today, what is coming.
+ *
+ *  Reads the workspace calendar, which already aggregates every module's
+ *  registered CalendarSource: maintenance schedules, task due dates, expected
+ *  deliveries, expiry dates, and a generic source that turns every date custom
+ *  field on every kind into an event. So a bundle that defines a date field
+ *  feeds this with no wiring, and this card needed no server work — the query
+ *  was already running, it just had nowhere to be seen except a month grid.
+ *
+ *  Bucketing lives in lib/up-next.ts, where the two decisions that are easy to
+ *  get wrong (local vs UTC "today", and what "this week" means) are tested. */
+function UpNext({ slug, editing }: { slug: string; editing: boolean }) {
+  // Recomputed per render rather than held in state: a dashboard left open
+  // overnight would otherwise still be bucketing against yesterday, quietly
+  // showing today's work as upcoming.
+  const now = new Date();
+  const win = upNextWindow(now);
+  const q = useQuery({
+    queryKey: ["up-next", slug, win.from, win.to],
+    queryFn: () => api.calendarEvents(slug, win.from, win.to),
+    enabled: !!slug,
+    staleTime: 60_000,
+  });
+  const buckets = useMemo(
+    () => bucketEvents(q.data?.items ?? [], now),
+    // `now` is a fresh object each render; key off the day so this memo is not
+    // a no-op that recomputes constantly.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [q.data, dayKey(now)],
+  );
+  const total = buckets.reduce((n, b) => n + b.items.length, 0);
+
+  // Nothing due is the normal state of a new workspace, and an empty card that
+  // says "nothing due" every day is furniture. Arrange mode still shows it so
+  // it stays orderable.
+  if (!editing && !q.isLoading && total === 0) return null;
+
+  return (
+    <section>
+      <SectionTitle>up next</SectionTitle>
+      {q.isLoading && <div className="text-xs text-faint">loading…</div>}
+      {!q.isLoading && total === 0 && (
+        <div className="text-xs text-faint italic">nothing scheduled</div>
+      )}
+      {total > 0 && (
+        <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 divide-y divide-line dark:divide-slate-800 overflow-hidden">
+          {buckets
+            .filter((b) => b.items.length > 0)
+            .map((b) => (
+              <div key={b.id}>
+                <div
+                  className={
+                    "px-3 py-1 text-[10px] font-mono uppercase tracking-widest " +
+                    (b.id === "overdue"
+                      ? "bg-ember-50 dark:bg-ember-950/30 text-ember-700 dark:text-ember-400"
+                      : "bg-subtle dark:bg-slate-800/50 text-faint dark:text-slate-500")
+                  }
+                >
+                  {b.label}
+                  <span className="ml-1.5 opacity-60">{b.items.length}</span>
+                </div>
+                <ul className="divide-y divide-line dark:divide-slate-800">
+                  {b.items.slice(0, b.id === "later" ? 3 : 6).map((e) => (
+                    <UpNextRow key={e.id} event={e} now={now} overdue={b.id === "overdue"} />
+                  ))}
+                </ul>
+                {b.items.length > (b.id === "later" ? 3 : 6) && (
+                  <Link
+                    to="/calendar"
+                    className="block px-3 py-1.5 text-[11px] text-muted hover:text-accent transition"
+                  >
+                    {b.items.length - (b.id === "later" ? 3 : 6)} more in {b.label.toLowerCase()} →
+                  </Link>
+                )}
+              </div>
+            ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function UpNextRow({
+  event,
+  now,
+  overdue,
+}: {
+  event: CalendarEvent;
+  now: Date;
+  overdue: boolean;
+}) {
+  const when = relativeDay(event.date, now);
+  const body = (
+    <div className="flex items-baseline gap-2 px-3 py-1.5 min-w-0">
+      <span className="text-sm text-content dark:text-mortar-100 truncate min-w-0">
+        {event.title}
+      </span>
+      {/* Which module this came from. Without it "Replace filter" and "Replace
+          filter" from two different sources are the same row twice. */}
+      <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 shrink-0">
+        {event.source}
+      </span>
+      <span
+        className={
+          "ml-auto text-[11px] shrink-0 " +
+          (overdue ? "text-ember-600 dark:text-ember-400 font-medium" : "text-muted dark:text-slate-400")
+        }
+      >
+        {when}
+      </span>
+    </div>
+  );
+  // A source without a deep link still earns a row: knowing a thing is late
+  // beats hiding it because nobody wrote its detail route.
+  return (
+    <li>
+      {event.detailUrl ? (
+        <Link to={event.detailUrl} className="block hover:bg-subtle dark:hover:bg-slate-800/50 transition">
+          {body}
+        </Link>
+      ) : (
+        body
+      )}
+    </li>
   );
 }
 
@@ -980,9 +1109,16 @@ function arrangeWidgets(
 // "what do you want to do" + waiting-to-file capture queue) sits ABOVE recent
 // activity: a scan backlog is actionable workspace state, not a growth
 // afterthought, so it's demoted no lower than recent activity (reported 2026-07-10).
-const SECTION_IDS = ["at_a_glance", "pinned_views", "scan_inbox", "recent_activity"] as const;
+//
+// `up_next` leads: it is the only section whose content changes every day and
+// the only one that answers "what should I do". The tiles below it are counts,
+// which is a thing you read once. arrangeSections slots a newly-added section
+// at its DEFAULT-order neighbour, so an already-arranged dashboard gets this at
+// the top rather than appended under recent activity.
+const SECTION_IDS = ["up_next", "at_a_glance", "pinned_views", "scan_inbox", "recent_activity"] as const;
 type SectionId = (typeof SECTION_IDS)[number];
 const SECTION_TITLE: Record<SectionId, string> = {
+  up_next: "up next",
   at_a_glance: "at a glance",
   pinned_views: "your views",
   scan_inbox: "from your scanner",
@@ -1122,6 +1258,7 @@ function ArrangeableBody({
           }
         />
       );
+    if (id === "up_next") return <UpNext slug={slug} editing={editing} />;
     if (id === "pinned_views") return <PinnedViews slug={slug} editing={editing} />;
     if (id === "scan_inbox")
       // The "what do you want to do" + waiting-to-file capture queue, now a

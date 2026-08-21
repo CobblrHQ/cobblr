@@ -15,13 +15,19 @@ import { webhookChannel } from "./channels/webhook.js";
 import { emailChannel } from "./channels/email.js";
 import { smsChannel } from "./channels/sms.js";
 import type { Channel } from "./channels/types.js";
+import type { NotificationAction } from "../db/schema.js";
 import type { NotificationChannel, NotificationPriority } from "../db/schema.js";
 import { hasAuthEmailSender, sendAuthEmail } from "./hosted-seams.js";
 import { sendDiscordDm } from "./discord-bot-trigger.js";
+import type { DeliveryOutcomes } from "@cobblr/platform-contract/delivery-outcome";
 import { absoluteAppUrl } from "./public-url.js";
-import { defaultEnabled, type PrefChannel } from "./notification-catalog.js";
+import { defaultEnabled, tierOf, type PrefChannel } from "./notification-catalog.js";
+import { fallbackChannels } from "./dispatch-fallback.js";
+import { shouldDefer, windowsFor, enqueueDeferred } from "./delivery-windows.js";
 
-const REGISTRY: Record<NotificationChannel, Channel | undefined> = {
+// Exported so the delivery sweeper flushes through the SAME adapters a live
+// send uses. A second registry would drift the moment a channel is added.
+export const REGISTRY: Record<NotificationChannel, Channel | undefined> = {
   in_app: inAppChannel,
   browser_push: browserPushChannel,
   email: emailChannel,
@@ -63,6 +69,10 @@ export interface DispatchParams {
    *  computer" tier. */
   priority?: NotificationPriority;
   payload?: unknown;
+  /** What the reader can do about it, offered right in the message. Channels
+   *  render them however they can; one that cannot ignores them, so `message`
+   *  must still stand alone. */
+  actions?: NotificationAction[];
 }
 
 export interface DispatchResult {
@@ -87,6 +97,14 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
       message: p.message,
       link_url: p.link_url ?? null,
       priority,
+      // Stored, not merely rendered: a press comes back carrying an ID, and
+      // the action it maps to is read from HERE.
+      //
+      // `JSON.stringify(...) as never` is the house convention for a jsonb
+      // ARRAY (lint:jsonb-array-writes): node-pg renders a JS array as a
+      // Postgres array literal, which jsonb rejects at runtime while
+      // typechecking perfectly.
+      actions: (p.actions?.length ? JSON.stringify(p.actions) : null) as never,
     })
     .returning("id")
     .executeTakeFirstOrThrow();
@@ -143,18 +161,62 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
     effective.push({ channel: s.channel, config: s.config });
   }
 
-  // Legacy default: no subscriptions matched at all → in_app only.
-  // (Existing callers haven't started supplying priority either, so
-  // this preserves their before-vs-after behaviour exactly.)
+  // Nothing said about this workspace at all → fall back to what the person
+  // has said ACCOUNT-wide. Used to be a hardcoded in_app, which meant somebody
+  // could verify Discord and still get nothing for anything a module sent.
+  //
+  // in_app is unchanged and unconditional. Discord rides along when they want
+  // it. Email never does — see dispatch-fallback.ts for why that one would
+  // hurt.
   if (effective.length === 0 && subs.length === 0) {
-    effective.push({ channel: "in_app", config: null });
+    const prefs = await resolveAccountPrefs(p.userId, p.eventType);
+    for (const channel of fallbackChannels(prefs, priority)) {
+      effective.push({ channel, config: null });
+    }
+  }
+
+  // 2b. Split the channels into "now" and "with the rest".
+  //
+  //     A delivery window is per (person, channel) and is about VOLUME; the
+  //     min_priority above is per (person, event, channel) and is about
+  //     relevance. Keeping them separate is what stops a person having to
+  //     choose between hearing about something and being interrupted by it.
+  //
+  //     The notification row is already written (step 1), unconditionally, so
+  //     the bell and the history never change shape because of a window. Only
+  //     the push channels defer.
+  const windows = await windowsFor(meta as never, p.userId);
+  const deferredChannels: string[] = [];
+  const liveChannels: typeof effective = [];
+  for (const e of effective) {
+    if (shouldDefer(windows.get(e.channel), priority, e.channel)) deferredChannels.push(e.channel);
+    else liveChannels.push(e);
+  }
+  for (const channel of deferredChannels) {
+    try {
+      await enqueueDeferred(meta as never, {
+        user_id: p.userId,
+        channel,
+        notification_id: inserted.id,
+        org_id: p.orgId,
+        event_type: p.eventType,
+        message: p.message,
+        link_url: p.link_url ?? null,
+        priority,
+      });
+    } catch (err) {
+      // A bucket that cannot be written must not swallow the notification: fall
+      // back to sending it now. Late and noisy beats lost.
+      console.error(`[notify] deferring to ${channel} failed, sending now:`, err);
+      liveChannels.push({ channel: channel as NotificationChannel, config: null });
+    }
   }
 
   // 3. Fan out in parallel. A failing channel doesn't take the others
   //    down with it. Channels not in the registry (or stubbed out)
   //    won't appear in delivered_via.
   const results = await Promise.all(
-    effective.map(async ({ channel: name, config }) => {
+    liveChannels.map(async ({ channel: name, config }) => {
       const channel = REGISTRY[name];
       if (!channel) return { name, ok: false };
       try {
@@ -168,6 +230,7 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
           priority,
           subscriptionConfig: config,
           payload: p.payload,
+          actions: p.actions ?? null,
         });
         return { name, ok };
       } catch (err) {
@@ -248,10 +311,31 @@ export async function resolveAccountPrefs(
     .where("notification_type", "=", notificationType)
     .execute();
   const byChannel = new Map(rows.map((r) => [r.channel, r.enabled]));
+  // Only asked when a default is actually needed, which is the first time a
+  // user is notified about a type and never again once they have a row.
+  let discordVerified: boolean | undefined;
+  const verified = async (): Promise<boolean> => {
+    if (discordVerified === undefined) {
+      const conn = await meta
+        .selectFrom("discord_connections")
+        .select(["verified"])
+        .where("user_id", "=", userId)
+        .executeTakeFirst();
+      discordVerified = Boolean(conn?.verified);
+    }
+    return discordVerified;
+  };
+
   const out = {} as Record<PrefChannel, boolean>;
   for (const ch of ["in_app", "discord_dm", "email"] as PrefChannel[]) {
     const v = byChannel.get(ch);
-    out[ch] = v === undefined ? defaultEnabled(ch) : v;
+    out[ch] =
+      v === undefined
+        ? defaultEnabled(ch, {
+            discordVerified: ch === "discord_dm" ? await verified() : false,
+            tier: tierOf(notificationType),
+          })
+        : v;
   }
   return out;
 }
@@ -282,9 +366,12 @@ export interface NotifyAccountParams {
  *  matrix; a disabled channel is simply skipped. */
 export async function notifyAccount(
   args: NotifyAccountParams,
-): Promise<{ notificationId: string | null; deliveredVia: PrefChannel[] }> {
+): Promise<{ notificationId: string | null; deliveredVia: PrefChannel[]; outcomes: DeliveryOutcomes }> {
   const prefs = await resolveAccountPrefs(args.userId, args.notificationType);
   const deliveredVia: PrefChannel[] = [];
+  // Every channel says why, not just whether — a bare false cannot tell an
+  // operator "they opted out" from "our sender is down". See delivery-outcome.ts.
+  const outcomes: DeliveryOutcomes = {};
   let notificationId: string | null = null;
 
   // in_app — the row's existence IS the delivery (the bell reads the table).
@@ -307,41 +394,60 @@ export async function notifyAccount(
       .executeTakeFirstOrThrow();
     notificationId = inserted.id;
     deliveredVia.push("in_app");
+    outcomes.in_app = "sent";
+  } else {
+    outcomes.in_app = "opted-out";
   }
 
   // email — only when the caller supplies an email payload (so an event that
   // isn't meant to email never does), gated by the user's pref + the PLATFORM
   // sender (managed mailer in prod), not per-user BYO SMTP.
-  if (args.email && prefs.email && hasAuthEmailSender()) {
+  if (!args.email) {
+    outcomes.email = "not-offered";
+  } else if (!prefs.email) {
+    outcomes.email = "opted-out";
+  } else if (!hasAuthEmailSender()) {
+    outcomes.email = "no-sender";
+  } else {
     const u = await meta
       .selectFrom("users")
       .select(["email"])
       .where("id", "=", args.userId)
       .executeTakeFirst();
-    if (u?.email) {
+    if (!u?.email) {
+      outcomes.email = "no-address";
+    } else {
       const ok = await sendAuthEmail({ to: u.email, subject: args.email.subject, text: args.email.text, html: args.email.html, kind: "notification", replyTo: args.email.replyTo, from: args.email.from, inReplyTo: args.email.inReplyTo, references: args.email.references });
       if (ok) deliveredVia.push("email");
+      outcomes.email = ok ? "sent" : "send-failed";
     }
   }
 
   // discord_dm — only when the user has connected + verified Discord.
-  if (prefs.discord_dm) {
+  if (!prefs.discord_dm) {
+    outcomes.discord_dm = "opted-out";
+  } else {
     const conn = await meta
       .selectFrom("discord_connections")
       .select(["discord_user_id", "verified"])
       .where("user_id", "=", args.userId)
       .executeTakeFirst();
-    if (conn?.verified && conn.discord_user_id) {
+    if (!conn?.discord_user_id) {
+      outcomes.discord_dm = "not-connected";
+    } else if (!conn.verified) {
+      outcomes.discord_dm = "unverified";
+    } else {
       const dmBody = args.discordMessage ?? args.message;
       const text = args.link_url
         ? `${dmBody}\n${absoluteAppUrl(args.link_url)}`
         : dmBody;
       const res = await sendDiscordDm({ discord_user_id: conn.discord_user_id, text });
       if (res.ok) deliveredVia.push("discord_dm");
+      outcomes.discord_dm = res.ok ? "sent" : res.deliverable ? "send-failed" : "blocked";
     }
   }
 
-  return { notificationId, deliveredVia };
+  return { notificationId, deliveredVia, outcomes };
 }
 
 export interface NotificationListItem {

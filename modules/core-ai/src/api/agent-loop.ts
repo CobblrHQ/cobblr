@@ -95,12 +95,34 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
     }
   };
 
+  let nudgedForSilence = false;
   for (let round = 0; round < maxRounds; round++) {
     emit({ kind: "thinking", round });
     const r = await deps.callModel(transcript);
     const calls = r.tool_calls ?? [];
 
-    if (calls.length === 0) return { kind: "reply", text: r.content, applied };
+    if (calls.length === 0) {
+      if (r.content.trim()) return { kind: "reply", text: r.content, applied };
+      // No tool calls AND no words. Some models answer a data question by
+      // trying to call a tool, malforming it, and having the provider strip the
+      // broken call — leaving an empty message (gemini-3.1-flash-lite returns
+      // finish_reason "MALFORMED_FUNCTION_CALL" this way on 3 of 9 runs). The
+      // user sees a blank bubble and cannot tell whether Cobb is broken or
+      // ignoring them. Ask once for plain words, then say something true.
+      if (!nudgedForSilence) {
+        nudgedForSilence = true;
+        transcript.push({
+          role: "user",
+          content: "(Your last message arrived empty. Answer in plain words. Do not call a tool this time.)",
+        });
+        continue;
+      }
+      return {
+        kind: "reply",
+        text: "Sorry, I couldn't get that answer out. Try asking me again, or in a different way.",
+        applied,
+      };
+    }
 
     const pendingProposals: ToolCall[] = [];
     const turnResults: Array<{ call: ToolCall; text: string }> = [];

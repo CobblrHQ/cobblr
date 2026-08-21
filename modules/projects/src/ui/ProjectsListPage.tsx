@@ -11,7 +11,7 @@ import {
   useToast,
   useConfirm,
   usePageTitle,
-  usePublishSelectedRecords,
+  useAskCobbAboutSelection,
 } from "@cobblr/platform-web";
 import { useProjects } from "./context";
 import type { Project } from "./api";
@@ -158,7 +158,7 @@ export function ProjectsListPage() {
 
   // count he has to go and re-find.
 
-  usePublishSelectedRecords(selected, items, "projects:project", "project");
+  const askCobb = useAskCobbAboutSelection(selected, items, "projects:project", "project");
   const bulkDelete = useMutation({
     mutationFn: async (ids: string[]) => {
       for (const id of ids) {
@@ -355,6 +355,7 @@ export function ProjectsListPage() {
         );
       })}
       <BulkActionBar
+        onAskCobb={askCobb}
         count={selected.size}
         onClear={() => setSelected(new Set())}
         actions={

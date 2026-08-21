@@ -61,7 +61,7 @@ export function register(): void {
           // this field, and only matters to someone who chooses to change it.
           label:
             `Model (optional. Blank uses ${GOOGLE_AI_STUDIO_DEFAULT_MODEL}, ` +
-            "500 free/day. gemini-flash-latest is stronger, 20/day)",
+            "500 free/day. gemini-flash-latest is stronger, 20 free/day)",
           secret: false,
         },
       }),

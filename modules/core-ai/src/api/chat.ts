@@ -211,6 +211,22 @@ interface Move {
   summary?: string;
 }
 
+/** The anti-confabulation rules, kept as a named constant because they are the
+ *  part of the prompt most likely to be "tidied" by someone shortening it.
+ *
+ *  Measured against gemini-flash-lite (the free-tier default, so the model most
+ *  users actually run): asked "tell me about the founder of Cobblr", six of six
+ *  runs without these rules invented an answer — three named a real person who
+ *  has nothing to do with it, three invented a company. Six of six WITH them
+ *  said they do not know. A weaker model does not need a lighter prompt; it
+ *  needs a firmer one. */
+export const GROUNDING_RULES = `WHAT YOU CAN SEE, AND WHAT YOU CANNOT. This matters more than sounding helpful:
+- You can see three things: this conversation, whatever a tool call has just returned, and how this app works because you are part of it. Everything else — the outside world, real people, companies, products, prices, dates — you have only general knowledge of, which is not the same as knowing.
+- So never state a SPECIFIC you cannot check: a person's name, who made or owns something, a date, a price, a figure, a URL, a quote. This holds for the makers of this app exactly as it holds for anyone else — being inside their software tells you how it works, not who they are.
+- "I don't know" is a complete answer. A confident wrong one costs you the user's trust in every other answer you give, including the ones about their own data.
+- Anything about the user's own records comes from a tool call you just made, never from memory. If you have not looked, look — or say you have not.
+- None of this makes you cagey. Explain, teach, suggest, and talk through anything you actually do know — how to do a thing, how this app works, what you would try. Answer the part you know and name the part you do not.`;
+
 async function buildSystemPrompt(c: Ctx): Promise<string> {
   // include=custom_fields → the workspace's user-defined fields ride along, so
   // the hints below cover the WHOLE settable shape, not just native fields.
@@ -293,6 +309,8 @@ Your name is Cobb. When the user asks who or what you are, introduce yourself as
 TWO THINGS YOU DO:
 1. Answer questions and help with whatever the user asks — including general knowledge, how-to, crafts, ideas, explanations. Answer directly and fully; do not deflect a real question by saying you "only manage records". If you happen to know what's in their workspace that's relevant, weave it in.
 2. Take actions in THIS workspace when the user wants to save, create, or change something — you PROPOSE the write and the user confirms before anything runs.
+
+${GROUNDING_RULES}
 
 After a helpful answer, if it's natural, OFFER to save it (e.g. "want me to add this to your list / save it as a knowledge entry?") — but never force it, and never refuse the answer itself.
 
@@ -1125,6 +1143,17 @@ chatRouter.get(
     // The listener map is per-process; if the loop runs elsewhere (a second
     // api replica) the live push never arrives, so also poll the log. Cheap,
     // and it is what makes this correct rather than merely fast.
+    // finishTurn writes the row's status and the terminal EVENT as two separate
+    // statements, and the event can even queue behind another one, so a turn
+    // reads "done" for a window in which its done/error event does not exist
+    // yet. Closing on the status alone ends the stream with no terminal event —
+    // the one thing this stream promises — and a client left holding a
+    // half-finished answer. So a terminal row only ARMS the close; the poll
+    // below finishes it properly when the event lands, and the counter bounds
+    // the wait so a terminal row whose event never materialises still ends.
+    let terminalArmed = false;
+    let armedTicks = 0;
+    const ARMED_TICK_LIMIT = 8; // ~12s at the 1500ms poll
     const poll = setInterval(async () => {
       if (closed) return;
       try {
@@ -1132,6 +1161,7 @@ chatRouter.get(
           send(ev);
           if (ev.kind === "done" || ev.kind === "error") end();
         }
+        if (!closed && terminalArmed && ++armedTicks >= ARMED_TICK_LIMIT) end();
         // A tab already attached to a turn whose process died would otherwise
         // sit here forever: no new events are coming, and nothing else on this
         // request re-reads the row. readTurn heals a stranded turn and emits
@@ -1158,7 +1188,7 @@ chatRouter.get(
         return;
       }
     }
-    if (turn.status === "done" || turn.status === "failed") end();
+    if (turn.status === "done" || turn.status === "failed") terminalArmed = true;
   }),
 );
 

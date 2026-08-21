@@ -14,6 +14,7 @@
 //         'explicit'           → the workspaces in user_credential_orgs
 
 import { meta } from "../db/meta.js";
+import { pickCredential } from "./pick-ai-credential.js";
 import { encryptCreds, decryptCreds } from "../db/crypto.js";
 
 export type RouteMode = "my-calls" | "workspace-default";
@@ -25,6 +26,10 @@ export type RouteScope = "sole_member" | "owner" | "all_mine" | "explicit";
 export interface CredentialRoute {
   org_id: string;
   mode: RouteMode;
+  /** This is the connection that serves that workspace, when its owner has more
+   *  than one routed there. Absent/false = it is routed but not the chosen one
+   *  (the most recently touched wins, as before). */
+  primary?: boolean;
 }
 
 export interface UserCredentialInput {
@@ -241,7 +246,7 @@ export async function listUserCredentials(
   const statusByCred = new Map<string, Record<string, "pending" | "approved" | "active">>();
   for (const o of orgRows) {
     const list = routesByCred.get(o.credential_id) ?? [];
-    list.push({ org_id: o.org_id, mode: o.mode });
+    list.push({ org_id: o.org_id, mode: o.mode, primary: o.active === true });
     routesByCred.set(o.credential_id, list);
     if (o.mode === "workspace-default") {
       const status = statusByCred.get(o.credential_id) ?? {};
@@ -387,6 +392,93 @@ export async function listWorkspaceAiOffers(orgId: string): Promise<WorkspaceAiO
   });
 }
 
+/** Set the ORDER of my own connections in a workspace: first, then next.
+ *
+ *  Distinct from setActiveWorkspaceAi, which is the ORG OWNER choosing between
+ *  approved Share offers. This is the key's owner ordering their own routed
+ *  connections — a decision nobody else can make and, until now, nobody could
+ *  make at all: two of your own keys in one workspace were settled by whichever
+ *  row had the newer updated_at.
+ *
+ *  `capability` narrows the order to one kind of work ("chat", "identify", …),
+ *  because one model is rarely right for a live camera scan AND for chat. Null
+ *  sets the workspace's general order, used wherever no capability-specific
+ *  order exists.
+ *
+ *  Ids not listed are left unranked, which sorts after everything ranked.
+ */
+export async function setMyConnectionOrder(
+  userId: string,
+  orgId: string,
+  orderedCredentialIds: string[],
+  capability: string | null = null,
+): Promise<boolean> {
+  const mine = await meta
+    .selectFrom("user_credentials")
+    .select(["id"])
+    .where("user_id", "=", userId)
+    .execute();
+  const myIds = new Set(mine.map((m) => m.id));
+  if (orderedCredentialIds.some((id) => !myIds.has(id))) return false;
+  if (myIds.size === 0) return true;
+
+  if (capability == null) {
+    // Clear the general order for all of MINE here, then write the new one.
+    await meta
+      .updateTable("user_credential_orgs")
+      .set({ rank: null })
+      .where("org_id", "=", orgId)
+      .where("credential_id", "in", Array.from(myIds))
+      .where("capability", "is", null)
+      .execute();
+  } else {
+    await meta
+      .deleteFrom("user_credential_orgs")
+      .where("org_id", "=", orgId)
+      .where("credential_id", "in", Array.from(myIds))
+      .where("capability", "=", capability)
+      .execute();
+  }
+
+  for (const [i, credentialId] of orderedCredentialIds.entries()) {
+    const rank = i + 1;
+    if (capability == null) {
+      await meta
+        .updateTable("user_credential_orgs")
+        .set({ rank })
+        .where("org_id", "=", orgId)
+        .where("credential_id", "=", credentialId)
+        .where("capability", "is", null)
+        .execute();
+      continue;
+    }
+    // A capability-specific order is its OWN row, so it can exist without
+    // disturbing the route (mode/approval) the general row carries.
+    const general = await meta
+      .selectFrom("user_credential_orgs")
+      .select(["mode", "approved_at", "approved_by", "active"])
+      .where("org_id", "=", orgId)
+      .where("credential_id", "=", credentialId)
+      .where("capability", "is", null)
+      .executeTakeFirst();
+    if (!general) continue; // not routed here at all — nothing to rank
+    await meta
+      .insertInto("user_credential_orgs")
+      .values({
+        credential_id: credentialId,
+        org_id: orgId,
+        mode: general.mode,
+        approved_at: general.approved_at,
+        approved_by: general.approved_by,
+        active: general.active,
+        rank,
+        capability,
+      } as never)
+      .execute();
+  }
+  return true;
+}
+
 /** Owner sets which approved AI is THE active workspace default (or none). */
 export async function setActiveWorkspaceAi(
   ownerUserId: string,
@@ -501,6 +593,10 @@ export async function resolvePersonalProvider(
   callerUserId: string | null,
   supportsCapability: (providerId: string) => boolean,
   kind = "ai-provider",
+  /** What is being invoked ("chat", "identify", …). A workspace can rank its
+   *  connections per capability — a fast model for the live camera, a better
+   *  one for inbox identification — and this is what selects that ranking. */
+  capability?: string,
 ): Promise<ResolvedPersonalProvider | null> {
   // FAIL-SAFE: this layer is opt-in + default-off, so if its tables are missing
   // (e.g. a meta DB without migration 053) or any query throws, it must NEVER
@@ -508,7 +604,7 @@ export async function resolvePersonalProvider(
   // workspace provider. (Regression guard: a thrown query here surfaced as a
   // generic ai_error instead of the clean no_ai_provider the degrade path wants.)
   try {
-    return await resolvePersonalProviderUnsafe(orgId, callerUserId, supportsCapability, kind);
+    return await resolvePersonalProviderUnsafe(orgId, callerUserId, supportsCapability, kind, capability);
   } catch {
     return null;
   }
@@ -519,6 +615,7 @@ async function resolvePersonalProviderUnsafe(
   callerUserId: string | null,
   supportsCapability: (providerId: string) => boolean,
   kind: string,
+  capability?: string,
 ): Promise<ResolvedPersonalProvider | null> {
   const members = await meta
     .selectFrom("org_memberships")
@@ -531,11 +628,28 @@ async function resolvePersonalProviderUnsafe(
 
   const explicitRows = await meta
     .selectFrom("user_credential_orgs")
-    .select(["credential_id", "mode", "approved_at", "active"])
+    .select(["credential_id", "mode", "approved_at", "active", "rank", "capability"])
     .where("org_id", "=", orgId)
     .execute();
   const explicitCredIds = new Set(explicitRows.map((e) => e.credential_id));
-  const routeByCred = new Map(explicitRows.map((e) => [e.credential_id, e]));
+  // One row per credential carries the ROUTE (mode, approval). Ranking rows can
+  // additionally exist per capability, so the route map keeps the general row
+  // and the rank is looked up separately: the capability's own order if it has
+  // one, else the workspace's general order.
+  const routeByCred = new Map(
+    explicitRows.filter((e) => e.capability == null).map((e) => [e.credential_id, e]),
+  );
+  for (const e of explicitRows) {
+    if (!routeByCred.has(e.credential_id)) routeByCred.set(e.credential_id, e);
+  }
+  const rankOf = (credentialId: string): number | null => {
+    const forCapability = capability
+      ? explicitRows.find((e) => e.credential_id === credentialId && e.capability === capability)
+      : undefined;
+    if (forCapability?.rank != null) return forCapability.rank;
+    const general = explicitRows.find((e) => e.credential_id === credentialId && e.capability == null);
+    return general?.rank ?? null;
+  };
 
   // Candidates = creds owned by a member of this org, plus any explicitly routed
   // here. (Two narrow queries instead of one OR with possibly-empty IN lists.)
@@ -579,9 +693,6 @@ async function resolvePersonalProviderUnsafe(
         return false;
     }
   };
-  const recent = (a: (typeof candidates)[number], b: (typeof candidates)[number]): number =>
-    new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
-
   // Per-workspace mode wins for explicit creds; dynamic scopes use the global
   // route_mode. (A Just-me route and a Share route differ only here.)
   const effectiveMode = (c: (typeof candidates)[number]): RouteMode =>
@@ -590,13 +701,9 @@ async function resolvePersonalProviderUnsafe(
   // 1) The caller's OWN routed cred — their own AI for their own calls, used
   //    immediately regardless of any Share-approval state (offering to share
   //    must never block your own use).
-  const own = callerUserId
-    ? candidates.filter((c) => c.user_id === callerUserId && inScope(c)).sort(recent)
-    : [];
-
-  // 2) The workspace's chosen shared AI: an APPROVED workspace-default offer
-  //    from anyone (the offering member's own approval, or the owner's accept),
-  //    preferring the owner-activated one, then most-recent.
+  // Who serves this call is decided in ONE place (pick-ai-credential.ts). What
+  // stays here is what only the database knows: whether a candidate is in scope
+  // for this workspace at all, and whether a Share offer has been approved.
   const isApproved = (c: (typeof candidates)[number]): boolean => {
     if (effectiveMode(c) !== "workspace-default" || !inScope(c)) return false;
     // Dynamic-scope workspace-default (legacy/owner global) has no per-org row;
@@ -604,15 +711,21 @@ async function resolvePersonalProviderUnsafe(
     const r = routeByCred.get(c.id);
     return c.route_scope === "explicit" ? r?.approved_at != null : true;
   };
-  const shared = candidates
-    .filter(isApproved)
-    .sort((a, b) => {
-      const aw = routeByCred.get(a.id)?.active ? 1 : 0;
-      const bw = routeByCred.get(b.id)?.active ? 1 : 0;
-      return bw - aw || recent(a, b);
-    });
-
-  const pick = own[0] ?? shared[0];
+  const eligible = candidates.filter((c) => inScope(c) && supportsCapability(c.provider_id));
+  const pick = pickCredential({
+    candidates: eligible,
+    callerUserId,
+    routeOf: (id: string) => {
+      const c = byId.get(id);
+      // A Share the owner activated is that workspace's first choice; an
+      // explicit rank says so directly and wins over the flag.
+      const activated = routeByCred.get(id)?.active === true;
+      return {
+        rank: rankOf(id) ?? (activated ? 1 : null),
+        shared: c ? isApproved(c) : false,
+      };
+    },
+  });
   if (!pick) return null;
 
   let credentials: Record<string, unknown> = {};

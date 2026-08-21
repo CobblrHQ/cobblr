@@ -1,103 +1,170 @@
-// /me — user profile self-edit. Display name + password change.
-// Email is read-only (changing it has identity implications that v0.1
-// doesn't tackle).
+// /me — "Your account": the hub, plus the identity / password / appearance
+// leaves it used to stack on top of each other.
 //
-// Reachable from the workspace switcher dropdown / display-name
-// chip in the header. Distinct from /me/activity (the cross-
-// workspace feed) — this is "edit who I am", that is "what have I
-// been doing".
+// It used to be three big open forms with five one-line links underneath. The
+// forms took the whole screen for settings you change once a year, and the
+// links — the things people actually came for — were small text at the bottom
+// that nobody found ("no one knows they are there", 2026-08-20). Configuration
+// had the same shape of problem and solved it with section cards you navigate
+// into, so this is the same fix: the two halves of settings now work the same
+// way.
+//
+// Sections + leaves live in lib/account-nav.ts, so the hub cannot drift from
+// the routes.
 
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { Bell, History, KeyRound, Monitor, Moon, Plug, Sun, Unlock, UserCog } from "lucide-react";
+import { KeyRound, Monitor, Moon, Sun, Unlock, UserCog } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, ApiError } from "../lib/api";
+import { accountSections } from "../lib/account-nav";
 import { useTheme } from "../theme/ThemeContext";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
+
+function AccountHead({ title, blurb }: { title: string; blurb?: string }) {
+  return (
+    <div className="border-b border-line dark:border-slate-700 pb-3">
+      <div className="flex items-baseline gap-3">
+        <UserCog size={20} className="text-accent" />
+        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">{title}</h1>
+      </div>
+      {blurb && <p className="mt-1 text-sm text-muted dark:text-slate-400">{blurb}</p>}
+    </div>
+  );
+}
 
 export function MeProfilePage() {
   usePageTitle("Your account");
   const { user } = useAuth();
   const { activeOrg } = useActiveOrg();
-  // A locked managed app ("Cobblr for Yarn") hides the platform — so the profile
-  // shows only what a single-app consumer needs (name + password + how they're
-  // notified), not cross-workspace / BYO-AI / browser-driving platform settings.
-  const appMode = !!activeOrg?.app_mode;
-  const qc = useQueryClient();
-  const toast = useToast();
+  const sections = accountSections({ appMode: !!activeOrg?.app_mode });
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <UserCog size={20} className="text-accent" />
-        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
-          Your account
-        </h1>
+    <div className="space-y-4">
+      <AccountHead title="Your account" />
+      {user && (
+        <p className="text-sm text-muted dark:text-slate-400">
+          Signed in as <span className="text-content dark:text-mortar-200">{user.email}</span>.
+        </p>
+      )}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {sections.map(({ id, meta, items }) => (
+          <AccountCard key={id} to={`/me/s/${id}`} meta={meta} items={items} />
+        ))}
       </div>
+      <Link
+        to="/configuration"
+        className="flex items-center gap-2 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-4 py-3 text-sm text-muted dark:text-slate-400 hover:border-cobble-300 dark:hover:border-cobble-700 transition"
+      >
+        <Unlock size={15} className="text-accent shrink-0" />
+        <span>
+          Looking for <span className="font-medium text-content dark:text-mortar-200">this workspace</span> - modules, fields, members, integrations?
+        </span>
+        <span className="ml-auto text-faint">→</span>
+      </Link>
+    </div>
+  );
+}
 
+/** One section card. Same shape as Configuration's, deliberately: the
+ *  two settings hubs should be recognisably one design. */
+function AccountCard({
+  to,
+  meta,
+  items,
+}: {
+  to: string;
+  meta: {
+    label: string;
+    blurb: string;
+    icon: React.ComponentType<{ size?: number }>;
+    action?: { label: string; to: string };
+  };
+  items: Array<{ label: string; to: string; description: string }>;
+}) {
+  const Icon = meta.icon;
+  return (
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 hover:border-cobble-300 dark:hover:border-cobble-700 transition">
+      {/* The header and the blurb are the CARD's own link, to the section page.
+          Pointing it at the first leaf instead would make "You" mean "Identity",
+          which stays true only until somebody reorders the list. */}
+      <div className="flex items-center gap-2.5">
+        <Link to={to} className="flex items-center gap-2.5 min-w-0">
+          <span className="w-8 h-8 rounded-lg bg-accent/10 text-accent grid place-items-center shrink-0">
+            <Icon size={18} />
+          </span>
+          <div className="font-medium text-content dark:text-mortar-100 truncate">{meta.label}</div>
+        </Link>
+        {/* Beside the title, amber, exactly as Configuration renders one. */}
+        {meta.action && (
+          <Link
+            to={meta.action.to}
+            className="shrink-0 rounded-md bg-amber-100 dark:bg-amber-500/20 text-amber-800 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-500/30 px-2 py-0.5 text-xs font-medium transition"
+          >
+            {meta.action.label}
+          </Link>
+        )}
+        <span className="ml-auto text-[11px] font-mono text-faint dark:text-slate-500 shrink-0">
+          {items.length}
+        </span>
+      </div>
+      <Link to={to} className="block">
+        <p className="mt-2 text-sm text-content dark:text-mortar-200">{meta.blurb}</p>
+      </Link>
+      <div className="mt-2.5 text-xs text-faint dark:text-slate-500 leading-relaxed">
+        {items.map((l, i) => (
+          <span key={l.to}>
+            {i > 0 && " · "}
+            <Link to={l.to} title={l.description} className="hover:text-accent hover:underline">
+              {l.label}
+            </Link>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Identity, password and appearance are DESTINATIONS now, not forms stacked on
+ *  the hub. Each is the same component that used to render inline. */
+/** Name, address and password on ONE page. They were briefly two, which split
+ *  "who you are" from "how you prove it" across a click for no reason: both are
+ *  short forms, you arrive for one and often do the other, and two cards that
+ *  each hold one field is the thin-page smell. */
+export function MeIdentityPage() {
+  usePageTitle("Identity & password");
+  const { user } = useAuth();
+  const qc = useQueryClient();
+  const toast = useToast();
+  return (
+    <div className="space-y-4">
+      <AccountHead
+        title="Identity & password"
+        blurb="Your display name, the address you sign in with, and the password you sign in with."
+      />
       {user && (
         <DisplayNameSection
           initial={user.display_name}
           email={user.email}
           onSaved={() => {
-            // Refresh /me so AuthContext re-renders with new name.
             void qc.invalidateQueries({ queryKey: ["me"] });
             toast.success("Profile saved");
           }}
         />
       )}
+      <PasswordSection onChanged={() => toast.success("Password updated - you stay signed in.")} />
+    </div>
+  );
+}
 
-      <PasswordSection
-        onChanged={() => toast.success("Password updated - you stay signed in.")}
-      />
-
+export function MeAppearancePage() {
+  usePageTitle("Appearance");
+  return (
+    <div className="space-y-4">
+      <AccountHead title="Appearance" blurb="Light or dark - for your account everywhere, or just this device." />
       <AppearanceSection />
-
-      <div className="flex flex-col gap-2">
-        {/* Notifications stay — a consumer cares how they're reached. */}
-        <Link
-          to="/me/communication"
-          className="inline-flex items-center gap-2 text-sm text-accent hover:text-accent"
-        >
-          <Bell size={14} />
-          Communication preferences (in-app / Discord DM / email) →
-        </Link>
-        {/* Platform-level surfaces — hidden inside a locked managed app. */}
-        {!appMode && (
-          <>
-            <Link
-              to="/me/activity"
-              className="inline-flex items-center gap-2 text-sm text-accent hover:text-accent"
-            >
-              <History size={14} />
-              Your activity across all workspaces →
-            </Link>
-            <Link
-              to="/me/notification-channels"
-              className="inline-flex items-center gap-2 text-sm text-accent hover:text-accent"
-            >
-              <Bell size={14} />
-              Notification channels (per-workspace Discord / Slack / email / SMS / webhook) →
-            </Link>
-            <Link
-              to="/me/connections"
-              className="inline-flex items-center gap-2 text-sm text-accent hover:text-accent"
-            >
-              <Plug size={14} />
-              Connections - BYO AI keys / edge bridge that follow you to your workspaces →
-            </Link>
-            <Link
-              to="/me/drive"
-              className="inline-flex items-center gap-2 text-sm text-accent hover:text-accent"
-            >
-              <Monitor size={14} />
-              Browser driving - let Claude drive the app you have open (per workspace, off by default) →
-            </Link>
-          </>
-        )}
-      </div>
     </div>
   );
 }

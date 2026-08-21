@@ -20,6 +20,7 @@ import { requestGuardMiddleware } from "./platform/hosted-seams.js";
 import { publicRouter } from "./routes/public.js";
 import { changelogRouter } from "./routes/changelog.js";
 import { meRouter } from "./routes/me.js";
+import { discordInteractionsRouter } from "./routes/discord-interactions.js";
 import { testSupportRouter } from "./routes/test-support.js";
 import { connectionsRouter, workspaceAiSharesRouter } from "./routes/connections.js";
 import { modulesRouter } from "./routes/modules.js";
@@ -133,7 +134,13 @@ export function createApp(): AppHandles {
       // per-workspace inbound receiver) and /hooks/ (the global public-webhook
       // receiver) — so we don't keep raw bytes for every API call.
       verify: (req, _res, buf) => {
-        if (req.url?.startsWith("/api/v1/integrations/") || req.url?.startsWith("/api/v1/hooks/")) {
+        if (
+          req.url?.startsWith("/api/v1/integrations/") ||
+          req.url?.startsWith("/api/v1/hooks/") ||
+          // Discord signs (timestamp + EXACT body bytes), so a re-serialised
+          // req.body cannot be verified against it.
+          req.url?.startsWith("/api/v1/discord/")
+        ) {
           (req as unknown as { rawBody?: string }).rawBody = buf.toString("utf8");
         }
       },
@@ -179,6 +186,10 @@ export function createApp(): AppHandles {
   // in prod — the route mints tokens). See routes/test-support.ts.
   if (env.COBBLR_TEST_ORG_POOL) v1.use(testSupportRouter);
   v1.use(meRouter);
+  // Public + unauthenticated by necessity: Discord carries no session. The
+  // Ed25519 signature is the gate, checked inside the route before anything
+  // is looked at. Mounted here so it sits under /api/v1 with everything else.
+  v1.use(discordInteractionsRouter);
   v1.use(connectionsRouter);
   // Public read endpoint for core-public-surfaces. No auth required;
   // token in the URL is the secret. Mounted on /api/v1/public/* —

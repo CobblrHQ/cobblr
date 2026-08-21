@@ -35,7 +35,7 @@ import { useThemeToggle } from "../theme/useThemeToggle";
 import { UpdateBadge } from "./UpdateBadge";
 import { GrowModal } from "./GrowModal";
 import { PairPhoneButton } from "./PairPhoneButton";
-import { api, isFocused, setFocused } from "../lib/api";
+import { api, isFocused, setFocused, type CommunityLink } from "../lib/api";
 import { useMyEdgeBridge } from "../lib/useMyEdgeBridge";
 
 /** Account-menu row showing the personal edge bridge's live status — only for
@@ -256,19 +256,23 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
               )}
             </>
           )}
-          {/* Community — only when an invite is configured (DISCORD_INVITE_URL). */}
-          {user.discord_invite_url && (
+          {/* Every community place this deployment offers, not just Discord —
+              the server owns the list (api/src/platform/community.ts). An older
+              server sends only discord_invite_url, which communityFor() folds
+              back into a chat entry. */}
+          {communityFor(user).map((l) => (
             <a
-              href={user.discord_invite_url}
+              key={l.id}
+              href={l.url}
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => setOpen(false)}
               className={itemCls}
               role="menuitem"
             >
-              <MessagesSquare size={14} className="text-faint dark:text-slate-400" /> Community on Discord
+              <MessagesSquare size={14} className="text-faint dark:text-slate-400" /> {l.label}
             </a>
-          )}
+          ))}
 
           {/* Platform-operator section — only for super-admins. */}
           {isAdmin && (
@@ -463,19 +467,23 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
               )}
             </>
           )}
-          {/* Community — only when an invite is configured (DISCORD_INVITE_URL). */}
-          {user.discord_invite_url && (
+          {/* Every community place this deployment offers, not just Discord —
+              the server owns the list (api/src/platform/community.ts). An older
+              server sends only discord_invite_url, which communityFor() folds
+              back into a chat entry. */}
+          {communityFor(user).map((l) => (
             <a
-              href={user.discord_invite_url}
+              key={l.id}
+              href={l.url}
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => setOpen(false)}
               className={itemCls}
               role="menuitem"
             >
-              <MessagesSquare size={14} className="text-faint dark:text-slate-400" /> Community on Discord
+              <MessagesSquare size={14} className="text-faint dark:text-slate-400" /> {l.label}
             </a>
-          )}
+          ))}
 
           {/* Platform-operator section — only for super-admins. */}
           {isAdmin && (
@@ -539,4 +547,27 @@ function SuperAdminChip() {
       <ShieldCheck size={9} /> super-admin
     </span>
   );
+}
+
+/** The community places to offer, tolerating a server that predates the list.
+ *
+ *  An older api sends only `discord_invite_url`; folding it back into a chat
+ *  entry means a mid-upgrade deployment keeps the link it already had rather
+ *  than showing nothing. */
+function communityFor(user: {
+  community_links?: CommunityLink[] | null;
+  discord_invite_url?: string | null;
+}): CommunityLink[] {
+  if (user.community_links?.length) return user.community_links;
+  if (user.discord_invite_url) {
+    return [
+      {
+        id: "chat",
+        label: "Community on Discord",
+        url: user.discord_invite_url,
+        blurb: "Ask a question and get an answer the same day.",
+      },
+    ];
+  }
+  return [];
 }

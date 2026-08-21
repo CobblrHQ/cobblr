@@ -19,6 +19,7 @@
 
 import type { Kysely } from "kysely";
 import { sql } from "kysely";
+import { serializeByKey, releaseKey } from "./serialize-by-key.js";
 import type { CoreAiDB } from "../db.js";
 
 /** "text-delta" is the answer arriving as it is written, one piece per event.
@@ -43,10 +44,31 @@ export async function createTurn(db: Kysely<CoreAiDB>, userId: string, prompt: s
   return row.id;
 }
 
-/** Append one event. seq is allocated in the same statement, so two writers
- *  on the same turn (they should not happen, but a retry could) never collide
- *  and a reader's "after N" is always dense. */
+/** Append one event.
+ *
+ *  Serialised per TURN. seq is allocated inside the insert, so concurrent
+ *  writers never collide on a number — but they can still land out of ORDER,
+ *  and the loop emits fire-and-forget so two were regularly in flight at once.
+ *  The event that suffered was the last one: `done` could be inserted before an
+ *  earlier `tool-result`, and a reader that stops at `done` (every reader) then
+ *  saw a turn that used no tools. That is the intermittent replay-test failure,
+ *  and the same reason a long answer sometimes showed no steps.
+ *
+ *  Queueing here rather than at each call site means every emitter gets it:
+ *  the loop's sink, an applied write, and finishTurn's terminal event. */
 export async function emitTurnEvent(
+  db: Kysely<CoreAiDB>,
+  turnId: string,
+  kind: TurnEventKind,
+  payload: Record<string, unknown> = {},
+): Promise<TurnEvent> {
+  const ev = await serializeByKey(turnId, () => insertTurnEvent(db, turnId, kind, payload));
+  // A turn is over after these; nothing may queue behind them.
+  if (kind === "done" || kind === "error") releaseKey(turnId);
+  return ev;
+}
+
+async function insertTurnEvent(
   db: Kysely<CoreAiDB>,
   turnId: string,
   kind: TurnEventKind,

@@ -12,7 +12,7 @@ export {
   clearChatSelection,
   useChatSelection,
   usePublishRowSelection,
-  usePublishSelectedRecords,
+  useAskCobbAboutSelection,
   useSelectionResolver,
   subscribeChatSelection,
   resolveSelectionText,

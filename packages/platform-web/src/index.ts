@@ -86,6 +86,8 @@ export { BackToTop } from "./BackToTop";
 export { CatalogTypeahead, type CatalogTypeaheadHit } from "./CatalogTypeahead";
 export { usePageTitle } from "./usePageTitle";
 export { AskCobbAbout } from "./AskCobbAbout";
+export { RecordRow, recordRowMarks } from "./RecordRow";
+export { toggleRecordInContext, nounForKind, labelForSet } from "./toggle-record-context";
 export {
   usePublishChatContext,
   getChatPageContext,
@@ -97,7 +99,7 @@ export {
   clearChatSelection,
   useChatSelection,
   usePublishRowSelection,
-  usePublishSelectedRecords,
+  useAskCobbAboutSelection,
   useSelectionResolver,
   subscribeChatSelection,
   resolveSelectionText,

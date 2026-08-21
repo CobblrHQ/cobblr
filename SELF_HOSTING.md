@@ -199,6 +199,31 @@ in your `.env` to keep them out entirely (not loaded, not mounted, no
 background workers). They show an amber "Experimental" badge in the module
 picker either way.
 
+## Where your users go with a question
+
+The **Feedback** button and the account menu offer whatever community places
+this deployment configures. Set none and neither shows a link; set one and only
+that appears. They are listed in the order below, which is chat first (fastest
+answer), then the forum (an answer that stays findable), then the tracker
+(filing one is work, and most questions are not bugs).
+
+| Variable | Shown as | For |
+|---|---|---|
+| `COBBLR_DISCORD_INVITE_URL` | Discord | Same-day questions. `DISCORD_INVITE_URL` still works; the prefixed name wins if both are set. |
+| `COBBLR_FORUM_URL` | Community forum | Longer questions and searchable answers. |
+| `COBBLR_ISSUES_URL` | Issue tracker | Your own tracker, if you run a fork. Leave it unset and no tracker is offered. |
+| `COBBLR_DOCS_URL` | Documentation | Where a feature is explained. |
+
+Each must be an `http(s)` URL; anything else is ignored rather than rendered.
+An empty value counts as unset, which matters because compose passes an unset
+variable through as an empty string.
+
+The **"Open an issue"** button on a self-hosted instance is separate from that
+list: it carries the report the user just typed, prefilled, and it goes to this
+project's own GitHub tracker. That is deliberate - it is the only tracker a
+self-hoster can reach, since our PRs and CI sit on a private network - and it is
+where a bug in Cobblr itself belongs.
+
 ## Backups
 
 The stack takes a **nightly `pg_dumpall`** to `./data/backups/daily` on its own

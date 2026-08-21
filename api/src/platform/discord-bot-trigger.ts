@@ -45,6 +45,15 @@ export async function sendDiscordDm(args: {
   discord_user_id: string;
   text: string;
   verify_token?: string;
+  /** Message components, already in Discord's shape. The bot passes them
+   *  through — it already attaches a button for `verify_token`, so this is the
+   *  same door widened rather than a new one.
+   *
+   *  ONE app sends everything. A second app for notifications would have meant
+   *  two Cobblr bots in a DM list, one of which cannot be replied to, and the
+   *  instinct on receiving a DM is to reply to it. See
+   *  docs/design-decisions/discord-workspace-app.md. */
+  components?: unknown[];
 }): Promise<DiscordDmResult> {
   if (!BOT_URL) return { ok: false, deliverable: false };
   try {

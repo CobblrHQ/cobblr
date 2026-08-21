@@ -6,6 +6,7 @@ import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
+import { deliveryTick } from "../platform/delivery-sweeper.js";
 import { requireAuth } from "../auth/middleware.js";
 import { mintTokenString } from "../auth/api-tokens.js";
 import { listScopeChoices, sanitizeScopes } from "../auth/scopes.js";
@@ -26,6 +27,7 @@ import {
   discordAuthorizeUrl,
   exchangeCodeForIdentity,
 } from "../platform/discord-oauth.js";
+import { communityLinks } from "../platform/community.js";
 import { sendDiscordDm } from "../platform/discord-bot-trigger.js";
 import { publicBaseUrl } from "../platform/public-url.js";
 import {
@@ -58,6 +60,7 @@ meRouter.get("/me", requireAuth, async (req, res) => {
       // Community link for the signed-in chrome (account menu, feedback modal);
       // null unless DISCORD_INVITE_URL is configured.
       discord_invite_url: discordInviteUrl() || null,
+      community_links: communityLinks(),
     },
     orgs,
   });
@@ -359,6 +362,122 @@ meRouter.get("/me/activity", requireAuth, async (req, res, next) => {
           .where("m.user_id", "=", userId)
           .executeTakeFirst();
     res.json({ items, next_cursor, total: Number(totalRow?.n ?? items.length) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─────────── Delivery windows ───────────────────────────────────────
+// When a channel is allowed to interrupt you. Per (person, channel), and
+// account-level rather than org-scoped on purpose: a person has one attention,
+// not one per workspace. Design: docs/design-decisions/notification-delivery-windows.md
+
+const WindowBody = z.object({
+  channel: z.string().min(1).max(40),
+  mode: z.enum(["immediate", "daily"]),
+  /** Minutes past local midnight. 480 = 08:00. */
+  deliver_at_minute: z.number().int().min(0).max(1439).optional(),
+  /** IANA zone. 08:00 has to mean 08:00 where the person is. */
+  timezone: z.string().min(1).max(64).optional(),
+});
+
+meRouter.get("/me/delivery-windows", requireAuth, async (req, res, next) => {
+  try {
+    const rows = await meta
+      .selectFrom("notification_delivery_windows")
+      .select(["channel", "mode", "deliver_at_minute", "timezone", "last_delivered_at"])
+      .where("user_id", "=", req.session!.id)
+      .execute();
+    // What is waiting, per channel. "You have 5 updates queued for 08:00" is
+    // the answer to the obvious question a window raises, and without it the
+    // only way to know whether anything deferred is to wait and see.
+    const pending = await meta
+      .selectFrom("notification_deferred")
+      .select(["channel", meta.fn.count<string>("id").as("n")])
+      .where("user_id", "=", req.session!.id)
+      .groupBy("channel")
+      .execute();
+    const byChannel = new Map(pending.map((p) => [p.channel, Number(p.n)]));
+    res.json({
+      items: rows.map((r) => ({ ...r, pending_count: byChannel.get(r.channel) ?? 0 })),
+      // Channels with mail queued but no window row (the window was removed
+      // while mail waited) still owe the person something; the sweeper sends
+      // those on its next pass, so say so rather than hiding them.
+      orphaned: pending.filter((p) => !rows.some((r) => r.channel === p.channel))
+        .map((p) => ({ channel: p.channel, pending_count: Number(p.n) })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// AI-REACH: exempt — a personal delivery preference. An agent has no business
+// deciding when someone may be interrupted.
+meRouter.put("/me/delivery-windows", requireAuth, async (req, res, next) => {
+  try {
+    const parsed = WindowBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues },
+      });
+      return;
+    }
+    const b = parsed.data;
+    // A bad zone name would silently strand this person's mail behind a window
+    // that never opens, so it is rejected here rather than falling back later.
+    if (b.timezone) {
+      try {
+        new Intl.DateTimeFormat("en-GB", { timeZone: b.timezone });
+      } catch {
+        res.status(400).json({
+          error: { code: "bad_timezone", message: `Unknown timezone: ${b.timezone}` },
+        });
+        return;
+      }
+    }
+    await meta
+      .insertInto("notification_delivery_windows")
+      .values({
+        user_id: req.session!.id,
+        channel: b.channel,
+        mode: b.mode,
+        ...(b.deliver_at_minute !== undefined ? { deliver_at_minute: b.deliver_at_minute } : {}),
+        ...(b.timezone ? { timezone: b.timezone } : {}),
+      })
+      .onConflict((oc) =>
+        oc.columns(["user_id", "channel"]).doUpdateSet({
+          mode: b.mode,
+          ...(b.deliver_at_minute !== undefined ? { deliver_at_minute: b.deliver_at_minute } : {}),
+          ...(b.timezone ? { timezone: b.timezone } : {}),
+          updated_at: new Date(),
+        }),
+      )
+      .execute();
+    res.json({ ok: true, channel: b.channel, mode: b.mode });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Flush MY buckets, now.
+ *
+ * A window is a time of day, which makes the delivering half of this feature
+ * untestable without a trigger: you cannot wait until 08:00 in an e2e, and a
+ * "sweeper started" log line says nothing about whether a tick actually sends
+ * anything. core-cadence grew a POST /sweep for exactly this reason.
+ *
+ * Scoped to the CALLER's own buckets, not the whole box: it is a diagnostic
+ * about your own mail, never a lever on anyone else's. It still honours the
+ * window, so forcing a flush before yours opens correctly does nothing — the
+ * due check is part of what needs exercising, not something to skip.
+ */
+// AI-REACH: exempt — an operator/self diagnostic that delivers mail already
+// queued; an agent has no reason to trigger someone's digest early.
+meRouter.post("/me/delivery-windows/flush", requireAuth, async (req, res, next) => {
+  try {
+    const out = await deliveryTick(new Date(), req.session!.id);
+    res.json(out);
   } catch (err) {
     next(err);
   }
@@ -720,6 +839,58 @@ meRouter.delete(
 // notifications table; doesn't trigger any other binding the user
 // may have set up. Used by the per-row "test" button so a Discord
 // webhook can be validated without spamming everyone else.
+/**
+ * Send myself one notification through the REAL dispatcher.
+ *
+ * The per-binding test below deliberately bypasses the dispatcher's
+ * subscription scan, which is right for "does this channel work" and means
+ * there is no way at all to exercise the layer above it: routing, the priority
+ * threshold, the account-prefs fallback, and now delivery windows. All four are
+ * decisions the dispatcher makes and none of them had a way to be checked
+ * against a running instance.
+ *
+ * Scoped to the caller, in a workspace they belong to.
+ */
+// AI-REACH: exempt — a diagnostic that notifies only the caller.
+const SelfTestBody = z.object({
+  org_id: z.string().uuid(),
+  priority: z.enum(["low", "normal", "high", "urgent"]).default("normal"),
+  message: z.string().min(1).max(300).default("Test notification"),
+  event_type: z.string().min(1).max(120).default("platform.self-test"),
+});
+
+meRouter.post("/me/notifications/self-test", requireAuth, async (req, res, next) => {
+  try {
+    const parsed = SelfTestBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues },
+      });
+      return;
+    }
+    const member = await meta
+      .selectFrom("org_memberships")
+      .select("user_id")
+      .where("user_id", "=", req.session!.id)
+      .where("org_id", "=", parsed.data.org_id)
+      .executeTakeFirst();
+    if (!member) {
+      res.status(403).json({ error: { code: "not_a_member", message: "Not a member of that workspace" } });
+      return;
+    }
+    const out = await notifications.dispatch({
+      orgId: parsed.data.org_id,
+      userId: req.session!.id,
+      eventType: parsed.data.event_type,
+      message: parsed.data.message,
+      priority: parsed.data.priority,
+    });
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+});
+
 meRouter.post(
   "/me/notification-channels/:id/test",
   requireAuth,

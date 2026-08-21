@@ -11,8 +11,8 @@ import { useState, useRef, useEffect } from "react";
 import { HIDE_WHEN_OVERLAY_OPEN } from "@cobblr/platform-web";
 import { createPortal } from "react-dom";
 import { Modal, useToast } from "@cobblr/platform-web";
-import { MessageSquare, ImagePlus, X, Copy, ExternalLink } from "lucide-react";
-import { api } from "../lib/api";
+import { BookOpen, Copy, ExternalLink, Github, ImagePlus, MessageCircle, MessageSquare, Users, X } from "lucide-react";
+import { api, type CommunityLink } from "../lib/api";
 import { newIssueUrl, reportBody, type ReportInput, type ServerDiagnostics } from "../lib/bug-report";
 import { useAuth } from "../auth/AuthContext";
 import { resolveHandle } from "../auth/ActiveOrgContext";
@@ -417,22 +417,64 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
               </a>
             </div>
           )}
-          {/* Community channel — for questions/chat that aren't a tracked report. */}
-          {user?.discord_invite_url && (
-            <div className="text-center text-xs text-muted">
-              Have a question or want to chat?{" "}
-              <a
-                href={user.discord_invite_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-accent hover:underline"
-              >
-                Join us on Discord →
-              </a>
-            </div>
-          )}
+          {/* Places to take a question that isn't a tracked report. A LIST,
+              because there are three of them now and there was room for one.
+              The server decides which exist and in what order (see
+              api/src/platform/community.ts); this only draws them. */}
+          <CommunityLinks user={user} />
         </div>
       </Modal>
     </>
+  );
+}
+
+/** Somewhere to go, as opposed to something to send.
+ *
+ *  Distinct from "Open an issue" above it on purpose: that button carries the
+ *  report you just typed, so it SUBMITS this. These are places you go with a
+ *  question, and they take nothing with them. */
+function CommunityLinks({ user }: { user?: { community_links?: CommunityLink[]; discord_invite_url?: string | null } | null }) {
+  // An older server sends only discord_invite_url. Synthesising the chat entry
+  // from it keeps a mid-upgrade deployment from losing the link it had.
+  const links: CommunityLink[] =
+    user?.community_links?.length
+      ? user.community_links
+      : user?.discord_invite_url
+        ? [{ id: "chat", label: "Discord", url: user.discord_invite_url, blurb: "Ask a question and get an answer the same day." }]
+        : [];
+  if (links.length === 0) return null;
+
+  const icon: Record<CommunityLink["id"], typeof MessageCircle> = {
+    chat: MessageCircle,
+    forum: Users,
+    issues: Github,
+    docs: BookOpen,
+  };
+
+  return (
+    <div className="border-t border-line dark:border-slate-700 pt-3 space-y-1.5">
+      <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+        Or ask somewhere
+      </div>
+      {links.map((l) => {
+        const Icon = icon[l.id] ?? MessageCircle;
+        return (
+          <a
+            key={l.id}
+            href={l.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-start gap-2.5 rounded-md px-2 py-1.5 -mx-2 hover:bg-subtle dark:hover:bg-slate-800/60 transition"
+          >
+            <Icon size={15} className="text-accent mt-0.5 shrink-0" />
+            <span className="min-w-0">
+              <span className="block text-sm text-content dark:text-mortar-100">{l.label}</span>
+              <span className="block text-xs text-muted dark:text-slate-400">{l.blurb}</span>
+            </span>
+            <ExternalLink size={12} className="ml-auto mt-1 shrink-0 text-faint" />
+          </a>
+        );
+      })}
+    </div>
   );
 }

@@ -26,18 +26,38 @@ export function registerProvider(p: ConnectionProviderDef): void {
   registered.set(p.id, p);
 }
 
-/** AI's providers in this shape, so one catalogue serves the whole page. */
+/** AI's providers in this shape, so one catalogue serves the whole page.
+ *
+ *  `rank` comes along. It used to be dropped here, which worked by accident:
+ *  aiImpl.listProviders() is already rank-sorted, so the ORDER survived while
+ *  the reason for it did not. Nothing downstream could sort, re-sort, or say
+ *  why one provider led — and the picker's default is literally `providers[0]`,
+ *  so the most consequential value on that screen rested on an ordering no
+ *  consumer could see. */
 function aiProviders(): ConnectionProviderDef[] {
   return aiImpl.listProviders().map((p) => ({
     id: p.id,
     kind: AI_KIND,
     label: p.label,
     credentials: p.credentials,
+    rank: p.rank,
   }));
 }
 
+/** Every provider, rank-ordered across BOTH registries.
+ *
+ *  Concatenating the two lists put every AI provider ahead of every other kind
+ *  regardless of rank, which is a decision nobody made — it was the order the
+ *  two registries happened to be written in. Unranked providers keep their
+ *  registration order behind the ranked ones, the same rule ai.ts uses. */
 export function listProviders(kind?: string): ConnectionProviderDef[] {
-  const all = [...aiProviders(), ...registered.values()];
+  const all = [...aiProviders(), ...registered.values()]
+    .map((p, i) => ({ p, i }))
+    .sort(
+      (a, b) =>
+        (a.p.rank ?? Number.MAX_SAFE_INTEGER) - (b.p.rank ?? Number.MAX_SAFE_INTEGER) || a.i - b.i,
+    )
+    .map(({ p }) => p);
   return kind ? all.filter((p) => p.kind === kind) : all;
 }
 

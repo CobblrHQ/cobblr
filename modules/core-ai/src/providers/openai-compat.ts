@@ -19,7 +19,7 @@ import { platform, type AiCapability, type AiProviderDef } from "@cobblr/platfor
 import { assertSafeAiEndpoint, pinnedFetch, type PinnedResponse } from "../ssrf.js";
 import { TRANSIT_FIELD, viaBridge, edgeKeyFor, edgeFetch } from "./edge-transit.js";
 import { buildMessages } from "./openai.js";
-import { toolsOf, openAiToolsOf, parseOpenAiToolCalls, looksLikeNoToolSupport } from "./tool-wire.js";
+import { toolsOf, openAiToolsOf, parseOpenAiToolCalls, looksLikeNoToolSupport, stripLeakedReasoning } from "./tool-wire.js";
 import { promptFingerprint } from "./prompt-fingerprint.js";
 
 export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
@@ -274,7 +274,9 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
               message: {
                 role: string;
                 content: string | null;
-                tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: unknown } }>;
+                tool_calls?: Array<
+                  { id?: string; function?: { name?: string; arguments?: unknown } } & Record<string, unknown>
+                >;
               };
             }>;
             usage?: { prompt_tokens?: number; completion_tokens?: number };
@@ -284,7 +286,7 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
           return {
             result: {
               role: msg.role ?? "assistant",
-              content: msg.content ?? "",
+              content: stripLeakedReasoning(msg.content ?? ""),
               ...(calls ? { tool_calls: calls } : {}),
             },
             input_tokens: out.usage?.prompt_tokens ?? 0,
@@ -309,8 +311,17 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
         }
         if (!res.ok) return { ok: false, error: `status ${res.status}` };
         const body = (await res.json()) as { data?: Array<{ id: string }> };
-        const models = (body.data ?? []).map((m) => m.id).slice(0, 5);
-        return { ok: true, error: undefined, detail: models.length ? `serving: ${models.join(", ")}` : undefined } as { ok: boolean; error?: string };
+        // The full list travels back, not just a preview string. Validating the key IS a
+        // model-list request, so the list is already in hand: throwing it away and then
+        // asking the user to type an exact model name is work nobody needed to do. Ids
+        // keep the provider's own order and are not filtered here — which models suit a
+        // capability is the caller's judgement, not this adapter's.
+        const models = (body.data ?? []).map((m) => m.id).filter((x) => typeof x === "string");
+        return {
+          ok: true,
+          models,
+          detail: models.length ? `serving ${models.length} model(s)` : undefined,
+        };
       } catch (err) {
         return { ok: false, error: (err as Error).message };
       }

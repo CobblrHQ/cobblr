@@ -2785,6 +2785,20 @@ export interface PlatformCalendar {
  *  enqueue() defers a unit of work; registerWorker(name, fn) sets
  *  the handler that the api process's worker loop will invoke when
  *  the job's run_at has arrived. See api/src/platform/queue.ts. */
+/** One thing a person can do about a notification, straight from the message. */
+export interface NotificationAction {
+  /** Stable within one notification; this is what a client sends back. */
+  id: string;
+  label: string;
+  /** A registered action id, e.g. "purchases:mark-arrived". Prefer an
+   *  IDEMPOTENT action: a card can be pressed twice, from two devices, or
+   *  long after the fact. */
+  action: string;
+  args?: Record<string, unknown>;
+  /** A hint. Channels with no notion of emphasis ignore it. */
+  style?: "primary" | "secondary" | "danger";
+}
+
 export interface PlatformNotifications {
   /** Fan a notification to one user across their enabled channels.
    *  Writes the row, looks up the user's per-event-type channel
@@ -2799,6 +2813,17 @@ export interface PlatformNotifications {
     entityType?: string;
     entityId?: string;
     payload?: unknown;
+    /** What the reader can DO about it, offered inside the message itself.
+     *
+     *  Channel-agnostic on purpose: a channel that can render them does
+     *  (Discord as buttons), one that cannot delivers the message and its link
+     *  unchanged. So `message` must still stand alone and must never say
+     *  "press the button below".
+     *
+     *  Stored on the notification row. A press arrives from a client carrying
+     *  only an id, and the action it maps to is read back from the row — so
+     *  `action` and `args` here are the server's copy, never the wire's. */
+    actions?: NotificationAction[];
   }): Promise<{ notificationId: string; deliveredVia: string[] }>;
   /** Convenience: every member of an org. Modules that want to
    *  broadcast a notification (e.g. "this task is now unblocked")
@@ -3175,8 +3200,24 @@ export interface AiProviderDef {
     output_tokens?: number;
     cost_cents?: number;
   }>;
-  /** Optional health/test ping. */
-  testConnection?: (credentials: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>;
+  /** Optional health/test ping.
+   *
+   *  `models` is what the provider says it can serve. The check for "is this key any
+   *  good" is usually a model-list request anyway, so the list comes back free with the
+   *  answer — and it is what lets the UI offer a dropdown instead of asking someone to
+   *  type an exact model name they have no way to know. */
+  testConnection?: (credentials: Record<string, unknown>) => Promise<AiConnectionTest>;
+}
+
+export interface AiConnectionTest {
+  ok: boolean;
+  error?: string;
+  /** Human-readable extra, e.g. a few model names. */
+  detail?: string;
+  /** Every model id the provider reported, unfiltered and in its own order. */
+  models?: string[];
+  /** Said instead of a verdict when the provider implements no test at all. */
+  note?: string;
 }
 
 /** A pluggable entitlement guard. Called by invoke() AFTER the provider +
@@ -3224,6 +3265,10 @@ export interface PlatformAi {
     credentials: Record<string, AiCredentialField>;
     capabilities: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>>;
     setup?: AiProviderSetup;
+    /** Position in the picker; lower first, and FIRST IS THE DEFAULT. The list
+     *  is returned already sorted by it — carried as well as applied, so a
+     *  consumer that re-merges these with another registry can re-sort. */
+    rank?: number;
   }>;
   getProvider(id: string): AiProviderDef | null;
   /** Single entry point for any module to use AI. Picks provider +
@@ -3415,6 +3460,9 @@ export interface ConnectionProviderDef {
   /** The fields to ask for. `secret: true` is write-only — stored encrypted and
    *  never returned, so the edit form shows "set" rather than the value. */
   credentials: Record<string, { label: string; secret: boolean }>;
+  /** Position in the picker; lower first, and FIRST IS THE DEFAULT. Optional:
+   *  unranked providers sort after the ranked ones in registration order. */
+  rank?: number;
   /** One line under the picker, for a kind whose purpose isn't self-evident. */
   blurb?: string;
 }

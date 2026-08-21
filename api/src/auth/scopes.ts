@@ -88,6 +88,16 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
     allow: [["POST", /^\/super-admin\/authoring-eval$/]],
   },
   {
+    key: "discord:interactions",
+    label: "Discord button presses (Discord bot)",
+    description:
+      "Forward a button press from a Cobblr notification DM so the API can " +
+      "resolve it. Carries no authority of its own: the API reads the action " +
+      "from the stored notification and checks the presser owns it, so this " +
+      "scope cannot act on anything the token holder chooses.",
+    allow: [["POST", /^\/discord\/interactions\/forwarded$/]],
+  },
+  {
     key: "feedback:ingest",
     label: "Feedback ingest (Discord bot)",
     description:

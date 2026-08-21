@@ -49,6 +49,7 @@ import { isUndeliverableTestAddress } from "../platform/email-send.js";
 import * as activity from "../platform/activity.js";
 import { fireSignup, sendAuthEmail } from "../platform/hosted-seams.js";
 import { discordInviteUrl } from "../platform/discord-oauth.js";
+import { communityLinks, type CommunityLink } from "../platform/community.js";
 import { enableDefaultModulesForOrg } from "../modules/enable.js";
 import { provisionAppWorkspace, ProvisionAppError } from "../platform/provision-app.js";
 import type { OrgRole } from "../db/schema.js";
@@ -137,6 +138,10 @@ interface AuthResponseUser {
   is_platform_admin: boolean;
   /** Community Discord invite (DISCORD_INVITE_URL) or null; signed-in chrome only. */
   discord_invite_url: string | null;
+  /** Every place this deployment offers for questions, in the order to show
+   *  them. `discord_invite_url` stays for older clients; it is the chat entry
+   *  of this list. */
+  community_links: CommunityLink[];
 }
 
 interface AuthResponseOrg {
@@ -296,6 +301,7 @@ export async function buildAuthResponse(userId: string): Promise<AuthResponse> {
       email_verified: email_verified_at !== null,
       is_platform_admin: isPlatformAdmin(user.email),
       discord_invite_url: discordInviteUrl() || null,
+      community_links: communityLinks(),
     },
     orgs,
   };

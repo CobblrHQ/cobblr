@@ -14,7 +14,7 @@ import { useDetailRoute } from "../lib/useDetailRoute";
 import { ReceiptSourceViewer } from "../components/ReceiptSourceViewer";
 import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
 import { ModulePurposeHint } from "../components/ModulePurposeHint";
-import { usePublishChatContext, usePublishSelectedRecords } from "../lib/chat-context";
+import { usePublishChatContext, useAskCobbAboutSelection } from "../lib/chat-context";
 import { BulkActionBar, EntityActionsBar, EntityThumb, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import { ContributedDetailPanels } from "../panels/registry";
 import { receiptGroupSummary } from "./receiptLabel";
@@ -284,7 +284,7 @@ export function PurchasesPage() {
   // What is ticked IS context: with the panel open, "delete these" means the
   // ones on screen a person pointed at, and Cobb gets their ids rather than a
   // count he has to go and re-find.
-  usePublishSelectedRecords(selected, rows, "purchases:order", "order");
+  const askCobb = useAskCobbAboutSelection(selected, rows, "purchases:order", "order");
   const qcP = useQueryClient();
   const toastP = useToast();
   const confirmP = useConfirm();
@@ -506,6 +506,7 @@ export function PurchasesPage() {
       <NewOrderModal open={newOpen} onClose={() => setNewOpen(false)} />
       {vendorsOpen && <VendorsModal onClose={() => setVendorsOpen(false)} />}
       <BulkActionBar
+        onAskCobb={askCobb}
         count={selected.size}
         onClear={() => setSelected(new Set())}
         actions={
