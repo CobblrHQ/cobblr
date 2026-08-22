@@ -796,7 +796,7 @@ function PairingRow({
       )}
       <button
         onClick={onDelete}
-        className="opacity-0 group-hover:opacity-100 text-faint hover:text-ember-500 transition"
+        className="hover-reveal text-faint hover:text-ember-500 transition"
         title="Remove link"
       >
         <X size={12} />
@@ -996,7 +996,7 @@ function AttachmentThumb({
           …
         </button>
       )}
-      <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition">
+      <div className="absolute top-1 right-1 flex gap-1 hover-reveal transition">
         <button
           onClick={onSetAsCover}
           className="p-1 rounded bg-black/40 text-white hover:bg-cobble-600 transition"

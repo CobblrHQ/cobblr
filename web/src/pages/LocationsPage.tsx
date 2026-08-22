@@ -42,7 +42,7 @@ import {
   type LocationNode as SharedLocationNode,
 } from "@cobblr/platform-web";
 import { ApiError, api, fetchAuthBlobUrl, type Location } from "../lib/api";
-import { emptyCounts, totalUsage, useLocationUsage, type UsageCounts } from "../lib/useLocationUsage";
+import { totalUsage, useLocationUsage, type UsageCounts } from "../lib/useLocationUsage";
 import { queueLabelsBulk } from "../lib/queue-label";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ImportLocationsDialog } from "../components/ImportLocationsDialog";
@@ -246,32 +246,6 @@ export function LocationsPage() {
   };
 
   // For the delete confirm — count the subtree's total external refs.
-  function subtreeUsage(node: LocationNode): UsageCounts {
-    const acc = emptyCounts();
-    const walk = (n: LocationNode) => {
-      const c = usageByLocation.get(n.id);
-      if (c) {
-        acc.machines += c.machines;
-        acc.assets += c.assets;
-        acc.parts += c.parts;
-      }
-      for (const child of n.children) walk(child);
-    };
-    walk(node);
-    return acc;
-  }
-
-  const del = useMutation({
-    mutationFn: (id: string) => api.deleteLocation(activeSlug, id),
-    onSuccess: () => {
-      toast.success("Location deleted");
-      void qc.invalidateQueries({ queryKey: ["core-locations", activeSlug] });
-    },
-    onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : String(err));
-    },
-  });
-
   const reorder = useMutation({
     mutationFn: (ids: string[]) => api.reorderLocations(activeSlug, ids),
     // Optimistic — reflect the new order instantly (the drag feels immediate),
@@ -359,25 +333,6 @@ export function LocationsPage() {
       setCreateOpen(true);
     },
     onEdit: (loc: Location) => setEditTarget(loc),
-    onDelete: async (loc: LocationNode) => {
-      const subtree = subtreeUsage(loc);
-      const subtreeTotal = subtree.machines + subtree.assets + subtree.parts;
-      const childPart =
-        loc.children.length > 0 ? ` and its ${loc.children.length} child location(s)` : "";
-      const usagePart =
-        subtreeTotal > 0
-          ? ` ${subtreeTotal} item(s) currently point at ${
-              loc.children.length > 0 ? "this subtree" : "this location"
-            } (${subtree.machines} machine(s), ${subtree.assets} asset(s), ${subtree.parts} part(s)) and will end up location-less.`
-          : "";
-      const ok = await confirm({
-        title: "Delete location?",
-        message: `${loc.name}${childPart} will be removed (cascade).${usagePart}`,
-        confirmLabel: "Delete",
-        destructive: true,
-      });
-      if (ok) del.mutate(loc.id);
-    },
   };
   const renderCard = (n: LocationNode) => (
     <LocationCard key={n.id} node={n} {...foldProps} {...cardHandlers} />
@@ -385,16 +340,17 @@ export function LocationsPage() {
 
   return (
     <div className="space-y-4">
-      {/* flex-wrap + a full-width basis on the spacer: on a phone the action
-          buttons drop to their own line (and wrap among themselves) instead of
-          running off the right edge — that unwrapped row was the locations-page
-          horizontal-scroll bug. On desktop it stays a single row, spacer pushing
-          the buttons right. */}
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
+      {/* ONE row on every width. It used to wrap, which kept the page from
+          scrolling sideways but spent three of a phone's rows on chrome before
+          the first location. The secondary actions keep their icon and drop
+          their LABEL below `sm` instead (they are recognisable, and rarely the
+          reason you opened this page), and "+ New location" has moved down to
+          share the search row. */}
+      <div className="flex items-center gap-x-2 sm:gap-x-3 border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100 shrink-0">
           Locations
         </h1>
-        <span className="text-sm text-muted dark:text-slate-400">
+        <span className="hidden sm:inline text-sm text-muted dark:text-slate-400 shrink-0">
           {items.length} {items.length === 1 ? "place" : "places"}
         </span>
         {/* Floor Plan / List as a segmented control in the title row. They are
@@ -403,7 +359,7 @@ export function LocationsPage() {
         <div
           role="tablist"
           aria-label="View"
-          className="inline-flex self-center rounded-md border border-line dark:border-slate-600 p-0.5 text-xs"
+          className="inline-flex shrink-0 self-center rounded-md border border-line dark:border-slate-600 p-0.5 text-xs"
         >
           {(["plan", "list"] as const).map((t) => (
             <button
@@ -423,44 +379,19 @@ export function LocationsPage() {
             </button>
           ))}
         </div>
-        <div className="flex-1 basis-full sm:basis-0" />
-        {items.length > 0 && (
-          <button
-            onClick={() =>
-              setSelected(
-                selected.size === items.length
-                  ? new Set()
-                  : new Set(items.map((l) => l.id)),
-              )
-            }
-            title="Select every location (e.g. to bulk-delete)"
-            className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 px-2.5 py-1.5 text-sm transition"
-          >
-            <CheckSquare size={14} />
-            {selected.size === items.length ? "Deselect all" : "Select all"}
-          </button>
-        )}
+        <div className="flex-1 min-w-0" />
         <button
           onClick={exportCsv}
           title="Download all locations as a CSV"
-          className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 px-2.5 py-1.5 text-sm transition"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded border border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 px-2 sm:px-2.5 py-1.5 text-sm transition"
         >
-          <Download size={14} /> Export
+          <Download size={14} /> <span className="hidden sm:inline">Export</span>
         </button>
         <button
           onClick={() => setImportOpen(true)}
-          className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 px-2.5 py-1.5 text-sm transition"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded border border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 px-2 sm:px-2.5 py-1.5 text-sm transition"
         >
-          <Upload size={14} /> Import
-        </button>
-        <button
-          onClick={() => {
-            setCreateParentId(null);
-            setCreateOpen(true);
-          }}
-          className="inline-flex items-center gap-2 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition"
-        >
-          <Plus size={14} /> New location
+          <Upload size={14} /> <span className="hidden sm:inline">Import</span>
         </button>
       </div>
       {importOpen && <ImportLocationsDialog slug={activeSlug} onClose={() => setImportOpen(false)} />}
@@ -484,8 +415,12 @@ export function LocationsPage() {
 
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
         {items.length > 0 && (
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <label className="relative flex-1 min-w-[12rem] max-w-md">
+          /* Search and "+ New location" share a row: the two things you came
+             here to do, side by side, instead of a button row above a search
+             row. No wrap - the button is shrink-0 and the field takes the
+             rest. */
+          <div className="flex items-center gap-2 sm:gap-4">
+            <label className="relative flex-1 min-w-0 sm:max-w-md">
               <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-faint pointer-events-none" />
               <input
                 type="search"
@@ -496,7 +431,17 @@ export function LocationsPage() {
                 className="w-full pl-7 pr-2 py-1.5 text-sm rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900"
               />
             </label>
-            <span className="hidden md:inline text-xs text-muted dark:text-slate-400 truncate min-w-0">
+            <button
+              onClick={() => {
+                setCreateParentId(null);
+                setCreateOpen(true);
+              }}
+              className="shrink-0 inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2.5 sm:px-3 py-1.5 text-sm transition"
+            >
+              <Plus size={14} />
+              New<span className="hidden sm:inline">&nbsp;location</span>
+            </button>
+            <span className="hidden lg:inline text-xs text-muted dark:text-slate-400 truncate min-w-0">
               {filtering
                 ? "Showing matches and the path to them. Drag is off while filtering."
                 : "Rooms, shelves, bins. Anything tangible in the workspace can point at a place here."}
@@ -508,6 +453,24 @@ export function LocationsPage() {
         )}
         {rootAreas.length > 0 && (
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-1">
+            {/* At the START of the list's own heading line, above the column of
+                row checkboxes it mirrors. It used to sit up in the page chrome
+                beside Export and Import, which grouped it with "things you do
+                to the file" rather than "things you do to these rows". */}
+            <button
+              onClick={() =>
+                setSelected(
+                  selected.size === items.length
+                    ? new Set()
+                    : new Set(items.map((l) => l.id)),
+                )
+              }
+              title="Select every location (e.g. to bulk-delete)"
+              className="inline-flex shrink-0 items-center gap-1 rounded text-muted hover:text-content dark:hover:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 px-1.5 py-0.5 text-xs transition"
+            >
+              <CheckSquare size={13} />
+              {selected.size === items.length ? "Deselect all" : "Select all"}
+            </button>
             <h2 className="text-xs font-mono uppercase tracking-widest text-faint dark:text-slate-500">
               Areas
             </h2>
@@ -619,7 +582,7 @@ export function LocationsPage() {
             <button
               type="button"
               onClick={() => void bulkDelete()}
-              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-ember-600 hover:text-ember-500"
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-ember-600 dark:text-ember-400 hover:text-ember-500"
             >
               <Trash2 size={12} />
               Delete
@@ -644,7 +607,6 @@ function LocationCard({
   onToggleSelect,
   onAddChild,
   onEdit,
-  onDelete,
 }: {
   node: LocationNode;
   depth: number;
@@ -658,7 +620,6 @@ function LocationCard({
   onToggleSelect: (id: string) => void;
   onAddChild: (parentId: string) => void;
   onEdit: (loc: Location) => void;
-  onDelete: (loc: LocationNode) => void;
 }) {
   const KindIcon = node.kind === "container" ? BoxIcon : AreaIcon;
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
@@ -677,14 +638,23 @@ function LocationCard({
       style={style}
       className={`rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden ${isDragging ? "opacity-60 shadow-lg ring-1 ring-accent/40" : ""}`}
     >
-      <div className="px-4 py-2.5 bg-subtle dark:bg-slate-800/50 border-b border-line dark:border-slate-700 flex flex-wrap items-center gap-2">
+      <div
+        className={
+          "px-3 sm:px-4 py-2.5 bg-subtle dark:bg-slate-800/50 border-b border-line dark:border-slate-700 flex items-center gap-1.5 sm:gap-2 " +
+          // A room card's right edge IS the page's edge, while everything nested
+          // inside it sits one gutter in. Matching that here is what puts the
+          // room's own controls on the same column as its contents' — without
+          // it the header row would be the one thing sticking out.
+          (depth === 0 ? "pr-6 sm:pr-8" : "")
+        }
+      >
         <button
           type="button"
           {...attributes}
           {...listeners}
           title="Drag to reorder (within its group)"
           aria-label={`Drag ${node.name} to reorder`}
-          className="cursor-grab touch-none text-faint hover:text-muted shrink-0 -ml-1.5 active:cursor-grabbing"
+          className="hidden sm:block cursor-grab touch-none text-faint hover:text-muted shrink-0 -ml-1.5 active:cursor-grabbing"
         >
           <GripVertical size={15} />
         </button>
@@ -711,7 +681,7 @@ function LocationCard({
             <ChevronRight size={15} className={"transition-transform " + (open ? "rotate-90" : "")} />
           </button>
         ) : (
-          <span className="w-4 shrink-0" aria-hidden />
+          <span className="hidden sm:block w-4 shrink-0" aria-hidden />
         )}
         <KindIcon size={16} className="text-accent shrink-0" />
         {/* The name sizes to itself (min-w-0 so a long one still truncates)
@@ -766,16 +736,18 @@ function LocationCard({
           </span>
         )}
         <div className="flex-1 min-w-[0.5rem]" />
-        {/* Trailing meta + actions: their own wrap group so that on a narrow
-            (mobile) card — or a deeply-nested one where indentation eats the
-            width — the cluster drops to its own line and, if still tight, its
-            chips wrap, instead of forcing the page to scroll sideways. min-w-0
-            lets it shrink; on desktop there's room and it stays inline. */}
+        {/* Trailing meta + actions. ONE line, never wrapped.
+            This used to wrap so a narrow card could not push the page sideways,
+            and the cost was that on a phone EVERY row became two: the name, then
+            a second line holding the count and four icons. A list where each
+            entry is two rows is half a list. The name truncates instead, which
+            is the thing that should give — you can read "Rack 1" from six
+            characters, and the row is still one row. */}
         <RecordRow
           kind="core-locations:location"
           id={node.id}
           label={node.name}
-          className="flex flex-wrap items-center gap-2 min-w-0 shrink-0"
+          className="flex items-center gap-1.5 sm:gap-2 shrink-0"
         >
           {/* Closed: what is hidden, as a button that opens it, so a summary is
               never a dead end. Open: the node's own count as before. */}
@@ -821,18 +793,37 @@ function LocationCard({
           >
             <Pencil size={14} />
           </button>
-          <button
-            type="button"
-            onClick={() => onDelete(node)}
-            title="Delete"
-            className="text-faint hover:text-ember-500 transition p-1"
-          >
-            <Trash2 size={14} />
-          </button>
+          {/* No per-row delete. Deleting a location cascades to everything
+              under it, so it is the one action here you cannot take back — and
+              it was a 14px target beside two harmless ones. Tick the row and
+              use Delete in the selection bar, which names what will go and asks
+              first. The same reasoning as the Cobb head: the checkbox already
+              says which rows you mean. */}
         </RecordRow>
       </div>
+      {/* Padding on the LEFT only in the child wrapper below. The indent is
+          what shows the nesting; the matching RIGHT padding was never a
+          decision, and it moved every row's trailing controls 13px inward per
+          level, so four levels put them 39px apart and the eye had no column
+          to run down. Left-only keeps the indent and lands every Cobb head,
+          pencil and kind label on one vertical line. The cost is a nested
+          card's right border meeting its parent's: a faint doubled line and a
+          small stair-step of corners, invisible at 1x. */}
       {hasChildren && open && (
-        <div className="p-2 pl-3 sm:p-3 sm:pl-6 space-y-2 bg-subtle/50 dark:bg-slate-900/40">
+        <div
+          className={
+            "py-2 pl-3 sm:py-3 sm:pl-6 space-y-2 bg-subtle/50 dark:bg-slate-900/40 " +
+            // The right gutter is opened ONCE, by the outermost card, and every
+            // level below inherits it. Per-level right padding is what made the
+            // trailing controls drift 13px inward each time you nested — four
+            // levels put them 39px apart. Opening it once means every card from
+            // depth 1 down shares a single right edge, so the controls line up,
+            // AND there is still visible air between a nested card and the room
+            // that holds it. The room's own controls are pulled in by the same
+            // amount (see the header above) so they join the column too.
+            (depth === 0 ? "pr-3 sm:pr-4" : "pr-0")
+          }
+        >
           {/* Child AREAS are zones — subdivisions of this space, not things
               inside it — so they render as dashed annotations (ZoneCard), never
               as nested boxes; containers keep the boxed card. Zones first, so
@@ -856,7 +847,6 @@ function LocationCard({
                 onToggleSelect={onToggleSelect}
                 onAddChild={onAddChild}
                 onEdit={onEdit}
-                onDelete={onDelete}
               />
             ))}
             <SiblingList
@@ -873,7 +863,6 @@ function LocationCard({
               onToggleSelect={onToggleSelect}
               onAddChild={onAddChild}
               onEdit={onEdit}
-              onDelete={onDelete}
             />
           </SortableContext>
         </div>
@@ -902,7 +891,6 @@ function ZoneCard({
   onToggleSelect,
   onAddChild,
   onEdit,
-  onDelete,
 }: {
   node: LocationNode;
   depth: number;
@@ -916,7 +904,6 @@ function ZoneCard({
   onToggleSelect: (id: string) => void;
   onAddChild: (parentId: string) => void;
   onEdit: (loc: Location) => void;
-  onDelete: (loc: LocationNode) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: node.id, disabled: filtering });
@@ -987,14 +974,6 @@ function ZoneCard({
           >
             <Pencil size={12} />
           </button>
-          <button
-            type="button"
-            onClick={() => onDelete(node)}
-            title="Delete"
-            className="text-faint hover:text-ember-500 transition px-1"
-          >
-            <Trash2 size={12} />
-          </button>
         </RecordRow>
         {node.children.length === 0 && (
           <div className="text-xs text-faint dark:text-slate-500 italic px-1 py-1">
@@ -1021,7 +1000,6 @@ function ZoneCard({
                 onToggleSelect={onToggleSelect}
                 onAddChild={onAddChild}
                 onEdit={onEdit}
-                onDelete={onDelete}
               />
             ))}
             <SiblingList
@@ -1038,7 +1016,6 @@ function ZoneCard({
               onToggleSelect={onToggleSelect}
               onAddChild={onAddChild}
               onEdit={onEdit}
-              onDelete={onDelete}
             />
           </SortableContext>
         )}
@@ -1069,7 +1046,6 @@ function SiblingList({
   onToggleSelect: (id: string) => void;
   onAddChild: (parentId: string) => void;
   onEdit: (loc: Location) => void;
-  onDelete: (loc: LocationNode) => void;
 }) {
   // A search shows the matches plainly: a run would hide the very rows you
   // asked for.
@@ -1109,7 +1085,6 @@ function RunCard({
   onToggleSelect: (id: string) => void;
   onAddChild: (parentId: string) => void;
   onEdit: (loc: Location) => void;
-  onDelete: (loc: LocationNode) => void;
 }) {
   const open = isRunOpen(card.fold, run.id);
   const count = run.members.length;
@@ -1125,8 +1100,8 @@ function RunCard({
   };
   return (
     <div className="rounded-xl border border-dashed border-line dark:border-slate-700 overflow-hidden">
-      <div className="px-4 py-2 bg-subtle/70 dark:bg-slate-800/40 flex flex-wrap items-center gap-2">
-        <span className="w-[15px] shrink-0 -ml-1.5" aria-hidden />
+      <div className="px-3 sm:px-4 py-2 bg-subtle/70 dark:bg-slate-800/40 flex items-center gap-1.5 sm:gap-2">
+        <span className="hidden sm:block w-[15px] shrink-0 -ml-1.5" aria-hidden />
         <input
           type="checkbox"
           checked={allSelected}
@@ -1155,7 +1130,7 @@ function RunCard({
         >
           {label}
         </button>
-        <div className="flex flex-wrap items-center gap-2 min-w-0 ml-auto">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 ml-auto">
           <button
             type="button"
             onClick={() => card.onToggleRun(run.id)}
@@ -1169,7 +1144,7 @@ function RunCard({
         </div>
       </div>
       {open && (
-        <div className="p-2 space-y-2 bg-subtle/30 dark:bg-slate-900/30">
+        <div className="py-2 pl-2 pr-0 space-y-2 bg-subtle/30 dark:bg-slate-900/30">
           {run.members.map((m) => (
             <LocationCard key={m.id} node={m} {...card} />
           ))}

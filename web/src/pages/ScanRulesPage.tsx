@@ -261,7 +261,7 @@ function PasteRuleModal({
           placeholder={PASTE_EXAMPLE}
           className="w-full rounded-md border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 p-2 font-mono text-xs text-content dark:text-mortar-100"
         />
-        {err && <p className="text-xs text-ember-600">{err}</p>}
+        {err && <p className="text-xs text-ember-600 dark:text-ember-400 dark:text-ember-400">{err}</p>}
         <button type="button" onClick={() => setText(PASTE_EXAMPLE)} className="text-xs text-accent hover:underline">
           Fill with an example
         </button>
@@ -495,7 +495,7 @@ function RuleModal({
           <div className="space-y-1">
             <textarea value={jsonText} onChange={(e) => editJson(e.target.value)} rows={16} spellCheck={false} className="input w-full font-mono text-xs" />
             {jsonErr ? (
-              <p className="text-xs text-ember-600">{jsonErr}</p>
+              <p className="text-xs text-ember-600 dark:text-ember-400">{jsonErr}</p>
             ) : (
               <p className="text-xs text-muted dark:text-mortar-300">Edit the rule directly - name, match, extract, resolve (+ optional enabled, position).</p>
             )}

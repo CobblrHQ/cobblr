@@ -88,6 +88,8 @@ export function EntityImageEdit({
         ) : (
           <EntityThumb src={src} alt={alt} size={size} className="ring-1 ring-line dark:ring-slate-700" />
         )}
+        // TOUCH-OK: a caption overlay on a tile that is itself the button:
+        // tapping the image opens the editor, so nothing is unreachable.
         <span className="absolute inset-0 flex items-center justify-center bg-black/45 text-white text-[10px] font-mono uppercase tracking-wide opacity-0 group-hover:opacity-100 transition-opacity">
           {uploading ? "Uploading…" : "Change"}
         </span>

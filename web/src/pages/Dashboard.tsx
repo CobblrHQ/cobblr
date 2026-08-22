@@ -607,7 +607,7 @@ function AttentionRow({ slug, item: it, tone, glyph }: { slug: string; item: Att
                     title="Mark done"
                     className="shrink-0 w-4 h-4 rounded border border-line dark:border-slate-600 hover:border-accent hover:bg-accent/10 transition flex items-center justify-center"
                   >
-                    <CheckCircle2 size={11} className="opacity-0 hover:opacity-100 text-accent" />
+                    <CheckCircle2 size={11} className="hover-reveal text-accent" />
                   </button>
                 ) : (
                   <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-faint/50" />

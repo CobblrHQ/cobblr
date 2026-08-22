@@ -152,6 +152,29 @@ export const FIELD_ROLE_VALUES = [
   "seller",
 ] as const;
 export type FieldRole = (typeof FIELD_ROLE_VALUES)[number];
+
+// VOCAB-ENUMERATION OK: this is the vocabulary's own declaration file, and
+// saying what each member MEANS to a person is the point. A Record over the
+// union, so adding a role fails the typecheck here until it has a name and a
+// decision about whether anyone may pick it by hand.
+/**
+ * How each role reads to a person, and whether a hand-built field may claim it.
+ *
+ * `pickable: false` is for a role the platform assigns from structure rather
+ * than intent: a table has exactly one grouping axis, and letting someone tag a
+ * second field "category" would make that ambiguous.
+ */
+export const FIELD_ROLE_LABELS: Record<FieldRole, { label: string; pickable: boolean }> = {
+  category: { label: "Its grouping axis", pickable: false },
+  pack: { label: "How many in a pack", pickable: true },
+  identifier: { label: "Its identifier (serial, VIN)", pickable: true },
+  expiry: { label: "When it expires", pickable: true },
+  assignee: { label: "Who it is assigned to", pickable: true },
+  "acquired-from": { label: "Where it came from", pickable: true },
+  "acquired-on": { label: "When it became yours", pickable: true },
+  "acquired-for": { label: "What it cost", pickable: true },
+  seller: { label: "Who sold it", pickable: true },
+};
 export const FieldRoleSchema = z.enum(FIELD_ROLE_VALUES);
 
 const EntityField = z.object({

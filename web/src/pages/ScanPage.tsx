@@ -69,6 +69,9 @@ import { isScanStale, needsScanReview } from "@cobblr/platform-contract/scan-tri
 import { matchParentType, readField } from "../lib/parent-type-match";
 import { isRerunInFlight, itemEnriching } from "./scan-status";
 import { baseKind, confirmBodyFor, isReadyToFile } from "./scanFileAll";
+import { resolveInstanceForFiling } from "./scanInstall";
+import type { BundleInstallSummary } from "../lib/api";
+import { installToastLine } from "../lib/installSummary";
 import { looksLikeContainer, nextBinName } from "./scanContainer";
 import {
   sessionCategory,
@@ -2056,6 +2059,14 @@ export function ScanPage() {
     //
     // Once per BUNDLE, not once per item: four lines routed to Groceries need
     // one install between them.
+    //
+    // KEEP THE ANSWER. Installing is only half of it - the install also reports
+    // which target it really created, and for a bundle that skins a module's
+    // default table (Groceries) that target has NO instance, while the
+    // candidate still carries the synthetic token the routing menu needed to
+    // name the bundle. Confirming the candidate verbatim therefore asked for an
+    // instance that installing had just declined to create, and every line of
+    // the receipt 404'd on a bundle that had installed perfectly (2026-08-22).
     const needed = new Map<string, string>();
     for (const id of ids) {
       const cand = byId.get(id)?.suggested_candidates?.[0] as
@@ -2063,21 +2074,28 @@ export function ScanPage() {
         | undefined;
       if (cand?.bundle_external_id) needed.set(cand.bundle_external_id, cand.label ?? "a table");
     }
-    for (const [bundleId, label] of needed) {
-      try {
-        await api.materializeQuickstart(activeSlug, bundleId, { item_ids: [] });
-      } catch {
-        // Leave the confirms to fail and be counted; a toast per bundle on top
-        // of the summary would say the same thing twice.
-        console.error(`[scan] could not install ${label} before filing`);
-      }
+    const installed = new Map<string, { instance: string | null }>();
+    for (const bundleId of needed.keys()) {
+      const fallback = [...ids]
+        .map((id) => byId.get(id)?.suggested_candidates?.[0])
+        .find((c) => (c as { bundle_external_id?: string } | undefined)?.bundle_external_id === bundleId)
+        ?.instance;
+      const instance = await resolveInstanceForFiling(activeSlug, bundleId, fallback, (sum) => {
+        const line = installToastLine(sum);
+        if (line) toast.success(line);
+      });
+      installed.set(bundleId, { instance: instance ?? null });
     }
     let ok = 0;
     let skipped = 0;
     let failed = 0;
     for (const id of ids) {
       const it = byId.get(id);
-      const body = it ? confirmBodyFor(it, agreedCategory, agreedLocationId) : null;
+      const bundleId = (it?.suggested_candidates?.[0] as { bundle_external_id?: string } | undefined)
+        ?.bundle_external_id;
+      const body = it
+        ? confirmBodyFor(it, agreedCategory, agreedLocationId, (bundleId && installed.get(bundleId)) || null)
+        : null;
       if (!body) {
         if (it && it.status === "pending") skipped++;
         continue;
@@ -4748,9 +4766,15 @@ function InboxCard({
       // Install the bundle first (no item_ids = install-only) so its table
       // exists, then file into it — the same install-then-add the form's Confirm
       // runs, but with the scan's values as-is (open the card to edit them).
-      if (dest.bundle_external_id) {
-        await api.materializeQuickstart(activeSlug, dest.bundle_external_id, { item_ids: [] });
-      }
+      let installed: BundleInstallSummary | null = null;
+      const destInstance = await resolveInstanceForFiling(
+        activeSlug,
+        dest.bundle_external_id,
+        dest.instance,
+        (sum) => {
+          installed = sum;
+        },
+      );
       const meta = (item.suggested_metadata as Record<string, unknown> | null) ?? {};
       const serial = String((meta as { serial_number?: unknown }).serial_number ?? "");
       const extras = {
@@ -4758,21 +4782,28 @@ function InboxCard({
         ...(serial ? { serial_number: serial } : {}),
         ...(dest.fields && Object.keys(dest.fields).length ? { metadata: dest.fields } : {}),
       };
-      return api.confirmScanItem(activeSlug, item.id, {
+      await api.confirmScanItem(activeSlug, item.id, {
         target_module: dest.module,
         target_kind: baseKind(dest.module),
-        instance: dest.instance ?? undefined,
+        instance: destInstance,
         name: item.suggested_name,
         quantity: item.quantity ?? dest.quantity ?? undefined,
         location_id: item.target_location_id ?? undefined,
         extras: Object.keys(extras).length ? extras : undefined,
       });
+      return { installed: installed as BundleInstallSummary | null };
     },
-    onSuccess: () => {
+    onSuccess: ({ installed }) => {
+      // ONE toast. The install summary and "added <thing>" are the same event,
+      // and two toasts for one tap is noise - which is what shipping the
+      // summary as its own toast produced (seen on staging, 2026-08-22).
+      const changed = installed ? installToastLine(installed) : null;
       toast.success(
-        topCand?.bundle_external_id
-          ? `Installed ${topCand.label} — added ${item.suggested_name}`
-          : `Added ${item.suggested_name}`,
+        changed
+          ? `Added ${item.suggested_name}. ${changed}`
+          : topCand?.bundle_external_id
+            ? `Installed ${topCand.label}. Added ${item.suggested_name}.`
+            : `Added ${item.suggested_name}`,
       );
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
       if (topCand?.bundle_external_id) {
@@ -8008,13 +8039,14 @@ function ConfirmForm({
       // A will-install destination is created FIRST (materialize with no item_ids
       // installs the bundle + its table, committing nothing), then we file THIS
       // item into it with the EDITED values — same commit path as any table.
-      if (willInstall) {
-        await api.materializeQuickstart(activeSlug, willInstall, { item_ids: [] });
-      }
-      return api.confirmScanItem(activeSlug, item.id, {
+      let formInstalled: BundleInstallSummary | null = null;
+      const entryInstance = await resolveInstanceForFiling(activeSlug, willInstall, entry.instance, (sum) => {
+        formInstalled = sum;
+      });
+      const confirmed = await api.confirmScanItem(activeSlug, item.id, {
         target_module: entry.module,
         target_kind: baseKind(entry.module),
-        instance: entry.instance ?? undefined,
+        instance: entryInstance,
         name: name.trim() || (item.suggested_name ?? "Untitled"),
         quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : undefined,
         location_id: locationId || undefined,
@@ -8023,6 +8055,8 @@ function ConfirmForm({
           ? { save_eval_case: true, eval_note: evalNote.trim() || undefined }
           : {}),
       });
+      const sum: BundleInstallSummary | null = formInstalled;
+      return { ...confirmed, installedSummary: sum ? installToastLine(sum) : null };
     },
     onSuccess: (r) => {
       // Link into the instance when committed into one, else the base module.
@@ -8035,10 +8069,13 @@ function ConfirmForm({
       // commit. Use a plain <a> with the basename-absolute href instead.
       toast.success(
         <span>
-          {willInstall ? `Installed ${entry.label} — added ` : "Created — open "}
+          {willInstall ? `Installed ${entry.label}. Added ` : "Created. Open "}
           <a href={`/w/${activeSlug}${dest}`} className="underline">
             {r.item.suggested_name ?? "the new entity"}
           </a>
+          {/* What the install changed rides in the SAME toast, for the same
+              reason as the pill: one tap should not raise two of them. */}
+          {r.installedSummary ? ` ${r.installedSummary}` : ""}
         </span> as never,
       );
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });

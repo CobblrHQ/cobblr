@@ -111,34 +111,74 @@ interface ExistingImported {
   photo_hashes: { identify?: string; display?: string };
 }
 
-/** All already-imported provenance keys for this workspace, in one query. */
-async function existingProvenance(db: ReturnType<typeof tenantDb>): Promise<Map<string, ExistingImported>> {
+/** The rows a re-import might already be looking at, keyed both ways. */
+export interface ExistingRows {
+  /** `<source_instance>::<source_id>` -> the row THIS importer wrote for it. */
+  byProvenance: Map<string, ExistingImported>;
+  /** The destination row's own id -> that row. See findExistingRow. */
+  byId: Map<string, ExistingImported>;
+}
+
+/** Every row that a re-import could match, in one query. */
+async function existingProvenance(db: ReturnType<typeof tenantDb>): Promise<ExistingRows> {
+  // Deliberately NOT filtered on `suggested_metadata is not null`: a row that
+  // reached this workspace by a route other than the importer has no metadata
+  // to filter on, and those are exactly the rows byId exists to catch.
   const rows = await db
     .selectFrom("core_scan_inbox_items")
     .select(["id", "suggested_metadata", "image_file_id", "catalog_image_file_id"])
-    .where("suggested_metadata", "is not", null)
     .execute();
-  const map = new Map<string, ExistingImported>();
+  const byProvenance = new Map<string, ExistingImported>();
+  const byId = new Map<string, ExistingImported>();
   for (const r of rows) {
     const meta = r.suggested_metadata as {
       import_provenance?: { source_id?: unknown; source_instance?: unknown };
       import_photo_hashes?: { identify?: unknown; display?: unknown };
     } | null;
+    const h = meta?.import_photo_hashes ?? {};
+    const entry: ExistingImported = {
+      id: r.id,
+      image_file_id: (r.image_file_id as string | null) ?? null,
+      catalog_image_file_id: (r.catalog_image_file_id as string | null) ?? null,
+      photo_hashes: {
+        ...(typeof h.identify === "string" ? { identify: h.identify } : {}),
+        ...(typeof h.display === "string" ? { display: h.display } : {}),
+      },
+    };
+    byId.set(r.id, entry);
     const p = meta?.import_provenance;
     if (p && p.source_id !== undefined) {
-      const h = meta?.import_photo_hashes ?? {};
-      map.set(`${String(p.source_instance ?? "")}::${String(p.source_id)}`, {
-        id: r.id,
-        image_file_id: (r.image_file_id as string | null) ?? null,
-        catalog_image_file_id: (r.catalog_image_file_id as string | null) ?? null,
-        photo_hashes: {
-          ...(typeof h.identify === "string" ? { identify: h.identify } : {}),
-          ...(typeof h.display === "string" ? { display: h.display } : {}),
-        },
-      });
+      byProvenance.set(`${String(p.source_instance ?? "")}::${String(p.source_id)}`, entry);
     }
   }
-  return map;
+  return { byProvenance, byId };
+}
+
+/**
+ * The destination row this incoming item already IS, if it is here at all.
+ *
+ * Provenance is the real key, and it covers every row this importer wrote. It
+ * does NOT cover a workspace that was seeded some other way - a DB-level clone
+ * of the source, a restore - because those rows arrive under the source's
+ * ORIGINAL ids carrying no provenance at all. Dedupe cannot see them, so each
+ * sync into such a workspace imports a SECOND copy of every one, beside the
+ * clone-seeded original. A staging workspace seeded from a prod clone had
+ * accumulated 26 such pairs by 2026-08-22, each identifiable exactly: an
+ * imported row whose source_id is another local row's own id.
+ *
+ * Falling back to the destination row's own id is safe precisely because an
+ * IMPORTED row never keeps the source's id - it is assigned a fresh one - so a
+ * destination id equal to the incoming source_id can only be the same row,
+ * arriving again by a different route. (Two random uuids colliding is not a
+ * practical concern.)
+ */
+export function findExistingRow(
+  provenance: { source_id: string; source_instance: string | null } | null,
+  existing: ExistingRows,
+): ExistingImported | undefined {
+  if (!provenance) return undefined;
+  const key = `${String(provenance.source_instance ?? "")}::${provenance.source_id}`;
+  return existing.byProvenance.get(key) ?? existing.byId.get(provenance.source_id);
 }
 
 /** Content identity of an embedded photo. Hashing the base64 text is enough -
@@ -434,7 +474,7 @@ importRouter.post(
       if (!key || policy === "append") return { item, action: "create" as const };
       if (seenInFile.has(key)) return { item, action: "skip" as const };
       seenInFile.add(key);
-      const prior = existing.get(key);
+      const prior = findExistingRow(item.provenance, existing);
       if (!prior) return { item, action: "create" as const };
       return policy === "replace"
         ? { item, action: "replace" as const, existingId: prior.id, prior }

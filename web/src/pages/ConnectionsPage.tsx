@@ -222,6 +222,24 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
   );
 }
 
+/** A worked example for the "Label" box, in terms of the provider you picked.
+ *
+ *  It was the literal string "e.g. My home Ollama" for every provider, so
+ *  choosing Google AI Studio suggested you name it after a different product
+ *  entirely. A field that names one vendor while you are configuring another is
+ *  the hardcoded-example smell: it reads as a leftover, because it is one.
+ *
+ *  The parenthetical is dropped: a provider is labelled "Ollama (local)" or
+ *  "Google AI Studio (free tier)" so the PICKER can tell them apart, and
+ *  "My Google AI Studio (free tier)" is not a name anyone would type.
+ *
+ *  With nothing picked yet there is no honest example, so there is no
+ *  placeholder rather than a made-up one. */
+export function labelPlaceholder(providerLabel: string | undefined): string {
+  const name = (providerLabel ?? "").replace(/\s*\([^)]*\)\s*/g, " ").trim();
+  return name ? `e.g. My ${name}` : "";
+}
+
 function ConnectionForm({
   providers,
   orgs,
@@ -241,7 +259,26 @@ function ConnectionForm({
 }) {
   const toast = useToast();
   const isEdit = !!existing;
-  const [providerId, setProviderId] = useState(existing?.provider_id ?? providers[0]?.id ?? "");
+  // DERIVED from the list, not captured from it once.
+  //
+  // `useState(providers[0]?.id ?? "")` reads the catalogue on the FIRST render,
+  // and on that render the query has not resolved, so `providers` is empty and
+  // the state is "". useState never re-runs its initialiser, so the state stays
+  // "" after the list arrives.
+  //
+  // The bug that made visible is subtle, because the <select> LOOKS right: a
+  // value matching no <option> makes the browser display option 0 and report
+  // ITS value from `select.value`. So the control showed "Google AI Studio",
+  // and reading the DOM agreed — while React still held "", so
+  // `providers.find(p => p.id === "")` was undefined and the form rendered
+  // "This provider needs no credentials" with no API-key field. Picking ANY
+  // provider, even the one already displayed, fixed it (2026-08-22).
+  //
+  // Holding only the user's CHOICE and deriving the rest means the two cannot
+  // disagree: before a choice, the value IS whatever leads the list.
+  const [picked, setPicked] = useState<string | null>(existing?.provider_id ?? null);
+  const providerId = picked ?? providers[0]?.id ?? "";
+  const setProviderId = setPicked;
   const [label, setLabel] = useState(existing?.label ?? "");
   // Pre-fill the NON-SECRET fields (base_url, choices like transit / mcp_relay,
   // model) from the saved connection so the form shows what's actually stored —
@@ -392,7 +429,7 @@ function ConnectionForm({
           type="text"
           value={label}
           onChange={(e) => setLabel(e.target.value)}
-          placeholder="e.g. My home Ollama"
+          placeholder={labelPlaceholder(provider?.label)}
           className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
         />
       </label>

@@ -134,7 +134,7 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
           <>
             <DetectedHeaders headers={preview.detected_headers} />
             {preview.errors.length > 0 && (
-              <div className="rounded-md bg-ember-50 border border-ember-100 px-3 py-2 text-xs text-ember-600">
+              <div className="rounded-md bg-ember-50 border border-ember-100 px-3 py-2 text-xs text-ember-600 dark:text-ember-400">
                 <div className="flex items-center gap-1.5 font-medium mb-1">
                   <AlertTriangle size={12} /> {preview.errors.length} row{preview.errors.length === 1 ? "" : "s"} skipped
                 </div>

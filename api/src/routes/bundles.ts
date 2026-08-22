@@ -29,6 +29,7 @@ import {
   claimsForSource,
   countClaimsFor,
 } from "../platform/bundle-claims.js";
+import { bundleInstallSummary } from "../lib/bundle-install-summary.js";
 
 // Cross-module table type for the tenant-DB writes. core-views owns
 // `core_views_views`; bundles install rows into it tagged with
@@ -2022,7 +2023,9 @@ bundlesRouter.post(
         v,
         { takeTheirs: body.data.take_theirs },
       );
-      res.status(201).json(result);
+      // Same summary the scan-side install returns, built once here so the
+      // two surfaces cannot drift on what an install is said to have done.
+      res.status(201).json({ ...result, installed: bundleInstallSummary(v.manifest!, result.applied) });
     } catch (err) {
       next(err);
     }
@@ -2180,7 +2183,9 @@ bundlesRouter.post(
         ref: { module: null, entityType: "bundle", entityId: result.bundle.id },
         diff: { name: snap.name, to_version: snap.version, snapshot_id: snap.id },
       });
-      res.status(201).json(result);
+      // Same summary the scan-side install returns, built once here so the
+      // two surfaces cannot drift on what an install is said to have done.
+      res.status(201).json({ ...result, installed: bundleInstallSummary(v.manifest!, result.applied) });
     } catch (err) {
       next(err);
     }

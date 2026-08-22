@@ -30,6 +30,8 @@ import {
 import { diffManifests, type Manifestish } from "../lib/bundle-diff";
 import { recordSetup } from "../lib/setupCards";
 import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
+import { installHeadline, installChanges } from "../lib/installSummary";
+import type { BundleInstallSummary } from "../lib/api";
 
 interface InstalledMode {
   mode: "installed";
@@ -106,7 +108,10 @@ export function BundleDetailModal(props: Props) {
   // "what's next" panel instead of dumping the user back on the page.
   // `reopened` = the user re-opened the "where to start" panel from an already-
   // installed bundle (no fresh "Added N fields" line — that's install-time only).
-  const [justInstalled, setJustInstalled] = useState<{ wires: number; field_defs: number; reopened?: boolean } | null>(null);
+  const [justInstalled, setJustInstalled] = useState<
+    | { wires: number; field_defs: number; reopened?: boolean; installed?: BundleInstallSummary }
+    | null
+  >(null);
   // Technical details (wires + custom fields + raw manifest) are collapsed by
   // default — a novice doesn't need them; the requires-modules row is the
   // always-visible accordion header.
@@ -287,7 +292,7 @@ export function BundleDetailModal(props: Props) {
         if (returnTo) navigate(returnTo);
         else onClose();
       } else {
-        setJustInstalled(r.applied);
+        setJustInstalled({ ...r.applied, ...(r.installed ? { installed: r.installed } : {}) });
       }
     },
     onError: (e: unknown) => {
@@ -661,6 +666,11 @@ export function BundleDetailModal(props: Props) {
               <div className="text-sm text-faint dark:text-slate-400 mt-0.5">
                 {justInstalled.reopened ? (
                   "Here's where to start:"
+                ) : justInstalled.installed ? (
+                  // The shared wording, which says the thing no screen can
+                  // show: a bundle that skins a module adds no nav entry, so
+                  // "nothing appeared" is the correct outcome, not a failure.
+                  <>{installHeadline(justInstalled.installed)} Here's where to start:</>
                 ) : (
                   <>
                     Added {justInstalled.field_defs} field{justInstalled.field_defs === 1 ? "" : "s"}
@@ -673,6 +683,24 @@ export function BundleDetailModal(props: Props) {
               </div>
             </div>
           </div>
+          {justInstalled.installed && !justInstalled.reopened && (
+            <ul className="space-y-1.5 rounded-lg border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/40 p-3">
+              {installChanges(justInstalled.installed).map((c, i) => (
+                <li key={i} className="flex items-center gap-2 text-sm text-content dark:text-mortar-200">
+                  <span className="flex-1 min-w-0">{c.text}</span>
+                  {c.href && (
+                    <button
+                      type="button"
+                      onClick={() => goTo(c.href!)}
+                      className="shrink-0 text-xs text-accent hover:underline"
+                    >
+                      {c.linkLabel}
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
           {nextSteps.length > 0 && (
             <ul className="space-y-2">
               {nextSteps.map((s, i) => (

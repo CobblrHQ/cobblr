@@ -6,7 +6,8 @@ import { useState, type FormEvent } from "react";
 import { FIELD_TYPE_VALUES } from "@cobblr/platform-contract";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Plus } from "lucide-react";
-import { ApiError, api, type CatalogFieldRenderer, type FieldScope, type PlatformFieldDef } from "../lib/api";
+import { FIELD_ROLE_LABELS, FIELD_ROLE_VALUES } from "@cobblr/platform-contract";
+import { ApiError, api, type CatalogFieldRenderer, type FieldScope, type PlatformFieldDef, type FieldPresetState } from "../lib/api";
 import { TraitScopePicker } from "../components/TraitScopePicker";
 import { ChoicesInput } from "../components/ChoicesInput";
 import { slugifyFieldName } from "../lib/field-key";
@@ -83,6 +84,11 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [nameTouched, setNameTouched] = useState(false);
   const [label, setLabel] = useState("");
   const [choices, setChoices] = useState<string[]>([]);
+  // What a field MEANS, so the pipeline can fill it. The API has always taken
+  // this; the form never sent one, which is why a hand-built "Acquired on" was
+  // a plain date the scan could not fill. Optional and empty by default: a role
+  // is a person saying what a field is, never a guess from its name.
+  const [fieldRole, setFieldRole] = useState<string>("");
   const [type, setType] = useState<PlatformFieldDef["type"]>("text");
   const [renderer, setRenderer] = useState<CatalogFieldRenderer>("text");
   const [template, setTemplate] = useState("");
@@ -96,6 +102,43 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
   // valid scope, and the grid is what expresses that.
   const scopes: FieldScope[] = fields.data?.scopes ?? [];
   const scopeBy = (key: string) => scopes.find((s) => s.key === key) ?? null;
+
+  // A named set of role-tagged fields, switched on rather than installed. The
+  // three provenance fields are the reason this exists: the scan pipeline fills
+  // a field by its ROLE, and the form below cannot set one, so building them by
+  // hand produced fields no receipt could ever fill.
+  const presets = useQuery({
+    queryKey: ["field-presets", slug],
+    queryFn: () => api.listFieldPresets(slug),
+    enabled: !!slug,
+  });
+  const [busyPreset, setBusyPreset] = useState<string | null>(null);
+  const togglePreset = async (preset: FieldPresetState) => {
+    setBusyPreset(preset.key);
+    try {
+      if (preset.status === "on") {
+        const r = await api.removeFieldPreset(slug, preset.key);
+        toast.success(
+          r.removed.length
+            ? `${preset.label} off. ${r.removed.length} field${r.removed.length === 1 ? "" : "s"} removed; anything already recorded stays on the items.`
+            : `${preset.label} was already off.`,
+        );
+      } else {
+        const r = await api.applyFieldPreset(slug, preset.key);
+        toast.success(
+          r.created.length
+            ? `${preset.label} on. Added ${r.created.length} field${r.created.length === 1 ? "" : "s"} to ${preset.hint.toLowerCase().replace(/\.$/, "")}.`
+            : `${preset.label} was already on.`,
+        );
+      }
+      await qc.invalidateQueries({ queryKey: ["field-presets", slug] });
+      await qc.invalidateQueries({ queryKey: ["field-defs", slug] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not change that.");
+    } finally {
+      setBusyPreset(null);
+    }
+  };
 
   const create = useMutation({
     mutationFn: () =>
@@ -116,6 +159,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
         // Only text fields take a dropdown; the API rejects choices on any other
         // type, so don't send an empty array and trip it.
         choices: type === "text" && choices.length ? choices : undefined,
+        field_role: fieldRole ? (fieldRole as PlatformFieldDef["field_role"]) : undefined,
       }),
     onSuccess: (created) => {
       toast.success(
@@ -258,6 +302,50 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
         </div>
       )}
 
+      {(presets.data?.items ?? []).length > 0 && (
+        <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
+            // sets you can switch on
+          </div>
+          {(presets.data?.items ?? []).map((preset) => (
+            <div key={preset.key} className="flex items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="font-medium text-content dark:text-mortar-100">
+                  {preset.label}
+                  {preset.status === "partial" && (
+                    <span className="ml-2 text-[11px] text-faint dark:text-slate-500">
+                      {preset.present} of {preset.total} there
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-faint dark:text-slate-400">{preset.hint}</div>
+                <div className="text-[11px] text-faint dark:text-slate-500 mt-0.5">
+                  {preset.fields.map((f) => f.display_label).join(" · ")}
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={busyPreset === preset.key}
+                onClick={() => void togglePreset(preset)}
+                className={`shrink-0 px-3 py-1.5 text-sm rounded disabled:opacity-50 ${
+                  preset.status === "on"
+                    ? "border border-line dark:border-slate-700 text-content dark:text-mortar-200"
+                    : "bg-cobble-600 hover:bg-cobble-700 text-white"
+                }`}
+              >
+                {busyPreset === preset.key
+                  ? "…"
+                  : preset.status === "on"
+                    ? "Turn off"
+                    : preset.status === "partial"
+                      ? "Finish turning on"
+                      : "Turn on"}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <form
         onSubmit={submit}
         className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3"
@@ -395,6 +483,32 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
               full-width bands stacked. A text field with choices renders as a
               DROPDOWN on the record (with a "+ add new" option) — that control has
               existed for ages; there was simply no way to SET the choices here. */}
+          {/* What the field MEANS. The pipeline fills a field by its ROLE, so a
+              hand-built "Acquired on" with no role is a date nothing can fill -
+              which is what made building these by hand look equivalent to a
+              preset and not be. Left empty by default: a role is a person
+              saying what a field is, never inferred from its name. */}
+          <label className="col-span-2 block">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+              Meaning
+              <span className="ml-2 normal-case tracking-normal text-faint dark:text-slate-600">
+                optional - lets a scan fill this field for you
+              </span>
+            </span>
+            <select
+              value={fieldRole}
+              onChange={(e) => setFieldRole(e.target.value)}
+              className="input"
+            >
+              <option value="">No particular meaning</option>
+              {FIELD_ROLE_VALUES.filter((r) => FIELD_ROLE_LABELS[r].pickable).map((r) => (
+                <option key={r} value={r}>
+                  {FIELD_ROLE_LABELS[r].label}
+                </option>
+              ))}
+            </select>
+          </label>
+
           {(type === "text" || rendererChoices.length > 1) && (
             <div className="col-span-2 grid grid-cols-3 gap-3">
               {type === "text" && (

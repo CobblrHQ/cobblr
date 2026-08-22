@@ -118,7 +118,7 @@ function ListCard({ list, onOpen, onDelete }: { list: ListSummary; onOpen: () =>
             {list.open_count} open{list.done_count > 0 ? ` · ${list.done_count} done` : ""}
           </div>
         </button>
-        <button type="button" onClick={onDelete} className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition" aria-label="Delete list">
+        <button type="button" onClick={onDelete} className="text-slate-300 hover:text-red-500 hover-reveal transition" aria-label="Delete list">
           <Trash2 size={15} />
         </button>
       </div>
@@ -223,13 +223,13 @@ function ListDetailModal({ listId, api, onClose }: { listId: string; api: ListsA
                   className={`shrink-0 rounded px-2 py-0.5 text-[11px] transition ${
                     it.claimed_by
                       ? "text-muted hover:text-accent"
-                      : "text-slate-300 hover:text-accent opacity-0 group-hover:opacity-100 focus:opacity-100"
+                      : "text-slate-300 hover:text-accent hover-reveal"
                   }`}
                 >
                   {it.claimed_by ? "Never mind" : "I'll get it"}
                 </button>
               )}
-              <button type="button" onClick={() => remove.mutate(it.id)} className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100" aria-label="Remove item">
+              <button type="button" onClick={() => remove.mutate(it.id)} className="text-slate-300 hover:text-red-500 hover-reveal" aria-label="Remove item">
                 <X size={14} />
               </button>
             </li>

@@ -1329,6 +1329,21 @@ export const api = {
       status: ShipmentStatus | null;
       reason: ShipmentStatusReason | null;
     }>("GET", `/orgs/${slug}/modules/core-shipments/status?number=${encodeURIComponent(number)}`),
+  /** The field presets this workspace can switch on, each with its state. */
+  listFieldPresets: (slug: string) =>
+    request<{ items: FieldPresetState[] }>("GET", `/orgs/${slug}/field-presets`),
+  /** Switch one ON: creates the fields it is missing, and only those. */
+  applyFieldPreset: (slug: string, key: string) =>
+    request<FieldPresetState & { created: string[]; failed?: Array<{ name: string; message: string }> }>(
+      "POST",
+      `/orgs/${slug}/field-presets/${key}`,
+    ),
+  /** Switch one OFF. Values already recorded stay on the items. */
+  removeFieldPreset: (slug: string, key: string) =>
+    request<FieldPresetState & { removed: string[]; values_kept: boolean }>(
+      "DELETE",
+      `/orgs/${slug}/field-presets/${key}`,
+    ),
   createFieldDef: (slug: string, body: Partial<PlatformFieldDef>) =>
     request<PlatformFieldDef>("POST", `/orgs/${slug}/field-defs`, body),
   updateFieldDef: (slug: string, id: string, body: Partial<PlatformFieldDef>) =>
@@ -1379,7 +1394,7 @@ export const api = {
     enabledFeatures?: string[],
     takeTheirs?: Array<{ entity_kind: string; name: string }>,
   ) =>
-    request<{ bundle: PlatformBundle; applied: { wires: number; field_defs: number } }>(
+    request<{ bundle: PlatformBundle; applied: { wires: number; field_defs: number }; installed?: BundleInstallSummary }>(
       "POST",
       `/orgs/${slug}/bundles/install`,
       { manifest, confirm, enabled_features: enabledFeatures, take_theirs: takeTheirs },
@@ -5048,6 +5063,9 @@ export interface OrganizePlanResponse {
   /** Display names by item id — the render fallback when the inbox no longer
    *  holds the item (entity plans, or a scan committed mid-walk). */
   item_names?: Record<string, string>;
+  /** The plan's own thumbnails, so a row still shows a picture once its
+   *  item has left the caller's inbox query. See planItemPhotos. */
+  item_photos?: Record<string, { image_file_id?: string; catalog_image_file_id?: string }>;
   /** Barcodes by item id (entity plans) — powers scan-to-confirm in the walk. */
   item_barcodes?: Record<string, string>;
 }
@@ -5087,6 +5105,9 @@ export interface OrganizeStoredPlan {
   source: "ai" | "heuristic";
   subject?: "inbox" | "entities";
   item_names?: Record<string, string>;
+  /** The plan's own thumbnails, so a row still shows a picture once its
+   *  item has left the caller's inbox query. See planItemPhotos. */
+  item_photos?: Record<string, { image_file_id?: string; catalog_image_file_id?: string }>;
   item_barcodes?: Record<string, string>;
   applied_group_ids: string[];
   walk_state: { placed_item_ids?: string[] };
@@ -5133,6 +5154,34 @@ export interface QuickstartSuggestions {
   pending_total: number;
   suggestions: QuickstartSuggestion[];
 }
+/** What installing a bundle changed. See api/src/lib/bundle-install-summary.ts. */
+export interface BundleInstallSummary {
+  bundle: string;
+  /** `skin` creates no table and no nav entry - the fact users most need told. */
+  kind: "instance" | "skin";
+  instance: string | null;
+  module: string | null;
+  fields: number;
+  wires: number;
+  catalogs: number;
+  modules_enabled: string[];
+  kinds_touched: string[];
+}
+
+/** A named set of role-tagged fields a workspace can switch on in one click.
+ *  See docs/design-decisions/field-presets.md. */
+export interface FieldPresetState {
+  key: string;
+  label: string;
+  hint: string;
+  traits: string[];
+  /** `partial` is real: some of the fields exist, and switching on adds the rest. */
+  status: "on" | "off" | "partial";
+  present: number;
+  total: number;
+  fields: Array<{ name: string; display_label: string; present: boolean }>;
+}
+
 export interface QuickstartMaterializeResult {
   created: number;
   module: string | null;
@@ -5140,6 +5189,8 @@ export interface QuickstartMaterializeResult {
   label?: string;
   /** Route under /w/:slug to land the user in the new, populated table. */
   route: string | null;
+  /** Present when this call actually installed something. */
+  installed?: BundleInstallSummary;
   errors?: Array<{ id: string; status: number }>;
 }
 
@@ -6459,6 +6510,10 @@ export interface PlatformFieldDef {
    *  within an axis, AND across axes). When set on create, the server derives
    *  `entity_kind` from it, so the two can't disagree. */
   applies_to?: { traits: string[] };
+  /** What this field MEANS, so the pipeline can fill it. A receipt's parsed date
+   *  lands on the field that CLAIMS that meaning, never on one whose name looks
+   *  right. Null on a field nobody has told. See FIELD_ROLE_LABELS. */
+  field_role?: FieldRole | null;
   name: string;
   display_label: string;
   type: FieldDefType;

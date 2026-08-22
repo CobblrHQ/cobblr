@@ -481,19 +481,11 @@
   },
   {
     "file": "web/src/pages/ScanPage.tsx",
-    "text": "Installed — added Added"
-  },
-  {
-    "file": "web/src/pages/ScanPage.tsx",
     "text": "item couldn't be sent back — open to see why."
   },
   {
     "file": "web/src/pages/ScanPage.tsx",
     "text": "Lookup updated: Re-ran — still no match. Fill it in manually."
-  },
-  {
-    "file": "web/src/pages/ScanPage.tsx",
-    "text": "of these have no location yet - this asks where they go, then files all Add all to their d"
   },
   {
     "file": "web/src/pages/ScanPage.tsx",

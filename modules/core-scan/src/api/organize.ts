@@ -31,6 +31,68 @@ import {
   type OrganizePlan,
 } from "../services/organize-plan.js";
 
+/**
+ * The display names a stored plan carries for its own items.
+ *
+ * BOTH sets, not just the planned one. The READY groups ("already set, just
+ * put it away") are built from rows that `plannable` deliberately excludes, so
+ * their members used to have no snapshot at all and fell back to whatever the
+ * caller's live inbox query happened to hold. A plan showing four groups
+ * rendered one of them by name and the other twenty-one items as
+ * "(unidentified)" (2026-08-22).
+ *
+ * The ready groups are exactly what this snapshot was written for: an item
+ * that already has its destination is the likeliest one to have left the
+ * caller's view.
+ *
+ * A row with no name at all is left out, so "(unidentified)" still means what
+ * it says rather than becoming an empty label.
+ */
+/**
+ * The photo a stored plan carries for each of its items.
+ *
+ * Same reason as planItemNames, and it was the other half of the same hole: a
+ * row whose item has left the caller's view rendered a grey square. Names came
+ * back first and the picture did not, which is worse than it sounds - a
+ * put-away list is read by picture, and a column of grey squares is unusable
+ * even when every name beside it is right.
+ *
+ * Built from the raw rows, so it covers the planned items and the ready ones
+ * without either having to be threaded through separately.
+ */
+export function planItemPhotos(
+  rows: ReadonlyArray<{
+    id: string;
+    image_file_id?: string | null;
+    catalog_image_file_id?: string | null;
+  }>,
+): Record<string, { image_file_id?: string; catalog_image_file_id?: string }> {
+  const out: Record<string, { image_file_id?: string; catalog_image_file_id?: string }> = {};
+  for (const r of rows) {
+    const entry = {
+      ...(r.image_file_id ? { image_file_id: r.image_file_id } : {}),
+      ...(r.catalog_image_file_id ? { catalog_image_file_id: r.catalog_image_file_id } : {}),
+    };
+    // A row with no picture at all stays out rather than storing an empty
+    // object for every item in a large plan.
+    if (Object.keys(entry).length) out[r.id] = entry;
+  }
+  return out;
+}
+
+export function planItemNames(
+  plannable: ReadonlyArray<{ id: string; name: string | null }>,
+  readyRows: ReadonlyArray<{ id: string; suggested_name: string | null }>,
+): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  // Planned first and unfiltered: the plan-reuse check compares these to the
+  // live names, so a null must stay a null there.
+  for (const p of plannable) out[p.id] = p.name;
+  for (const r of readyRows) if (r.suggested_name) out[r.id] = r.suggested_name;
+  return out;
+}
+
+
 export const organizeRouter: Router = Router({ mergeParams: true });
 
 const PLAN_MAX_ITEMS = 200;
@@ -140,6 +202,9 @@ organizeRouter.post(
         "target_location_id",
         "target_container_id",
         "quantity",
+        // For the plan's own thumbnails - see planItemPhotos.
+        "image_file_id",
+        "catalog_image_file_id",
       ])
       .where("status", "=", "pending")
       // scope:"pending" is a one-click CTA — plan the newest cap-full rather
@@ -398,7 +463,8 @@ organizeRouter.post(
       subject: "inbox" as const,
       // Display names ride the payload so the walk never depends on the inbox
       // query still holding the item (it may commit/resolve mid-walk).
-      item_names: Object.fromEntries(plannable.map((p) => [p.id, p.name])),
+      item_names: planItemNames(plannable, readyRows),
+      item_photos: planItemPhotos(rows),
       already_filed_item_ids: alreadyFiled,
       needs_review_item_ids: needsReview,
     };

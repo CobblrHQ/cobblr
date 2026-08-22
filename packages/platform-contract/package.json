@@ -14,7 +14,9 @@
     "./outbound-identity": "./src/outbound-identity.ts",
     "./receipt-totals": "./src/receipt-totals.ts",
     "./scan-triage": "./src/scan-triage.ts",
-    "./delivery-outcome": "./src/delivery-outcome.ts"
+    "./delivery-outcome": "./src/delivery-outcome.ts",
+    "./app-surface": "./src/app-surface.generated.ts",
+    "./app-surface-types": "./src/app-surface-types.ts"
   },
   "types": "src/index.ts",
   "scripts": {

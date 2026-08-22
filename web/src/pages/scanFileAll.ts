@@ -74,6 +74,20 @@ export interface ConfirmBody {
 /** The confirm body that routes an item to ITS top candidate — module + BASE
  *  kind + the instance the matchmaker chose. Returns null when the item isn't
  *  ready (no name / no candidate / already resolved). */
+/** What installing a bundle actually produced, as the install reports it.
+ *
+ *  A candidate's `instance` is not always a real instance. A bundle that
+ *  PROVIDES one (Bookshelf) names it; a bundle that SKINS the module default
+ *  (Groceries) has none, and the routing menu still needs a token to tell that
+ *  bundle apart, so it carries a synthetic one - the bundle's own slug. The two
+ *  are indistinguishable from the candidate alone.
+ *
+ *  Install answers the question: it reports the target it really created, with
+ *  a null instance for the skinning case. Pass that here and it wins. */
+export interface InstalledBundleTarget {
+  instance: string | null;
+}
+
 export function confirmBodyFor(
   it: ScanItemLike,
   /** The category the whole session agreed on. Overrides ONLY the axis field, so
@@ -84,6 +98,12 @@ export function confirmBodyFor(
    *  to put the thing; without this an item commits with no home and is findable
    *  only by search. The item's own location still wins when it has one. */
   agreedLocationId?: string | null,
+  /** The real target of the bundle this item routes to, from its install. When
+   *  given it REPLACES the candidate's instance, including replacing it with
+   *  nothing. Only the instance: a multi-target bundle reports its primary
+   *  target here, so the module and kind stay with the candidate, which knows
+   *  which of them this item is for. */
+  installedTarget?: InstalledBundleTarget | null,
 ): ConfirmBody | null {
   const cand = it.suggested_candidates?.[0];
   if (!isReadyToFile(it) || !cand) return null;
@@ -95,7 +115,7 @@ export function confirmBodyFor(
   return {
     target_module: cand.module,
     target_kind: baseKind(cand.module),
-    instance: cand.instance ?? undefined,
+    instance: (installedTarget ? installedTarget.instance : cand.instance) ?? undefined,
     name: it.suggested_name!,
     quantity: it.quantity ?? cand.quantity ?? undefined,
     extras: fields,

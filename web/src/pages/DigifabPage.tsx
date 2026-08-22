@@ -643,7 +643,7 @@ const JOB_STATUS_STYLE: Record<string, string> = {
   sent: "text-accent bg-cobble-50 dark:bg-cobble-950/40",
   printing: "text-accent bg-cobble-50 dark:bg-cobble-950/40",
   completed: "text-moss-600 bg-moss-50 dark:bg-moss-950/40",
-  failed: "text-ember-600 bg-ember-50 dark:bg-ember-950/40",
+  failed: "text-ember-600 dark:text-ember-400 bg-ember-50 dark:bg-ember-950/40",
   cancelled: "text-faint bg-subtle dark:bg-slate-800",
 };
 // A pool job is auto-assigned by the worker (it has no connection to send to),
@@ -736,7 +736,7 @@ function PrintTrendChart({ series }: { series: NonNullable<DigifabHistory["serie
           {h ? (
             <span className="text-content dark:text-mortar-100">
               {fmtDay(h.date)} · <span className="text-moss-600">{h.completed} ok</span>
-              {h.failed ? <> · <span className="text-ember-600">{h.failed} failed</span></> : null}
+              {h.failed ? <> · <span className="text-ember-600 dark:text-ember-400">{h.failed} failed</span></> : null}
               {h.filament_g ? ` · ${h.filament_g}g` : ""}
             </span>
           ) : (
@@ -1248,7 +1248,7 @@ function PrintHistorySection({ slug }: { slug: string }) {
                           <li key={i} className="flex gap-2">
                             <span className="flex-1 min-w-0 truncate text-content dark:text-mortar-100">{d.name}</span>
                             {dr != null && (
-                              <span className={"shrink-0 tabular-nums " + (dr >= 90 ? "text-moss-600" : dr >= 70 ? "text-amber-600" : "text-ember-600")}>{dr}%</span>
+                              <span className={"shrink-0 tabular-nums " + (dr >= 90 ? "text-moss-600" : dr >= 70 ? "text-amber-600" : "text-ember-600 dark:text-ember-400")}>{dr}%</span>
                             )}
                             <span className="text-faint shrink-0">{d.completed}/{d.total}{d.failed ? ` · ${d.failed} failed` : ""}{d.filament_g ? ` · ${Math.round(d.filament_g)}g` : ""}</span>
                           </li>

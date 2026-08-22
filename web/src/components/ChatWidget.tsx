@@ -51,6 +51,11 @@ function chatStoreKey(slug: string | null | undefined): string | null {
 interface Msg {
   role: "user" | "assistant";
   content: string;
+  /** What was in context when this was SENT. A message reads differently once
+   *  you have scrolled back to it — "tell me about these" is meaningless
+   *  without the two racks it came with — so the message keeps its own copy
+   *  rather than borrowing whatever the composer holds now. */
+  sentWith?: { label: string; kind?: string; ids?: string[]; text?: string };
   proposal?: AiChatProposal; // assistant proposed a write — needs confirm
   buildPreview?: BundleValidationPreview; // build-proposal: what applying enables/adds
   buildSeedCount?: number; // build-proposal: starter records apply will create
@@ -332,7 +337,7 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
       const slim = messages
         .filter((m) => m.content && m.content.trim())
         .slice(-CHAT_STORE_MAX)
-        .map((m) => ({ role: m.role, content: m.content }));
+        .map((m) => ({ role: m.role, content: m.content, ...(m.sentWith ? { sentWith: m.sentWith } : {}) }));
       if (slim.length) localStorage.setItem(key, JSON.stringify(slim));
       else localStorage.removeItem(key);
     } catch {
@@ -582,7 +587,10 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
       saveHistory(activeSlug, entries);
       return { entries, index: null, draft: "" };
     });
-    const next: Msg[] = [...messages, { role: "user", content: text }];
+    const next: Msg[] = [
+      ...messages,
+      { role: "user", content: text, ...(selection ? { sentWith: selection } : {}) },
+    ];
     setMessages(next);
     setBusy(true);
     try {
@@ -621,7 +629,10 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
     });
     setSeedPlaceholder(null);
     setError(null);
-    const next: Msg[] = [...messages, { role: "user", content: text }];
+    const next: Msg[] = [
+      ...messages,
+      { role: "user", content: text, ...(selection ? { sentWith: selection } : {}) },
+    ];
     setMessages(next);
 
     // No AI provider → ask the server's basic-mode matcher (no model, no cost)
@@ -1315,7 +1326,20 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
             {messages.map((m, i) => {
               const el =
               m.role === "user" ? (
-                <div key={i} className="text-right">
+                <div key={i} className="flex items-start justify-end gap-1.5">
+                  {/* What the message was sent WITH, to the LEFT of it: the
+                      space beside a right-aligned bubble is already empty, and
+                      a line above would cost height on every message that had
+                      context. Scrolled back to weeks later, "tell me about
+                      these" still says which two racks it meant. */}
+                  {m.sentWith && (
+                    <span
+                      className="mt-1 shrink min-w-0 max-w-[45%] inline-flex items-center gap-1 rounded-md border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900 px-1.5 py-0.5 text-[10px] text-cobble-800 dark:text-cobble-100"
+                      title={m.sentWith.text ?? m.sentWith.label}
+                    >
+                      <span className="truncate">{m.sentWith.label}</span>
+                    </span>
+                  )}
                   <div className="inline-block max-w-[88%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap break-words bg-cobble-600 text-white text-left">
                     {m.content}
                   </div>
@@ -1620,20 +1644,19 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
           {/* What you are pointing at, held where you can see it — and drop it.
               A highlight is gone the moment the caret enters this box, so it is
               captured as a chip instead of being read back at send-time. */}
-          <div className="relative border-t border-line dark:border-slate-700 p-3 flex items-end gap-2 shrink-0">
+          <div className="border-t border-line dark:border-slate-700 p-3 flex flex-col gap-2 shrink-0">
             {selection && (
-              // ANCHORED to the top of the box, not a row above it. As a row it
-              // had its own divider and, worse, its own HEIGHT: the transcript
-              // lost that many pixels the moment you pointed Cobb at something,
-              // so the last thing said slid out of view. scrollTop stayed the
-              // same number, which is why measuring only scrollTop said this was
-              // fine — the pixels that moved were clientHeight.
-              //
-              // Absolute, so the conversation above it is not resized at all. It
-              // carries its own background and border, so it reads as a chip
-              // sitting on the box's edge rather than a strip of chrome.
-              <div className="absolute -top-3 left-3 right-3 z-10 flex">
-                <div className="inline-flex items-center gap-1.5 rounded-md border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-950/40 px-2 py-1 text-[11px] text-cobble-800 dark:text-cobble-200 max-w-full shadow-sm">
+              // INSIDE the box, at its top. Three attempts got here:
+              //   a row of its own above the composer — a second divider and a
+              //     strip of chrome that read as a section;
+              //   absolutely positioned over the composer's edge — no divider,
+              //     but it covered the last line of the conversation and, being
+              //     translucent, showed the words through itself.
+              // Part of the input's own box is what "anchored to the top of the
+              // text input" actually means: no divider between them, nothing
+              // overlapping, opaque.
+              <div className="flex">
+                <div className="inline-flex items-center gap-1.5 rounded-md border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900 px-2 py-1 text-[11px] text-cobble-800 dark:text-cobble-100 max-w-full">
                   {/* Not "In context" — that is the vocabulary of the tool, not
                       of the person using it. What the chip means is "this is what
                       my next message is about". */}
@@ -1658,6 +1681,7 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
                 </div>
               </div>
             )}
+            <div className="flex items-end gap-2">
             <textarea
               ref={taRef}
               value={input}
@@ -1720,6 +1744,7 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
             >
               <Send size={16} />
             </button>
+            </div>
           </div>
     </SidePanel>
   );

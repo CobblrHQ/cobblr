@@ -239,7 +239,7 @@ export function CatalogMatchPage() {
                     </div>
                     <Check
                       size={14}
-                      className="text-accent opacity-0 group-hover:opacity-100 shrink-0"
+                      className="text-accent hover-reveal shrink-0"
                     />
                   </button>
                 );

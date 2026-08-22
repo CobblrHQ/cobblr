@@ -33,6 +33,15 @@ import {
   listAllFieldDefs,
   resolveFieldDefsForKind,
 } from "../platform/field-defs.js";
+import {
+  FIELD_PRESETS,
+  fieldsToCreate,
+  fieldsToRemove,
+  findFieldPreset,
+  presetState,
+  type FieldPreset,
+  type PresetFieldState,
+} from "../platform/field-presets.js";
 
 export const platformOrgRouter = Router({ mergeParams: true });
 
@@ -1221,6 +1230,119 @@ platformOrgRouter.delete(
         .where("name", "=", req.params.name!)
         .execute();
       res.status(204).end();
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ── Field presets ────────────────────────────────────────────────────────────
+// A named set of role-tagged fields you switch on, rather than install. The
+// switch has to be idempotent: creating a field that already exists is how a
+// setting quietly produces duplicates. See docs/design-decisions/field-presets.md.
+
+/** Which of a preset's fields exist in this workspace right now. */
+async function presetFieldStates(orgId: string, preset: FieldPreset): Promise<PresetFieldState[]> {
+  const sentinel = fieldScopeSentinel(preset.traits);
+  const rows = await meta
+    .selectFrom("module_field_defs")
+    .select(["name", "display_label"])
+    .where("org_id", "=", orgId)
+    .where("entity_kind", "=", sentinel)
+    .execute();
+  const have = new Set(rows.map((r) => r.name));
+  return preset.fields.map((f) => ({
+    name: f.name,
+    display_label: f.display_label,
+    present: have.has(f.name),
+  }));
+}
+
+platformOrgRouter.get(
+  "/:slug/field-presets",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      const orgId = req.tenant!.org.id;
+      const items = await Promise.all(
+        FIELD_PRESETS.map(async (p) => presetState(p, await presetFieldStates(orgId, p))),
+      );
+      res.json({ items });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+platformOrgRouter.post(
+  "/:slug/field-presets/:key",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      if (!requireRole(req, res, "owner", "admin")) return;
+      const preset = findFieldPreset(req.params.key ?? "");
+      if (!preset) {
+        res.status(404).json({ error: { code: "unknown_preset", message: "No such field preset." } });
+        return;
+      }
+      const orgId = req.tenant!.org.id;
+      const before = presetState(preset, await presetFieldStates(orgId, preset));
+      const created: string[] = [];
+      const failed: Array<{ name: string; message: string }> = [];
+      for (const f of fieldsToCreate(preset, before)) {
+        const result = await createFieldDef(orgId, {
+          entity_kind: "",
+          applies_to: { traits: preset.traits },
+          name: f.name,
+          display_label: f.display_label,
+          type: f.type,
+          field_role: f.field_role,
+          ...(f.help ? { help: f.help } : {}),
+        });
+        if (result.ok) created.push(f.name);
+        // A name already taken by a field this preset did not make is not an
+        // error to shout about: the preset is partly on because the workspace
+        // already had one, and saying so is more useful than failing the switch.
+        else failed.push({ name: f.name, message: result.message });
+      }
+      const after = presetState(preset, await presetFieldStates(orgId, preset));
+      res.status(201).json({ ...after, created, ...(failed.length ? { failed } : {}) });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+platformOrgRouter.delete(
+  "/:slug/field-presets/:key",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      if (!requireRole(req, res, "owner", "admin")) return;
+      const preset = findFieldPreset(req.params.key ?? "");
+      if (!preset) {
+        res.status(404).json({ error: { code: "unknown_preset", message: "No such field preset." } });
+        return;
+      }
+      const orgId = req.tenant!.org.id;
+      const state = presetState(preset, await presetFieldStates(orgId, preset));
+      const names = fieldsToRemove(state);
+      if (names.length > 0) {
+        await meta
+          .deleteFrom("module_field_defs")
+          .where("org_id", "=", orgId)
+          .where("entity_kind", "=", fieldScopeSentinel(preset.traits))
+          .where("name", "in", names)
+          .execute();
+      }
+      const after = presetState(preset, await presetFieldStates(orgId, preset));
+      // Values already recorded stay on the items, exactly as they do for any
+      // other field deletion here, and come back if the preset is switched on
+      // again. Said out loud so the switch does not read as destructive.
+      res.json({ ...after, removed: names, values_kept: true });
     } catch (err) {
       next(err);
     }

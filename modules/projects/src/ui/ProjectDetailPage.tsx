@@ -420,11 +420,11 @@ function TaskRow({ task }: { task: Task }) {
       <EntityActionsBar
         entityKind="projects:task"
         entityId={task.id}
-        className="opacity-0 group-hover:opacity-100 transition"
+        className="hover-reveal transition"
       />
       <button
         onClick={() => remove.mutate()}
-        className="opacity-0 group-hover:opacity-100 text-faint dark:text-slate-600 hover:text-ember-500 transition"
+        className="hover-reveal text-faint dark:text-slate-600 hover:text-ember-500 transition"
       >
         <Trash2 size={13} />
       </button>

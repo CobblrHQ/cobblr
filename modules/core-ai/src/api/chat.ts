@@ -33,6 +33,8 @@ import { createTurn, emitTurnEvent, finishTurn, readTurn, eventsAfter, openTurnF
 import { recordRound } from "../providers/replay.js";
 import { performWrite, performWrites, undoWrite, undoableOf, type WriteRequest, type WriteOutcome } from "./chat-ledger.js";
 import type { ToolCall, ChatTurn } from "../providers/tool-wire.js";
+import { summariseAction, type ActionCopy } from "./action-summary.js";
+import { appSurfacePrompt } from "./app-surface.js";
 
 /** ToolCall → the ledgered write request shape (null = not a known write). */
 /** The writes a tool call MEANS — one for a single write, many for a bulk one.
@@ -220,8 +222,25 @@ interface Move {
  *  has nothing to do with it, three invented a company. Six of six WITH them
  *  said they do not know. A weaker model does not need a lighter prompt; it
  *  needs a firmer one. */
+/** How an answer READS.
+ *
+ *  Asked "tell me about these" for two racks, Cobb replied with their storage
+ *  classification, that they sit under the same parent, the parent's uuid, and
+ *  three offers of help. Everything true; almost nothing wanted. A person
+ *  asking about two shelves wants to know what is on them.
+ *
+ *  Kept beside the grounding rules because they are the same job from two
+ *  sides: that one is about not saying what you do not know, this one is about
+ *  not saying what nobody asked. */
+export const PLAIN_ANSWER_RULES = `HOW TO ANSWER:
+- Lead with the answer. One or two sentences for a simple question, and stop. A person scanning a shelf does not read a report.
+- Never show an id, a uuid, or an internal field name. Say what the thing is CALLED. If you only have an id, say "its parent" rather than printing it.
+- Do not narrate the shape of the data: not "a container location configured as a top-level storage unit", just "a rack". Its kind, its parent and its settings are worth mentioning only when they answer what was asked.
+- Empty is a fine answer. "Both are empty." beats a paragraph explaining that nothing is placed inside them.
+- Offer ONE next step, if an obvious one exists. Not three.`;
+
 export const GROUNDING_RULES = `WHAT YOU CAN SEE, AND WHAT YOU CANNOT. This matters more than sounding helpful:
-- You can see three things: this conversation, whatever a tool call has just returned, and how this app works because you are part of it. Everything else — the outside world, real people, companies, products, prices, dates — you have only general knowledge of, which is not the same as knowing.
+- You can see three things: this conversation, whatever a tool call has just returned, and the list of app features you are given below. Being inside this app does not tell you how the rest of it works — the list is what you know about the product, and there is nothing behind it. Everything else — the outside world, real people, companies, products, prices, dates — you have only general knowledge of, which is not the same as knowing.
 - So never state a SPECIFIC you cannot check: a person's name, who made or owns something, a date, a price, a figure, a URL, a quote. This holds for the makers of this app exactly as it holds for anyone else — being inside their software tells you how it works, not who they are.
 - "I don't know" is a complete answer. A confident wrong one costs you the user's trust in every other answer you give, including the ones about their own data.
 - Anything about the user's own records comes from a tool call you just made, never from memory. If you have not looked, look — or say you have not.
@@ -243,6 +262,22 @@ async function buildSystemPrompt(c: Ctx): Promise<string> {
   // field and an action list that pretended core-locations:reorder ran on a
   // record, so it proposed the action against the parent location with no ids —
   // uninvokable, and the user was told it could not be done (2026-08-19).
+  // Which modules this workspace actually runs. A screen belonging to one it
+  // does not have is not somewhere it can go, and naming it would be the
+  // original bug wearing a badge.
+  let enabledModules: Set<string> | undefined;
+  try {
+    const mods = await callApi(c, "GET", "/modules");
+    const items = (mods.body.items as Array<{ name?: string; module_name?: string; enabled?: boolean }> | undefined) ?? [];
+    const names = items
+      .filter((m) => m.enabled !== false)
+      .map((m) => m.module_name ?? m.name)
+      .filter((n): n is string => !!n);
+    if (names.length) enabledModules = new Set(names);
+  } catch {
+    // Unknown: show the whole list rather than hiding features that exist.
+  }
+
   const reg = await callApi(c, "GET", "/registered-actions");
   const allActions =
     (reg.body.items as
@@ -312,6 +347,10 @@ TWO THINGS YOU DO:
 
 ${GROUNDING_RULES}
 
+${PLAIN_ANSWER_RULES}
+
+${appSurfacePrompt(enabledModules)}
+
 After a helpful answer, if it's natural, OFFER to save it (e.g. "want me to add this to your list / save it as a knowledge entry?") — but never force it, and never refuse the answer itself.
 
 ENTITY KINDS in this workspace:
@@ -345,6 +384,18 @@ Rules:
 - action: entity_query is the name/text to find the existing record — the system looks it up. For an action in the WORKSPACE list, omit entity_kind and entity_query entirely.
 - action args: pass every argument the action lists, under "args", by name. A "list" arg is a JSON array in the order you mean, e.g. {"ids":["<id-a>","<id-b>"]} — read the ids first and pass the real ones, never a name. An action whose args you cannot fill is one to ASK about, not to guess at.
 - Use "build" only when the user wants to SET UP or DESIGN a whole new app/workspace (several kinds/modules at once). Put their full description in "intent". Never use "build" for a single record.`;
+}
+
+/** The action's own words: its label and what its arguments are called. The
+ *  registry has carried these all along; the confirm card simply never asked. */
+async function actionCopy(c: Ctx, actionId: string): Promise<ActionCopy | null> {
+  try {
+    const reg = await callApi(c, "GET", "/registered-actions");
+    const items = (reg.body.items as Array<{ id: string } & ActionCopy> | undefined) ?? [];
+    return items.find((x) => x.id === actionId) ?? null;
+  } catch {
+    return null; // summariseAction falls back to the id
+  }
 }
 
 /** Does this action run on the WORKSPACE rather than a record? Read from the
@@ -426,15 +477,20 @@ async function proposalOf(
       // A workspace action HAS no record. Demanding one here refused the whole
       // class from chat, which is how reordering locations became something
       // Cobb could describe and not do.
+      const copy = await actionCopy(c, actionId);
+      const argValues = (a.args && typeof a.args === "object" ? a.args : {}) as Record<string, unknown>;
       if (!kind || !id) {
         if (!(await isWorkspaceAction(c, actionId))) {
           return { error: "I need the action and the exact record to run it on." };
         }
-        return { summary: `Run ${actionId}`, proposal: { kind: "action", action_id: actionId, ...args } };
+        return {
+          summary: summariseAction(actionId, copy, argValues),
+          proposal: { kind: "action", action_id: actionId, ...args },
+        };
       }
       const label = await labelOf(wsApi, kind, id);
       return {
-        summary: `Run ${actionId} on “${label}”`,
+        summary: summariseAction(actionId, copy, argValues, label),
         proposal: {
           kind: "action",
           action_id: actionId,

@@ -369,7 +369,7 @@ function WorkspaceRow({
           rather than taking flex width, so revealing them never reflows or
           truncates the workspace name (feedback: "name gets hidden on mouse
           over"). At rest they're invisible AND non-interactive. */}
-      <div className="absolute right-0 inset-y-0 flex items-stretch pl-10 opacity-0 pointer-events-none transition-opacity bg-gradient-to-l from-subtle from-60% to-transparent dark:from-slate-800 group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto">
+      <div className="absolute right-0 inset-y-0 flex items-stretch pl-10 hover-reveal pointer-events-none transition-opacity bg-gradient-to-l from-subtle from-60% to-transparent dark:from-slate-800 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto">
         {onSetDefault && (
           <button
             onClick={(e) => { e.stopPropagation(); onSetDefault(); }}
@@ -423,7 +423,7 @@ function SortableRow(props: {
             type="button"
             {...attributes}
             {...listeners}
-            className="pl-1.5 pr-0.5 flex items-center text-faint/70 dark:text-slate-700 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-muted dark:hover:text-slate-400 cursor-grab active:cursor-grabbing touch-none transition-opacity"
+            className="pl-1.5 pr-0.5 flex items-center text-faint/70 dark:text-slate-700 hover-reveal focus-visible:opacity-100 hover:text-muted dark:hover:text-slate-400 cursor-grab active:cursor-grabbing touch-none transition-opacity"
             title="Drag to reorder"
             aria-label="Drag to reorder"
           >

@@ -65,6 +65,21 @@ export interface VocabularyCapability extends Base {
 export const CAPABILITIES: Capability[] = [
   {
     kind: "owns",
+    id: "scan:install-before-filing",
+    what: "installing the bundle a scan destination needs and deciding which instance to file into afterwards",
+    why: "installing reports the target it really created, and a bundle that skins a module's default table creates NO instance - while the candidate still carries the synthetic token the routing menu used to name the bundle. Three call sites each installed and then confirmed the candidate verbatim, so a receipt of groceries failed on every line against a bundle that had installed perfectly (2026-08-22)",
+    owner: "web/src/pages/scanInstall.ts",
+    // Every surface that files a scanned item into a destination it may have to
+    // install first. Other pages install bundles for their own reasons; that is
+    // not this rule's business.
+    scope: ["web/src/pages/ScanPage.tsx"],
+    // A hand-rolled copy installs the bundle itself, and then has the candidate
+    // instance in hand at the moment it must not be trusted.
+    detect: /materializeQuickstart\s*\(/,
+    use: "await resolveInstanceForFiling(slug, bundleId, candidateInstance) - it installs and returns the instance to file into, which may be none",
+  },
+  {
+    kind: "owns",
     id: "credentials:provider-form",
     what: "rendering the credential fields for an AI/connection provider - the input, the paste recovery, the check-as-you-type verdict and the model dropdown it populates",
     why: "the same field loop was pasted into three forms, so every capability added to it landed on some and was missed on the rest: the paste recovery and the visible-while-typing key both shipped to the two workspace forms and skipped /me/connections, which is the form an individual user or self-hoster actually uses (2026-08-21)",

@@ -296,7 +296,7 @@ export function PrintPage({ embedded = false }: { embedded?: boolean } = {}) {
                     del.mutate(p.id);
                   }
                 }}
-                className="p-1.5 rounded hover:bg-ember-100 dark:hover:bg-ember-900/30 text-ember-600 transition"
+                className="p-1.5 rounded hover:bg-ember-100 dark:hover:bg-ember-900/30 text-ember-600 dark:text-ember-400 transition"
                 title="Remove"
               >
                 <Trash2 size={14} />

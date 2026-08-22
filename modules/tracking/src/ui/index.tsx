@@ -100,7 +100,7 @@ function MetricCard({ metric, api, orgSlug, onOpen, onDelete }: { metric: Metric
             {metric.goal_value != null && <span className="text-faint"> · goal {metric.goal_value}</span>}
           </div>
         </button>
-        <button type="button" onClick={onDelete} className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition" aria-label="Delete metric">
+        <button type="button" onClick={onDelete} className="text-slate-300 hover:text-red-500 hover-reveal transition" aria-label="Delete metric">
           <Trash2 size={15} />
         </button>
       </div>

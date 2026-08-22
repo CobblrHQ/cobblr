@@ -9,9 +9,47 @@
 /** Blank comments length-preservingly, so line numbers survive and a lint can
  *  never match its own explanatory prose (a real failure, 2026-08-02). */
 export function stripComments(src: string): string {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
-    .replace(/(^|[^:])\/\/[^\n]*/g, (m, p1: string) => p1 + m.slice(p1.length).replace(/./g, " "));
+  // A scanner, not two regexes, because the regex pair could not tell where a
+  // comment STARTS. It replaced block comments first, unaware of strings and of
+  // line comments, so a `/*` inside either opened a comment that ran to the next
+  // `*/` anywhere in the file and blanked every line between.
+  //
+  // One `//     (accept=image/*)` near the top of ScanPage.tsx swallowed its
+  // entire import block and 419 lines of code, and 660 lines across the files
+  // the capability rules watch were invisible the same way - so those rules
+  // reported clean over code they had never looked at (2026-08-22).
+  //
+  // Comment bytes become spaces and newlines are kept, so every line number and
+  // column stays where it was.
+  let out = "";
+  let state: "code" | "line" | "block" | "string" | "template" = "code";
+  let quote = "";
+  for (let i = 0; i < src.length; ) {
+    const c = src[i]!;
+    const d = src[i + 1];
+    if (state === "code") {
+      if (c === "/" && d === "*") { state = "block"; out += "  "; i += 2; continue; }
+      if (c === "/" && d === "/") { state = "line"; out += "  "; i += 2; continue; }
+      if (c === '"' || c === "'") { state = "string"; quote = c; out += c; i += 1; continue; }
+      if (c === "`") { state = "template"; out += c; i += 1; continue; }
+      out += c; i += 1; continue;
+    }
+    if (state === "line") {
+      if (c === "\n") { state = "code"; out += "\n"; i += 1; continue; }
+      out += " "; i += 1; continue;
+    }
+    if (state === "block") {
+      if (c === "*" && d === "/") { state = "code"; out += "  "; i += 2; continue; }
+      out += c === "\n" ? "\n" : " "; i += 1; continue;
+    }
+    // Inside a string or template: an escape consumes the next character, so a
+    // `\"` never ends the run and a `\`` never ends a template.
+    if (c === "\\") { out += src.slice(i, i + 2); i += 2; continue; }
+    if (state === "string" && (c === quote || c === "\n")) { state = "code"; out += c; i += 1; continue; }
+    if (state === "template" && c === "`") { state = "code"; out += c; i += 1; continue; }
+    out += c; i += 1;
+  }
+  return out;
 }
 
 /** A quoted run and its inner text, for telling a control LABEL from prose. */

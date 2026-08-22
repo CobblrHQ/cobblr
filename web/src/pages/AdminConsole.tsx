@@ -926,7 +926,7 @@ function HealthTab() {
                         className={
                           "px-3 py-1.5 text-right font-mono text-xs " +
                           (errPct >= 10
-                            ? "text-ember-600"
+                            ? "text-ember-600 dark:text-ember-400"
                             : errPct >= 1
                               ? "text-orange-600"
                               : "text-muted")
@@ -1126,7 +1126,7 @@ function MarketplaceTab() {
                       if (ok) uninstall.mutate(m.name);
                     }}
                     disabled={uninstall.isPending}
-                    className="text-[10px] font-mono text-ember-600 hover:text-ember-700 hover:underline disabled:opacity-50"
+                    className="text-[10px] font-mono text-ember-600 dark:text-ember-400 hover:text-ember-700 hover:underline disabled:opacity-50"
                   >
                     Uninstall
                   </button>

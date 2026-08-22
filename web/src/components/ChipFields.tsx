@@ -178,9 +178,13 @@ export function ChipFields({ fields, available, onChange, onAdd, onDrop, renderE
               e.stopPropagation();
               addedRef.current.add(f.key);
               onAdd(f.key);
-              // Straight into typing: the tap that asked for the field is
-              // the tap that opens it.
-              setEditing(f.key);
+              // The tap that asks for a field is the tap that opens it - into
+              // TYPING for a text field, and into its own control for a field
+              // that has one. Sending a picker field to the text input instead
+              // handed the user a box that wrote a free-text string where an
+              // id belonged (Location, 2026-08-22).
+              if (f.onActivate) f.onActivate();
+              else setEditing(f.key);
             }}
             className="rounded-full bg-subtle/60 dark:bg-slate-800/60 border border-line/70 dark:border-slate-700/70 px-2 py-0.5 text-[11.5px] text-content dark:text-mortar-200 hover:border-cobble-400 dark:hover:border-cobble-600 transition"
           >
@@ -203,9 +207,13 @@ export function ChipFields({ fields, available, onChange, onAdd, onDrop, renderE
                   e.stopPropagation();
                   addedRef.current.add(f.key);
                   onAdd(f.key);
-                  // Straight into typing: the tap that asked for the field is
-                  // the tap that opens it.
-                  setEditing(f.key);
+                  // The tap that asks for a field is the tap that opens it - into
+                  // TYPING for a text field, and into its own control for a field
+                  // that has one. Sending a picker field to the text input instead
+                  // handed the user a box that wrote a free-text string where an
+                  // id belonged (Location, 2026-08-22).
+                  if (f.onActivate) f.onActivate();
+                  else setEditing(f.key);
                 }}
                 className="rounded-full bg-subtle/60 dark:bg-slate-800/60 border border-line/70 dark:border-slate-700/70 px-2.5 py-1 text-[11.5px] text-content dark:text-mortar-200 hover:border-cobble-400 dark:hover:border-cobble-600 transition"
               >
@@ -223,7 +231,7 @@ export function ChipFields({ fields, available, onChange, onAdd, onDrop, renderE
 function Chip({
   def,
   wide,
-  editing,
+  editing: editingProp,
   mirror,
   container,
   register,
@@ -243,6 +251,11 @@ function Chip({
   onOpen: () => void;
   onCommit: (next: string) => void;
 }) {
+  // A field that owns a control is NEVER a text box, whatever put it into
+  // the editing state. Belt and braces beside the add-button fix: the text
+  // input commits through onChange, which for a picker field means writing
+  // its label into a custom field and leaving the real id unset.
+  const editing = editingProp && !def.onActivate;
   const ref = useRef<HTMLSpanElement | null>(null);
   const valueRef = useRef<HTMLSpanElement | null>(null);
   const inputRef = useRef<HTMLInputElement | HTMLSelectElement | null>(null);

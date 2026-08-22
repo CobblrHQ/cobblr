@@ -101,7 +101,7 @@ function OrderCard({ order, onOpen, onDelete }: { order: SalesOrder; onOpen: () 
             {order.order_number && order.customer_name && <span>{order.order_number}</span>}
           </div>
         </button>
-        <button type="button" onClick={onDelete} className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition shrink-0" aria-label="Delete order">
+        <button type="button" onClick={onDelete} className="text-slate-300 hover:text-red-500 hover-reveal transition shrink-0" aria-label="Delete order">
           <Trash2 size={15} />
         </button>
       </div>
@@ -201,7 +201,7 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
                       {Number(it.qty)}{it.unit_price ? ` × $${Number(it.unit_price).toFixed(2)}` : ""}
                     </span>
                     {!fulfilled && (
-                      <button type="button" onClick={() => removeItem.mutate(it.id)} className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100" aria-label="Remove line item">
+                      <button type="button" onClick={() => removeItem.mutate(it.id)} className="text-slate-300 hover:text-red-500 hover-reveal" aria-label="Remove line item">
                         <X size={14} />
                       </button>
                     )}

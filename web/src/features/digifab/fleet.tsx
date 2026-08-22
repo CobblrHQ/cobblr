@@ -1603,7 +1603,7 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
               {job.file_ref}
             </div>
             {job.priority > 0 && (
-              <span className={"text-[9px] font-mono uppercase px-1 rounded shrink-0 " + (job.priority >= 20 ? "bg-ember-500/15 text-ember-600" : "bg-amber-500/15 text-amber-600")}>
+              <span className={"text-[9px] font-mono uppercase px-1 rounded shrink-0 " + (job.priority >= 20 ? "bg-ember-500/15 text-ember-600 dark:text-ember-400" : "bg-amber-500/15 text-amber-600")}>
                 {job.priority >= 20 ? "urgent" : "high"}
               </span>
             )}
@@ -1819,7 +1819,7 @@ function ControlsPanel({ slug, connId, deviceId, name, telemetry, lanActive }: {
                   <div className="flex flex-wrap items-center gap-1.5">
                     {cs.map((c) =>
                       c.kind === "action" ? (
-                        <button key={c.id} type="button" onClick={() => doRun(c)} disabled={run.isPending} className={c.destructive ? "text-xs px-2.5 py-1.5 rounded border border-ember-400 text-ember-600 hover:bg-ember-50 dark:hover:bg-ember-950/30 disabled:opacity-50" : btn}>{c.label}</button>
+                        <button key={c.id} type="button" onClick={() => doRun(c)} disabled={run.isPending} className={c.destructive ? "text-xs px-2.5 py-1.5 rounded border border-ember-400 text-ember-600 dark:text-ember-400 hover:bg-ember-50 dark:hover:bg-ember-950/30 disabled:opacity-50" : btn}>{c.label}</button>
                       ) : c.kind === "toggle" ? (
                         <span key={c.id} className="inline-flex items-center gap-1 text-xs">
                           <span className="text-muted dark:text-slate-400">{c.label}</span>
@@ -2002,7 +2002,7 @@ function FileRow({
         </span>
         {printed && (
           <span
-            className={"shrink-0 inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded " + (printed.status === "completed" ? "text-moss-600 bg-moss-500/10" : "text-ember-600 bg-ember-500/10")}
+            className={"shrink-0 inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded " + (printed.status === "completed" ? "text-moss-600 bg-moss-500/10" : "text-ember-600 dark:text-ember-400 bg-ember-500/10")}
             title={`Last printed ${new Date(printed.at).toLocaleString()} — ${printed.status}`}
           >
             {printed.status === "completed" ? "✓" : "✗"} {new Date(printed.at).toLocaleDateString()}
@@ -2472,9 +2472,9 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
           <div className="flex flex-wrap items-center gap-2 text-xs pb-2 border-b border-line dark:border-slate-800">
             <span className="px-1.5 py-0.5 rounded bg-subtle dark:bg-slate-800 text-content dark:text-mortar-100">{device.state}</span>
             {device.pool_name && <span className="px-1.5 py-0.5 rounded bg-accent/10 text-accent">{device.pool_name}</span>}
-            {!device.enabled && <span className="px-1.5 py-0.5 rounded bg-ember-500/10 text-ember-600">disabled</span>}
+            {!device.enabled && <span className="px-1.5 py-0.5 rounded bg-ember-500/10 text-ember-600 dark:text-ember-400">disabled</span>}
             {t?.firmware_update && <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600">firmware update</span>}
-            {t && t.hms_count > 0 && <span className="px-1.5 py-0.5 rounded bg-ember-500/15 text-ember-600">{t.hms_count} alert{t.hms_count > 1 ? "s" : ""}</span>}
+            {t && t.hms_count > 0 && <span className="px-1.5 py-0.5 rounded bg-ember-500/15 text-ember-600 dark:text-ember-400">{t.hms_count} alert{t.hms_count > 1 ? "s" : ""}</span>}
             {t && (t.nozzle_diameter || t.nozzle_type) && <span className="text-faint">Nozzle {t.nozzle_diameter}mm {t.nozzle_type?.replace(/_/g, " ")}</span>}
             {t?.wifi && <span className="text-faint">Wi-Fi {t.wifi}</span>}
             <div className="flex-1 min-w-[8rem]" />
@@ -2643,7 +2643,7 @@ export function PrintDetailModal({ item, onClose, onZoom, onReprint }: { item: D
           <img src={item.cover} alt="" className="w-full max-h-72 object-contain rounded bg-subtle dark:bg-slate-800 cursor-zoom-in" onClick={() => onZoom?.(item.cover!)} />
         )}
         <div>
-          {row("Status", <span className={item.status === "completed" ? "text-moss-600" : item.status === "failed" ? "text-ember-600" : ""}>{item.status}</span>)}
+          {row("Status", <span className={item.status === "completed" ? "text-moss-600" : item.status === "failed" ? "text-ember-600 dark:text-ember-400" : ""}>{item.status}</span>)}
           {row("Profile", item.sub_label)}
           {row("Printer", item.device)}
           {row("Filament", item.filament_g != null ? `${Math.round(item.filament_g)} g` : null)}

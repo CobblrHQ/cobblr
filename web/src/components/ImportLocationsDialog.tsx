@@ -97,7 +97,7 @@ export function ImportLocationsDialog({ slug, onClose }: { slug: string; onClose
           </>
         )}
 
-        {error && <div className="text-xs text-ember-600 flex items-center gap-1"><AlertTriangle size={12} /> {error}</div>}
+        {error && <div className="text-xs text-ember-600 dark:text-ember-400 flex items-center gap-1"><AlertTriangle size={12} /> {error}</div>}
 
         {preview && (
           <>
@@ -109,7 +109,7 @@ export function ImportLocationsDialog({ slug, onClose }: { slug: string; onClose
             </div>
             {preview.detected_headers && <div className="text-[11px] text-faint">Columns: {preview.detected_headers.map((h) => <code key={h} className="mr-1">{h}</code>)}</div>}
             {preview.errors.length > 0 && (
-              <div className="text-[11px] text-ember-600">
+              <div className="text-[11px] text-ember-600 dark:text-ember-400">
                 <AlertTriangle size={11} className="inline" /> {preview.errors.length} row{preview.errors.length === 1 ? "" : "s"} skipped: {preview.errors.slice(0, 4).map((e) => `row ${e.row_number} (${e.message})`).join("; ")}
               </div>
             )}
@@ -124,7 +124,7 @@ export function ImportLocationsDialog({ slug, onClose }: { slug: string; onClose
                       <td className="px-2 py-1"><span className={r.action === "create" ? "text-moss-600" : "text-amber-600"}>{r.action}</span></td>
                       <td className="px-2 py-1 text-content dark:text-mortar-100">{r.name}{r.short_name ? <span className="text-faint"> · {r.short_name}</span> : null}</td>
                       <td className="px-2 py-1 text-faint">{r.kind}</td>
-                      <td className="px-2 py-1">{r.parent ? <span className={r.parent.resolved ? "text-faint" : "text-ember-600"} title={r.parent.resolved ? "" : "parent not found in the file or existing"}>{r.parent.key}{r.parent.resolved ? "" : " ⚠"}</span> : <span className="text-faint/50">—</span>}</td>
+                      <td className="px-2 py-1">{r.parent ? <span className={r.parent.resolved ? "text-faint" : "text-ember-600 dark:text-ember-400"} title={r.parent.resolved ? "" : "parent not found in the file or existing"}>{r.parent.key}{r.parent.resolved ? "" : " ⚠"}</span> : <span className="text-faint/50">—</span>}</td>
                     </tr>
                   ))}
                 </tbody>

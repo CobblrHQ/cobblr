@@ -100,6 +100,7 @@ import { extractLocation, type LocationLite } from "../services/note-location.js
 import { suggestLocationForItem } from "../services/suggest-location.js";
 import { normaliseCategory } from "@cobblr/platform-contract/category-reconcile";
 import { receiptFacts, type ReceiptMeta } from "../services/receipt-facts.js";
+import { receiptRecord, type ReceiptLineMeta } from "../services/receipt-record.js";
 
 export const inboxRouter = Router({ mergeParams: true });
 
@@ -1913,6 +1914,9 @@ inboxRouter.post(
     // mapper looking for `acquired_from` works in one workspace and silently
     // does nothing in every other. A workspace that declares no roles gets an
     // empty patch, which is the current behaviour and stays correct.
+    // Everything the receipt parse established, kept whether or not a field
+    // claimed it (see receipt-record.ts).
+    const recordedReceipt = receiptRecord(meta as ReceiptLineMeta);
     let provenancePatch: Record<string, string | number> = {};
     try {
       // The receipt's facts, keyed by MEANING (receipt-facts.ts owns that
@@ -2007,6 +2011,12 @@ inboxRouter.post(
         // Machine-derived, so it sits BELOW the matchmaker's candidate and well
         // below anything the user typed.
         ...provenancePatch,
+        // Everything the receipt parse established, whether or not a field
+        // claimed it. provenancePatch above promotes what has a ROLE; this
+        // keeps the rest, because a workspace with no acquired-on field was
+        // losing the receipt's date outright and dating a perishable by the
+        // day it happened to be scanned (2026-08-22).
+        ...(recordedReceipt ? { receipt: recordedReceipt } : {}),
         ...((meta as { fields?: Record<string, unknown> }).fields ?? {}),
         ...candidateFields,
         ...typedMetadata,

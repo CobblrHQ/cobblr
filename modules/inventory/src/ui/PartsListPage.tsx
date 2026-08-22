@@ -751,7 +751,7 @@ export function PartsListPage() {
             <button
               type="button"
               onClick={() => void bulkDelete()}
-              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-ember-600 hover:text-ember-700"
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-ember-600 dark:text-ember-400 hover:text-ember-700"
             >
               <AlertTriangle size={12} /> Delete
             </button>

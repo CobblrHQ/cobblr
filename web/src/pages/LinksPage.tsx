@@ -322,7 +322,7 @@ function ExpiryBadge({ expiresAt }: { expiresAt: string | null }) {
   const days = Math.round((t - now) / (1000 * 60 * 60 * 24));
   if (expired) {
     return (
-      <span className="px-1.5 py-0.5 rounded text-[10px] font-mono text-ember-700 bg-ember-50 dark:bg-ember-900/20">
+      <span className="px-1.5 py-0.5 rounded text-[10px] font-mono text-ember-700 dark:text-ember-400 bg-ember-50 dark:bg-ember-900/20">
         expired
       </span>
     );

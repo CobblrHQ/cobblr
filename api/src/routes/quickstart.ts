@@ -23,6 +23,7 @@ import {
   type BundleMenuEntry,
   type BundleMenuField,
 } from "../lib/flagship-bundles.js";
+import { bundleInstallSummary } from "../lib/bundle-install-summary.js";
 import { meta } from "../db/meta.js";
 import { resolveFieldDefsForKind } from "../platform/field-defs.js";
 import { currentBundleId, humaniseBundleId } from "../lib/bundle-aliases.js";
@@ -231,6 +232,13 @@ quickstartRouter.post("/materialize", requireAuth, withTenant, async (req, res, 
       return;
     }
 
+    // What the install actually did, reported back so the caller can say so.
+    // A bundle that SKINS a module's default table creates no table and no nav
+    // entry, so a complete, correct install could leave the screen looking
+    // exactly as it did before and the only honest way to answer "did that
+    // work?" was to go hunting (2026-08-22).
+    let applied: Awaited<ReturnType<typeof applyValidatedBundle>>["applied"] | null = null;
+
     // Install (autoEnable: enable the bundle's required modules in one step).
     // Unless the caller already installed it via the feature-picker modal — then
     // just commit the captures onto the tables that install created.
@@ -240,17 +248,21 @@ quickstartRouter.post("/materialize", requireAuth, withTenant, async (req, res, 
         res.status(400).json({ error: { code: "invalid_bundle", message: "Bundle failed validation", details: { errors: v.errors } } });
         return;
       }
-      await applyValidatedBundle(
+      const result = await applyValidatedBundle(
         orgId,
         { id: req.session!.id, display_name: req.session!.display_name ?? null, auth_method: req.session!.auth_method, api_token_id: req.session!.api_token_id ?? null },
         v,
       );
+      applied = result.applied;
     }
 
     const targets = flagshipBundleTargets(bundleId);
     if (targets.length === 0) {
       // Bundle installed but isn't a trackable capture target — nothing to commit.
-      res.status(201).json({ created: 0, module: null, instance: null, route: null });
+      res.status(201).json({
+        created: 0, module: null, instance: null, route: null,
+        ...(applied ? { installed: bundleInstallSummary(manifest, applied) } : {}),
+      });
       return;
     }
     const pickTarget = (kind?: string) =>
@@ -289,6 +301,7 @@ quickstartRouter.post("/materialize", requireAuth, withTenant, async (req, res, 
       instance: primary.instance,
       label: primary.label,
       route,
+      ...(applied ? { installed: bundleInstallSummary(manifest, applied) } : {}),
       ...(errors.length ? { errors } : {}),
     });
   } catch (err) {

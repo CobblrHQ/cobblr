@@ -8,11 +8,12 @@
 import { useMemo, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { BinAdjustModal } from "../components/BinAdjustModal";
+import { QuickCreateLocation } from "../components/QuickCreateLocation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronRight, MapPin, Save, Trash2 } from "lucide-react";
+import { ArrowLeft, ChevronRight, MapPin, Plus, Save, Trash2 } from "lucide-react";
 
 import { EntityActionsBar, EntityThumb, Modal, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
-import { ApiError, api, type Location } from "../lib/api";
+import { ApiError, api, type Location, type PlatformEntityKind } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { EntityAttachments } from "../components/EntityAttachments";
 import { FloorPlan } from "../components/FloorPlan";
@@ -28,11 +29,43 @@ interface ContentItem {
 
 // Modules that store entities with `location_id`. We probe each one's
 // list endpoint with ?location_id=<id> and union the results.
-const LOCATION_BEARING_MODULES = [
-  { module: "inventory", endpoint: "/modules/inventory/parts", kind: "inventory:part", route: (id: string) => `/inventory/parts/${id}` },
-  { module: "machines", endpoint: "/modules/machines/machines", kind: "machines:machine", route: (id: string) => `/machines/${id}` },
-  { module: "assets", endpoint: "/modules/assets/assets", kind: "assets:asset", route: (id: string) => `/assets/${id}` },
-] as const;
+/** Which kinds can live in a location: the ones that HAVE a `location_id`.
+ *
+ *  This was a hardcoded list of three modules — inventory, machines, assets —
+ *  so anything else that carries a location was invisible here. A workspace
+ *  with its own instance table ("Kitchen Stuff") filed an item into a room and
+ *  this page said the room held nothing, while the scanner's bin lookup (which
+ *  asks the platform instead) found it and popped a single-item card at the top
+ *  of a room that claimed to be empty (reported 2026-08-22).
+ *
+ *  The registry already answers this: every kind reports its fields, its list
+ *  endpoint and its detail route, and instance kinds are in there too. So ask,
+ *  rather than keep a list that is wrong the moment anyone adds a module. */
+function locationBearingKinds(kinds: PlatformEntityKind[]): Array<{
+  kind: string;
+  module: string;
+  /** "modules/<name>" or "instances/<name>" — what `endpoints.list` hangs off. */
+  base: string;
+  listPath: string;
+  route: (id: string) => string;
+}> {
+  return kinds
+    .filter((k) => k.fields.some((f) => f.name === "location_id") && k.endpoints?.list)
+    .map((k) => ({
+      kind: k.id,
+      module: k.instance_name ?? k.module_name,
+      // `endpoints.list` is RELATIVE to the kind's own base ("/parts"), and the
+      // base differs for an instance. FloorPlan resolves it the same way; the
+      // first version of this pasted the raw value after /orgs/<slug> and every
+      // request 404'd into the silent catch below, so the page showed nothing
+      // and said so confidently.
+      base: k.instance_name ? `instances/${k.instance_name}` : `modules/${k.module_name}`,
+      listPath: k.endpoints!.list!,
+      // The registry's template is "{id}", not ":id" — the same substitution
+      // useDetailRoute and SearchBar do.
+      route: (id: string) => (k.detail_route ?? "").replace("{id}", id),
+    }));
+}
 
 export function LocationDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -42,6 +75,7 @@ export function LocationDetailPage() {
   const toast = useToast();
   const confirm = useConfirm();
   const [editing, setEditing] = useState(false);
+  const [addingChild, setAddingChild] = useState(false);
 
   const location = useQuery({
     queryKey: ["location", activeSlug, id],
@@ -69,13 +103,28 @@ export function LocationDetailPage() {
     return (allLocations.data?.items ?? []).filter((l) => l.parent_id === id);
   }, [allLocations.data, id]);
 
-  // Contents — items + machines + assets stored here.
+  // Every kind this workspace has that can carry a location, from the registry.
+  const kinds = useQuery({
+    queryKey: ["entity-kinds", activeSlug],
+    queryFn: () => api.listEntityKinds(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 5 * 60_000,
+  });
+  const bearing = useMemo(() => locationBearingKinds(kinds.data?.items ?? []), [kinds.data]);
+
+  // Contents — everything stored here, whatever kind it is.
   const contents = useQuery({
-    queryKey: ["location-contents", activeSlug, id],
+    queryKey: ["location-contents", activeSlug, id, bearing.map((b) => b.kind).join(",")],
     queryFn: async () => {
       const out: ContentItem[] = [];
-      for (const m of LOCATION_BEARING_MODULES) {
+      const failed: string[] = [];
+      for (const m of bearing) {
         try {
+          // NO `limit`. It used to send `limit=500`, and the caps are per
+          // module — inventory allows 200, catalogs 60 — so the parts request
+          // 400'd, the catch below swallowed it, and the page reported "what's
+          // here (0)" for a location that had things in it. Every list
+          // endpoint has its own sane default; taking it cannot 400.
           const data = await api.request<{
             items: Array<{
               id: string;
@@ -84,7 +133,7 @@ export function LocationDetailPage() {
               image_path?: string | null;
               manufacturer?: string | null;
             }>;
-          }>("GET", `/orgs/${activeSlug}${m.endpoint}?location_id=${id}&limit=500`);
+          }>("GET", `/orgs/${activeSlug}/${m.base}${m.listPath}?location_id=${id}`);
           for (const item of data.items) {
             out.push({
               module: m.module,
@@ -96,12 +145,18 @@ export function LocationDetailPage() {
             });
           }
         } catch {
-          /* module not installed in this workspace — skip silently */
+          // A 404 is "that module is not installed here" and is expected.
+          // Anything else is a kind we could not read, and the difference
+          // matters: silently counting it as zero is how a 400 turned into a
+          // page that confidently said this location was empty. We cannot tell
+          // them apart from the thrown value alone, so record the kind and let
+          // the section say it is incomplete rather than assert a total.
+          failed.push(m.kind);
         }
       }
-      return out;
+      return { items: out, failed };
     },
-    enabled: !!activeSlug && !!id,
+    enabled: !!activeSlug && !!id && bearing.length > 0,
   });
 
   const remove = useMutation({
@@ -157,7 +212,14 @@ export function LocationDetailPage() {
         </nav>
       )}
 
-      {binContents.data?.single && binContents.data.items[0] && (
+      {/* The count-adjust card is a BIN affordance: "the bin of M3 screws", one
+          SKU, adjust it off the bin's own QR. A ROOM is not a bin. It was
+          appearing at the top of any location holding exactly one thing, so a
+          kitchen with a single item in it opened on a giant +1/-5/-10 pad for
+          that item, above the room's own name (reported 2026-08-22).
+          `kind === "container"` is the same distinction the rest of the app
+          draws between a place and a thing you put things in. */}
+      {l.kind === "container" && binContents.data?.single && binContents.data.items[0] && (
         <BinAdjustModal
           inline
           locationId={l.id}
@@ -227,11 +289,47 @@ export function LocationDetailPage() {
           elevation so drawers show at true scale. */}
       <FloorPlan room={l} slug={activeSlug} />
 
-      {children.length > 0 && (
-        <section>
-          <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
+      {/* ALWAYS rendered, even with no children. It used to appear only once a
+          location already had something inside it, so a room with none had no
+          way to add one from its own page — you had to go back to the list and
+          find its row (reported 2026-08-22). The place you are standing on is
+          the obvious place to put something inside it. */}
+      <section>
+        <div className="flex items-center gap-2 mb-2">
+          <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
             // sub-locations ({children.length})
           </div>
+          <button
+            type="button"
+            onClick={() => setAddingChild(true)}
+            className="ml-auto inline-flex items-center gap-1 rounded-md bg-amber-100 dark:bg-amber-500/20 text-amber-800 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-500/30 px-2 py-0.5 text-xs font-medium transition"
+          >
+            <Plus size={13} /> Add a location inside
+          </button>
+        </div>
+        {addingChild && (
+          <div className="mb-3">
+            <QuickCreateLocation
+              slug={activeSlug}
+              all={allLocations.data?.items ?? []}
+              fixedParentId={l.id}
+              defaultKind="container"
+              onClose={() => setAddingChild(false)}
+              onCreated={() => {
+                setAddingChild(false);
+                void qc.invalidateQueries({ queryKey: ["locations", activeSlug] });
+                toast.success(`Added inside ${l.name}`);
+              }}
+            />
+          </div>
+        )}
+        {children.length === 0 && !addingChild && (
+          <p className="text-sm text-faint dark:text-slate-500 italic">
+            Nothing inside this one yet.
+          </p>
+        )}
+        {children.length > 0 && (
+          <>
           <ul className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
             {children.map((c) => (
               <li key={c.id}>
@@ -252,26 +350,35 @@ export function LocationDetailPage() {
               </li>
             ))}
           </ul>
-        </section>
-      )}
+          </>
+        )}
+      </section>
 
       <section>
         <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
-          // what's here ({contents.data?.length ?? 0})
+          // what's here ({contents.data?.items.length ?? 0})
         </div>
         {contents.isLoading && (
           <div className="text-xs text-faint">loading…</div>
         )}
-        {contents.data && contents.data.length === 0 && (
+        {contents.data && contents.data.items.length === 0 && contents.data.failed.length === 0 && (
           <div className="border border-dashed border-line dark:border-slate-700 rounded-md p-6 text-center text-sm text-faint italic">
-            Nothing's stored here yet. Set a part / machine / asset's
-            location to "{l.name}" to see it appear.
+            Nothing's stored here yet. Set something's location to "{l.name}" to see it appear.
           </div>
         )}
-        {contents.data && contents.data.length > 0 && (
+        {/* Say the list is incomplete rather than let a failed read pass for an
+            empty location. "Nothing is here" and "we could not look" are
+            different answers and only one of them is reassuring. */}
+        {contents.data && contents.data.failed.length > 0 && (
+          <div className="border border-dashed border-line dark:border-slate-700 rounded-md p-3 text-xs text-faint italic">
+            Some kinds could not be read just now ({contents.data.failed.join(", ")}), so this list may
+            be incomplete.
+          </div>
+        )}
+        {contents.data && contents.data.items.length > 0 && (
           <ul className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-            {contents.data.map((item) => {
-              const m = LOCATION_BEARING_MODULES.find((x) => x.module === item.module);
+            {contents.data.items.map((item) => {
+              const m = bearing.find((x) => x.kind === item.kind);
               const href = m ? m.route(item.id) : "#";
               return (
                 <li key={`${item.module}:${item.id}`}>

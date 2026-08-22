@@ -36,6 +36,7 @@ export function QuickCreateLocation({
   slug,
   all,
   defaultKind,
+  fixedParentId,
   onClose,
   onCreated,
   parentField,
@@ -43,20 +44,25 @@ export function QuickCreateLocation({
   slug: string;
   all: Location[];
   defaultKind?: Location["kind"];
+  /** Create INSIDE this location, with no parent picker at all. For a place
+   *  that already IS the parent — the "add a location inside this one" button
+   *  on a location's own page — where asking again would be asking a question
+   *  the page has already answered. */
+  fixedParentId?: string;
   onClose: () => void;
   onCreated: (loc: Location) => void;
   /** Renders the Parent field. Required, and taken as a prop rather than
    *  imported, because the thing that belongs here is the workspace's location
    *  picker — and every picker renders THIS component, so importing one back
    *  would close an import cycle. The picker hands its own down instead. */
-  parentField: (value: string | null, onChange: (id: string | null) => void) => ReactNode;
+  parentField?: (value: string | null, onChange: (id: string | null) => void) => ReactNode;
 }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [name, setName] = useState("");
   const [shortName, setShortName] = useState("");
   const [kind, setKind] = useState<"area" | "container">(defaultKind ?? "container");
-  const [parentId, setParentId] = useState<string>("");
+  const [parentId, setParentId] = useState<string>(fixedParentId ?? "");
 
   const nextNum = nextContainerNumber(all);
   // A container whose name is just a word ("Bin", "Office") gets the global
@@ -131,7 +137,7 @@ export function QuickCreateLocation({
           <span className={labelCls}>Short name (optional)</span>
           <input type="text" value={shortName} onChange={(e) => setShortName(e.target.value)} className={fieldCls} />
         </label>
-        {parentField(parentId || null, (id) => setParentId(id ?? ""))}
+        {!fixedParentId && parentField?.(parentId || null, (id) => setParentId(id ?? ""))}
         <div>
           <span className={labelCls}>Kind</span>
           <div className="grid grid-cols-2 gap-2">

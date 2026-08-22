@@ -134,7 +134,7 @@ function BuildCard({ build, onOpen, onDelete }: { build: BuildSummary; onOpen: (
           <div className="font-medium text-content dark:text-mortar-100">{build.name}</div>
           {build.description && <div className="text-xs text-muted mt-0.5 line-clamp-2">{build.description}</div>}
         </button>
-        <button type="button" onClick={onDelete} className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition" aria-label="Delete build">
+        <button type="button" onClick={onDelete} className="text-slate-300 hover:text-red-500 hover-reveal transition" aria-label="Delete build">
           <Trash2 size={15} />
         </button>
       </div>
@@ -291,7 +291,7 @@ function BuildDetailModal({ buildId, api, onClose }: { buildId: string; api: Bui
                           </>
                         )}
                       </span>
-                      <button type="button" onClick={() => removeComponent.mutate(c.id)} className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100" aria-label="Remove component">
+                      <button type="button" onClick={() => removeComponent.mutate(c.id)} className="text-slate-300 hover:text-red-500 hover-reveal" aria-label="Remove component">
                         <X size={14} />
                       </button>
                     </li>
@@ -415,11 +415,11 @@ function OperationsSection({
                 <button
                   type="button"
                   onClick={() => setLogging(logging === op.id ? null : op.id)}
-                  className={`text-[10px] px-1.5 py-0.5 rounded ${logging === op.id ? "bg-cobble-600 text-white" : "text-muted hover:bg-subtle dark:hover:bg-slate-800 opacity-0 group-hover:opacity-100"}`}
+                  className={`text-[10px] px-1.5 py-0.5 rounded ${logging === op.id ? "bg-cobble-600 text-white" : "text-muted hover:bg-subtle dark:hover:bg-slate-800 hover-reveal"}`}
                 >
                   Log
                 </button>
-                <div className="flex items-center opacity-0 group-hover:opacity-100">
+                <div className="flex items-center hover-reveal">
                   <button type="button" onClick={() => onMove(op, "up")} disabled={i === 0} className="text-slate-300 hover:text-content disabled:opacity-30" aria-label="Move up">
                     <ChevronUp size={14} />
                   </button>
@@ -831,7 +831,7 @@ function SchedulePanel({ api, builds }: { api: BuildsApi; builds: BuildSummary[]
                         <AlertTriangle size={10} /> late
                       </span>
                     )}
-                    <div className="flex items-center opacity-0 group-hover:opacity-100">
+                    <div className="flex items-center hover-reveal">
                       <button type="button" onClick={() => completePlanned.mutate(it.id)} className="text-slate-300 hover:text-green-600" title="Mark done" aria-label="Mark done"><Check size={14} /></button>
                       <button type="button" onClick={() => removePlanned.mutate(it.id)} className="text-slate-300 hover:text-red-500 ml-1" title="Remove" aria-label="Remove"><X size={14} /></button>
                     </div>

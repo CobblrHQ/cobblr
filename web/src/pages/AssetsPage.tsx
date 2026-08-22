@@ -415,7 +415,7 @@ export function AssetsPage({
                 });
                 if (ok) bulkDelete.mutate(Array.from(selected));
               }}
-              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-ember-600 hover:text-ember-700 disabled:opacity-50"
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-ember-600 dark:text-ember-400 hover:text-ember-700 disabled:opacity-50"
             >
               <Trash2 size={12} /> Delete
             </button>

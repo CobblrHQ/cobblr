@@ -20,6 +20,7 @@
 // prompt; the round cap keeps a confused model from ping-ponging forever.
 
 import type { ToolCall, ChatTurn } from "../providers/tool-wire.js";
+import { scrubIds, namesFromToolResults } from "./scrub-ids.js";
 
 export interface LoopModelResult {
   content: string;
@@ -96,13 +97,17 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
   };
 
   let nudgedForSilence = false;
+  // Every id the tools handed back, with what it is called. The answer is
+  // scrubbed of ids before it reaches a person (scrub-ids.ts); knowing the
+  // names is what lets "(67377d87-…)" become "(Den)" instead of vanishing.
+  const seenNames = new Map<string, string>();
   for (let round = 0; round < maxRounds; round++) {
     emit({ kind: "thinking", round });
     const r = await deps.callModel(transcript);
     const calls = r.tool_calls ?? [];
 
     if (calls.length === 0) {
-      if (r.content.trim()) return { kind: "reply", text: r.content, applied };
+      if (r.content.trim()) return { kind: "reply", text: scrubIds(r.content, seenNames), applied };
       // No tool calls AND no words. Some models answer a data question by
       // trying to call a tool, malforming it, and having the provider strip the
       // broken call — leaving an empty message (gemini-3.1-flash-lite returns
@@ -141,6 +146,11 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
         }
         emit({ kind: "tool-result", name: call.name, ok, summary: resultText.slice(0, 160) });
         turnResults.push({ call, text: resultText });
+        try {
+          for (const [id, label] of namesFromToolResults([JSON.parse(resultText)])) seenNames.set(id, label);
+        } catch {
+          /* a clamped/truncated result is not parseable — no names, no harm */
+        }
         continue;
       }
       // Write — auto-apply when allowed, else queue as a proposal.

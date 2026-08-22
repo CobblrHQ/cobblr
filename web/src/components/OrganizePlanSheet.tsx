@@ -51,12 +51,25 @@ const planUiState = new Map<
 >();
 const PLAN_UI_STATE_CAP = 10;
 
-function ItemThumb({ slug, item }: { slug: string; item: ScanInboxItem | undefined }) {
+function ItemThumb({
+  slug,
+  item,
+  fallback,
+}: {
+  slug: string;
+  item: ScanInboxItem | undefined;
+  /** The plan's stored file ids, used when the live item is not in the caller's
+   *  view. Without it a ready-group row drew a grey square, which is what a
+   *  put-away list is read by. */
+  fallback?: { image_file_id?: string; catalog_image_file_id?: string };
+}) {
   const file = (id: string) => `/api/v1/orgs/${slug}/modules/core-files/files/${id}/raw?variant=thumb`;
+  const catalogId = item?.catalog_image_file_id ?? fallback?.catalog_image_file_id ?? null;
+  const yoursId = item?.image_file_id ?? fallback?.image_file_id ?? null;
   const src = useImageSrc(
     leadPhoto(item, {
-      catalog: [item?.catalog_image_file_id ? file(item.catalog_image_file_id) : null],
-      yours: item?.image_file_id ? file(item.image_file_id) : null,
+      catalog: [catalogId ? file(catalogId) : null],
+      yours: yoursId ? file(yoursId) : null,
     }).src,
   );
   if (!src) {
@@ -855,7 +868,7 @@ export function SortingPlanView({
                               : ""
                           }`}
                         >
-                          <ItemThumb slug={slug} item={item} />
+                          <ItemThumb slug={slug} item={item} fallback={plan.item_photos?.[id]} />
                           <span className={`truncate ${isSplit ? "line-through text-faint" : ""}`}>
                             {item?.suggested_name ?? plan.item_names?.[id] ?? "(unidentified)"}
                           </span>

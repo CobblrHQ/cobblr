@@ -57,9 +57,18 @@ export function RecordRow({ kind, id, label, className, children, affordances = 
               on the row; a module's registered-but-unbound action stays on the
               record's own page, where there is room to explain it. */}
           <RowBindings kind={kind} id={id} />
-          {/* Always rendered, never hover-only: a control that appears on hover
-              does not exist on a phone, and this list is used standing up. */}
-          <AskCobbAbout kind={kind} id={id} label={label} />
+          {/* DESKTOP ONLY on a list row. This file's neighbour says it plainly:
+              ticking a checkbox already says which rows you mean, so on a list
+              this is a second way to do the same thing. On a phone that second
+              way cost real estate AND was disruptive — pressing it opened the
+              chat panel over the list you were reading (reported 2026-08-22).
+              The mobile path is the checkbox plus "Ask Cobb" in the selection
+              bar, which says what it will do before it does it.
+
+              A record with no checkbox near it — a detail header, a card — is
+              the case this control was written for, and EntityActionsBar still
+              renders it at every width. */}
+          <AskCobbAbout kind={kind} id={id} label={label} className="hidden sm:inline-flex" />
         </>
       )}
     </div>
