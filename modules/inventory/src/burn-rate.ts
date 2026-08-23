@@ -129,6 +129,11 @@ async function burnTick(orgId?: string): Promise<{ scanned: number; warned: numb
           "in",
           aggs.map((a) => a.part_id),
         )
+        // Archiving something is the user saying "stop". Predicting a run-out
+        // for it and pushing that onto the shopping list ignores the one
+        // explicit instruction they gave, which is worse than never having
+        // offered the prediction.
+        .where("archived", "=", false)
         .execute();
       const byId = new Map(parts.map((p) => [p.id, p]));
 

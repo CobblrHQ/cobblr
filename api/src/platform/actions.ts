@@ -26,6 +26,28 @@ export function hasHandler(handlerKey: string): boolean {
   return handlers.has(handlerKey);
 }
 
+/** Does this action belong in a RECORD's action bar?
+ *
+ *  Pulled out of listApplicable so the rule can be tested without a database.
+ *  It is the only thing standing between a workspace operation and a button on
+ *  every record in the app, and it had no test: four actions whose handlers
+ *  never read the record were declared entity-scoped and rendered everywhere,
+ *  including in a location header where they pushed the title onto a second
+ *  line (2026-08-23). */
+export function belongsOnEntity(
+  action: { scope: "entity" | "workspace" },
+  predicate: ActionAppliesToDecl,
+  fields: { role?: string }[],
+  matchKind: string,
+  traits: Record<string, unknown> | null,
+): boolean {
+  // Workspace-scoped actions run on the workspace, not a record. Their
+  // appliesTo also defaults to { any: true }, which would otherwise match
+  // every kind here.
+  if (action.scope === "workspace") return false;
+  return actionApplies(predicate, fields, matchKind, traits);
+}
+
 export async function listApplicable(
   kind: string,
   orgId?: string,
@@ -71,14 +93,15 @@ export async function listApplicable(
   const matchKind = orgId ? await baseKindOf(orgId, kind) : kind;
   return allActions
     .map(rowToActionRecord)
-    .filter((a) => {
-      // Workspace-scoped actions run on the workspace, not a record — they
-      // never belong in an entity's action list (and their appliesTo defaults
-      // to { any: true }, which would otherwise match every kind here).
-      if (a.scope === "workspace") return false;
-      const predicate = overrides.get(a.id) ?? a.applies_to;
-      return actionApplies(predicate, kindRecord.fields, matchKind, kindRecord.traits);
-    });
+    .filter((a) =>
+      belongsOnEntity(
+        a,
+        overrides.get(a.id) ?? a.applies_to,
+        kindRecord.fields,
+        matchKind,
+        kindRecord.traits,
+      ),
+    );
 }
 
 /** Read the effective appliesTo for an action in an org's context.

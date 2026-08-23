@@ -122,10 +122,31 @@ export async function cadenceTick(
           }));
           const state = cadenceState(events);
 
+          // Retired records generate no work. Cadence cannot look at
+          // inventory_parts.archived without breaking isolation, so it asks the
+          // platform for the resolved record and honours the generic `retired`
+          // flag the owning module sets. A record that has been deleted
+          // outright resolves to null and is skipped for the same reason: the
+          // ledger keeps its history, but history is not a reason to nag.
+          //
+          // Checked only when a signal WOULD fire, so the happy path (nothing
+          // due) still costs no lookups.
+          const wants: Array<"reorder_due" | "buy_less"> = [];
+          if (reorderSuggested(state) || buyLessSuggested(state)) {
+            let live = true;
+            try {
+              const resolved = await platform().entities.lookup(org.id, t.entity_kind, t.entity_id);
+              live = !!resolved && resolved.retired !== true;
+            } catch {
+              // A resolver that throws must not silence a real signal.
+              live = true;
+            }
+            if (!live) continue;
+          }
+
           // min_qty lives on the ITEM, not here, so the sweeper only speaks for
           // the PREDICTIVE half; the static threshold keeps firing through the
           // module's own inventory.stock.low, and the two unify downstream.
-          const wants: Array<"reorder_due" | "buy_less"> = [];
           if (reorderSuggested(state)) wants.push("reorder_due");
           if (buyLessSuggested(state)) wants.push("buy_less");
 

@@ -68,8 +68,8 @@
     "hash": "24ca0447bad1d722cdd18aceb900cc1593de21513e082185d69b05a952306852"
   },
   "cobblr.flagship.groceries": {
-    "version": "0.4.0",
-    "hash": "d305c1279217bc66c1b1a24bfd69a75bf35c4597cf9b09b2cd67bcba83e62b30"
+    "version": "0.7.0",
+    "hash": "e9853d1c7f631b549f3b53c7392fc841907c9f6205a398a411dca87fc7e7be68"
   },
   "cobblr.flagship.grocery-spend": {
     "version": "0.1.2",
@@ -105,7 +105,7 @@
   },
   "cobblr.flagship.spice-rack": {
     "version": "0.1.0",
-    "hash": "3479bb11639cdb0a5eba856704947fa41253c9e14b1fb4513d65cdb4d39d36fb"
+    "hash": "1b5f956ace458f5ea15bb65d07cd2a16a8049be14e4854f239aab162a7096346"
   },
   "cobblr.flagship.subscriptions": {
     "version": "0.2.2",

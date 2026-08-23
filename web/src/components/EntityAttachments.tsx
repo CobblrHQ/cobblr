@@ -15,6 +15,9 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
 import { useImageSrc, FilePreview, canPreviewFile, useFilePreviewRegistry } from "@cobblr/platform-web";
 import { ImageLightbox } from "./ImageLightbox";
+import { Link as RouterLink } from "react-router-dom";
+import { useDetailRoute } from "../lib/useDetailRoute";
+import { DiscussionPreview } from "./DiscussionTab";
 
 interface Props {
   /** Entity kind id, e.g. "inventory:part". */
@@ -34,6 +37,12 @@ export function EntityAttachments({ kind, entityId, compact = false }: Props) {
   return (
     <div className={compact ? "flex flex-wrap items-start gap-2" : "space-y-4"}>
       <TagsSection
+        sourceModule={moduleName}
+        sourceType={sourceType}
+        sourceId={entityId}
+        compact={compact}
+      />
+      <DiscussionPreview
         sourceModule={moduleName}
         sourceType={sourceType}
         sourceId={entityId}
@@ -88,6 +97,7 @@ function TagsSection({
   const qc = useQueryClient();
   const toast = useToast();
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [showQuiet, setShowQuiet] = useState(false);
 
   const attached = useQuery({
     queryKey: ["tag-attachments", activeSlug, sourceType, sourceId],
@@ -111,6 +121,14 @@ function TagsSection({
   });
 
   const items = attached.data?.items ?? [];
+  // The server ranks these (core-tags src/relevance.ts): pinned first, then by
+  // how broadly and how recently the tag is used. A tag that is both OLD and
+  // NARROW comes back `quiet` — a spent event tag like "3DPrintopia 2026",
+  // worth keeping as history and not worth reading on every printer forever.
+  // It folds behind "+N" rather than disappearing: one click brings it back,
+  // and the button says why it was folded.
+  const quiet = items.filter((a) => a.quiet);
+  const shown = showQuiet ? items : items.filter((a) => !a.quiet);
 
   return (
     <section>
@@ -120,7 +138,7 @@ function TagsSection({
         </h3>
       )}
       <div className="flex flex-wrap gap-2 items-center">
-        {items.map((a) => (
+        {shown.map((a) => (
           <span
             key={a.id}
             className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border"
@@ -140,6 +158,26 @@ function TagsSection({
             </button>
           </span>
         ))}
+        {quiet.length > 0 && !showQuiet && (
+          <button
+            onClick={() => setShowQuiet(true)}
+            // The reason, per tag, on hover. A count alone ("+3") tells you
+            // something was hidden but not what or why, which is the part that
+            // makes an automatic rule feel arbitrary.
+            title={quiet.map((a) => a.quiet_reason ?? a.tag_name).join("\n")}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs border border-dashed border-line dark:border-slate-600 text-faint dark:text-slate-500 hover:border-cobble-500 hover:text-accent transition"
+          >
+            +{quiet.length}
+          </button>
+        )}
+        {showQuiet && quiet.length > 0 && (
+          <button
+            onClick={() => setShowQuiet(false)}
+            className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-accent transition"
+          >
+            fewer
+          </button>
+        )}
         <button
           onClick={() => setPickerOpen(true)}
           className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs border border-dashed border-line dark:border-slate-600 text-muted hover:border-cobble-500 hover:text-accent transition"
@@ -759,6 +797,43 @@ function PairingsSection({ kind, entityId, compact = false }: { kind: string; en
   );
 }
 
+/** The other end of a link, by name.
+ *
+ *  One cached query per (kind, id), so a record linked from ten rows is looked
+ *  up once and a page of links costs a handful of small requests. The title is
+ *  read at render time and never stored, so renaming the record renames it
+ *  everywhere it is linked. */
+function LinkedEntityName({ kind, id }: { kind: string; id: string }) {
+  const { activeSlug } = useActiveOrg();
+  const detailRoute = useDetailRoute(activeSlug ?? "");
+  const q = useQuery({
+    queryKey: ["entity", activeSlug, kind, id],
+    queryFn: () => api.lookupEntity(activeSlug, kind, id),
+    enabled: !!activeSlug,
+    staleTime: 60_000,
+    retry: false,
+  });
+  const to = detailRoute(kind, id);
+  // A link can outlive what it points at. Saying so beats a spinner that never
+  // resolves, and beats showing a uuid as though it were an answer.
+  const label = q.isError ? "(deleted)" : (q.data?.title ?? "…");
+  const cls = "font-medium text-content dark:text-mortar-100 truncate";
+  return (
+    <>
+      {to && !q.isError ? (
+        <RouterLink to={to} className={cls + " hover:underline"} title={kind}>
+          {label}
+        </RouterLink>
+      ) : (
+        <span className={cls} title={kind}>{label}</span>
+      )}
+      {/* The kind still earns a place: "which of my things is this" is answered
+          by the name, "what sort of thing is it" by this. */}
+      <span className="font-mono text-[10px] text-faint truncate">{kind}</span>
+    </>
+  );
+}
+
 function PairingRow({
   pairing,
   direction,
@@ -782,12 +857,13 @@ function PairingRow({
         {pairing.relationship_kind}
       </span>
       <ArrowRight size={10} className="text-faint" />
-      <span className="font-medium text-content dark:text-mortar-100 truncate">
-        {left}
-      </span>
-      <span className="font-mono text-[10px] text-faint truncate">
-        {leftId.slice(0, 8)}
-      </span>
+      {/* The NAME of the other thing, not its kind and the first eight
+          characters of a uuid. This row read "inventory:part a3f5729e" for as
+          long as it has existed, which is the machine's version of the answer:
+          you cannot tell which part that is without opening it. Mentions made
+          it worse by writing links here automatically, so a feature that says
+          "these two are related" pointed at something unreadable. */}
+      <LinkedEntityName kind={left} id={leftId} />
       <div className="flex-1" />
       {pairing.notes && (
         <span className="text-muted italic truncate max-w-[200px]" title={pairing.notes}>

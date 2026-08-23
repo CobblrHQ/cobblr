@@ -9,6 +9,9 @@ export interface TagsTable {
   color: string | null;
   parent_id: string | null;
   icon: string | null;
+  /** Keeps a tag at the front of every chip row and exempts it from the
+   *  relevance collapse (see src/relevance.ts). */
+  pinned: Generated<boolean>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }

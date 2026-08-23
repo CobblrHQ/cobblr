@@ -6,6 +6,7 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { isQuiet, quietReason, rankTags, type TagUsage } from "../relevance.js";
 
 export const tagsRouter = Router({ mergeParams: true });
 
@@ -16,7 +17,9 @@ const TagCreate = z.object({
   icon: z.string().max(16).nullable().optional(),
 });
 
-const TagUpdate = TagCreate.partial();
+// `pinned` is update-only on purpose: you pin a tag you already have and can
+// see the ranking of, never one you are in the middle of typing.
+const TagUpdate = TagCreate.partial().extend({ pinned: z.boolean().optional() });
 
 const TagMerge = z.object({ into_tag_id: z.string().uuid() });
 
@@ -115,16 +118,60 @@ tagsRouter.post(
   }),
 );
 
+/** Usage stats per tag, for ranking. One grouped read of the assignment table.
+ *
+ *  Shared deliberately: the tag PICKER, a record's chip row and the /tags page
+ *  all order by relevance, and three separate queries would drift into three
+ *  different orders for the same tags. */
+async function usageByTag(db: ReturnType<typeof tenantDb>): Promise<Map<string, TagUsage>> {
+  const rows = await db
+    .selectFrom("core_tags_tags as t")
+    .leftJoin("core_tags_assignments as a", "a.tag_id", "t.id")
+    .select(({ fn }) => [
+      "t.id as id",
+      "t.name as name",
+      "t.pinned as pinned",
+      fn.count<number>("a.id").as("uses"),
+      fn.max("a.created_at").as("last_used_at"),
+      fn.min("a.created_at").as("first_used_at"),
+    ])
+    .groupBy(["t.id", "t.name", "t.pinned"])
+    .execute();
+  return new Map(
+    rows.map((r) => [
+      r.id,
+      {
+        id: r.id,
+        name: r.name,
+        // count() comes back as a string from pg for bigint columns.
+        uses: Number(r.uses ?? 0),
+        lastUsedAt: r.last_used_at ? new Date(r.last_used_at as unknown as string) : null,
+        firstUsedAt: r.first_used_at ? new Date(r.first_used_at as unknown as string) : null,
+        pinned: !!r.pinned,
+      },
+    ]),
+  );
+}
+
 tagsRouter.get(
   "/tags",
   asyncHandler(async (req, res) => {
     const db = tenantDb(req);
-    const items = await db
-      .selectFrom("core_tags_tags")
-      .selectAll()
-      .orderBy("name")
-      .execute();
-    res.json({ items });
+    const rows = await db.selectFrom("core_tags_tags").selectAll().execute();
+    const usage = await usageByTag(db);
+    const now = new Date();
+    // Relevance, not the alphabet. Alphabetical order put "3DPrintopia 2026"
+    // above "in service" on every printer forever, purely because it starts
+    // with a digit.
+    const decorated = rows.map((t) => {
+      const u = usage.get(t.id) ?? {
+        id: t.id, name: t.name, uses: 0, lastUsedAt: null, firstUsedAt: null, pinned: !!t.pinned,
+      };
+      return { ...t, uses: u.uses, last_used_at: u.lastUsedAt, quiet: isQuiet(u, now) };
+    });
+    const order = new Map(rankTags([...usage.values()], now).map((u, i) => [u.id, i]));
+    decorated.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+    res.json({ items: decorated });
   }),
 );
 
@@ -144,6 +191,7 @@ tagsRouter.patch(
     if (parsed.data.name !== undefined) patch.name = parsed.data.name.trim();
     if (parsed.data.color !== undefined) patch.color = parsed.data.color;
     if (parsed.data.icon !== undefined) patch.icon = parsed.data.icon;
+    if (parsed.data.pinned !== undefined) patch.pinned = parsed.data.pinned;
     if (parsed.data.parent_id !== undefined) {
       const newParent = parsed.data.parent_id;
       // Guard against loops: a tag can't be its own parent, and a parent can't
@@ -370,7 +418,28 @@ tagsRouter.get(
     if (sourceType) q = q.where("a.source_type", "=", sourceType);
     if (sourceId) q = q.where("a.source_id", "=", sourceId);
     if (tagId) q = q.where("a.tag_id", "=", tagId);
-    const items = await q.execute();
+    const rows = await q.execute();
+    // Ranked here rather than in the browser, so the chip row, the picker and
+    // the /tags page cannot disagree about which tags matter.
+    const usage = await usageByTag(db);
+    const now = new Date();
+    const seen = rows.map((r) => usage.get(r.tag_id)).filter((u): u is TagUsage => !!u);
+    const order = new Map(rankTags(seen, now).map((u, i) => [u.id, i]));
+    const items = rows
+      .map((r) => {
+        const u = usage.get(r.tag_id);
+        return {
+          ...r,
+          uses: u?.uses ?? 0,
+          last_used_at: u?.lastUsedAt ?? null,
+          pinned: u?.pinned ?? false,
+          // Fold behind "+N" on a stated ground — old AND narrow — never on a
+          // score, because a hidden thing needs a reason a person can read.
+          quiet: u ? isQuiet(u, now) : false,
+          quiet_reason: u && isQuiet(u, now) ? quietReason(u, now) : null,
+        };
+      })
+      .sort((a, b) => (order.get(a.tag_id) ?? 0) - (order.get(b.tag_id) ?? 0));
     res.json({ items });
   }),
 );

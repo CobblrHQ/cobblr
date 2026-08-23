@@ -298,20 +298,6 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                             },
                             {
                                   "entity_kind": "inventory:part",
-                                  "name": "rack_area",
-                                  "display_label": "Where",
-                                  "type": "text",
-                                  "position": 4,
-                                  "choices": [
-                                        "Rack",
-                                        "Cabinet floor",
-                                        "Drawer",
-                                        "Pantry",
-                                        "Fridge"
-                                  ]
-                            },
-                            {
-                                  "entity_kind": "inventory:part",
                                   "name": "opened_on",
                                   "display_label": "Opened",
                                   "type": "date",
@@ -383,11 +369,11 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                       "saved_views": [
                             {
                                   "entity_kind": "inventory:part",
-                                  "name": "On the rack",
+                                  "name": "Where they live",
                                   "view_type": "table",
                                   "pinned": true,
                                   "config": {
-                                        "group_by": "rack_area",
+                                        "group_by": "location",
                                         "visible_fields": [
                                               "title",
                                               "manufacturer",
@@ -718,7 +704,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Track the fridge/pantry with expiry + storage, and auto-build a shopping list when something runs low or is about to expire. Check an item off → it restocks.",
     manifest: {
       id: "cobblr.flagship.groceries",
-      version: "0.4.0",
+      version: "0.7.0",
       // What its items are actually CALLED. A bundle's suggestion has to be
       // corroborated by the capture's own text before it is trusted, and a
       // category whose members never share its name can never corroborate:
@@ -882,6 +868,27 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       // cadence wires below are part of THIS bundle's promise, so installing
       // Groceries brings the capability with it. A workspace that never installs
       // Groceries still carries no ledger.
+      features: [
+        {
+          key: "kitchen-places",
+          name: "Set up your kitchen",
+          question: "Shall we set up a Fridge and a Freezer you can file things into?",
+          description:
+            "Adds Kitchen with a Fridge, Freezer and Pantry inside it, so you can put a label on each and scan things straight in. If you already have a Kitchen these go inside the one you have, and nothing already in it is moved. Decline and grocery tracking works exactly the same.",
+          default: true,
+          provides_locations: [
+            {
+              name: "Kitchen",
+              kind: "area",
+              children: [
+                { name: "Fridge", kind: "container" },
+                { name: "Freezer", kind: "container" },
+                { name: "Pantry", kind: "container" },
+              ],
+            },
+          ],
+        },
+      ],
       requires: [{ module: "inventory" }, { module: "lists" }, { module: "core-cadence" }],
       wires: [
         { source_kind: "inventory:part", action_id: "lists:add-item", trigger_type: "event", trigger_event: "inventory.stock.low", args: { listTitle: "Shopping list" } },
@@ -896,7 +903,6 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         // would quietly add it to the list as if it had been used, and the
         // learned rate would climb on food nobody ate. Recording it as a discard
         // is what makes "3 of your last 4 went bad, buy fewer" possible.
-        { source_kind: "inventory:part", action_id: "core-cadence:record-event", trigger_type: "event", trigger_event: "lists.item.expiring", args: { event_type: "discard", qty_delta: -1, source: "checkin" } },
         // The predictive half of the reorder signal, beside the shipped
         // threshold one above: stock.low fires when you CROSS the reorder level,
         // this fires when the learned rate says you are about to. Same list, same
@@ -904,7 +910,18 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         { source_kind: "inventory:part", action_id: "lists:add-item", trigger_type: "event", trigger_event: "core-cadence.reorder.due", args: { listTitle: "Shopping list" } },
       ],
       field_defs: [
+        { entity_kind: "inventory:part", name: "storage_requirement", display_label: "Must be kept", type: "text", position: 0, choices: ["frozen", "refrigerated", "ambient"], help: "How this has to be kept, which is not the same as where it currently is. Filled in from what the item is when you scan it, and left blank when that is not clear enough to say. Anything you choose here is used instead." },
         { entity_kind: "inventory:part", name: "expires_on", display_label: "Expires", type: "date", position: 1, field_role: "expiry" },
+        // Shelf life counts from the day you BOUGHT it, and a receipt is often
+        // scanned days later - so this cannot be the scan date. The receipt
+        // parser fills it by its role.
+        //
+        // Deliberately the SAME NAME as the Provenance preset's field: a
+        // per-kind def shadows a trait-scoped one of the same name
+        // (resolveFieldDefsForKind), so a workspace with both gets ONE field
+        // rather than two dates meaning the same thing, and a workspace with
+        // neither the preset nor this bundle is unaffected.
+        { entity_kind: "inventory:part", name: "acquired_on", display_label: "Bought on", type: "date", position: 2, field_role: "acquired-on" },
         { entity_kind: "inventory:part", name: "opened_on", display_label: "Opened", type: "date", position: 2 },
         { entity_kind: "inventory:part", name: "storage", display_label: "Storage", type: "text", position: 3, choices: ["Fridge", "Freezer", "Pantry", "Counter", "Spice rack"] },
         { entity_kind: "inventory:part", name: "food_category", display_label: "Category", type: "text", position: 4, choices: ["Produce", "Dairy", "Meat", "Bakery", "Frozen", "Canned", "Dry goods", "Condiments", "Beverages", "Snacks"] },

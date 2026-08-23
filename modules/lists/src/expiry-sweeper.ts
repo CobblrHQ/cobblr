@@ -133,13 +133,27 @@ export async function expiryTick(opts: { orgId?: string } = {}): Promise<{ scann
       // Event → food-cluster wire turns this into a shopping-list line. The
       // wire engine resolves the source entity from a `<kindSuffix>Id` payload
       // key — for source_kind inventory:part that's `partId` (NOT entityId).
-      void platform().events.emit("lists.item.expiring", {
+      //
+      // TWO events, because one covered two different facts and a wire could
+      // not tell them apart. `expiring` fires from EXPIRY_SOON_DAYS out, which
+      // means an item whose whole shelf life is shorter than that window is
+      // "expiring" the moment it is entered. Anything hung off it therefore
+      // fires for food that is perfectly good — a Groceries wire recorded a
+      // ledger `discard` on it, so six meal containers with a five-day life
+      // were written off as waste within the hour of arriving.
+      //
+      // `expired` is the narrower fact: the date has actually passed. Note that
+      // it still is not "was thrown away" — that needs a person to say so, and
+      // the grace-period ask is what will collect it.
+      const payload = {
         orgId: org.id,
         partId: row.id,
         name: row.name,
         expiresOn: row.expires_on,
         daysUntil,
-      });
+      };
+      void platform().events.emit("lists.item.expiring", payload);
+      if (daysUntil < 0) void platform().events.emit("lists.item.expired", payload);
 
       for (const userId of memberIds) {
         try {

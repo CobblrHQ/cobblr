@@ -4,7 +4,7 @@
 // messages render markdown; the input auto-grows. Portals to <body> so the
 // header's backdrop-blur can't trap its position:fixed (CLAUDE.md modal note).
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X, Send, Check, Eye, PencilLine, Trash2, Wand2 } from "lucide-react";
@@ -31,7 +31,7 @@ import {
 } from "../lib/input-history";
 import { useDetailRoute } from "../lib/useDetailRoute";
 import { useAiStatus, AiOffNotice } from "./AiStatusNotice";
-import { SidePanel } from "./SidePanel";
+import { RailTabContent, useRailTab } from "./SideRail";
 
 // Shown only if the basic-mode endpoint itself is unreachable (network error) —
 // the server otherwise always returns a reply (its own no-match nudge).
@@ -203,7 +203,18 @@ export function ChatLauncher({ open, setOpen, asRow = false }: { open: boolean; 
  *  the only instance is what guarantees one conversation, one portal, one
  *  prefs fetch, one cobblr:open-chat listener. `open`/`setOpen` are lifted to
  *  AppLayout so the main content can shift left when the panel opens. */
-export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boolean) => void }) {
+export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen: (v: boolean) => void }) {
+  // Registers Cobb as a rail tab and reports whether he is the one SHOWING.
+  // Everything below gates on `open` meaning "this tab is visible" — the rail
+  // being open on a different tab must not leave Cobb polling, subscribing or
+  // capturing selection in the background.
+  const { active: open } = useRailTab({
+    id: "cobb",
+    label: "Cobb",
+    icon: <CobbBust size={18} title="" />,
+    order: 0,
+  });
+  void railOpen;
   const { activeSlug } = useActiveOrg();
   const navigate = useNavigate();
   const detailRoute = useDetailRoute(activeSlug ?? "");
@@ -278,6 +289,18 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
   const [devPose, setDevPose] = useState<CobbPose>("idle");
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  // Mirrored into STATE as well, so the sizing effect below re-runs the moment
+  // the textarea actually attaches. A plain ref cannot do that: it mutates
+  // without a render, and since the panel became a portalled rail tab the
+  // element mounts a render LATER than `open` flips — so the effect fired once
+  // against a null ref, bailed, and never ran again. The composer stayed one
+  // row tall with its placeholder clipped (caught by an A/B screenshot, not by
+  // typecheck).
+  const [taEl, setTaEl] = useState<HTMLTextAreaElement | null>(null);
+  const setTa = useCallback((el: HTMLTextAreaElement | null) => {
+    taRef.current = el;
+    setTaEl(el);
+  }, []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -303,7 +326,7 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
       caretToEndRef.current = false;
       el.setSelectionRange(el.value.length, el.value.length);
     }
-  }, [input, open]);
+  }, [input, open, taEl]);
 
   // ── Up/Down recall of what you sent ───────────────────────────────────────
   // Its own store, not the conversation cache: clearing the chat clears what
@@ -1195,12 +1218,13 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
     }
   }
 
-  if (!activeSlug || !open) return null;
+  if (!activeSlug) return null;
 
   return (
-    <SidePanel width="sm:w-[min(100vw,440px)]" escapeExempt cobbPanel>
-          <header className="flex items-center justify-between px-4 py-3 border-b border-line dark:border-slate-700 shrink-0">
-            <div className="flex items-center gap-2 text-sm font-semibold text-content dark:text-mortar-100">
+    <RailTabContent
+      id="cobb"
+      title={
+        <>
               {/* The bust is always the wave — it takes no pose (see CobbBust).
                   In dev this is also the pose-cycler button, but what it cycles is
                   the FULL-BODY Cobb below, which is where poses are reviewable. */}
@@ -1216,28 +1240,26 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
               ) : (
                 <CobbBust size={42} title="Cobb" className="cobb-lift" />
               )}
-              Ask Cobb
-              {import.meta.env.DEV && (
-                <span className="font-mono text-[10px] font-normal text-faint">{devPose}</span>
-              )}
-            </div>
-            <div className="flex items-center gap-1">
-              {messages.length > 0 && (
-                <button
-                  type="button"
-                  onClick={clearChat}
-                  className="text-faint hover:text-content dark:hover:text-mortar-200 transition p-1"
-                  aria-label="Clear conversation"
-                  title="Clear this conversation"
-                >
-                  <Trash2 size={15} />
-                </button>
-              )}
-              <button type="button" onClick={() => setOpen(false)} className="text-faint hover:text-content dark:hover:text-mortar-200 transition" aria-label="Close">
-                <X size={18} />
-              </button>
-            </div>
-          </header>
+          Ask Cobb
+          {import.meta.env.DEV && (
+            <span className="font-mono text-[10px] font-normal text-faint">{devPose}</span>
+          )}
+        </>
+      }
+      actions={
+        messages.length > 0 ? (
+          <button
+            type="button"
+            onClick={clearChat}
+            className="text-faint hover:text-content dark:hover:text-mortar-200 transition p-1"
+            aria-label="Clear conversation"
+            title="Clear this conversation"
+          >
+            <Trash2 size={15} />
+          </button>
+        ) : null
+      }
+    >
 
           {/* Tool consent, always visible while AI is on: since the agent loop,
               Cobb READS records into prompts (and with a shared AI that data
@@ -1683,7 +1705,7 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
             )}
             <div className="flex items-end gap-2">
             <textarea
-              ref={taRef}
+              ref={setTa}
               value={input}
               onChange={(e) => {
                 setInput(e.target.value);
@@ -1746,6 +1768,6 @@ export function ChatPanel({ open, setOpen }: { open: boolean; setOpen: (v: boole
             </button>
             </div>
           </div>
-    </SidePanel>
+    </RailTabContent>
   );
 }

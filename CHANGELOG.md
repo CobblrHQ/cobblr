@@ -2,6 +2,28 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-08-23
+
+### Features
+- Several of the same thing bought on different days now each keep their own use-by date. Four meals in the fridge, two from Sunday and two from Wednesday, are no longer one date pretending to cover both. You are told about the oldest one, the rest are left alone, and once you have eaten it the warning moves on to the next by itself. Everything you already track carries on working unchanged; nothing needs re-entering.
+- A bundle can now offer to set up the places its things live in. Groceries offers a Kitchen with a Fridge, Freezer and Pantry inside it, so you can put a label on each and scan things straight in. If you already have a Kitchen, they go inside the one you have and nothing already in it is moved. It is a question at install, not something that happens to you, and declining changes nothing else about how the bundle works.
+- Mention @cobb in a discussion and he answers there, where everyone can see it. Replying to him carries on the conversation without mentioning him again.
+- Discussions now keep up with you: a Discussion page listing everything with something new in it, an unread dot, and a bell to follow or stop following any record.
+- Type @ in a discussion to name a person, a record, or Cobb. Naming a record links the two together, both ways, using the same Linked entities you already have.
+- You can now talk about a record with the people you share a workspace with: every part, printer, location or entry has its own conversation, in the panel beside it.
+- You can now reply to a specific comment in a discussion. The reply quotes what it answers, and tapping the quote jumps to the original.
+- Pin a knowledge entry and it stays in the side panel on every page, so the things you keep needing are one glance away instead of one search away.
+- Fill provenance fields from receipts you scanned before those fields existed, and Groceries now records the day you bought something rather than the day you scanned it.
+- Cobblr now tells you when something goes somewhere it should not. Put a thing that has to stay frozen into a cupboard and you hear about it straight away, rather than finding out later. It only speaks up when it actually knows how the thing must be kept, so it stays quiet rather than guessing, and it never comments on shelf-stable things. This one interrupts instead of waiting for a daily summary, because a message about food spoiling is no use tomorrow morning.
+- Tags now sort by how much they still matter, and a tag you have not used in months folds away behind a "+N" instead of sitting on every record forever.
+- The vending board can now be tapped. It has always shown what you have and never let you change it. A "Use / restock" button turns on a plus and minus on every tile, so you can record what you used while standing in front of the cupboard rather than going back to a laptop. Undo sits next to the toggle, because a mis-tap on a screen you walk past is going to happen.
+
+### Fixes
+- Fixed food being recorded as thrown away while you were still eating it. Anything approaching its use-by date was filed in the consumption ledger as waste, and because that warning starts five days out, anything with a short shelf life was written off the moment you entered it. Six meal containers good for a week were all counted as binned within the hour. Nothing is treated as thrown away automatically any more; approaching a date still adds a replacement to your shopping list, which was the useful half.
+- Fixed a bundle creating a second copy of a place you already had, when yours was nested inside another one. A Kitchen kept inside Home was not recognised, so installing Groceries would add a new Kitchen at the top level rather than using the one you had. Places created inside a nested parent also sat at the wrong level in the tree.
+- Fixed being warned that something was in the wrong place when it was not. Putting a chilled item on a shelf inside the fridge counted as a mismatch, because only the shelf was looked at and not the fridge around it. The whole chain is checked now, and a warning about a particular spot is only given once rather than every time something is picked up and put back.
+- Fixed "must be kept" being worked out for scanned food and then not shown anywhere. The value was recorded and used, but there was no field for it, so you could not see what Cobblr had decided or correct it. It now appears on the item with the three choices, and anything you pick is used instead of the guess. That was already how it behaved; there was simply no way to exercise it.
+
 ## 2026-08-22
 
 ### Features

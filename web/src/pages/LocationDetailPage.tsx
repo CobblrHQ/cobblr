@@ -18,53 +18,25 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { EntityAttachments } from "../components/EntityAttachments";
 import { FloorPlan } from "../components/FloorPlan";
 
-interface ContentItem {
-  module: string;
+/** One thing found inside this location, as the placement endpoint returns it:
+ *  the entity's resolved identity plus its declared fields. */
+interface PlacedEntity {
   kind: string;
   id: string;
   title: string;
-  image_path?: string | null;
-  manufacturer?: string | null;
+  fields?: Record<string, unknown>;
 }
 
-// Modules that store entities with `location_id`. We probe each one's
-// list endpoint with ?location_id=<id> and union the results.
-/** Which kinds can live in a location: the ones that HAVE a `location_id`.
- *
- *  This was a hardcoded list of three modules — inventory, machines, assets —
- *  so anything else that carries a location was invisible here. A workspace
- *  with its own instance table ("Kitchen Stuff") filed an item into a room and
- *  this page said the room held nothing, while the scanner's bin lookup (which
- *  asks the platform instead) found it and popped a single-item card at the top
- *  of a room that claimed to be empty (reported 2026-08-22).
- *
- *  The registry already answers this: every kind reports its fields, its list
- *  endpoint and its detail route, and instance kinds are in there too. So ask,
- *  rather than keep a list that is wrong the moment anyone adds a module. */
-function locationBearingKinds(kinds: PlatformEntityKind[]): Array<{
-  kind: string;
-  module: string;
-  /** "modules/<name>" or "instances/<name>" — what `endpoints.list` hangs off. */
-  base: string;
-  listPath: string;
-  route: (id: string) => string;
-}> {
-  return kinds
-    .filter((k) => k.fields.some((f) => f.name === "location_id") && k.endpoints?.list)
-    .map((k) => ({
-      kind: k.id,
-      module: k.instance_name ?? k.module_name,
-      // `endpoints.list` is RELATIVE to the kind's own base ("/parts"), and the
-      // base differs for an instance. FloorPlan resolves it the same way; the
-      // first version of this pasted the raw value after /orgs/<slug> and every
-      // request 404'd into the silent catch below, so the page showed nothing
-      // and said so confidently.
-      base: k.instance_name ? `instances/${k.instance_name}` : `modules/${k.module_name}`,
-      listPath: k.endpoints!.list!,
-      // The registry's template is "{id}", not ":id" — the same substitution
-      // useDetailRoute and SearchBar do.
-      route: (id: string) => (k.detail_route ?? "").replace("{id}", id),
-    }));
+/** Where a kind's detail page lives. The placement endpoint answers WHAT is
+ *  here; the registry is still how a kind says where to click through to. */
+function detailRoutes(kinds: PlatformEntityKind[]): Map<string, string> {
+  // The registry's template is "{id}", not ":id" — the same substitution
+  // useDetailRoute and SearchBar do.
+  return new Map(kinds.filter((k) => k.detail_route).map((k) => [k.id, k.detail_route!]));
+}
+
+function str(v: unknown): string | null {
+  return typeof v === "string" && v ? v : null;
 }
 
 export function LocationDetailPage() {
@@ -110,53 +82,35 @@ export function LocationDetailPage() {
     enabled: !!activeSlug,
     staleTime: 5 * 60_000,
   });
-  const bearing = useMemo(() => locationBearingKinds(kinds.data?.items ?? []), [kinds.data]);
+  const routes = useMemo(() => detailRoutes(kinds.data?.items ?? []), [kinds.data]);
 
   // Contents — everything stored here, whatever kind it is.
+  //
+  // ONE question, asked of the primitive that owns the answer. This used to
+  // walk the entity registry and probe each location-bearing kind's own list
+  // endpoint with `?location_id=`, which is a filter most of them do not
+  // implement: they ignored the query string and returned their whole table,
+  // so every room showed the same items and a book shelved in the dining room
+  // turned up in the den (reported 2026-08-23). Re-checking each row's
+  // `location_id` client-side does not rescue it either — a record's location
+  // lives in the placement table and its `location_id` column reads null, so
+  // the check that fixed the over-listing would have emptied the section.
+  //
+  // Placement IS where "what is this inside of" is kept
+  // (docs/design-decisions/placement-and-containment.md), mirrored from every
+  // location-bearing table by DB trigger, so one call answers for all kinds at
+  // once — instance kinds and any module added later included. There is now
+  // one implementation of this question instead of two that disagreed.
   const contents = useQuery({
-    queryKey: ["location-contents", activeSlug, id, bearing.map((b) => b.kind).join(",")],
-    queryFn: async () => {
-      const out: ContentItem[] = [];
-      const failed: string[] = [];
-      for (const m of bearing) {
-        try {
-          // NO `limit`. It used to send `limit=500`, and the caps are per
-          // module — inventory allows 200, catalogs 60 — so the parts request
-          // 400'd, the catch below swallowed it, and the page reported "what's
-          // here (0)" for a location that had things in it. Every list
-          // endpoint has its own sane default; taking it cannot 400.
-          const data = await api.request<{
-            items: Array<{
-              id: string;
-              name?: string;
-              title?: string;
-              image_path?: string | null;
-              manufacturer?: string | null;
-            }>;
-          }>("GET", `/orgs/${activeSlug}/${m.base}${m.listPath}?location_id=${id}`);
-          for (const item of data.items) {
-            out.push({
-              module: m.module,
-              kind: m.kind,
-              id: item.id,
-              title: item.name ?? item.title ?? "(unnamed)",
-              image_path: item.image_path,
-              manufacturer: item.manufacturer,
-            });
-          }
-        } catch {
-          // A 404 is "that module is not installed here" and is expected.
-          // Anything else is a kind we could not read, and the difference
-          // matters: silently counting it as zero is how a 400 turned into a
-          // page that confidently said this location was empty. We cannot tell
-          // them apart from the thrown value alone, so record the kind and let
-          // the section say it is incomplete rather than assert a total.
-          failed.push(m.kind);
-        }
-      }
-      return { items: out, failed };
-    },
-    enabled: !!activeSlug && !!id && bearing.length > 0,
+    queryKey: ["location-contents", activeSlug, id],
+    queryFn: () =>
+      api.request<{ items: PlacedEntity[] }>(
+        "GET",
+        `/orgs/${activeSlug}/modules/core-placement/contents` +
+          `?container_kind=${encodeURIComponent("core-locations:location")}` +
+          `&container_id=${encodeURIComponent(id!)}`,
+      ),
+    enabled: !!activeSlug && !!id,
   });
 
   const remove = useMutation({
@@ -237,7 +191,7 @@ export function LocationDetailPage() {
             className="ring-1 ring-line dark:ring-slate-700 shrink-0"
           />
           <div className="flex-1 min-w-0">
-            <h1 className="text-2xl font-display font-bold text-content dark:text-mortar-100">
+            <h1 className="text-2xl font-display font-bold text-content dark:text-mortar-100 break-words">
               {l.name}
             </h1>
             <div className="flex flex-wrap items-center gap-2 mt-1 text-[11px] font-mono">
@@ -254,13 +208,18 @@ export function LocationDetailPage() {
               </p>
             )}
           </div>
-          {/* Phone: its own full-width row, so the title gets the whole width
-              and the buttons sit under it. Desktop: back beside the title.
-              This was a plain `flex` with no shrink-0 and no wrap, so on a
-              narrow screen the buttons held their intrinsic width, the title
-              was squeezed to three lines, and the two drew on top of each
-              other. */}
-          <div className="order-last w-full shrink-0 flex flex-wrap items-center gap-1 sm:order-none sm:w-auto sm:justify-end">
+          {/* Its own full-width row, at EVERY width, so the name never competes
+              with the buttons for space.
+              This used to sit beside the title from `sm:` up, holding its
+              intrinsic width (`shrink-0`) while the title absorbed every pixel
+              of the shortfall. With five actions — and the set GROWS, since a
+              bundle can register more — "Rack 1" wrapped to two lines on a wide
+              desktop, and at narrower widths the Cobb button drew on top of the
+              word it had squeezed (reported 2026-08-23).
+              The name is the most important thing on the page, so it is not
+              part of the negotiation. The bar already wraps internally; below
+              the title it has the whole card to wrap into. */}
+          <div className="order-last w-full flex flex-wrap items-center gap-1">
             <EntityActionsBar entityKind="core-locations:location" entityId={l.id} entityLabel={l.name} />
             <button
               type="button"
@@ -358,51 +317,55 @@ export function LocationDetailPage() {
         <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
           // what's here ({contents.data?.items.length ?? 0})
         </div>
-        {contents.isLoading && (
-          <div className="text-xs text-faint">loading…</div>
-        )}
-        {contents.data && contents.data.items.length === 0 && contents.data.failed.length === 0 && (
-          <div className="border border-dashed border-line dark:border-slate-700 rounded-md p-6 text-center text-sm text-faint italic">
-            Nothing's stored here yet. Set something's location to "{l.name}" to see it appear.
+        {contents.isLoading && <div className="text-xs text-faint">loading…</div>}
+        {contents.isError && (
+          <div className="border border-dashed border-line dark:border-slate-700 rounded-md p-3 text-xs text-faint italic">
+            Couldn't read what's stored here just now. Reload to try again.
           </div>
         )}
-        {/* Say the list is incomplete rather than let a failed read pass for an
-            empty location. "Nothing is here" and "we could not look" are
-            different answers and only one of them is reassuring. */}
-        {contents.data && contents.data.failed.length > 0 && (
-          <div className="border border-dashed border-line dark:border-slate-700 rounded-md p-3 text-xs text-faint italic">
-            Some kinds could not be read just now ({contents.data.failed.join(", ")}), so this list may
-            be incomplete.
+        {contents.data && contents.data.items.length === 0 && (
+          <div className="border border-dashed border-line dark:border-slate-700 rounded-md p-6 text-center text-sm text-faint italic">
+            Nothing's stored here yet. Set something's location to "{l.name}" to see it appear.
           </div>
         )}
         {contents.data && contents.data.items.length > 0 && (
           <ul className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
             {contents.data.items.map((item) => {
-              const m = bearing.find((x) => x.kind === item.kind);
-              const href = m ? m.route(item.id) : "#";
-              return (
-                <li key={`${item.module}:${item.id}`}>
-                  <Link
-                    to={href}
-                    className="block rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 hover:border-cobble-300 dark:hover:border-cobble-700 transition"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <EntityThumb
-                        src={item.image_path}
-                        alt={item.title}
-                        size={40}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium text-content dark:text-mortar-100 truncate">
-                          {item.title}
-                        </div>
-                        <div className="text-[10px] font-mono uppercase tracking-widest text-faint">
-                          {item.kind}
-                          {item.manufacturer ? ` · ${item.manufacturer}` : ""}
-                        </div>
-                      </div>
+              const f = item.fields ?? {};
+              const template = routes.get(item.kind);
+              const href = template ? template.replace("{id}", item.id) : null;
+              const maker = str(f.manufacturer);
+              const body = (
+                <div className="flex items-center gap-3 min-w-0">
+                  <EntityThumb src={str(f.image_path)} alt={item.title} size={40} />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-content dark:text-mortar-100 truncate">
+                      {item.title}
                     </div>
-                  </Link>
+                    <div className="text-[10px] font-mono uppercase tracking-widest text-faint truncate">
+                      {item.kind}
+                      {maker ? ` · ${maker}` : ""}
+                    </div>
+                  </div>
+                </div>
+              );
+              const card =
+                "block rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3";
+              return (
+                <li key={`${item.kind}:${item.id}`}>
+                  {/* A kind that declares no detail route has nowhere to go —
+                      render it as a plain card rather than a link to "#", which
+                      looks clickable and scrolls to the top of the page. */}
+                  {href ? (
+                    <Link
+                      to={href}
+                      className={card + " hover:border-cobble-300 dark:hover:border-cobble-700 transition"}
+                    >
+                      {body}
+                    </Link>
+                  ) : (
+                    <div className={card}>{body}</div>
+                  )}
                 </li>
               );
             })}

@@ -36,6 +36,7 @@ COPY modules/core-activity-log/package.json ./modules/core-activity-log/
 COPY modules/core-notifications/package.json ./modules/core-notifications/
 COPY modules/core-healthcheck/package.json ./modules/core-healthcheck/
 COPY modules/core-tags/package.json ./modules/core-tags/
+COPY modules/core-discussion/package.json ./modules/core-discussion/
 COPY modules/core-views/package.json ./modules/core-views/
 COPY modules/core-files/package.json ./modules/core-files/
 COPY modules/core-search/package.json ./modules/core-search/

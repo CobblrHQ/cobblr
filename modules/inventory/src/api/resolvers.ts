@@ -188,6 +188,7 @@ function toResolvedPart(row: {
   approximate_qty?: string | null;
   estimated_at?: Date | null;
   metadata: unknown;
+  archived?: boolean;
 }): ResolvedEntity {
   const qty = Number(row.qty);
   // A skinned instance's items live at /instances/<name>/items/:id; the default
@@ -203,6 +204,9 @@ function toResolvedPart(row: {
   return {
     kind: "inventory:part",
     id: row.id,
+    // Archived is inventory's word for "out of use". Reported generically so a
+    // sweeper in another module can honour it without knowing this table.
+    ...(row.archived ? { retired: true } : {}),
     title: row.name,
     subtitle: row.manufacturer ?? undefined,
     image_path: row.image_path ?? undefined,

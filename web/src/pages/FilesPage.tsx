@@ -186,8 +186,8 @@ function ImageTile({
           and 401s (the "all I see is broken images" report). useImageSrc
           blob-fetches with the token, like every other thumbnail. */}
       <AuthedThumb slug={slug} file={file} />
-              // TOUCH-OK: a filename gradient over a tile that is itself the
-              // link; the tile opens the file with or without this.
+              {/* TOUCH-OK: a filename gradient over a tile that is itself the
+                  link; the tile opens the file with or without this. */}
       <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-2 opacity-0 group-hover:opacity-100 transition">
         <div className="text-xs text-white truncate" title={file.filename}>
           {file.filename}

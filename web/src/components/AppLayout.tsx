@@ -27,6 +27,9 @@ import { MobileNav } from "./MobileNav";
 import { EmailVerifyBanner } from "./EmailVerifyBanner";
 import { SimpleModeNotice } from "./SimpleModeNotice";
 import { ChatLauncher, ChatPanel } from "./ChatWidget";
+import { SideRail } from "./SideRail";
+import { DiscussionTab } from "./DiscussionTab";
+import { PinnedTab } from "./PinnedTab";
 import { FeedbackWidget } from "./FeedbackWidget";
 import { GlobalScanWedge } from "./GlobalScanWedge";
 import { SearchBar } from "./SearchBar";
@@ -613,11 +616,18 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           space means an upward flick reveals the bar over the page instead of
           shoving the content down under your thumb. */}
       <div className={fullSide ? "md:hidden" : ""} aria-hidden style={{ height: barH }} />
-      {/* THE chat panel — one mount for however many launchers the chrome has.
-          It portals to <body>, so where it sits here is bookkeeping, but that it
-          appears exactly once is not: a second mount is a second conversation
-          stacked over the first (ChatWidget.test.ts pins this). */}
-      <ChatPanel open={chatOpen} setOpen={setChatOpen} />
+      {/* THE right-hand rail, and the tabs that share it.
+          Tabs are mounted HERE, not by the rail, and stay mounted while it is
+          closed — that is what keeps Cobb's conversation alive across
+          close/reopen. Each tab portals itself into the rail's chrome when it
+          is the active one (docs/design-decisions/discussion-and-the-side-rail.md).
+          Exactly one mount per tab: a second is a second conversation stacked
+          over the first (ChatWidget.test.ts pins this). */}
+      <SideRail open={chatOpen} setOpen={setChatOpen}>
+        <ChatPanel open={chatOpen} setOpen={setChatOpen} />
+        <DiscussionTab />
+        <PinnedTab />
+      </SideRail>
 
         {!fullSide && <SimpleModeNotice />}
         {!fullSide && <EmailVerifyBanner />}

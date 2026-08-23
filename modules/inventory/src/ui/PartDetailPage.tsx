@@ -284,14 +284,15 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
   const lifecycle = String(pmeta.lifecycle ?? pmeta.state ?? "");
   const looseOrDone = ["loose", "bulk", "spare", "parted-out"].includes(lifecycle);
   const canDisassemble = !!matched.data && !looseOrDone;
-  // Keep the detail-page action bar to actions that act ON this item. The
-  // generic CRUD actions stay user-invokable (Tier-B apps / wires need them) but
-  // don't belong here: create-item / create-items make NEW items (nonsensical on
-  // an existing item), and update-item duplicates the inline editing right here.
+  // Keep the detail-page action bar to actions that act ON this item.
+  // create-item / create-items are gone from here for good: they are declared
+  // `scope: "workspace"` now, so the platform never offers them on a record.
+  // They were listed here by hand, which fixed this page and left every other
+  // detail page showing them.
+  // update-item is a genuine per-page choice - it DOES act on this item, it
+  // just duplicates the inline editing right here.
   // (The Lego kit→parts action also moved to the bricklink-connector module.)
   const excludeActionIds = [
-    "inventory:create-item",
-    "inventory:create-items",
     "inventory:update-item",
     ...(canDisassemble ? [] : ["bricklink:disassemble-kit"]),
     // "Split one off" only makes sense for a lot (qty > 1) — hide it on a

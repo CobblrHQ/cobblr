@@ -116,9 +116,18 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
   //         priority (the urgency threshold)
   //      c. dedup so a (channel, eventType-exact) and (channel,
   //         wildcard) pair only fires the channel once — exact wins.
-  //    No subscriptions at all → default to in_app only (legacy
-  //    behaviour preserved). An explicit `enabled=false` row
-  //    suppresses a channel that would otherwise default-on.
+  //    No subscriptions at all → fall back to ACCOUNT prefs, per the policy
+  //    in dispatch-fallback.ts (in_app always; discord_dm when the person
+  //    wants it and the event clears DM_FLOOR; email never). An explicit
+  //    `enabled=false` row suppresses a channel that would otherwise
+  //    default-on.
+  //
+  //    This line used to read "default to in_app only (legacy behaviour
+  //    preserved)", and stayed there after dispatch-fallback.ts replaced that
+  //    rule 40 lines below. Someone reading top-down concluded from it that a
+  //    module notification could never reach Discord, and said so out loud
+  //    (2026-08-24). A stale comment above live code is worse than no comment:
+  //    it is believed.
   const subs = await meta
     .selectFrom("notification_subscriptions")
     .select(["channel", "enabled", "min_priority", "event_type", "config"])

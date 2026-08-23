@@ -1058,6 +1058,82 @@ export const api = {
     request<void>("DELETE", `${primaryBase(slug, "records/records", instance)}/${id}`),
 
   // Members + invites
+  // ── knowledge ───────────────────────────────────────────────────────────
+  listKnowledgeEntries: (slug: string, opts?: { pinned?: boolean; kind?: string; q?: string }) => {
+    const qs = new URLSearchParams();
+    if (opts?.pinned) qs.set("pinned", "1");
+    if (opts?.kind) qs.set("kind", opts.kind);
+    if (opts?.q) qs.set("q", opts.q);
+    const tail = qs.toString();
+    return request<{ items: KnowledgeEntry[] }>(
+      "GET",
+      `/orgs/${slug}/modules/knowledge/entries${tail ? `?${tail}` : ""}`,
+    );
+  },
+
+  // ── discussion ──────────────────────────────────────────────────────────
+  discussionInbox: (slug: string, q?: string) =>
+    request<{ items: DiscussionInboxItem[] }>(
+      "GET",
+      `/orgs/${slug}/modules/core-discussion/comments/inbox${q ? `?q=${encodeURIComponent(q)}` : ""}`,
+    ),
+  markConversationRead: (
+    slug: string,
+    src: { source_module: string; source_type: string; source_id: string },
+  ) =>
+    request<void>("POST", `/orgs/${slug}/modules/core-discussion/comments/read`, src),
+  followRecord: (
+    slug: string,
+    src: { source_module: string; source_type: string; source_id: string },
+    following: boolean,
+  ) =>
+    request<{ following: boolean }>(
+      "POST",
+      `/orgs/${slug}/modules/core-discussion/comments/follow`,
+      { ...src, following },
+    ),
+  getConversation: (
+    slug: string,
+    src: { source_module: string; source_type: string; source_id: string },
+  ) =>
+    request<{
+      conversation: DiscussionConversation | null;
+      comments: DiscussionComment[];
+      count: number;
+    }>(
+      "GET",
+      `/orgs/${slug}/modules/core-discussion/comments?${new URLSearchParams(src).toString()}`,
+    ),
+  postComment: (
+    slug: string,
+    body: {
+      source_module: string;
+      source_type: string;
+      source_id: string;
+      body: string;
+      in_reply_to?: string | null;
+    },
+  ) =>
+    request<{ comment: DiscussionComment }>(
+      "POST",
+      `/orgs/${slug}/modules/core-discussion/comments`,
+      body,
+    ),
+  editComment: (slug: string, id: string, body: string) =>
+    request<{ comment: DiscussionComment }>(
+      "PATCH",
+      `/orgs/${slug}/modules/core-discussion/comments/${id}`,
+      { body },
+    ),
+  deleteComment: (slug: string, id: string) =>
+    request<void>("DELETE", `/orgs/${slug}/modules/core-discussion/comments/${id}`),
+  resolveConversation: (slug: string, id: string, resolved: boolean) =>
+    request<{ conversation: DiscussionConversation }>(
+      "POST",
+      `/orgs/${slug}/modules/core-discussion/comments/${id}/resolve`,
+      { resolved },
+    ),
+
   listMembers: (slug: string) =>
     request<{ items: WorkspaceMember[]; self: { user_id: string; role: OrgMembership["role"] } }>(
       "GET",
@@ -1816,7 +1892,13 @@ export const api = {
   updateTag: (
     slug: string,
     id: string,
-    body: { name?: string; color?: string | null; parent_id?: string | null; icon?: string | null },
+    body: {
+      name?: string;
+      color?: string | null;
+      parent_id?: string | null;
+      icon?: string | null;
+      pinned?: boolean;
+    },
   ) =>
     request<TagRecord>(
       "PATCH",
@@ -5533,6 +5615,73 @@ export interface TagRecord {
   parent_id: string | null;
   icon: string | null;
   created_at: string;
+  /** Pinned tags rank first and never fold behind "+N". */
+  pinned?: boolean;
+  /** Ranking, from core-tags src/relevance.ts. */
+  uses?: number;
+  last_used_at?: string | null;
+  quiet?: boolean;
+}
+
+/** A record's conversation. One per record; `resolved_at` is a bookmark
+ *  meaning "decided", not a lock — posting into it opens it again. */
+export interface DiscussionConversation {
+  id: string;
+  source_module: string;
+  source_type: string;
+  source_id: string;
+  resolved_at: string | null;
+  resolved_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A Knowledge Base entry. `pinned` is what Quick Access reads. */
+export interface KnowledgeEntry {
+  id: string;
+  title: string;
+  body: string | null;
+  kind: string | null;
+  pinned: boolean;
+  /** An owned code, rendered as a barcode where a renderer is registered. */
+  code: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DiscussionInboxItem {
+  conversation_id: string;
+  source_module: string;
+  source_type: string;
+  source_id: string;
+  resolved_at: string | null;
+  comments: number;
+  latest_at: string | null;
+  /** Newer than your last read of it — or never opened at all. */
+  unread: boolean;
+  /** Somebody named you in it. */
+  addressed_to_me: boolean;
+  following: boolean;
+  follow_reason: string | null;
+}
+
+export interface DiscussionComment {
+  id: string;
+  /** A reference to another comment, not a tree edge. Ships unrendered. */
+  in_reply_to: string | null;
+  author_kind: "user" | "assistant";
+  /** An opaque id: these rows live in the tenant DB and users live in
+   *  cobblr_meta, so names are resolved against the member list, never stored. */
+  author_user_id: string | null;
+  requested_by: string | null;
+  status: "posted" | "pending" | "failed";
+  body: string;
+  edited_at: string | null;
+  /** A tombstone. The row survives so a reply quoting it can say so; the body
+   *  comes back empty. */
+  deleted_at: string | null;
+  created_at: string;
 }
 
 export interface TagAttachment {
@@ -5546,6 +5695,14 @@ export interface TagAttachment {
   // Joined on list:
   tag_name?: string;
   tag_color?: string | null;
+  // Ranking, computed server-side so every surface agrees (core-tags
+  // src/relevance.ts). `quiet` means old AND narrow — safe to fold behind
+  // "+N"; `quiet_reason` is the sentence that says why.
+  uses?: number;
+  last_used_at?: string | null;
+  pinned?: boolean;
+  quiet?: boolean;
+  quiet_reason?: string | null;
 }
 
 export interface SearchHit {
@@ -6688,6 +6845,11 @@ export interface PlatformBundleManifest {
   catalogs?: PlatformBundleCatalog[];
   /** WorkspaceApps this bundle seeds on install (e.g. the Outfit Planner). */
   provides_apps?: PlatformBundleApp[];
+  /** Places this bundle offers to set up (a Kitchen with a Fridge in it).
+   *  Applied find-or-create per CHILD: an existing Kitchen is merged into and
+   *  whatever is already inside it stays. Usually declared on a FEATURE so it
+   *  is a question - a workspace may be an office or a van. */
+  provides_locations?: PlatformBundleLocation[];
   /** Data migrations the bundle owns — run automatically + idempotently when the
    *  user upgrades from a version below `to_version`. Each invokes a registered
    *  generic action (e.g. inventory:lift-to-type) against their data. */
@@ -6776,6 +6938,15 @@ export interface PlatformBundleCatalog {
 
 /** An opt-in capability of a bundle — its contributions merge into the
  *  manifest when its key is enabled. */
+/** A place a bundle offers to create. One level of nesting: a room with things
+ *  in it. `container` is a thing you put stuff in and can label; `area` is a
+ *  room. */
+export interface PlatformBundleLocation {
+  name: string;
+  kind?: "area" | "container";
+  children?: Array<{ name: string; kind?: "area" | "container" }>;
+}
+
 export interface PlatformBundleFeature {
   key: string;
   name: string;
@@ -6795,6 +6966,8 @@ export interface PlatformBundleFeature {
   provides_instances?: PlatformBundleManifest["provides_instances"];
   /** WorkspaceApps this feature seeds when enabled (e.g. the Outfit Planner). */
   provides_apps?: PlatformBundleManifest["provides_apps"];
+  /** Places this feature sets up when enabled (Groceries' Fridge + Freezer). */
+  provides_locations?: PlatformBundleManifest["provides_locations"];
   /** Catalog shells this feature installs when enabled (e.g. the Rebrickable
    *  catalogs behind "Link to Rebrickable"). */
   catalogs?: PlatformBundleCatalog[];

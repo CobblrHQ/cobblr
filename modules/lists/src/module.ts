@@ -86,7 +86,14 @@ export default defineModule({
       "lists.item.removed",
       // Fired by the expiry sweeper per inventory part expiring soon — wire it
       // to lists:add-item to auto-restock the shopping list.
+      // Approaching its date. Fires from EXPIRY_SOON_DAYS out, so it is true of
+      // anything whose whole shelf life is shorter than that window from the
+      // moment it is entered. Safe to hang a "buy a replacement" on; never hang
+      // anything that assumes the food is gone.
       "lists.item.expiring",
+      // The date has actually passed. Still not "was thrown away" - only a
+      // person can say that.
+      "lists.item.expired",
     ],
     api: [],
     actions: [

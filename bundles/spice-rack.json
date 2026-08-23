@@ -1,7 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.flagship.spice-rack",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "released_at": "2026-08-20",
     "name": "Spice Rack",
     "author": "Cobblr",
@@ -140,20 +140,6 @@
           },
           {
             "entity_kind": "inventory:part",
-            "name": "rack_area",
-            "display_label": "Where",
-            "type": "text",
-            "position": 4,
-            "choices": [
-              "Rack",
-              "Cabinet floor",
-              "Drawer",
-              "Pantry",
-              "Fridge"
-            ]
-          },
-          {
-            "entity_kind": "inventory:part",
             "name": "opened_on",
             "display_label": "Opened",
             "type": "date",
@@ -225,11 +211,11 @@
         "saved_views": [
           {
             "entity_kind": "inventory:part",
-            "name": "On the rack",
+            "name": "Where they live",
             "view_type": "table",
             "pinned": true,
             "config": {
-              "group_by": "rack_area",
+              "group_by": "location",
               "visible_fields": [
                 "title",
                 "manufacturer",

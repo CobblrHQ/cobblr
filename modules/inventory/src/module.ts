@@ -304,7 +304,12 @@ export default defineModule({
         label: "Add an item",
         description:
           "Create an inventory item in an instance (name + custom fields (metadata) + an optional location / brand / qty. The canonical CREATE a custom (Tier B) app block performs (there was no invokable create before) only set-status / adjust-stock). Generic: the caller composes the name + fields and decides what to make. User-invokable so a granted worker can run it. Args: { instance, name, fields?, location_id?, manufacturer?, qty?, unit? }.",
-        appliesTo: { kinds: ["inventory:part"] },
+        // Creating a NEW item is not an operation on an existing one, so this
+        // is workspace-scoped. PartDetailPage used to hand-exclude it (and
+        // create-items) from its action bar for exactly this reason; that
+        // workaround only protected that one page, while every other detail
+        // page still showed it.
+        scope: "workspace" as const,
         invokeHandler: "inventory.create-item",
         userInvokable: true,
         argsSchema: {
@@ -318,7 +323,7 @@ export default defineModule({
         label: "Add items (bulk)",
         description:
           "Bulk-create N inventory items in one INSERT (a kit BOM, a CSV import, a batch from another module). Returns the new ids in input order so the caller can wire pairings. Does NOT fan out per-item created events. Generic. Args: { items: [{ name, instance?, fields?, qty?, unit?, image_path?, manufacturer?, location_id? }] }.",
-        appliesTo: { kinds: ["inventory:part"] },
+        scope: "workspace" as const,
         invokeHandler: "inventory.create-items",
         userInvokable: true,
       },

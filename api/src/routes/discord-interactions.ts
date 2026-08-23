@@ -23,6 +23,12 @@ import { requireAuth } from "../auth/middleware.js";
 import { platform } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import {
+  MODAL_SUBMIT,
+  readReply,
+  replyModal,
+  REPLY_ACTION_ID,
+} from "../platform/discord-modal.js";
+import {
   INTERACTION,
   RESPONSE,
   parsePress,
@@ -102,7 +108,12 @@ async function handlePress(req: Request, res: Response): Promise<void> {
     res.json({ type: RESPONSE.PONG });
     return;
   }
-  if (body.type !== INTERACTION.COMPONENT) {
+  // A submitted modal is type 5, and it is the ONLY way free text reaches us
+  // without a gateway process. Everything below treats it exactly like a press
+  // — same custom_id, same parser, same ownership check — because it IS the
+  // same press, just carrying what the person typed.
+  const isModalSubmit = body.type === MODAL_SUBMIT;
+  if (body.type !== INTERACTION.COMPONENT && !isModalSubmit) {
     res.status(204).end();
     return;
   }
@@ -122,7 +133,7 @@ async function handlePress(req: Request, res: Response): Promise<void> {
     const [notification, conn] = await Promise.all([
       meta
         .selectFrom("notifications")
-        .select(["id", "org_id", "user_id", "actions"])
+        .select(["id", "org_id", "user_id", "actions", "module_name", "entity_type", "entity_id"])
         .where("id", "=", ref.notificationId)
         .executeTakeFirst(),
       discordUserId
@@ -134,6 +145,28 @@ async function handlePress(req: Request, res: Response): Promise<void> {
             .executeTakeFirst()
         : Promise.resolve(undefined),
     ]);
+
+    // A press of Reply does not DO anything: it opens a box. So it is answered
+    // before the action is resolved, and the ownership check still has to pass
+    // first — otherwise a forged id would open a modal naming somebody else's
+    // record, which leaks the subject even if the submit later fails.
+    if (!isModalSubmit && ref.actionId === REPLY_ACTION_ID) {
+      const owns =
+        notification && conn?.user_id && (notification as StoredNotification).user_id === conn.user_id;
+      if (!owns) {
+        res.json(settledMessage(original, "This button is no longer valid."));
+        return;
+      }
+      res.json(
+        replyModal({
+          notificationId: ref.notificationId,
+          // The card's own first line is the best short name for what this is
+          // about, and it is already the text the person is looking at.
+          subject: original.split("\n")[0]?.slice(0, 30) || "this",
+        }),
+      );
+      return;
+    }
 
     const resolved = resolvePress(
       (notification as StoredNotification | undefined) ?? null,
@@ -147,9 +180,36 @@ async function handlePress(req: Request, res: Response): Promise<void> {
       return;
     }
 
+    // A modal carries what was typed; a button carries only its stored args.
+    // Merging here rather than in resolvePress keeps that function pure and
+    // keeps "what the user typed" out of anything a forged id could reach.
+    const typed = isModalSubmit ? readReply(body.data) : null;
+    if (isModalSubmit && !typed) {
+      // Submitted empty. Discord already enforces min_length, so this is a
+      // client that did not, and there is nothing to post.
+      res.json(settledMessage(original, "Nothing to send."));
+      return;
+    }
+
+    // The notification already records WHAT it is about, so an entity-scoped
+    // action can be invoked from a card. Without this, `invoke` gets no entity
+    // and requireActionEntity throws — every card action had to be
+    // workspace-scoped, which quietly ruled out the interesting ones
+    // (commenting on the record you were just told about).
+    const row = notification as unknown as {
+      module_name: string | null;
+      entity_type: string | null;
+      entity_id: string | null;
+    };
+    const entity =
+      row.module_name && row.entity_type && row.entity_id
+        ? { kind: `${row.module_name}:${row.entity_type}`, id: row.entity_id, fields: {} }
+        : undefined;
+
     await platform().actions.invoke(resolved.action, {
       orgId: resolved.orgId,
       userId: resolved.userId,
+      ...(entity ? { scope: "entity" as const, entity } : {}),
       event: {
         name: "platform.notification.action",
         payload: { notificationId: ref.notificationId, actionId: ref.actionId },
@@ -163,10 +223,12 @@ async function handlePress(req: Request, res: Response): Promise<void> {
         timestamp: new Date().toISOString(),
         trigger_type: "user-invoked",
       },
-      args: resolved.args,
+      args: typed ? { ...resolved.args, body: typed } : resolved.args,
     });
 
-    res.json(settledMessage(original, `✅ ${resolved.label}`));
+    res.json(
+      settledMessage(original, isModalSubmit ? "✅ Sent." : `✅ ${resolved.label}`),
+    );
   } catch (err) {
     console.error("[discord-interactions]", (err as Error).message);
     // The press was real and we failed it. Say so rather than pretending, and

@@ -32,6 +32,10 @@ export default defineModule({
     onBoot: async () => {
       const { registerRetryLookupWorker } = await import("./services/retry-worker.js");
       registerRetryLookupWorker();
+      // How a thing must be kept vs where it just got put. Subscribes to
+      // core-placement.placed; costs nothing until something moves.
+      const { registerStorageFitCheck } = await import("./services/storage-fit.js");
+      registerStorageFitCheck();
     },
   },
 
@@ -78,6 +82,10 @@ export default defineModule({
       "core-scan.organize.applied",
       "core-scan.putaway.session-started",
       "core-scan.putaway.item-placed",
+      // Something was put somewhere that contradicts how it must be kept -
+      // frozen food in a cupboard. A FACT, not a prediction, which is why it is
+      // worth telling someone about at the moment it happens.
+      "core-scan.storage.mismatch",
       "core-scan.putaway.session-ended",
     ],
     api: [],
@@ -132,14 +140,44 @@ export default defineModule({
         userInvokable: false,
       },
       {
+        id: "core-scan:fill-fields-from-receipts",
+        examples: [
+          "fill in where my things came from",
+          "backfill provenance from my receipts",
+        ],
+        label: "Fill fields from past receipts",
+        description:
+          "Move what already-scanned receipts established (the date printed on them, the shop, a reconciled price) into the fields this workspace has NOW - for items filed before those fields existed. Never overwrites a value that is already there; only fills empty ones. Args: { dry_run? }.",
+        // A WORKSPACE sweep, not a record operation: it moves what receipts
+        // established into whichever fields the workspace has now, across every
+        // kind at once. Declared entity-scoped it rendered a button on every
+        // record in the app - on a location called "Rack 1" it sat in the
+        // header offering to do something that has nothing to do with Rack 1
+        // (2026-08-23). Workspace scope keeps it on the same invoke_action
+        // rail, so Cobb and MCP still reach it; it just stops pretending to be
+        // about whatever record you are looking at.
+        scope: "workspace" as const,
+        argsSchema: {
+          dry_run: {
+            label: "Report what would be filled without writing anything",
+            type: "boolean",
+          },
+        },
+        invokeHandler: "core-scan.fill-fields-from-receipts",
+        userInvokable: true,
+      },
+      {
         id: "core-scan:identify",
         examples: ["what is this thing", "identify this for me"],
         label: "Identify a thing",
         description:
           "PURE 'what is this?': from a photo and/or captured measurements + observations. Returns the suggestion ({ name, brand, category, confidence }); writes nothing. A capture app calls it and decides whether to use the suggestion or keep its own name. User-invokable. Args: { image_file_id?, measurements?, observations? }.",
-        // DELIBERATELY universal: args-driven (a capture app supplies the
-        // photo/measurements) — there is no entity source to scope by.
-        appliesTo: { any: true },
+        // Args-driven: a capture app supplies the photo/measurements, and the
+        // handler reads no record at all. As an entity action it rendered on
+        // every record and, pressed from a detail page with no args, answered
+        // `{ identified: false, reason: "nothing to identify" }` - a button
+        // that could only ever do nothing.
+        scope: "workspace" as const,
         invokeHandler: "core-scan.identify",
         userInvokable: true,
       },
@@ -147,7 +185,12 @@ export default defineModule({
   },
 
   // Informational — the reactions run through the seeded wires below.
-  subscribes: ["core-scan.scan.received", "core-scan.scan.enriched"],
+  subscribes: [
+    // Checks a moved record against its storage requirement.
+    "core-placement.placed",
+    "core-scan.scan.received",
+    "core-scan.scan.enriched",
+  ],
 
   // The autonomous photo-sort ships as a default WIRE, not a cron baked
   // into the module: every scan.received fires identify-photo, which

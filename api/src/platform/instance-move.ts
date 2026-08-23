@@ -91,6 +91,32 @@ export const SATELLITE_TABLES: SatelliteRef[] = [
     moduleCol: "source_module",
     splitKind: true,
   },
+  // What people said about the record follows it. Discussion normalises its
+  // source_type to the BASE kind, so an instance move does not actually change
+  // the triple — but it is declared here anyway, with the same shape as tags
+  // and files, because the day someone stops normalising is the day a move
+  // would silently strand the conversation, and a table listed here fails
+  // loudly instead of quietly.
+  {
+    table: "core_discussion_conversations",
+    db: "tenant",
+    kindCol: "source_type",
+    idCol: "source_id",
+    moduleCol: "source_module",
+    splitKind: true,
+  },
+  // Following follows the record. You chose to hear about THIS thing, and
+  // moving it between instances does not change which thing it is — being
+  // silently unsubscribed by an administrative move is the kind of thing nobody
+  // notices until they miss something.
+  {
+    table: "core_discussion_follows",
+    db: "tenant",
+    kindCol: "source_type",
+    idCol: "source_id",
+    moduleCol: "source_module",
+    splitKind: true,
+  },
   // Consumption history follows the record. The ledger is the ONLY source of a
   // thing's learned cadence, so leaving it behind on a move would silently reset
   // "how fast do I go through this" to cold-start for a record the user only

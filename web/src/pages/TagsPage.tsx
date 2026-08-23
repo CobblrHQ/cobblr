@@ -6,7 +6,7 @@
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Pencil, Plus, Tag as TagIcon, Trash2 } from "lucide-react";
+import { ExternalLink, Pencil, Pin, Plus, Tag as TagIcon, Trash2 } from "lucide-react";
 import { ApiError, api, type TagRecord } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
@@ -50,11 +50,13 @@ function TagPillRow({
   onExplore,
   onEdit,
   onDelete,
+  onTogglePin,
 }: {
   t: TagRecord;
   onExplore: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onTogglePin: () => void;
 }) {
   return (
     <span
@@ -76,6 +78,25 @@ function TagPillRow({
         title={`Show what's tagged "${t.name}"`}
       >
         {t.name}
+      </button>
+      {/* The escape hatch for the automatic ordering. A pinned tag stays at
+          the front of every chip row and never folds behind "+N", however long
+          ago it was last used — so a rule that reads a workspace wrongly is
+          always overridable by the person who knows better. */}
+      <button
+        onClick={onTogglePin}
+        className={
+          "transition " +
+          (t.pinned ? "text-amber-500" : "text-faint hover:text-accent")
+        }
+        title={
+          t.pinned
+            ? "Pinned: always shown first. Click to unpin."
+            : "Pin: keep this tag at the front and never fold it away"
+        }
+        aria-pressed={!!t.pinned}
+      >
+        <Pin size={12} />
       </button>
       <button onClick={onEdit} className="text-faint hover:text-accent transition" title="Edit">
         <Pencil size={12} />
@@ -127,6 +148,17 @@ export function TagsPage() {
     },
   });
 
+  const pin = useMutation({
+    mutationFn: (t: TagRecord) => api.updateTag(activeSlug, t.id, { pinned: !t.pinned }),
+    onSuccess: (_r, t) => {
+      toast.success(t.pinned ? `Unpinned ${t.name}` : `Pinned ${t.name}`);
+      void qc.invalidateQueries({ queryKey: ["tags", activeSlug] });
+      // Every chip row shows ranked tags, so a pin changes them all.
+      void qc.invalidateQueries({ queryKey: ["tag-attachments"] });
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+
   const items = list.data?.items ?? [];
 
   // Group into a tree by parent_id (a parent_id pointing at a missing tag is
@@ -156,6 +188,7 @@ export function TagsPage() {
           onExplore={() => setExploring(t)}
           onEdit={() => setEditing(t)}
           onDelete={() => void onDelete(t)}
+          onTogglePin={() => pin.mutate(t)}
         />
         {renderNodes(t.id, depth + 1)}
       </div>

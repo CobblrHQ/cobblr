@@ -6,6 +6,7 @@ import { Router } from "express";
 import { trackProductEvent } from "../platform/product-events.js";
 import { parseWireFilter } from "../platform/wire-filter.js";
 import { z } from "zod";
+import { applyBundleLocations, previewBundleLocations } from "../platform/apply-bundle-locations.js";
 import { sql, type Kysely } from "kysely";
 import { platform, CatalogSchemaConfig, packFieldIssues, FieldRoleSchema, FieldTypeSchema, isFieldScope, parseFieldScope } from "@cobblr/platform-contract";
 import { requireAuth } from "../auth/middleware.js";
@@ -266,6 +267,18 @@ const InstanceEntry = z.object({
  *  custom block carries its own HTML); validated structurally here, deeply by
  *  core-apps when rendered. Requires the core-apps module (declare it in the
  *  bundle/feature `requires`). Idempotent on slug. */
+/** A place a bundle offers to set up. One level of nesting, which covers every
+ *  real case (a room with things in it) and keeps the install preview readable.
+ *  Applied find-or-create per CHILD, so an existing Kitchen is merged into
+ *  rather than duplicated, and its existing contents are left alone. */
+const LocationEntry = z.object({
+  name: z.string().min(1).max(80),
+  kind: z.enum(["area", "container"]).default("container"),
+  children: z
+    .array(z.object({ name: z.string().min(1).max(80), kind: z.enum(["area", "container"]).default("container") }))
+    .default([]),
+});
+
 const AppPageEntry = z.object({
   slug: z.string().regex(/^[a-z0-9-]+$/),
   title: z.string().min(1).max(160),
@@ -368,6 +381,7 @@ export const BundleManifest = z.object({
         field_overrides: z.array(FieldOverrideEntry).default([]),
         saved_views: z.array(SavedViewEntry).default([]),
         provides_instances: z.array(InstanceEntry).default([]),
+        provides_locations: z.array(LocationEntry).default([]),
         provides_apps: z.array(AppEntry).default([]),
         /** Catalog shells this feature installs when its box is checked (e.g.
          *  the Rebrickable catalogs behind "Link to Rebrickable"). */
@@ -378,6 +392,12 @@ export const BundleManifest = z.object({
   /** Module instances this bundle creates on install (skinned copies of a
    *  multi-instance module — see InstanceEntry). Features can declare their own. */
   provides_instances: z.array(InstanceEntry).default([]),
+  /** Places this bundle offers to set up (Kitchen with a Fridge in it). Applied
+   *  find-or-create per child: an existing Kitchen is merged into, never
+   *  duplicated, and whatever is already inside it stays. Usually declared on a
+   *  FEATURE so it is a question rather than an imposition — a workspace may be
+   *  an office, a van, or somebody who does not want the appliance modelled. */
+  provides_locations: z.array(LocationEntry).default([]),
   /** Data migrations the bundle OWNS. When the user upgrades from a version
    *  below `to_version` to this manifest's version (or higher), each migration's
    *  `action` runs automatically + idempotently against their data — so a
@@ -506,6 +526,16 @@ export interface BundleValidationPreview {
     fields: Array<{ name: string; type: string; display_label: string }>;
     wires: number;
   }>;
+  /** Places this bundle would set up, and - just as important - which of them
+   *  ALREADY exist and will be merged into rather than duplicated. Showing only
+   *  the new rows would leave a user guessing whether their Kitchen is about to
+   *  be cloned. */
+  locations_planned: Array<{
+    name: string;
+    parent_name: string | null;
+    kind: "area" | "container";
+    exists: boolean;
+  }>;
   /** Navbar parent headings this bundle creates + what moves under each. */
   nav_headings: Array<{ name: string; members: Array<{ target_kind: string; target_id: string }> }>;
   /** Phase 2 — when this is a self-upgrade and the new version changes a field the
@@ -587,6 +617,10 @@ export function resolveManifestFeatures(full: BundleManifestT, enabledKeys: stri
     saved_views: [...full.saved_views, ...on.flatMap((f) => f.saved_views)],
     provides_instances: mergeInstances([...full.provides_instances, ...on.flatMap((f) => f.provides_instances)]),
     provides_apps: [...full.provides_apps, ...on.flatMap((f) => f.provides_apps)],
+    // Without this a feature could declare places and they would never be
+    // applied - the exact silent-inert failure a default-off feature makes
+    // hardest to notice.
+    provides_locations: [...(full.provides_locations ?? []), ...on.flatMap((f) => f.provides_locations ?? [])],
     catalogs: [...(full.catalogs ?? []), ...on.flatMap((f) => f.catalogs ?? [])],
   };
 }
@@ -904,9 +938,29 @@ export async function validateBundle(
     }
   }
 
+  // What the places would do to THIS workspace, resolved against what is
+  // already there. Computed by the same planner the applier uses, so the
+  // preview and the write cannot drift apart.
+  let locationsPlanned: BundleValidationPreview["locations_planned"] = [];
+  if ((m.provides_locations ?? []).length > 0) {
+    try {
+      const plan = await previewBundleLocations(orgId, m.provides_locations);
+      locationsPlanned = plan.map((p) => ({
+        name: p.name,
+        parent_name: p.parentName,
+        kind: p.kind,
+        exists: p.exists,
+      }));
+    } catch {
+      // A preview that cannot read the tree says nothing rather than guessing.
+      locationsPlanned = [];
+    }
+  }
+
   const preview: BundleValidationPreview = {
     fields_added: m.field_defs.map((f) => ({ entity_kind: f.entity_kind, name: f.name, type: f.type, display_label: f.display_label })),
     wires_added: m.wires.map((w) => ({ source_kind: w.source_kind, action_id: w.action_id, trigger_type: w.trigger_type })),
+    locations_planned: locationsPlanned,
     instances_created: m.provides_instances.map((i) => ({
       module: i.module,
       instance_name: i.instance_name,
@@ -1291,6 +1345,20 @@ export async function applyValidatedBundle(
   }
   for (const old of existing) {
     await uninstallBundleId(old.id, { snapshotReason: "replaced" });
+  }
+
+  // Set up the places this bundle offers. Find-or-create per CHILD, so a
+  // workspace that already has a Kitchen gets a Fridge added INSIDE it rather
+  // than a second Kitchen alongside - and whatever was already in that Kitchen
+  // is left exactly where it is. Failure here never fails the install: places
+  // are a convenience, and a bundle whose fields and wires landed is still
+  // useful without them.
+  if ((m.provides_locations ?? []).length > 0) {
+    try {
+      await applyBundleLocations(orgId, m.provides_locations);
+    } catch (err) {
+      console.error(`[bundles] locations for ${m.id} not applied:`, (err as Error).message);
+    }
   }
 
   // Create the module instances this bundle ships (skinned copies of a

@@ -1,0 +1,589 @@
+// The Discussion tab: what people have said about the record you are looking at.
+//
+// Unlike its neighbours in the rail, this tab does NOT travel with you — it IS
+// the page you are on, and it empties when you navigate away from a record.
+// That difference is the thing users trip over, so the tab carries the record's
+// name as a context chip (the same affordance Cobb's "About: Rack 1" uses) and
+// hides itself entirely on pages that are not a record. A visible, dead tab
+// reads as broken; an absent one reads as "not here".
+//
+// Spec: docs/design-decisions/discussion-and-the-side-rail.md
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Bell, BellOff, CornerUpLeft, MessageSquare, Send, Sparkles, Trash2, X } from "lucide-react";
+import { useToast, useConfirm } from "@cobblr/platform-web";
+import { api, ApiError, type DiscussionComment } from "../lib/api";
+import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { useCurrentRecord } from "../lib/useCurrentRecord";
+import { RailTabContent, openRail, useRailTab } from "./SideRail";
+import { MentionText, useMentionPicker } from "./MentionText";
+
+/** How long ago, in the shortest form that is still unambiguous. */
+function ago(iso: string): string {
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  return days < 30 ? `${days}d ago` : new Date(iso).toLocaleDateString();
+}
+
+/** The quote above a reply.
+ *
+ *  Rendered LIVE from the comment it points at, never a stored copy: edit the
+ *  original and every quote of it updates. A snapshot would drift, and the
+ *  drift would be invisible.
+ *
+ *  Which creates one honesty problem worth solving. Reply "yes, agreed" to a
+ *  question, let the question be edited, and the recorded agreement now answers
+ *  different words. So when the original changed AFTER the reply was written,
+ *  the quote says so. */
+function Quote({
+  id,
+  comments,
+  names,
+}: {
+  id: string;
+  comments: DiscussionComment[];
+  names: (userId: string) => string;
+}) {
+  const target = comments.find((c) => c.id === id);
+  const reply = comments.find((c) => c.in_reply_to === id);
+  const editedSince =
+    !!target?.edited_at &&
+    !!reply &&
+    new Date(target.edited_at) > new Date(reply.created_at);
+
+  const jump = () => {
+    const el = document.getElementById(`c-${id}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    // A flash rather than a persistent highlight: it answers "which one" and
+    // then gets out of the way.
+    el.classList.add("bg-amber-400/20");
+    window.setTimeout(() => el.classList.remove("bg-amber-400/20"), 1200);
+  };
+
+  // A quoted comment can be gone. Saying so keeps the reply readable, which is
+  // usually the half that mattered.
+  const gone = !target || !!target.deleted_at;
+
+  return (
+    <button
+      type="button"
+      onClick={jump}
+      disabled={gone}
+      className={
+        "block w-full text-left border-l-2 border-line dark:border-slate-600 pl-2 mb-1 " +
+        (gone ? "" : "hover:border-cobble-400 transition")
+      }
+    >
+      <span className="block text-[11px] text-faint truncate">
+        {gone ? (
+          <span className="italic">message removed</span>
+        ) : (
+          <>
+            <span className="font-medium">
+              {target.author_kind === "assistant" ? "Cobb" : names(target.author_user_id ?? "")}
+            </span>
+            : {target.body}
+          </>
+        )}
+      </span>
+      {editedSince && (
+        <span className="block text-[10px] text-faint italic">edited since this reply</span>
+      )}
+    </button>
+  );
+}
+
+export function DiscussionTab() {
+  const { activeSlug } = useActiveOrg();
+  const record = useCurrentRecord(activeSlug ?? "");
+  const qc = useQueryClient();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [draft, setDraft] = useState("");
+  const mentionRef = useRef<(() => void) | null>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const [replyTo, setReplyTo] = useState<string | null>(null);
+  // "Don't ask Cobb" needs NO storage: suppressing simply means not summoning
+  // him, and the comment is then an ordinary reply that nothing downstream has
+  // to know about.
+  const [suppressCobb, setSuppressCobb] = useState(false);
+
+  // A page with no record has nothing to discuss, so the tab is not registered
+  // at all — which is also what keeps the tab BAR hidden (and the rail looking
+  // exactly as it did) everywhere except a record.
+  const { active } = useRailTab(
+    record
+      ? { id: "discussion", label: "Discussion", icon: <MessageSquare size={16} />, order: 1 }
+      : null,
+  );
+
+  const src = record
+    ? {
+        source_module: record.sourceModule,
+        source_type: record.sourceType,
+        source_id: record.id,
+      }
+    : null;
+
+  // The record itself, for the context chip. Same cached lookup the mention
+  // chips use, so a record named in a comment and the record being discussed
+  // resolve through one path.
+  const subject = useQuery({
+    queryKey: ["entity", activeSlug, record?.kind, record?.id],
+    queryFn: () => api.lookupEntity(activeSlug, record!.kind, record!.id),
+    enabled: !!activeSlug && !!record && active,
+    staleTime: 60_000,
+    retry: false,
+  });
+
+  const conv = useQuery({
+    queryKey: ["discussion", activeSlug, src?.source_module, src?.source_type, src?.source_id],
+    queryFn: () => api.getConversation(activeSlug, src!),
+    // Only while showing: a mounted-but-hidden tab must not poll.
+    enabled: !!activeSlug && !!src && active,
+  });
+
+  // Names live in cobblr_meta, the comments in the tenant DB, so the join
+  // happens here rather than in SQL. Cached workspace-wide; a comment stores an
+  // id and never a name, so renaming somebody updates every comment they wrote.
+  const members = useQuery({
+    queryKey: ["members", activeSlug],
+    queryFn: () => api.listMembers(activeSlug),
+    enabled: !!activeSlug && active,
+    staleTime: 5 * 60_000,
+  });
+  const nameOfUser = useMemo(() => {
+    const by = new Map<string, string>();
+    for (const m of members.data?.items ?? []) by.set(m.user_id, m.display_name || m.email);
+    return (id: string) => by.get(id) ?? "someone";
+  }, [members.data]);
+  const nameOf = useMemo(() => {
+    const by = new Map<string, string>();
+    for (const m of members.data?.items ?? []) by.set(m.user_id, m.display_name || m.email);
+    return (c: DiscussionComment) =>
+      c.author_kind === "assistant"
+        ? "Cobb"
+        : c.author_user_id
+          ? (by.get(c.author_user_id) ?? "Someone")
+          : "Someone";
+  }, [members.data]);
+
+  const post = useMutation({
+    mutationFn: (body: string) =>
+      api.postComment(activeSlug, {
+        ...src!,
+        body,
+        // Suppressing means not REPLYING to Cobb, which is the trigger itself.
+        // Sending a "please don't" flag would put the rule in two places.
+        in_reply_to: suppressCobb && cobbWillReply ? null : replyTo,
+      }),
+    onSuccess: () => {
+      setDraft("");
+      mentionRef.current?.();
+      setReplyTo(null);
+      setSuppressCobb(false);
+      void qc.invalidateQueries({ queryKey: ["discussion", activeSlug] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't post that."),
+  });
+
+  const mention = useMentionPicker(draft, setDraft, taRef);
+  // The mutation above is declared before the picker exists, so its success
+  // handler reaches the reset through here rather than by reordering two blocks
+  // that each have a reason to sit where they do.
+  mentionRef.current = mention.reset;
+
+  /** Both ways of sending go through here.
+   *
+   *  The composer holds NAMES and the server stores TOKENS, so something has to
+   *  translate, and it has to be the same something for the button and for
+   *  Enter — two copies of this line is how one of them ends up posting a
+   *  sentence that mentions nobody. */
+  const send = () => {
+    const body = mention.resolve(draft).trim();
+    if (body) post.mutate(body);
+  };
+
+  // Discord DMs are the difference between hearing about a mention now and
+  // hearing about it whenever you next open the app. Someone who has not
+  // connected Discord has no way to know that from in here, so this says it —
+  // once, where the feature is, and dismissibly.
+  //
+  // Per-user and per-browser (localStorage) on purpose: it is a nudge, not a
+  // setting, and a nudge that needs a migration to dismiss is a nudge that
+  // should not exist.
+  const [nudgeHidden, setNudgeHidden] = useState(
+    () => localStorage.getItem("cobblr.discussion.discord-nudge") === "dismissed",
+  );
+  const commsPrefs = useQuery({
+    queryKey: ["communication-prefs"],
+    queryFn: () => api.meCommunicationPrefs(),
+    enabled: active && !nudgeHidden,
+    staleTime: 10 * 60_000,
+    retry: false,
+  });
+  const showDiscordNudge = !nudgeHidden && commsPrefs.data?.discord_verified === false;
+
+
+  // Opening the tab IS reading it. Marking read on open rather than behind a
+  // button is what keeps the inbox honest: an unread count you have to clear by
+  // hand becomes a number people ignore.
+  useEffect(() => {
+    if (!active || !src || !activeSlug || !conv.data?.conversation) return;
+    void api
+      .markConversationRead(activeSlug, src)
+      .then(() => qc.invalidateQueries({ queryKey: ["discussion-inbox", activeSlug] }))
+      .catch(() => undefined);
+    // Re-runs when the newest comment changes, so reading a conversation you
+    // already had open still clears the dot.
+  }, [active, activeSlug, conv.data?.conversation?.id, conv.data?.comments.length]);
+
+  const follow = useMutation({
+    mutationFn: (following: boolean) => api.followRecord(activeSlug, src!, following),
+    onSuccess: (_r, following) => {
+      toast.success(following ? "Following this" : "Not following this");
+      void qc.invalidateQueries({ queryKey: ["discussion-inbox", activeSlug] });
+      void qc.invalidateQueries({ queryKey: ["discussion", activeSlug] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't change that."),
+  });
+
+  // The inbox already computes this per record; reading it from there avoids a
+  // second endpoint that could answer differently.
+  const inbox = useQuery({
+    queryKey: ["discussion-inbox", activeSlug],
+    queryFn: () => api.discussionInbox(activeSlug),
+    enabled: !!activeSlug && active,
+    staleTime: 30_000,
+  });
+  // `src` is null on a page that is not a record, which is exactly the case
+  // this hook has to keep running for: the hook count must not depend on it.
+  const following = !!inbox.data?.items.find(
+    (i) =>
+      !!src &&
+      i.source_module === src.source_module &&
+      i.source_type === src.source_type &&
+      i.source_id === src.source_id,
+  )?.following;
+
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteComment(activeSlug, id),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["discussion", activeSlug] }),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't remove that."),
+  });
+
+  if (!record || !src) return null;
+
+  const comments = conv.data?.comments ?? [];
+  // The same rule the server applies, shown BEFORE sending. The failure this
+  // prevents: replying "ok, agreed, let's take it" to Cobb's answer, addressed
+  // to a person, and getting an answer from Cobb anyway. Harmless once,
+  // irritating by the fourth time.
+  //
+  // Not a hook, so it is safe below the early return. The `inbox` query that
+  // used to sit here has moved ABOVE the guard, where it belongs.
+  const repliedToComment = comments.find((c) => c.id === replyTo);
+  const cobbWillReply =
+    draft.includes("[[cobb]]") || repliedToComment?.author_kind === "assistant";
+
+  return (
+    <RailTabContent
+      id="discussion"
+      title={<>Discussion</>}
+      actions={
+        <button
+          type="button"
+          onClick={() => follow.mutate(!following)}
+          disabled={follow.isPending}
+          title={
+            following
+              ? "You hear about new comments here. Click to stop."
+              : "Hear about new comments on this record"
+          }
+          aria-pressed={following}
+          className={
+            "p-1 transition " +
+            (following ? "text-amber-500" : "text-faint hover:text-content dark:hover:text-mortar-200")
+          }
+        >
+          {following ? <Bell size={14} /> : <BellOff size={14} />}
+        </button>
+      }
+    >
+      <div className="flex-1 min-h-0 flex flex-col">
+        {showDiscordNudge && (
+          <div className="mx-4 mt-3 shrink-0 flex items-start gap-2 rounded-md border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900 px-3 py-2">
+            <MessageSquare size={13} className="shrink-0 mt-0.5 text-cobble-700 dark:text-cobble-200" />
+            <p className="flex-1 min-w-0 text-[11px] text-cobble-800 dark:text-cobble-100">
+              <Link to="/me/notifications" className="underline hover:no-underline">
+                Connect Discord
+              </Link>{" "}
+              and someone mentioning you here reaches you straight away, with a
+              reply box on the message. Without it, you find out next time you
+              open Cobblr.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                localStorage.setItem("cobblr.discussion.discord-nudge", "dismissed");
+                setNudgeHidden(true);
+              }}
+              className="shrink-0 text-faint hover:text-content dark:hover:text-mortar-200 transition"
+              aria-label="Dismiss"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
+        <div className="px-4 pt-3 shrink-0">
+          {/* The record's NAME. This said "machines:machine" until somebody
+              looked at it — the machine's version of the answer, in the one
+              place whose whole job is telling you which record you are talking
+              about. (The same mistake Linked entities carried for as long as it
+              existed.) */}
+          <span
+            className="inline-flex items-center gap-1.5 rounded-md border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900 px-2 py-1 text-[11px] text-cobble-800 dark:text-cobble-100 max-w-full"
+            title={record.kind}
+          >
+            <span className="shrink-0 opacity-70">About:</span>
+            <span className="truncate">{subject.data?.title ?? "…"}</span>
+          </span>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+          {conv.isLoading && <p className="text-xs text-faint">loading…</p>}
+          {!conv.isLoading && comments.length === 0 && (
+            <p className="text-sm text-faint dark:text-slate-500 italic">
+              Nothing said about this yet. Whatever you write here stays with the record, so the
+              next person to open it sees it too.
+            </p>
+          )}
+          {comments.map((c) => (
+            <div key={c.id} id={`c-${c.id}`} className="group scroll-mt-4 transition-colors">
+              <div className="flex items-baseline gap-2 text-[11px]">
+                <span className="font-medium text-content dark:text-mortar-100">{nameOf(c)}</span>
+                {c.author_kind === "assistant" && c.requested_by && (
+                  <span className="text-faint">asked by {nameOfUser(c.requested_by)}</span>
+                )}
+                <span className="text-faint">{ago(c.created_at)}</span>
+                {c.edited_at && <span className="text-faint italic">edited</span>}
+                {!c.deleted_at && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReplyTo(c.id);
+                      taRef.current?.focus();
+                    }}
+                    className="ml-auto text-faint hover:text-accent transition"
+                    aria-label="Reply to this comment"
+                    title="Reply"
+                  >
+                    <CornerUpLeft size={12} />
+                  </button>
+                )}
+                {!c.deleted_at && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const ok = await confirm({
+                        title: "Remove this comment?",
+                        message: "The text goes. Anyone who replied to it keeps their reply.",
+                        confirmLabel: "Remove",
+                        destructive: true,
+                      });
+                      if (ok) remove.mutate(c.id);
+                    }}
+                    className="text-faint hover:text-ember-500 transition"
+                    aria-label="Remove comment"
+                    title="Remove"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                )}
+              </div>
+              {c.in_reply_to && <Quote id={c.in_reply_to} comments={comments} names={nameOfUser} />}
+              {c.status === "pending" ? (
+                <p className="text-sm text-faint dark:text-slate-500 italic">Cobb is thinking…</p>
+              ) : c.status === "failed" ? (
+                // Failure says so out loud. A silent non-answer looks like a
+                // broken feature and leaves nobody sure whether to ask again.
+                <p className="text-sm text-ember-500 italic">{c.body || "Cobb could not answer."}</p>
+              ) : c.deleted_at ? (
+                <p className="text-sm text-faint dark:text-slate-500 italic">message removed</p>
+              ) : (
+                <p className="text-sm text-content dark:text-mortar-200">
+                  <MentionText body={c.body} names={(id) => nameOfUser(id)} />
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="border-t border-line dark:border-slate-700 p-3 shrink-0">
+          {replyTo && (
+            <div className="mb-2 flex items-start gap-2 rounded-md border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 px-2 py-1.5">
+              <CornerUpLeft size={12} className="shrink-0 mt-0.5 text-faint" />
+              <span className="flex-1 min-w-0 text-[11px] text-muted truncate">
+                {(() => {
+                  const t = comments.find((c) => c.id === replyTo);
+                  if (!t) return "replying";
+                  const who =
+                    t.author_kind === "assistant" ? "Cobb" : nameOfUser(t.author_user_id ?? "");
+                  return `${who}: ${t.body}`;
+                })()}
+              </span>
+              <button
+                type="button"
+                onClick={() => setReplyTo(null)}
+                className="shrink-0 text-faint hover:text-content dark:hover:text-mortar-200 transition"
+                aria-label="Cancel reply"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          )}
+          {cobbWillReply && (
+            <div className="mb-2 flex items-center gap-2 text-[11px] text-muted">
+              <span className="inline-flex items-center gap-1">
+                <Sparkles size={11} className="text-amber-500" />
+                {suppressCobb ? "Cobb will stay out of it" : "Cobb will reply"}
+              </span>
+              <button
+                type="button"
+                onClick={() => setSuppressCobb((v) => !v)}
+                className="text-faint hover:text-accent underline transition"
+              >
+                {suppressCobb ? "ask Cobb after all" : "don't ask Cobb"}
+              </button>
+            </div>
+          )}
+          {mention.element}
+          <div className="flex items-end gap-2">
+            <textarea
+              ref={taRef}
+              value={draft}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                mention.onInput(e.target.value, e.target.selectionStart ?? e.target.value.length);
+              }}
+              onKeyDown={(e) => {
+                // The picker eats the keys it needs (arrows, Enter, Escape)
+                // while it is open, so Enter completes a mention instead of
+                // sending a half-written sentence.
+                if (mention.onKeyDown(e)) return;
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+              rows={2}
+              placeholder="Say something about this… (@ to mention)"
+              className="flex-1 resize-none px-3 py-2 text-base sm:text-sm rounded-lg border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 text-content dark:text-mortar-200 leading-relaxed"
+            />
+            <button
+              type="button"
+              onClick={send}
+              disabled={!draft.trim() || post.isPending}
+              className="h-9 w-9 shrink-0 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white flex items-center justify-center transition disabled:opacity-50"
+              aria-label="Post comment"
+            >
+              <Send size={16} />
+            </button>
+          </div>
+        </div>
+      </div>
+    </RailTabContent>
+  );
+}
+
+/** The inline pointer on the record itself.
+ *
+ *  Deliberately a PREVIEW and not a second implementation: it reads the same
+ *  conversation, renders no composer, and its only affordance is opening the
+ *  rail. The rail is where you converse; this is where you find out there is
+ *  something to read. (Same relationship the attachment thumbnail strip has to
+ *  the file viewer.) */
+export function DiscussionPreview({
+  sourceModule,
+  sourceType,
+  sourceId,
+  compact = false,
+}: {
+  sourceModule: string;
+  sourceType: string;
+  sourceId: string;
+  /** Modal detail views (machines, inventory) render their side-cars as a row
+   *  of pills rather than sections. Without a compact form, discussion had no
+   *  entry point AT ALL on those pages — and most detail views in this app are
+   *  modals, so the feature was invisible exactly where it is most used. */
+  compact?: boolean;
+}) {
+  const { activeSlug } = useActiveOrg();
+  const conv = useQuery({
+    queryKey: ["discussion", activeSlug, sourceModule, sourceType, sourceId],
+    queryFn: () =>
+      api.getConversation(activeSlug, {
+        source_module: sourceModule,
+        source_type: sourceType,
+        source_id: sourceId,
+      }),
+    enabled: !!activeSlug && !!sourceId,
+    staleTime: 30_000,
+  });
+
+  const count = conv.data?.count ?? 0;
+  const latest = [...(conv.data?.comments ?? [])].reverse().find((c) => !c.deleted_at);
+
+  if (compact) {
+    // Matches the Tag / File / Link pills beside it: same size, same shape, and
+    // it says how many so an empty record and a busy one do not look alike.
+    return (
+      <button
+        type="button"
+        onClick={() => openRail("discussion")}
+        className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs border border-dashed border-line dark:border-slate-600 text-muted hover:border-cobble-500 hover:text-accent transition"
+      >
+        <MessageSquare size={10} />
+        {count > 0 ? `${count} comment${count === 1 ? "" : "s"}` : "Discuss"}
+      </button>
+    );
+  }
+
+  return (
+    <section>
+      {/* The count is of what is actually there: a removed comment leaves a
+          tombstone so replies still read, but it is not something to go and
+          look at. */}
+      <h3 className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
+        // discussion{count > 0 ? ` (${count})` : ""}
+      </h3>
+      <button
+        type="button"
+        onClick={() => openRail("discussion")}
+        className="w-full text-left rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 hover:border-cobble-300 dark:hover:border-cobble-700 transition"
+      >
+        {latest ? (
+          <>
+            <span className="block text-sm text-content dark:text-mortar-200 line-clamp-2 break-words">
+              {latest.body}
+            </span>
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mt-1">
+              {count === 1 ? "1 comment" : `${count} comments`} · open to reply
+            </span>
+          </>
+        ) : (
+          <span className="text-sm text-faint dark:text-slate-500 italic">
+            Nothing said about this yet. Start a discussion the rest of the workspace can see.
+          </span>
+        )}
+      </button>
+    </section>
+  );
+}

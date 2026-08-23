@@ -14,12 +14,18 @@ import type { CoreScanDB } from "../db.js";
 import { enrichPhotoItem } from "../services/enrich-photo.js";
 import { routeScannedReceiptPhoto } from "../services/receipt-photo.js";
 import { autoRankCatalogPhoto, readPhotoRankEnabled } from "../services/auto-rank.js";
+import { runReceiptBackfill } from "../services/receipt-backfill.js";
 
 let registered = false;
 
 export function registerScanHandlers(): void {
   if (registered) return;
   registered = true;
+
+  platform().actions.registerHandler("core-scan.fill-fields-from-receipts", async (ctx) => {
+    const args = (ctx.args ?? {}) as { dry_run?: boolean };
+    return await runReceiptBackfill(ctx.orgId, { dryRun: args.dry_run === true });
+  });
 
   platform().actions.registerHandler("core-scan.identify-photo", async (ctx) => {
     const itemId = ctx.event?.payload?.itemId;

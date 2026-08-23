@@ -20,6 +20,7 @@
 
 import { randomUUID } from "node:crypto";
 import { buildCadenceEvents } from "../cadence-events.js";
+import { storageRequirementFor } from "../services/storage-requirement.js";
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
@@ -101,6 +102,7 @@ import { suggestLocationForItem } from "../services/suggest-location.js";
 import { normaliseCategory } from "@cobblr/platform-contract/category-reconcile";
 import { receiptFacts, type ReceiptMeta } from "../services/receipt-facts.js";
 import { receiptRecord, type ReceiptLineMeta } from "../services/receipt-record.js";
+import { runReceiptBackfill } from "../services/receipt-backfill.js";
 
 export const inboxRouter = Router({ mergeParams: true });
 
@@ -1955,6 +1957,19 @@ inboxRouter.post(
       ? candidates.find((c) => c.instance === parsed.data.instance)
       : (candidates.find((c) => !c.instance && c.module === target.module) ?? candidates[0]);
     const candidateFields = matchedCandidate?.fields ?? {};
+    // HOW it must be kept, which is not WHERE it is. Derived from the scan's own
+    // category, the only signal with real coverage: on a 221-item scan set, 73%
+    // carried a category while under 2% carried any storage prose, and Open Food
+    // Facts' conservation field is sparse multilingual free text (its
+    // best-populated products say things like "Ne pas mettre au réfrigérateur").
+    //
+    // A DEFAULT, never an override: it fills only when nothing else said, so a
+    // user's own answer and the matchmaker's both win. Null when the category
+    // implies nothing, so an unknown stays unknown rather than being asserted
+    // shelf-stable.
+    const derivedStorage = storageRequirementFor(
+      (meta as { category?: unknown } | null)?.category as string | undefined,
+    );
     // The triage form posts EVERY input — an untouched one arrives as "".
     // Empty means "no answer", not "blank the suggestion": drop them so a
     // placeholder the user never typed over can't clobber the candidate.
@@ -2018,6 +2033,8 @@ inboxRouter.post(
         // day it happened to be scanned (2026-08-22).
         ...(recordedReceipt ? { receipt: recordedReceipt } : {}),
         ...((meta as { fields?: Record<string, unknown> }).fields ?? {}),
+        // Ahead of candidateFields and typedMetadata so both still win.
+        ...(derivedStorage ? { storage_requirement: derivedStorage } : {}),
         ...candidateFields,
         ...typedMetadata,
       },
@@ -2541,6 +2558,24 @@ inboxRouter.post(
     });
 
     res.json({ item: withTitle(resolvedRow), location_id: locId });
+  }),
+);
+
+// ── Fill fields from receipts already filed ──────────────────────────────────
+// The other half of receipt-record.ts: everything a parse established is kept
+// on the item whether or not a field claimed it, so when the field arrives the
+// answers can move into it. Explicit on purpose - switching a setting on should
+// not rewrite months of items behind your back.
+// AI-ACTION: core-scan:fill-fields-from-receipts
+// AI-REACH: action core-scan:fill-fields-from-receipts
+inboxRouter.post(
+  "/receipts/backfill-fields",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const result = await runReceiptBackfill(tenantContext(req).org.id, {
+      dryRun: req.query.dry_run === "true",
+    });
+    res.json(result);
   }),
 );
 

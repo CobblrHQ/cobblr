@@ -65,6 +65,24 @@ export interface VocabularyCapability extends Base {
 export const CAPABILITIES: Capability[] = [
   {
     kind: "owns",
+    id: "placement:whats-inside",
+    what: "answering what is stored inside a container - a room, a shelf, a bin",
+    why: "the location page asked each kind's own list endpoint to filter by ?location_id=, which most of them do not implement: they ignored it and returned their whole table, so every room showed the same items and a book shelved in the dining room turned up in the den. Re-checking the rows client-side would have emptied the section instead, because a record's location lives in the placement table and its location_id column reads null (2026-08-23)",
+    owner: "modules/core-placement/src/api/index.ts",
+    // The surfaces that ask what is inside a location. A page filtering its OWN
+    // module's list by its own column is not this rule's business.
+    scope: [
+      "web/src/pages/LocationDetailPage.tsx",
+      "web/src/pages/LocationsPage.tsx",
+      "web/src/components/FloorPlan.tsx",
+    ],
+    // A hand-rolled copy puts location_id in a list request's query string and
+    // trusts the server to have implemented that filter.
+    detect: /[?&]location_id=/,
+    use: "GET /orgs/:slug/modules/core-placement/contents?container_kind=core-locations:location&container_id=<id> - placement is where containment lives, and a DB trigger keeps it in step with every location-bearing table, so one call covers every kind including instances",
+  },
+  {
+    kind: "owns",
     id: "scan:install-before-filing",
     what: "installing the bundle a scan destination needs and deciding which instance to file into afterwards",
     why: "installing reports the target it really created, and a bundle that skins a module's default table creates NO instance - while the candidate still carries the synthetic token the routing menu used to name the bundle. Three call sites each installed and then confirmed the candidate verbatim, so a receipt of groceries failed on every line against a bundle that had installed perfectly (2026-08-22)",
@@ -90,6 +108,21 @@ export const CAPABILITIES: Capability[] = [
     // A hand-rolled copy renders the input directly instead of the field set.
     detect: /<CredentialInput\b/,
     use: "render <CredentialFields fields={...} creds={...} onChange={...} scope={...} providerId={...} /> - it renders every field, including the choices and model cases",
+  },
+  {
+    kind: "owns",
+    id: "announce:destination-fanout",
+    what: "deciding WHERE an operator announcement goes - reading the webhook config and sending to each place exactly once",
+    why: "every publisher read ONE webhook URL out of ONE env var, so a second Discord meant editing each script by hand, and the per-destination delivery record (sent? how far? which message id, for a later correction) was three scalars that silently collapse when pointed at two servers: the new one reads as already delivered, a retry resumes it at the other one's cursor, and a correction edits the wrong post (2026-08-23)",
+    owner: "scripts/lib/destinations.mjs",
+    // The operator publishers. Tenant-configured webhooks (a workspace's own
+    // Discord connector, digifab print rules, notification channels) are a
+    // different thing entirely and are not this rule's business.
+    scope: ["scripts/changelog-publish.mjs", "scripts/changelog-backfill.mjs"],
+    // A hand-rolled copy reads the env var straight instead of parsing it into
+    // destinations.
+    detect: /process\.env\.[A-Z_]*WEBHOOK[A-Z_]*/,
+    use: "call destinationsFrom(\"<ENV_VAR>\") from scripts/lib/destinations.mjs - a single URL is a list of one, so nothing has to change to configure it the way it is configured today",
   },
   {
     kind: "owns",

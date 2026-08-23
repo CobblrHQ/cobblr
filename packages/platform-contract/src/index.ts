@@ -1846,6 +1846,20 @@ export interface ResolvedEntity {
   /** All declared fields, key → value. Numbers come back as numbers,
    *  strings as strings — modules cast as needed. */
   fields: Record<string, unknown>;
+  /**
+   * The user has put this out of use: archived, retired, decommissioned —
+   * whatever the owning module calls it. It still exists and still resolves,
+   * because its history is worth keeping; what it must not do is generate work.
+   *
+   * This exists because "stop bothering me about this" had no cross-module
+   * expression. A sweeper that wants to skip retired records could only find
+   * out by reaching into the owning module's table, which module isolation
+   * forbids — so core-cadence kept putting archived groceries on the shopping
+   * list, ignoring the one explicit instruction the user had given it.
+   *
+   * Absent means not retired. A module with no such concept just omits it.
+   */
+  retired?: boolean;
 }
 
 /** Module-side resolver for an entity kind. Registered at module
@@ -2836,6 +2850,25 @@ export interface PlatformNotifications {
     entityType?: string;
     entityId?: string;
     payload?: unknown;
+    /**
+     * How urgent this is. Defaults to `normal`.
+     *
+     * It decides two separate things, and a module only has to think about the
+     * second one: whether a channel hears about it at all (each subscription
+     * carries a min_priority), and whether a channel with a DELIVERY WINDOW set
+     * batches it into a digest or interrupts immediately. At or below `normal`
+     * waits for the window; `high` and `urgent` do not.
+     *
+     * The dispatcher has always taken a priority; the module-facing contract did
+     * not expose it, so every module notification was `normal` by omission. That
+     * made the batching rule unable to see the difference it exists to make -
+     * "your ice cream is in a cupboard" and "you are low on cumin" would have
+     * arrived in the same morning digest.
+     *
+     * Reserve `high` for facts that stop being useful if they wait. A prediction
+     * about shopping is not one.
+     */
+    priority?: "low" | "normal" | "high" | "urgent";
     /** What the reader can DO about it, offered inside the message itself.
      *
      *  Channel-agnostic on purpose: a channel that can render them does
@@ -3694,6 +3727,29 @@ export interface PlatformPairings {
     relationshipKind: string;
     createdBy?: string | null;
   }): Promise<{ id: string }>;
+  /** Remove the pairing(s) matching this exact relationship. Returns how many
+   *  rows went; removing something that is not there is a no-op, not an error
+   *  (the same shape placement.remove has).
+   *
+   *  The inverse of `create`, and it was missing: modules could make a link and
+   *  never unmake one, so a module whose links are DERIVED from something
+   *  editable — a mention inside a comment, say — had no way to reconcile when
+   *  the thing that justified the link was edited away. The only alternatives
+   *  were leaving stale links forever or deleting from `entity_pairings`
+   *  directly, and that table has one chokepoint on purpose.
+   *
+   *  Matched on the whole tuple INCLUDING relationshipKind, so a caller can
+   *  only ever remove links of a kind it created. Removing every link between
+   *  two entities regardless of rel would let one module quietly delete
+   *  another's, or a user's own hand-made one. */
+  remove(args: {
+    orgId: string;
+    sourceKind: string;
+    sourceId: string;
+    targetKind: string;
+    targetId: string;
+    relationshipKind: string;
+  }): Promise<{ removed: number }>;
   /** Insert many pairings at once. Used by bricklink.disassemble-kit
    *  to write hundreds of "matches" / "derived-from" rows efficiently. */
   createMany(

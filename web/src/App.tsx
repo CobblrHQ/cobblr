@@ -51,6 +51,7 @@ import { AssetsPage } from "./pages/AssetsPage";
 import { PurchasesPage } from "./pages/PurchasesPage";
 import { SearchPage } from "./pages/SearchPage";
 import { TagsPage } from "./pages/TagsPage";
+import { DiscussionInboxPage } from "./pages/DiscussionInboxPage";
 import { FilesPage } from "./pages/FilesPage";
 import { ViewsPage } from "./pages/ViewsPage";
 import { SavedViewPage } from "./pages/SavedViewPage";
@@ -707,6 +708,7 @@ function ActiveOrgScopedRoutes() {
           <Route path="/files" element={<FilesPage />} />
           <Route path="/views" element={<ViewsPage />} />
           <Route path="/tags" element={<TagsPage />} />
+          <Route path="/discussion" element={<DiscussionInboxPage />} />
           <Route path="/maintenance" element={<MaintenancePage />} />
           {/* A saved view as a full PAGE — outside the configuration shell.
               The dashboard's pinned-view cards land here so a view opens

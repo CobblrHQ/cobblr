@@ -479,6 +479,21 @@ async function boot() {
           .executeTakeFirstOrThrow();
         return { id: row.id };
       },
+      remove: async ({ orgId, sourceKind, sourceId, targetKind, targetId, relationshipKind }) => {
+        // Org-scoped and rel-scoped, exactly like the DELETE route the UI's
+        // unlink uses: a caller can only remove links of the kind it makes.
+        const gone = await meta
+          .deleteFrom("entity_pairings")
+          .where("org_id", "=", orgId)
+          .where("source_kind", "=", sourceKind)
+          .where("source_id", "=", sourceId)
+          .where("target_kind", "=", targetKind)
+          .where("target_id", "=", targetId)
+          .where("relationship_kind", "=", relationshipKind)
+          .returning("id")
+          .execute();
+        return { removed: gone.length };
+      },
       createMany: async (rows) => {
         if (rows.length === 0) return { inserted: 0 };
         await meta
@@ -637,6 +652,23 @@ async function boot() {
             `[placement] location_id sync for ${containee.kind} skipped:`,
             (err as Error).message,
           );
+        }
+        // Something moved. Placement had no events at all, which meant nothing
+        // could react to a thing being put somewhere - the single most ordinary
+        // physical fact the platform records. Emitted AFTER the write and the
+        // legacy sync, so a subscriber that reads the record back sees the new
+        // home rather than the old one.
+        try {
+          events.emit("core-placement.placed", {
+            orgId,
+            containeeKind: containee.kind,
+            containeeId: containee.id,
+            containerKind: container.kind,
+            containerId: container.id,
+          });
+        } catch (err) {
+          // A subscriber must never be able to fail a move.
+          console.warn("[placement] placed event not emitted:", (err as Error).message);
         }
       },
       remove: async ({ orgId, containee }) => {

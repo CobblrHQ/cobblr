@@ -38,7 +38,13 @@ export default defineModule({
   intents: [],
   dependencies: [],
   exposes: {
-    events: [],
+    events: [
+      // Something was put inside something else. The platform records this all
+      // day and, until now, told nobody: a module that wants to react to a
+      // record finding a home had nothing to subscribe to. Payload is the pair
+      // plus kinds, so a subscriber can decide relevance without a lookup.
+      "core-placement.placed",
+    ],
     api: ["contents", "of", "place", "remove"],
     actions: [
       // Wire/AI-invokable placement — the same put-inside/take-out the /place

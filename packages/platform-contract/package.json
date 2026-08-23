@@ -7,6 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./qr-token": "./src/qr-token.ts",
+    "./entity-tokens": "./src/entity-tokens.ts",
     "./category-reconcile": "./src/category-reconcile.ts",
     "./resolvables": "./src/resolvables.ts",
     "./label-geometry": "./src/label-geometry.ts",
