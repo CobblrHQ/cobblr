@@ -1,7 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.flagship.tea",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "released_at": "2026-08-20",
     "name": "Tea",
     "author": "Cobblr",
@@ -73,6 +73,42 @@
       {
         "module": "inventory",
         "instance_name": "tea",
+        "nav_group": {
+          "key": "kitchen",
+          "label": "Kitchen"
+        },
+        "wires": [
+          {
+            "source_kind": "tea:item",
+            "action_id": "lists:add-item",
+            "trigger_type": "event",
+            "trigger_event": "inventory.stock.low",
+            "args": {
+              "listTitle": "Shopping list"
+            }
+          },
+          {
+            "source_kind": "tea:item",
+            "action_id": "inventory:adjust-stock",
+            "trigger_type": "event",
+            "trigger_event": "lists.item.checked",
+            "args": {
+              "delta": 1,
+              "reason": "Restocked, checked off the shopping list"
+            }
+          },
+          {
+            "source_kind": "tea:item",
+            "action_id": "core-cadence:record-event",
+            "trigger_type": "event",
+            "trigger_event": "lists.item.checked",
+            "args": {
+              "event_type": "purchase",
+              "qty_delta": 1,
+              "source": "list"
+            }
+          }
+        ],
         "display_name": "Tea",
         "item_noun": "tea",
         "glyph": "🍵",

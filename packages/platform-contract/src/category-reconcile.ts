@@ -74,6 +74,28 @@ export function normaliseCategory(raw: string | null | undefined): string | null
   return canonicalSynonym(raw) ?? comparable(raw);
 }
 
+/**
+ * Is this a placeholder rather than a category?
+ *
+ * A catalog emits these, and so does a model asked for a category it does not
+ * have: "unknown", "other", "n/a". The literal string "undefined" belongs to the
+ * same family and arrives a different way — a JS value stringified somewhere up
+ * the chain — which is why the test is on the VALUE here rather than a null
+ * check at each call site. A recorded scan of 81 categories carried five items
+ * filed under "undefined"; every one of them was better off with no category at
+ * all, since a blank prompts the user while a junk label looks answered.
+ *
+ * Shared because two callers already had their own copy of this list and a third
+ * had none — the shape that lets one of them silently fall behind.
+ */
+export function isJunkCategory(raw: string | null | undefined): boolean {
+  const s = comparable(raw);
+  if (!s) return true;
+  if (s.length < 2) return true;
+  if (/^uncategori[sz]/.test(s)) return true;
+  return /^(n a|na|none|null|undefined|unknown|other|misc|miscellaneous|general|item|thing|stuff|product)$/.test(s);
+}
+
 /** Title Case for display: "clothing" -> "Clothing", "hand tool" -> "Hand Tool". */
 export function displayCategory(canonical: string): string {
   return canonical.replace(/\b[a-z]/g, (c) => c.toUpperCase());

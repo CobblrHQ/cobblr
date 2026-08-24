@@ -175,6 +175,8 @@ export async function tick(opts: { orgId?: string } = {}): Promise<{
             orgId: org.id,
             userId,
             eventType: "maintenance.due-soon",
+            // Due on a date, knowable in advance: the morning brief, not a ping.
+            triggeredBy: "schedule",
             message,
             module: "core-maintenance",
             entityType: row.entity_type,

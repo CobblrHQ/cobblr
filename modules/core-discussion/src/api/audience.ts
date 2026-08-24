@@ -93,6 +93,11 @@ export async function notifyAboutComment(
     authorUserId: string | null;
     authorName: string;
     recordLabel: string;
+    /** True when the conversation is the workspace ROOM rather than a record.
+     *  Changes the preposition, because you are IN a room and you comment ON a
+     *  thing — and because the room's label is a workspace name, where
+     *  "commented on the Workshop workspace" reads as vandalism. */
+    inRoom?: boolean;
     link: string | null;
   },
 ): Promise<{ mentioned: number; followers: number }> {
@@ -131,7 +136,20 @@ export async function notifyAboutComment(
         eventType: "core-discussion.comment.posted",
         message,
         ...(args.link ? { link_url: args.link } : {}),
-        module: "core-discussion",
+        // ALL THREE come from the source triple, because together they ARE the
+        // entity ref: the interactions endpoint rebuilds
+        // `${module_name}:${entity_type}` and posts a Discord reply back into
+        // whatever that names.
+        //
+        // This said "core-discussion" - the module raising the notification,
+        // not the thing it is about - so the rebuilt kind was
+        // `core-discussion:workspace` instead of `@workspace:workspace`, and a
+        // reply typed into Discord opened a SECOND conversation for the same
+        // room. It saved fine and nobody ever saw it, because every surface
+        // reads the real triple. A record mention had the same fault waiting:
+        // `core-discussion:part` rather than `inventory:part`, a parallel
+        // conversation per record.
+        module: args.source.source_module,
         entityType: args.source.source_type,
         entityId: args.source.source_id,
         priority,
@@ -142,10 +160,10 @@ export async function notifyAboutComment(
 
   await Promise.all([
     ...[...named].map((u) =>
-      send(u, "high", `${args.authorName} mentioned you on ${args.recordLabel}`),
+      send(u, "high", `${args.authorName} mentioned you ${args.inRoom ? "in" : "on"} ${args.recordLabel}`),
     ),
     ...rest.map((u) =>
-      send(u, "normal", `${args.authorName} commented on ${args.recordLabel}`),
+      send(u, "normal", `${args.authorName} said something ${args.inRoom ? "in" : "about"} ${args.recordLabel}`),
     ),
   ]);
   return { mentioned: named.size, followers: rest.length };

@@ -14,6 +14,22 @@ import { platform, requireActionEntity } from "@cobblr/platform-contract";
 import type { InventoryDB } from "../db.js";
 import { recordConsumption } from "./stock-ledger.js";
 import { reserveAllocation, settleAllocation } from "./allocations.js";
+import {
+  estimateShelfLife,
+  recordObservation,
+  isConfident,
+  type LifecycleObservation,
+} from "../shelf-life-learning.js";
+import {
+  batchesFrom,
+  addBatch,
+  consumeOldest,
+  reconcileToQty,
+  visibleFrom,
+  expiryFor,
+  localToday,
+  type Batch,
+} from "../batches.js";
 
 let registered = false;
 
@@ -209,6 +225,81 @@ export function registerInventoryActionHandlers(): void {
     });
   });
 
+
+/**
+ * Change stock while keeping the lots underneath honest.
+ *
+ * Batches are the detail; `qty` and `expires_on` are the visible summary every
+ * other consumer reads. They have to move together or the summary starts lying,
+ * so both writes happen here and nowhere else.
+ *
+ * RECONCILES FIRST. Most of inventory does not know batches exist - adjust-stock,
+ * the restock wire, a scan add-qty - and any of them can have moved `qty` since
+ * the lots were last touched. Rather than forbidding that (which would mean
+ * teaching every path about batches), the drift is absorbed: fewer than the lots
+ * expect means the oldest went, more means stock arrived by a route that recorded
+ * no date.
+ */
+async function withBatches(
+  orgId: string,
+  partId: string,
+  reason: string,
+  delta: number,
+  mutate: (batches: Batch[], ctx: { today: string; shelfLifeDays: number | null }) => Batch[],
+  opts: { timezone?: string } = {},
+): Promise<Record<string, unknown>> {
+  const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
+  const row = await db
+    .selectFrom("inventory_parts")
+    .select(["id", "qty", "metadata"])
+    .where("id", "=", partId)
+    .executeTakeFirst();
+  if (!row) return { ok: false, error: "missing_part" };
+
+  const md = ((row.metadata as Record<string, unknown> | null) ?? {}) as Record<string, unknown>;
+  const qtyNow = Number(row.qty);
+  const expiresOn = typeof md.expires_on === "string" ? md.expires_on : null;
+
+  const current = reconcileToQty(batchesFrom(md, qtyNow, expiresOn), qtyNow);
+  const shelfLifeDays =
+    typeof md.shelf_life_days === "number" && md.shelf_life_days > 0 ? md.shelf_life_days : null;
+  const today = localToday(new Date(), opts.timezone ?? "UTC");
+
+  // The CALLER decides how much stock moves; the lots only describe it. This
+  // used to run the other way - the delta was read back out of the mutated
+  // batches - and an item with stock but no expiry date has no lots to read, so
+  // `use-one` computed 0 - qty and wiped the whole record to zero. Every screw,
+  // spool and tool in a workspace is exactly that shape, so one everyday tap
+  // emptied it, with a ledger line that looked deliberate.
+  //
+  // Reconciling the lots to the new qty afterwards keeps them honest without
+  // ever letting them govern: a dateless item stays batch-free and behaves
+  // exactly as it did before batches existed.
+  const qtyAfter = Math.max(0, qtyNow + delta);
+  const next = reconcileToQty(mutate(current, { today, shelfLifeDays }), qtyAfter);
+  const visible = visibleFrom(next);
+
+  // Metadata first, so a failure in the stock write leaves the lots describing
+  // what is really there rather than what we hoped to do.
+  await db
+    .updateTable("inventory_parts")
+    .set({
+      metadata: sql`coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({
+        batches: next,
+        ...(visible.expires_on !== null ? { expires_on: visible.expires_on } : {}),
+      })}::jsonb`,
+    })
+    .where("id", "=", partId)
+    .execute();
+
+  // Through the normal path, so the consumption ledger, stock.changed and the
+  // running-low wire all fire exactly as they do for any other stock move.
+  const applied =
+    delta === 0 ? { ok: true, skipped: true, reason: "no quantity change" } : await applyStockDelta(orgId, { partId, delta, reason });
+
+  return { ...applied, batches: next, expires_on: visible.expires_on, qty: qtyAfter };
+}
+
   // ───────────── one-tap consumption (P1 — consumption capture) ─────────────
   // The binary "used" signal, at the moment you're already handling the item —
   // NO number entry (that's the typed StockAdjust popup, kept for when you DO
@@ -220,7 +311,191 @@ export function registerInventoryActionHandlers(): void {
   platform().actions.registerHandler("inventory.use-one", async (ctx) => {
     const partId = ctx.entity?.id ?? (ctx.args as { partId?: string } | null)?.partId;
     if (!partId) return { ok: false, error: "missing_part" };
-    return applyStockDelta(ctx.orgId, { partId, delta: -1, reason: "used one" });
+    const tz = (ctx.args as { timezone?: string } | null)?.timezone;
+    // Always the OLDEST lot. It is the one the warning named, so taking from
+    // anywhere else would leave the warning standing after the user did what it
+    // asked - and once that lot empties the deadline moves on by itself.
+    return withBatches(
+      ctx.orgId,
+      partId,
+      "used one",
+      -1,
+      (batches) => consumeOldest(batches, 1).batches,
+      { ...(tz ? { timezone: tz } : {}) },
+    );
+  });
+
+  // Restock one: another arrived today, good until its own date. NOT qty + 1 -
+  // a container arriving today has its own shelf life, and incrementing a count
+  // would leave it inheriting the previous lot's deadline.
+  platform().actions.registerHandler("inventory.restock-one", async (ctx) => {
+    const args = (ctx.args as { partId?: string; qty?: number; timezone?: string } | null) ?? {};
+    const partId = ctx.entity?.id ?? args.partId;
+    if (!partId) return { ok: false, error: "missing_part" };
+    const add = Math.max(1, Math.trunc(Number(args.qty ?? 1)));
+    return withBatches(
+      ctx.orgId,
+      partId,
+      "restocked one",
+      add,
+      (batches, { today, shelfLifeDays }) => {
+        const expires = expiryFor(today, shelfLifeDays);
+        // No shelf life declared means no date. Adding one anyway would put a
+        // confident deadline on something nobody measured.
+        return addBatch(batches, {
+          received_on: today,
+          expires_on: expires ?? "",
+          qty: add,
+        });
+      },
+      { ...(args.timezone ? { timezone: args.timezone } : {}) },
+    );
+  });
+
+
+  // ───────────── lifecycle marks (learning what you never knew) ─────────────
+  // Nobody knows how long a jar of pesto keeps. Everybody knows what they did
+  // to it. Three taps with dates on them, and the durations fall out.
+  //
+  // The asymmetry is the whole point and is enforced in shelf-life-learning.ts:
+  // "threw it out" MEASURES a shelf life; "used it up" only puts a floor under
+  // one. Averaging the two teaches a fast eater that pesto keeps six days and
+  // then warns them about food that was never going to spoil.
+
+  /** Shared tail: close the oldest lot, record what happened to it, and fold the
+   *  learning back onto the item. */
+  async function endOldestLot(
+    orgId: string,
+    partId: string,
+    ended: "used" | "spoiled",
+    timezone: string | undefined,
+    reason: string,
+  ): Promise<Record<string, unknown>> {
+    const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
+    const row = await db
+      .selectFrom("inventory_parts")
+      .select(["qty", "metadata", "created_at"])
+      .where("id", "=", partId)
+      .executeTakeFirst();
+    if (!row) return { ok: false, error: "missing_part" };
+    const md = ((row.metadata as Record<string, unknown> | null) ?? {}) as Record<string, unknown>;
+    const today = localToday(new Date(), timezone ?? "UTC");
+    const lots = reconcileToQty(
+      batchesFrom(md, Number(row.qty), typeof md.expires_on === "string" ? md.expires_on : null),
+      Number(row.qty),
+    );
+    const oldest = lots[0];
+
+    const result = await withBatches(orgId, partId, reason, -1, (batches) => consumeOldest(batches, 1).batches, {
+      ...(timezone ? { timezone } : {}),
+    });
+
+    // When it turned up. A dated lot knows; most items do not have one, because
+    // only `restock-one` creates them - anything filed by a scan, an import or
+    // the plain create form is a bare quantity. Without a fallback the learning
+    // would quietly never fire for the great majority of a workspace, which
+    // looks identical to a feature that does not work.
+    //
+    // The record's own creation date is the honest stand-in: you filed it when
+    // it showed up. It is wrong for a backfilled inventory, which is why a dated
+    // lot always wins and why one observation never becomes confident on its own.
+    const startedOn =
+      oldest?.received_on ||
+      (typeof md.received_on === "string" ? md.received_on : "") ||
+      (row.created_at ? new Date(row.created_at).toISOString().slice(0, 10) : "");
+
+    if (startedOn) {
+      const prior = Array.isArray(md.shelf_life_observations)
+        ? (md.shelf_life_observations as LifecycleObservation[])
+        : [];
+      const observations = recordObservation(prior, {
+        received_on: startedOn,
+        ...(typeof md.opened_on === "string" && md.opened_on ? { opened_on: md.opened_on } : {}),
+        ended_on: today,
+        ended,
+      });
+      const estimate = estimateShelfLife(observations);
+      // Only APPLY a learned figure once more than one thing has actually gone
+      // off. Below that it is stored and shown, never acted on.
+      const apply =
+        isConfident(estimate) && estimate.shelf_life_days !== null
+          ? {
+              shelf_life_days: estimate.shelf_life_days,
+              ...(estimate.shelf_life_opened_days !== null
+                ? { shelf_life_opened_days: estimate.shelf_life_opened_days }
+                : {}),
+            }
+          : {};
+      await db
+        .updateTable("inventory_parts")
+        .set({
+          metadata: sql`coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({
+            shelf_life_observations: observations,
+            shelf_life_estimate: estimate,
+            // The lot is gone, so the opened clock that belonged to it is too.
+            opened_on: null,
+            ...apply,
+          })}::jsonb`,
+        })
+        .where("id", "=", partId)
+        .execute();
+      return { ...result, learned: estimate };
+    }
+    return result;
+  }
+
+  // Opened: starts the shorter clock on ONE unit, and records when, so the
+  // opened-to-spoiled duration can be measured later.
+  platform().actions.registerHandler("inventory.mark-opened", async (ctx) => {
+    const args = (ctx.args as { partId?: string; timezone?: string } | null) ?? {};
+    const partId = ctx.entity?.id ?? args.partId;
+    if (!partId) return { ok: false, error: "missing_part" };
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
+    const row = await db
+      .selectFrom("inventory_parts")
+      .select(["qty", "metadata"])
+      .where("id", "=", partId)
+      .executeTakeFirst();
+    if (!row) return { ok: false, error: "missing_part" };
+    const md = ((row.metadata as Record<string, unknown> | null) ?? {}) as Record<string, unknown>;
+    const today = localToday(new Date(), args.timezone ?? "UTC");
+    const openedDays =
+      typeof md.shelf_life_opened_days === "number" && md.shelf_life_opened_days > 0
+        ? md.shelf_life_opened_days
+        : null;
+    // Opening does not change how many you have, so the lot count is untouched.
+    // What changes is the DEADLINE on the one you opened: if we know the opened
+    // clock, it takes over, because it is much shorter than the sealed one.
+    const shortened = expiryFor(today, openedDays);
+    await db
+      .updateTable("inventory_parts")
+      .set({
+        metadata: sql`coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({
+          opened_on: today,
+          ...(shortened ? { expires_on: shortened } : {}),
+        })}::jsonb`,
+      })
+      .where("id", "=", partId)
+      .execute();
+    return { ok: true, opened_on: today, expires_on: shortened };
+  });
+
+  // Used up: finished it. A LOWER BOUND on the shelf life, never a measurement.
+  platform().actions.registerHandler("inventory.mark-finished", async (ctx) => {
+    const args = (ctx.args as { partId?: string; timezone?: string } | null) ?? {};
+    const partId = ctx.entity?.id ?? args.partId;
+    if (!partId) return { ok: false, error: "missing_part" };
+    return endOldestLot(ctx.orgId, partId, "used", args.timezone, "finished it");
+  });
+
+  // Threw it out: it went bad. THE measurement, and the only thing that ever
+  // teaches a shelf life. Also a cadence discard, which is what feeds the
+  // buy-less advice - the signal that says somebody is over-buying.
+  platform().actions.registerHandler("inventory.mark-spoiled", async (ctx) => {
+    const args = (ctx.args as { partId?: string; timezone?: string } | null) ?? {};
+    const partId = ctx.entity?.id ?? args.partId;
+    if (!partId) return { ok: false, error: "missing_part" };
+    return endOldestLot(ctx.orgId, partId, "spoiled", args.timezone, "threw it out");
   });
 
   // Used up: it's gone (tossing the empty). Drive on-hand to 0 in one tap —

@@ -89,6 +89,7 @@ import {
 } from "./platform/scan-url-resolvers/register.js";
 import { runOnBoot, runOnShutdown } from "./modules/lifecycle.js";
 import { registerBackupCron, seedBackupSchedules } from "./platform/backup-destinations.js";
+import { navSurface } from "./platform/nav-surface.js";
 import { completeApp, createApp } from "./server.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -239,6 +240,7 @@ async function boot() {
       resolve: unitsImpl.resolve,
       convert: unitsImpl.convert,
     },
+    nav: navSurface,
     wires: { fireEvent: wires.fireEvent },
     health: {
       registerProbe: health.registerProbe,

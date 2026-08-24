@@ -14,6 +14,22 @@
 //
 // A module with something genuinely time-sensitive raises its own priority — a
 // knob it already has. Nothing here knows what a grocery is.
+//
+// TWO CADENCES, ONE CHANNEL
+//
+// Priority cannot separate everything people want separated. Chat and "this
+// expires today" are both `normal`, so any bar that lets a reply through lets
+// the expiry through with it — and the shape people ask for is Discord live all
+// day for conversation AND one quiet morning list of what is due. What tells
+// those apart is not urgency but what CAUSED the notification:
+//
+//     activity  — somebody did something. A reply, a mention, a parcel landing.
+//     schedule  — a date arrived. Expiring today, service due, running low.
+//
+// So a window is per (person, channel, class), and `schedule` defaults to
+// `inherit`: unchanged behaviour until somebody asks for the split. This is
+// still not a use case — "a date arrived" is a property of the notification in
+// the same way priority is.
 
 import { Kysely, sql, type Generated } from "kysely";
 
@@ -27,13 +43,38 @@ const INTERRUPT_ABOVE = RANK.normal!;
 /** Channels a window may never hold back. See shouldDefer. */
 const NEVER_DEFERRED = new Set(["in_app"]);
 
+/** What caused a notification, and therefore which cadence governs it. */
+export type TriggeredBy = "activity" | "schedule";
+
 export interface DeliveryWindow {
   mode: "immediate" | "daily";
   /** Minutes past local midnight. */
   deliver_at_minute: number;
-  /** IANA zone name. */
+  /** IANA zone name. Shared: a person is in one place. */
   timezone: string;
   last_delivered_at: Date | null;
+
+  /** `inherit` means dated things follow the activity cadence above, which is
+   *  what every window meant before there were two. */
+  schedule_mode: "inherit" | "immediate" | "daily";
+  schedule_deliver_at_minute: number;
+  schedule_last_delivered_at: Date | null;
+}
+
+/** One class's view of a window: the four fields the rest of this file reads.
+ *
+ *  Resolving `inherit` HERE, once, is the point. Every caller that asked
+ *  "is it daily?" or "when did it last fire?" would otherwise have to remember
+ *  which of two column sets applies, and the one that forgot would silently
+ *  deliver somebody's morning brief on their chat cadence. */
+export function windowFor(window: DeliveryWindow, triggeredBy: TriggeredBy): DeliveryWindow {
+  if (triggeredBy === "activity" || window.schedule_mode === "inherit") return window;
+  return {
+    ...window,
+    mode: window.schedule_mode,
+    deliver_at_minute: window.schedule_deliver_at_minute,
+    last_delivered_at: window.schedule_last_delivered_at,
+  };
 }
 
 /**
@@ -46,6 +87,7 @@ export function shouldDefer(
   window: DeliveryWindow | null | undefined,
   priority: string,
   channel?: string,
+  triggeredBy: TriggeredBy = "activity",
 ): boolean {
   // The bell is never delayed, whatever anyone has set. A delivery window is
   // for channels that PUSH into someone's attention; in_app is a place you
@@ -58,7 +100,9 @@ export function shouldDefer(
   // in_app as its windowed channel, so the test would have passed while the
   // code contradicted the design it cites.
   if (channel && NEVER_DEFERRED.has(channel)) return false;
-  if (!window || window.mode === "immediate") return false;
+  if (!window) return false;
+  const w = windowFor(window, triggeredBy);
+  if (w.mode === "immediate") return false;
   return (RANK[priority] ?? RANK.normal!) <= INTERRUPT_ABOVE;
 }
 
@@ -99,11 +143,31 @@ export function localDay(at: Date, timezone: string): string {
  * cannot send a second digest — which would be the exact noise this feature
  * exists to prevent, delivered by the fix for it.
  */
-export function isWindowDue(window: DeliveryWindow, now: Date): boolean {
-  if (window.mode !== "daily") return false;
-  if (localMinuteOfDay(now, window.timezone) < window.deliver_at_minute) return false;
-  if (!window.last_delivered_at) return true;
-  return localDay(window.last_delivered_at, window.timezone) !== localDay(now, window.timezone);
+export function isWindowDue(
+  window: DeliveryWindow,
+  now: Date,
+  triggeredBy: TriggeredBy = "activity",
+): boolean {
+  const w = windowFor(window, triggeredBy);
+  if (w.mode !== "daily") return false;
+  if (localMinuteOfDay(now, w.timezone) < w.deliver_at_minute) return false;
+  if (!w.last_delivered_at) return true;
+  return localDay(w.last_delivered_at, w.timezone) !== localDay(now, w.timezone);
+}
+
+/** The column the sweeper stamps after flushing this class's bucket.
+ *
+ *  Two stamps, because the two windows open at different times: one shared
+ *  stamp would let whichever fired first suppress the other for the rest of
+ *  the day, and the symptom would be a morning brief that silently stops
+ *  arriving for anyone who also chats. */
+export function stampColumn(
+  window: DeliveryWindow,
+  triggeredBy: TriggeredBy,
+): "last_delivered_at" | "schedule_last_delivered_at" {
+  return triggeredBy === "schedule" && window.schedule_mode !== "inherit"
+    ? "schedule_last_delivered_at"
+    : "last_delivered_at";
 }
 
 export interface DeferredItem {
@@ -136,6 +200,9 @@ interface WindowDB {
     deliver_at_minute: number;
     timezone: string;
     last_delivered_at: Date | null;
+    schedule_mode: "inherit" | "immediate" | "daily";
+    schedule_deliver_at_minute: number;
+    schedule_last_delivered_at: Date | null;
   };
   notification_deferred: {
     // Generated so an insert may omit them (the column defaults supply both).
@@ -148,6 +215,7 @@ interface WindowDB {
     message: string;
     link_url: string | null;
     priority: string;
+    triggered_by: Generated<TriggeredBy>;
     queued_at: Generated<Date>;
   };
 }
@@ -160,7 +228,16 @@ export async function windowsFor(
 ): Promise<Map<string, DeliveryWindow>> {
   const rows = await db
     .selectFrom("notification_delivery_windows")
-    .select(["channel", "mode", "deliver_at_minute", "timezone", "last_delivered_at"])
+    .select([
+      "channel",
+      "mode",
+      "deliver_at_minute",
+      "timezone",
+      "last_delivered_at",
+      "schedule_mode",
+      "schedule_deliver_at_minute",
+      "schedule_last_delivered_at",
+    ])
     .where("user_id", "=", userId)
     .execute();
   return new Map(rows.map((r) => [r.channel, r as DeliveryWindow]));
@@ -168,7 +245,9 @@ export async function windowsFor(
 
 export async function enqueueDeferred(
   db: Kysely<WindowDB>,
-  row: Omit<WindowDB["notification_deferred"], "id" | "queued_at">,
+  row: Omit<WindowDB["notification_deferred"], "id" | "queued_at" | "triggered_by"> & {
+    triggered_by?: TriggeredBy;
+  },
 ): Promise<void> {
   await db.insertInto("notification_deferred").values(row).execute();
 }

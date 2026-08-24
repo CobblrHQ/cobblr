@@ -16,6 +16,17 @@ export interface ReceiptLine {
    *  OCR'd, so it carries the same lower trust a code read off a photo does —
    *  the row stamps it as AI-read rather than pretending it was scanned. */
   code: string | null;
+  /** The MANUFACTURER's model number for the line, when the receipt prints one
+   *  ("Model #: GA605WI-XS96"). Alphanumeric, so it is a different fact from
+   *  `code` above, which is digits-only by design: a UPC identifies the package
+   *  a shop sold, a model identifies the thing itself across every shop that
+   *  sells it.
+   *
+   *  Online order emails print it routinely and it was being read straight past
+   *  - a Best Buy email listed a Model # that reached nothing (2026-08-24).
+   *  Kept because it is the most durable handle on a machine: warranties,
+   *  manuals, spare parts and a future catalog match all key on it. */
+  model: string | null;
   /** Money taken off this line by a coupon or discount printed beneath it, as a
    *  POSITIVE number. Null when there was none.
    *
@@ -173,6 +184,7 @@ export function buildReceipt(parts: {
     line_total?: unknown;
     discount?: unknown;
     code?: unknown;
+    model?: unknown;
   }>;
 }): ParsedReceipt | null {
   const items: ReceiptLine[] = [];
@@ -193,6 +205,10 @@ export function buildReceipt(parts: {
       // What it MEANS is "this much came off", so store the magnitude.
       discount: discount === null ? null : Math.abs(discount),
       code: rawCode.length >= 8 && rawCode.length <= 14 ? rawCode : null,
+      // Deliberately NOT digit-stripped: a model number is alphanumeric and
+      // often hyphenated, and stripping it would leave a meaningless run of
+      // digits that resolves to nothing.
+      model: str(it.model)?.slice(0, 60) ?? null,
     });
   }
   if (items.length === 0) return null;

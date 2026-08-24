@@ -2,6 +2,52 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-08-24
+
+### Features
+- Cobb can now rename a field, make it required, replace a dropdown's choices, or take a field off a kind of record. Name the field the way it appears on the form. A field that applies to a whole class of records (everything physical, say) is refused with a note about where it lives, so a change meant for one list cannot land on all of them.
+- Cobb can switch a whole set of fields on across everything it applies to ("track where my things came from"), and rename a heading on a form.
+- Cobb can lay out a form for you: "put purchase date and supplier under Buying" creates the heading and moves those fields under it, in the order you named them, and taking them back out removes a heading nothing is left in.
+- Ask Cobb to group sections in your navigation and he does it. "Put Spices and Tea under Kitchen" creates the heading and moves them under it, as a change you confirm and can undo, instead of telling you which settings screen to open.
+- Cobb can rename what a list is called ("call my parts spools"), give a category a list of its own ("give spices their own list"), and fold one back where it came from.
+- Cobb can turn a Cobblr feature on or off for your workspace when you ask for it by name, so "I want to track maintenance" sets it up instead of telling you where the switch is.
+- When someone mentions you, the Discord DM now carries a Reply button: press it, type, and your answer lands in the discussion without opening Cobblr.
+- Discussion and tags now work on every record, including inventory parts.
+- A view can now be filtered to several places at once, not just one. A screen mounted between a fridge and a pantry can show both cupboards and nothing else. Filtering to a list of values used to be quietly ignored, which showed you everything instead of what you asked for; an unusable filter now shows nothing, so a mistake is visible rather than silent.
+- Groceries is now its own table rather than extra columns on Inventory, so a scanned cucumber and a scanned bolt no longer share a list. Groceries, Tea and Spices sit together under one Kitchen heading in the nav, and Tea and Spices now reach the shopping list when they run low, which they previously did not. Anything already filed into Inventory stays exactly where it is and keeps all its columns.
+- One button files everything waiting, adding to what you already have instead of making a second one. A receipt saying three cucumbers now finds the cucumbers already in your kitchen and adds to them. It shows you what it would do before it does anything, and anything it cannot tell apart is left for you rather than guessed at.
+- Builds, knowledge entries, lists, projects, sales orders, tracked metrics and catalogs can now be tagged and discussed, like the rest of your records.
+- Conversation can now reach you as it happens while everything due today waits for one message in the morning, on the same channel.
+- You can now talk to the whole workspace, not only about one record at a time.
+
+### Improvements
+- Items scanned together now agree on their categories instead of each inventing one alone. Five monitors in one session used to come back filed under three different names, all of them reasonable, none of them the same, because each item was identified on its own and a proposed category is not saved until you confirm it. Each item now sees what the rest of its batch has already proposed and reuses it when it fits. On a replay of 40 real scans the number of distinct categories dropped from 17 to 9.
+- A receipt that says when something is arriving now shows it on the session row, instead of keeping it to itself.
+- Cobb now runs the change you asked for instead of offering to take you to the screen where you could do it yourself, whenever one of his actions covers the ask.
+- Asking Cobb to hide or rename one of the fields Cobblr ships (a part's manufacturer, a machine's serial number) now works, instead of getting a list of your own custom fields back.
+- Cobb can rename this workspace and turn simple mode on or off when you ask. Renaming changes the name only, so links, bookmarks and printed labels keep working.
+- When Cobblr moves to a new Discord app, your linked account no longer goes quietly unreachable. A Discord DM belongs to the bot that sent it, so a new app has to earn its own permission to message you, and previously nothing noticed: notifications simply stopped arriving while the settings page still said Discord was connected. Your communication settings now say the app changed and offer one re-confirm, and notifications wait in the bell until it is done rather than being sent into a channel nobody is listening on. If Discord ever blocks messages from us outright, the connection is marked unverified instead of silently swallowing everything after it.
+- Reordering the sidebar now starts on a short hold rather than as soon as you move, and letting go no longer opens the item you were moving. A quick press that drifts a few pixels counts as a click and follows the link, which it did not always do before. The case that failed every time was dragging the top item upwards, where the drop lands outside the list and the reorder is abandoned: the item opened as if you had simply clicked it.
+- Receipts and order emails that print a model number now record it on the item, instead of reading past it.
+- Categories from a scan now come back at the level of a section you would browse rather than the label a shop files a product under, so a run of kitchen gear lands in "Kitchen" instead of "Steamer Baskets", "Mugs" and "Kitchen & Dining". One recorded scan of a single room had produced 81 different categories, since the routing prompt asked for "a few dozen" of them and judged two items the same only if they would share a bin, which a bin of one product passes. It now aims for a handful across a whole workspace and shows what a collapse looks like. Placeholder values are no longer filed either: "unknown", "other" and the literal "undefined" leave the category blank so you get asked, instead of looking answered.
+- Wide lists like Inventory now use the whole screen, and a long product name wraps instead of pushing the last column off the edge.
+
+### Fixes
+- Replying to a mention from a Discord DM now posts into the conversation you were replying to. It was saving your reply into a second, identical-looking conversation for the same record or workspace, so it never appeared anywhere on screen and nothing reported a problem. Discord said it sent, the server agreed, and the message was simply somewhere no page reads from.
+- After Cobb runs an action, the chat says what it actually did ("Spices and Tea are now under Kitchen.") instead of a bare "Done."
+- Doing your shopping no longer makes five things overdue. A date field that records when something happened (bought on, received, opened) is no longer treated as a deadline, so it cannot turn red and crowd out the things that are actually late. Dashboard rows also stopped showing raw internal names like INVENTORY-DATE, and a view of 18 things now says "18 items" rather than "18 inventorys".
+- "Was it due today?" nudges no longer arrive the evening before the day they ask about.
+- Someone invited as an editor can now actually edit. The role could read a whole workspace and save nothing in it.
+- Importing a scan inbox no longer leaves every item stuck under a "finishing" spinner. Imported scans are marked as identified, which they already were when they were exported, so they arrive ready to file instead of appearing to still be working.
+- On a scan card, the location picker now opens directly under the chip you tapped, instead of below the photos at the far end of the card.
+- A heading you group nav sections under now appears where those sections were, instead of dropping to the bottom of the navigation.
+- An inventory table no longer shows two columns both headed Category. The groceries bundle's own category field had been given the same label as Inventory's built-in one, so both were drawn and neither said which was which. On the Groceries table the built-in one is now hidden, since the food category replaces it; on plain Inventory the grocery one reads "Food category".
+- The scan inbox now says which table a committed scan went into, by its name rather than an internal code, and points out when a better table has appeared since the scan was routed. A box of tea scanned before you set up a Tea table used to file into plain Inventory without a word, because the routing was worked out once and never revisited.
+- Parcel tracking now tells the tracking service which carrier a number belongs to. Without it the service had to guess, and for a plain 12-digit number it often could not, so the parcel sat unresolved and never updated even though the number was perfectly valid. Numbers already added that got stuck this way are repaired automatically on the next check.
+- Refreshing while the side panel is open now brings it back on the tab you were using, rather than dropping you on Ask Cobb. It already remembered that the panel was open and which page you opened it on; it just never remembered which tab was showing, so a reload in the middle of a discussion handed you the assistant instead. As before, the panel only returns on the page you opened it on, and only for as long as the browser tab is alive.
+- The guided tour now happens once for you, rather than once per browser. It kept coming back when you opened a brand new workspace, signed in on a second device, or visited from a different address, because "you have seen this" was only ever written into that browser's local storage. It is now remembered on your account, so every device and every workspace agree. If you have already taken the tour you will not see it again: your existing local record is carried up to your account rather than being ignored.
+- Updating a bundle no longer switches on new optional features by itself. A version that adds one now offers it, marked new and turned off, so nothing is added to your workspace until you say yes. Previously a bundle update could create locations you never asked for.
+
 ## 2026-08-23
 
 ### Features
@@ -14,6 +60,8 @@ User-facing changes, newest first. Dates are release dates.
 - You can now reply to a specific comment in a discussion. The reply quotes what it answers, and tapping the quote jumps to the original.
 - Pin a knowledge entry and it stays in the side panel on every page, so the things you keep needing are one glance away instead of one search away.
 - Fill provenance fields from receipts you scanned before those fields existed, and Groceries now records the day you bought something rather than the day you scanned it.
+- Adding another one now dates it properly instead of making it inherit the last one's use-by. Say how long something keeps and adding one records that it arrived today and works out its own date. Eating one always takes the oldest, so once the urgent one is gone the warning moves on by itself. Nothing to type, and nothing you already track changes until you use it.
+- Cobblr can now work out how long your things keep, from what you tell it you did. You do not need to know that a jar of pesto lasts five days once opened. Mark it opened when you open it, and mark it thrown out if it goes off, and after a couple of jars Cobblr knows. Finishing something never counts as a measurement, because eating it early proves nothing about when it would have gone bad, so the figure is only ever learned from things that actually spoiled.
 - Cobblr now tells you when something goes somewhere it should not. Put a thing that has to stay frozen into a cupboard and you hear about it straight away, rather than finding out later. It only speaks up when it actually knows how the thing must be kept, so it stays quiet rather than guessing, and it never comments on shelf-stable things. This one interrupts instead of waiting for a daily summary, because a message about food spoiling is no use tomorrow morning.
 - Tags now sort by how much they still matter, and a tag you have not used in months folds away behind a "+N" instead of sitting on every record forever.
 - The vending board can now be tapped. It has always shown what you have and never let you change it. A "Use / restock" button turns on a plus and minus on every tile, so you can record what you used while standing in front of the cupboard rather than going back to a laptop. Undo sits next to the toggle, because a mis-tap on a screen you walk past is going to happen.
@@ -421,12 +469,15 @@ User-facing changes, newest first. Dates are release dates.
 
 ### Features
 - Self-hosted instances can now turn a feedback note into a ready-made bug report for the public issue tracker, with the version, browser and enabled modules already filled in.
+- Rotate a token from its row: the dialog reopens prefilled with the same name and scopes, you adjust what you need, and mint a fresh value. The old token keeps working until you revoke it, so the daemon using it does not go down mid-swap.
 
 ### Improvements
 - Your sidebar-or-top-bar choice follows your account now, so signing in on another desktop keeps the layout you set instead of starting over on the top bar. Phones are unaffected and keep their own menu.
+- The operator console navigates from a sidebar instead of two wrapped rows of tabs, matching the workspace shell. Every group is visible at once and pages start at the top of the window.
 - Signup gains opt-in anti-abuse controls, all off by default so nothing changes for an existing instance: a captcha on the signup form (Cloudflare Turnstile), a block on known disposable/throwaway email providers, and an option to require a verified email before an account can sign in. The trial tier also gains a humane reaper that emails an expiring workspace a heads-up, waits out a grace period, and never removes a workspace it could not warn first.
 
 ### Fixes
+- The mint-operator-token dialog shows its scopes two-up in a wider window, so you can read the whole list and reach the Mint button without scrolling past it.
 - Self-hosted images now know which commit they were built from, so Health and a bug report show a real version instead of a blank one.
 
 ## 2026-08-05

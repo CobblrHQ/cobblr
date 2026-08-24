@@ -30,7 +30,17 @@ type FallbackPolicy =
   /** Never in the fallback. Reaching this channel takes an explicit
    *  subscription; `why` is the argument, so the next person changing it has
    *  to answer it rather than rediscover it. */
-  | { send: "never"; why: string };
+  | { send: "never"; why: string }
+  /** Send ONLY when the person has batched this channel — i.e. they have set a
+   *  daily cadence on it, so whatever arrives arrives once.
+   *
+   *  This exists because the argument against a channel is sometimes about
+   *  VOLUME rather than about the channel. "Would mail every module event to
+   *  everyone" is a real objection to per-event mail and no objection at all to
+   *  one message a day, so the honest rule is not "never" but "not unless it is
+   *  bounded". Setting a daily cadence IS the request, which is also why it
+   *  needs no second opt-in to forget to give. */
+  | { send: "when-batched"; floor: NotificationPriority; why: string };
 
 /** ⚠️ EXHAUSTIVE BY CONSTRUCTION — this is the guardrail, not decoration.
  *
@@ -47,12 +57,25 @@ const POLICY: Record<PrefChannel, FallbackPolicy> = {
 
   discord_dm: { send: "when-wanted", floor: DM_FLOOR },
 
-  // Account prefs default email ON, so honouring it here would start mailing
-  // every workspace notification to everyone — parcel updates, order nudges,
-  // scan events. None of that has ever been emailed and nobody asked for it.
-  // A DM is glanceable and a mail is not; the volume that is fine in one is
-  // not fine in the other.
-  email: { send: "never", why: "would mail every module event to everyone; email stays explicit" },
+  // Account prefs default email ON, so honouring it unconditionally would start
+  // mailing every workspace notification to everyone — parcel updates, order
+  // nudges, scan events. None of that has ever been emailed and nobody asked
+  // for it. A DM is glanceable and a mail is not; the volume that is fine in
+  // one is not fine in the other.
+  //
+  // But that is an argument about VOLUME, and a daily cadence removes it: one
+  // message a day is not "every module event". So email is reachable exactly
+  // when it is bounded, and a person who has not asked for a daily digest is
+  // still mailed nothing at all.
+  //
+  // Note what this is NOT: an extra toggle. Setting email to "once a day" is
+  // already an unambiguous request for a daily email, and making somebody
+  // confirm it twice is how you end up with a setting that looks on and is off.
+  email: {
+    send: "when-batched",
+    floor: DM_FLOOR,
+    why: "per-event mail is too much; one message a day is what was asked for",
+  },
 };
 
 /** The channels POLICY has an answer for. Exported so a test can hold it
@@ -63,12 +86,23 @@ export const POLICIED_CHANNELS = Object.keys(POLICY) as PrefChannel[];
 export function fallbackChannels(
   prefs: Record<PrefChannel, boolean>,
   priority: NotificationPriority,
+  /** Channels this person has put on a daily cadence, so anything sent there
+   *  arrives once rather than per event. Empty means nobody has batched
+   *  anything, which is the state every workspace starts in. */
+  batched: ReadonlySet<string> = new Set(),
 ): NotificationChannel[] {
   const out: NotificationChannel[] = [];
   for (const [channel, policy] of Object.entries(POLICY) as [PrefChannel, FallbackPolicy][]) {
     if (policy.send === "always") {
       out.push(channel);
     } else if (policy.send === "when-wanted" && prefs[channel] && ORDER[priority] >= ORDER[policy.floor]) {
+      out.push(channel);
+    } else if (
+      policy.send === "when-batched" &&
+      prefs[channel] &&
+      batched.has(channel) &&
+      ORDER[priority] >= ORDER[policy.floor]
+    ) {
       out.push(channel);
     }
   }

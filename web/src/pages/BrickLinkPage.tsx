@@ -13,7 +13,7 @@
 import { useState, type ReactNode } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Diff, FileText, Upload } from "lucide-react";
-import { usePageTitle, useToast } from "@cobblr/platform-web";
+import { usePageTitle, usePageWidth, useToast } from "@cobblr/platform-web";
 import { ApiError, api } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
@@ -97,6 +97,8 @@ type Tab = "wanted" | "order";
 
 export function BrickLinkPage() {
   usePageTitle("BrickLink");
+  // A wide table is the page here, so it gets the screen.
+  usePageWidth("wide");
   const { activeSlug } = useActiveOrg();
   const toast = useToast();
   const [tab, setTab] = useState<Tab>("wanted");

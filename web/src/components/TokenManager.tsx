@@ -16,11 +16,18 @@
 //
 // Tokens are user-level either way — same /me/api-tokens endpoints.
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, KeyRound, Plus, Trash2 } from "lucide-react";
+import { Copy, KeyRound, Plus, Trash2, RefreshCw } from "lucide-react";
 import { ApiError, api, type ApiTokenListItem } from "../lib/api";
 import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
+
+/** A token being replaced: what to prefill, and what to offer revoking after. */
+interface RotateTarget {
+  id: string;
+  name: string;
+  scopes: string[];
+}
 
 export function TokenManager({ variant }: { variant: "personal" | "operator" }) {
   const qc = useQueryClient();
@@ -33,7 +40,16 @@ export function TokenManager({ variant }: { variant: "personal" | "operator" }) 
   });
 
   const [mintOpen, setMintOpen] = useState(false);
-  const [revealed, setRevealed] = useState<{ plaintext: string; name: string } | null>(null);
+  const [revealed, setRevealed] = useState<
+    { plaintext: string; name: string; supersedes: RotateTarget | null } | null
+  >(null);
+  /** The token being replaced. Scopes and permissions on an EXISTING token are
+   *  never editable: its value is already sitting in some daemon's env, so
+   *  widening it would change what a credential someone already holds can reach,
+   *  and the audit trail would stop being true. Rotation mints a NEW token
+   *  instead, prefilled from the old one so the common case (same job, same
+   *  grants, fresh secret) is one dialog. */
+  const [rotating, setRotating] = useState<RotateTarget | null>(null);
 
   const revoke = useMutation({
     mutationFn: (id: string) => api.revokeApiToken(id),
@@ -164,6 +180,19 @@ export function TokenManager({ variant }: { variant: "personal" | "operator" }) 
                 <Trash2 size={14} />
               </button>
             )}
+            {!t.revoked_at && (
+              <button
+                type="button"
+                onClick={() => {
+                  setRotating({ id: t.id, name: t.name, scopes: t.scopes ?? [] });
+                  setMintOpen(true);
+                }}
+                className="text-faint hover:text-accent transition shrink-0"
+                title="Rotate - mint a replacement with the same name, then revoke this one"
+              >
+                <RefreshCw size={14} />
+              </button>
+            )}
           </li>
         ))}
       </ul>
@@ -171,14 +200,31 @@ export function TokenManager({ variant }: { variant: "personal" | "operator" }) 
       <MintModal
         variant={variant}
         open={mintOpen}
-        onClose={() => setMintOpen(false)}
+        rotating={rotating}
+        onClose={() => {
+          setMintOpen(false);
+          setRotating(null);
+        }}
         onMinted={(plaintext, name) => {
           setMintOpen(false);
-          setRevealed({ plaintext, name });
+          // Keep the OLD token alive. Revoking it here would cut the running
+          // daemon off the instant you minted its replacement, before you had
+          // anywhere to paste the new value — the outage would be caused by the
+          // rotation itself. It is offered on the reveal screen instead, for
+          // after the bot is updated.
+          setRevealed({ plaintext, name, supersedes: rotating ?? null });
+          setRotating(null);
           void qc.invalidateQueries({ queryKey: ["api-tokens"] });
         }}
       />
-      <RevealedModal revealed={revealed} onClose={() => setRevealed(null)} />
+      <RevealedModal
+        revealed={revealed}
+        onClose={() => setRevealed(null)}
+        onRevokeOld={(id) => {
+          revoke.mutate(id);
+          setRevealed(null);
+        }}
+      />
     </div>
   );
 }
@@ -186,17 +232,28 @@ export function TokenManager({ variant }: { variant: "personal" | "operator" }) 
 function MintModal({
   variant,
   open,
+  rotating,
   onClose,
   onMinted,
 }: {
   variant: "personal" | "operator";
   open: boolean;
+  rotating?: RotateTarget | null;
   onClose: () => void;
   onMinted: (plaintext: string, name: string) => void;
 }) {
   const [name, setName] = useState("");
   const [expiresInDays, setExpiresInDays] = useState<"" | "30" | "90" | "365" | "never">("never");
   const [scopes, setScopes] = useState<Set<string>>(new Set());
+  // Prefill from the token being replaced when the dialog opens. Keyed on
+  // open+id so re-opening for a DIFFERENT token refills, while typing inside an
+  // open dialog is never clobbered.
+  useEffect(() => {
+    if (!open) return;
+    setName(rotating?.name ?? "");
+    setScopes(new Set(rotating?.scopes ?? []));
+    setExpiresInDays("never");
+  }, [open, rotating?.id]);
   const toast = useToast();
 
   const scopeChoices = useQuery({
@@ -242,8 +299,19 @@ function MintModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={variant === "operator" ? "mint operator token" : "mint api token"}
-      size="sm"
+      title={
+        rotating
+          ? `rotate ${rotating.name}`
+          : variant === "operator"
+            ? "mint operator token"
+            : "mint api token"
+      }
+      // The operator variant lists a dozen scopes, each with a paragraph saying
+      // exactly what it can and cannot reach. At max-w-md that was a ~2000px
+      // column you scrolled blind: you could not survey the options, and the
+      // mint button sat well below the fold. The api variant has no scopes and
+      // stays small.
+      size={variant === "operator" ? "xl" : "sm"}
     >
       <form onSubmit={submit} className="space-y-4">
         <label className="block">
@@ -276,14 +344,27 @@ function MintModal({
 
         {variant === "operator" ? (
           <div className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-              Scopes <span className="text-ember-500">(pick at least one)</span>
-            </span>
-            <div className="space-y-1.5">
+            <div className="flex items-baseline justify-between mb-1 gap-3">
+              <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+                Scopes{" "}
+                {scopes.size === 0 && <span className="text-ember-500">(pick at least one)</span>}
+              </span>
+              <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+                {scopes.size} selected
+              </span>
+            </div>
+            {/* Two columns from sm up, and a cap so a short viewport scrolls the
+                LIST rather than pushing the mint button off the dialog. */}
+            <div className="grid sm:grid-cols-2 gap-x-5 gap-y-2 max-h-[26rem] overflow-y-auto pr-1">
               {(scopeChoices.data?.items ?? []).map((s) => (
                 <label
                   key={s.key}
-                  className="flex items-start gap-2 text-sm text-content dark:text-mortar-200 cursor-pointer"
+                  className={
+                    "flex items-start gap-2 text-sm text-content dark:text-mortar-200 cursor-pointer rounded-md border p-2 transition min-w-0 " +
+                    (scopes.has(s.key)
+                      ? "border-cobble-300 dark:border-cobble-700 bg-cobble-50/50 dark:bg-cobble-900/20"
+                      : "border-line dark:border-slate-700 hover:bg-subtle/50 dark:hover:bg-slate-800/40")
+                  }
                 >
                   <input
                     type="checkbox"
@@ -296,9 +377,9 @@ function MintModal({
                         return next;
                       })
                     }
-                    className="accent-cobble-500 mt-0.5"
+                    className="accent-cobble-500 mt-0.5 shrink-0"
                   />
-                  <span>
+                  <span className="min-w-0">
                     <span className="font-medium">{s.label}</span>
                     <span className="block text-xs text-muted dark:text-slate-400">{s.description}</span>
                   </span>
@@ -346,9 +427,11 @@ function MintModal({
 function RevealedModal({
   revealed,
   onClose,
+  onRevokeOld,
 }: {
-  revealed: { plaintext: string; name: string } | null;
+  revealed: { plaintext: string; name: string; supersedes?: RotateTarget | null } | null;
   onClose: () => void;
+  onRevokeOld?: (id: string) => void;
 }) {
   const toast = useToast();
   async function copy() {
@@ -361,7 +444,13 @@ function RevealedModal({
     }
   }
   return (
-    <Modal open={!!revealed} onClose={onClose} title="Token minted" subtitle={revealed?.name ?? ""} size="md">
+    <Modal
+      open={!!revealed}
+      onClose={onClose}
+      title={revealed?.supersedes ? "Replacement minted" : "Token minted"}
+      subtitle={revealed?.name ?? ""}
+      size="md"
+    >
       <div className="space-y-4">
         <p className="text-sm text-content dark:text-mortar-100">
           Copy this token now. It'll never be shown again - if you lose it, you'll need to mint a
@@ -370,6 +459,29 @@ function RevealedModal({
         <div className="rounded-md border border-cobble-200 dark:border-cobble-700 bg-cobble-50/40 dark:bg-slate-800 p-3 font-mono text-xs break-all text-content dark:text-mortar-100">
           {revealed?.plaintext}
         </div>
+        {revealed?.supersedes && (
+          // The old token is still live, deliberately: this is the cutover
+          // window. Paste the new value wherever the daemon reads it, confirm it
+          // works, THEN kill the old one. Revoking at mint time would have taken
+          // the bot down as a side effect of rotating it.
+          <div className="rounded-md border border-line dark:border-slate-700 p-3 space-y-2">
+            <p className="text-sm text-content dark:text-mortar-200">
+              The old token still works. Update wherever it is used, then revoke it.
+            </p>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 truncate">
+                {revealed.supersedes.name}
+              </span>
+              <button
+                type="button"
+                onClick={() => onRevokeOld?.(revealed.supersedes!.id)}
+                className="shrink-0 px-2.5 py-1 rounded-md text-xs font-medium border border-ember-500/40 text-ember-500 hover:bg-ember-500/10 transition"
+              >
+                Revoke the old one
+              </button>
+            </div>
+          </div>
+        )}
         <div className="flex items-center justify-end gap-2 pt-2 border-t border-line dark:border-slate-700">
           <button
             onClick={copy}

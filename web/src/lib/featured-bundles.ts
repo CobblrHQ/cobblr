@@ -159,7 +159,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Your spice cabinet as its own table. Which jar is open, which are still sealed, and how often you actually re-buy each one.",
     manifest: {
           "id": "cobblr.flagship.spice-rack",
-          "version": "0.1.0",
+          "version": "0.2.0",
           "released_at": "2026-08-20",
           "name": "Spice Rack",
           "author": "Cobblr",
@@ -231,6 +231,42 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                 {
                       "module": "inventory",
                       "instance_name": "spices",
+                      "nav_group": {
+                            "key": "kitchen",
+                            "label": "Kitchen"
+                      },
+                      "wires": [
+                            {
+                                  "source_kind": "spices:item",
+                                  "action_id": "lists:add-item",
+                                  "trigger_type": "event",
+                                  "trigger_event": "inventory.stock.low",
+                                  "args": {
+                                        "listTitle": "Shopping list"
+                                  }
+                            },
+                            {
+                                  "source_kind": "spices:item",
+                                  "action_id": "inventory:adjust-stock",
+                                  "trigger_type": "event",
+                                  "trigger_event": "lists.item.checked",
+                                  "args": {
+                                        "delta": 1,
+                                        "reason": "Restocked, checked off the shopping list"
+                                  }
+                            },
+                            {
+                                  "source_kind": "spices:item",
+                                  "action_id": "core-cadence:record-event",
+                                  "trigger_type": "event",
+                                  "trigger_event": "lists.item.checked",
+                                  "args": {
+                                        "event_type": "purchase",
+                                        "qty_delta": 1,
+                                        "source": "list"
+                                  }
+                            }
+                      ],
                       "display_name": "Spices",
                       "item_noun": "spice",
                       "glyph": "🧂",
@@ -426,7 +462,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Your tea cupboard as its own table. Which box is open, which are still sealed, and how often you actually re-buy each one.",
     manifest: {
           "id": "cobblr.flagship.tea",
-          "version": "0.1.0",
+          "version": "0.2.0",
           "released_at": "2026-08-20",
           "name": "Tea",
           "author": "Cobblr",
@@ -498,6 +534,42 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                 {
                       "module": "inventory",
                       "instance_name": "tea",
+                      "nav_group": {
+                            "key": "kitchen",
+                            "label": "Kitchen"
+                      },
+                      "wires": [
+                            {
+                                  "source_kind": "tea:item",
+                                  "action_id": "lists:add-item",
+                                  "trigger_type": "event",
+                                  "trigger_event": "inventory.stock.low",
+                                  "args": {
+                                        "listTitle": "Shopping list"
+                                  }
+                            },
+                            {
+                                  "source_kind": "tea:item",
+                                  "action_id": "inventory:adjust-stock",
+                                  "trigger_type": "event",
+                                  "trigger_event": "lists.item.checked",
+                                  "args": {
+                                        "delta": 1,
+                                        "reason": "Restocked, checked off the shopping list"
+                                  }
+                            },
+                            {
+                                  "source_kind": "tea:item",
+                                  "action_id": "core-cadence:record-event",
+                                  "trigger_type": "event",
+                                  "trigger_event": "lists.item.checked",
+                                  "args": {
+                                        "event_type": "purchase",
+                                        "qty_delta": 1,
+                                        "source": "list"
+                                  }
+                            }
+                      ],
                       "display_name": "Tea",
                       "item_noun": "tea",
                       "glyph": "🍵",
@@ -704,7 +776,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Track the fridge/pantry with expiry + storage, and auto-build a shopping list when something runs low or is about to expire. Check an item off → it restocks.",
     manifest: {
       id: "cobblr.flagship.groceries",
-      version: "0.7.0",
+      version: "0.9.0",
       // What its items are actually CALLED. A bundle's suggestion has to be
       // corroborated by the capture's own text before it is trusted, and a
       // category whose members never share its name can never corroborate:
@@ -910,6 +982,9 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         { source_kind: "inventory:part", action_id: "lists:add-item", trigger_type: "event", trigger_event: "core-cadence.reorder.due", args: { listTitle: "Shopping list" } },
       ],
       field_defs: [
+        { entity_kind: "inventory:part", name: "shelf_life_days", display_label: "Good for (days)", type: "number", position: 1, help: "How long this keeps from the day it arrives. Used to date a new one when you add it, so you never type a use-by. Leave blank and nothing is dated for you." },
+        { entity_kind: "inventory:part", name: "shelf_life_opened_days", display_label: "Once opened, good for (days)", type: "number", position: 2, help: "A lemon lasts weeks whole and days once cut. Opening one starts this shorter clock on that one only; the unopened ones keep their own dates." },
+        { entity_kind: "inventory:part", name: "grace_days", display_label: "Still fine for (days past)", type: "number", position: 3, help: "Food does not go off at midnight. Inside this window past the use-by it is mentioned rather than alarming; beyond it you are asked whether you threw it out." },
         { entity_kind: "inventory:part", name: "storage_requirement", display_label: "Must be kept", type: "text", position: 0, choices: ["frozen", "refrigerated", "ambient"], help: "How this has to be kept, which is not the same as where it currently is. Filled in from what the item is when you scan it, and left blank when that is not clear enough to say. Anything you choose here is used instead." },
         { entity_kind: "inventory:part", name: "expires_on", display_label: "Expires", type: "date", position: 1, field_role: "expiry" },
         // Shelf life counts from the day you BOUGHT it, and a receipt is often
@@ -924,7 +999,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         { entity_kind: "inventory:part", name: "acquired_on", display_label: "Bought on", type: "date", position: 2, field_role: "acquired-on" },
         { entity_kind: "inventory:part", name: "opened_on", display_label: "Opened", type: "date", position: 2 },
         { entity_kind: "inventory:part", name: "storage", display_label: "Storage", type: "text", position: 3, choices: ["Fridge", "Freezer", "Pantry", "Counter", "Spice rack"] },
-        { entity_kind: "inventory:part", name: "food_category", display_label: "Category", type: "text", position: 4, choices: ["Produce", "Dairy", "Meat", "Bakery", "Frozen", "Canned", "Dry goods", "Condiments", "Beverages", "Snacks"] },
+        { entity_kind: "inventory:part", name: "food_category", display_label: "Food category", type: "text", position: 4, choices: ["Produce", "Dairy", "Meat", "Bakery", "Frozen", "Canned", "Dry goods", "Condiments", "Beverages", "Snacks"] },
       ],
       saved_views: [
         // The vending-machine renderer: slots, a qty badge, one status dot. It
@@ -946,6 +1021,290 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           config: { sort_by: "expires_on", sort_dir: "asc", visible_fields: ["title", "expires_on", "storage", "qty"] },
         },
       ],
+      // Groceries is its own TABLE, not a set of extra columns on Inventory.
+      //
+      // It began as a lens: nine field defs bolted onto inventory:part. That is
+      // why a scanned cucumber and a scanned bolt landed in the same list, and
+      // why a workspace with Spices and Tea set up still had no Groceries to put
+      // groceries in.
+      //
+      // It stays an INSTANCE OF INVENTORY rather than a record type, because
+      // groceries are stock: you have three cucumbers, you use one, it runs low,
+      // it goes on the shopping list, it gets re-bought on a cadence. Quantity,
+      // the consumption ledger, use-one/restock-one, expiry batches and the
+      // low-stock wire are all inventory's, and a records-based table would have
+      // to reimplement every one of them.
+      //
+      // THE inventory:part FIELD DEFS BELOW STAY, deliberately. Removing them
+      // would strip the columns off groceries somebody has ALREADY filed into
+      // plain Inventory - the two-phase rule: add the new home now, move at
+      // leisure, drop the old only once nothing reads it.
+      provides_instances: [
+              {
+                      "module": "inventory",
+                      "instance_name": "groceries",
+        "scan_keywords": [
+                "tomato",
+                "cucumber",
+                "carrot",
+                "lettuce",
+                "spinach",
+                "potato",
+                "onion",
+                "garlic",
+                "mushroom",
+                "pepper",
+                "avocado",
+                "apple",
+                "banana",
+                "orange",
+                "lemon",
+                "grape",
+                "berry",
+                "melon",
+                "bread",
+                "baguette",
+                "croissant",
+                "bagel",
+                "tortilla",
+                "pastry",
+                "milk",
+                "yogurt",
+                "cheese",
+                "butter",
+                "egg",
+                "chicken",
+                "beef",
+                "pork",
+                "salmon",
+                "tuna",
+                "pasta",
+                "rice",
+                "cereal",
+                "yoghurt",
+                "pizza",
+                "juice"
+        ],
+                      "display_name": "Groceries",
+                      "item_noun": "item",
+                      "glyph": "\ud83e\udd6c",
+                      "qty_unit": "unit",
+                      "nav_group": {
+                              "key": "kitchen",
+                              "label": "Kitchen"
+                      },
+                      "field_defs": [
+                              {
+                                      "entity_kind": "groceries:item",
+                                      "name": "shelf_life_days",
+                                      "display_label": "Good for (days)",
+                                      "type": "number",
+                                      "position": 1,
+                                      "help": "How long this keeps from the day it arrives. Used to date a new one when you add it, so you never type a use-by. Leave blank and nothing is dated for you."
+                              },
+                              {
+                                      "entity_kind": "groceries:item",
+                                      "name": "shelf_life_opened_days",
+                                      "display_label": "Once opened, good for (days)",
+                                      "type": "number",
+                                      "position": 2,
+                                      "help": "A lemon lasts weeks whole and days once cut. Opening one starts this shorter clock on that one only; the unopened ones keep their own dates."
+                              },
+                              {
+                                      "entity_kind": "groceries:item",
+                                      "name": "grace_days",
+                                      "display_label": "Still fine for (days past)",
+                                      "type": "number",
+                                      "position": 3,
+                                      "help": "Food does not go off at midnight. Inside this window past the use-by it is mentioned rather than alarming; beyond it you are asked whether you threw it out."
+                              },
+                              {
+                                      "entity_kind": "groceries:item",
+                                      "name": "storage_requirement",
+                                      "display_label": "Must be kept",
+                                      "type": "text",
+                                      "position": 0,
+                                      "choices": [
+                                              "frozen",
+                                              "refrigerated",
+                                              "ambient"
+                                      ],
+                                      "help": "How this has to be kept, which is not the same as where it currently is. Filled in from what the item is when you scan it, and left blank when that is not clear enough to say. Anything you choose here is used instead."
+                              },
+                              {
+                                      "entity_kind": "groceries:item",
+                                      "name": "expires_on",
+                                      "display_label": "Expires",
+                                      "type": "date",
+                                      "position": 1,
+                                      "field_role": "expiry"
+                              },
+                              {
+                                      "entity_kind": "groceries:item",
+                                      "name": "acquired_on",
+                                      "display_label": "Bought on",
+                                      "type": "date",
+                                      "position": 2,
+                                      "field_role": "acquired-on"
+                              },
+                              {
+                                      "entity_kind": "groceries:item",
+                                      "name": "opened_on",
+                                      "display_label": "Opened",
+                                      "type": "date",
+                                      "position": 2
+                              },
+                              {
+                                      "entity_kind": "groceries:item",
+                                      "name": "storage",
+                                      "display_label": "Storage",
+                                      "type": "text",
+                                      "position": 3,
+                                      "choices": [
+                                              "Fridge",
+                                              "Freezer",
+                                              "Pantry",
+                                              "Counter",
+                                              "Spice rack"
+                                      ]
+                              },
+                              {
+                                      "entity_kind": "groceries:item",
+                                      "name": "food_category",
+                                      "display_label": "Category",
+                                      "type": "text",
+                                      "position": 4,
+                                      "choices": [
+                                              "Produce",
+                                              "Dairy",
+                                              "Meat",
+                                              "Bakery",
+                                              "Frozen",
+                                              "Canned",
+                                              "Dry goods",
+                                              "Condiments",
+                                              "Beverages",
+                                              "Snacks"
+                                      ]
+                              }
+                      ],
+                      "saved_views": [
+                              {
+                                      "entity_kind": "groceries:item",
+                                      "name": "What's on hand",
+                                      "view_type": "vending",
+                                      "pinned": true,
+                                      "config": {
+                                              "qty_field": "qty",
+                                              "expiry_field": "expires_on",
+                                              "min_qty_field": "min_qty"
+                                      }
+                              },
+                              {
+                                      "entity_kind": "groceries:item",
+                                      "name": "Use it or lose it",
+                                      "view_type": "table",
+                                      "config": {
+                                              "sort_by": "expires_on",
+                                              "sort_dir": "asc",
+                                              "visible_fields": [
+                                                      "title",
+                                                      "expires_on",
+                                                      "storage",
+                                                      "qty"
+                                              ]
+                                      }
+                              }
+                      ],
+                      "wires": [
+                              {
+                                      "source_kind": "groceries:item",
+                                      "action_id": "lists:add-item",
+                                      "trigger_type": "event",
+                                      "trigger_event": "inventory.stock.low",
+                                      "args": {
+                                              "listTitle": "Shopping list"
+                                      }
+                              },
+                              {
+                                      "source_kind": "groceries:item",
+                                      "action_id": "lists:add-item",
+                                      "trigger_type": "event",
+                                      "trigger_event": "lists.item.expiring",
+                                      "args": {
+                                              "listTitle": "Shopping list"
+                                      }
+                              },
+                              {
+                                      "source_kind": "groceries:item",
+                                      "action_id": "inventory:adjust-stock",
+                                      "trigger_type": "event",
+                                      "trigger_event": "lists.item.checked",
+                                      "args": {
+                                              "delta": 1,
+                                              "reason": "Restocked, checked off the shopping list"
+                                      }
+                              },
+                              {
+                                      "source_kind": "groceries:item",
+                                      "action_id": "core-cadence:record-event",
+                                      "trigger_type": "event",
+                                      "trigger_event": "lists.item.checked",
+                                      "args": {
+                                              "event_type": "purchase",
+                                              "qty_delta": 1,
+                                              "source": "list"
+                                      }
+                              },
+                              {
+                                      "source_kind": "groceries:item",
+                                      "action_id": "lists:add-item",
+                                      "trigger_type": "event",
+                                      "trigger_event": "core-cadence.reorder.due",
+                                      "args": {
+                                              "listTitle": "Shopping list"
+                                      }
+                              }
+                      ],
+                      "field_overrides": [
+        {
+                "entity_kind": "inventory:part",
+                "name": "category",
+                "hidden": true
+        },
+                              {
+                                      "entity_kind": "inventory:part",
+                                      "name": "manufacturer",
+                                      "display_label": "Brand"
+                              },
+                              {
+                                      "entity_kind": "inventory:part",
+                                      "name": "min_qty",
+                                      "display_label": "Re-buy when down to"
+                              },
+                              {
+                                      "entity_kind": "inventory:part",
+                                      "name": "warranty",
+                                      "hidden": true
+                              },
+                              {
+                                      "entity_kind": "inventory:part",
+                                      "name": "serial_number",
+                                      "hidden": true
+                              },
+                              {
+                                      "entity_kind": "inventory:part",
+                                      "name": "model_number",
+                                      "hidden": true
+                              },
+                              {
+                                      "entity_kind": "inventory:part",
+                                      "name": "maintenance",
+                                      "hidden": true
+                              }
+                      ]
+              }
+      ],
       provides_apps: [
         {
           slug: "whats-on-hand",
@@ -956,10 +1315,10 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
               slug: "on-hand",
               title: "On hand",
               blocks: [
-                { type: "stat", view_name: "What's on hand", agg: "count", label: "Things in the kitchen" },
-                { type: "view", view_name: "What's on hand", title: "Everything you have" },
+                { type: "stat", view_name: "What's on hand", view_kind: "groceries:item", agg: "count", label: "Things in the kitchen" },
+                { type: "view", view_name: "What's on hand", view_kind: "groceries:item", title: "Everything you have" },
                 { type: "markdown", body: "### Eat these first\n\nClosest to its expiry date at the top. Anything that runs out or goes off lands on the shopping list by itself." },
-                { type: "view", view_name: "Use it or lose it" },
+                { type: "view", view_name: "Use it or lose it", view_kind: "groceries:item" },
               ],
             },
           ],

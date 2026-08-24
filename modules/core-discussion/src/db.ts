@@ -2,6 +2,7 @@
 
 import type { Generated, Kysely } from "kysely";
 import type { Request } from "express";
+import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
 
 export interface ConversationsTable {
   id: Generated<string>;
@@ -65,7 +66,9 @@ export interface CoreDiscussionDB {
   core_discussion_follows: FollowsTable;
 }
 
-export type OrgRole = "owner" | "admin" | "member" | "guest";
+/** Re-exported from the contract so this module cannot fall behind the
+ *  vocabulary. It already had: this line used to omit "editor". */
+export type OrgRole = OrgRoleName;
 
 export interface TenantContext {
   org: { id: string; name: string; slug: string };

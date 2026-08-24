@@ -57,7 +57,7 @@ import { CustomFieldsPanel,
   useAskCobbAboutSelection,
   Modal,
   useToast,
-  useConfirm, usePageTitle } from "@cobblr/platform-web";
+  useConfirm, usePageTitle, usePageWidth } from "@cobblr/platform-web";
 import {
   BulkActionBar,
   EntityThumb,
@@ -81,6 +81,8 @@ export function MachinesPage({
   // items. No lens/specialisation grouping (the instance IS the focus), and the
   // detail modal opens via local state instead of a /machines/:id route.
   usePageTitle(displayName ?? "Machines");
+  // A wide table is the page here, so it gets the screen.
+  usePageWidth("wide");
   const { activeSlug } = useActiveOrg();
   const navigate = useNavigate();
   const { id } = useParams<{ id?: string }>();
@@ -1442,7 +1444,14 @@ function MachineDetailModal({
               Link / Note) that only grow into full fields once used — so the
               modal opens without a wall of empty boxes. */}
           <div className="flex flex-wrap items-start gap-2">
-            <EntityAttachments kind={ENTITY_KIND} entityId={m.id} compact />
+            {/* Tags and discussion arrive as universal contributed panels on
+                this page, so taking them from here too would show each twice. */}
+            <EntityAttachments
+              kind={ENTITY_KIND}
+              entityId={m.id}
+              compact
+              omit={["tags", "discussion"]}
+            />
             {!(m.notes || notesOpen) && (
               <button
                 type="button"

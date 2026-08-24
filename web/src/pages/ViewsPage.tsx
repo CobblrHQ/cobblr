@@ -625,6 +625,63 @@ function EntityTitleLink({ row, className }: { row: ViewRow; className?: string 
 // serves a filament shelf or a medicine cabinet. Nothing here knows about food.
 function VendingRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
   const c = cfg as unknown as { qty_field?: string; expiry_field?: string; min_qty_field?: string };
+  const { activeSlug } = useActiveOrg();
+  const qc = useQueryClient();
+  const toast = useToast();
+  // OFF by default. The board's first job is to be readable from across the
+  // room; controls on every tile all the time is a worse board. Turning them on
+  // is one tap and the state is obvious, which is the trade a wall panel wants.
+  const [editing, setEditing] = useState(false);
+  // Which tile is mid-flight, so a tap has an immediate answer. Without it
+  // people tap twice and the double decrement teaches them the thing lies.
+  const [busy, setBusy] = useState<string | null>(null);
+  // The last thing done, offered back. Mis-taps on a wall screen are certain;
+  // if undo is buried people stop tapping rather than risk being wrong.
+  const [lastAction, setLastAction] = useState<{ id: string; title: string; undo: () => Promise<void> } | null>(null);
+
+  const invalidate = () => {
+    void qc.invalidateQueries({ queryKey: ["view-items"] });
+    void qc.invalidateQueries({ queryKey: ["saved-views"] });
+  };
+
+  /** One tap. `dir` is -1 for "used one", +1 for "another arrived". */
+  const tap = async (row: ViewRow, dir: -1 | 1) => {
+    if (!activeSlug || busy) return;
+    const key = `${row.kind}:${row.id}`;
+    setBusy(key);
+    const actionId = dir === -1 ? "inventory:use-one" : "inventory:restock-one";
+    const inverse = dir === -1 ? "inventory:restock-one" : "inventory:use-one";
+    // The panel knows where it is standing; the server must not guess a
+    // calendar day from a UTC clock (a 9pm tap would date tomorrow).
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    try {
+      await api.invokeAction(activeSlug, {
+        actionId,
+        entityKind: row.kind,
+        entityId: row.id,
+        args: { timezone },
+      });
+      invalidate();
+      setLastAction({
+        id: key,
+        title: row.title ?? "that",
+        undo: async () => {
+          await api.invokeAction(activeSlug, {
+            actionId: inverse,
+            entityKind: row.kind,
+            entityId: row.id,
+            args: { timezone },
+          });
+          invalidate();
+          setLastAction(null);
+        },
+      });
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
   const qtyField = c.qty_field ?? "qty";
   const expiryField = c.expiry_field ?? "expires_on";
   const minQtyField = c.min_qty_field ?? "min_qty";
@@ -655,6 +712,32 @@ function VendingRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) 
   };
 
   return (
+    <>
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <button
+          type="button"
+          onClick={() => { setEditing((v) => !v); setLastAction(null); }}
+          className={
+            "rounded-full border px-3 py-1.5 text-xs font-medium transition " +
+            (editing
+              ? "border-cobble-500 bg-cobble-600 text-white"
+              : "border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:border-cobble-400")
+          }
+        >
+          {editing ? "Done" : "Use / restock"}
+        </button>
+        {/* Undo sits beside the toggle rather than on the tile: one place to
+            look, and it does not move when the grid re-sorts under it. */}
+        {lastAction && (
+          <button
+            type="button"
+            onClick={() => void lastAction.undo()}
+            className="rounded-full border border-line dark:border-slate-700 px-3 py-1.5 text-xs text-muted dark:text-slate-400 hover:border-cobble-400"
+          >
+            Undo {lastAction.title}
+          </button>
+        )}
+      </div>
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
       {items.map((row) => {
         const f = row.fields ?? {};
@@ -713,15 +796,40 @@ function VendingRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) 
             )}
             <EntityTitleLink row={row} className="block pr-4 text-sm font-semibold" />
             <div className="mt-0.5 text-[11px] text-muted dark:text-slate-400">{meta}</div>
-            {out && (
+            {out && !editing && (
               <div className="mt-2 inline-block rounded bg-red-500/90 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white">
                 Sold out
+              </div>
+            )}
+            {editing && (
+              // Deliberately large. This is tapped standing up, one-handed,
+              // sometimes holding the thing it is about.
+              <div className="mt-2 flex items-stretch gap-2">
+                <button
+                  type="button"
+                  aria-label={`Used one ${row.title ?? ""}`}
+                  disabled={busy !== null || out}
+                  onClick={() => void tap(row, -1)}
+                  className="flex-1 rounded-md border border-line dark:border-slate-600 bg-panel dark:bg-slate-900 py-2 text-base font-bold text-content dark:text-slate-100 disabled:opacity-40 active:scale-95 transition"
+                >
+                  −
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Another ${row.title ?? ""} arrived`}
+                  disabled={busy !== null}
+                  onClick={() => void tap(row, 1)}
+                  className="flex-1 rounded-md border border-line dark:border-slate-600 bg-panel dark:bg-slate-900 py-2 text-base font-bold text-content dark:text-slate-100 disabled:opacity-40 active:scale-95 transition"
+                >
+                  +
+                </button>
               </div>
             )}
           </div>
         );
       })}
     </div>
+    </>
   );
 }
 

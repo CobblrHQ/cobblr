@@ -15,7 +15,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-discussion",
-  version: "0.6.0",
+  version: "0.7.0",
   displayName: "Discussion",
   description:
     "Talk about a record with the people you share a workspace with. One conversation per record, flat and chronological, reachable from the record itself.",
@@ -96,6 +96,31 @@ export default defineModule({
           resolved: { label: "true to resolve, false to reopen", type: "boolean" },
         },
         userInvokable: false,
+      },
+    ],
+  },
+
+  // A conversation belongs to the RECORD, so it belongs on the record's detail
+  // view — every one of them, not the handful of pages that happen to live in
+  // the web app rather than inside a module.
+  //
+  // This is why: `EntityAttachments` (tags / discussion / files / links) is a
+  // web-app component, and a module's own detail page cannot import it without
+  // breaking isolation. So for the first weeks of this feature, inventory
+  // parts — the most-used record type in the product — had no way to reach
+  // discussion AT ALL, while locations and assets did. The compact pill form
+  // had even been written for exactly that case and was never mounted.
+  //
+  // The panel seam already solved this shape for cross-module UI (purchases
+  // puts price history on a part without inventory naming purchases), so a
+  // conversation rides the same rail, targeting every kind.
+  contributes: {
+    panels: [
+      {
+        id: "core-discussion:conversation",
+        surface: "entity-detail-panel" as const,
+        target: "*",
+        title: "Discussion",
       },
     ],
   },

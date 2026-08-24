@@ -47,6 +47,40 @@ function findBase(): string | null {
   return null;
 }
 
+// ── the WHOLE archive's types must be renderable, not just the touched ones ──
+// Checking only changed files let 17 entries sit for two months typed `feat`
+// (14) and `change` (3). Both are invalid, and nothing failed: the nightly
+// renderer falls back to `TYPE_LABEL[t] ?? t`, so they published as cards
+// titled literally "feat" and "change", and the forum backfill - which drops
+// unknown types outright - left them out of the public history altogether.
+// Neither surface complained. The archive is small and this read is cheap, so
+// check all of it: a type that no surface can label is a broken entry whenever
+// it was written.
+{
+  const bad: string[] = [];
+  for (const f of readdirSync("changelog.d")) {
+    if (!f.endsWith(".md") || f === "README.md") continue;
+    const fm = readFileSync(`changelog.d/${f}`, "utf8").match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
+    const all = [...fm.matchAll(/^type:\s*(\S+)\s*$/gm)].map((m) => m[1]);
+    const t = all[0] ?? "";
+    if (!ALL_ENTRY_TYPES.includes(t)) bad.push(`  changelog.d/${f}: type: ${t || "(missing)"}`);
+    // A DUPLICATE type: is how 17 entries hid for two months. Every reader here
+    // uses its own regex, so one took the first line and another the last, and
+    // the two disagreed silently: the nightly rendered a card titled "feat"
+    // while a count of the same archive said the types were clean. Whichever
+    // line is right, having two is the bug.
+    else if (all.length > 1) bad.push(`  changelog.d/${f}: ${all.length} type: lines (${all.join(", ")}) — keep one`);
+  }
+  if (bad.length) {
+    console.error(
+      `[lint:changelog] \u2717 ${bad.length} archive entr${bad.length === 1 ? "y has" : "ies have"} a type no surface can render.\n` +
+        `  Valid: ${ALL_ENTRY_TYPES.join(", ")}\n${bad.slice(0, 20).join("\n")}` +
+        (bad.length > 20 ? `\n  …and ${bad.length - 20} more` : ""),
+    );
+    process.exitCode = 1;
+  }
+}
+
 const base = findBase();
 if (!base) {
   console.log("[lint:changelog] no base ref (origin/main) — skipping");

@@ -21,6 +21,7 @@
 
 import type { ToolCall, ChatTurn } from "../providers/tool-wire.js";
 import { scrubIds, namesFromToolResults } from "./scrub-ids.js";
+import { stripStageDirections } from "./stage-directions.js";
 
 export interface LoopModelResult {
   content: string;
@@ -107,7 +108,7 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
     const calls = r.tool_calls ?? [];
 
     if (calls.length === 0) {
-      if (r.content.trim()) return { kind: "reply", text: scrubIds(r.content, seenNames), applied };
+      if (r.content.trim()) return { kind: "reply", text: stripStageDirections(scrubIds(r.content, seenNames)), applied };
       // No tool calls AND no words. Some models answer a data question by
       // trying to call a tool, malforming it, and having the provider strip the
       // broken call — leaving an empty message (gemini-3.1-flash-lite returns

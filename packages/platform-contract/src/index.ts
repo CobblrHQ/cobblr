@@ -7,6 +7,12 @@
 // later phases.
 
 import { z } from "zod";
+import type { DateFieldDirection } from "@cobblr/platform-contract/date-field-direction";
+
+export type { DateFieldDirection } from "@cobblr/platform-contract/date-field-direction";
+export { dateFieldDirection, canBeOverdue, dateEventTitle } from "@cobblr/platform-contract/date-field-direction";
+export { pluralise, countOf, itemNounFor } from "@cobblr/platform-contract/plural";
+export { destinationLabel, normaliseTargetKind, betterDestination, type DestinationTable } from "@cobblr/platform-contract/destination-label";
 import type {
   ResolvableProvider,
   ResolveContext,
@@ -138,6 +144,35 @@ export function fieldNoteKey(name: string): string {
  *  anything enumerating fields for IDENTITY can skip it. */
 export function isFieldNoteKey(key: string): boolean {
   return key.endsWith(FIELD_NOTE_SUFFIX);
+}
+
+/**
+ * The day a promised date can be said to have ARRIVED, anywhere.
+ *
+ * `new Date().toISOString().slice(0, 10)` is the UTC day, and two arrival
+ * sweepers compared stored `YYYY-MM-DD` dates against it. At 8pm US Eastern it
+ * is already tomorrow in UTC, so a parcel due the 25th was announced as "due
+ * today. Did it turn up?" at 8pm on the 24th - a whole evening before the day it
+ * names (reported 2026-08-24).
+ *
+ * These announcements are decided once for a batch or an order and sent to every
+ * member, so there is no single recipient whose clock to read. The rule that is
+ * right without one: a date has arrived when it has arrived EVERYWHERE. UTC-12
+ * is the last zone on earth to enter a date, so waiting for it cannot be early
+ * for anybody.
+ *
+ * The cost is up to half a day of lateness for someone far east, which is the
+ * correct direction to err: "did it turn up?" is a question you ask after the
+ * postman has been, never before.
+ */
+export function arrivedEverywhere(now: Date): string {
+  try {
+    // en-CA formats as YYYY-MM-DD, which is the shape the stored dates use.
+    return new Intl.DateTimeFormat("en-CA", { timeZone: "Etc/GMT+12" }).format(now);
+  } catch {
+    // No zone data: still lag rather than lead.
+    return new Date(now.getTime() - 12 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  }
 }
 
 export const FIELD_ROLE_VALUES = [
@@ -1478,6 +1513,27 @@ const ModuleManifest = z.object({
   // (it stops being decorative) and makes drive-by UI injection a
   // manifest-validation failure, not a review argument.
   for (const p of m.contributes.panels) {
+    // `*` — a panel on EVERY entity detail view. Some side-cars are not about
+    // one module's entities at all: a conversation, a tag. Enumerating every
+    // kind that should have one is a list that is wrong the day a module ships,
+    // and getting it wrong is silent (the panel simply never appears).
+    //
+    // It is NOT a hole in the gate above. `operatesOn` exists to stop drive-by
+    // UI injection, and a universal panel is the largest injection there is, so
+    // it is limited to modules that are ALWAYS ON: a workspace cannot turn
+    // these off, so there is no surprise to spring on it. A stock module that
+    // the user chose to enable, or a marketplace one, still has to name what it
+    // operates on.
+    if (p.target === "*") {
+      if (m.band !== "foundational" && !m.autoEnable) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["contributes", "panels"],
+          message: `panel "${p.id}" targets every kind ("*"), which only an always-on module may do — "${m.name}" is neither band "foundational" nor autoEnable`,
+        });
+      }
+      continue;
+    }
     const targetModule = p.target.includes(":") ? p.target.split(":")[0]! : p.target;
     if (!m.operatesOn.includes(targetModule)) {
       ctx.addIssue({
@@ -2748,8 +2804,18 @@ export interface CalendarEvent {
   /** ISO date ("2026-06-10") for all-day, or ISO datetime for timed. */
   date: string;
   allDay?: boolean;
-  /** The contributing source's id (e.g. "maintenance", "task", "expiry"). */
+  /** The contributing source's id (e.g. "maintenance", "task", "expiry"). A
+   *  machine key: matched on for colour/grouping, never shown. */
   source: string;
+  /** What to CALL the source on screen. Without it the raw id leaks: a
+   *  dashboard row read "Roma Tomatoes - Bought on  INVENTORY-DATE". */
+  sourceLabel?: string;
+  /** Whether passing this date means something is late. Absent is read as a
+   *  deadline, which is right for the dedicated sources (maintenance, tasks,
+   *  expiry) - they only ever emit deadlines. The generic date-field source
+   *  says explicitly, because most custom date fields record rather than
+   *  demand. See date-field-direction.ts. */
+  direction?: DateFieldDirection;
   /** Coarse category for colour/grouping (often == source). */
   category?: string;
   /** Deep-link back to the originating entity, when there is one. */
@@ -2869,6 +2935,26 @@ export interface PlatformNotifications {
      * about shopping is not one.
      */
     priority?: "low" | "normal" | "high" | "urgent";
+    /**
+     * What CAUSED this: somebody doing something (`activity`, the default), or a
+     * date arriving (`schedule`).
+     *
+     * A second dial beside priority, answering a different question. Priority is
+     * "how much does this interrupt". This is "was it news, or was it the
+     * calendar" — and people want those on different cadences on the SAME
+     * channel: chat as it happens, everything due today as one morning list.
+     * Priority cannot express that, because both are `normal`.
+     *
+     * Pass `schedule` when the notification exists because a date or threshold
+     * was reached and was knowable in advance: expiring today, service due,
+     * running low. Leave it alone for anything that just happened.
+     *
+     * `lint:dated-notifications` fails the build on a dispatch that carries a
+     * dated payload and does not say which it is, because getting it wrong is
+     * silent and backwards: a "milk expires today" that forgot to declare
+     * itself interrupts at 03:00 when the sweep happened to run.
+     */
+    triggeredBy?: "activity" | "schedule";
     /** What the reader can DO about it, offered inside the message itself.
      *
      *  Channel-agnostic on purpose: a channel that can render them does
@@ -4332,6 +4418,7 @@ export interface Platform {
   integrations: PlatformIntegrations;
   ai: PlatformAi;
   units: PlatformUnits;
+  nav: PlatformNav;
   edge: PlatformEdge;
   connections: PlatformConnections;
   egress: PlatformEgress;
@@ -4477,6 +4564,36 @@ export interface UnitsService {
   /** Convert between raw unit strings (same category, both factored).
    *  Null when not convertible. */
   convert(orgId: string, value: number, fromRaw: string, toRaw: string): Promise<number | null>;
+}
+
+/** The shape of the navigation: the headings a workspace has grouped its
+ *  sections under.
+ *
+ *  Here because it was the one thing the assistant could describe and not do.
+ *  Asked to group two sections under a parent he answered correctly and then
+ *  printed "[Take user to Presentation configuration screen]" — a stage
+ *  direction, because nav lived in kernel routes with no action behind it and
+ *  signposting was all he had. A capability the user can reach and Cobb cannot
+ *  is a capability half-built. */
+export interface PlatformNav {
+  /** Every heading, with what sits under it. */
+  listHeadings(orgId: string): Promise<
+    Array<{
+      id: string;
+      name: string;
+      members: Array<{ target_kind: string; target_id: string }>;
+    }>
+  >;
+  createHeading(orgId: string, name: string, icon?: string | null): Promise<{ id: string }>;
+  /** Move a nav entry under a heading. An entry belongs to at most one, so this
+   *  takes it out of any other. */
+  addMember(orgId: string, headingId: string, targetKind: string, targetId: string): Promise<void>;
+  removeMember(orgId: string, targetKind: string, targetId: string): Promise<void>;
+  deleteHeading(orgId: string, headingId: string): Promise<void>;
+  /** What can go under a heading, with the names a person would use for them —
+   *  so a request naming "Spices" can be resolved without the caller knowing
+   *  what an instance id looks like. */
+  listEntries(orgId: string): Promise<Array<{ kind: string; id: string; label: string }>>;
 }
 
 export interface PlatformUnits {

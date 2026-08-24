@@ -12,7 +12,7 @@ import { useEffect, useRef, useState } from "react";
 import { Moon, PanelLeft, PanelTop, Pin, PinOff, Sliders, Sun, UserRound } from "lucide-react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { Search } from "lucide-react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { DesktopDragStrip } from "./DesktopDragStrip";
 import { NotificationsBell } from "./NotificationsBell";
@@ -27,7 +27,7 @@ import { MobileNav } from "./MobileNav";
 import { EmailVerifyBanner } from "./EmailVerifyBanner";
 import { SimpleModeNotice } from "./SimpleModeNotice";
 import { ChatLauncher, ChatPanel } from "./ChatWidget";
-import { SideRail } from "./SideRail";
+import { SideRail, useRailActiveTab } from "./SideRail";
 import { DiscussionTab } from "./DiscussionTab";
 import { PinnedTab } from "./PinnedTab";
 import { FeedbackWidget } from "./FeedbackWidget";
@@ -51,7 +51,7 @@ import { useTour } from "../tour/useTour";
 import { DASHBOARD_TOUR } from "../tour/tour.config";
 import { useTheme } from "../theme/ThemeContext";
 import { useToast } from "@cobblr/platform-web";
-import { readOpenOn, restoresOn, writeOpenOn } from "../lib/panel-memory";
+import { readOpenOn, readOpenTab, restoresOn, writeOpenOn, writeOpenTab } from "../lib/panel-memory";
 
 export function AppLayout({ activeSlug }: { activeSlug: string }) {
   const location = useLocation();
@@ -64,6 +64,17 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
   // `/w/<handle>` basename is already gone and the same page in two workspaces
   // is one place. See lib/panel-memory.
   const [chatOpen, setChatOpen] = useState(() => restoresOn(readOpenOn(), location.pathname));
+  // Read ONCE, at mount: this is the tab from before the refresh. Re-reading it
+  // later would fight the person's own clicks, since the same key is what those
+  // clicks write.
+  const [restoreTab] = useState(() => readOpenTab());
+  // Remember which tab is showing, next to WHERE it is open. Only while open -
+  // a closed panel has no tab, and writing one would restore a panel nobody
+  // left open.
+  const railTab = useRailActiveTab();
+  useEffect(() => {
+    if (chatOpen && railTab) writeOpenTab(railTab);
+  }, [chatOpen, railTab]);
   useEffect(() => {
     writeOpenOn(chatOpen ? location.pathname : null);
   }, [chatOpen, location.pathname]);
@@ -168,7 +179,23 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
   const onDashboard = location.pathname === "/" && !appMode;
   const contentProbe = useWorkspaceContentProbe(onDashboard ? activeSlug : "");
   const { user } = useAuth();
-  const tour = useTour(onDashboard && contentProbe.ready && !contentProbe.hasContent, user?.id ?? null);
+  // Seen-state comes from the ACCOUNT, so a second device, a different origin
+  // and a new workspace all agree. `undefined` while /me loads means "do not
+  // decide yet" rather than "never" — see useTour.
+  const markTourSeen = useMutation({
+    mutationFn: () => api.setTourSeen(true),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["me"] }),
+  });
+  const tour = useTour(
+    onDashboard && contentProbe.ready && !contentProbe.hasContent,
+    user?.id ?? null,
+    {
+      seenAt: user ? (user.tour_seen_at ?? null) : undefined,
+      markSeen: () => {
+        if (!markTourSeen.isPending) markTourSeen.mutate();
+      },
+    },
+  );
 
   // Is the labels module on? Gates the label-queue foot row below. Shares the
   // cached ["org-modules"] query the nav already fetches — no extra request.
@@ -623,7 +650,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           is the active one (docs/design-decisions/discussion-and-the-side-rail.md).
           Exactly one mount per tab: a second is a second conversation stacked
           over the first (ChatWidget.test.ts pins this). */}
-      <SideRail open={chatOpen} setOpen={setChatOpen}>
+      <SideRail open={chatOpen} setOpen={setChatOpen} initialTab={restoreTab}>
         <ChatPanel open={chatOpen} setOpen={setChatOpen} />
         <DiscussionTab />
         <PinnedTab />
@@ -672,7 +699,11 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
         )}
       <main className={`flex-1 min-w-0 transition-[padding] duration-200 ${chatOpen ? "xl:pr-[456px]" : ""}`}>
         {/* pb clears the mobile bottom action bar; md+ has no bar. */}
-        <div className="max-w-6xl mx-auto w-full px-5 py-6 pb-20 md:pb-6">
+        {/* `page-shell` carries the max-width in CSS so a page can widen it
+            with usePageWidth("wide") — see index.css. A wide TABLE is
+            unreadable in a 6xl column and fine at full width; prose is the
+            other way round, which is why this is opt-in per page. */}
+        <div className="page-shell w-full px-5 py-6 pb-20 md:pb-6">
           {/* Per-page boundary: a crash in one page shows a fallback but
               keeps the nav/chrome, and keying on pathname resets it when
               you navigate away. Also catches lazy-chunk load errors that

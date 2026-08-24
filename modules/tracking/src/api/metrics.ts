@@ -18,7 +18,6 @@ import { logMeasurement } from "./record.js";
 export const metricsRouter = Router({ mergeParams: true });
 
 const jsonb = (v: unknown) => sql`${JSON.stringify(v ?? {})}::jsonb`;
-const ROLES = ["owner", "admin", "member"] as const;
 const num = (v: string | null) => (v == null ? null : Number(v));
 
 /** Progress toward goal as 0..1, direction-aware. null if no goal/data. */
@@ -59,7 +58,7 @@ async function latestFor(req: Parameters<typeof tenantDb>[0], metricId: string):
 metricsRouter.get(
   "/metrics",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, ...ROLES)) return;
+    if (!requireRole(req, res, "member")) return;
     const db = tenantDb(req);
     const metrics = await db.selectFrom("tracking_metrics").selectAll().orderBy("created_at", "desc").execute();
     const out = [];
@@ -81,7 +80,7 @@ metricsRouter.get(
 metricsRouter.post(
   "/metrics",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, ...ROLES)) return;
+    if (!requireRole(req, res, "member")) return;
     const parsed = MetricCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
@@ -105,7 +104,7 @@ metricsRouter.post(
 metricsRouter.get(
   "/metrics/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, ...ROLES)) return;
+    if (!requireRole(req, res, "member")) return;
     const db = tenantDb(req);
     const m = await db.selectFrom("tracking_metrics").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
     if (!m) return void res.status(404).json({ error: { code: "not_found", message: "Metric not found." } });
@@ -132,7 +131,7 @@ metricsRouter.get(
 metricsRouter.patch(
   "/metrics/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, ...ROLES)) return;
+    if (!requireRole(req, res, "member")) return;
     const parsed = MetricUpdate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
@@ -170,7 +169,7 @@ const MeasurementCreate = z.object({
 metricsRouter.post(
   "/metrics/:id/measurements",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, ...ROLES)) return;
+    if (!requireRole(req, res, "member")) return;
     const parsed = MeasurementCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
@@ -193,7 +192,7 @@ metricsRouter.post(
 metricsRouter.delete(
   "/measurements/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, ...ROLES)) return;
+    if (!requireRole(req, res, "member")) return;
     const db = tenantDb(req);
     await db.deleteFrom("tracking_measurements").where("id", "=", req.params.id!).execute();
     res.status(204).end();

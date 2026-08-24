@@ -9,6 +9,7 @@
 // footer flips pinned↔auto-hide.
 
 import type { ReactNode } from "react";
+import { useDragClickGuard } from "./useDragClickGuard";
 import { NavLink, useLocation } from "react-router-dom";
 import {
   DndContext,
@@ -66,7 +67,7 @@ export function SidebarNav({
   // in one branch but not the other, and React throws "Rendered more hooks
   // than during the previous render" the moment you navigate between them.
   // Drag-to-reorder sensors: 8px activation so plain clicks still navigate.
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { delay: 250, tolerance: 5 } }));
 
   // Configuration fold (the author, 2026-07-03): on a configuration-family route the
   // sidebar BECOMES the configuration panel — two sidebars never stack. A
@@ -220,6 +221,9 @@ export function SidebarNav({
  *  re-reads), so the two nav modes never disagree. */
 function SortableTop({ id, children }: { id: string; children: ReactNode }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  // A drag that reorders nothing still ends in a click. See useDragClickGuard.
+  useDragClickGuard(isDragging);
+
   return (
     <div
       ref={setNodeRef}

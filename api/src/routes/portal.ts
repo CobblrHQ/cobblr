@@ -92,6 +92,9 @@ portalRouter.get(
   },
 );
 
+// AI-REACH: what a PUBLIC link shows to people who are not in this workspace.
+// Disclosure is the one setting where a mistake cannot be taken back, because
+// whoever saw it has already seen it.
 portalRouter.put(
   "/:slug/portal-config",
   requireAuth,
@@ -476,6 +479,8 @@ portalRouter.get("/:slug/field-scopes", requireAuth, withTenant, async (req, res
     next(err);
   }
 });
+// AI-REACH: which FIELDS a shared link exposes. Same reason as the config above:
+// a field shown by accident is a field a stranger has already read.
 portalRouter.put("/:slug/field-scopes", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (!adminOnly(req, res)) return;
@@ -500,6 +505,7 @@ portalRouter.put("/:slug/field-scopes", requireAuth, withTenant, async (req, res
     next(err);
   }
 });
+// AI-REACH: clearing that same disclosure list, which widens what is shared.
 portalRouter.delete("/:slug/field-scopes", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (!adminOnly(req, res)) return;

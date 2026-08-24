@@ -50,6 +50,8 @@ export default defineModule({
         getEndpoint: "/lists/{id}",
       },
       {
+        // sidecar-exempt: a list item is a line inside its list, never opened on
+        // its own — the list is where the conversation belongs
         id: "lists:item",
         createEndpoint: "/items",
         updateEndpoint: "/items/{id}",

@@ -18,6 +18,7 @@
 
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { arrivedEverywhere } from "@cobblr/platform-contract";
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
@@ -116,7 +117,7 @@ export async function receiptTrackingTick(
         // worth asking about even when nobody ever added a tracking number --
         // that is the majority of receipts, and the case that used to fall
         // through both sweeps and produce silence.
-        const today = now.toISOString().slice(0, 10);
+        const today = arrivedEverywhere(now);
         const q = sql<TrackedRow>`
           select b.id,
                  b.label,
@@ -213,7 +214,7 @@ export async function receiptTrackingTick(
             const announce =
               state && NOTIFY_STATES.has(state)
                 ? state
-                : !state && row.expected_arrival && row.expected_arrival <= now.toISOString().slice(0, 10)
+                : !state && row.expected_arrival && row.expected_arrival <= arrivedEverywhere(now)
                   ? DUE_MARK
                   : null;
             if (announce && row.shipment_notified_state !== announce) {

@@ -84,6 +84,62 @@ export function defaultModuleEntriesToHide(instances: ModuleInstance[]): Set<str
   return hide;
 }
 
+/** Order the top-level nav rows.
+ *
+ *  Precedence: (1) the per-device reorder (localStorage), then (2) the org-wide
+ *  `nav_order` from Configuration → Presentation, then (3) alphabetical.
+ *
+ *  A user-defined HEADING has none of those: it did not exist when the device
+ *  order was saved, so it lost every comparison and landed at the very bottom —
+ *  ask Cobb to put Spices and Tea under Kitchen and both sections vanish from
+ *  where you were looking and reappear at the end of the navbar. So a heading
+ *  borrows the slot of the member that sorted FIRST, which is the same rule
+ *  instance groups already follow (collapseNavGroups: "the group lands at its
+ *  first member's slot"). Pure, so the rule can be tested without a navbar.
+ */
+export function orderTops<T extends { name: string; navOrder?: number | null }>(
+  rawTops: readonly T[],
+  deviceOrder: readonly string[],
+  headingMembers: ReadonlyMap<string, string[]>,
+): T[] {
+  const pos = new Map(deviceOrder.map((n, i) => [n, i] as const));
+  const byName = new Map(rawTops.map((t) => [t.name, t] as const));
+  /** (device slot, org nav_order, name) — compared in that order. */
+  type Key = [number | null, number | null, string];
+  const keyOf = (name: string, navOrder: number | null): Key => [
+    pos.has(name) ? pos.get(name)! : null,
+    navOrder,
+    name,
+  ];
+  const cmp = (a: Key, b: Key): number => {
+    if (a[0] !== null && b[0] !== null && a[0] !== b[0]) return a[0] - b[0];
+    if (a[0] !== null && b[0] === null) return -1;
+    if (b[0] !== null && a[0] === null) return 1;
+    if (a[1] !== null && b[1] !== null && a[1] !== b[1]) return a[1] - b[1];
+    if (a[1] !== null && b[1] === null) return -1;
+    if (b[1] !== null && a[1] === null) return 1;
+    return a[2].localeCompare(b[2]);
+  };
+  const keys = new Map<string, Key>();
+  for (const t of rawTops) {
+    const members = headingMembers.get(t.name);
+    if (members?.length) {
+      // The heading sorts where its best-placed member would have.
+      let best: Key | null = null;
+      for (const m of members) {
+        const k = keyOf(m, byName.get(m)?.navOrder ?? null);
+        if (!best || cmp(k, best) < 0) best = k;
+      }
+      // Keep the heading's own name as the last tiebreak so two headings whose
+      // members tie are still ordered deterministically.
+      keys.set(t.name, best ? [best[0], best[1], best[2]] : keyOf(t.name, t.navOrder ?? null));
+      continue;
+    }
+    keys.set(t.name, keyOf(t.name, t.navOrder ?? null));
+  }
+  return [...rawTops].sort((a, b) => cmp(keys.get(a.name)!, keys.get(b.name)!));
+}
+
 /** Collapse sibling instance tops that share a `nav_group` key into one
  *  synthetic `__navgroup__<key>` entry (the connected stem+segments element),
  *  preserving order — the group lands at its FIRST member's slot. Only groups
@@ -423,6 +479,9 @@ export function useNavModules(activeSlug: string): NavModules {
   // the top row (their own instance-children flatten in alongside, so
   // nothing is orphaned). The HEADING_PREFIX marks a label-only group
   // (no page of its own).
+  // A heading's member names, so the sort can give it their slot rather than
+  // dropping it at the end of the navbar.
+  const headingMembers = new Map<string, string[]>();
   for (const h of headings.data?.items ?? []) {
     const hkey = `${HEADING_PREFIX}${h.id}`;
     const hkids: OrgModuleListItem[] = [];
@@ -461,6 +520,7 @@ export function useNavModules(activeSlug: string): NavModules {
     }
     if (hkids.length > 0) {
       childrenByParent.set(hkey, hkids);
+      headingMembers.set(hkey, hkids.map((k) => k.name));
       rawTops.push({
         name: hkey,
         version: "0.1.0",
@@ -489,29 +549,13 @@ export function useNavModules(activeSlug: string): NavModules {
       return `${x.name}\x01${x.displayName}\x01${x.icon ?? ""}\x01${x.groupLabel ?? ""}${x.navOrder ?? ""}`;
     })
     .join("|");
-  // Order precedence: (1) the member's per-device reorder (localStorage)
-  // wins; then (2) the org-wide `nav_order` set in Configuration →
-  // Presentation; then (3) alphabetical. Before this, the sort honoured
-  // only the per-device order, so the admin "Nav order" field was dead
-  // and important modules (e.g. machines) fell to the end alphabetically
-  // and overflowed into "more".
+  // Order + heading placement live in orderTops (pure, tested).
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const allTops = useMemo(() => {
-    const pos = new Map(navOrder.map((n, i) => [n, i] as const));
-    return [...rawTops].sort((a, b) => {
-      const ap = pos.has(a.name) ? pos.get(a.name)! : null;
-      const bp = pos.has(b.name) ? pos.get(b.name)! : null;
-      if (ap !== null && bp !== null) return ap - bp;
-      if (ap !== null) return -1;
-      if (bp !== null) return 1;
-      const ao = (a as { navOrder?: number | null }).navOrder ?? null;
-      const bo = (b as { navOrder?: number | null }).navOrder ?? null;
-      if (ao !== null && bo !== null && ao !== bo) return ao - bo;
-      if (ao !== null && bo === null) return -1;
-      if (bo !== null && ao === null) return 1;
-      return a.name.localeCompare(b.name);
-    });
-  }, [rawTopsKey, navOrder.join("|")]);
+  const allTops = useMemo(
+    () => orderTops(rawTops, navOrder, headingMembers),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rawTopsKey, navOrder.join("|"), [...headingMembers.keys()].join("|")],
+  );
   const hiddenNames = new Set(navHidden);
   const overflowNames = new Set(navOverflow);
   const tops = allTops.filter((t) => !hiddenNames.has(t.name));

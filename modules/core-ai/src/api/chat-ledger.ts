@@ -26,6 +26,7 @@
 
 import { createHash } from "node:crypto";
 import type { Kysely } from "kysely";
+import { actionSaid } from "./action-summary.js";
 import { getTool, fetchKinds, resolveUpdatePath, resolveDeletePath, type WorkspaceApi } from "@cobblr/workspace-tools";
 import { platform, imageId } from "@cobblr/platform-contract";
 import type { CoreAiDB } from "../db.js";
@@ -240,7 +241,13 @@ export async function performWrite(
       })
       .returning("id")
       .executeTakeFirst();
-    return { ok: true, message: "Done.", ledger_id: row?.id, undoable: false };
+    // What the action itself said it did, rather than a tick with no sentence.
+    return {
+      ok: true,
+      message: actionSaid((r.data as { result?: unknown } | undefined)?.result),
+      ledger_id: row?.id,
+      undoable: false,
+    };
   }
 
   if (tool === "create") {

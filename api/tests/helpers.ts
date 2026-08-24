@@ -239,3 +239,42 @@ export async function isApiUp(): Promise<boolean> {
 // built prod image in CI to restore this coverage in the env that works.
 export const SKIP_SANDBOX_READOPS_IN_CI =
   process.env.COBBLR_CI_SKIP_SANDBOX_READOPS === "1";
+
+/** The result of an action, unwrapped.
+ *
+ *  POST /actions/invoke answers `{ ok: true, result: <what the handler
+ *  returned> }` where the OUTER ok only means "dispatched". A handler that
+ *  refuses returns `{ ok: false, error }` INSIDE result, so `expect(res.ok).toBe(false)`
+ *  on the envelope is a test that can never fail — three of them passed locally
+ *  and were caught by CI only because the happy-path assertions failed alongside.
+ *  Every test that invokes an action goes through here, so nobody unwraps it by
+ *  hand again. */
+export interface ActionOutcome {
+  ok: boolean;
+  summary?: string;
+  error?: string;
+  message?: string;
+  data?: Record<string, unknown>;
+}
+
+export async function invokeAction(
+  session: TestSession,
+  actionId: string,
+  args: Record<string, unknown>,
+  entity?: { kind: string; id: string },
+): Promise<ActionOutcome> {
+  try {
+    const res = await http<{ ok: boolean; result: ActionOutcome }>(session, org(session, "/actions/invoke"), {
+      method: "POST",
+      body: {
+        actionId,
+        args,
+        ...(entity ? { entityKind: entity.kind, entityId: entity.id } : {}),
+      },
+    });
+    return res.result ?? { ok: false, error: "the invoke returned no result" };
+  } catch (err) {
+    // A refusal the route turned into a status code is still a refusal.
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}

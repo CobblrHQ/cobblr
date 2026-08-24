@@ -14,8 +14,10 @@ import { REGISTRY } from "./notifications.js";
 import {
   composeDigest,
   isWindowDue,
+  stampColumn,
   type DeliveryWindow,
   type DeferredItem,
+  type TriggeredBy,
 } from "./delivery-windows.js";
 
 /** Every 5 minutes. A window is a time of day, so this is precise enough, and
@@ -48,6 +50,9 @@ interface SweepDB {
     deliver_at_minute: number;
     timezone: string;
     last_delivered_at: Date | null;
+    schedule_mode: "inherit" | "immediate" | "daily";
+    schedule_deliver_at_minute: number;
+    schedule_last_delivered_at: Date | null;
   };
   notification_deferred: {
     id: string;
@@ -59,6 +64,7 @@ interface SweepDB {
     message: string;
     link_url: string | null;
     priority: string;
+    triggered_by: TriggeredBy;
     queued_at: Date;
   };
 }
@@ -78,7 +84,12 @@ export async function deliveryTick(
   // Only buckets with mail. A person with a window and an empty bucket is not
   // owed a "nothing happened today" message — that is noise wearing the shape
   // of a feature.
-  let pendingQ = db.selectFrom("notification_deferred").select(["user_id", "channel"]).distinct();
+  // A bucket is per (person, channel, CLASS): chat and the morning brief share
+  // a channel and must not share a message.
+  let pendingQ = db
+    .selectFrom("notification_deferred")
+    .select(["user_id", "channel", "triggered_by"])
+    .distinct();
   if (onlyUserId) pendingQ = pendingQ.where("user_id", "=", onlyUserId);
   const pending = await pendingQ.execute();
   if (pending.length === 0) return { flushed: 0, messages: 0 };
@@ -86,18 +97,26 @@ export async function deliveryTick(
   let flushed = 0;
   let messages = 0;
 
-  for (const { user_id, channel } of pending) {
+  for (const { user_id, channel, triggered_by } of pending) {
     try {
       const win = await db
         .selectFrom("notification_delivery_windows")
-        .select(["mode", "deliver_at_minute", "timezone", "last_delivered_at"])
+        .select([
+          "mode",
+          "deliver_at_minute",
+          "timezone",
+          "last_delivered_at",
+          "schedule_mode",
+          "schedule_deliver_at_minute",
+          "schedule_last_delivered_at",
+        ])
         .where("user_id", "=", user_id)
         .where("channel", "=", channel)
         .executeTakeFirst();
 
       // The window was removed while mail was queued: send it rather than
       // holding it forever. Turning a window off must not strand a backlog.
-      const due = win ? isWindowDue(win as DeliveryWindow, now) : true;
+      const due = win ? isWindowDue(win as DeliveryWindow, now, triggered_by) : true;
       if (!due) continue;
 
       const rows = await db
@@ -105,6 +124,7 @@ export async function deliveryTick(
         .select(["id", "org_id", "event_type", "message", "link_url", "priority", "notification_id"])
         .where("user_id", "=", user_id)
         .where("channel", "=", channel)
+        .where("triggered_by", "=", triggered_by)
         .orderBy("queued_at", "asc")
         .execute();
       if (rows.length === 0) continue;
@@ -114,7 +134,12 @@ export async function deliveryTick(
         // No adapter (channel removed, or stubbed): drop the bucket rather than
         // letting it grow without bound. The notifications themselves are still
         // in history — only the push copy is discarded.
-        await db.deleteFrom("notification_deferred").where("user_id", "=", user_id).where("channel", "=", channel).execute();
+        await db
+          .deleteFrom("notification_deferred")
+          .where("user_id", "=", user_id)
+          .where("channel", "=", channel)
+          .where("triggered_by", "=", triggered_by)
+          .execute();
         continue;
       }
 
@@ -148,9 +173,13 @@ export async function deliveryTick(
         .where("id", "in", rows.map((r) => r.id))
         .execute();
       if (win) {
+        // Each class stamps its OWN column. One shared stamp would let whichever
+        // window fired first suppress the other for the rest of the day, and the
+        // symptom is a morning brief that quietly stops arriving for anyone who
+        // also chats.
         await db
           .updateTable("notification_delivery_windows")
-          .set({ last_delivered_at: now })
+          .set({ [stampColumn(win as DeliveryWindow, triggered_by)]: now })
           .where("user_id", "=", user_id)
           .where("channel", "=", channel)
           .execute();

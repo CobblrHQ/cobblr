@@ -17,7 +17,7 @@ import { Bell, Plus, Send, Trash2, Zap } from "lucide-react";
 import {
   Modal,
   useConfirm,
-  usePageTitle,
+  usePageTitle, usePageWidth,
   useToast,
 } from "@cobblr/platform-web";
 import { useAuth } from "../auth/AuthContext";
@@ -157,6 +157,9 @@ const CHANNEL_OPTIONS: Array<{
 
 export function MeNotificationChannelsPage() {
   usePageTitle("Notification channels");
+  // Channel, event, priority, enabled, config and an action per row: a data
+  // table, not a settings matrix, so it gets the room.
+  usePageWidth("wide");
   const { orgs } = useAuth();
   const [activeOrgId, setActiveOrgId] = useState<string>(
     () => orgs[0]?.id ?? "",

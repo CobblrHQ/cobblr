@@ -42,7 +42,7 @@ const SCHEMA_INSTRUCTION =
   '{"vendor":<string|null>,"order_ref":<string|null>,"date":<"YYYY-MM-DD"|null>,"currency":<ISO-4217 code|null>,' +
   '"total":<number|null grand total>,"items":[{"description":<string>,"qty":<number>,' +
   '"unit_price":<number|null>,"line_total":<number|null>,"discount":<number|null>,' +
-  '"code":<string|null>}]}\n' +
+  '"code":<string|null>,"model":<string|null>}]}\n' +
   "One entry per PURCHASED line item. Skip subtotal / tax / shipping / total rows — " +
   "capture the grand total in \"total\" instead. qty defaults to 1 when " +
   "no count is shown. Prices are numbers only (strip currency symbols and thousands " +
@@ -69,7 +69,13 @@ const SCHEMA_INSTRUCTION =
   "only, no spaces), when the receipt shows one. Read it verbatim, never guess " +
   "or complete a partial one, and leave it null when the line shows no code. Do " +
   "NOT put the receipt's own transaction, store, terminal or survey numbers " +
-  "here: those belong to the visit, not to an item.";
+  "here: those belong to the visit, not to an item. " +
+  '"model" is the MANUFACTURER model number when the line prints one ' +
+  '("Model #: GA605WI-XS96", "Model/SKU", "Part #"). Alphanumeric and often ' +
+  "hyphenated, so copy it exactly and do NOT reduce it to digits. It is a " +
+  'DIFFERENT field from "code": a UPC identifies the package a shop sold, a ' +
+  "model identifies the thing itself across every shop that sells it. Online " +
+  "order emails print it routinely. Null when the line shows none.";
 
 /** Shape a model's (possibly messy) JSON reply into a ParsedReceipt. Pure +
  *  tolerant (first JSON object, price coercion, blank-line drop) so it's

@@ -2,6 +2,7 @@
 
 import type { ColumnType, Generated, Kysely } from "kysely";
 import type { Request } from "express";
+import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
 
 export type ScanStatus = "pending" | "enriching" | "resolved" | "discarded";
 export type ScanSourceKind = "barcode" | "photo" | "url" | "receipt" | "note";
@@ -233,7 +234,9 @@ export interface CoreScanImportRunsTable {
   undone_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;
 }
 
-export type OrgRole = "owner" | "admin" | "member" | "guest";
+/** Re-exported from the contract so this module cannot fall behind the
+ *  vocabulary. It already had: this line used to omit "editor". */
+export type OrgRole = OrgRoleName;
 
 interface RequestWithTenant {
   tenant?: {

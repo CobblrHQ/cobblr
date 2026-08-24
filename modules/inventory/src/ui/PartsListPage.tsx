@@ -30,6 +30,7 @@ import {
   useToast,
   useConfirm,
   usePageTitle,
+  usePageWidth,
   useViewMode,
   usePlatformWeb,
   usePublishChatContext,
@@ -60,6 +61,10 @@ type SavedViewLite = {
 
 export function PartsListPage() {
   usePageTitle("Inventory");
+  // A wide table, so it gets the screen. Nine columns in a 6xl column meant a
+  // real product title either lost its tail to an ellipsis or pushed the last
+  // column off the edge, while a wide monitor kept 900px of margin either side.
+  usePageWidth("wide");
   const { api, orgSlug, getToken, entityKind, itemNoun, itemNounPlural, basePath, instance } = useInventory();
   const { appMode } = usePlatformWeb();
   const qc = useQueryClient();
@@ -1037,7 +1042,10 @@ function PartsTable({
               <td className="px-3 py-2 font-mono text-[11px] text-faint dark:text-slate-500 whitespace-nowrap">
                 {p.asset_id != null ? `#${assetIdFmt(p.asset_id)}` : "—"}
               </td>
-              <td className="px-3 py-2">
+              {/* A ceiling, or the cell has nothing to wrap against: a table
+                  cell sizes to its content, so "max width" is what turns a long
+                  name into two lines instead of a wider table. */}
+              <td className="px-3 py-2 max-w-[32rem]">
                 <div className="flex items-center gap-3">
                   <EntityThumb
                     src={p.image_path}
@@ -1054,9 +1062,15 @@ function PartsTable({
                       value={p.name}
                       onCommit={(v) => setCol(p, "name", v)}
                     >
+                      {/* Wraps, up to two lines. `truncate` is nowrap, so the
+                          column stretched to the longest title and pushed the
+                          last column past the edge; the ellipsis never even
+                          appeared, because nothing was constraining the width.
+                          Two lines is enough for a real product name and stops
+                          one pathological title owning the row height. */}
                       <Link
                         to={`${basePath}/parts/${p.id}`}
-                        className="font-medium text-content dark:text-mortar-100 hover:text-accent truncate"
+                        className="font-medium text-content dark:text-mortar-100 hover:text-accent line-clamp-2 break-words"
                       >
                         {p.name}
                       </Link>

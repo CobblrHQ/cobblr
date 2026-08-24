@@ -1,4 +1,6 @@
 import type { Request, Response } from "express";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import type { OrgRoleName as OrgRole } from "@cobblr/platform-contract/org-roles";
 
 /** Gate a write route to the given org roles (403 + false otherwise). The
  *  downstream module endpoints re-enforce their own create-capability under the
@@ -6,10 +8,10 @@ import type { Request, Response } from "express";
 export function requireRole(
   req: Request,
   res: Response,
-  ...allowed: Array<"owner" | "admin" | "member" | "guest">
+  ...allowed: OrgRole[]
 ): boolean {
   const role = (req as unknown as { tenant?: { role: string } }).tenant?.role;
-  if (!role || !allowed.includes(role as "owner")) {
+  if (!role || !roleSatisfies(role as "owner", allowed)) {
     res.status(403).json({ error: { code: "forbidden", message: `Requires one of: ${allowed.join(", ")}` } });
     return false;
   }

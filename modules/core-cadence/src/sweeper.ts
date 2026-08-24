@@ -220,6 +220,10 @@ export async function cadenceTick(
                     orgId: org.id,
                     userId,
                     eventType: "core-cadence.buy-less",
+                    // Nothing just happened: a sweep noticed a pattern. That is
+                    // the clock talking, so it belongs with the rest of the
+                    // day's standing advice rather than as an interruption.
+                    triggeredBy: "schedule",
                     message: `About ${pct}% of this keeps going bad — worth buying less of it.`,
                     module: "core-cadence",
                     entityType: t.entity_kind,

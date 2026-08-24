@@ -137,6 +137,7 @@ export function DashboardTile({
   icon: Icon,
   label,
   primary,
+  primaryNoun,
   secondary,
   attention,
   empty,
@@ -145,6 +146,12 @@ export function DashboardTile({
   icon: ComponentType<{ size?: number; className?: string }>;
   label: string;
   primary: ReactNode;
+  /** What the big number COUNTS, when it is not simply all of them.
+   *
+   *  A tile labelled "purchases" showing 0 above "3 total" reads as a
+   *  contradiction, because the 0 was open orders and nothing said so. Give the
+   *  filtered number its noun and the two lines agree: "0 open" / "3 total". */
+  primaryNoun?: string;
   secondary?: ReactNode;
   attention?: boolean;
   /** Explicitly "loaded and zero" — set by the widget (it knows its loading
@@ -180,8 +187,15 @@ export function DashboardTile({
         <span className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 truncate">
           {label}
         </span>
-        <span className="ml-auto text-xl font-semibold text-content dark:text-mortar-100 leading-none">
-          {primary}
+        <span className="ml-auto flex items-baseline gap-1 min-w-0">
+          <span className="text-xl font-semibold text-content dark:text-mortar-100 leading-none">
+            {primary}
+          </span>
+          {primaryNoun && (
+            <span className="text-[10px] text-faint dark:text-slate-500 leading-none truncate">
+              {primaryNoun}
+            </span>
+          )}
         </span>
       </div>
       {secondary && (

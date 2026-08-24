@@ -17,6 +17,11 @@ export type ChannelOutcome =
   | "not-connected"
   | "unverified"
   | "blocked"
+  /** Verified, but by a Discord app that is no longer the one sending. The
+   *  channel belongs to a BOT, so switching apps does not carry the permission
+   *  over — and an undeliverable DM is silent, which is why this is its own
+   *  answer rather than folded into "unverified". One re-confirmation fixes it. */
+  | "stale-app"
   | "send-failed"
   | "not-offered";
 
@@ -33,6 +38,7 @@ export function describeOutcome(outcome: ChannelOutcome): string {
     case "not-connected": return "not connected";
     case "unverified": return "not verified";
     case "blocked": return "their privacy settings block it";
+    case "stale-app": return "linked to the previous Discord app - needs one re-confirm";
     case "send-failed": return "send failed";
     case "not-offered": return "not offered for this message";
     default: {

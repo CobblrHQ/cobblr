@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-tags",
-  version: "0.3.0",
+  version: "0.4.0",
   displayName: "Tags",
   description:
     "Cross-module polymorphic labels. Attach the same tag to a part, a task, a printer: they all show up under that tag.",
@@ -121,6 +121,20 @@ export default defineModule({
         argsSchema: {
           tag_name: { label: "Tag name", type: "text" },
         },
+      },
+    ],
+  },
+
+  // Same reasoning as the conversation next door: a tag is about the record,
+  // so it belongs on the record, and "which pages happen to live in the web app"
+  // is not a sensible answer to which records can be tagged.
+  contributes: {
+    panels: [
+      {
+        id: "core-tags:tags",
+        surface: "entity-detail-panel" as const,
+        target: "*",
+        title: "Tags",
       },
     ],
   },

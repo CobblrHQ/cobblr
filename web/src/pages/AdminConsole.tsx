@@ -22,7 +22,7 @@ import {
   Eye,
 } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
-import { useConfirm, usePageTitle, useToast, Modal } from "@cobblr/platform-web";
+import { useConfirm, usePageTitle, usePageWidth, useToast, Modal } from "@cobblr/platform-web";
 import { setImpersonation } from "../lib/impersonation";
 import { displaySlug } from "../lib/workspaceSlug";
 import {
@@ -51,6 +51,8 @@ export function AdminConsole() {
   const label = ADMIN_SECTIONS.find((s) => s.id === active)?.label ?? "Overview";
   usePageTitle(`Operator · ${label}`);
 
+  // A wide table is the page here, so it gets the screen.
+  usePageWidth("wide");
   return (
     <div className="space-y-5">
       {active === "overview" && <OverviewTab />}

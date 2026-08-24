@@ -6,6 +6,7 @@
 
 import type { Generated, Kysely } from "kysely";
 import type { Request } from "express";
+import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
 
 export interface LabelsQrScansTable {
   id: Generated<string>;
@@ -87,7 +88,7 @@ export function qrShortcode(entityKind: string): string {
 interface RequestWithTenant {
   tenant?: {
     org: { id: string; name: string; slug: string };
-    role: "owner" | "admin" | "member" | "guest";
+    role: OrgRoleName;
     db: unknown;
   };
 }

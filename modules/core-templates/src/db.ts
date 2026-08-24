@@ -2,6 +2,7 @@
 
 import type { Generated, Kysely } from "kysely";
 import type { Request } from "express";
+import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
 
 export interface CoreTemplatesTable {
   id: Generated<string>;
@@ -19,7 +20,9 @@ export interface CoreTemplatesDB {
   core_templates_templates: CoreTemplatesTable;
 }
 
-export type OrgRole = "owner" | "admin" | "member" | "guest";
+/** Re-exported from the contract so this module cannot fall behind the
+ *  vocabulary. It already had: this line used to omit "editor". */
+export type OrgRole = OrgRoleName;
 
 interface RequestWithTenant {
   tenant?: {

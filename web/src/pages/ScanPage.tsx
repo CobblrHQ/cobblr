@@ -21,7 +21,7 @@ import { RepurchaseControls } from "../components/RepurchaseControls";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, CheckCircle, ChevronDown, Download, ExternalLink, FileText, Flag, Image as ImageIcon, ImagePlus, LayoutGrid, Library, List, Loader2, MapPin, MonitorSmartphone, MoreHorizontal, Pencil, ReceiptText, RefreshCw, RotateCcw, ScanLine, Scissors, Search, Sparkles, Tag, Trash2, Truck, Upload, Wand2, X, Zap } from "lucide-react";
-import { Modal, useImageSrc, useOverlayOpenFlag, useToast, usePageTitle, colorSwatch, wantsSwatch } from "@cobblr/platform-web";
+import { Modal, useImageSrc, useOverlayOpenFlag, useToast, useConfirm, usePageTitle, colorSwatch, wantsSwatch } from "@cobblr/platform-web";
 import { ScanImportModal } from "../components/ScanImportModal";
 import { ExportInboxModal } from "../components/ExportInboxModal";
 import { CameraCaptureSheet } from "../components/CameraCaptureSheet";
@@ -70,6 +70,7 @@ import { matchParentType, readField } from "../lib/parent-type-match";
 import { isRerunInFlight, itemEnriching } from "./scan-status";
 import { baseKind, confirmBodyFor, isReadyToFile } from "./scanFileAll";
 import { resolveInstanceForFiling } from "./scanInstall";
+import { arrivalLabel, arrivalOf } from "./scanArrival";
 import type { BundleInstallSummary } from "../lib/api";
 import { installToastLine } from "../lib/installSummary";
 import { looksLikeContainer, nextBinName } from "./scanContainer";
@@ -88,6 +89,7 @@ import { tabBrowserId } from "../hooks/useBrowserDrive";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { useAuth } from "../auth/AuthContext";
+import { destinationLabel, betterDestination, type DestinationTable } from "@cobblr/platform-contract";
 
 /** Base-kind fallback for when the scan menu can't load — the menu
  *  (GET /modules/core-scan/menu) is the real source of truth and lists
@@ -592,6 +594,44 @@ function CorrectNameInline({
 /** Where scans confirm into — a module instance (e.g. the "yarn" inventory
  *  instance), passed via the URL when you scan from an instance's table. */
 export type ScanTarget = { instance: string; module: string; kind: string; label: string };
+
+export 
+/** Where a committed scan ended up, and whether a better home has appeared since.
+ *
+ *  This was `-> ${target_kind}` inline, twice, and the two copies had already
+ *  drifted: one row said "part" and another "inventory:part" for the same place.
+ *  A destination is a table somebody set up, so it is shown by that table's name.
+ *
+ *  The nudge is deliberately quiet. A scan matched days ago carries the routing
+ *  of the workspace AS IT WAS; install a Tea table afterwards and every tea
+ *  already filed still points at plain Inventory. Saying so where the mistake is
+ *  visible costs nothing and blocks nobody. */
+function CommittedDestination({
+  item,
+  tables,
+}: {
+  item: { target_kind?: string | null; target_module?: string | null; barcode_text?: string | null; suggested_name?: string | null };
+  tables: DestinationTable[];
+}) {
+  const label = destinationLabel(item.target_kind, tables, item.target_module);
+  const better = betterDestination(
+    item.suggested_name ?? "",
+    item.target_kind,
+    tables,
+    item.target_module,
+  );
+  return (
+    <div className="text-[10px] font-mono text-faint truncate">
+      {label ? `→ ${label}` : ""}
+      {item.barcode_text ? ` · ${item.barcode_text}` : ""}
+      {better && (
+        <span className="ml-1.5 text-ember-600 dark:text-ember-400" title={`This looks like it belongs in ${better.display_name ?? better.instance_name}, which did not exist when this scan was routed. Send it back to re-file it.`}>
+          · {better.display_name ?? better.instance_name}?
+        </span>
+      )}
+    </div>
+  );
+}
 
 export function ScanPage() {
   usePageTitle("Scan");
@@ -1252,6 +1292,22 @@ export function ScanPage() {
     queryFn: () => api.listScanInbox(activeSlug, { status: "resolved" }),
     enabled: !!activeSlug,
   });
+  // The tables this workspace can file into. Needed to say WHERE something went
+  // by its name rather than its internal kind, and to notice that a better home
+  // has appeared since a scan was routed. Shares the ["instances", slug] cache
+  // key the rest of the app uses, so it costs no extra fetch.
+  const instancesQ = useQuery({
+    queryKey: ["instances", activeSlug],
+    queryFn: () => api.listInstances(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 30_000,
+  });
+  const destinationTables: DestinationTable[] = (instancesQ.data?.items ?? []).map((i) => ({
+    instance_name: i.instance_name,
+    display_name: i.display_name,
+    module_name: i.module_name,
+  }));
+
   const recentlyCommitted = (resolvedQ.data?.items ?? [])
     .slice()
     .sort((a, b) => String(b.resolved_at ?? "").localeCompare(String(a.resolved_at ?? "")))
@@ -1950,6 +2006,9 @@ export function ScanPage() {
   // Which receipt is showing its parcel's status. Shares the exits below, so
   // Escape and a click outside close it like every other transient panel here.
   const [trackingPopover, setTrackingPopover] = useState<string | null>(null);
+  /** Where to draw the parcel panel, since it is portaled out of the row
+   *  that would otherwise clip it. */
+  const [trackingRect, setTrackingRect] = useState<{ top: number; left: number } | null>(null);
   const trackingPopRef = useRef<HTMLSpanElement>(null);
   useEffect(() => {
     if (!editingPo && !editingTracking && !trackingPopover) return;
@@ -1960,6 +2019,12 @@ export function ScanPage() {
     };
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
+      // A PORTALED panel is outside every ref here, because a portal escapes the
+      // React tree in the DOM as well. Without this, opening the parcel panel and
+      // clicking anything in it closes the panel on mousedown, before the click
+      // lands - and marking it in the DOM covers whatever gets portaled next,
+      // where remembering to add another ref would not.
+      if ((t as HTMLElement).closest?.("[data-portal-panel]")) return;
       if (
         poEditRef.current?.contains(t) ||
         trackingEditRef.current?.contains(t) ||
@@ -1979,6 +2044,15 @@ export function ScanPage() {
       document.removeEventListener("keydown", onKey);
     };
   }, [editingPo, editingTracking, trackingPopover]);
+  // Same reason the destination menu closes on scroll: the panel's position is
+  // measured once at open, so a page that scrolls underneath leaves it floating
+  // away from its button. Close rather than chase it.
+  useEffect(() => {
+    if (!trackingPopover) return;
+    const onScroll = () => setTrackingPopover(null);
+    window.addEventListener("scroll", onScroll, { capture: true, passive: true });
+    return () => window.removeEventListener("scroll", onScroll, { capture: true });
+  }, [trackingPopover]);
   const setOrderRef = useMutation({
     mutationFn: (v: { batchId: string; orderRef: string | null }) =>
       api.setReceiptOrderRef(activeSlug, v.batchId, v.orderRef),
@@ -2042,12 +2116,88 @@ export function ScanPage() {
   // the per-session "File all" button. A pending item without a confident
   // candidate or a name stays pending for a manual look and is reported;
   // already-resolved items in the set are skipped silently.
+  const confirm = useConfirm();
+
   const confirmItemsToTheirCandidate = async (
     ids: Iterable<string>,
     agreedCategory?: string | null,
     agreedLocationId?: string | null,
   ) => {
     const byId = new Map(items.map((i) => [i.id, i]));
+
+    // ASK BEFORE FILING A BATCH INTO THE WRONG TABLE.
+    //
+    // Each card carries a "Tea?" chip when a better table exists, which works
+    // when you are reading cards. It does nothing for "file all": you never see
+    // the lines, so ten teas went into Inventory with ten unread suggestions
+    // attached. Expecting a tap per line is not a fix, it is the same work moved.
+    //
+    // So the batch is checked ONCE, here, at the chokepoint every bulk path
+    // goes through - not at the two call sites, which would be two copies to
+    // drift. One question, grouped by table, and "file as-is" stays one click
+    // away because the suggestion is a suggestion.
+    const tables = (menu ?? []).map((m) => ({
+      instance_name: m.instance ?? m.module,
+      display_name: m.label,
+      module_name: m.module,
+      keywords: m.scan_keywords ?? [],
+    }));
+    const idList = [...ids];
+    // Grouped by TABLE and carrying ids, not names. Names are for reading; two
+    // jars of the same thing share one, and an unnamed scan has none at all, so
+    // matching rows back by name would move the wrong ones.
+    const misrouted = new Map<string, { label: string; entry: ScanMenuEntry; ids: string[]; names: string[] }>();
+    for (const id of idList) {
+      const it = byId.get(id);
+      if (!it) continue;
+      const cand = it.suggested_candidates?.[0] as { kind?: string; module?: string } | undefined;
+      const better = betterDestination(it.suggested_name ?? "", cand?.kind ?? null, tables, cand?.module ?? null);
+      if (!better) continue;
+      const entry = (menu ?? []).find((m) => (m.instance ?? m.module) === better.instance_name);
+      if (!entry) continue;
+      const label = better.display_name ?? better.instance_name;
+      const cur = misrouted.get(label) ?? { label, entry, ids: [], names: [] };
+      cur.ids.push(id);
+      cur.names.push(it.suggested_name ?? "one scan");
+      misrouted.set(label, cur);
+    }
+    if (misrouted.size > 0) {
+      const groups = [...misrouted.values()];
+      const total = groups.reduce((n, g) => n + g.names.length, 0);
+      const lines = groups
+        .map((g) => `${g.names.length} look${g.names.length === 1 ? "s" : ""} like ${g.label}: ${g.names.slice(0, 3).join(", ")}${g.names.length > 3 ? `, +${g.names.length - 3}` : ""}`)
+        .join("\n");
+      const useSuggested = await confirm({
+        title: `${total} of these may belong somewhere else`,
+        message: `${lines}\n\nFile them where they look like they belong, or carry on filing everything as it is.`,
+        confirmLabel: "File where they belong",
+        cancelLabel: "File as-is",
+      });
+      if (useSuggested) {
+        // Each group goes to ITS OWN table in the one pass: five teas to Tea and
+        // five spices to Spices, from a single press.
+        for (const g of groups) {
+          for (const id of g.ids) {
+            const it = byId.get(id);
+            if (!it) continue;
+            byId.set(id, {
+              ...it,
+              suggested_candidates: [
+                {
+                  ...(it.suggested_candidates?.[0] ?? ({} as ScanCandidate)),
+                  module: g.entry.module,
+                  instance: g.entry.instance,
+                  kind: g.entry.kind,
+                  label: g.entry.label,
+                },
+                ...(it.suggested_candidates ?? []).slice(1),
+              ],
+            } as typeof it);
+          }
+        }
+      }
+    }
+
     // INSTALL what these items are routed to, before confirming any of them.
     //
     // A top candidate can be a bundle the workspace does not have — the card
@@ -3398,6 +3548,10 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
             // gating on sourceFileId — that is a capability check, not this
             // question.
             const isReceiptSession = g.isBatch && !!g.batchId && !!g.label?.startsWith("Receipt");
+            // What the receipt promised, for the parcel control's label. A live
+            // carrier state outranks it there; this is what fills the usual gap
+            // before any carrier has said anything.
+            const trackingArrival = arrivalOf(g.items);
             return (
               <div key={g.key} id={g.batchId ? `s-${g.batchId}` : undefined} className="space-y-2 scroll-mt-24">
                 {/* ONE row, always. No `flex-wrap`, and `overflow-hidden` so a
@@ -3413,7 +3567,9 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                     a string appearing somewhere else. */}
                 <div
                   data-session-header
-                  className="flex w-full items-center gap-2 overflow-hidden rounded-md bg-mortar-50 dark:bg-slate-800/40 px-2.5 py-1.5 text-left text-xs"
+                  // gap-1.5, not gap-2: eleven gaps across this row, so the
+                  // half-step is most of a control's width back.
+                  className="flex w-full items-center gap-1.5 overflow-hidden rounded-md bg-mortar-50 dark:bg-slate-800/40 px-2.5 py-1.5 text-left text-xs"
                 >
                   {/* Burst select-all: grab the whole session for the
                       bulk toolbar (location / confirm / discard). */}
@@ -3451,6 +3607,31 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                   >
                     <ChevronDown size={13} className={`transition ${collapsed ? "-rotate-90" : ""}`} />
                   </button>
+                  {/* The word "Receipt" became this. It opened every receipt
+                      row, said what the icon says, and cost width the row did
+                      not have - and the icon can do the job the row was
+                      spending a whole separate control on: tapping it opens the
+                      original its lines were read from. Two elements out, one
+                      in (2026-08-24). */}
+                  {isReceiptSession &&
+                    (g.sourceFileId ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setViewSource(g.sourceFileId);
+                        }}
+                        title="Receipt - open the photo or file its lines were read from"
+                        aria-label="Open the original receipt"
+                        className="shrink-0 text-faint hover:text-accent transition"
+                      >
+                        <ReceiptText size={13} />
+                      </button>
+                    ) : (
+                      <span title="Receipt" aria-label="Receipt" className="shrink-0 text-faint">
+                        <ReceiptText size={13} />
+                      </span>
+                    ))}
                     {/* The NAME wins the row. Every span after it either fits
                         whole or is not rendered - none of them truncate. A
                         `truncate` on the trimmings spends the same width to say
@@ -3466,12 +3647,23 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       // make room for "+ Tracking #" (reported 2026-08-19). A
                       // session's name is the one thing on this row you cannot
                       // work out from anything else on it.
+                      // Sized to the NAME, with nothing reserved. A min-width
+                      // floor was added here to stop the name being crushed to
+                      // "Recei...", and it did - but min-width also pads the box
+                      // out when the name is SHORT, so "Lidl" sat in a 112px box
+                      // and the row opened with a hole in it (2026-08-24).
+                      //
+                      // The floor is not needed any more: the row gave back
+                      // ~127px when the parcel controls merged, so nothing is
+                      // under shrink pressure at any width the desktop layout
+                      // runs at. truncate + min-w-0 keeps it able to give way
+                      // last if that ever stops being true.
                       className="font-medium text-content dark:text-mortar-100 truncate min-w-0"
                       title={g.label ?? `Session · ${formatSessionTime(g.latest)}`}
                     >
                       {/* Without the order number — that is the control beside
                           it, so tapping the number edits it. */}
-                      {sessionName(g) ?? `Session · ${formatSessionTime(g.latest)}`}
+                      {sessionName(g, isReceiptSession) ?? `Session · ${formatSessionTime(g.latest)}`}
                     </span>
                   {/* The receipt's own number, edited where it is READ. A separate
                       "PO#" control said the same thing twice: the number was
@@ -3533,6 +3725,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         {receiptDateOf(g) ?? formatSessionTime(g.latest)}
                       </span>
                     )}
+
                     {isActiveSession && (
                       <span
                         className="inline-flex items-center gap-1 shrink-0 text-emerald-600/80 dark:text-emerald-400/80"
@@ -3644,19 +3837,6 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                   {isReceiptSession && g.batchId && g.sourceFileId && (
                     <button
                       type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setViewSource(g.sourceFileId);
-                      }}
-                      title="The photo or file its lines were read from"
-                      className="shrink-0 inline-flex items-center gap-1 text-faint hover:text-accent transition"
-                    >
-                      <FileText size={11} /> Original
-                    </button>
-                  )}
-                  {isReceiptSession && g.batchId && g.sourceFileId && (
-                    <button
-                      type="button"
                       disabled={reparse.isPending && reparseBatch === g.batchId}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -3669,7 +3849,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         size={11}
                         className={reparse.isPending && reparseBatch === g.batchId ? "animate-spin" : ""}
                       />{" "}
-                      Re-parse
+                      <span className="hidden 2xl:inline">Re-parse</span>
                     </button>
                   )}
                   {/* Tracking number — beside the order number because they
@@ -3681,6 +3861,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       saved while the control was ungated has to stay editable
                       and clearable, or tightening the gate would strand it on a
                       session that can no longer reach it. */}
+                  {/* Computed once: the truck control below reads it. */}
                   {(isReceiptSession || (!!g.batchId && !!g.trackingNumber)) &&
                     (editingTracking === g.batchId ? (
                       <span ref={trackingEditRef} className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
@@ -3740,6 +3921,10 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                               setEditingTracking(g.batchId!);
                               return;
                             }
+                            // Measured from the button, because the panel is
+                            // PORTALED out of this row - see below.
+                            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                            setTrackingRect({ top: r.bottom + 6, left: r.left });
                             setTrackingPopover(trackingPopover === g.batchId ? null : g.batchId!);
                           }}
                           title={
@@ -3761,19 +3946,46 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                               header had no room for a second line, and a
                               control that says "Tracking #" next to a number
                               you cannot see is a label for a label. */}
-                          {!g.trackingNumber
-                            ? "+ Tracking #"
-                            : g.shipmentState
-                              ? (SHIPMENT_LABEL[g.shipmentState] ?? g.shipmentState)
-                              : "Tracking #"}
+                          {/* One control for the parcel, showing the best thing
+                              known about it. A carrier's live state wins; the
+                              receipt's own estimate fills the usual gap before
+                              there is one; only with neither does it fall back
+                              to offering the number.
+
+                              These were two elements side by side - "arriving
+                              tomorrow" and "+ Tracking #" - which is the row
+                              spending twice to talk about one parcel, and it
+                              was the pair that tipped the row into clipping
+                              (2026-08-24). Tapping still adds a number, so the
+                              estimate never costs you the ability to follow it. */}
+                          {g.shipmentState
+                            ? (SHIPMENT_LABEL[g.shipmentState] ?? g.shipmentState)
+                            : trackingArrival
+                              ? arrivalLabel(trackingArrival)
+                              : g.trackingNumber
+                                ? "Tracking #"
+                                : "+ Tracking #"}
                         </button>
 
-                        {trackingPopover === g.batchId && g.trackingNumber && (
+                        {trackingPopover === g.batchId && g.trackingNumber && trackingRect &&
+                          // PORTALED, and positioned from a measured rect. The
+                          // session row is deliberately overflow-hidden so a row
+                          // that does not fit is clipped rather than pushing the
+                          // whole page sideways - which also clips anything
+                          // absolutely positioned inside it, and this panel drew
+                          // as a sliver under the row (reported 2026-08-24).
+                          //
+                          // The destination menu on the card solved exactly this
+                          // and this is the same shape: fixed coordinates taken
+                          // from the button, rendered to the body.
+                          createPortal(
                           // Click, not hover: a phone has no hover, and this is
                           // the surface a phone user reaches for most.
                           <div
+                            data-portal-panel
                             onClick={(e) => e.stopPropagation()}
-                            className="absolute left-0 top-full z-30 mt-1.5 w-64 rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-2.5 shadow-lg space-y-1.5 text-left"
+                            style={{ top: trackingRect.top, left: trackingRect.left }}
+                            className="fixed z-[61] w-64 rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-2.5 shadow-lg space-y-1.5 text-left"
                           >
                             {/* No state line: the button is already showing it.
                                 This panel carries what would not fit there. */}
@@ -3806,7 +4018,8 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                             >
                               Edit number
                             </button>
-                          </div>
+                          </div>,
+                          document.body,
                         )}
                       </span>
                     ))}
@@ -3862,8 +4075,10 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       ) : (
                         // It's a button: say the action, not the absence. Also
                         // the shortest honest label, which this row needs
-                        // (reported 2026-08-01).
-                        "Set location"
+                        // (reported 2026-08-01). "Set" went too: the pin
+                        // already says it is a place, and the row needs the
+                        // characters more than it needs the verb (2026-08-24).
+                        "Location"
                       )}
                     </button>
                   )}
@@ -4176,10 +4391,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       <div key={d.id} className="flex items-center gap-2 px-3 py-1.5 pl-6">
                         <div className="min-w-0 flex-1">
                           <div className="text-sm text-muted truncate">{d.suggested_name ?? d.barcode_text ?? "Unknown scan"}</div>
-                          <div className="text-[10px] font-mono text-faint truncate">
-                            {d.target_kind ? `→ ${d.target_kind}` : ""}
-                            {d.barcode_text ? ` · ${d.barcode_text}` : ""}
-                          </div>
+                          <CommittedDestination item={d} tables={destinationTables} />
                         </div>
                         <button
                           type="button"
@@ -4202,10 +4414,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         <div className="text-sm text-muted truncate">
                           {grp.items[0].suggested_name ?? grp.items[0].barcode_text ?? "Unknown scan"}
                         </div>
-                        <div className="text-[10px] font-mono text-faint truncate">
-                          {grp.items[0].target_kind ? `→ ${grp.items[0].target_kind}` : ""}
-                          {grp.items[0].barcode_text ? ` · ${grp.items[0].barcode_text}` : ""}
-                        </div>
+                        <CommittedDestination item={grp.items[0]} tables={destinationTables} />
                       </div>
                       <button
                         type="button"
@@ -4566,6 +4775,36 @@ function InboxCard({
   })();
   const dest =
     destOptions.find((c) => entryKey(c.module, c.instance) === destKey) ?? topCand ?? destOptions[0] ?? null;
+
+  // A ROUTE CAN GO STALE WHILE IT SITS IN THE INBOX.
+  //
+  // The matchmaker answers once, against the workspace as it was. Scan a box of
+  // tea, install a Tea table a week later, and the stored answer still says
+  // plain Inventory - correct when it was written, wrong by the time anybody
+  // presses File. That is how five teas and three spice blends ended up in
+  // Inventory with Spices and Tea sitting empty beside them.
+  //
+  // Computed HERE, at render, against the LIVE menu - so unlike a stored
+  // recomputation it cannot itself go stale. And it never changes the
+  // destination on its own: a route somebody can see and ignore costs a glance,
+  // one that moves under them costs their trust.
+  const staleHint = (() => {
+    if (!dest || item.status !== "pending") return null;
+    const tables = (menu ?? []).map((m) => ({
+      instance_name: m.instance ?? m.module,
+      display_name: m.label,
+      module_name: m.module,
+      // The terms the table declares for itself. Without these the nudge can
+      // only find a table whose NAME an item says, so Groceries could never be
+      // suggested by anything - no food is called a grocery. That is the same
+      // reason the routing keywords exist in the first place.
+      keywords: m.scan_keywords ?? [],
+    }));
+    const better = betterDestination(item.suggested_name ?? "", dest.kind, tables, dest.module);
+    if (!better) return null;
+    const entry = (menu ?? []).find((m) => (m.instance ?? m.module) === better.instance_name);
+    return entry ? { entry, label: better.display_name ?? better.instance_name } : null;
+  })();
   // Re-arm the OPEN form when a re-run lands a new answer. `formCtx` (which drives
   // ADD TO + the pre-filled fields) is only set by openForm() on a CLICK, so a
   // re-run updated the header chips and the Source panel while the form below kept
@@ -5197,6 +5436,12 @@ function InboxCard({
   // form opens.
   const [actionSlot, setActionSlot] = useState<HTMLDivElement | null>(null);
   const [fieldSlot, setFieldSlot] = useState<HTMLElement | null>(null);
+  // Where the location drawer opens: at the SEAM, directly under the chip strip
+  // whose LOCATION chip opened it. It used to render inside the form, which sits
+  // below the photos and the web strip — so tapping a chip at the top of the
+  // card opened a picker most of a screen further down, with everything you had
+  // been looking at in between.
+  const [locSlot, setLocSlot] = useState<HTMLElement | null>(null);
   const [editingBarcode, setEditingBarcode] = useState(false);
   const [barcodeDraft, setBarcodeDraft] = useState("");
   const barcodeDigits = barcodeDraft.replace(/[\s-]/g, "");
@@ -5575,6 +5820,15 @@ function InboxCard({
           {receiptGroupId && (
             <ContributedDetailPanels
               target="core-scan:item"
+              // NOT the universal side-cars. An inbox row is not a record: its
+              // id belongs to the scan item, and filing it creates a DIFFERENT
+              // record with a different id. A conversation or a tag attached
+              // here is silently orphaned the moment somebody acts on the row,
+              // which is worse than not offering one.
+              //
+              // This slot was built for one named contributor (the receipt
+              // lines banner) and is gated on a receipt group for that reason.
+              universal={false}
               ctx={{
                 slug: activeSlug,
                 entityId: item.id,
@@ -5788,6 +6042,23 @@ function InboxCard({
                     </button>
                   )}
                 </span>
+                {/* The route was answered against the workspace as it was. A table
+                    that has appeared since is offered, never applied: a route you
+                    can see and ignore costs a glance, one that moves under you
+                    costs your trust. */}
+                {staleHint && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDestKey(entryKey(staleHint.entry.module, staleHint.entry.instance));
+                    }}
+                    className="ml-1.5 shrink-0 inline-flex items-center gap-1 rounded-full border border-ember-300 dark:border-ember-700 bg-ember-50 dark:bg-ember-950/30 px-2 py-0.5 text-[11px] text-ember-700 dark:text-ember-300 hover:bg-ember-100 dark:hover:bg-ember-900/40 transition"
+                    title={`${staleHint.label} was set up after this scan was routed. Tap to file it there instead.`}
+                  >
+                    {staleHint.label}?
+                  </button>
+                )}
                     {destOpen && destRect && createPortal(
                       <>
                         {/* click anywhere else to dismiss */}
@@ -6241,6 +6512,10 @@ function InboxCard({
           onArmBin={onArmBin}
         />
       )}
+      {/* The seam: the bottom edge of the closed strip. A control opened from a
+          chip in that strip belongs here, against the line, not at the far end
+          of the card. Empty until something opens. */}
+      <div ref={setLocSlot} className="empty:hidden" />
       {/* ── expanded triage surface — photos left, intel right (lg+) ── */}
       {expanded && (
         <div className="border-t border-line dark:border-slate-800 p-3 space-y-3 bg-subtle/40 dark:bg-slate-950/40">
@@ -6911,6 +7186,7 @@ function InboxCard({
             onCollapse={() => setExpanded(false)}
             actionSlot={actionSlot}
             fieldSlot={fieldSlot}
+            locSlot={locSlot}
           />}
         </div>
       )}
@@ -7529,7 +7805,12 @@ function receiptDateOf(g: { items: ScanInboxItem[] }): string | null {
 /** A session's name WITHOUT its order number. The number is rendered beside it
  *  as its own control so it can be edited where it is read, and the two would
  *  otherwise both show it: "Receipt · Lidl #141483 #141483". */
-function sessionName(g: { label?: string | null; orderRef?: string | null }): string | null {
+function sessionName(
+  g: { label?: string | null; orderRef?: string | null },
+  /** True when the row renders the receipt ICON, which says "receipt" already.
+   *  The word then costs width twice over on a row that has none to spare. */
+  iconSaysReceipt = false,
+): string | null {
   const label = g.label ?? null;
   if (!label) return label;
   // By SHAPE, and ALWAYS — not only when a ref is stored. The two can disagree:
@@ -7539,7 +7820,11 @@ function sessionName(g: { label?: string | null; orderRef?: string | null }): st
   // number in the name AND a "+ #" offering to add one, which contradict.
   // `order_ref` is the source of truth; the label is a rendering of it.
   // receiptSessionLabel only ever appends " #<ref>", so the shape is exact.
-  return label.replace(/\s+#\S+$/, "");
+  const withoutRef = label.replace(/\s+#\S+$/, "");
+  // "Receipt · Best Buy" -> "Best Buy". Only the prefix receiptSessionLabel
+  // writes, and only when the icon is there to say it instead; a session whose
+  // name happens to start with the word keeps it.
+  return iconSaysReceipt ? withoutRef.replace(/^Receipt\s+·\s+/, "") : withoutRef;
 }
 
 function seriesOf(it: ScanInboxItem): string | null {
@@ -7762,6 +8047,7 @@ function ConfirmForm({
   onCollapse,
   actionSlot,
   fieldSlot,
+  locSlot,
 }: {
   item: ScanInboxItem;
   menu: ScanMenuEntry[] | null;
@@ -7786,6 +8072,9 @@ function ConfirmForm({
    *  second copy of that row lower down. The form keeps all of its state and
    *  submission; only the chips move. */
   fieldSlot?: HTMLElement | null;
+  /** Where the LOCATION drawer opens: the seam under the chip strip that holds
+   *  its trigger. Null renders it inline, at the bottom of the form. */
+  locSlot?: HTMLElement | null;
 }) {
   const { activeSlug, activeOrg } = useActiveOrg();
   const { user } = useAuth();
@@ -8318,19 +8607,27 @@ function ConfirmForm({
       {/* The AI-off hint the name block used to carry: still the moment it is
           worth saying, since a scan with no name at all is what it explains. */}
       {!item.suggested_name && <AiOffMissHint status={aiStatus} />}
-      {hasLocations && locOpen && (
-        <div className="rounded-md border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/40 p-2 max-h-72 overflow-y-auto">
-          <LocationChipPicker
-            value={locationId || null}
-            onChange={(v) => {
-              setLocTouched(true);
-              setLocationId(v ?? "");
-              persistLocation.mutate(v);
-              if (v) setLocOpen(false);
-            }}
-          />
-        </div>
-      )}
+      {hasLocations && locOpen && (() => {
+        const drawer = (
+          <div className="rounded-md border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/40 p-2 max-h-72 overflow-y-auto">
+            <LocationChipPicker
+              value={locationId || null}
+              onChange={(v) => {
+                setLocTouched(true);
+                setLocationId(v ?? "");
+                persistLocation.mutate(v);
+                if (v) setLocOpen(false);
+              }}
+            />
+          </div>
+        );
+        // Under the chip that opened it. Portalled rather than moved, because the
+        // form owns the picker's state and its submission; only where it draws
+        // changes.
+        return locSlot
+          ? createPortal(<div className="px-3 pb-3">{drawer}</div>, locSlot)
+          : drawer;
+      })()}
       {isAdmin && (
         <div className="rounded border border-dashed border-line dark:border-slate-700 p-2 space-y-2">
           <label className="flex items-center gap-2 text-sm text-content cursor-pointer">

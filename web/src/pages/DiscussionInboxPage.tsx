@@ -20,6 +20,7 @@ import { usePageTitle } from "@cobblr/platform-web";
 import { api, type DiscussionInboxItem } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useDetailRoute } from "../lib/useDetailRoute";
+import { isWorkspaceRoom } from "@cobblr/platform-contract/workspace-room";
 
 type Lane = "me" | "new" | "all";
 
@@ -36,18 +37,26 @@ function ago(iso: string | null): string {
 
 /** One row, named by the record rather than by its kind. */
 function InboxRow({ item }: { item: DiscussionInboxItem }) {
-  const { activeSlug } = useActiveOrg();
+  const { activeSlug, activeOrg } = useActiveOrg();
   const detailRoute = useDetailRoute(activeSlug ?? "");
   const kind = `${item.source_module}:${item.source_type}`;
+  // The room is not about a record, so there is nothing to look up. Asking
+  // anyway returns nothing and renders as "(deleted)" — a workspace room that
+  // says it was deleted is worse than no room at all.
+  const room = isWorkspaceRoom(item);
   const q = useQuery({
     queryKey: ["entity", activeSlug, kind, item.source_id],
     queryFn: () => api.lookupEntity(activeSlug, kind, item.source_id),
-    enabled: !!activeSlug,
+    enabled: !!activeSlug && !room,
     staleTime: 60_000,
     retry: false,
   });
-  const to = detailRoute(kind, item.source_id);
-  const label = q.isError ? "(deleted)" : (q.data?.title ?? "…");
+  const to = room ? "/discussion" : detailRoute(kind, item.source_id);
+  const label = room
+    ? `${activeOrg?.name ?? "Workspace"} · everyone`
+    : q.isError
+      ? "(deleted)"
+      : (q.data?.title ?? "…");
 
   const body = (
     <div className="flex items-center gap-3 min-w-0">
@@ -77,7 +86,8 @@ function InboxRow({ item }: { item: DiscussionInboxItem }) {
           )}
         </div>
         <div className="text-[10px] font-mono uppercase tracking-widest text-faint truncate">
-          {kind} · {item.comments} {item.comments === 1 ? "comment" : "comments"} ·{" "}
+          {room ? "the whole workspace" : kind} · {item.comments}{" "}
+          {item.comments === 1 ? "comment" : "comments"} ·{" "}
           {ago(item.latest_at)}
         </div>
       </div>

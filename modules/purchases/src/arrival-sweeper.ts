@@ -17,6 +17,7 @@
 
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { arrivedEverywhere } from "@cobblr/platform-contract";
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
@@ -223,7 +224,7 @@ export async function arrivalTick(opts: { orgId?: string; now?: Date } = {}): Pr
              and (
                -- past its estimate: the date-only question
                (o.expected_arrival is not null
-                and o.expected_arrival <= ${now.toISOString().slice(0, 10)}::date)
+                and o.expected_arrival <= ${arrivedEverywhere(now)}::date)
                -- or followable: worth checking before the date, which is the
                -- entire reason to have a tracking number
                or nullif(btrim(coalesce(o.tracking_number, '')), '') is not null
@@ -309,7 +310,10 @@ export async function arrivalTick(opts: { orgId?: string; now?: Date } = {}): Pr
         // its estimate, so requiring both meant a delivered parcel was never
         // asked about until its original ETA came round, which is the whole
         // thing tracking was supposed to improve.
-        const today = now.toISOString().slice(0, 10);
+        // NOT the UTC day: at 8pm US Eastern that is already tomorrow, so an
+        // order due the 25th was asked about on the evening of the 24th
+        // (2026-08-24). See arrivedEverywhere.
+        const today = arrivedEverywhere(now);
         const askable = rows.filter(
           (r) =>
             r.shipment_state === "delivered" ||

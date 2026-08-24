@@ -69,6 +69,8 @@ export type ConfigSection =
  *  `("owner","admin","member")`. Nothing in settings is owner-exclusive, so
  *  "admin" is the only meaningful value here — `owner` would hide pages the
  *  server happily serves to admins. */
+// role-vocab: ok — a nav TIER, not the role vocabulary. It names the two
+// thresholds settings pages are gated at; a sixth role would not add a third.
 export type ConfigRole = "admin" | "member";
 
 /** Width is a pair, not a flag: choosing the wide column obliges you to say what

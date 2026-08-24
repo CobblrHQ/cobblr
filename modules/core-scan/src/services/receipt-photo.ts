@@ -37,6 +37,9 @@ import { platform } from "@cobblr/platform-contract";
  *  rule can be tested against a recorded reply or a stored row without building
  *  a whole identity. */
 export interface ReceiptPhotoSignals {
+  /** What the pass called the thing. Its primary verdict, and stronger than a
+   *  category that only names a material. */
+  name?: string | null;
   /** The pass's plain-English account of what is in the photo. */
   observations: string;
   /** What KIND of thing it decided this is, in the workspace's own vocabulary.
@@ -68,10 +71,22 @@ export function looksLikeReceiptPhoto(id: ReceiptPhotoSignals): boolean {
   // Gate one: the description is ABOUT a receipt, not about a device for
   // printing them.
   const obs = id.observations ?? "";
+  const name = id.name ?? "";
+  // The pass's NAME is its primary verdict on what the thing IS - "Lidl grocery
+  // store receipt" is not a hedge - so a name that says receipt settles it, and
+  // only the modifier check can take it back ("receipt printer").
+  const namesOne = RECEIPT_NOUN.test(name) && !RECEIPT_AS_MODIFIER.test(name);
   if (!RECEIPT_NOUN.test(obs) || RECEIPT_AS_MODIFIER.test(obs)) return false;
+  if (namesOne) return true;
   // Gate two: the pass did not land on some other kind of thing. A category is
   // its own verdict on what this IS, so "cooking oil" outranks anything the
   // prose happens to mention; "receipt", or no category at all, does not.
+  //
+  // Only reached when the NAME did not already settle it, which is what keeps
+  // this from vetoing a receipt over a material. Re-recording the fixtures
+  // returned category "paper" for a photo the model had named a receipt, and
+  // this gate rejected it - "paper" describes what a receipt is MADE OF, not a
+  // different thing to own (2026-08-24).
   const cat = (id.category ?? "").trim();
   if (cat && !RECEIPTY_CATEGORY.test(cat)) return false;
   return true;

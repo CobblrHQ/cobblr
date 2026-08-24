@@ -52,6 +52,8 @@ function fail(res: Res, err: unknown): void {
   throw err;
 }
 
+// AI-REACH: a read. The dry run of the move below, which is the route that
+// needs the door; showing what would happen changes nothing.
 recordMoveRouter.post("/preview", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (!requireEditor(req, res)) return;

@@ -27,6 +27,8 @@ const Body = z.object({
     .optional(),
 });
 
+// AI-REACH: a read. "What could this value mean here?" writes nothing, and POST
+// only because the surface + filters travel in a body.
 resolveRouter.post("/:slug/resolve", requireAuth, withTenant, async (req, res, next) => {
   try {
     const parsed = Body.safeParse(req.body);

@@ -57,6 +57,10 @@ hostedPanelsRouter.get(
   },
 );
 
+// AI-REACH: a generic dispatcher into panels the hosted overlay registers, whose
+// actions are declared nowhere Cobb can read, and which are billing and account
+// plumbing. If a panel ever carries a workspace capability, that capability gets
+// its own action rather than this catch-all.
 hostedPanelsRouter.post(
   "/:slug/hosted-panels/:id/action",
   requireAuth,

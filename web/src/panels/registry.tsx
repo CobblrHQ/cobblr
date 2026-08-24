@@ -36,6 +36,21 @@ registerDetailPanel(
   "purchases:receipt-lines",
   lazy(() => import("../features/purchases/receiptLines").then((m) => ({ default: m.ReceiptLinesPanel }))),
 );
+// Universal side-cars (target "*"): every entity detail view that renders
+// <ContributedDetailPanels> gets these, including module-owned pages that
+// cannot import the web app's EntityAttachments.
+//
+// Registration order IS render order, and it matches EntityAttachments (tags,
+// then discussion) so a record does not rearrange itself depending on which
+// half of the app drew the page.
+registerDetailPanel(
+  "core-tags:tags",
+  lazy(() => import("../features/core-tags/panel").then((m) => ({ default: m.TagsPanel }))),
+);
+registerDetailPanel(
+  "core-discussion:conversation",
+  lazy(() => import("../features/core-discussion/panel").then((m) => ({ default: m.DiscussionPanel }))),
+);
 registerDetailPanel(
   "core-shipments:shipment",
   lazy(() => import("../features/core-shipments/shipment").then((m) => ({ default: m.ShipmentPanel }))),

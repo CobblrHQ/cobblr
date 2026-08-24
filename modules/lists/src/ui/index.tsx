@@ -5,7 +5,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { ContributedDetailPanels, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import { ListChecks, Plus, Trash2, X, RotateCcw, Hand } from "lucide-react";
 import { ListsApi, type ListSummary, type ListItem, ListsApiError } from "./api.js";
 
@@ -103,7 +103,7 @@ export function ListsUI({ orgSlug, getToken }: Props) {
         </Modal>
       )}
 
-      {open && <ListDetailModal listId={open} api={api} onClose={() => setOpen(null)} />}
+      {open && <ListDetailModal orgSlug={orgSlug} listId={open} api={api} onClose={() => setOpen(null)} />}
     </div>
   );
 }
@@ -126,7 +126,7 @@ function ListCard({ list, onOpen, onDelete }: { list: ListSummary; onOpen: () =>
   );
 }
 
-function ListDetailModal({ listId, api, onClose }: { listId: string; api: ListsApi; onClose: () => void }) {
+function ListDetailModal({ listId, api, orgSlug, onClose }: { listId: string; api: ListsApi; orgSlug: string; onClose: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [draft, setDraft] = useState("");
@@ -243,6 +243,14 @@ function ListDetailModal({ listId, api, onClose }: { listId: string; api: ListsA
             </button>
           </div>
         )}
+
+        {/* Tags and discussion, contributed at every kind. A shared list is
+            read by several people, so it is exactly the sort of record that
+            gets talked about. */}
+        <ContributedDetailPanels
+          target="lists:list"
+          ctx={{ slug: orgSlug, entityId: listId, entityTitle: detail.data?.title ?? "List" }}
+        />
       </div>
     </Modal>
   );

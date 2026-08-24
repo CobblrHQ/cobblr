@@ -21,6 +21,11 @@
 // same page in two workspaces read as two different places.
 
 const KEY = "cobblr.chat.openOn";
+// WHICH tab was showing. Separate key, same storage, same decay: the panel
+// coming back on the wrong tab is its own papercut - you left it on Discussion
+// mid-conversation, refreshed, and it handed you Cobb instead. Remembering
+// "open" without remembering "open on WHAT" only solves half of it.
+const TAB_KEY = "cobblr.chat.openTab";
 
 type MaybeStorage = Pick<Storage, "getItem" | "setItem" | "removeItem"> | null | undefined;
 
@@ -50,6 +55,29 @@ export function writeOpenOn(path: string | null, s: MaybeStorage = storage()): v
     else s?.removeItem(KEY);
   } catch {
     /* storage full or blocked — the panel simply will not persist */
+  }
+}
+
+/** The tab the panel was showing, or null. */
+export function readOpenTab(s: MaybeStorage = storage()): string | null {
+  try {
+    const v = s?.getItem(TAB_KEY);
+    // Tab ids are short slugs the tabs themselves declare. Anything else is
+    // somebody else's key or a stale shape, and picking the default beats
+    // trying to honour it.
+    return v && /^[a-z0-9-]{1,40}$/i.test(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Remember (or forget) which tab the panel is showing. */
+export function writeOpenTab(tab: string | null, s: MaybeStorage = storage()): void {
+  try {
+    if (tab) s?.setItem(TAB_KEY, tab);
+    else s?.removeItem(TAB_KEY);
+  } catch {
+    /* storage full or blocked - the tab simply will not persist */
   }
 }
 

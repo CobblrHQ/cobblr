@@ -28,6 +28,12 @@ export interface EntityDetailPanelCtx {
   slug: string;
   entityId: string;
   entityTitle: string;
+  /** The kind being rendered, e.g. "inventory:part".
+   *
+   *  Filled in by ContributedDetailPanels from its own `target`, so a panel
+   *  that declared `target: "*"` still knows what it is looking at. A panel
+   *  targeting one kind already knows; a universal one cannot. */
+  kind?: string;
   /** Free-form host hints (e.g. a machine's `printer_kind`) — interpretation
    *  is the contributor's business, presence is optional. */
   hints?: Record<string, string | undefined>;
@@ -42,6 +48,9 @@ export interface ContributedPanelSpec {
 }
 
 export type DetailPanelComponent = ComponentType<{ ctx: EntityDetailPanelCtx }>;
+
+/** A panel that belongs on EVERY entity detail view, whatever the kind. */
+export const UNIVERSAL = "*";
 
 const REGISTRY = new Map<string, DetailPanelComponent>();
 const listeners = new Set<() => void>();
@@ -85,7 +94,15 @@ function useRegisteredIds(): string[] {
 /** The panels ENABLED modules declare for this entity kind AND that the host
  *  has a component for. An id declared but never registered renders nothing —
  *  a typo is invisible, not a crash. */
-export function useContributedDetailPanels(target: string): ContributedPanelSpec[] {
+export function useContributedDetailPanels(
+  target: string,
+  /** Include panels that declared `target: "*"`.
+   *
+   *  Default true: a detail view of a real record should carry the universal
+   *  side-cars. Pass false from a slot that is NOT a record's detail view —
+   *  notably a row in a list of things that do not exist yet. */
+  universal = true,
+): ContributedPanelSpec[] {
   const { api, orgSlug } = usePlatformWeb();
   const registered = useRegisteredIds();
   const q = useQuery({
@@ -98,7 +115,10 @@ export function useContributedDetailPanels(target: string): ContributedPanelSpec
   return (q.data ?? []).filter(
     (p) =>
       p.surface === "entity-detail-panel" &&
-      p.target === target &&
+      // `*` means EVERY kind. Some side-cars are not about one module's
+      // entities at all — a conversation, a tag — and enumerating every kind
+      // that should have one is a list that is wrong the day a module ships.
+      (p.target === target || (universal && p.target === UNIVERSAL)) &&
       registered.includes(p.id),
   );
 }
@@ -113,11 +133,15 @@ const spinner = (
 export function ContributedDetailPanels({
   target,
   ctx,
+  universal = true,
 }: {
   target: string;
   ctx: EntityDetailPanelCtx;
+  /** See useContributedDetailPanels. Set false where the slot is a row in a
+   *  list rather than a record's own detail view. */
+  universal?: boolean;
 }) {
-  const panels = useContributedDetailPanels(target);
+  const panels = useContributedDetailPanels(target, universal);
   if (panels.length === 0) return null;
   return (
     <>
@@ -126,7 +150,7 @@ export function ContributedDetailPanels({
         if (!C) return null;
         return (
           <Suspense key={p.id} fallback={spinner}>
-            <C ctx={ctx} />
+            <C ctx={{ ...ctx, kind: ctx.kind ?? target }} />
           </Suspense>
         );
       })}

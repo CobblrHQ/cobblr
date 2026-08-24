@@ -6,7 +6,7 @@ import { useLayoutEffect, useRef, useState, type ComponentProps, type FormEvent 
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, Plus, Sparkles, Trash2, Upload } from "lucide-react";
-import { EntityActionsBar, CustomFieldsPanel, Modal, usePageTitle } from "@cobblr/platform-web";
+import { ContributedDetailPanels, EntityActionsBar, CustomFieldsPanel, Modal, usePageTitle } from "@cobblr/platform-web";
 import { useProjects } from "./context";
 import { DesignFiles } from "./DesignFiles";
 import { useFieldPresentation } from "./useFieldPresentation";
@@ -46,7 +46,7 @@ function AutoGrowTextarea({
 
 export function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { api, entityKind, instance, displayName } = useProjects();
+  const { api, orgSlug, entityKind, instance, displayName } = useProjects();
   // Route "back" to the collection the user actually came from: a Designs (or
   // any named) instance lives at /instances/<name>, not the empty base
   // /projects. Mirrors ProjectsListPage's basePath.
@@ -273,6 +273,14 @@ export function ProjectDetailPage() {
           ))}
         </ul>
       </div>
+
+      {/* Tags, discussion, and anything else contributed at every kind. Keyed
+          off the INSTANCE kind, so a Designs instance's conversation is about
+          the design rather than about "a project". */}
+      <ContributedDetailPanels
+        target={entityKind}
+        ctx={{ slug: orgSlug, entityId: project.data.id, entityTitle: project.data.name }}
+      />
     </div>
   );
 }

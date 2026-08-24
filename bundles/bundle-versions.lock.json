@@ -68,8 +68,8 @@
     "hash": "24ca0447bad1d722cdd18aceb900cc1593de21513e082185d69b05a952306852"
   },
   "cobblr.flagship.groceries": {
-    "version": "0.7.0",
-    "hash": "e9853d1c7f631b549f3b53c7392fc841907c9f6205a398a411dca87fc7e7be68"
+    "version": "0.9.0",
+    "hash": "8bf811a65cc42cbeb423275be47e7234c8b57a75c62e4c682fd1b503558797d9"
   },
   "cobblr.flagship.grocery-spend": {
     "version": "0.1.2",
@@ -104,16 +104,16 @@
     "hash": "07624338cfbe4a034a7cd8aadc9e88b29635a3dd30d4866243e4dd4fbed92020"
   },
   "cobblr.flagship.spice-rack": {
-    "version": "0.1.0",
-    "hash": "1b5f956ace458f5ea15bb65d07cd2a16a8049be14e4854f239aab162a7096346"
+    "version": "0.2.0",
+    "hash": "096085f246f9fed27c59189b458f0e67163bd58c9a4d7739101f7349693432b3"
   },
   "cobblr.flagship.subscriptions": {
     "version": "0.2.2",
     "hash": "c21efaf08112977c62408d2e330a7bca1f9715f73d6943351c317978492c58b2"
   },
   "cobblr.flagship.tea": {
-    "version": "0.1.0",
-    "hash": "ad712b9e8ce6bb7694c7c7e9cb42d4184a34d1b5dd5309a5275483b9e3f2037b"
+    "version": "0.2.0",
+    "hash": "03a6d749ed9c1133d7ea6b332ccad5519760a54a475020394b9a2a9b87621bb2"
   },
   "cobblr.flagship.vehicles": {
     "version": "0.4.1",

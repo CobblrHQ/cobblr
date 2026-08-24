@@ -2,6 +2,7 @@
 
 import type { Generated, Kysely } from "kysely";
 import type { Request } from "express";
+import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
 
 export interface DigifabConnectionsTable {
   id: Generated<string>;
@@ -405,7 +406,9 @@ export interface DigifabBambuStatusTable {
   updated_at: Generated<Date>;
 }
 
-export type OrgRole = "owner" | "admin" | "member" | "guest";
+/** Re-exported from the contract so this module cannot fall behind the
+ *  vocabulary. It already had: this line used to omit "editor". */
+export type OrgRole = OrgRoleName;
 
 interface RequestWithTenant {
   tenant?: {

@@ -18,7 +18,6 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 export const entriesRouter = Router({ mergeParams: true });
 
 const jsonb = (v: unknown) => sql`${JSON.stringify(v ?? {})}::jsonb`;
-const ROLES = ["owner", "admin", "member"] as const;
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 const EntryCreate = z.object({
@@ -35,7 +34,7 @@ const EntryUpdate = EntryCreate.partial();
 entriesRouter.get(
   "/entries",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, ...ROLES, "guest")) return;
+    if (!requireRole(req, res, "guest")) return;
     const db = tenantDb(req);
     let q = db.selectFrom("knowledge_entries").selectAll();
     if (req.query.pinned === "1" || req.query.pinned === "true") q = q.where("pinned", "=", true);
@@ -52,7 +51,7 @@ entriesRouter.get(
 entriesRouter.post(
   "/entries",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, ...ROLES)) return;
+    if (!requireRole(req, res, "member")) return;
     const parsed = EntryCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
@@ -78,7 +77,7 @@ entriesRouter.post(
 entriesRouter.get(
   "/entries/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, ...ROLES, "guest")) return;
+    if (!requireRole(req, res, "guest")) return;
     const db = tenantDb(req);
     const row = await db
       .selectFrom("knowledge_entries")
@@ -93,7 +92,7 @@ entriesRouter.get(
 entriesRouter.patch(
   "/entries/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, ...ROLES)) return;
+    if (!requireRole(req, res, "member")) return;
     const parsed = EntryUpdate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
@@ -118,7 +117,7 @@ entriesRouter.patch(
 entriesRouter.delete(
   "/entries/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, ...ROLES)) return;
+    if (!requireRole(req, res, "member")) return;
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     const row = await db
@@ -139,7 +138,7 @@ entriesRouter.post(
   "/entries/:id/image",
   upload.single("file"),
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, ...ROLES)) return;
+    if (!requireRole(req, res, "member")) return;
     const file = (req as unknown as { file?: { buffer: Buffer; originalname?: string; mimetype?: string } }).file;
     if (!file) return void res.status(400).json({ error: { code: "no_file", message: "No file uploaded." } });
     const db = tenantDb(req);

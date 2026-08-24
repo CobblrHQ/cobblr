@@ -19,6 +19,8 @@
 //
 // Pure + unit-tested (api/tests/scan-category-buckets.test.ts).
 
+import { isJunkCategory } from "@cobblr/platform-contract/category-reconcile";
+
 /** A coarse shelf: a stable `key` to group by and a clean `name` for the bin. */
 export interface CategoryBucket {
   key: string;
@@ -80,16 +82,12 @@ function titleCase(s: string): string {
 export function bucketForCategory(raw: string | null | undefined): CategoryBucket | null {
   if (!raw || !raw.trim()) return null;
   const norm = normalise(raw);
-  // Guard against junk categories the catalog occasionally emits. Whole-string
-  // anchored: the old unanchored prefix test made `n/a` match ANYTHING that
-  // starts with "na" — "nail polish" and "napkins" silently lost their bucket.
-  if (
-    norm.length < 2 ||
-    /^(n\/?a|none|null|unknown|other|misc\.?|general)$/.test(norm) ||
-    /^uncategori[sz]/.test(norm)
-  ) {
-    return null;
-  }
+  // Guard against junk categories the catalog occasionally emits — the SHARED
+  // vocabulary, so this and the matchmaker's own guard cannot drift apart. (The
+  // test is whole-string anchored in there: an unanchored `n/a` prefix once
+  // matched ANYTHING starting with "na", and "nail polish" and "napkins"
+  // silently lost their bucket.)
+  if (isJunkCategory(norm)) return null;
   for (const { match, bucket } of RULES) {
     if (match.test(norm)) return bucket;
   }

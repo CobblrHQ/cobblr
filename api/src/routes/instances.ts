@@ -80,6 +80,7 @@ instancesRouter.get(
   },
 );
 
+// AI-ACTION: platform:create-instance
 instancesRouter.post(
   "/",
   requireAuth,
@@ -133,6 +134,7 @@ const PromoteBody = z.object({
   display_name: z.string().min(1).max(160),
 });
 
+// AI-ACTION: platform:promote-category
 instancesRouter.post(
   "/:instanceName/promote-category",
   requireAuth,
@@ -184,6 +186,7 @@ const DemoteBody = z.object({
   category: z.string().min(1).max(60).optional(),
 });
 
+// AI-ACTION: platform:demote-category
 instancesRouter.post(
   "/:instanceName/demote-to-category",
   requireAuth,
@@ -249,6 +252,9 @@ instancesRouter.post(
   },
 );
 
+// AI-REACH: deleting a whole list and everything filed in it. Folding it back
+// into another list is the door for "I don't want this any more", and it keeps
+// the records; this one does not.
 instancesRouter.delete(
   "/:instanceName",
   requireAuth,
@@ -320,6 +326,7 @@ overridesRouter.get(
   },
 );
 
+// AI-ACTION: platform:rename-thing
 overridesRouter.put(
   "/",
   requireAuth,
@@ -356,6 +363,9 @@ overridesRouter.put(
   },
 );
 
+// AI-REACH: dropping every workspace override on one thing at once (its label,
+// icon, nav order, hidden flag). Renaming through platform:rename-thing is the
+// door; wiping the row is a settings-screen reset.
 overridesRouter.delete(
   "/:targetKind/:targetId",
   requireAuth,

@@ -14,7 +14,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { glanceTotal, idsOf } from "./glanceTotal";
 import { Wrench, Sprout, ShoppingCart } from "lucide-react";
-import { DashboardTile, registerDashboardWidget } from "@cobblr/platform-web";
+import { DashboardTile, registerDashboardWidget, summaryLine } from "@cobblr/platform-web";
 import { api } from "../lib/api";
 
 function MachinesWidget({ slug }: { slug: string }) {
@@ -74,7 +74,7 @@ function MachinesWidget({ slug }: { slug: string }) {
       icon={Wrench}
       label="machines"
       primary={total}
-      secondary={rows.length > 0 ? rows.map((r) => r.label).join(" · ") : top || "none yet"}
+      secondary={rows.length > 0 ? summaryLine(rows.map((r) => r.label)) : top || "none yet"}
       empty={!q.isLoading && !insts.isLoading && !instData.isLoading && total === 0}
     />
   );
@@ -152,6 +152,7 @@ function PurchasesWidget({ slug }: { slug: string }) {
       icon={ShoppingCart}
       label="purchases"
       primary={open}
+      primaryNoun="open"
       secondary={open === items.length ? "all open" : `${items.length} total`}
       empty={!q.isLoading && items.length === 0}
     />

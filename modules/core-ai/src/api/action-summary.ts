@@ -46,3 +46,31 @@ export function summariseAction(
   if (target) return subject ? `${verb} on “${target}”: ${subject}` : `${verb} on “${target}”`;
   return subject ? `${verb}: ${subject}` : verb;
 }
+
+/** What to say once an action HAS run.
+ *
+ *  Every write in the ledger says what it did — "Created Rack 5.", "Deleted
+ *  Widget.", "Updated." — except an action, which said "Done." no matter what
+ *  it was. The handlers were already writing the sentence: "Spices and Tea are
+ *  now under Kitchen.", "Manufacturer on inventory:part: hidden", "Maintenance
+ *  is on". It was thrown away one line before it reached the person, who was
+ *  left reading a tick and remembering what they had asked for.
+ *
+ *  Handlers say it under `summary` (the kernel's) or `message` (most modules'),
+ *  so both are read. Neither is a model's words: they are written in the module,
+ *  which is why they can be shown as they are. */
+export function actionSaid(result: unknown): string {
+  if (result && typeof result === "object") {
+    const r = result as { summary?: unknown; message?: unknown };
+    const said =
+      typeof r.summary === "string" && r.summary.trim()
+        ? r.summary.trim()
+        : typeof r.message === "string" && r.message.trim()
+          ? r.message.trim()
+          : null;
+    // A handler that answers with a JSON blob is not saying anything a person
+    // asked for; "Done." is better than `{"id":"8943a0b0-…"}`.
+    if (said && !said.startsWith("{")) return said.length > 200 ? `${said.slice(0, 197)}…` : said;
+  }
+  return "Done.";
+}

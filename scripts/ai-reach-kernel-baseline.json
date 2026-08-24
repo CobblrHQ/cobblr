@@ -1,0 +1,23 @@
+{
+  "_why": "Kernel routes the assistant cannot reach. A WORKLIST, not an allowance: it may only shrink. Each is a capability a person has and Cobb does not, which is how he came to print a stage direction instead of grouping two nav sections. Give one an action (// AI-ACTION: <id>) or say why it should never have a door (// AI-REACH: <reason>), then delete its line. A NEW kernel route cannot be added here: it says which it is on the day it is written.",
+  "unreachable": [
+    "blueprint.ts POST /install",
+    "bundles.ts DELETE /:x",
+    "bundles.ts POST /history/:x/revert",
+    "bundles.ts POST /install",
+    "dashboard.ts PUT /:x/dashboard-layout",
+    "instances.ts POST /:x/scan-fallback",
+    "orgs.ts POST /:x/import-app",
+    "orgs.ts POST /:x/refresh-app",
+    "pairings.ts DELETE /:x",
+    "pairings.ts PATCH /:x",
+    "pairings.ts POST /",
+    "platform.ts DELETE /:x/bindings/:x",
+    "platform.ts PATCH /:x/bindings/:x",
+    "platform.ts POST /:x/bindings",
+    "quickstart.ts POST /materialize",
+    "record-move.ts POST /",
+    "sandbox-install.ts DELETE /install/:x",
+    "sandbox-install.ts POST /install"
+  ]
+}

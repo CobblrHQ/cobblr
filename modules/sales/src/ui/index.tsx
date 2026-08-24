@@ -6,7 +6,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { ContributedDetailPanels, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import { ShoppingCart, Plus, Trash2, X, Users, PackageCheck } from "lucide-react";
 import {
   SalesApi, SalesApiError,
@@ -227,6 +227,13 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
             </div>
           </>
         )}
+
+        {/* Tags and discussion, contributed at every kind. A record you
+            open is a record somebody may want to say something about. */}
+        <ContributedDetailPanels
+          target="sales:order"
+          ctx={{ slug: orgSlug, entityId: orderId, entityTitle: d?.customer_name || d?.order_number || "Sales order" }}
+        />
       </div>
     </Modal>
   );

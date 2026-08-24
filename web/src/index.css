@@ -146,6 +146,17 @@
   .page-title::first-letter {
     text-transform: uppercase;
   }
+  /* The page column. Centred and capped by default, because a form or a
+     record is unreadable stretched across a wide monitor. A page that is
+     mostly a WIDE TABLE opts out with usePageWidth("wide"), which sets the
+     attribute on <body> that this reads. */
+  .page-shell {
+    @apply max-w-6xl mx-auto;
+  }
+  body[data-page-width="wide"] .page-shell {
+    @apply max-w-none;
+  }
+
   .input {
     /* dark: fields take the page tone (slate-800) — a step darker
        than the slate-900 card they sit on, so they read as inset. */

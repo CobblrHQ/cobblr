@@ -10,7 +10,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { api, type QueueJob } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { usePageTitle } from "@cobblr/platform-web";
+import { usePageTitle, usePageWidth } from "@cobblr/platform-web";
 import { ConfigHeaderActions } from "../components/ConfigPageHeader";
 import { FEED_SCROLL_PAGE_INNER } from "../lib/feed";
 
@@ -19,6 +19,8 @@ type Status = (typeof STATUSES)[number];
 
 export function QueuePage() {
   usePageTitle("Background queue");
+  // A wide table is the page here, so it gets the screen.
+  usePageWidth("wide");
   const { activeSlug } = useActiveOrg();
   const [statusFilter, setStatusFilter] = useState<"" | Status>("");
 

@@ -58,9 +58,13 @@ const src = withoutComments.slice(anchorAt);
 /** Where a marker sits WITHIN the session header, or -1. */
 const at = (needle: string) => src.indexOf(needle);
 
-// Renamed 2026-08-01 (feedback: shorten this row rather than let it wrap): the
-// unset chip says the ACTION now, and the verbs drop their long half below sm.
-const LOCATION = at('"Set location"');
+// Anchored on BEHAVIOUR, like FILE_ALL below and for the same reason: this was
+// `at('"Set location"')`, so shortening the label to "Location" - a width fix on
+// a row that was clipping - reported the chip as MISSING rather than renamed
+// (2026-08-24). That is the third time a label anchor in this file has failed a
+// layout change it was supposed to be checking. `setPlacingMode("set")` is what
+// this chip does, and nothing else on the row does it.
+const LOCATION = at('setPlacingMode("set")');
 // Anchored on BEHAVIOUR, not on the label. This used to look for the exact
 // markup of the words inside the button, so rewording it — "Place & file all" to
 // "File all", then splitting the label into one text node to kill a double
@@ -71,7 +75,7 @@ const FILE_ALL = at('setPlacingMode("file")');
 const OPEN = at("open →");
 
 for (const [name, idx] of [
-  ["the location chip (\"Set location\")", LOCATION],
+  ["the location chip", LOCATION],
   ["the File-all button", FILE_ALL],
   ["the open → link", OPEN],
 ] as const) {
@@ -186,7 +190,39 @@ if (LOCATION !== -1 && FILE_ALL !== -1) {
 // second line, which is the thing the ordering was meant to make scannable.
 // Tolerates a multi-line opening tag: prettier splitting the attributes across
 // lines is not a layout change, and the old single-line regex called it one.
-const headerBar = src.match(/className="flex w-full items-center gap-2[^"]*"/);
+// Found through the STRUCTURAL anchor, not a class prefix. Matching
+// `gap-2` meant tightening the row's spacing - eleven gaps, so the half-step is
+// most of a control back - reported the bar as missing (2026-08-24). The
+// gap size is a style; `data-session-header` is the identity.
+// Nothing inside this row may be ABSOLUTELY POSITIONED.
+//
+// The row is deliberately overflow-hidden so a row that does not fit is clipped
+// rather than pushing the whole page sideways. That also clips anything
+// positioned inside it: the parcel panel drew as a sliver under the row instead
+// of opening (reported 2026-08-24). A panel that has to escape the row must be
+// PORTALED with a measured rect, which is what the destination menu on the card
+// already does.
+//
+// Scoped to the header's own JSX, from the anchor to the end of the row's
+// controls, so a positioned thing elsewhere on the page is not this rule's
+// business.
+const headerJsx = src.slice(0, 26_000);
+for (const m of headerJsx.matchAll(/className=[{"`][^"`}]*\babsolute\b/g)) {
+  // `src` is already sliced from the anchor, so a line counted inside it is
+  // relative to the slice. Count in the WHOLE file, which stripComments keeps
+  // line-for-line, or the message points at the wrong place - it said 419 for
+  // something at 3960 the first time this ran.
+  const line = withoutComments.slice(0, anchorAt + m.index!).split("\n").length;
+  errors.push(
+    `absolutely positioned inside the session row (${REL}:${line}) - the row is ` +
+      `overflow-hidden, so this is clipped rather than shown. Portal it with a ` +
+      `measured rect, the way the card's destination menu does.`,
+  );
+}
+
+const barAt = src.indexOf(ANCHOR);
+const headerBar =
+  barAt === -1 ? null : src.slice(barAt, barAt + 600).match(/className="flex w-full items-center[^"]*"/);
 if (!headerBar) {
   errors.push(`could not find the session header bar in ${REL} - if its classes changed, update this lint`);
 } else if (headerBar[0].includes("flex-wrap")) {

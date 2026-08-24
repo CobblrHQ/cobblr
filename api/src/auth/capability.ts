@@ -1,9 +1,14 @@
 // Kernel-side authorization gates for api/src/routes handlers.
 //
-// Mirror of modules/inventory/src/api/util.ts (which serves module
-// routers) — duplicated rather than shared because the kernel app's
-// routes can't import a module's internals, and modules can't import
-// the kernel app. Both wrap platform().auth.userHasCapability.
+// Mirror of modules/*/src/api/util.ts (which serve module routers). The
+// express plumbing is duplicated because the kernel app's routes can't
+// import a module's internals and modules can't import the kernel app.
+//
+// The ROLE RANKING is not duplicated any more. It lives in
+// @cobblr/platform-contract/org-roles, because the copies drifted: the
+// kernel's was rank-based and all 34 module copies were exact-set, so an
+// `editor` could read a workspace and write nothing in it. Duplicating
+// plumbing is cheap; duplicating a RULE is how you get 34 of them.
 //
 // Compose AFTER requireAuth + withTenant (they populate req.session +
 // req.tenant). Each returns true to continue, or writes a 4xx and
@@ -14,29 +19,20 @@
 import type { Request, Response } from "express";
 import { platform } from "@cobblr/platform-contract";
 import type { OrgRole } from "../db/schema.js";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 
-// Action-gating rank. A more-privileged role satisfies any check a lesser one
-// passes (every requireRole call site is hierarchical — they start at "owner").
-// `editor` sits at admin-tier for ACTIONS: it does the full builder + config +
-// data work. The two genuine governance gates are NOT rank-based — managing
-// members goes through ADMINISH (owner/admin only) and deleting a workspace is
-// owner-only — so editor is admin-minus-{manage-members, delete}.
-const ROLE_RANK: Record<OrgRole, number> = {
-  guest: 0,
-  member: 1,
-  editor: 2,
-  admin: 2,
-  owner: 3,
-};
+// The ranking moved to @cobblr/platform-contract/org-roles, because every
+// module had written its own copy and all 34 of them got it wrong in the same
+// direction — an exact-set test that silently excluded `editor` from every
+// write. One table, imported by both halves, is the only version of this that
+// cannot drift again.
 
 /** Gate by org role (rank-based — a higher role always satisfies a lower
  *  requirement). Guest is never in an `allowed` set for a mutation, so this
  *  also enforces the "guest = read-only" invariant. */
 export function requireRole(req: Request, res: Response, ...allowed: OrgRole[]): boolean {
   const role = req.tenant?.role;
-  const need = allowed.length ? Math.min(...allowed.map((r) => ROLE_RANK[r] ?? 99)) : 99;
-  const have = role ? (ROLE_RANK[role] ?? -1) : -1;
-  if (have < need) {
+  if (!roleSatisfies(role, allowed)) {
     res.status(403).json({
       error: { code: "forbidden", message: `This action requires one of: ${allowed.join(", ")}.` },
     });

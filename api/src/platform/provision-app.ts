@@ -144,7 +144,17 @@ export async function refreshManagedApp(
     // app now curates a feature the workspace doesn't have yet (a locked app
     // can't enable features itself, so rolling out a new app feature happens
     // here on next use). Already current AND feature-complete → nothing to do.
-    const want = app.enabledFeatures ?? [];
+    // Only features THIS manifest declares can be missing - a curated key the
+    // bundle does not have is nothing to install, and treating it as missing
+    // makes every refresh re-apply, forever, on a workspace that is already
+    // current. (Latent until the stored set stopped keeping phantom keys: it
+    // used to record whatever was requested, declared or not.)
+    const declared = new Set(
+      ((manifest as { features?: Array<{ key?: string }> }).features ?? [])
+        .map((f) => f.key)
+        .filter((k): k is string => typeof k === "string"),
+    );
+    const want = (app.enabledFeatures ?? []).filter((f) => declared.has(f));
     const have = new Set((installed?.enabled_features as string[] | null) ?? []);
     const featuresMissing = want.some((f) => !have.has(f));
     const versionCurrent = installed && latest && cmpVersion(installed.version, latest) >= 0;

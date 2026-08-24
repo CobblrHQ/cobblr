@@ -207,6 +207,67 @@ export default defineModule({
         },
       },
       {
+        id: "inventory:mark-opened",
+        examples: ["opened it", "cracked open the pesto", "started this one"],
+        undoable: true,
+        label: "Opened",
+        description:
+          "Record that you opened one, today. Starts the shorter opened clock on that one only - the unopened ones keep their own dates - and records WHEN, so how long it lasts after opening can be measured the next time one goes off. Args: { partId?, timezone? }.",
+        appliesTo: { kinds: ["inventory:part"] },
+        invokeHandler: "inventory.mark-opened",
+        userInvokable: true,
+        argsSchema: {
+          partId: { label: "Which item", type: "text" },
+          timezone: { label: "Timezone to date it in", type: "text" },
+        },
+      },
+      {
+        id: "inventory:mark-finished",
+        examples: ["ate the last one", "that's the end of the jar", "all gone"],
+        undoable: true,
+        label: "Finished it",
+        description:
+          "Record that you used the last of one up. Counts as a LOWER BOUND on how long it keeps - it lasted at least this long - and never as a measurement, because you ate it rather than testing it. Args: { partId?, timezone? }.",
+        appliesTo: { kinds: ["inventory:part"] },
+        invokeHandler: "inventory.mark-finished",
+        userInvokable: true,
+        argsSchema: {
+          partId: { label: "Which item", type: "text" },
+          timezone: { label: "Timezone to date it in", type: "text" },
+        },
+      },
+      {
+        id: "inventory:mark-spoiled",
+        examples: ["it went bad", "had to bin it", "this one spoiled before I got to it"],
+        undoable: true,
+        label: "Threw it out",
+        description:
+          "Record that one went bad and was binned. This is the only thing that MEASURES how long something keeps, so it is what teaches the shelf life; it also files a waste event, which is what tells you when you are consistently buying more than you get through. Args: { partId?, timezone? }.",
+        appliesTo: { kinds: ["inventory:part"] },
+        invokeHandler: "inventory.mark-spoiled",
+        userInvokable: true,
+        argsSchema: {
+          partId: { label: "Which item", type: "text" },
+          timezone: { label: "Timezone to date it in", type: "text" },
+        },
+      },
+      {
+        id: "inventory:restock-one",
+        examples: ["another one arrived", "got one more", "add one to the fridge"],
+        undoable: true,
+        label: "Restock one",
+        description:
+          "Record that another one arrived today. NOT the same as adding one to the count: a container arriving today has its own shelf life, so this dates the new arrival from the item's shelf_life_days rather than letting it inherit the previous one's deadline. Several on the same day merge into one lot. Args: { partId?, qty?, timezone? }.",
+        appliesTo: { kinds: ["inventory:part"] },
+        invokeHandler: "inventory.restock-one",
+        userInvokable: true,
+        argsSchema: {
+          partId: { label: "Which item", type: "text" },
+          qty: { label: "How many arrived", type: "number" },
+          timezone: { label: "Timezone to date the arrival in", type: "text" },
+        },
+      },
+      {
         id: "inventory:use-one",
         examples: ["used one", "I just took one out"],
         undoable: true,

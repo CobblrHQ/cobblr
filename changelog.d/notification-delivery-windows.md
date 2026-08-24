@@ -12,6 +12,8 @@ docs_target: docs/USER_GUIDE.md#Notification delivery windows
 
 By default every channel tells you about things as they happen. That is right for a bell you glance at and wrong for a channel that pushes into your attention, especially once you are tracking enough things to hear from several of them a day.
 
+You set these under **Notifications, Delivery**, per channel. They are yours rather than a workspace's, so one daily message covers every workspace you are in.
+
 A **delivery window** lets you set, per channel, when messages are allowed to arrive:
 
 | Setting | What happens |
@@ -25,3 +27,5 @@ Two things stay true whatever you pick:
 - **The bell is never delayed.** In-app notifications and your notification history are unaffected. A window changes when a channel *pushes* to you, not what your workspace records.
 
 If several things happen before your window opens, you get one message listing them rather than one message each. A quiet day sends nothing at all, so an empty digest never arrives just to tell you nothing happened.
+
+Each channel actually carries **two** of these, one for conversation and one for things a date brought up, so chat can reach you live while everything due today waits for the morning. See "When things arrive" below.

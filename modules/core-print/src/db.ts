@@ -2,6 +2,7 @@
 
 import type { Generated, Kysely } from "kysely";
 import type { Request } from "express";
+import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
 
 export interface CorePrintPrintersTable {
   id: Generated<string>;
@@ -23,7 +24,9 @@ export interface CorePrintDB {
   core_print_printers: CorePrintPrintersTable;
 }
 
-export type OrgRole = "owner" | "admin" | "member" | "guest";
+/** Re-exported from the contract so this module cannot fall behind the
+ *  vocabulary. It already had: this line used to omit "editor". */
+export type OrgRole = OrgRoleName;
 
 interface RequestWithTenant {
   tenant?: {

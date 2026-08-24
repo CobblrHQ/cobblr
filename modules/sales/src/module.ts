@@ -30,6 +30,8 @@ export default defineModule({
   provides: {
     entityKinds: [
       {
+        // sidecar-exempt: a customer is chosen from a picker on an order; there is
+        // no customer detail view to hang a conversation on yet
         id: "sales:customer",
         createEndpoint: "/customers",
         updateEndpoint: "/customers/{id}",

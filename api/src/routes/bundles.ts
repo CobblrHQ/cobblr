@@ -7,6 +7,7 @@ import { trackProductEvent } from "../platform/product-events.js";
 import { parseWireFilter } from "../platform/wire-filter.js";
 import { z } from "zod";
 import { applyBundleLocations, previewBundleLocations } from "../platform/apply-bundle-locations.js";
+import { resolveEnabledFeatures, featuresToOffer as pickFeaturesToOffer } from "../platform/feature-defaults.js";
 import { sql, type Kysely } from "kysely";
 import { platform, CatalogSchemaConfig, packFieldIssues, FieldRoleSchema, FieldTypeSchema, isFieldScope, parseFieldScope } from "@cobblr/platform-contract";
 import { requireAuth } from "../auth/middleware.js";
@@ -20,6 +21,7 @@ import { enableModuleForOrg } from "../modules/enable.js";
 import { getEntry } from "../modules/registry.js";
 import { upsertOverride, deleteOverride } from "../platform/entity-kind-overrides.js";
 import { createInstance, getInstance } from "../platform/instances.js";
+import { checkInstalled, promisedInstances } from "../platform/install-postcondition.js";
 import { SCAN_CATEGORY_SOURCE } from "../platform/reconcile-scan-category.js";
 import { listNavHeadings, createNavHeading, addNavMember } from "../platform/nav-headings.js";
 import { tearDownInstance, countInstanceItems } from "../platform/instances.js";
@@ -564,6 +566,35 @@ export interface BundleValidationResult {
   fullManifest?: BundleManifestT;
   /** The feature keys that were resolved into `manifest`. */
   enabledFeatures?: string[];
+  /** Optional features this version declares that the workspace has never been
+   *  asked about. NOT enabled - carried so a surface can offer them. Empty on a
+   *  first install, where the checkboxes were on screen anyway. */
+  featuresToOffer?: Array<{ key: string; name?: string; question?: string; description?: string }>;
+}
+
+/**
+ * What this workspace already has installed of this bundle, if anything.
+ *
+ * Returns null when nothing is installed, which is what makes a first install
+ * distinguishable from an update - and that distinction is the whole point:
+ * `default: true` may switch a feature on for the former and never for the
+ * latter. Returning an empty array for both would reintroduce the bug.
+ */
+async function readInstalledFeatures(
+  orgId: string,
+  externalId: string,
+): Promise<{ enabled: string[]; declared: Array<{ key: string; default?: boolean }> | null } | null> {
+  const row = await meta
+    .selectFrom("bundles")
+    .select(["enabled_features", "manifest"])
+    .where("org_id", "=", orgId)
+    .where("external_id", "=", externalId)
+    .executeTakeFirst();
+  if (!row) return null;
+  const raw = row.manifest as unknown;
+  const parsed = typeof raw === "string" ? (JSON.parse(raw) as unknown) : raw;
+  const declared = (parsed as { features?: Array<{ key: string; default?: boolean }> } | null)?.features ?? null;
+  return { enabled: (row.enabled_features as string[] | null) ?? [], declared };
 }
 
 const moduleOf = (id: string): string | null => (id.includes(":") ? (id.split(":")[0] ?? null) : null);
@@ -645,10 +676,23 @@ export async function validateBundle(
   }
   const full = parsed.data;
   // Phase 2: resolve BASE + enabled optional features; everything below
-  // validates/previews the resolved set. Default = features marked default:true
-  // when the caller doesn't specify an explicit set.
-  const enabledFeatures =
-    opts.enabledFeatures ?? full.features.filter((f) => f.default).map((f) => f.key);
+  // validates/previews the resolved set.
+  //
+  // `default: true` is a FIRST-INSTALL concept - it means "most people setting
+  // this up want this", and the checkbox is on screen when they press the
+  // button. On an UPDATE nobody is asked anything, so falling back to the new
+  // version's defaults silently opts a workspace into something it has never
+  // seen. That shipped: a groceries update turned on a feature that CREATES
+  // PLACES and made a Fridge, Freezer and Pantry inside a Kitchen somebody had
+  // already arranged. See platform/feature-defaults.ts.
+  const priorInstall = await readInstalledFeatures(orgId, full.id);
+  const resolvedFeatures = resolveEnabledFeatures({
+    declared: full.features,
+    ...(opts.enabledFeatures !== undefined ? { requested: opts.enabledFeatures } : {}),
+    installed: priorInstall?.enabled ?? null,
+  });
+  const enabledFeatures = resolvedFeatures.enabled;
+  const offer = pickFeaturesToOffer(full.features, priorInstall?.enabled ?? null, priorInstall?.declared ?? null);
   const m = resolveManifestFeatures(full, enabledFeatures);
   const errors: BundleValidationError[] = [];
 
@@ -974,7 +1018,23 @@ export async function validateBundle(
     modules_to_enable: modulesToEnable,
     upgrade_conflicts: upgradeConflicts,
   };
-  return { valid: errors.length === 0, errors, preview, manifest: m, fullManifest: full, enabledFeatures };
+  return {
+    valid: errors.length === 0,
+    errors,
+    preview,
+    manifest: m,
+    fullManifest: full,
+    enabledFeatures,
+    featuresToOffer: offer.map((f) => {
+      const d = full.features.find((x) => x.key === f.key);
+      return {
+        key: f.key,
+        ...(d?.name ? { name: d.name } : {}),
+        ...(d?.question ? { question: d.question } : {}),
+        ...(d?.description ? { description: d.description } : {}),
+      };
+    }),
+  };
 }
 
 bundlesRouter.get(
@@ -1229,6 +1289,8 @@ bundlesRouter.get(
 // so a candidate that validates here is guaranteed installable. Always
 // 200; validity + repairable errors + a preview are in the body. Used by
 // the authoring module's candidate flow and the BuildPage live preview.
+// AI-REACH: a read. Always 200, writes nothing: it answers whether a candidate
+// bundle would install. Installing it is the route with the door.
 bundlesRouter.post(
   "/validate",
   requireAuth,
@@ -2019,8 +2081,10 @@ bundlesRouter.post(
       const ManifestBody = z.object({
         manifest: z.unknown(),
         confirm: z.boolean().optional(),
-        /** Phase 2: which optional features to install. Omitted → the
-         *  features' own default:true set (validateBundle's fallback). */
+        /** Phase 2: which optional features to install. Omitted on a FIRST
+         *  install → the features' own default:true set. Omitted on an UPDATE
+         *  → whatever is already on, never the new version's defaults; see
+         *  platform/feature-defaults.ts. `[]` is an explicit "none of them". */
         enabled_features: z.array(z.string()).optional(),
         /** Upgrade conflicts (preview.upgrade_conflicts) the user chose to
          *  "take theirs" on: drop the user override so the new bundle wins. */
@@ -2091,9 +2155,51 @@ bundlesRouter.post(
         v,
         { takeTheirs: body.data.take_theirs },
       );
+      // DID IT ACTUALLY DO IT?
+      //
+      // The summary below is built from the MANIFEST - "this bundle provides an
+      // instance called tea" - so it reports what was asked for, and nothing
+      // compares that against what exists afterwards.
+      //
+      // The tenant-side work is best-effort by design (`install_status:
+      // "partial"` exists because an install can half-succeed), so a partial
+      // install answers 201 with a summary that reads exactly like a whole one.
+      // A workspace can hold a bundle listed as installed with no table to file
+      // into, and nothing says so.
+      //
+      // This reads the instances back and names the promised ones that are
+      // missing. Not a throw - a partial install is recoverable, not an error.
+      // The point is that it stops being invisible.
+      const promised = promisedInstances(v.fullManifest ?? v.manifest!, v.enabledFeatures ?? []);
+      let postcondition: ReturnType<typeof checkInstalled> = { missing: [], ok: true, message: "" };
+      if (promised.length > 0) {
+        const present = new Set<string>();
+        for (const p of promised) {
+          try {
+            if (await getInstance(req.tenant!.org.id, p.instance_name)) present.add(p.instance_name);
+          } catch {
+            // Unreadable is not the same as absent, but for this report it has
+            // to count as "cannot prove it is there", which is the honest read.
+          }
+        }
+        postcondition = checkInstalled(promised, present);
+        if (!postcondition.ok) {
+          console.error(`[bundles] ${v.manifest!.id}: ${postcondition.message}`);
+        }
+      }
+
       // Same summary the scan-side install returns, built once here so the
       // two surfaces cannot drift on what an install is said to have done.
-      res.status(201).json({ ...result, installed: bundleInstallSummary(v.manifest!, result.applied) });
+      res.status(201).json({
+        ...result,
+        installed: bundleInstallSummary(v.manifest!, result.applied),
+        // Present ONLY when something promised is missing, so a healthy install
+        // says nothing extra and a broken one cannot be read as healthy.
+        ...(postcondition.ok ? {} : { incomplete: { missing: postcondition.missing, message: postcondition.message } }),
+        // What this version adds that nobody agreed to. NOT installed - handed
+        // back so the surface can ask instead of the update deciding.
+        features_to_offer: v.featuresToOffer ?? [],
+      });
     } catch (err) {
       next(err);
     }

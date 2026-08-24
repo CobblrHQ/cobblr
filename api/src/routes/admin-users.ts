@@ -25,13 +25,14 @@ import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { hashPassword } from "../auth/password.js";
 import * as activity from "../platform/activity.js";
+import { ORG_ROLES } from "@cobblr/platform-contract/org-roles";
 
 export const adminUsersRouter = Router({ mergeParams: true });
 
 const CreateBody = z.object({
   email: z.string().email().max(254),
   display_name: z.string().min(1).max(120),
-  role: z.enum(["owner", "admin", "member", "guest"]).default("member"),
+  role: z.enum(ORG_ROLES).default("member"),
 });
 
 const RegenPasswordBody = z.object({

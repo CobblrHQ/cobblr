@@ -2,6 +2,8 @@
 
 import type { Request, Response, NextFunction } from "express";
 import type { z } from "zod";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import type { OrgRoleName as OrgRole } from "@cobblr/platform-contract/org-roles";
 
 type AsyncHandler = (req: Request, res: Response) => Promise<unknown>;
 
@@ -20,10 +22,10 @@ export function badBody(res: Response, error: z.ZodError): void {
 export function requireRole(
   req: Request,
   res: Response,
-  ...allowed: Array<"owner" | "admin" | "member" | "guest">
+  ...allowed: OrgRole[]
 ): boolean {
   const role = (req as unknown as { tenant?: { role: string } }).tenant?.role;
-  if (!role || !allowed.includes(role as "owner")) {
+  if (!role || !roleSatisfies(role as "owner", allowed)) {
     res.status(403).json({
       error: { code: "forbidden", message: `Requires one of: ${allowed.join(", ")}` },
     });

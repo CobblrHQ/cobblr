@@ -13,7 +13,7 @@
 // (Audit 2026-06-26 follow-up — was a hardcoded SPECS list in the kernel.)
 
 import { sql, type Kysely } from "kysely";
-import type { CalendarEvent, DateFieldCalendarSpec } from "@cobblr/platform-contract";
+import { dateFieldDirection, dateEventTitle, type CalendarEvent, type DateFieldCalendarSpec } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import { getTenantDb } from "../db/tenant.js";
 import * as calendar from "./calendar-registry.js";
@@ -137,10 +137,18 @@ export function registerDateFieldSource(spec: Spec): void {
           for (const r of rows) {
             events.push({
               id: `${spec.entityModule}-date:${d.name}:${r.id}:${r.dt.slice(0, 10)}`,
-              title: `${r.name} — ${d.display_label}`,
+              title: dateEventTitle(r.name, d.display_label),
               date: r.dt.slice(0, 10),
               allDay: true,
               source: `${spec.entityModule}-date`,
+              // The module, not the source id. `inventory-date` was reaching
+              // the screen as "INVENTORY-DATE".
+              sourceLabel: spec.entityModule,
+              // Most custom date fields RECORD something rather than demand it,
+              // and a record that has passed is not late. Without this, doing
+              // the shopping put five groceries in OVERDUE and pushed anything
+              // genuinely late out of sight.
+              direction: dateFieldDirection(d.display_label),
               category: "date",
               entityModule: spec.entityModule,
               entityType: spec.entityType,

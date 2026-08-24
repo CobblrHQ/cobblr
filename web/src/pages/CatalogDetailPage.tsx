@@ -4,6 +4,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { Link, useParams } from "react-router-dom";
+import { EntityAttachments } from "../components/EntityAttachments";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Download, Library, Upload } from "lucide-react";
 import { BackToTop, Modal, useToast, usePageTitle } from "@cobblr/platform-web";
@@ -225,6 +226,10 @@ export function CatalogDetailPage() {
           }}
         />
       )}
+
+      {/* A catalog is a record you open, so it is a record somebody may want to
+          tag or ask a question about. */}
+      <EntityAttachments kind="core-catalogs:catalog" entityId={id!} />
     </div>
   );
 }

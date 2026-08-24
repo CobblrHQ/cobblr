@@ -13,6 +13,7 @@ import {
 import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
 import { displaySlug } from "../lib/workspaceSlug";
 import { usePrefill } from "../lib/prefill";
+import { ORG_ROLES, INVITABLE_ORG_ROLES } from "@cobblr/platform-contract/org-roles";
 
 interface Props {
   /** Render in-flow (settings page mode) instead of as an overlay. */
@@ -29,8 +30,10 @@ interface Props {
   focus?: "invite";
 }
 
-const ROLES: OrgMembership["role"][] = ["owner", "admin", "editor", "member", "guest"];
-const INVITE_ROLES: OrgMembership["role"][] = ["admin", "editor", "member", "guest"];
+// From the contract, not retyped. The two lists differ for a reason: ownership
+// is transferred to somebody already here, never handed out through a link.
+const ROLES = ORG_ROLES as readonly OrgMembership["role"][];
+const INVITE_ROLES = INVITABLE_ORG_ROLES as readonly OrgMembership["role"][];
 
 export function MembersModal({ open, onClose, slug, inline, chromeless, focus }: Props) {
   const qc = useQueryClient();

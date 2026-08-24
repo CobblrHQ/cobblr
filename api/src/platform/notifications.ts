@@ -19,11 +19,18 @@ import type { NotificationAction } from "../db/schema.js";
 import type { NotificationChannel, NotificationPriority } from "../db/schema.js";
 import { hasAuthEmailSender, sendAuthEmail } from "./hosted-seams.js";
 import { sendDiscordDm } from "./discord-bot-trigger.js";
+import { discordConnectionState } from "./discord-connection.js";
 import type { DeliveryOutcomes } from "@cobblr/platform-contract/delivery-outcome";
 import { absoluteAppUrl } from "./public-url.js";
 import { defaultEnabled, tierOf, type PrefChannel } from "./notification-catalog.js";
 import { fallbackChannels } from "./dispatch-fallback.js";
-import { shouldDefer, windowsFor, enqueueDeferred } from "./delivery-windows.js";
+import {
+  shouldDefer,
+  windowsFor,
+  windowFor,
+  enqueueDeferred,
+  type TriggeredBy,
+} from "./delivery-windows.js";
 
 // Exported so the delivery sweeper flushes through the SAME adapters a live
 // send uses. A second registry would drift the moment a channel is added.
@@ -68,6 +75,19 @@ export interface DispatchParams {
    *  about urgency lands in the standard "I care if I'm at the
    *  computer" tier. */
   priority?: NotificationPriority;
+  /** What CAUSED this: somebody doing something (`activity`, the default), or a
+   *  date arriving (`schedule`).
+   *
+   *  A second dial beside priority, and a different question. Priority is "how
+   *  much does this interrupt"; this is "was it news, or was it the calendar".
+   *  People want those delivered on different cadences on the SAME channel —
+   *  chat as it happens, everything due today as one morning list — and no
+   *  priority bar can express that, because both are `normal`.
+   *
+   *  Set `schedule` when the notification exists because a date or threshold was
+   *  reached and was knowable in advance: expiring today, service due, running
+   *  low. Leave it alone for anything that just happened. */
+  triggeredBy?: TriggeredBy;
   payload?: unknown;
   /** What the reader can do about it, offered right in the message. Channels
    *  render them however they can; one that cannot ignores them, so `message`
@@ -177,9 +197,20 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
   // in_app is unchanged and unconditional. Discord rides along when they want
   // it. Email never does — see dispatch-fallback.ts for why that one would
   // hurt.
+  // The windows are read HERE rather than in step 2b, because "has this person
+  // batched that channel" is now part of deciding whether the channel is
+  // reachable at all: email is mailed one message a day or not at all.
+  const windows = await windowsFor(meta as never, p.userId);
+  const triggeredBy: TriggeredBy = p.triggeredBy ?? "activity";
+  const batched = new Set(
+    [...windows.entries()]
+      .filter(([, w]) => windowFor(w, triggeredBy).mode === "daily")
+      .map(([channel]) => channel),
+  );
+
   if (effective.length === 0 && subs.length === 0) {
     const prefs = await resolveAccountPrefs(p.userId, p.eventType);
-    for (const channel of fallbackChannels(prefs, priority)) {
+    for (const channel of fallbackChannels(prefs, priority, batched)) {
       effective.push({ channel, config: null });
     }
   }
@@ -194,11 +225,11 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
   //     The notification row is already written (step 1), unconditionally, so
   //     the bell and the history never change shape because of a window. Only
   //     the push channels defer.
-  const windows = await windowsFor(meta as never, p.userId);
   const deferredChannels: string[] = [];
   const liveChannels: typeof effective = [];
   for (const e of effective) {
-    if (shouldDefer(windows.get(e.channel), priority, e.channel)) deferredChannels.push(e.channel);
+    if (shouldDefer(windows.get(e.channel), priority, e.channel, triggeredBy))
+      deferredChannels.push(e.channel);
     else liveChannels.push(e);
   }
   for (const channel of deferredChannels) {
@@ -212,6 +243,7 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
         message: p.message,
         link_url: p.link_url ?? null,
         priority,
+        triggered_by: triggeredBy,
       });
     } catch (err) {
       // A bucket that cannot be written must not swallow the notification: fall
@@ -327,10 +359,12 @@ export async function resolveAccountPrefs(
     if (discordVerified === undefined) {
       const conn = await meta
         .selectFrom("discord_connections")
-        .select(["verified"])
+        .select(["discord_user_id", "verified", "verified_app_id"])
         .where("user_id", "=", userId)
         .executeTakeFirst();
-      discordVerified = Boolean(conn?.verified);
+      // The same question the dispatcher asks, so a default cannot say "on"
+      // for a channel delivery will refuse.
+      discordVerified = discordConnectionState(conn) === "verified";
     }
     return discordVerified;
   };
@@ -438,21 +472,40 @@ export async function notifyAccount(
   } else {
     const conn = await meta
       .selectFrom("discord_connections")
-      .select(["discord_user_id", "verified"])
+      .select(["discord_user_id", "verified", "verified_app_id"])
       .where("user_id", "=", args.userId)
       .executeTakeFirst();
-    if (!conn?.discord_user_id) {
+    const state = discordConnectionState(conn);
+    if (state === "not-connected") {
       outcomes.discord_dm = "not-connected";
-    } else if (!conn.verified) {
+    } else if (state === "unverified") {
       outcomes.discord_dm = "unverified";
+    } else if (state === "stale-app") {
+      // Verified, but by a Discord app that is no longer the one sending. The
+      // current bot may not share a server with this person, so the DM would
+      // vanish rather than fail loudly. Say so instead of sending into it.
+      outcomes.discord_dm = "stale-app";
     } else {
       const dmBody = args.discordMessage ?? args.message;
       const text = args.link_url
         ? `${dmBody}\n${absoluteAppUrl(args.link_url)}`
         : dmBody;
-      const res = await sendDiscordDm({ discord_user_id: conn.discord_user_id, text });
+      const res = await sendDiscordDm({ discord_user_id: conn!.discord_user_id!, text });
       if (res.ok) deliveredVia.push("discord_dm");
       outcomes.discord_dm = res.ok ? "sent" : res.deliverable ? "send-failed" : "blocked";
+      if (!res.ok && !res.deliverable) {
+        // BLOCKED is durable, not a blip: privacy settings, a bot that shares no
+        // server, a deleted account. Leaving `verified` true means every future
+        // notification goes quietly nowhere and the settings page keeps claiming
+        // Discord works. Dropping it surfaces the reconnect prompt and lets the
+        // account-pref fallback route this person somewhere they will see it.
+        // A transient send-failed is left alone on purpose.
+        await meta
+          .updateTable("discord_connections")
+          .set({ verified: false, updated_at: new Date() })
+          .where("user_id", "=", args.userId)
+          .execute();
+      }
     }
   }
 

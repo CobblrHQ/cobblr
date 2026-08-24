@@ -18,13 +18,15 @@ import { Router, text as expressText } from "express";
 import { z } from "zod";
 import multer from "multer";
 import { platform } from "@cobblr/platform-contract";
-import type { Transaction } from "kysely";
+import { sql, type Transaction } from "kysely";
 import { bearer, sessionUser, tenantContext, tenantDb, type CoreScanDB } from "../db.js";
 
 /** An open transaction on a tenant db. The import does every one of its writes
  *  inside one, so a failure rolls the whole import back. */
 type TenantTrx = Transaction<CoreScanDB>;
 import { asyncHandler, requireRole } from "./util.js";
+import { assembleScanMenu, heuristicMatch, type ScanMenuEntry } from "../services/matchmaker.js";
+import { INTERNAL_API } from "./inbox.js";
 import { assertSafeOutboundUrl } from "../services/enrich.js";
 import {
   parseCsvImport,
@@ -693,6 +695,84 @@ importRouter.post(
         photos_failed: photosFailed,
       });
       return;
+    }
+
+    // AN IMPORTED SCAN IS STILL A SCAN: it needs a stamp saying identification
+    // is finished, and a route.
+    //
+    // Neither happened, so every imported item sat under "finishing..." with no
+    // destination, and the seeded fixture this repo uses for scan testing could
+    // never reach the state it was seeded to test.
+    //
+    // ROUTING IS DONE HERE, IN PROCESS, WITH THE HEURISTIC ONLY. The obvious
+    // version - a detached matchmaker per row, the same call a live scan makes -
+    // is wrong for a bulk operation. The committed fixture alone is 156 rows, so
+    // that is 156 concurrent runs each opening pools and calling this same api
+    // over HTTP: it took the api's Postgres client down in CI and turned the
+    // suite into 488 ECONNREFUSED. It would also spend 156 model calls on an
+    // operation whose entire purpose is to replay work already paid for.
+    //
+    // The heuristic needs neither. One menu build for the whole import, then a
+    // pure function per row. Free, bounded, and enough: a table's noun and its
+    // declared keywords are exactly what routes "Tazo Tea" to Tea.
+    if (createdIds.length > 0) {
+      const stampedAt = new Date();
+      let menu: ScanMenuEntry[] = [];
+      const token = bearer(req);
+      if (token) {
+        try {
+          const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+          menu = await assembleScanMenu(baseUrl, ctx.org.slug, token);
+        } catch (err) {
+          // No menu means no routing, which is a worse import, not a failed one.
+          console.error("[core-scan] import: could not read the table menu:", (err as Error).message);
+        }
+      }
+      // The rows as WRITTEN, not the import plan: the plan is a different shape
+      // and does not carry what routing reads.
+      let rows: Array<{ id: string; suggested_name: string | null; barcode_text: string | null; suggested_manufacturer: string | null }> = [];
+      try {
+        rows = (await db
+          .selectFrom("core_scan_inbox_items")
+          .select(["id", "suggested_name", "barcode_text", "suggested_manufacturer"])
+          .where("id", "in", createdIds)
+          .execute()) as typeof rows;
+      } catch (err) {
+        console.error("[core-scan] import: could not read back the new rows:", (err as Error).message);
+      }
+      for (const row of rows) {
+        const id = row.id;
+        let candidates: unknown[] = [];
+        if (menu.length > 0 && row.suggested_name) {
+          try {
+            candidates = heuristicMatch(
+              {
+                name: row.suggested_name ?? "",
+                ...(row.barcode_text ? { barcode: row.barcode_text } : {}),
+                ...(row.suggested_manufacturer ? { manufacturer: row.suggested_manufacturer } : {}),
+              },
+              menu,
+            );
+          } catch (err) {
+            console.error("[core-scan] import: routing threw for one row:", (err as Error).message);
+          }
+        }
+        try {
+          await db
+            .updateTable("core_scan_inbox_items")
+            .set({
+              ai_suggested_at: stampedAt,
+              updated_at: stampedAt,
+              ...(candidates.length > 0
+                ? { suggested_candidates: sql`${JSON.stringify(candidates)}::jsonb` as never }
+                : {}),
+            })
+            .where("id", "=", id)
+            .execute();
+        } catch (err) {
+          console.error("[core-scan] import: could not stamp one row:", (err as Error).message);
+        }
+      }
     }
 
     res.json({

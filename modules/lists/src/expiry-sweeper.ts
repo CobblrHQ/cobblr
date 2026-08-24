@@ -161,6 +161,9 @@ export async function expiryTick(opts: { orgId?: string } = {}): Promise<{ scann
             orgId: org.id,
             userId,
             eventType: "lists.expiring",
+            // A date arrived. Better as one line in somebody's morning list
+            // than as an interruption at whatever hour the sweep ran.
+            triggeredBy: "schedule",
             message: `${row.name} — ${tone}`,
             module: "lists",
             entityType: "inventory:part",

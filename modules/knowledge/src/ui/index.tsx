@@ -6,6 +6,7 @@
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
+  ContributedDetailPanels,
   Modal,
   Markdown,
   MarkdownEditor,
@@ -159,6 +160,7 @@ export function KnowledgeUI({ orgSlug, getToken }: Props) {
       {editing && (
         <EntryEditor
           api={api}
+          orgSlug={orgSlug}
           entry={editing === "new" ? null : editing}
           onClose={() => setEditing(null)}
           onSaved={() => {
@@ -203,11 +205,13 @@ function EntryThumb({ path }: { path: string | null }) {
 function EntryEditor({
   api,
   entry,
+  orgSlug,
   onClose,
   onSaved,
 }: {
   api: KnowledgeApi;
   entry: Entry | null;
+  orgSlug: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -348,6 +352,16 @@ function EntryEditor({
             <MarkdownEditor value={body} onChange={setBody} minRows={10} ariaLabel="Entry body" />
           )}
         </div>
+
+        {/* Only once the entry EXISTS. There is nothing to tag or talk about
+            while it is still being typed, and a conversation attached to a
+            record that may never be saved would have nowhere to live. */}
+        {entry && (
+          <ContributedDetailPanels
+            target="knowledge:entry"
+            ctx={{ slug: orgSlug, entityId: entry.id, entityTitle: entry.title }}
+          />
+        )}
 
         <div className="flex justify-end gap-2 pt-1">
           <button type="button" onClick={onClose} className="px-3 py-1.5 text-sm rounded border border-line dark:border-slate-600 text-muted">

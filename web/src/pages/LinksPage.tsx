@@ -10,6 +10,7 @@ import { ArrowRight, Check, Clock, Plus, X } from "lucide-react";
 import { ApiError, api, type WorkspaceLinkItem } from "../lib/api";
 import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import { ConfigHeaderActions } from "../components/ConfigPageHeader";
+import { ORG_ROLES, type OrgRoleName } from "@cobblr/platform-contract/org-roles";
 
 export function LinksPage() {
   usePageTitle("Workspace links");
@@ -348,7 +349,7 @@ function CreateLinkModal({
   const [targetOrg, setTargetOrg] = useState("");
   const [kindsRaw, setKindsRaw] = useState("inventory:part");
   const [expiryDays, setExpiryDays] = useState("");
-  const [minRole, setMinRole] = useState<"" | "guest" | "member" | "admin" | "owner">("");
+  const [minRole, setMinRole] = useState<"" | OrgRoleName>("");
   const toast = useToast();
 
   const orgs = useQuery({
@@ -457,10 +458,15 @@ function CreateLinkModal({
             className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           >
             <option value="">no restriction - every target member can read</option>
-            <option value="guest">guest or higher</option>
-            <option value="member">member or higher</option>
-            <option value="admin">admin or higher</option>
-            <option value="owner">owner only</option>
+            {/* Built from the vocabulary, weakest first, so a new role appears
+                here the day it exists. This list used to be typed out and had
+                silently lost "editor", which the server would have rejected
+                anyway for the same reason. */}
+            {[...ORG_ROLES].reverse().map((r) => (
+              <option key={r} value={r}>
+                {r === "owner" ? "owner only" : `${r} or higher`}
+              </option>
+            ))}
           </select>
           <div className="text-[11px] text-faint mt-1">
             Only target-workspace members whose role meets-or-exceeds

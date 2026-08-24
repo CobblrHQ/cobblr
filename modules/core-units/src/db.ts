@@ -7,6 +7,7 @@
 
 import type { Generated, Kysely } from "kysely";
 import type { Request } from "express";
+import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
 
 export interface CustomUnitsTable {
   code: string; // primary key — canonical identity within the workspace
@@ -28,7 +29,9 @@ export interface CoreUnitsDB {
   core_units_settings: UnitsSettingsTable;
 }
 
-export type OrgRole = "owner" | "admin" | "member" | "guest";
+/** Re-exported from the contract so this module cannot fall behind the
+ *  vocabulary. It already had: this line used to omit "editor". */
+export type OrgRole = OrgRoleName;
 
 interface RequestWithTenant {
   tenant?: {

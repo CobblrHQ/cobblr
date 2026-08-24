@@ -4,6 +4,7 @@
 
 import type { Generated, Kysely } from "kysely";
 import type { Request } from "express";
+import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
 
 export interface FilePreviewRenderersTable {
   id: Generated<string>;
@@ -27,7 +28,9 @@ export interface FilePreviewDB {
   core_file_preview_renderers: FilePreviewRenderersTable;
 }
 
-export type OrgRole = "owner" | "admin" | "member" | "guest";
+/** Re-exported from the contract so this module cannot fall behind the
+ *  vocabulary. It already had: this line used to omit "editor". */
+export type OrgRole = OrgRoleName;
 
 interface RequestWithTenant {
   tenant?: {

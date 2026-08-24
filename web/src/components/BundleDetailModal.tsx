@@ -9,7 +9,7 @@
 // For installed bundles we additionally hit /bundles/:id to fetch the
 // actually-installed wires/field-defs (in case the manifest drifted).
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowRight, CheckCircle2, ChevronDown, ChevronRight, Compass, Download, Package, Trash2 } from "lucide-react";
@@ -365,6 +365,34 @@ export function BundleDetailModal(props: Props) {
     if (ok) uninstall.mutate();
   }
 
+  // Which features this workspace ACTUALLY has on. Until the detail query lands
+  // this is null, meaning "not known yet" - distinct from "none", because
+  // treating unknown as none is how a tick appears next to something nobody
+  // agreed to.
+  //
+  // ABOVE the `props.mode === null` return on purpose: React identifies hooks by
+  // call order, so a hook below a guard throws "rendered more hooks than during
+  // the previous render" the moment the guard flips.
+  const installedFeatureKeys = useMemo<Set<string> | null>(
+    () => (detail.data ? new Set(detail.data.bundle.enabled_features ?? []) : null),
+    [detail.data],
+  );
+  const showingInstalled = props.mode === "installed" || (props.mode === "featured" && alreadyInstalled);
+
+  // Sync the boxes to the truth ONCE per bundle, when it arrives. The lazy init
+  // read the incoming MANIFEST's defaults, so a feature the new version marks
+  // default:true rendered ticked on an update even though it was not installed -
+  // the modal said "an update never adds or removes capabilities" directly above
+  // a ticked box for something nobody had ever agreed to.
+  const syncedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!showingInstalled || !installedFeatureKeys) return;
+    const id = detail.data?.bundle.id ?? null;
+    if (!id || syncedFor.current === id) return;
+    syncedFor.current = id;
+    setSelectedFeatures(new Set(installedFeatureKeys));
+  }, [showingInstalled, installedFeatureKeys, detail.data?.bundle.id]);
+
   if (props.mode === null || !open) return null;
 
   // Derive the shared rendering shape — the manifest for previews
@@ -395,8 +423,14 @@ export function BundleDetailModal(props: Props) {
   // the installed bundle's modal (features + "Save feature changes").
   const featuresLocked = props.mode === "featured" && alreadyInstalled;
 
+  /** A feature this version offers that the workspace has never turned on.
+   *  Tickable even on a locked update - that is the whole point: the update can
+   *  proceed, and the new thing is offered rather than assumed. */
+  const isNewToYou = (key: string): boolean =>
+    showingInstalled && installedFeatureKeys !== null && !installedFeatureKeys.has(key);
+
   function toggleFeature(key: string) {
-    if (featuresLocked) return;
+    if (featuresLocked && !isNewToYou(key)) return;
     setSelectedFeatures((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
@@ -504,8 +538,11 @@ export function BundleDetailModal(props: Props) {
     // the checkbox state — if the user clicks Update before the bundle-detail
     // query lands, selectedFeatures still holds manifest defaults, and sending
     // those would silently change the installation mid-update.
+    // On a locked update: what is installed, plus anything the person ticked in
+    // this dialog. Never the new manifest's defaults - a version that adds a
+    // feature must ASK, and an unanswered question means no.
     const enabledFeatures = featuresLocked
-      ? (detail.data?.bundle.enabled_features ?? [...selectedFeatures])
+      ? [...new Set([...(detail.data?.bundle.enabled_features ?? []), ...[...selectedFeatures].filter(isNewToYou)])]
       : [...selectedFeatures];
     // Phase 2 — on an UPDATE, surface fields the user customized that this version
     // changes, and let them keep theirs (the safe default) or take the update's.
@@ -897,33 +934,45 @@ export function BundleDetailModal(props: Props) {
               {props.mode === "installed"
                 ? "Turn capabilities on or off, then save. Re-applies the bundle with your choice — your entities (parts, designs, …) stay; only the bundle's fields/views/automations change."
                 : featuresLocked
-                  ? "Updating keeps this setup exactly as it is — an update never adds or removes capabilities. To change what's installed, open this bundle from the Bundles page and edit its features there."
+                  ? "Updating keeps this setup exactly as it is. Anything marked new is off unless you turn it on here. To change what's already installed, open this bundle from the Bundles page and edit its features there."
                   : "The basics are always included. Turn on what you want — the fields, views, and modules below update to match. (Changeable anytime after install.)"}
             </p>
             <ul className="space-y-1.5">
               {features.map((f) => {
                 const on = selectedFeatures.has(f.key);
+                // A locked update still lets you tick something NEW. Locking
+                // that too would mean the only way to see a new feature is to
+                // go somewhere else afterwards, which is how it gets missed.
+                const fresh = isNewToYou(f.key);
+                const frozen = featuresLocked && !fresh;
                 return (
                   <li key={f.key}>
                     <label
                       className={
                         "flex items-start gap-3 rounded-md border p-3 transition " +
-                        (featuresLocked ? "cursor-default opacity-60 " : "cursor-pointer ") +
+                        (frozen ? "cursor-default opacity-60 " : "cursor-pointer ") +
                         (on
                           ? "border-cobble-500 dark:border-cobble-500 bg-cobble-50 dark:bg-cobble-900/30"
                           : "border-line dark:border-slate-700 bg-surface dark:bg-slate-900" +
-                            (featuresLocked ? "" : " hover:border-cobble-300 dark:hover:border-cobble-700"))
+                            (frozen ? "" : " hover:border-cobble-300 dark:hover:border-cobble-700"))
                       }
                     >
                       <input
                         type="checkbox"
                         checked={on}
-                        disabled={featuresLocked}
+                        disabled={frozen}
                         onChange={() => toggleFeature(f.key)}
                         className="mt-0.5 h-4 w-4 shrink-0 accent-cobble-600 disabled:cursor-default"
                       />
                       <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-content dark:text-mortar-100">{f.question ?? f.name}</div>
+                        <div className="text-sm font-medium text-content dark:text-mortar-100">
+                          {f.question ?? f.name}
+                          {fresh && (
+                            <span className="ml-2 align-middle text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-cobble-100 dark:bg-cobble-900/50 text-cobble-700 dark:text-cobble-300">
+                              new
+                            </span>
+                          )}
+                        </div>
                         {f.description && (
                           <div className="text-xs text-muted dark:text-slate-300 mt-0.5">{f.description}</div>
                         )}

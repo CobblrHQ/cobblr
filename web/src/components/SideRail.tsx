@@ -23,7 +23,14 @@
 // With one tab the bar hides itself and the header shows that tab's own title,
 // which is why introducing this shell changed nothing on screen.
 
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+  type ReactNode, useRef } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { SidePanel } from "./SidePanel";
@@ -63,6 +70,37 @@ const Ctx = createContext<RailContext | null>(null);
  *  the generic form. */
 export function openRail(tabId: string): void {
   window.dispatchEvent(new CustomEvent("cobblr:open-rail", { detail: { tab: tabId } }));
+}
+
+// WHICH TAB IS SHOWING, readable from outside the rail.
+//
+// The launchers live in the app chrome, not under this provider, so they cannot
+// use the context. Without knowing the active tab a launcher can only "open" or
+// "toggle", and both are wrong once there is more than one room: pressing Cobb
+// while Discussion was showing CLOSED the panel instead of switching to Cobb,
+// and pressing Discussion while Discussion was showing did nothing at all.
+//
+// A tiny store rather than a context, for the same reason openRail is an event:
+// the two sides of this are in different subtrees and always will be.
+let activeTab: string | null = null;
+const tabListeners = new Set<() => void>();
+
+function setActiveTabStore(id: string | null): void {
+  if (activeTab === id) return;
+  activeTab = id;
+  for (const l of tabListeners) l();
+}
+
+/** The tab the rail is showing, or null. Re-renders on change. */
+export function useRailActiveTab(): string | null {
+  return useSyncExternalStore(
+    (cb: () => void) => {
+      tabListeners.add(cb);
+      return () => tabListeners.delete(cb);
+    },
+    () => activeTab,
+    () => activeTab,
+  );
 }
 
 /** Mount a tab into the rail.
@@ -131,10 +169,14 @@ export function RailTabContent({
 export function SideRail({
   open,
   setOpen,
+  initialTab,
   children,
 }: {
   open: boolean;
   setOpen: (v: boolean) => void;
+  /** The tab that was showing before a refresh, if any. Honoured ONCE, when the
+   *  tab that owns it registers - after that the person's clicks decide. */
+  initialTab?: string | null;
   /** The tab components. Mounted here for the lifetime of the app so their
    *  state survives the rail closing. */
   children: ReactNode;
@@ -154,11 +196,34 @@ export function SideRail({
   );
 
   // First tab to register becomes the default, so the rail is never open with
-  // nothing showing.
+  // nothing showing - UNLESS a previous tab is remembered and still exists.
+  //
+  // Tabs register one by one as their components mount, so "restore" cannot be
+  // a one-shot on first render: the remembered tab may not have registered yet,
+  // and picking tabs[0] before it does is exactly how a refresh landed everyone
+  // back on Cobb. The restore is therefore attempted on every registration
+  // until it lands, and then never again, so it cannot fight a later click.
+  const restored = useRef(false);
   useEffect(() => {
-    if (!activeId && tabs[0]) setActiveId(tabs[0].id);
+    if (!activeId && tabs[0]) {
+      const wanted = !restored.current && initialTab ? tabs.find((t) => t.id === initialTab) : undefined;
+      if (wanted) restored.current = true;
+      setActiveId((wanted ?? tabs[0]).id);
+    }
+    if (!restored.current && initialTab && activeId && activeId !== initialTab) {
+      const wanted = tabs.find((t) => t.id === initialTab);
+      if (wanted) {
+        restored.current = true;
+        setActiveId(wanted.id);
+      }
+    }
     if (activeId && !tabs.some((t) => t.id === activeId)) setActiveId(tabs[0]?.id ?? null);
-  }, [tabs, activeId]);
+  }, [tabs, activeId, initialTab]);
+
+  // Mirror it out for the launchers. `open` is theirs already; the tab is not.
+  useEffect(() => {
+    setActiveTabStore(open ? activeId : null);
+  }, [open, activeId]);
 
   useEffect(() => {
     const onOpenRail = (e: Event) => {

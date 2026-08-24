@@ -325,6 +325,19 @@ function Chip({
   };
 
   const isSelect = def.type === "select" && def.choices?.length;
+  // A TEXT field with choices is this platform's dropdown, and its choices are
+  // SUGGESTIONS rather than constraints - the stored value is free text and the
+  // list is what people usually pick. Keying the dropdown only on type:"select"
+  // rendered such a field as a bare text box with its list unreachable, which is
+  // what "Acquired from" looked like: an empty box for a field that had six
+  // answers ready (2026-08-24).
+  //
+  // A datalist rather than a <select>, because a <select> would turn the
+  // suggestions into the only options and lose the free text the field is for.
+  const suggestions = !isSelect && def.type !== "date" && def.type !== "number"
+    ? (def.choices ?? [])
+    : [];
+  const listId = suggestions.length ? `chip-choices-${def.key}` : undefined;
   // A rich control owns the whole row: a swatch picker or a checkbox with help
   // beneath it has no business being squeezed into a chip's width.
   const hosting = editing && !!customEditor;
@@ -400,6 +413,7 @@ function Chip({
               inputRef.current = el;
             }}
             type={def.type === "number" ? "number" : def.type === "date" ? "date" : "text"}
+            list={listId}
             value={draft}
             placeholder={def.placeholder}
             onChange={(e) => {
@@ -420,6 +434,13 @@ function Chip({
             }}
             className="bg-transparent border-0 p-0 text-sm outline-none w-full min-w-0"
           />
+        )}
+        {listId && (
+          <datalist id={listId}>
+            {suggestions.map((c) => (
+              <option key={c} value={c} />
+            ))}
+          </datalist>
         )}
       </span>
     </span>

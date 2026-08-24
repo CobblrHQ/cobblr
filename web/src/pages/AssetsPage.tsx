@@ -20,7 +20,7 @@ import { CustomFieldsPanel,
   useAskCobbAboutSelection,
   Modal,
   useToast,
-  useConfirm, usePageTitle } from "@cobblr/platform-web";
+  useConfirm, usePageTitle, usePageWidth } from "@cobblr/platform-web";
 import {
   BulkActionBar,
   MoveToInstanceModal,
@@ -46,6 +46,8 @@ export function AssetsPage({
   // items. No lens/instance-chooser (the instance IS the focus), and detail is
   // local state (no /<instance>/:id route). Mirrors MachinesPage.
   usePageTitle(displayName ?? "Assets");
+  // A wide table is the page here, so it gets the screen.
+  usePageWidth("wide");
   const { activeSlug } = useActiveOrg();
   const navigate = useNavigate();
   const { id } = useParams<{ id?: string }>();

@@ -51,6 +51,7 @@ navHeadingsRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
   }
 });
 
+// AI-ACTION: core-presentation:group-nav
 navHeadingsRouter.post("/", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (!requireOwnerOrAdmin(req, res)) return;
@@ -70,6 +71,8 @@ navHeadingsRouter.post("/", requireAuth, withTenant, async (req, res, next) => {
   }
 });
 
+// AI-REACH: renaming or re-icon-ing a heading is a presentation detail with no
+// sentence behind it yet. group-nav creates one with the name it was given.
 navHeadingsRouter.patch("/:id", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (!requireOwnerOrAdmin(req, res)) return;
@@ -89,6 +92,8 @@ navHeadingsRouter.patch("/:id", requireAuth, withTenant, async (req, res, next) 
   }
 });
 
+// AI-REACH: ungroup-nav empties a heading, which is the ask ("take them back
+// out"). Removing the empty label itself has never been asked for in words.
 navHeadingsRouter.delete("/:id", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (!requireOwnerOrAdmin(req, res)) return;
@@ -99,6 +104,7 @@ navHeadingsRouter.delete("/:id", requireAuth, withTenant, async (req, res, next)
   }
 });
 
+// AI-ACTION: core-presentation:group-nav
 navHeadingsRouter.post("/:id/members", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (!requireOwnerOrAdmin(req, res)) return;
@@ -121,6 +127,7 @@ navHeadingsRouter.post("/:id/members", requireAuth, withTenant, async (req, res,
 
 // Remove a member by its target — an entry is in at most one heading, so
 // the heading id isn't needed.
+// AI-ACTION: core-presentation:ungroup-nav
 navHeadingsRouter.delete(
   "/members/:targetKind/:targetId",
   requireAuth,

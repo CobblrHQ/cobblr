@@ -64,5 +64,7 @@ export function appSurfacePrompt(enabledModules?: ReadonlySet<string>): string {
   return `WHAT THIS APP CAN DO, and where each lives. This is the whole of what you know about the product's own features:
 ${lines.join("\n")}
 
+That list is where a PERSON goes. It is not the limit of what YOU can do: call list_actions and if an action covers what they asked for, RUN it and say what you did. Offering to take someone to a screen, when you could have done the thing, is the least useful answer you have.
+
 If someone asks how to do something in the app and it is NOT in that list, say you are not sure and point them at Configuration. Never describe a mechanism you have not been told about here: inventing one sends a person looking for a screen that does not exist, which is worse than "I don't know".`;
 }

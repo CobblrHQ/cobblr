@@ -25,10 +25,10 @@ import {
   signOAuthState,
   verifyOAuthState,
   discordAuthorizeUrl,
-  exchangeCodeForIdentity,
-} from "../platform/discord-oauth.js";
+  exchangeCodeForIdentity, discordAppId } from "../platform/discord-oauth.js";
 import { communityLinks } from "../platform/community.js";
 import { sendDiscordDm } from "../platform/discord-bot-trigger.js";
+import { discordConnectionState, needsAppStamp } from "../platform/discord-connection.js";
 import { publicBaseUrl } from "../platform/public-url.js";
 import {
   NOTIFICATION_TYPES,
@@ -36,6 +36,7 @@ import {
   isTier2,
   isPrefChannel,
 } from "../platform/notification-catalog.js";
+import { ORG_ROLES } from "@cobblr/platform-contract/org-roles";
 
 export const meRouter = Router();
 
@@ -44,7 +45,7 @@ meRouter.get("/me", requireAuth, async (req, res) => {
   const [user, orgs] = await Promise.all([
     meta
       .selectFrom("users")
-      .select(["id", "email", "display_name", "must_reset_password", "email_verified_at", "theme_pref", "nav_pref"])
+      .select(["id", "email", "display_name", "must_reset_password", "email_verified_at", "theme_pref", "nav_pref", "tour_seen_at"])
       .where("id", "=", userId)
       .executeTakeFirstOrThrow(),
     listMembershipsForUser(userId),
@@ -187,6 +188,11 @@ const MeUpdate = z.object({
   display_name: z.string().min(1).max(160).optional(),
   // Per-user theme; null clears back to device/OS default.
   theme_pref: z.enum(["light", "dark"]).nullable().optional(),
+  /** true = mark the tour seen now. false = clear it, so "Take the tour" from
+   *  the account menu can put somebody back to never-seen if they want it
+   *  offered again. A timestamp is not accepted from the client: when it
+   *  happened is the server's to say. */
+  tour_seen: z.boolean().optional(),
   // Per-user nav layout (desktop only — a phone keeps its own menu whatever
   // this says). null clears back to the device default. Strict so a stray key
   // can't be smuggled into the blob and read back out as trusted state.
@@ -220,6 +226,9 @@ meRouter.patch("/me", requireAuth, async (req, res, next) => {
           display_name: parsed.data.display_name.trim(),
         }),
         ...(parsed.data.theme_pref !== undefined && { theme_pref: parsed.data.theme_pref }),
+        ...(parsed.data.tour_seen !== undefined && {
+          tour_seen_at: parsed.data.tour_seen ? new Date() : null,
+        }),
         ...(parsed.data.nav_pref !== undefined && {
           // jsonb-replace-ok: nav_pref is one small document this endpoint owns
           nav_pref: (parsed.data.nav_pref === null
@@ -228,7 +237,7 @@ meRouter.patch("/me", requireAuth, async (req, res, next) => {
         }),
       })
       .where("id", "=", req.session!.id)
-      .returning(["id", "email", "display_name", "theme_pref", "nav_pref"])
+      .returning(["id", "email", "display_name", "theme_pref", "nav_pref", "tour_seen_at"])
       .executeTakeFirstOrThrow();
     res.json({ user: updated });
   } catch (err) {
@@ -379,13 +388,31 @@ const WindowBody = z.object({
   deliver_at_minute: z.number().int().min(0).max(1439).optional(),
   /** IANA zone. 08:00 has to mean 08:00 where the person is. */
   timezone: z.string().min(1).max(64).optional(),
+  /** The cadence for DATED things — expiring today, service due, running low —
+   *  as opposed to the one above, which governs things that just happened.
+   *
+   *  `inherit` means what a single-cadence window always meant: dated things
+   *  follow the same rule as everything else. Omitting it leaves the stored
+   *  value alone, so a client that has never heard of the split cannot reset
+   *  somebody's morning brief by saving an unrelated preference. */
+  schedule_mode: z.enum(["inherit", "immediate", "daily"]).optional(),
+  schedule_deliver_at_minute: z.number().int().min(0).max(1439).optional(),
 });
 
 meRouter.get("/me/delivery-windows", requireAuth, async (req, res, next) => {
   try {
     const rows = await meta
       .selectFrom("notification_delivery_windows")
-      .select(["channel", "mode", "deliver_at_minute", "timezone", "last_delivered_at"])
+      .select([
+        "channel",
+        "mode",
+        "deliver_at_minute",
+        "timezone",
+        "last_delivered_at",
+        "schedule_mode",
+        "schedule_deliver_at_minute",
+        "schedule_last_delivered_at",
+      ])
       .where("user_id", "=", req.session!.id)
       .execute();
     // What is waiting, per channel. "You have 5 updates queued for 08:00" is
@@ -393,13 +420,26 @@ meRouter.get("/me/delivery-windows", requireAuth, async (req, res, next) => {
     // only way to know whether anything deferred is to wait and see.
     const pending = await meta
       .selectFrom("notification_deferred")
-      .select(["channel", meta.fn.count<string>("id").as("n")])
+      .select(["channel", "triggered_by", meta.fn.count<string>("id").as("n")])
       .where("user_id", "=", req.session!.id)
-      .groupBy("channel")
+      .groupBy(["channel", "triggered_by"])
       .execute();
-    const byChannel = new Map(pending.map((p) => [p.channel, Number(p.n)]));
+    // Per channel, and per class within it: "5 waiting" is a different answer
+    // depending on whether it is chat or things due today, and the two now
+    // arrive at different times.
+    const byChannel = new Map<string, number>();
+    const byClass = new Map<string, number>();
+    for (const p of pending) {
+      byChannel.set(p.channel, (byChannel.get(p.channel) ?? 0) + Number(p.n));
+      byClass.set(`${p.channel}:${p.triggered_by}`, Number(p.n));
+    }
     res.json({
-      items: rows.map((r) => ({ ...r, pending_count: byChannel.get(r.channel) ?? 0 })),
+      items: rows.map((r) => ({
+        ...r,
+        pending_count: byChannel.get(r.channel) ?? 0,
+        pending_activity: byClass.get(`${r.channel}:activity`) ?? 0,
+        pending_schedule: byClass.get(`${r.channel}:schedule`) ?? 0,
+      })),
       // Channels with mail queued but no window row (the window was removed
       // while mail waited) still owe the person something; the sweeper sends
       // those on its next pass, so say so rather than hiding them.
@@ -443,12 +483,20 @@ meRouter.put("/me/delivery-windows", requireAuth, async (req, res, next) => {
         mode: b.mode,
         ...(b.deliver_at_minute !== undefined ? { deliver_at_minute: b.deliver_at_minute } : {}),
         ...(b.timezone ? { timezone: b.timezone } : {}),
+        ...(b.schedule_mode ? { schedule_mode: b.schedule_mode } : {}),
+        ...(b.schedule_deliver_at_minute !== undefined
+          ? { schedule_deliver_at_minute: b.schedule_deliver_at_minute }
+          : {}),
       })
       .onConflict((oc) =>
         oc.columns(["user_id", "channel"]).doUpdateSet({
           mode: b.mode,
           ...(b.deliver_at_minute !== undefined ? { deliver_at_minute: b.deliver_at_minute } : {}),
           ...(b.timezone ? { timezone: b.timezone } : {}),
+          ...(b.schedule_mode ? { schedule_mode: b.schedule_mode } : {}),
+          ...(b.schedule_deliver_at_minute !== undefined
+            ? { schedule_deliver_at_minute: b.schedule_deliver_at_minute }
+            : {}),
           updated_at: new Date(),
         }),
       )
@@ -1088,7 +1136,7 @@ const LinkCreate = z.object({
   /** M1 v0.5: gate cross-workspace reads on target-side role.
    *  null/omitted = no restriction (every target member can read). */
   min_target_role: z
-    .enum(["owner", "admin", "member", "guest"])
+    .enum(ORG_ROLES)
     .nullable()
     .optional(),
 });
@@ -1259,7 +1307,7 @@ meRouter.get("/me/links", requireAuth, async (req, res, next) => {
 const LinkPatch = z.object({
   expires_at: z.string().datetime().nullable().optional(),
   min_target_role: z
-    .enum(["owner", "admin", "member", "guest"])
+    .enum(ORG_ROLES)
     .nullable()
     .optional(),
 });
@@ -1688,13 +1736,30 @@ meRouter.get("/me/discord", requireAuth, async (req, res, next) => {
   try {
     const row = await meta
       .selectFrom("discord_connections")
-      .select(["discord_user_id", "discord_username", "verified"])
+      .select(["discord_user_id", "discord_username", "verified", "verified_app_id"])
       .where("user_id", "=", req.session!.id)
       .executeTakeFirst();
+    // Lazy backfill: a row verified before the column existed is grandfathered
+    // and stamped here, so deploying prompts nobody and only a genuine app
+    // change does. Cheap, idempotent, and never runs twice for a row.
+    if (needsAppStamp(row)) {
+      await meta
+        .updateTable("discord_connections")
+        .set({ verified_app_id: discordAppId(), updated_at: new Date() })
+        .where("user_id", "=", req.session!.id)
+        .where("verified_app_id", "is", null)
+        .execute();
+    }
+    const state = discordConnectionState(row);
     res.json({
       configured: discordOAuthConfigured(),
       connected: Boolean(row?.discord_user_id),
-      verified: Boolean(row?.verified),
+      // `verified` stays the field the UI already reads, and now answers the
+      // question that matters: can the app that is sending TODAY reach you.
+      verified: state === "verified",
+      /** True when a previous app verified this and a different one is now
+       *  configured — connected, but needing one re-confirmation. */
+      needs_reverify: state === "stale-app",
       username: row?.discord_username ?? null,
       invite_url: discordInviteUrl() || null,
     });
@@ -1742,6 +1807,9 @@ meRouter.get("/me/discord/oauth-callback", async (req, res, next) => {
         discord_user_id: identity.id,
         discord_username: identity.username,
         verified: false,
+        // Cleared with `verified`: a fresh link has proved nothing yet, and a
+        // stamp left from a previous app would outlive the thing it described.
+        verified_app_id: null,
         connected_at: new Date(),
         updated_at: new Date(),
       })
@@ -1750,6 +1818,7 @@ meRouter.get("/me/discord/oauth-callback", async (req, res, next) => {
           discord_user_id: identity.id,
           discord_username: identity.username,
           verified: false,
+          verified_app_id: null,
           connected_at: new Date(),
           updated_at: new Date(),
         }),

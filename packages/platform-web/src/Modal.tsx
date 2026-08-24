@@ -73,6 +73,18 @@ interface Props {
   cobb?: { opener: string; label?: string };
 }
 
+/** Pick by what the body HOLDS, not by how important the dialog feels.
+ *
+ *  The shell is height-capped and its body scrolls, so nothing is ever
+ *  unreachable — but a narrow column turns a long body into a blind scroll where
+ *  you cannot survey the options and the confirm button sits below the fold.
+ *  Measured on the operator-token dialog at 1440x900: twelve scopes with a
+ *  sentence each rendered an 850px list at `sm`, putting the mint button at
+ *  y=918. The same content at `xl` in two columns is 416px, button at y=484.
+ *
+ *  Rule of thumb: a form of a few fields is `sm`/`md`. A body that renders a
+ *  LIST of unknown length wants `lg`+ and its own height cap, so the list
+ *  scrolls inside the dialog and the actions stay put. */
 const SIZE: Record<NonNullable<Props["size"]>, string> = {
   sm: "max-w-md",
   md: "max-w-xl",

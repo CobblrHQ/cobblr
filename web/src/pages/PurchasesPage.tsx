@@ -15,7 +15,7 @@ import { ReceiptSourceViewer } from "../components/ReceiptSourceViewer";
 import { ModuleInstanceChooser } from "../components/ModuleInstanceChooser";
 import { ModulePurposeHint } from "../components/ModulePurposeHint";
 import { usePublishChatContext, useAskCobbAboutSelection } from "../lib/chat-context";
-import { BulkActionBar, EntityActionsBar, EntityThumb, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { BulkActionBar, EntityActionsBar, EntityThumb, Modal, useToast, useConfirm, usePageTitle, usePageWidth } from "@cobblr/platform-web";
 import { ContributedDetailPanels } from "../panels/registry";
 import { receiptGroupSummary } from "./receiptLabel";
 import { ReceiptAddressChip } from "../components/ReceiptAddressChip";
@@ -201,6 +201,8 @@ const STATUSES: Order["status"][] = ["planned", "ordered", "in-transit", "arrive
 
 export function PurchasesPage() {
   usePageTitle("Purchases");
+  // A wide table is the page here, so it gets the screen.
+  usePageWidth("wide");
   const { activeSlug } = useActiveOrg();
   const navigate = useNavigate();
   const { id } = useParams<{ id?: string }>();

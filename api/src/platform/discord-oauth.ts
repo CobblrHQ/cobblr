@@ -29,6 +29,19 @@ export function discordOAuthConfigured(): boolean {
   return Boolean(CLIENT_ID && CLIENT_SECRET && REDIRECT_URI);
 }
 
+/** The Discord APPLICATION currently configured, as its client id.
+ *
+ *  A DM channel belongs to a bot, not to Cobblr. Swap the app and every stored
+ *  `verified` becomes a claim about a bot that is no longer sending — one that
+ *  fails silently, because an undeliverable DM is recorded as an outcome and
+ *  nothing else. So verification is stamped with the app that proved it, and a
+ *  mismatch means re-prove rather than assume.
+ *
+ *  "" when unconfigured, which reads as "no app", never as "matches". */
+export function discordAppId(): string {
+  return CLIENT_ID;
+}
+
 /** Optional invite link to the Cobblr Discord server — offered when a test DM
  *  bounces (joining a shared server unblocks DMs). "" when unset. */
 export function discordInviteUrl(): string {

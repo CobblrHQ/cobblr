@@ -6,7 +6,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { ContributedDetailPanels, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import { Hammer, Plus, Trash2, X, Wrench, AlertTriangle, Layers, ListOrdered, Check, Circle, ChevronUp, ChevronDown, Clock, History, GitBranch, Search, CornerDownRight, CalendarClock } from "lucide-react";
 import { BuildsApi, BuildsApiError, type BuildSummary, type PartOption, type OperationRow, type GenealogyNode } from "./api.js";
 
@@ -121,7 +121,7 @@ export function BuildsUI({ orgSlug, getToken }: Props) {
         </Modal>
       )}
 
-      {open && <BuildDetailModal buildId={open} api={api} onClose={() => setOpen(null)} />}
+      {open && <BuildDetailModal orgSlug={orgSlug} buildId={open} api={api} onClose={() => setOpen(null)} />}
     </div>
   );
 }
@@ -142,7 +142,7 @@ function BuildCard({ build, onOpen, onDelete }: { build: BuildSummary; onOpen: (
   );
 }
 
-function BuildDetailModal({ buildId, api, onClose }: { buildId: string; api: BuildsApi; onClose: () => void }) {
+function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string; api: BuildsApi; orgSlug: string; onClose: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [qty, setQty] = useState(1);
@@ -331,6 +331,13 @@ function BuildDetailModal({ buildId, api, onClose }: { buildId: string; api: Bui
             <TraceBox api={api} />
           </>
         )}
+
+        {/* Tags and discussion, contributed at every kind. A record you
+            open is a record somebody may want to say something about. */}
+        <ContributedDetailPanels
+          target="builds:build"
+          ctx={{ slug: orgSlug, entityId: buildId, entityTitle: d?.build.name ?? "Build" }}
+        />
       </div>
     </Modal>
   );

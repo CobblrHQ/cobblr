@@ -40,7 +40,7 @@ import {
   type ActionAppliesToDecl,
 } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
-import type { ModuleFieldDefsTable } from "../db/schema.js";
+import type { FieldOverrideBlob, ModuleFieldDefsTable } from "../db/schema.js";
 import { matchAction } from "./actions.js";
 import * as activity from "./activity.js";
 import { clearComputedDefsCache } from "./computed-fields.js";
@@ -332,4 +332,160 @@ export async function createFieldDef(
     }
     throw err;
   }
+}
+
+// ─────────────────────────── change one, remove one ─────────────────────────
+//
+// Both bodies used to live inline in the PATCH/DELETE routes. They moved here
+// when the assistant got doors of its own (platform:edit-field /
+// platform:remove-field): a rule that lives in a route handler is a rule the
+// assistant does not obey, and the bundle-provenance routing below is exactly
+// the kind nobody would think to copy.
+
+export const FieldDefPatch = z.object({
+  display_label: z.string().min(1).optional(),
+  required: z.boolean().optional(),
+  position: z.number().int().optional(),
+  choices: z.array(z.string().max(120)).nullable().optional(),
+  renderer: FieldRenderer.nullable().optional(),
+  template: z.string().max(2000).nullable().optional(),
+  /** Only meaningful on type='number' defs — validated against the row's
+   *  type here (the patch body alone can't see it). */
+  unit: z.string().trim().min(1).max(40).nullable().optional(),
+  /** Settable after the fact, so a field made before roles existed can be told
+   *  what it means without being recreated. Null clears it. */
+  field_role: FieldRoleSchema.nullable().optional(),
+});
+
+export type FieldDefPatchInput = z.infer<typeof FieldDefPatch>;
+
+export type UpdateFieldDefResult =
+  | { ok: true; def: FieldDefRow; effectiveChoices?: string[] | null }
+  | { ok: false; code: "not_found" | "unit_not_number" | "no_changes"; message: string };
+
+/** Change one field def — the shared body of PATCH /field-defs/:id and the
+ *  platform:edit-field action. */
+export async function updateFieldDef(
+  orgId: string,
+  id: string,
+  patch: FieldDefPatchInput,
+): Promise<UpdateFieldDefResult> {
+  const updates: Record<string, unknown> = {};
+  if (patch.display_label !== undefined) updates.display_label = patch.display_label;
+  if (patch.required !== undefined) updates.required = patch.required;
+  if (patch.position !== undefined) updates.position = patch.position;
+  if (patch.choices !== undefined) {
+    updates.choices = patch.choices ? sql`${JSON.stringify(patch.choices)}::jsonb` : null;
+  }
+  if (patch.renderer !== undefined) updates.renderer = patch.renderer;
+  if (patch.template !== undefined) updates.template = patch.template;
+  if (patch.unit !== undefined) updates.unit = patch.unit;
+  if (patch.field_role !== undefined) updates.field_role = patch.field_role;
+
+  const def = await meta
+    .selectFrom("module_field_defs")
+    .selectAll()
+    .where("id", "=", id)
+    .where("org_id", "=", orgId)
+    .executeTakeFirst();
+  if (!def) return { ok: false, code: "not_found", message: "field def not found" };
+
+  // A unit only makes sense on a number field — checked here because the
+  // patch body alone can't see the row's type.
+  if (patch.unit != null && def.type !== "number") {
+    return { ok: false, code: "unit_not_number", message: "unit is only valid for type='number'" };
+  }
+
+  // Provenance: a `choices` change on a BUNDLE-owned field def routes to the
+  // USER override layer (bundle_id null), never the bundle row — so the
+  // "+ add option" can't be clobbered by the next bundle update. This is the
+  // single chokepoint: every client PATCHes through here, so none of them can
+  // clobber a bundle field.
+  let routedChoices = false;
+  if (def.bundle_id && patch.choices !== undefined) {
+    const existing = await meta
+      .selectFrom("native_field_overrides")
+      .selectAll()
+      .where("org_id", "=", orgId)
+      .where("entity_kind", "=", def.entity_kind)
+      .where("name", "=", def.name)
+      .executeTakeFirst();
+    const blob: FieldOverrideBlob = { ...(existing?.overrides ?? {}) };
+    if (patch.choices === null) delete blob.choices;
+    else blob.choices = patch.choices;
+    const blobSql = sql`${JSON.stringify(blob)}::jsonb` as unknown as FieldOverrideBlob;
+    await meta
+      .insertInto("native_field_overrides")
+      .values({
+        org_id: orgId,
+        entity_kind: def.entity_kind,
+        name: def.name,
+        display_label: existing?.display_label ?? null,
+        hidden: existing?.hidden ?? false,
+        position: existing?.position ?? 0,
+        overrides: blobSql,
+        bundle_id: null,
+      })
+      .onConflict((c) =>
+        c.columns(["org_id", "entity_kind", "name"]).doUpdateSet({
+          overrides: blobSql,
+          bundle_id: null,
+          updated_at: new Date(),
+        }),
+      )
+      .execute();
+    delete updates.choices;
+    routedChoices = true;
+  }
+
+  if (Object.keys(updates).length === 0 && !routedChoices) {
+    return { ok: false, code: "no_changes", message: "no fields to update" };
+  }
+  let updated = def;
+  if (Object.keys(updates).length > 0) {
+    const u = await meta
+      .updateTable("module_field_defs")
+      .set(updates as never)
+      .where("id", "=", id)
+      .where("org_id", "=", orgId)
+      .returningAll()
+      .executeTakeFirst();
+    if (!u) return { ok: false, code: "not_found", message: "field def not found" };
+    updated = u;
+  }
+  await activity.log({
+    orgId,
+    action: "field_def_updated",
+    ref: { module: null, entityType: "field_def", entityId: updated.id },
+    diff: patch,
+  });
+  clearComputedDefsCache();
+  return routedChoices
+    ? { ok: true, def: updated, effectiveChoices: patch.choices ?? def.choices }
+    : { ok: true, def: updated };
+}
+
+export type DeleteFieldDefResult =
+  | { ok: true; def: FieldDefRow }
+  | { ok: false; code: "not_found"; message: string };
+
+/** Remove one field def — the shared body of DELETE /field-defs/:id and the
+ *  platform:remove-field action. Values already recorded stay on the records:
+ *  the def is what goes, so re-adding the field under the same name brings them
+ *  back into view. */
+export async function deleteFieldDef(orgId: string, id: string): Promise<DeleteFieldDefResult> {
+  const deleted = await meta
+    .deleteFrom("module_field_defs")
+    .where("id", "=", id)
+    .where("org_id", "=", orgId)
+    .returningAll()
+    .executeTakeFirst();
+  if (!deleted) return { ok: false, code: "not_found", message: "field def not found" };
+  await activity.log({
+    orgId,
+    action: "field_def_deleted",
+    ref: { module: null, entityType: "field_def", entityId: deleted.id },
+  });
+  clearComputedDefsCache();
+  return { ok: true, def: deleted };
 }

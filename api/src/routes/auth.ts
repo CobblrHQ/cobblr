@@ -48,7 +48,7 @@ import { dispatch } from "../platform/notifications.js";
 import { isUndeliverableTestAddress } from "../platform/email-send.js";
 import * as activity from "../platform/activity.js";
 import { fireSignup, sendAuthEmail } from "../platform/hosted-seams.js";
-import { discordInviteUrl } from "../platform/discord-oauth.js";
+import { discordInviteUrl, discordAppId } from "../platform/discord-oauth.js";
 import { communityLinks, type CommunityLink } from "../platform/community.js";
 import { enableDefaultModulesForOrg } from "../modules/enable.js";
 import { provisionAppWorkspace, ProvisionAppError } from "../platform/provision-app.js";
@@ -1375,7 +1375,17 @@ authRouter.post("/discord/verify-dm", async (req, res, next) => {
     }
     await meta
       .updateTable("discord_connections")
-      .set({ verified: true, verify_token: null, verify_expires_at: null, updated_at: new Date() })
+      // Stamp WHICH app proved it. The test DM that just landed came from the
+      // configured bot, and that is exactly the fact worth recording: point the
+      // server at a different app later and this stops matching, which is what
+      // turns a silent dead channel into one re-confirmation.
+      .set({
+        verified: true,
+        verified_app_id: discordAppId(),
+        verify_token: null,
+        verify_expires_at: null,
+        updated_at: new Date(),
+      })
       .where("verify_token", "=", parsed.data.token)
       .execute();
     res.json({ ok: true });

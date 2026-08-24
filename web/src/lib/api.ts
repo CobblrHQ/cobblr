@@ -11,6 +11,7 @@ import type {
   AiConnectionTest,
 } from "@cobblr/platform-contract";
 import { describeUnreadableBody } from "@cobblr/platform-web";
+import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
 
 const TOKEN_KEY = "cobblr.token";
 
@@ -188,6 +189,10 @@ export interface SessionUser {
   /** Desktop nav layout, follows you across devices. null/absent = this device's
    *  own default stands. Phones ignore it (the sidebar is `hidden md:block`). */
   nav_pref?: { mode: "top" | "side"; autohide: boolean; topbar: boolean } | null;
+  /** When the guided tour was completed or skipped. null = never, absent = the
+   *  account has not loaded yet. Account-level so a new device, a different
+   *  origin and a new workspace all agree. */
+  tour_seen_at?: string | null;
   /** True when an admin minted this account with a temp password. UI
    *  redirects to /me/force-password-reset until cleared. PATCH
    *  /me/password clears it. */
@@ -212,7 +217,7 @@ export interface OrgMembership {
   id: string;
   name: string;
   slug: string;
-  role: "owner" | "admin" | "editor" | "member" | "guest";
+  role: OrgRoleName;
   /** Display name of the workspace's owner — for the switcher's "Owner: …" on
    *  workspaces you don't own. Null if unresolved. */
   owner_name?: string | null;
@@ -651,6 +656,26 @@ export interface OrgModuleListItem {
   enabled_at: string | null;
 }
 
+/** When a channel's messages arrive, per person.
+ *
+ *  Two cadences, because chat and "expires today" are both priority `normal`
+ *  and people want them on different rhythms: conversation as it happens,
+ *  everything due today as one morning list. `schedule_mode: "inherit"` means
+ *  one cadence for both, which is what a window meant before the split. */
+export interface DeliveryWindowRow {
+  channel: string;
+  mode: "immediate" | "daily";
+  deliver_at_minute: number;
+  timezone: string;
+  last_delivered_at: string | null;
+  schedule_mode: "inherit" | "immediate" | "daily";
+  schedule_deliver_at_minute: number;
+  schedule_last_delivered_at: string | null;
+  pending_count: number;
+  pending_activity: number;
+  pending_schedule: number;
+}
+
 export interface ModuleListItem {
   name: string;
   version: string;
@@ -914,6 +939,10 @@ export const api = {
   /** Persist the per-user desktop nav layout (follows you across devices). */
   setNavPref: (nav_pref: { mode: "top" | "side"; autohide: boolean; topbar: boolean } | null) =>
     request<{ user: { nav_pref: unknown } }>("PATCH", "/me", { nav_pref }),
+  /** Remember that this person has seen the tour, on the ACCOUNT — localStorage
+   *  alone forgets on a new device, a different origin and a cleared cache. */
+  setTourSeen: (tour_seen: boolean) =>
+    request<{ user: { tour_seen_at: string | null } }>("PATCH", "/me", { tour_seen }),
   /** Owner-only rename. `name` = display name (safe). `slug` = the URL handle
    *  (risky — breaks existing links). Returns the new name + slug. */
   renameOrg: (slug: string, body: { name?: string; slug?: string }) =>
@@ -1713,7 +1742,7 @@ export const api = {
 
   // ─── Discord connection (Feature 1) ───────────────────────────────
   meDiscordStatus: () =>
-    request<{ configured: boolean; connected: boolean; verified: boolean; username: string | null; invite_url: string | null }>(
+    request<{ configured: boolean; connected: boolean; verified: boolean; needs_reverify?: boolean; username: string | null; invite_url: string | null }>(
       "GET",
       "/me/discord",
     ),
@@ -1731,6 +1760,20 @@ export const api = {
     request<CommunicationPrefs>("GET", "/me/communication-prefs"),
   setMeCommunicationPref: (body: { notification_type: string; channel: string; enabled: boolean }) =>
     request<{ ok: boolean }>("PUT", "/me/communication-prefs", body),
+
+  meDeliveryWindows: () =>
+    request<{ items: DeliveryWindowRow[]; orphaned: { channel: string; pending_count: number }[] }>(
+      "GET",
+      "/me/delivery-windows",
+    ),
+  setMeDeliveryWindow: (body: {
+    channel: string;
+    mode: "immediate" | "daily";
+    deliver_at_minute?: number;
+    timezone?: string;
+    schedule_mode?: "inherit" | "immediate" | "daily";
+    schedule_deliver_at_minute?: number;
+  }) => request<{ ok: boolean }>("PUT", "/me/delivery-windows", body),
 
   // ─── Browser driving (Feature 3) ──────────────────────────────────
   driveGrant: (slug: string) =>
@@ -2530,7 +2573,7 @@ export const api = {
     target_org_id: string;
     kinds: string[];
     expires_at?: string | null;
-    min_target_role?: "owner" | "admin" | "editor" | "member" | "guest" | null;
+    min_target_role?: OrgRoleName | null;
   }) => request<WorkspaceLinkItem>("POST", "/me/links", body),
   acceptWorkspaceLink: (id: string) =>
     request<WorkspaceLinkItem>("POST", `/me/links/${id}/accept`),
@@ -2540,7 +2583,7 @@ export const api = {
     id: string,
     body: {
       expires_at?: string | null;
-      min_target_role?: "owner" | "admin" | "editor" | "member" | "guest" | null;
+      min_target_role?: OrgRoleName | null;
     },
   ) => request<WorkspaceLinkItem>("PATCH", `/me/links/${id}`, body),
 
@@ -4167,7 +4210,7 @@ export const api = {
   // regen later.
   adminCreateUser: (
     slug: string,
-    body: { email: string; display_name: string; role: "owner" | "admin" | "editor" | "member" | "guest" },
+    body: { email: string; display_name: string; role: OrgRoleName },
   ) =>
     request<{
       user: { id: string; email: string; display_name: string; role: string; must_reset_password: boolean };
@@ -5418,7 +5461,7 @@ export interface PermissionsMember {
   id: string;
   email: string;
   display_name: string;
-  role: "owner" | "admin" | "editor" | "member" | "guest";
+  role: OrgRoleName;
   grants: string[];
   /** Custom-role assignments — array of workspace_roles.id values. */
   custom_role_ids: string[];
@@ -5498,7 +5541,7 @@ export interface WorkspaceLinkItem {
   accepted_at: string | null;
   revoked_at: string | null;
   expires_at: string | null;
-  min_target_role: "owner" | "admin" | "editor" | "member" | "guest" | null;
+  min_target_role: OrgRoleName | null;
   source_org_id: string;
   source_org_name: string;
   source_org_slug: string;
@@ -6523,18 +6566,13 @@ export interface UnitVocabulary {
   display_mode: UnitDisplayMode;
 }
 
-export interface CalendarEvent {
-  id: string;
-  title: string;
-  date: string;
-  allDay?: boolean;
-  source: string;
-  category?: string;
-  entityModule?: string;
-  entityType?: string;
-  entityId?: string;
-  detailUrl?: string;
-}
+// Re-exported, not re-declared. This was a hand-typed copy of the contract's
+// interface, and it had already drifted: the server had been sending fields the
+// copy did not know about, so the compiler could not see them and the UI
+// silently could not use them. Two copies of one shape always end up one
+// feature apart.
+import type { CalendarEvent } from "@cobblr/platform-contract";
+export type { CalendarEvent };
 export interface CalendarFeed {
   enabled: boolean;
   token: string | null;

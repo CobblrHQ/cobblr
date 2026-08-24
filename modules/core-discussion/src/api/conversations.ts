@@ -11,6 +11,7 @@ import { reconcileMentions } from "./reconcile.js";
 import { followRecord, notifyAboutComment } from "./audience.js";
 import { askCobb, summonsCobb } from "./cobb.js";
 import { userMentions } from "../mentions.js";
+import { isWorkspaceRoom } from "@cobblr/platform-contract/workspace-room";
 
 export const discussionRouter = Router({ mergeParams: true });
 
@@ -201,8 +202,18 @@ discussionRouter.post(
     // A notification that says "commented on machines:machine" is the machine's
     // version of the answer. Resolve the record's name; fall back to the kind
     // rather than failing the comment if the resolver cannot.
-    let recordTitle = `${src.source_module}:${src.source_type}`;
+    // The ROOM is not a record, so there is nothing to look up and the kind is
+    // a sentinel. Left to the fallback below it produced, in a real Discord DM:
+    //
+    //   "Sam mentioned you on @workspace:workspace"
+    //
+    // The workspace's own name is the answer, and it is already in hand.
+    const room = isWorkspaceRoom(src);
+    let recordTitle = room
+      ? ctx.org.name || "your workspace"
+      : `${src.source_module}:${src.source_type}`;
     try {
+      if (room) throw new Error("skip lookup");
       const resolved = await platform().entities.lookup(
         ctx.org.id,
         `${src.source_module}:${src.source_type}`,
@@ -269,6 +280,9 @@ discussionRouter.post(
       authorUserId: user?.id ?? null,
       authorName: user?.display_name || "Somebody",
       recordLabel: recordTitle,
+      // "mentioned you ON the blue widget" but "IN the workspace": a room is
+      // somewhere you are, a record is something you are looking at.
+      inRoom: room,
       link: null,
     });
 

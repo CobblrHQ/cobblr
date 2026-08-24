@@ -39,6 +39,7 @@ import { applyRelationFields } from "./relation-fields.js";
 import { applyMemberFields } from "./member-fields.js";
 import { normalizeEntitySort } from "./sort.js";
 import { effectiveCapabilities } from "../auth/effective-capabilities.js";
+import { ORG_ROLE_RANK } from "@cobblr/platform-contract/org-roles";
 
 const resolvers = new Map<string, EntityResolver>();
 const listResolvers = new Map<string, EntityListResolver>();
@@ -359,16 +360,11 @@ export function clearExposableFieldsCache(): void {
   legacyWarnedKinds.clear();
 }
 
-// Role hierarchy for min_target_role gating. Higher index = more
-// privileged. A viewer's role must be at index >= the link's
-// min_target_role index to qualify.
-const ROLE_RANK: Record<string, number> = {
-  guest: 0,
-  member: 1,
-  editor: 2, // a trusted builder; ≈ admin for cross-workspace read gating
-  admin: 2,
-  owner: 3,
-};
+// Role hierarchy for min_target_role gating: a viewer's role must rank at or
+// above the link's min_target_role to qualify. Imported rather than restated —
+// this file used to carry its own copy of the same numbers, which is exactly
+// how the module copies drifted into rejecting editors.
+const ROLE_RANK = ORG_ROLE_RANK as Record<string, number>;
 
 /** Find every active, non-expired workspace_link where `targetOrgId`
  *  is the target and `kind` is in the link's kinds[]. Returns the

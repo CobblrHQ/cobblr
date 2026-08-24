@@ -18,6 +18,7 @@ import { sendAuthEmail, hasAuthEmailSender } from "../platform/hosted-seams.js";
 import type { OrgRole } from "../db/schema.js";
 import { hashPassword } from "../auth/password.js";
 import { buildAuthResponse } from "./auth.js";
+import { ORG_ROLES, INVITABLE_ORG_ROLES } from "@cobblr/platform-contract/org-roles";
 
 export const membersRouter = Router({ mergeParams: true });
 // /accept-invite/:token doesn't have a tenant slug in the path so it
@@ -32,6 +33,9 @@ const ADMINISH: ReadonlyArray<OrgRole> = ["owner", "admin"];
  *  error response object the route should emit. */
 async function assertAdmin(req: import("express").Request, res: import("express").Response): Promise<boolean> {
   const role = req.tenant!.role as OrgRole;
+  // role-gate: exact — managing members is governance, not action. An editor
+  // ranks with admin for ACTIONS on purpose, and must not inherit the ability
+  // to change who is in the workspace by outranking a member.
   if (!ADMINISH.includes(role)) {
     res.status(403).json({
       error: { code: "forbidden", message: "Workspace owners/admins only." },
@@ -71,7 +75,7 @@ membersRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
 
 // PATCH /:slug/members/:userId  { role }
 const RolePatch = z.object({
-  role: z.enum(["owner", "admin", "editor", "member", "guest"]),
+  role: z.enum(ORG_ROLES),
 });
 membersRouter.patch("/:userId", requireAuth, withTenant, async (req, res, next) => {
   try {
@@ -255,7 +259,7 @@ async function deliverInvite(opts: {
 
 const InviteCreate = z.object({
   email: z.string().email().max(255).optional(),
-  role: z.enum(["admin", "editor", "member", "guest"]).default("member"),
+  role: z.enum(INVITABLE_ORG_ROLES).default("member"),
   /** ISO timestamp; defaults to 14 days from now. */
   expires_at: z.string().datetime().optional(),
 });

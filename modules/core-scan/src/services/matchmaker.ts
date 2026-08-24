@@ -12,7 +12,7 @@
 
 import { platform, extractJsonObject, repairJson, parseJsonReply } from "@cobblr/platform-contract";
 import { routingNoteBare, routingNoteWithCategory } from "./routing-note.js";
-import { normaliseCategory } from "@cobblr/platform-contract/category-reconcile";
+import { normaliseCategory, isJunkCategory } from "@cobblr/platform-contract/category-reconcile";
 
 // A HANG GUARD, not a latency knob: the matchmaker
 // runs detached server-side — nobody is blocked on it — and a queued
@@ -196,6 +196,96 @@ export function chooseFallbackInstance(
  * so isolation + role gating apply). Only domain modules that hold scannable
  * physical things are included (inventory / assets / machines).
  */
+/**
+ * Pull the proposed categories out of sibling inbox rows.
+ *
+ * Separate from the query that fetches them so the part that can actually be
+ * WRONG is testable without a database. Two ways it silently returns nothing,
+ * both of which look like "the feature does nothing" rather than an error:
+ *
+ *   the value is written into `fields` by resolveCategoryInto and only mirrored
+ *   onto the candidate when the axis is declared, so reading one place finds
+ *   half of them;
+ *
+ *   jsonb arrives parsed under `pg`, but a JSON.stringify'd write read straight
+ *   back can arrive as a string.
+ *
+ * Fixture-backed: the shapes here are lifted from real recorded rows.
+ */
+export function categoriesFromCandidateRows(rows: Array<{ suggested_candidates?: unknown }>): string[] {
+  const out: string[] = [];
+  for (const row of rows) {
+    let list = row?.suggested_candidates as unknown;
+    if (typeof list === "string") {
+      try {
+        list = JSON.parse(list);
+      } catch {
+        continue;
+      }
+    }
+    if (!Array.isArray(list)) continue;
+    for (const c of list) {
+      const cand = c as { category?: unknown; fields?: { category?: unknown } } | null;
+      if (!cand) continue;
+      const v = typeof cand.category === "string" ? cand.category : cand.fields?.category;
+      if (typeof v === "string" && v.trim()) out.push(v.trim());
+    }
+  }
+  return out;
+}
+
+/** How many sibling proposals to carry. The list rides in every prompt, so it
+ *  is bounded; a batch that has genuinely produced more distinct categories than
+ *  this has a grain problem the prompt is meant to solve, not a memory problem. */
+const MAX_CARRIED_CATEGORIES = 40;
+
+/**
+ * Let a scan see what its own batch has already proposed.
+ *
+ * Every item is matched INDEPENDENTLY, and a proposed category is not stored
+ * until the user confirms — so during a bulk scan `category_field.values` is
+ * empty for all of them, and the prompt's "use one of the values already in use,
+ * reuse beats invention" has nothing to reuse. Sixty items, sixty inventions.
+ *
+ * Measured on 40 recorded items with an empty axis, five monitors scanned
+ * together came back as three different categories:
+ *
+ *   Lenovo Monitor → Electronics    Dell E2220H → Monitors
+ *   Dell U2417H    → Electronics    Samsung F27T → Monitors    ASUS VG245 → Electronics
+ *
+ * Every one of those is at the right GRAIN — that half is the prompt's job and
+ * it is doing it. They just disagree, because no two of them could see each
+ * other. Normalising cannot repair it either: "Monitors" and "Electronics" are
+ * different words for a real choice, not a spelling of one.
+ *
+ * So the fix is to make the reuse instruction true: hand each item what its
+ * siblings proposed, as ordinary axis values. No new prompt, no second pass, no
+ * question for the user — the model already knows what to do with a value that
+ * is "already in use".
+ *
+ * Existing values win: a category the workspace has actually committed to is
+ * worth more than one a sibling proposed a second ago, and comes first.
+ */
+export function withProposedCategories(menu: ScanMenuEntry[], proposed: string[]): ScanMenuEntry[] {
+  const clean = proposed.filter((c) => typeof c === "string" && c.trim() && !isJunkCategory(c));
+  if (!clean.length) return menu;
+  return menu.map((entry) => {
+    const axis = entry.category_field;
+    if (!axis) return entry;
+    const seen = new Set(axis.values.map((v) => normaliseCategory(v)).filter(Boolean));
+    const extra: string[] = [];
+    for (const c of clean) {
+      const key = normaliseCategory(c);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      extra.push(c.trim());
+      if (axis.values.length + extra.length >= MAX_CARRIED_CATEGORIES) break;
+    }
+    if (!extra.length) return entry;
+    return { ...entry, category_field: { ...axis, values: [...axis.values, ...extra] } };
+  });
+}
+
 export async function assembleScanMenu(
   baseUrl: string,
   slug: string,
@@ -563,6 +653,11 @@ export function resolveCategory(
   if (!axis) return null;
   const proposed = typeof raw === "string" ? raw.trim() : "";
   if (!proposed || proposed.length > 60) return null;
+  // A placeholder is not a category. Filing under "undefined"/"unknown"/"other"
+  // looks answered on screen and is worth less than the blank it replaced, which
+  // at least prompts the user. Five items in one recorded scan came back
+  // "undefined"; that string reached the axis as a real proposed value.
+  if (isJunkCategory(proposed)) return null;
   // The SHARED reconciler, so enforcement is as strong as the reconciliation the
   // session header and the chips already do. A local normalizer let a plural or a
   // synonym past as "new", which is how one kind gets two entries.
@@ -961,12 +1056,22 @@ export async function runMatchmaker(
     "with its colour/size/brand). Return it in the candidate's `category`. " +
     "Nothing is created until the user confirms.\n" +
     "COARSEN, don't echo. The item's `category` field is a HINT from a product " +
-    "database and is usually far too specific to group by — a product taxonomy " +
-    "splits one everyday kind into many narrow sub-types. Collapse the hint UP to " +
-    "the broad kind a person would actually file it under, so a workspace ends up " +
-    "with a few dozen categories, not hundreds. Test: if two items would sensibly " +
-    "share a drawer, shelf or bin, give them the SAME category. Prefer a value " +
-    "already in `category_field.values` over coining a synonym of it.\n" +
+    "database, written to file a CATALOG rather than a home: it splits one " +
+    "everyday kind into many narrow sub-types. Collapse the hint UP.\n" +
+    "AIM FOR THE AISLE, NOT THE SHELF TAG. The right grain is the heading a shop " +
+    "or a menu would use — a word still useful with a thousand items behind it. A " +
+    "whole workspace should settle on roughly 5-15 categories in total. Each of " +
+    "these lines is ONE category, not three: 'Circuit Breaker Panels', 'Wall " +
+    "Plates & Covers' and 'Power Outlets & Sockets' are all Electrical; 'Ground " +
+    "Cumin Seeds', 'Garlic Powder' and 'Dried Rosemary' are all Spices; 'Steamer " +
+    "Baskets' and 'Mugs' are both Kitchen. If your answer names the exact product " +
+    "someone searched for, it is a level or two too fine — go up until it names " +
+    "the section they would BROWSE.\n" +
+    "Test: could this category still head a whole page of items a year from now? " +
+    "If it could only ever hold this item and its near-identical twins, go " +
+    "broader. Prefer a value already in `category_field.values` over coining a " +
+    "synonym of it. Never answer 'unknown', 'other', 'misc' or 'undefined' — omit " +
+    "the category instead and let the user name it.\n" +
     "2. For EACH picked table, fill in field values — MINE EVERY ITEM FIELD: " +
     "the title, lookup_metadata attributes (material/color/size), the " +
     "description, lookup_notes. Map them onto the table's field names (e.g. an " +

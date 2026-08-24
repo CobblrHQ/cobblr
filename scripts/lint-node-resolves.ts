@@ -156,6 +156,52 @@ for (const [spec, owner] of moduleImports) {
   }
 }
 
+// ── the same class, one step over: repo SCRIPTS ────────────────────────────
+//
+// A script in scripts/ that imports a bare `@cobblr/*` specifier resolves fine
+// on a dev machine, where pnpm has hoisted the workspace packages into the root
+// node_modules, and fails in CI's clean install, where the repo root does not
+// depend on them. Green locally, MODULE_NOT_FOUND in CI, which is exactly the
+// shape this file already exists for.
+//
+// It cost a red build on 2026-08-24. The fix is a relative path into the
+// package's source, which lint-catalog-schema-complete has always used.
+const rootPkg = JSON.parse(readFileSync("package.json", "utf8")) as {
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+};
+const rootDeps = new Set([
+  ...Object.keys(rootPkg.dependencies ?? {}),
+  ...Object.keys(rootPkg.devDependencies ?? {}),
+]);
+const scriptImports: string[] = [];
+for (const file of globSync("scripts/**/*.ts")) {
+  const src = readFileSync(file, "utf8");
+  // A real import STATEMENT, anchored to the start of a line. Several lints
+  // print `import { x } from "@cobblr/..."` inside their own error text to tell
+  // you what to write instead; matching those made the first version of this
+  // check report two files that import nothing at all, which sent me chasing a
+  // difference between them and mine that did not exist.
+  for (const m of src.matchAll(/^\s*import\s[^;]*?from\s+["'](@cobblr\/[^"']+)["']/gm)) {
+    const spec = m[1]!;
+    const pkg = spec.split("/").slice(0, 2).join("/");
+    if (rootDeps.has(pkg)) continue;
+    const line = src.slice(0, m.index).split("\n").length;
+    scriptImports.push(
+      `${file}:${line}  imports "${spec}", which the repo root does not depend on.\n` +
+        `       It resolves here only because pnpm hoisted it. Use a relative path:\n` +
+        `       ../packages/<pkg>/src/<file>.js`,
+    );
+  }
+}
+if (scriptImports.length > 0) {
+  console.error(
+    "node-resolves lint: a repo script imports a workspace package the root does not depend on.\n",
+  );
+  for (const s of scriptImports) console.error(`    ❌ ${s}`);
+  process.exit(1);
+}
+
 if (failures.length > 0) {
   console.error(`node-resolves lint: an entry point loaded at boot does not load under plain Node.\n`);
   for (const f of failures) {

@@ -6,6 +6,7 @@
 import { sql, type Kysely } from "kysely";
 import { platform, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
 import { PART_CI_FILTER_COLS, PART_FILTER_COLS, type InventoryDB } from "../db.js";
+import { filterValues, isMulti } from "./filter-values.js";
 
 let registered = false;
 
@@ -75,24 +76,40 @@ export function registerInventoryResolvers(): void {
           );
           continue;
         }
+        // One value or several. A filter used to be equality-only and silently
+        // IGNORED anything that was not a string, so passing a list applied no
+        // filter and the view showed everything - a panel meant to show one
+        // cupboard showing the whole kitchen, with nothing to notice. An
+        // unusable value now drops the row set to empty instead of widening it:
+        // showing nothing is visibly wrong, showing everything is not.
+        const vals = filterValues(val);
+        if (!vals) {
+          q = q.where(sql<boolean>`false`);
+          continue;
+        }
         if (NATIVE_FILTER_COLS.has(key)) {
-          if (typeof val === "string") {
-            // Scanned identifiers arrive in whatever case the scanner emitted, so
-            // those columns compare case-insensitively (and this form can finally
-            // use the lower(serial_number) index from migration 0004).
-            if (PART_CI_FILTER_COLS.has(key)) {
-              q = q.where(sql<boolean>`lower(${sql.ref(key)}) = lower(${val})`);
-            } else {
-              q = q.where(key as never, "=", val as never);
-            }
+          // Scanned identifiers arrive in whatever case the scanner emitted, so
+          // those columns compare case-insensitively (and this form can finally
+          // use the lower(serial_number) index from migration 0004).
+          if (PART_CI_FILTER_COLS.has(key)) {
+            const lowered = vals.map((v: string) => v.toLowerCase());
+            q = isMulti(lowered)
+              ? q.where(sql<boolean>`lower(${sql.ref(key)}) = any(${lowered})`)
+              : q.where(sql<boolean>`lower(${sql.ref(key)}) = lower(${lowered[0]!})`);
+          } else {
+            // Single values keep the plain equality so an index still applies.
+            q = isMulti(vals)
+              ? q.where(key as never, "in", vals as never)
+              : q.where(key as never, "=", vals[0]! as never);
           }
           continue;
         }
         // D8: unknown filter key — assume it's a metadata field.
-        // Postgres ->> returns text; we coerce val to string for the
-        // comparison. JSON values are stored as their JSON form
-        // (numbers come back as text representations).
-        q = q.where(sql<boolean>`metadata ->> ${key} = ${String(val)}`);
+        // Postgres ->> returns text; values are compared as text, since JSON
+        // values are stored in their JSON form (numbers come back as text).
+        q = isMulti(vals)
+          ? q.where(sql<boolean>`metadata ->> ${key} = any(${vals})`)
+          : q.where(sql<boolean>`metadata ->> ${key} = ${vals[0]!}`);
       }
     }
     // D10: comparison predicates. Native numeric/date columns, OR a custom

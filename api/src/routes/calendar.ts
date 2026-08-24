@@ -78,6 +78,8 @@ calendarOrgRouter.get(
   },
 );
 
+// AI-REACH: a subscribe-by-link feed of what is in this workspace. The link is
+// the credential, and handing one out is a person's decision.
 calendarOrgRouter.put(
   "/:slug/calendar/feed",
   requireAuth,
@@ -111,6 +113,8 @@ calendarOrgRouter.put(
   },
 );
 
+// AI-REACH: rotating that link REVOKES every calendar already subscribed to it.
+// Nothing in the workspace shows that it broke; the phone just stops updating.
 calendarOrgRouter.post(
   "/:slug/calendar/feed/rotate",
   requireAuth,

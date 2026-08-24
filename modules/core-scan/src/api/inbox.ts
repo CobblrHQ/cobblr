@@ -20,6 +20,13 @@
 
 import { randomUUID } from "node:crypto";
 import { buildCadenceEvents } from "../cadence-events.js";
+import {
+  planItem,
+  summarise,
+  describeSummary,
+  type AutofilePlan,
+  type TrackedCandidate,
+} from "../services/autofile.js";
 import { storageRequirementFor } from "../services/storage-requirement.js";
 import { Router } from "express";
 import { sql } from "kysely";
@@ -79,6 +86,8 @@ import {
 import {
   assembleScanMenu,
   assembleMergedMenu,
+  withProposedCategories,
+  categoriesFromCandidateRows,
   runMatchmaker,
   reconcileSeriesSecondaries,
   type MatchCandidate,
@@ -115,7 +124,10 @@ export const inboxRouter = Router({ mergeParams: true });
 // token to whatever host the caller named. Mirrors services/enrich.ts. The
 // `x-cobblr-base-url` override stays for isolated-stack e2e (home-life maps
 // :4055→:4000); it's an explicit opt-in, not the default.
-const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
+/** Exported so the import path reaches the api by THIS url rather than its own
+ *  copy. A second spelling of a base url does not fail loudly - the caller still
+ *  runs, just against nothing. */
+export const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
 
 // ─────────────────────────── GET /inbox/stats ──────────────────────
 // Cheap counts for the put-away front door (dashboard card + scan-page
@@ -719,6 +731,11 @@ async function materializeReceiptLines(opts: {
           // scanned, so the card shows "(read from photo)" and nothing treats
           // it as a hardware scan.
           ...(line.code ? { barcode_source: "ai-photo" } : {}),
+          // `model` is the key resolveNativeIdentity reads, so a model printed
+          // on the receipt reaches the destination's own model column with
+          // nothing further to wire - the same route a decoded VIN's model
+          // takes. Before this it was read past entirely.
+          ...(line.model ? { model: line.model } : {}),
           ...(line.discount ? { line_discount: line.discount, line_net: lineNet(line) } : {}),
         }) as never,
         created_by_user_id: opts.userId,
@@ -3029,6 +3046,7 @@ inboxRouter.post(
       looksLikeReceiptPhoto({
         observations: typeof storedMeta.photo_observations === "string" ? storedMeta.photo_observations : "",
         category: typeof storedMeta.category === "string" ? storedMeta.category : null,
+        name: row.suggested_name,
       })
     ) {
       const routed = await routeScannedReceiptPhoto({
@@ -5145,6 +5163,164 @@ const MergeBatchesBody = z.object({
   from_batch_id: z.string().min(1),
   into_batch_id: z.string().min(1),
 });
+/**
+ * File everything that can be filed, in one press.
+ *
+ * The two halves this joins both existed and were never connected: findTracked
+ * matches a scan against things you already track, and attach/add-qty bumps one
+ * rather than making a second. "File all" only ever created, so a weekly receipt
+ * built a cupboard of duplicates - and a dozen records of the same food means
+ * none of them has a history the cadence engine can learn from.
+ *
+ * DRY RUN BY DEFAULT is not politeness. This touches every pending item at once,
+ * and "it attached 40 things to the wrong records" is not something an undo
+ * makes better. The caller asks what would happen, shows it, and comes back with
+ * confirm.
+ */
+const AutofileBody = z.object({
+  confirm: z.boolean().optional(),
+  /** Limit to one receipt/session. Omitted, the whole pending inbox. */
+  batch_id: z.string().optional(),
+  /** Passed to the entity write so a date lands on the right calendar day. */
+  timezone: z.string().optional(),
+});
+
+// AI-REACH: exempt — a bulk write over the whole pending inbox. An agent should
+// file items one at a time through the normal confirm/attach path, where each
+// decision is separately visible and separately undoable.
+inboxRouter.post(
+  "/inbox/autofile",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const parsed = AutofileBody.safeParse(req.body ?? {});
+    if (!parsed.success) return badBody(res, parsed.error);
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const token = bearer(req);
+    if (!token) {
+      res.status(401).json({ error: { code: "no_auth", message: "Bearer token required" } });
+      return;
+    }
+
+    let q = db
+      .selectFrom("core_scan_inbox_items")
+      .selectAll()
+      .where("status", "=", "pending")
+      .orderBy("created_at", "asc")
+      .limit(200);
+    if (parsed.data.batch_id) q = q.where("scan_batch_id", "=", parsed.data.batch_id);
+    const rows = await q.execute();
+
+    // Match every row FIRST, so the plan is computed against one consistent
+    // picture. Doing it row-by-row while also writing would let an earlier
+    // create become a later row's "match", which is how one receipt line
+    // silently absorbs the next.
+    const plans: AutofilePlan[] = [];
+    for (const row of rows) {
+      let matches: { barcode_matches: TrackedCandidate[]; name_matches: TrackedCandidate[] } = {
+        barcode_matches: [],
+        name_matches: [],
+      };
+      try {
+        matches = (await findTracked(ctx.org.id, {
+          barcode: row.barcode_text,
+          name: row.suggested_name,
+        })) as never;
+      } catch {
+        // A matcher that fails must not turn into "nothing matched", which
+        // would create a duplicate. Treat it as ambiguous and leave it.
+        plans.push({ action: "skip", itemId: row.id, why: "could not check what you already have" });
+        continue;
+      }
+      const cand = (row.suggested_candidates as Array<Record<string, unknown>> | null)?.[0] ?? null;
+      plans.push(
+        planItem({
+          id: row.id,
+          suggested_name: row.suggested_name,
+          quantity: row.quantity,
+          candidate: cand as never,
+          barcodeMatches: matches.barcode_matches,
+          nameMatches: matches.name_matches,
+        }),
+      );
+    }
+
+    const summary = summarise(plans);
+    if (!parsed.data.confirm) {
+      res.json({
+        dry_run: true,
+        summary,
+        message: describeSummary(summary),
+        plans: plans.slice(0, 100),
+      });
+      return;
+    }
+
+    const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+    const authHeaders = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+    let attached = 0;
+    let created = 0;
+    const failures: Array<{ itemId: string; error: string }> = [];
+
+    for (const plan of plans) {
+      try {
+        if (plan.action === "attach") {
+          const r = await fetch(
+            `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-scan/inbox/${plan.itemId}/attach`,
+            {
+              method: "POST",
+              headers: authHeaders,
+              body: JSON.stringify({
+                kind: plan.to.kind,
+                entity_id: plan.to.id,
+                ...(plan.to.instance ? { instance: plan.to.instance } : {}),
+                mode: "add-qty",
+                qty: plan.qty,
+              }),
+            },
+          );
+          if (!r.ok) throw new Error(`attach ${r.status}`);
+          attached++;
+        } else if (plan.action === "create") {
+          const row = rows.find((x) => x.id === plan.itemId);
+          const cand = (row?.suggested_candidates as Array<Record<string, unknown>> | null)?.[0];
+          // The candidate carries its own module and kind. planItem refuses an
+          // item without them, so there is no default to fall back to - and
+          // naming one here would hardcode another module's identity into
+          // core-scan, which is what module isolation forbids.
+          const targetModule = String(cand?.module ?? "");
+          const targetKind = String(cand?.kind ?? "");
+          if (!targetModule || !targetKind) throw new Error("candidate lost its destination");
+          const r = await fetch(
+            `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-scan/inbox/${plan.itemId}/confirm`,
+            {
+              method: "POST",
+              headers: authHeaders,
+              body: JSON.stringify({
+                target_module: targetModule,
+                target_kind: targetKind,
+                ...(cand?.instance ? { instance: cand.instance } : {}),
+                name: row?.suggested_name,
+                quantity: plan.qty,
+                extras: (cand?.fields as Record<string, unknown> | undefined) ?? {},
+              }),
+            },
+          );
+          if (!r.ok) throw new Error(`confirm ${r.status}`);
+          created++;
+        }
+      } catch (err) {
+        // One bad row must not abandon the rest: a half-filed inbox with a named
+        // failure is recoverable, a run that stopped at item 4 of 45 is not.
+        failures.push({ itemId: plan.itemId, error: (err as Error).message });
+      }
+    }
+
+    const done = { ...summary, attached, created };
+    res.json({ dry_run: false, summary: done, message: describeSummary(done), failures });
+  }),
+);
+
 // AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
   "/inbox/merge-batches",
@@ -5734,6 +5910,37 @@ export function storedCandidateList(raw: unknown): unknown[] {
   return [];
 }
 
+/** Categories already proposed by OTHER items in the same scan batch.
+ *
+ *  A proposal lives on the sibling row until the user confirms it, so this is
+ *  the only place the current run can learn that "Monitors" has just been
+ *  offered for the monitor two rows up. Scoped to the batch on purpose: items
+ *  scanned together are the ones a person expects to agree, and a workspace-wide
+ *  sweep of every pending row would drag in unrelated sessions.
+ *
+ *  Best-effort — a batch that cannot be read is not a reason to fail the match,
+ *  it just means this item invents like it always did. */
+async function batchProposedCategories(
+  db: ReturnType<typeof tenantDb>,
+  batchId: string | null,
+  excludeItemId: string,
+): Promise<string[]> {
+  if (!batchId) return [];
+  try {
+    const rows = await db
+      .selectFrom("core_scan_inbox_items")
+      .select(["suggested_candidates"])
+      .where("scan_batch_id", "=", batchId)
+      .where("id", "!=", excludeItemId)
+      .where("status", "=", "pending")
+      .limit(200)
+      .execute();
+    return categoriesFromCandidateRows(rows);
+  } catch {
+    return [];
+  }
+}
+
 async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
   const inflight = matchInFlight.get(opts.itemId);
   if (inflight && Date.now() - inflight < 120_000) return null;
@@ -5805,7 +6012,12 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
       }
     }
 
-    const menu = await assembleMergedMenu(opts.baseUrl, opts.orgSlug, opts.token);
+    const baseMenu = await assembleMergedMenu(opts.baseUrl, opts.orgSlug, opts.token);
+    // What this item's OWN batch has already proposed, offered as ordinary axis
+    // values. Without it every item in a bulk scan invents in isolation and a
+    // run of like things scatters across synonyms of one category — see
+    // withProposedCategories for the measurement.
+    const menu = withProposedCategories(baseMenu, await batchProposedCategories(db, row.scan_batch_id, opts.itemId));
     const candidates = await runMatchmaker(
       opts.orgId,
       {

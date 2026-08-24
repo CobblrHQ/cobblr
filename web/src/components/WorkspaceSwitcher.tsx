@@ -413,8 +413,14 @@ function SortableRow(props: {
   onSetDefault: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: props.org.slug });
+  // No guard needed here: this row drags by its GripVertical handle only, and
+  // its content is buttons rather than links, so a press on the row was never
+  // ambiguous and there is no native link-drag to cancel.
   return (
-    <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.6 : 1 }}>
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.6 : 1 }}
+    >
       <WorkspaceRow
         {...props}
         onManage={props.org.role === "owner" || props.org.role === "admin" ? props.onManage : undefined}

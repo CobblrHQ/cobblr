@@ -7,6 +7,7 @@
 // types don't require you to supply it.
 
 import type { ColumnType, Generated } from "kysely";
+import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
 
 export interface UsersTable {
   id: Generated<string>;
@@ -21,6 +22,10 @@ export interface UsersTable {
   /** Desktop nav layout that follows the user across devices. null = the device
    *  default stands. A phone ignores it: the sidebar renders `hidden md:block`. */
   nav_pref: { mode: "top" | "side"; autohide: boolean; topbar: boolean } | null;
+  /** When the guided tour was completed or skipped. NULL = never. Lives on the
+   *  ACCOUNT because localStorage forgets on a new device, a different origin
+   *  (the main host vs a preview host) and a cleared cache. */
+  tour_seen_at: Date | null;
   /** True when an admin minted this account with a temp password.
    *  Login succeeds; the response carries the flag and the web
    *  client redirects to /me/force-password-reset until the user
@@ -155,7 +160,9 @@ export interface WorkspaceNavHeadingMembersTable {
   created_at: Generated<Date>;
 }
 
-export type OrgRole = "owner" | "admin" | "editor" | "member" | "guest";
+/** Re-exported from the contract so this module cannot fall behind the
+ *  vocabulary. It already had: this line used to omit "editor". */
+export type OrgRole = OrgRoleName;
 
 export interface OrgMembershipsTable {
   user_id: string;
@@ -501,6 +508,9 @@ export interface DiscordConnectionsTable {
   verified: Generated<boolean>;
   verify_token: string | null;
   verify_expires_at: Date | null;
+  /** Discord application whose test DM proved this. NULL predates the column
+   *  (grandfathered); a mismatch with the configured app means re-verify. */
+  verified_app_id: string | null;
   connected_at: Date | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
@@ -614,12 +624,12 @@ export interface WorkspaceLinksTable {
   expires_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;
   /** M1 v0.5: minimum role the viewer must hold in the TARGET
    *  workspace to read the share. NULL = no restriction (every
-   *  target member can read, v0.1 default). Values: owner | admin
-   *  | member | guest. */
+   *  target member can read, v0.1 default). The role vocabulary is
+   *  ORG_ROLES; this used to spell it out and had gone stale. */
   min_target_role: ColumnType<
-    "owner" | "admin" | "member" | "guest" | null,
-    "owner" | "admin" | "member" | "guest" | null | undefined,
-    "owner" | "admin" | "member" | "guest" | null | undefined
+    OrgRole | null,
+    OrgRole | null | undefined,
+    OrgRole | null | undefined
   >;
 }
 
@@ -1290,6 +1300,13 @@ export interface NotificationDeliveryWindowsTable {
   timezone: Generated<string>;
   /** Idempotency for the sweeper: one flush per window per local day. */
   last_delivered_at: ColumnType<Date | null, Date | null | undefined, Date | null>;
+  /** The cadence for DATED things (expiring today, service due) as opposed to
+   *  things that just happened. `inherit` is what a single-cadence window
+   *  always meant. */
+  schedule_mode: Generated<"inherit" | "immediate" | "daily">;
+  schedule_deliver_at_minute: Generated<number>;
+  /** Its own stamp: the two windows open at different times of day. */
+  schedule_last_delivered_at: ColumnType<Date | null, Date | null | undefined, Date | null>;
   updated_at: Generated<Date>;
 }
 
@@ -1305,5 +1322,7 @@ export interface NotificationDeferredTable {
   message: string;
   link_url: string | null;
   priority: Generated<string>;
+  /** Which of the two windows this item is waiting for. */
+  triggered_by: Generated<"activity" | "schedule">;
   queued_at: Generated<Date>;
 }

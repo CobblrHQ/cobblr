@@ -21,7 +21,6 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 export const listsRouter = Router({ mergeParams: true });
 
 const jsonb = (v: unknown) => sql`${JSON.stringify(v ?? {})}::jsonb`;
-const ROLES = ["owner", "admin", "member"] as const;
 
 // ── lists ───────────────────────────────────────────────────────────────────
 const ListCreate = z.object({
@@ -34,7 +33,7 @@ const ListUpdate = ListCreate.partial();
 listsRouter.get(
   "/lists",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, ...ROLES)) return;
+    if (!requireRole(req, res, "member")) return;
     const db = tenantDb(req);
     const lists = await db.selectFrom("lists_lists").selectAll().orderBy("created_at", "desc").execute();
     // open-item counts in one grouped query
@@ -58,7 +57,7 @@ listsRouter.get(
 listsRouter.post(
   "/lists",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, ...ROLES)) return;
+    if (!requireRole(req, res, "member")) return;
     const parsed = ListCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
@@ -80,7 +79,7 @@ listsRouter.post(
 listsRouter.get(
   "/lists/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, ...ROLES)) return;
+    if (!requireRole(req, res, "member")) return;
     const db = tenantDb(req);
     const list = await db.selectFrom("lists_lists").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
     if (!list) return void res.status(404).json({ error: { code: "not_found", message: "List not found." } });
@@ -99,7 +98,7 @@ listsRouter.get(
 listsRouter.patch(
   "/lists/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, ...ROLES)) return;
+    if (!requireRole(req, res, "member")) return;
     const parsed = ListUpdate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
@@ -129,7 +128,7 @@ listsRouter.delete(
 listsRouter.post(
   "/lists/:id/clear-done",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, ...ROLES)) return;
+    if (!requireRole(req, res, "member")) return;
     const db = tenantDb(req);
     const r = await db.deleteFrom("lists_items").where("list_id", "=", req.params.id!).where("checked", "=", true).executeTakeFirst();
     res.json({ cleared: Number(r.numDeletedRows ?? 0) });
@@ -159,7 +158,7 @@ const ItemUpdate = z.object({
 listsRouter.post(
   "/items",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, ...ROLES)) return;
+    if (!requireRole(req, res, "member")) return;
     const parsed = ItemCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
@@ -186,7 +185,7 @@ listsRouter.post(
 listsRouter.patch(
   "/items/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, ...ROLES)) return;
+    if (!requireRole(req, res, "member")) return;
     const parsed = ItemUpdate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
@@ -260,7 +259,7 @@ listsRouter.patch(
 listsRouter.delete(
   "/items/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, ...ROLES)) return;
+    if (!requireRole(req, res, "member")) return;
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     const row = await db.deleteFrom("lists_items").where("id", "=", req.params.id!).returning(["id", "list_id"]).executeTakeFirst();

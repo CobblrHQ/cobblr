@@ -355,6 +355,9 @@ workspaceAiSharesRouter.get("/ai-shares", requireAuth, withTenant, async (req, r
 });
 
 const ApproveBody = z.object({ active: z.boolean().optional() });
+// AI-REACH: accepting, refusing or switching WHOSE AI powers this workspace. It is
+// somebody's own account paying for the calls, offered deliberately and taken up
+// deliberately; an assistant must not decide that, least of all about itself.
 workspaceAiSharesRouter.post("/ai-shares/:credentialId/approve", requireAuth, withTenant, async (req, res, next) => {
   try {
     const parsed = ApproveBody.safeParse(req.body ?? {});
@@ -376,6 +379,9 @@ workspaceAiSharesRouter.post("/ai-shares/:credentialId/approve", requireAuth, wi
   }
 });
 
+// AI-REACH: accepting, refusing or switching WHOSE AI powers this workspace. It is
+// somebody's own account paying for the calls, offered deliberately and taken up
+// deliberately; an assistant must not decide that, least of all about itself.
 workspaceAiSharesRouter.post("/ai-shares/:credentialId/reject", requireAuth, withTenant, async (req, res, next) => {
   try {
     const ok = await rejectWorkspaceAiOffer(req.session!.id, orgId(req), req.params.credentialId!);
@@ -392,6 +398,9 @@ workspaceAiSharesRouter.post("/ai-shares/:credentialId/reject", requireAuth, wit
 });
 
 const ActiveBody = z.object({ credential_id: z.string().uuid().nullable() });
+// AI-REACH: accepting, refusing or switching WHOSE AI powers this workspace. It is
+// somebody's own account paying for the calls, offered deliberately and taken up
+// deliberately; an assistant must not decide that, least of all about itself.
 workspaceAiSharesRouter.post("/ai-shares/active", requireAuth, withTenant, async (req, res, next) => {
   try {
     const parsed = ActiveBody.safeParse(req.body);

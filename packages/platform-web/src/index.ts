@@ -9,6 +9,7 @@ export {
   type FlowRegistry,
 } from "./context";
 export { EntityActionsBar } from "./EntityActionsBar";
+export { summariseParts, summaryLine, type TileSummary } from "./tileSummary";
 export { EntityChip } from "./EntityChip";
 export { EntityThumb } from "./EntityThumb";
 export {
@@ -85,6 +86,7 @@ export {
 export { BackToTop } from "./BackToTop";
 export { CatalogTypeahead, type CatalogTypeaheadHit } from "./CatalogTypeahead";
 export { usePageTitle } from "./usePageTitle";
+export { usePageWidth, type PageWidth } from "./usePageWidth";
 export { AskCobbAbout } from "./AskCobbAbout";
 export { RecordRow, recordRowMarks } from "./RecordRow";
 export { toggleRecordInContext, nounForKind, labelForSet } from "./toggle-record-context";
@@ -114,6 +116,7 @@ export {
   registerDetailPanel,
   unregisterDetailPanel,
   hasDetailPanel,
+  UNIVERSAL,
   type EntityDetailPanelCtx,
   type ContributedPanelSpec,
   type DetailPanelComponent,

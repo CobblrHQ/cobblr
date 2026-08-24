@@ -80,8 +80,18 @@ export function bucketEvents(events: readonly CalendarEvent[], now: Date): Bucke
 
   for (const e of events) {
     const day = e.date.slice(0, 10);
-    if (day < today) overdue.push(e);
-    else if (day === today) onToday.push(e);
+    if (day < today) {
+      // A date that RECORDS something is not late once it passes, and it is
+      // not "up next" either - it already happened. Five groceries with a
+      // "Bought on" date filled OVERDUE on a real dashboard and pushed the
+      // genuinely late things off the bottom. They stay on the calendar, which
+      // is a history view as well as a plan.
+      //
+      // Absent direction means a dedicated source (maintenance, tasks, expiry),
+      // and those only ever emit deadlines, so the default is "due".
+      if (e.direction === "record") continue;
+      overdue.push(e);
+    } else if (day === today) onToday.push(e);
     else if (day <= weekEnd) week.push(e);
     else later.push(e);
   }

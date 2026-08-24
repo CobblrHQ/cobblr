@@ -4,6 +4,7 @@
 // location, custom-field bag), so the interesting columns all come from
 // each collection's declared field-defs.
 
+import { countOf } from "@cobblr/platform-contract";
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -21,6 +22,7 @@ import {
   ViewModeToggle,
   useConfirm,
   usePageTitle,
+  usePageWidth,
   useToast,
   useViewMode,
 } from "@cobblr/platform-web";
@@ -41,6 +43,8 @@ export function RecordsPage({
   // /records (thumbnails, views, detail/edit), just scoped to the instance's
   // items. Detail is local state (no /<instance>/:id route). Mirrors AssetsPage.
   usePageTitle(displayName ?? "Records");
+  // A wide table is the page here, so it gets the screen.
+  usePageWidth("wide");
   const { activeSlug } = useActiveOrg();
   const navigate = useNavigate();
   const { id } = useParams<{ id?: string }>();
@@ -122,7 +126,7 @@ export function RecordsPage({
         // real debugging session down the wrong path (reported 2026-07-18).
         if (r.unresolved > 0)
           toast.error(
-            `Couldn't read ${r.unresolved} ${noun}${r.unresolved === 1 ? "" : "s"} — that's a bug on our side, not your data.`,
+            `Couldn't read ${countOf(r.unresolved, noun)} — that's a bug on our side, not your data.`,
           );
         else if (r.unnamed > 0)
           toast.error(`Nothing to look up — these ${noun}s need a name first.`);
@@ -165,7 +169,7 @@ export function RecordsPage({
           <button
             onClick={() => backfill.mutate()}
             disabled={backfill.isPending}
-            title={`Look up an image for the ${missingCovers} ${noun}${missingCovers === 1 ? "" : "s"} without one`}
+            title={`Look up an image for the ${countOf(missingCovers, noun)} without one`}
             className="rounded-md border border-line dark:border-slate-600 hover:border-faint disabled:opacity-50 text-muted hover:text-content text-xs font-medium px-3 py-2 transition flex items-center gap-1.5"
           >
             <ImageIcon size={13} />

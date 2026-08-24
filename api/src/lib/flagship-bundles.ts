@@ -238,12 +238,31 @@ export function flagshipBundleMenu(): BundleMenuEntry[] {
           noun: String(pi.item_noun || pi.display_name || instName).toLowerCase(),
           label: String(pi.display_name || m.name || instName),
           fields: mapFields(pi.field_defs as Array<Record<string, unknown>> | undefined),
-          // The instance's own words, else the bundle's. Only the first half
-          // existed, which is why a bundle that SKINS a module default rather
-          // than providing an instance — Groceries — had no way to say them.
-          ...(keywordsOf(pi.scan_keywords) ?? keywordsOf(m.scan_keywords)
-            ? { scan_keywords: (keywordsOf(pi.scan_keywords) ?? keywordsOf(m.scan_keywords))! }
-            : {}),
+          // BOTH lists, deduped: the bundle's words AND the table's.
+          //
+          // This picked one and threw the other away, which is fine until a
+          // bundle gains an instance. Groceries did exactly that, and its 139
+          // manifest keywords - the whole reason a Croissant can be recognised
+          // as food, since nothing on a receipt says "grocery" - were replaced
+          // by the table's 40. A bundle's declared vocabulary should not vanish
+          // because it grew a table; the table ADDS to it.
+          //
+          // Order matters for nothing here, but the instance's own words come
+          // first so a table-specific term wins any future first-match read.
+          ...(() => {
+            const merged = [
+              ...(keywordsOf(pi.scan_keywords) ?? []),
+              ...(keywordsOf(m.scan_keywords) ?? []),
+            ];
+            const seen = new Set<string>();
+            const words = merged.filter((k) => {
+              const key = k.toLowerCase();
+              if (seen.has(key)) return false;
+              seen.add(key);
+              return true;
+            });
+            return words.length > 0 ? { scan_keywords: words } : {};
+          })(),
           ...fieldRoleAxes(pi.field_defs as Array<Record<string, unknown>> | undefined),
           bundle_external_id: id,
         });

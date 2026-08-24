@@ -21,6 +21,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, CheckCircle2, ChevronDown, Compass, Download, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Pin, Sliders, Sparkles, X } from "lucide-react";
+import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract";
 import { useBundleUpdates, type BundleUpdate } from "../lib/useBundleUpdates";
 import { classifyBundleUpdate, tierAutoApplies, updateMayTeardownCatalogs } from "../lib/bundleUpdateTier";
 import { useDetailRoute } from "../lib/useDetailRoute";
@@ -282,7 +283,7 @@ function BundleSuggestionsCard({ slug, role }: { slug: string; role?: string }) 
   const materializeMut = useMutation({
     mutationFn: (s: QuickstartSuggestion) => api.materializeQuickstart(slug, s.bundle_external_id),
     onSuccess: (r, s) => {
-      toast.success(`Installed ${s.bundle_name} — filed ${r.created} ${s.noun}${r.created === 1 ? "" : "s"}.`);
+      toast.success(`Installed ${s.bundle_name} — filed ${countOf(r.created, s.noun)}.`);
       void qc.invalidateQueries({ queryKey: ["quickstart", slug] });
       void qc.invalidateQueries({ queryKey: ["org-modules", slug] });
       void qc.invalidateQueries({ queryKey: ["instances", slug] });
@@ -474,7 +475,7 @@ function UpNextRow({
       {/* Which module this came from. Without it "Replace filter" and "Replace
           filter" from two different sources are the same row twice. */}
       <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 shrink-0">
-        {event.source}
+        {event.sourceLabel ?? event.source}
       </span>
       <span
         className={
@@ -1595,10 +1596,29 @@ function PinnedViews({ slug, editing = false }: { slug: string; editing?: boolea
       )}
       {/* Always the 2-up grid. The old full/half toggle only changed the column
           count — the cards render identically either way (each AS its own type),
-          so it added no real choice (reported 2026-07-10). */}
-      <div className="grid gap-3 md:grid-cols-2">
+          so it added no real choice (reported 2026-07-10).
+
+          COLUMNS, NOT A GRID, and the reason is the card heights. A grid row is
+          as tall as its tallest cell, so a one-line empty card beside a five-row
+          gallery was stretched to four hundred pixels of nothing. `items-start`
+          fixes the stretching and leaves the other half of the problem: the
+          short card now floats with a hole under it, because a grid cannot pull
+          the next card up into the gap.
+
+          CSS multi-column packs vertically, so a tall card and two short ones
+          fill both columns with no hole. The cost is reading order: it runs down
+          column one and then down column two, rather than left-to-right. These
+          cards are independent things somebody scans, not a sequence, so
+          column-major costs nothing here - and it would be the wrong trade on
+          anything ordered.
+
+          break-inside-avoid keeps a card whole; without it a column break can
+          slice one across the boundary. */}
+      <div className="md:columns-2 md:gap-3">
         {pinned.map((v) => (
-          <PinnedView key={v.id} slug={slug} view={v} />
+          <div key={v.id} className="mb-3 break-inside-avoid">
+            <PinnedView slug={slug} view={v} />
+          </div>
         ))}
       </div>
     </section>
@@ -1708,18 +1728,22 @@ function PinnedView({
   });
   const entityKind = data.data?.view?.entity_kind ?? "";
   const kindHead = entityKind.split(":")[0] ?? "";
-  const kindTail = entityKind.split(":")[1] ?? "";
   const instance = (instancesQ.data?.items ?? []).find((i) => i.instance_name === kindHead);
   // The instance's display name ("Vehicles"); a plain module kind has no instance
   // and its type suffix already reads as the subject (assets:asset → asset).
   const subject = instance?.display_name ?? "";
   const configNoun = instance?.config?.item_noun;
-  const kindNoun =
-    (typeof configNoun === "string" && configNoun) ||
-    (subject ? subject.replace(/s$/i, "").toLowerCase() : kindTail);
-  const countLabel = kindNoun
-    ? `${allItems.length} ${kindNoun}${allItems.length === 1 ? "" : "s"}`
-    : `${allItems.length}`;
+  // The CONTAINER's name is not what one thing inside it is called. Deriving the
+  // noun from the display name gave "18 inventorys" - wrong twice, because even
+  // "18 inventories" is nonsense: an inventory holds items, it is not a pile of
+  // inventories. Ask the declared item_noun, then the kind's own type suffix,
+  // then say "item".
+  const itemNoun = itemNounFor({
+    itemNoun: typeof configNoun === "string" ? configNoun : null,
+    entityKind,
+  });
+  const countLabel = countOf(allItems.length, itemNoun);
+  const emptyNoun = pluralise(itemNoun);
   const galleryImg = (r: (typeof allItems)[number]): string | null => {
     // Mirror the modal's fieldVal: custom + native fields live under `fields`
     // (and native image_path is also mirrored there), with a top-level fallback.
@@ -1767,8 +1791,23 @@ function PinnedView({
       {data.isLoading && (
         <div className="text-xs text-faint">loading…</div>
       )}
+      {/* An empty card KEEPS ITS PLACE and offers the way in, rather than saying
+          "no matching rows" and stopping there. A card that reports its own
+          emptiness and nothing else is the one thing on a dashboard that costs
+          space and returns none - and hiding it instead would take away the
+          quickest route to filling it. */}
       {!data.isLoading && items.length === 0 && (
-        <div className="text-xs text-faint italic">no matching rows</div>
+        <Link
+          to={`/views/${view.id}`}
+          className="flex items-center gap-1.5 text-xs text-muted dark:text-slate-400 hover:text-accent transition"
+        >
+          <span className="italic text-faint">
+            {emptyNoun ? `no ${emptyNoun} here yet` : "nothing here yet"}
+          </span>
+          <span aria-hidden>·</span>
+          <span className="font-medium">open</span>
+          <ArrowRight size={11} className="shrink-0" />
+        </Link>
       )}
       {/* Each card ALWAYS renders as its own type — a heatmap is always a
           heatmap, never a degraded row list. Non-visual types (list/table/…)

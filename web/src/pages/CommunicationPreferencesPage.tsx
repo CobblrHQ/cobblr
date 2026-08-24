@@ -9,6 +9,7 @@
 
 import { useEffect, useState } from "react";
 import { AreaTabs, NOTIFICATION_TABS } from "../components/AreaTabs";
+import { DeliveryWindows } from "../components/DeliveryWindows";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, Check, Lock, MessageCircle } from "lucide-react";
@@ -86,6 +87,10 @@ export function CommunicationPreferencesPage() {
   const verified = discordQ.data?.verified ?? false;
   const connected = discordQ.data?.connected ?? false;
   const configured = discordQ.data?.configured ?? false;
+  // Connected and previously confirmed, but by the PREVIOUS Discord app. The
+  // DM channel belongs to the bot, so the permission does not carry over and
+  // messages would go nowhere silently. One re-confirm fixes it.
+  const needsReverify = discordQ.data?.needs_reverify ?? false;
 
   // Offer the "route these to Discord?" prompt once Discord is verified.
   const [promptDismissed, setPromptDismissed] = useState(false);
@@ -132,6 +137,7 @@ export function CommunicationPreferencesPage() {
         configured={configured}
         connected={connected}
         verified={verified}
+        needsReverify={needsReverify}
         username={discordQ.data?.username ?? null}
         inviteUrl={discordQ.data?.invite_url ?? null}
         discordParam={discordParam}
@@ -169,6 +175,12 @@ export function CommunicationPreferencesPage() {
           </div>
         </div>
       )}
+
+      {/* ── When things arrive ──────────────────────────────────────────── */}
+      {/* Above the matrix on purpose: the matrix answers "does this channel
+          hear about it at all", and the first thing people ask after wiring a
+          channel up is "how often". */}
+      <DeliveryWindows />
 
       {/* ── Matrix ──────────────────────────────────────────────────────── */}
       {prefsQ.isLoading || !data ? (
@@ -243,6 +255,7 @@ export function CommunicationPreferencesPage() {
 }
 
 function DiscordCard(props: {
+  needsReverify: boolean;
   configured: boolean;
   connected: boolean;
   verified: boolean;
@@ -256,7 +269,7 @@ function DiscordCard(props: {
   onRetry: () => void;
   onDisconnect: () => void;
 }) {
-  const { configured, connected, verified, username, inviteUrl, discordParam } = props;
+  const { configured, connected, verified, needsReverify, username, inviteUrl, discordParam } = props;
 
   if (props.loading) return <div className="text-sm text-faint">Checking Discord…</div>;
   if (!configured) {
@@ -269,6 +282,16 @@ function DiscordCard(props: {
 
   return (
     <div className="rounded-lg border border-line dark:border-slate-700 p-4 space-y-3">
+      {needsReverify && (
+        // Says what happened and what it costs. "Reconnect" alone would read as
+        // something the person broke, and the honest answer is that Cobblr moved.
+        <div className="rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
+          Cobblr moved to a new Discord app. Your account is still linked, but the
+          new one has to send you a test DM before it can reach you - until then
+          these notifications wait in the bell. Press Reconnect Discord below;
+          it takes a few seconds.
+        </div>
+      )}
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <MessageCircle size={18} className="text-[#5865F2]" />

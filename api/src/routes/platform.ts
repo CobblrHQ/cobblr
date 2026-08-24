@@ -8,12 +8,11 @@ import { Router } from "express";
 import { z } from "zod";
 import { parseWireFilter } from "../platform/wire-filter.js";
 import { sql } from "kysely";
-import { platform, FieldRoleSchema } from "@cobblr/platform-contract";
+import { platform } from "@cobblr/platform-contract";
 import { requireAuth } from "../auth/middleware.js";
 import { requireCapability, requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
-import type { FieldOverrideBlob } from "../db/schema.js";
 import { listEntries } from "../modules/registry.js";
 import * as activity from "../platform/activity.js";
 import { checkAvailability as checkAiAvailability } from "../platform/ai.js";
@@ -28,20 +27,16 @@ import {
 } from "@cobblr/platform-contract";
 import {
   FieldDefCreate,
-  FieldRenderer,
+  FieldDefPatch,
   createFieldDef,
+  deleteFieldDef,
   listAllFieldDefs,
   resolveFieldDefsForKind,
+  updateFieldDef,
 } from "../platform/field-defs.js";
-import {
-  FIELD_PRESETS,
-  fieldsToCreate,
-  fieldsToRemove,
-  findFieldPreset,
-  presetState,
-  type FieldPreset,
-  type PresetFieldState,
-} from "../platform/field-presets.js";
+import { upsertNativeFieldOverride } from "../platform/native-field-overrides.js";
+import { FIELD_PRESETS, presetState } from "../platform/field-presets.js";
+import { presetFieldStates, turnPresetOff, turnPresetOn } from "../platform/field-preset-switch.js";
 
 export const platformOrgRouter = Router({ mergeParams: true });
 
@@ -217,6 +212,8 @@ platformOrgRouter.get(
 //
 // POST (not GET) because hops can be many and don't fit cleanly in
 // a query string. Each hop's shape matches walkPairings's spec.
+// AI-REACH: a read. POST only because a list of hops does not fit a query
+// string; it writes nothing, and the assistant reads pairings with its own tools.
 platformOrgRouter.post(
   "/:slug/entities/:kind/:id/walk-path",
   requireAuth,
@@ -350,6 +347,8 @@ const InvokeBody = z.object({
   args: z.record(z.unknown()).optional(),
 });
 
+// AI-REACH: this IS the door. Every action the assistant runs arrives here,
+// so giving it one of its own would be a door into the door.
 platformOrgRouter.post(
   "/:slug/actions/invoke",
   requireAuth,
@@ -801,20 +800,6 @@ platformOrgRouter.delete(
 // platform:add-field action handler so the trait-scope, relation and
 // reserved-name rules cannot fork between the two surfaces.
 
-const FieldDefPatch = z.object({
-  display_label: z.string().min(1).optional(),
-  required: z.boolean().optional(),
-  position: z.number().int().optional(),
-  choices: z.array(z.string().max(120)).nullable().optional(),
-  renderer: FieldRenderer.nullable().optional(),
-  template: z.string().max(2000).nullable().optional(),
-  /** Only meaningful on type='number' defs — validated against the row's
-   *  type in the handler (the patch body alone can't see it). */
-  unit: z.string().trim().min(1).max(40).nullable().optional(),
-  /** Settable after the fact, so a field made before roles existed can be told
-   *  what it means without being recreated. Null clears it. */
-  field_role: FieldRoleSchema.nullable().optional(),
-});
 
 platformOrgRouter.get(
   "/:slug/field-defs",
@@ -946,6 +931,7 @@ platformOrgRouter.get("/:slug/field-sections", requireAuth, withTenant, async (r
 });
 
 const SectionCreate = z.object({ entity_kind: z.string().min(1), name: z.string().min(1).max(120) });
+// AI-ACTION: platform:group-fields
 platformOrgRouter.post("/:slug/field-sections", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (!requireRole(req, res, "owner", "admin")) return;
@@ -975,6 +961,7 @@ platformOrgRouter.post("/:slug/field-sections", requireAuth, withTenant, async (
 });
 
 const SectionPatch = z.object({ name: z.string().min(1).max(120).optional(), position: z.number().int().optional() });
+// AI-ACTION: platform:group-fields
 platformOrgRouter.patch("/:slug/field-sections/:id", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (!requireRole(req, res, "owner", "admin")) return;
@@ -1003,6 +990,7 @@ platformOrgRouter.patch("/:slug/field-sections/:id", requireAuth, withTenant, as
   }
 });
 
+// AI-ACTION: platform:ungroup-fields
 platformOrgRouter.delete("/:slug/field-sections/:id", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (!requireRole(req, res, "owner", "admin")) return;
@@ -1025,6 +1013,7 @@ const FieldReorder = z.object({
   sections: z.array(z.object({ id: z.string().uuid(), position: z.number().int() })).optional(),
   fields: z.array(z.object({ name: z.string().min(1), section_id: z.string().uuid().nullable(), position: z.number().int() })).optional(),
 });
+// AI-ACTION: platform:group-fields
 platformOrgRouter.post("/:slug/field-defs/reorder", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (!requireRole(req, res, "owner", "admin")) return;
@@ -1149,6 +1138,7 @@ const NativeFieldOverrideBody = z.object({
   choices: z.array(z.string().max(120)).nullable().optional(),
 });
 
+// AI-ACTION: platform:edit-field
 platformOrgRouter.put(
   "/:slug/native-field-overrides",
   requireAuth,
@@ -1162,53 +1152,12 @@ platformOrgRouter.put(
         return;
       }
       const d = parsed.data;
-      // Partial merge: a write that only sets `choices` must not wipe a relabel
-      // (and vice versa). Read the existing row, layer the provided fields on top.
-      const existing = await meta
-        .selectFrom("native_field_overrides")
-        .selectAll()
-        .where("org_id", "=", req.tenant!.org.id)
-        .where("entity_kind", "=", d.entity_kind)
-        .where("name", "=", d.name)
-        .executeTakeFirst();
-
-      const blob: FieldOverrideBlob = { ...(existing?.overrides ?? {}) };
-      if (d.choices !== undefined) {
-        if (d.choices === null) delete blob.choices;
-        else blob.choices = d.choices;
-      }
-      const display_label = d.display_label !== undefined ? d.display_label : (existing?.display_label ?? null);
-      const hidden = d.hidden !== undefined ? d.hidden : (existing?.hidden ?? false);
-      const position = d.position !== undefined ? d.position : (existing?.position ?? 0);
-      const blobSql = sql`${JSON.stringify(blob)}::jsonb` as unknown as FieldOverrideBlob;
-
-      const row = await meta
-        .insertInto("native_field_overrides")
-        .values({
-          org_id: req.tenant!.org.id,
-          entity_kind: d.entity_kind,
-          name: d.name,
-          display_label,
-          hidden,
-          position,
-          overrides: blobSql,
-          // A user edit CLAIMS the row as user-owned (bundle_id null) so the bundle
-          // re-push can't clobber it (the install upsert only overwrites
-          // bundle-owned rows). This is what makes the user layer win + survive.
-          bundle_id: null,
-        })
-        .onConflict((c) =>
-          c.columns(["org_id", "entity_kind", "name"]).doUpdateSet({
-            display_label,
-            hidden,
-            position,
-            overrides: blobSql,
-            bundle_id: null,
-            updated_at: new Date(),
-          }),
-        )
-        .returningAll()
-        .executeTakeFirstOrThrow();
+      const row = await upsertNativeFieldOverride(req.tenant!.org.id, d.entity_kind, d.name, {
+        displayLabel: d.display_label,
+        hidden: d.hidden,
+        position: d.position,
+        choices: d.choices,
+      });
       res.json(row);
     } catch (err) {
       next(err);
@@ -1216,6 +1165,9 @@ platformOrgRouter.put(
   },
 );
 
+// AI-REACH: wiping every workspace override on one field at once — its label,
+// whether it shows, its choices. Changing any of those is platform:edit-field;
+// this is the settings screen's reset button, which should stay a person's.
 platformOrgRouter.delete(
   "/:slug/native-field-overrides/:entityKind/:name",
   requireAuth,
@@ -1241,23 +1193,6 @@ platformOrgRouter.delete(
 // switch has to be idempotent: creating a field that already exists is how a
 // setting quietly produces duplicates. See docs/design-decisions/field-presets.md.
 
-/** Which of a preset's fields exist in this workspace right now. */
-async function presetFieldStates(orgId: string, preset: FieldPreset): Promise<PresetFieldState[]> {
-  const sentinel = fieldScopeSentinel(preset.traits);
-  const rows = await meta
-    .selectFrom("module_field_defs")
-    .select(["name", "display_label"])
-    .where("org_id", "=", orgId)
-    .where("entity_kind", "=", sentinel)
-    .execute();
-  const have = new Set(rows.map((r) => r.name));
-  return preset.fields.map((f) => ({
-    name: f.name,
-    display_label: f.display_label,
-    present: have.has(f.name),
-  }));
-}
-
 platformOrgRouter.get(
   "/:slug/field-presets",
   requireAuth,
@@ -1275,6 +1210,7 @@ platformOrgRouter.get(
   },
 );
 
+// AI-ACTION: platform:set-field-preset
 platformOrgRouter.post(
   "/:slug/field-presets/:key",
   requireAuth,
@@ -1282,39 +1218,23 @@ platformOrgRouter.post(
   async (req, res, next) => {
     try {
       if (!requireRole(req, res, "owner", "admin")) return;
-      const preset = findFieldPreset(req.params.key ?? "");
-      if (!preset) {
-        res.status(404).json({ error: { code: "unknown_preset", message: "No such field preset." } });
+      const result = await turnPresetOn(req.tenant!.org.id, req.params.key ?? "");
+      if (!result.ok) {
+        res.status(404).json({ error: { code: result.code, message: result.message } });
         return;
       }
-      const orgId = req.tenant!.org.id;
-      const before = presetState(preset, await presetFieldStates(orgId, preset));
-      const created: string[] = [];
-      const failed: Array<{ name: string; message: string }> = [];
-      for (const f of fieldsToCreate(preset, before)) {
-        const result = await createFieldDef(orgId, {
-          entity_kind: "",
-          applies_to: { traits: preset.traits },
-          name: f.name,
-          display_label: f.display_label,
-          type: f.type,
-          field_role: f.field_role,
-          ...(f.help ? { help: f.help } : {}),
-        });
-        if (result.ok) created.push(f.name);
-        // A name already taken by a field this preset did not make is not an
-        // error to shout about: the preset is partly on because the workspace
-        // already had one, and saying so is more useful than failing the switch.
-        else failed.push({ name: f.name, message: result.message });
-      }
-      const after = presetState(preset, await presetFieldStates(orgId, preset));
-      res.status(201).json({ ...after, created, ...(failed.length ? { failed } : {}) });
+      res.status(201).json({
+        ...result.state,
+        created: result.created ?? [],
+        ...(result.failed?.length ? { failed: result.failed } : {}),
+      });
     } catch (err) {
       next(err);
     }
   },
 );
 
+// AI-ACTION: platform:set-field-preset
 platformOrgRouter.delete(
   "/:slug/field-presets/:key",
   requireAuth,
@@ -1322,33 +1242,21 @@ platformOrgRouter.delete(
   async (req, res, next) => {
     try {
       if (!requireRole(req, res, "owner", "admin")) return;
-      const preset = findFieldPreset(req.params.key ?? "");
-      if (!preset) {
-        res.status(404).json({ error: { code: "unknown_preset", message: "No such field preset." } });
+      const result = await turnPresetOff(req.tenant!.org.id, req.params.key ?? "");
+      if (!result.ok) {
+        res.status(404).json({ error: { code: result.code, message: result.message } });
         return;
       }
-      const orgId = req.tenant!.org.id;
-      const state = presetState(preset, await presetFieldStates(orgId, preset));
-      const names = fieldsToRemove(state);
-      if (names.length > 0) {
-        await meta
-          .deleteFrom("module_field_defs")
-          .where("org_id", "=", orgId)
-          .where("entity_kind", "=", fieldScopeSentinel(preset.traits))
-          .where("name", "in", names)
-          .execute();
-      }
-      const after = presetState(preset, await presetFieldStates(orgId, preset));
-      // Values already recorded stay on the items, exactly as they do for any
-      // other field deletion here, and come back if the preset is switched on
-      // again. Said out loud so the switch does not read as destructive.
-      res.json({ ...after, removed: names, values_kept: true });
+      // Values already recorded stay on the items and come back if the preset is
+      // switched on again. Said out loud so the switch does not read as destructive.
+      res.json({ ...result.state, removed: result.removed ?? [], values_kept: true });
     } catch (err) {
       next(err);
     }
   },
 );
 
+// AI-ACTION: platform:add-field
 platformOrgRouter.post(
   "/:slug/field-defs",
   requireAuth,
@@ -1378,6 +1286,7 @@ platformOrgRouter.post(
   },
 );
 
+// AI-ACTION: platform:edit-field
 platformOrgRouter.patch(
   "/:slug/field-defs/:id",
   requireAuth,
@@ -1396,114 +1305,26 @@ platformOrgRouter.patch(
         });
         return;
       }
-      const updates: Record<string, unknown> = {};
-      if (parsed.data.display_label !== undefined) updates.display_label = parsed.data.display_label;
-      if (parsed.data.required !== undefined) updates.required = parsed.data.required;
-      if (parsed.data.position !== undefined) updates.position = parsed.data.position;
-      if (parsed.data.choices !== undefined) {
-        updates.choices = parsed.data.choices
-          ? sql`${JSON.stringify(parsed.data.choices)}::jsonb`
-          : null;
-      }
-      if (parsed.data.renderer !== undefined) updates.renderer = parsed.data.renderer;
-      if (parsed.data.template !== undefined) updates.template = parsed.data.template;
-      if (parsed.data.unit !== undefined) updates.unit = parsed.data.unit;
-      if (parsed.data.field_role !== undefined) updates.field_role = parsed.data.field_role;
-
-      // Provenance check: a `choices` change on a BUNDLE-owned field def routes to
-      // the USER override layer (bundle_id null), never the bundle row — so the
-      // "+ add option" can't be clobbered by the next bundle update. This is the
-      // single chokepoint: every client (inventory's updateFieldDef, the platform
-      // composer, …) PATCHes here, so none of them can clobber a bundle field.
-      const def = await meta
-        .selectFrom("module_field_defs")
-        .selectAll()
-        .where("id", "=", id)
-        .where("org_id", "=", req.tenant!.org.id)
-        .executeTakeFirst();
-      if (!def) {
-        res.status(404).json({ error: { code: "not_found", message: "field def not found" } });
-        return;
-      }
-      // A unit only makes sense on a number field — checked here because the
-      // patch body alone can't see the row's type.
-      if (parsed.data.unit != null && def.type !== "number") {
-        res.status(400).json({
-          error: { code: "invalid_body", message: "unit is only valid for type='number'" },
+      const result = await updateFieldDef(req.tenant!.org.id, id, parsed.data);
+      if (!result.ok) {
+        res.status(result.code === "not_found" ? 404 : 400).json({
+          error: { code: result.code, message: result.message },
         });
         return;
       }
-      let routedChoices = false;
-      if (def.bundle_id && parsed.data.choices !== undefined) {
-        const existing = await meta
-          .selectFrom("native_field_overrides")
-          .selectAll()
-          .where("org_id", "=", req.tenant!.org.id)
-          .where("entity_kind", "=", def.entity_kind)
-          .where("name", "=", def.name)
-          .executeTakeFirst();
-        const blob: FieldOverrideBlob = { ...(existing?.overrides ?? {}) };
-        if (parsed.data.choices === null) delete blob.choices;
-        else blob.choices = parsed.data.choices;
-        const blobSql = sql`${JSON.stringify(blob)}::jsonb` as unknown as FieldOverrideBlob;
-        await meta
-          .insertInto("native_field_overrides")
-          .values({
-            org_id: req.tenant!.org.id,
-            entity_kind: def.entity_kind,
-            name: def.name,
-            display_label: existing?.display_label ?? null,
-            hidden: existing?.hidden ?? false,
-            position: existing?.position ?? 0,
-            overrides: blobSql,
-            bundle_id: null,
-          })
-          .onConflict((c) =>
-            c.columns(["org_id", "entity_kind", "name"]).doUpdateSet({
-              overrides: blobSql,
-              bundle_id: null,
-              updated_at: new Date(),
-            }),
-          )
-          .execute();
-        delete updates.choices;
-        routedChoices = true;
-      }
-
-      if (Object.keys(updates).length === 0 && !routedChoices) {
-        res.status(400).json({ error: { code: "no_changes", message: "no fields to update" } });
-        return;
-      }
-      let updated = def;
-      if (Object.keys(updates).length > 0) {
-        const u = await meta
-          .updateTable("module_field_defs")
-          .set(updates as never)
-          .where("id", "=", id)
-          .where("org_id", "=", req.tenant!.org.id)
-          .returningAll()
-          .executeTakeFirst();
-        if (!u) {
-          res.status(404).json({ error: { code: "not_found", message: "field def not found" } });
-          return;
-        }
-        updated = u;
-      }
-      await activity.log({
-        orgId: req.tenant!.org.id,
-        action: "field_def_updated",
-        ref: { module: null, entityType: "field_def", entityId: updated.id },
-        diff: parsed.data,
-      });
-      clearComputedDefsCache();
       // Surface the EFFECTIVE choices so the caller immediately sees its override.
-      res.json(routedChoices ? { ...updated, choices: parsed.data.choices ?? def.choices } : updated);
+      res.json(
+        result.effectiveChoices !== undefined
+          ? { ...result.def, choices: result.effectiveChoices }
+          : result.def,
+      );
     } catch (err) {
       next(err);
     }
   },
 );
 
+// AI-ACTION: platform:remove-field
 platformOrgRouter.delete(
   "/:slug/field-defs/:id",
   requireAuth,
@@ -1515,22 +1336,11 @@ platformOrgRouter.delete(
         res.status(400).json({ error: { code: "missing_id", message: "id required" } });
         return;
       }
-      const deleted = await meta
-        .deleteFrom("module_field_defs")
-        .where("id", "=", id)
-        .where("org_id", "=", req.tenant!.org.id)
-        .returning("id")
-        .executeTakeFirst();
-      if (!deleted) {
-        res.status(404).json({ error: { code: "not_found", message: "field def not found" } });
+      const result = await deleteFieldDef(req.tenant!.org.id, id);
+      if (!result.ok) {
+        res.status(404).json({ error: { code: result.code, message: result.message } });
         return;
       }
-      await activity.log({
-        orgId: req.tenant!.org.id,
-        action: "field_def_deleted",
-        ref: { module: null, entityType: "field_def", entityId: deleted.id },
-      });
-      clearComputedDefsCache();
       res.status(204).end();
     } catch (err) {
       next(err);
@@ -1772,6 +1582,10 @@ const PredicateOverrideBody = z.union([
     ),
 ]);
 
+// AI-REACH: which records an ACTION appears on, which is the assistant's own
+// reach. Letting it widen where its actions apply is letting it change what it
+// is allowed to touch, and that belongs to a person on a screen that shows the
+// blast radius.
 platformOrgRouter.put(
   "/:slug/registered-actions/:id/predicate",
   requireAuth,
@@ -1843,6 +1657,7 @@ platformOrgRouter.put(
   },
 );
 
+// AI-REACH: the same reach, put back to the manifest default. Also a person's.
 platformOrgRouter.delete(
   "/:slug/registered-actions/:id/predicate",
   requireAuth,

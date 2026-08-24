@@ -29,32 +29,46 @@ interface Props {
    *  section once it has content — so a detail modal opens without a wall of
    *  empty attachment boxes. Default off (unchanged for existing callers). */
   compact?: boolean;
+  /** Side-cars this page already gets another way.
+   *
+   *  Tags and discussion are also contributed as universal detail PANELS, so a
+   *  page that renders <ContributedDetailPanels> as well as this component
+   *  would show each of them twice. `lint:sidecar-once` fails the build on a
+   *  page that renders both and does not say which half it is dropping. */
+  omit?: Array<"tags" | "discussion" | "files" | "pairings">;
 }
 
-export function EntityAttachments({ kind, entityId, compact = false }: Props) {
+export function EntityAttachments({ kind, entityId, compact = false, omit = [] }: Props) {
   const [moduleName, sourceType] = kind.split(":");
   if (!moduleName || !sourceType) return null;
+  const shows = (part: NonNullable<Props["omit"]>[number]) => !omit.includes(part);
   return (
     <div className={compact ? "flex flex-wrap items-start gap-2" : "space-y-4"}>
-      <TagsSection
-        sourceModule={moduleName}
-        sourceType={sourceType}
-        sourceId={entityId}
-        compact={compact}
-      />
-      <DiscussionPreview
-        sourceModule={moduleName}
-        sourceType={sourceType}
-        sourceId={entityId}
-        compact={compact}
-      />
-      <FilesSection
-        sourceModule={moduleName}
-        sourceType={sourceType}
-        sourceId={entityId}
-        compact={compact}
-      />
-      <PairingsSection kind={kind} entityId={entityId} compact={compact} />
+      {shows("tags") && (
+        <TagsSection
+          sourceModule={moduleName}
+          sourceType={sourceType}
+          sourceId={entityId}
+          compact={compact}
+        />
+      )}
+      {shows("discussion") && (
+        <DiscussionPreview
+          sourceModule={moduleName}
+          sourceType={sourceType}
+          sourceId={entityId}
+          compact={compact}
+        />
+      )}
+      {shows("files") && (
+        <FilesSection
+          sourceModule={moduleName}
+          sourceType={sourceType}
+          sourceId={entityId}
+          compact={compact}
+        />
+      )}
+      {shows("pairings") && <PairingsSection kind={kind} entityId={entityId} compact={compact} />}
     </div>
   );
 }
@@ -82,7 +96,7 @@ async function setEntityImagePath(
 
 // ──────────────── Tags ──────────────────────────────────────────────
 
-function TagsSection({
+export function TagsSection({
   sourceModule,
   sourceType,
   sourceId,

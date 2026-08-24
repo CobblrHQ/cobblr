@@ -135,6 +135,7 @@ orgsRouter.get("/:slug/modules", requireAuth, withTenant, async (req, res, next)
 // POST /orgs/:slug/modules/:moduleName/enable — enable a module for
 // the workspace post-signup. Idempotent: returns already_enabled=true
 // instead of erroring if the module's already on.
+// AI-ACTION: platform:enable-module
 orgsRouter.post(
   "/:slug/modules/:moduleName/enable",
   requireAuth,
@@ -181,6 +182,7 @@ orgsRouter.post(
 // drop the org_modules row. Tenant tables are NOT dropped (data
 // preservation); re-enabling the module later re-runs migrations
 // against existing tables, which is a no-op.
+// AI-ACTION: platform:disable-module
 orgsRouter.post(
   "/:slug/modules/:moduleName/disable",
   requireAuth,
@@ -217,6 +219,8 @@ orgsRouter.post(
 // field-defs, activity_log for this org), then the org row itself.
 // Hard delete. Phase-0 minimum-viable; later versions might support
 // "archive" instead.
+// AI-REACH: deleting the whole workspace, every record in it, and its database.
+// The one thing in here that no undo reaches, so it stays a person's own click.
 orgsRouter.delete("/:slug", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (req.tenant!.role !== "owner") {
@@ -236,6 +240,7 @@ orgsRouter.delete("/:slug", requireAuth, withTenant, async (req, res, next) => {
 // POST /orgs/:slug/convert-to-keep — owner-only. Turn a trial/demo workspace into a kept
 // one: clear its expiry + per-demo unlocks and move it to a paid plan, so the reaper never
 // touches it and the trial caps no longer apply. The conversion funnel at a demo's expiry.
+// AI-REACH: moving a trial onto a paid plan. Money, and the owner's alone.
 orgsRouter.post("/:slug/convert-to-keep", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (req.tenant!.role !== "owner") {
@@ -274,6 +279,9 @@ orgsRouter.post("/:slug/convert-to-keep", requireAuth, withTenant, async (req, r
 // expected to already have, or get, the flagship bundle applied); this only
 // records "treat this workspace as that managed app + lock it down."
 const AppModeBody = z.object({ app: z.string().min(1).nullable() });
+// AI-REACH: locking a workspace into ONE app, which is what its owner sees
+// instead of Cobblr from then on. A decision about the product someone is
+// using, taken deliberately on a screen that explains it.
 orgsRouter.patch("/:slug/app-mode", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (req.tenant!.role !== "owner") {
@@ -324,6 +332,7 @@ orgsRouter.patch("/:slug/app-mode", requireAuth, withTenant, async (req, res, ne
 // navigable and any owner/admin can flip it straight back ("Explore the full
 // platform"). Body: { focused: boolean }.
 const FocusedBody = z.object({ focused: z.boolean() });
+// AI-ACTION: platform:set-simple-mode
 orgsRouter.patch("/:slug/focused", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin") {
@@ -367,6 +376,7 @@ const normalizeSlug = (s: string) =>
 const RenameBody = z
   .object({ name: z.string().trim().min(1).max(120).optional(), slug: z.string().trim().min(1).max(60).optional() })
   .refine((b) => b.name !== undefined || b.slug !== undefined, { message: "Provide a name and/or slug." });
+// AI-ACTION: platform:rename-workspace
 orgsRouter.patch("/:slug", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (req.tenant!.role !== "owner") {
@@ -474,6 +484,8 @@ orgsRouter.post("/:slug/import-app", requireAuth, withTenant, async (req, res, n
   }
 });
 
+// AI-REACH: creating a workspace is account-level and happens before any
+// workspace exists to ask in. The assistant lives inside one.
 orgsRouter.post("/", requireAuth, async (req, res, next) => {
   try {
     const parsed = CreateOrgBody.safeParse(req.body);
@@ -558,6 +570,7 @@ orgsRouter.post("/", requireAuth, async (req, res, next) => {
 // against the server-side managed-app registry; `manifest` is the app's bundle
 // (caller-supplied for now — a server-side registry fetch is the follow-up).
 const ProvisionAppBody = z.object({ app: z.string().min(1), manifest: z.unknown() });
+// AI-REACH: provisioning a new app workspace: account-level, same as creating one.
 orgsRouter.post("/provision-app", requireAuth, async (req, res, next) => {
   try {
     const parsed = ProvisionAppBody.safeParse(req.body);
@@ -767,6 +780,8 @@ orgsRouter.get(
   },
 );
 
+// AI-REACH: read-state the app keeps as you use it. Nobody asks for it in words,
+// and marking someone's notifications read on their behalf is not a favour.
 orgsRouter.post(
   "/:slug/notifications/:id/read",
   requireAuth,
@@ -786,6 +801,7 @@ orgsRouter.post(
   },
 );
 
+// AI-REACH: read-state, as above.
 orgsRouter.post(
   "/:slug/notifications/read-all",
   requireAuth,

@@ -8,6 +8,8 @@
     ".": "./src/index.ts",
     "./qr-token": "./src/qr-token.ts",
     "./entity-tokens": "./src/entity-tokens.ts",
+    "./org-roles": "./src/org-roles.ts",
+    "./workspace-room": "./src/workspace-room.ts",
     "./category-reconcile": "./src/category-reconcile.ts",
     "./resolvables": "./src/resolvables.ts",
     "./label-geometry": "./src/label-geometry.ts",
@@ -17,7 +19,11 @@
     "./scan-triage": "./src/scan-triage.ts",
     "./delivery-outcome": "./src/delivery-outcome.ts",
     "./app-surface": "./src/app-surface.generated.ts",
-    "./app-surface-types": "./src/app-surface-types.ts"
+    "./app-surface-types": "./src/app-surface-types.ts",
+    "./said-names": "./src/said-names.ts",
+    "./date-field-direction": "./src/date-field-direction.ts",
+    "./plural": "./src/plural.ts",
+    "./destination-label": "./src/destination-label.ts"
   },
   "types": "src/index.ts",
   "scripts": {

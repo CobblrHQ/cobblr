@@ -19,6 +19,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useCurrentRecord } from "../lib/useCurrentRecord";
 import { RailTabContent, openRail, useRailTab } from "./SideRail";
 import { MentionText, useMentionPicker } from "./MentionText";
+import { workspaceRoomSource, isWorkspaceRoom } from "@cobblr/platform-contract/workspace-room";
 
 /** How long ago, in the shortest form that is still unambiguous. */
 function ago(iso: string): string {
@@ -101,7 +102,7 @@ function Quote({
 }
 
 export function DiscussionTab() {
-  const { activeSlug } = useActiveOrg();
+  const { activeSlug, activeOrg } = useActiveOrg();
   const record = useCurrentRecord(activeSlug ?? "");
   const qc = useQueryClient();
   const toast = useToast();
@@ -115,22 +116,42 @@ export function DiscussionTab() {
   // to know about.
   const [suppressCobb, setSuppressCobb] = useState(false);
 
-  // A page with no record has nothing to discuss, so the tab is not registered
-  // at all — which is also what keeps the tab BAR hidden (and the rail looking
-  // exactly as it did) everywhere except a record.
-  const { active } = useRailTab(
-    record
-      ? { id: "discussion", label: "Discussion", icon: <MessageSquare size={16} />, order: 1 }
-      : null,
-  );
+  // ALWAYS registered, even with no record in view.
+  //
+  // It used to register only on a record, and the reasoning was sound at the
+  // time: off a record there would be one tab, no tab bar, and the rail would
+  // look exactly as it always had. Then Pinned shipped and registers
+  // unconditionally, so the bar shows everywhere regardless — and the only
+  // thing the condition still achieved was making Discussion vanish from it.
+  //
+  // Which reads as a missing feature, not as "you are not on a record". A tab
+  // that comes and goes as you navigate is worse than one that is always there
+  // and sometimes says it has nothing to show.
+  const { active } = useRailTab({
+    id: "discussion",
+    label: "Discussion",
+    icon: <MessageSquare size={16} />,
+    order: 1,
+  });
 
+  // On a record, its conversation. Off one, the WORKSPACE ROOM.
+  //
+  // This used to be `null` off a record and the tab said "open a record to talk
+  // about it", which was a limitation invented by the tab rather than one the
+  // platform had: a conversation is keyed by a source triple, and the workspace
+  // has an id of its own, so the room needs no new table and no migration.
+  //
+  // Talking without pointing at something is the ordinary case. Docs has both
+  // halves for the same reason: comment on a selection, or just say something.
   const src = record
     ? {
         source_module: record.sourceModule,
         source_type: record.sourceType,
         source_id: record.id,
       }
-    : null;
+    : activeOrg
+      ? workspaceRoomSource(activeOrg.id)
+      : null;
 
   // The record itself, for the context chip. Same cached lookup the mention
   // chips use, so a record named in a comment and the record being discussed
@@ -279,7 +300,34 @@ export function DiscussionTab() {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't remove that."),
   });
 
-  if (!record || !src) return null;
+  // No record in view: the tab is here, and says what it is for. Every hook has
+  // already run above, so this is a plain render branch and not a conditional
+  // hook (lint:hooks-after-return watches that, and would have caught it).
+  if (!src) {
+    return (
+      <RailTabContent id="discussion" title={<>Discussion</>}>
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-3">
+          <p className="text-sm text-faint dark:text-slate-500 italic">
+            Pick a workspace to talk in.
+          </p>
+          <p className="text-sm text-muted dark:text-slate-400">
+            A conversation belongs to the thing it is about, so this fills in
+            once you are looking at a part, a machine, a location, a project.
+          </p>
+          {/* No /w/<slug> prefix: that IS the router basename, so writing it
+              here produces /w/slug/w/slug/discussion. Every other link in the
+              rail is a bare path for the same reason. */}
+          <Link
+            to="/discussion"
+            className="inline-flex items-center gap-1.5 text-sm text-accent hover:underline"
+          >
+            <MessageSquare size={13} />
+            Everything people are saying
+          </Link>
+        </div>
+      </RailTabContent>
+    );
+  }
 
   const comments = conv.data?.comments ?? [];
   // The same rule the server applies, shown BEFORE sending. The failure this
@@ -322,7 +370,11 @@ export function DiscussionTab() {
           <div className="mx-4 mt-3 shrink-0 flex items-start gap-2 rounded-md border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900 px-3 py-2">
             <MessageSquare size={13} className="shrink-0 mt-0.5 text-cobble-700 dark:text-cobble-200" />
             <p className="flex-1 min-w-0 text-[11px] text-cobble-800 dark:text-cobble-100">
-              <Link to="/me/notifications" className="underline hover:no-underline">
+              {/* /me/communication (the Delivery tab), NOT /me/notifications (Inbox).
+                  The Connect Discord button lives on Delivery; Inbox is a list of
+                  things that already happened, so this CTA used to land on a page
+                  that cannot do the thing it offers. */}
+              <Link to="/me/communication" className="underline hover:no-underline">
                 Connect Discord
               </Link>{" "}
               and someone mentioning you here reaches you straight away, with a
@@ -350,10 +402,15 @@ export function DiscussionTab() {
               existed.) */}
           <span
             className="inline-flex items-center gap-1.5 rounded-md border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900 px-2 py-1 text-[11px] text-cobble-800 dark:text-cobble-100 max-w-full"
-            title={record.kind}
+            title={record?.kind ?? activeOrg?.name}
           >
-            <span className="shrink-0 opacity-70">About:</span>
-            <span className="truncate">{subject.data?.title ?? "…"}</span>
+            {/* The room is not ABOUT anything, so it does not claim to be. It
+                says where you are talking, which is the useful fact when the
+                same tab is a record thread one moment and the room the next. */}
+            <span className="shrink-0 opacity-70">{record ? "About:" : "In:"}</span>
+            <span className="truncate">
+              {record ? (subject.data?.title ?? "…") : (activeOrg?.name ?? "this workspace")}
+            </span>
           </span>
         </div>
 
@@ -361,8 +418,9 @@ export function DiscussionTab() {
           {conv.isLoading && <p className="text-xs text-faint">loading…</p>}
           {!conv.isLoading && comments.length === 0 && (
             <p className="text-sm text-faint dark:text-slate-500 italic">
-              Nothing said about this yet. Whatever you write here stays with the record, so the
-              next person to open it sees it too.
+              {isWorkspaceRoom(src)
+                ? "Nothing said in here yet. This is the whole workspace, so anything that is not about one particular record belongs here."
+                : "Nothing said about this yet. Whatever you write here stays with the record, so the next person to open it sees it too."}
             </p>
           )}
           {comments.map((c) => (
@@ -374,54 +432,77 @@ export function DiscussionTab() {
                 )}
                 <span className="text-faint">{ago(c.created_at)}</span>
                 {c.edited_at && <span className="text-faint italic">edited</span>}
-                {!c.deleted_at && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setReplyTo(c.id);
-                      taRef.current?.focus();
-                    }}
-                    className="ml-auto text-faint hover:text-accent transition"
-                    aria-label="Reply to this comment"
-                    title="Reply"
-                  >
-                    <CornerUpLeft size={12} />
-                  </button>
-                )}
-                {!c.deleted_at && (
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      const ok = await confirm({
-                        title: "Remove this comment?",
-                        message: "The text goes. Anyone who replied to it keeps their reply.",
-                        confirmLabel: "Remove",
-                        destructive: true,
-                      });
-                      if (ok) remove.mutate(c.id);
-                    }}
-                    className="text-faint hover:text-ember-500 transition"
-                    aria-label="Remove comment"
-                    title="Remove"
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                )}
               </div>
               {c.in_reply_to && <Quote id={c.in_reply_to} comments={comments} names={nameOfUser} />}
-              {c.status === "pending" ? (
-                <p className="text-sm text-faint dark:text-slate-500 italic">Cobb is thinking…</p>
-              ) : c.status === "failed" ? (
-                // Failure says so out loud. A silent non-answer looks like a
-                // broken feature and leaves nobody sure whether to ask again.
-                <p className="text-sm text-ember-500 italic">{c.body || "Cobb could not answer."}</p>
-              ) : c.deleted_at ? (
-                <p className="text-sm text-faint dark:text-slate-500 italic">message removed</p>
-              ) : (
-                <p className="text-sm text-content dark:text-mortar-200">
-                  <MentionText body={c.body} names={(id) => nameOfUser(id)} />
-                </p>
-              )}
+              {/* THE TOOLS LIVE WITH THE MESSAGE.
+                  They used to sit in the header row on `ml-auto`, which pinned
+                  them to the far edge of the panel: the name and the time on
+                  the left, two icons stranded across a gap, and the message
+                  itself on a third line. Three pieces of one thing, none of
+                  them touching.
+                  Beside the text instead, the way a chat app does it, and
+                  revealed on hover through the shared `hover-reveal` — which
+                  stays visible on a touch screen, where there is no hover to
+                  reveal them with. */}
+              <div className="flex items-start gap-1">
+                {/* w-fit, or the tools are back at the far edge.
+                    A <p> is block-level and fills its container, so the flex
+                    row's first child was full width and the icons sat against
+                    the panel border again — the same disjointed look, one line
+                    lower. Hugging the text is what puts them BESIDE the
+                    message; a long message still fills and wraps, and then the
+                    edge is where they belong anyway. */}
+                <div className="min-w-0 w-fit max-w-full">
+                  {c.status === "pending" ? (
+                    <p className="text-sm text-faint dark:text-slate-500 italic">Cobb is thinking…</p>
+                  ) : c.status === "failed" ? (
+                    // Failure says so out loud. A silent non-answer looks like a
+                    // broken feature and leaves nobody sure whether to ask again.
+                    <p className="text-sm text-ember-500 italic">
+                      {c.body || "Cobb could not answer."}
+                    </p>
+                  ) : c.deleted_at ? (
+                    <p className="text-sm text-faint dark:text-slate-500 italic">message removed</p>
+                  ) : (
+                    <p className="text-sm text-content dark:text-mortar-200">
+                      <MentionText body={c.body} names={(id) => nameOfUser(id)} />
+                    </p>
+                  )}
+                </div>
+                {!c.deleted_at && (
+                  <span className="hover-reveal shrink-0 flex items-center gap-0.5 pl-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReplyTo(c.id);
+                        taRef.current?.focus();
+                      }}
+                      className="p-1 rounded text-faint hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/60 transition"
+                      aria-label="Reply to this comment"
+                      title="Reply"
+                    >
+                      <CornerUpLeft size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const ok = await confirm({
+                          title: "Remove this comment?",
+                          message: "The text goes. Anyone who replied to it keeps their reply.",
+                          confirmLabel: "Remove",
+                          destructive: true,
+                        });
+                        if (ok) remove.mutate(c.id);
+                      }}
+                      className="p-1 rounded text-faint hover:text-ember-500 hover:bg-subtle/60 dark:hover:bg-slate-800/60 transition"
+                      aria-label="Remove comment"
+                      title="Remove"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </span>
+                )}
+              </div>
             </div>
           ))}
         </div>
@@ -541,7 +622,19 @@ export function DiscussionPreview({
   const count = conv.data?.count ?? 0;
   const latest = [...(conv.data?.comments ?? [])].reverse().find((c) => !c.deleted_at);
 
-  if (compact) {
+  // A PILL when there is nothing to read, whatever the caller asked for.
+  //
+  // The section form is a full-width bordered box, and on an empty record it
+  // says "Nothing said about this yet" in a box the size of a paragraph. One of
+  // those on a detail page is heavy; a list of them, one per row, is what the
+  // scan inbox looked like — every item carrying an empty container for
+  // something nobody had written. It reads as a text field to fill in.
+  //
+  // Tags already had the right answer next door: an empty tag list is a small
+  // "+ Tag" pill, not an empty box announcing itself. So an empty conversation
+  // is a "Discuss" pill, and the section earns its room only once there is
+  // something in it to show.
+  if (compact || count === 0) {
     // Matches the Tag / File / Link pills beside it: same size, same shape, and
     // it says how many so an empty record and a busy one do not look alike.
     return (

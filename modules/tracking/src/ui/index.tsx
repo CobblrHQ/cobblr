@@ -6,7 +6,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { ContributedDetailPanels, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import { TrendingUp, Plus, Trash2 } from "lucide-react";
 import { TrackingApi, type MetricSummary, type Measurement, type GoalDirection, TrackingApiError } from "./api.js";
 
@@ -222,6 +222,13 @@ function MetricDetailModal({ metricId, api, orgSlug, onClose }: { metricId: stri
             ))}
           </ul>
         )}
+
+        {/* Tags and discussion, contributed at every kind. A record you
+            open is a record somebody may want to say something about. */}
+        <ContributedDetailPanels
+          target="tracking:metric"
+          ctx={{ slug: orgSlug, entityId: metricId, entityTitle: d?.name ?? "Metric" }}
+        />
       </div>
     </Modal>
   );

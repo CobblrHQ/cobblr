@@ -12,8 +12,11 @@ import { ClipboardCopy, Plus, RefreshCw } from "lucide-react";
 import { useToast, usePageTitle, Modal } from "@cobblr/platform-web";
 import { ApiError, api } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { ORG_ROLES, ORG_ROLE_BLURB, type OrgRoleName } from "@cobblr/platform-contract/org-roles";
 
-type Role = "owner" | "admin" | "member" | "guest";
+// From the vocabulary. This union used to be typed out and had lost "editor",
+// so the one screen that creates users could not create one.
+type Role = OrgRoleName;
 
 interface TempPasswordResult {
   email?: string;
@@ -192,10 +195,14 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
               onChange={(e) => setRoleInput(e.target.value as Role)}
               className="input"
             >
-              <option value="member">Member (default - read-only, grant edit verbs separately)</option>
-              <option value="admin">Admin (configures the workspace)</option>
-              <option value="guest">Guest (read-only, never grantable)</option>
-              <option value="owner">Owner (full power)</option>
+              {/* Every role, described once, from the contract. The blurbs used
+                  to live here AND in the members modal AND in the manual, which
+                  is three chances to describe the same role differently. */}
+              {ORG_ROLES.map((r) => (
+                <option key={r} value={r}>
+                  {r} - {ORG_ROLE_BLURB[r]}
+                </option>
+              ))}
             </select>
           </label>
           <div className="flex gap-2 pt-2">

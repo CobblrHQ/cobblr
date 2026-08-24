@@ -137,6 +137,33 @@ export function parseTracker(
   };
 }
 
+/** Not a carrier code: this module's stand-in for "we could not tell". Named
+ *  once so the default below and the path builder cannot drift apart. */
+const UNKNOWN_CARRIER = "unknown";
+
+/** The read-or-follow URL, carrier included whenever we know it.
+ *
+ *  The carrier is not decoration. A tracking service handed a bare number has
+ *  to guess, and a 12-digit number is ambiguous enough that 17track offered
+ *  FOURTEEN candidates for a plain FedEx one and refused to pick — leaving the
+ *  parcel parked on "Select carrier", never polled, reporting nothing, forever.
+ *  Cobblr already knows the answer offline from a check digit, so withholding
+ *  it buys nothing and costs the whole feature.
+ *
+ *  This was the bug: `carrierCode` was a parameter of track() and simply never
+ *  reached the query string, so every parcel was followed unclassified and only
+ *  the ones the service happened to guess correctly ever resolved.
+ *
+ *  "unknown" is omitted deliberately — it is this module's stand-in for "no
+ *  idea", and passing it as if it were a carrier name would be a lie the
+ *  service cannot act on. EasyPost's own GET /v2/trackers takes `carrier` as a
+ *  filter, so the parameter is right for both backends. */
+export function trackerPath(number: string, carrierCode: string | undefined): string {
+  const q = new URLSearchParams({ tracking_code: number });
+  if (carrierCode && carrierCode !== UNKNOWN_CARRIER) q.set("carrier", carrierCode);
+  return `/trackers?${q.toString()}`;
+}
+
 /** Not a carrier: a stand-in for any of them. The registry treats it as the
  *  fallback rather than looking it up by carrier code. */
 export const easypostCompatDriver: CarrierDriver = {
@@ -155,7 +182,7 @@ export const easypostCompatDriver: CarrierDriver = {
 
   async track(
     number: string,
-    carrierCode = "unknown",
+    carrierCode = UNKNOWN_CARRIER,
     route: { orgId?: string; ownerUserId?: string | null } = {},
   ): Promise<ShipmentStatus> {
     // Whose key, and where it points, is a property of the parcel — the owner's
@@ -167,7 +194,7 @@ export const easypostCompatDriver: CarrierDriver = {
     // Read before create. On real EasyPost creating a tracker is the billable
     // act, so a parcel already being followed must not be re-created on every
     // sweep; a bridge can answer this one call and ignore the other entirely.
-    const path = `/trackers?tracking_code=${encodeURIComponent(number)}`;
+    const path = trackerPath(number, carrierCode);
     const headers = {
       Accept: "application/json",
       // EasyPost is HTTP Basic with the key as username and no password.
