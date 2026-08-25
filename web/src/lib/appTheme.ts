@@ -11,7 +11,13 @@
 // theme can restyle but can't inject a stylesheet.
 
 import type { CSSProperties } from "react";
+import { isSafeFontUrl } from "@cobblr/platform-contract/safe-font-url";
 import type { AppTheme } from "./api";
+
+// The @font-face safety predicate lives in the contract so the write sites
+// (portal + core-apps theme routes) enforce the SAME rule — one source, no
+// drift. Re-exported here for the render-side tests + callers.
+export { isSafeFontUrl };
 
 export const FONT_STACKS: Record<NonNullable<AppTheme["font"]>, string> = {
   sans: "ui-sans-serif, system-ui, -apple-system, sans-serif",
@@ -22,11 +28,14 @@ export const FONT_STACKS: Record<NonNullable<AppTheme["font"]>, string> = {
 };
 export const CUSTOM_FONT_FAMILY = "cobblr-app-font";
 
-// A custom (uploaded/hosted) font wins over the keyword stack. Guard the
-// URL so it can't break out of the CSS `url("…")` string (data: URLs are
-// base64; normal URLs don't contain quotes/newlines).
+// A custom (uploaded/hosted) font wins over the keyword stack. Two guards:
+// (1) it can't break out of the CSS `url("…")` string (no quotes/newlines/
+// backslashes — data: URLs are base64, normal URLs don't carry these), and
+// (2) it can only point at a safe origin (isSafeFontUrl) so a workspace admin
+// can't turn the theme into an off-site tracking beacon.
 export function customFontUrl(t?: AppTheme | null): string | null {
   if (!t?.font_url || /["\\\n\r]/.test(t.font_url)) return null;
+  if (!isSafeFontUrl(t.font_url)) return null;
   return t.font_url;
 }
 export function fontFaceCss(t?: AppTheme | null): string | null {

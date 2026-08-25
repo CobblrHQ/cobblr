@@ -62,6 +62,7 @@ import * as scanResolvers from "./platform/scan-resolvers.js";
 import * as queue from "./platform/queue.js";
 import * as sharedCache from "./platform/shared-cache.js";
 import * as notificationsImpl from "./platform/notifications.js";
+import { orgMemberIds } from "./platform/memberships.js";
 import * as integrationsImpl from "./platform/integrations.js";
 import * as aiImpl from "./platform/ai.js";
 import * as edgeImpl from "./platform/edge.js";
@@ -74,6 +75,7 @@ import { migrateBookshelfToInstance } from "./platform/migrate-bookshelf-to-inst
 import { mergeLabelsQr } from "./platform/merge-labels-qr.js";
 import { backfillPlacements } from "./platform/migrate-location-to-placement.js";
 import { backfillDefaultBindings } from "./platform/seed-bindings.js";
+import { healMentionEntityRef } from "./platform/heal-mention-entity-ref.js";
 import { repairReplayTruncatedNames } from "./platform/repair-replay-truncated-names.js";
 import { backfillIdentityLinks } from "./platform/backfill-identity.js";
 import { logAnnounceRouting } from "./platform/announce.js";
@@ -268,14 +270,11 @@ async function boot() {
     },
     notifications: {
       dispatch: notificationsImpl.dispatch,
-      orgMemberIds: async (orgId: string) => {
-        const rows = await meta
-          .selectFrom("org_memberships")
-          .select("user_id")
-          .where("org_id", "=", orgId)
-          .execute();
-        return rows.map((r) => String(r.user_id));
-      },
+      orgMemberIds: async (orgId: string) => [...(await orgMemberIds(orgId))],
+      orgName: async (orgId: string) =>
+        (
+          await meta.selectFrom("orgs").select("name").where("id", "=", orgId).executeTakeFirst()
+        )?.name ?? null,
     },
     integrations: {
       registerConnector: integrationsImpl.registerConnector,
@@ -1016,6 +1015,14 @@ async function boot() {
   // trigger_event), so repeated boots are safe.
   const seeded = await T("backfillDefaultBindings", backfillDefaultBindings());
   console.log(`[cobblr-api] default bindings backfilled: ${seeded} added`);
+
+  // Correct the entity ref on discussion-mention notifications dispatched
+  // before it was fixed at the source. A DM already sitting in somebody's
+  // Discord carries the old ref, so its Reply button keeps posting into an
+  // invisible second conversation until this runs. Costs one indexed query
+  // once every install is clean.
+  const refs = await T("healMentionEntityRef", healMentionEntityRef());
+  if (refs) console.log(`[cobblr-api] mention entity refs corrected: ${refs}`);
 
   // The one sweeper that flushes windowed notification channels. Every module
   // that wants a digest gets it from here rather than growing its own timer:

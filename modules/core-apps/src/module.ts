@@ -22,7 +22,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-apps",
-  version: "0.1.0",
+  version: "0.1.1",
   displayName: "Apps",
   description:
     "Structured worker apps for the member portal: composed pages of views, actions, forms and stats, rendered by the App Player. Every block stays inside the capability + read-scope boundary.",

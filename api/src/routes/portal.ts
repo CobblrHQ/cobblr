@@ -6,6 +6,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
+import { isSafeFontUrl } from "@cobblr/platform-contract/safe-font-url";
 import { sql } from "kysely";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
@@ -40,7 +41,14 @@ const ThemeTokens = z
     font: z.enum(["sans", "serif", "mono", "rounded", "slab"]).optional(),
     radius: z.number().int().min(0).max(36).optional(),
     logo: assetRef.max(500_000).optional(),
-    font_url: assetRef.max(1_200_000).optional(),
+    // A font_url is fetched by every visitor's browser via @font-face, so it
+    // must be same-origin / data: / an allowlisted font CDN — never an
+    // arbitrary host used as a tracking beacon. Same rule the render site
+    // enforces (web appTheme), from the one shared predicate.
+    font_url: assetRef
+      .max(1_200_000)
+      .refine(isSafeFontUrl, "font_url must be a data: URL, a same-origin path, or an allowlisted font host")
+      .optional(),
     font_name: z.string().max(60).optional(),
   })
   .strict();
@@ -347,13 +355,26 @@ portalRouter.post(
       // Verify the target user is actually a member of this workspace.
       const member = await meta
         .selectFrom("org_memberships")
-        .select("user_id")
+        .select(["user_id", "role"])
         .where("org_id", "=", req.tenant!.org.id)
         .where("user_id", "=", parsed.data.user_id)
         .executeTakeFirst();
       if (!member) {
         res.status(404).json({
           error: { code: "not_member", message: "User isn't a member of this workspace." },
+        });
+        return;
+      }
+      // A guest is read-only by invariant (auth/capability.ts). Every grantable
+      // capability gates a MUTATION, so handing one to a guest quietly makes them
+      // a writer the rest of the code still treats as read-only. Refuse it; change
+      // their role first if they should be able to act. (audit L-GUESTGRANT)
+      if (member.role === "guest") {
+        res.status(403).json({
+          error: {
+            code: "guest_read_only",
+            message: "Guests are read-only. Change this person's role before granting a capability.",
+          },
         });
         return;
       }

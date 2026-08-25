@@ -14,6 +14,17 @@
 // exists but never open it, and the bug was a bad specifier INSIDE the entry.
 // Only resolution-class errors fail here; a package that legitimately needs env
 // at import time is reported and tolerated.
+//
+// LOAD errors are the second failure class. Node strips TypeScript types by
+// default (strip-ONLY mode, no transform), and a source-first @cobblr/* package
+// loaded at boot is parsed that way. Strip-only refuses any syntax that needs
+// codegen — parameter properties (`constructor(public x)`), `enum`, `namespace`,
+// `import x = require()`, decorators — with ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX.
+// tsc and tsx both accept that syntax, so a package can be green on typecheck AND
+// on the unit tests (tsx/esbuild transform it) and still crash the api at import.
+// That shipped once (platform-net used a parameter property); this lint saw the
+// error but filed it under "threw at import time, tolerate" because the code was
+// not listed. It is a load failure, not a runtime throw — it fails here now.
 // Run: npx tsx scripts/lint-node-resolves.ts
 
 import { readFileSync, globSync } from "node:fs";
@@ -25,6 +36,10 @@ const RESOLUTION_ERRORS = [
   "ERR_UNSUPPORTED_DIR_IMPORT",
   "ERR_INVALID_MODULE_SPECIFIER",
 ];
+// A buildless package that boots the api MUST be strip-safe. This is the same
+// crash as a resolution error from the api's point of view: it does not load.
+const STRIP_ERRORS = ["ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX"];
+const BOOT_LOAD_ERRORS = [...RESOLUTION_ERRORS, ...STRIP_ERRORS];
 
 const apiPkg = JSON.parse(readFileSync("api/package.json", "utf8")) as {
   dependencies?: Record<string, string>;
@@ -91,7 +106,7 @@ for (const dep of deps) {
       });
     } catch (e) {
       const stderr = String((e as { stderr?: Buffer }).stderr ?? "");
-      const code = RESOLUTION_ERRORS.find((c) => stderr.includes(c));
+      const code = BOOT_LOAD_ERRORS.find((c) => stderr.includes(c));
       const line = stderr.split("\n").find((l) => l.includes("Error")) ?? stderr.split("\n")[0] ?? "";
       if (code) failures.push({ spec, code, msg: line.trim().slice(0, 160) });
       else console.log(`  (${spec} resolved but threw at import time, not a resolution problem)`);
@@ -150,7 +165,7 @@ for (const [spec, owner] of moduleImports) {
     });
   } catch (e) {
     const stderr = String((e as { stderr?: Buffer }).stderr ?? "");
-    const code = RESOLUTION_ERRORS.find((c) => stderr.includes(c));
+    const code = BOOT_LOAD_ERRORS.find((c) => stderr.includes(c));
     const line = stderr.split("\n").find((l) => l.includes("Error")) ?? stderr.split("\n")[0] ?? "";
     if (code) failures.push({ spec: `${spec}  (imported by modules/${owner})`, code, msg: line.trim().slice(0, 160) });
   }
@@ -209,9 +224,12 @@ if (failures.length > 0) {
     console.error(`       ${f.code}: ${f.msg}`);
   }
   console.error(
-    `\n  tsc and tsx both rewrite a "./foo.js" specifier to foo.ts; node does not.` +
-      `\n  In a source-first package, import the real extension or reach the file` +
-      `\n  through an exports subpath instead of a relative re-export.`,
+    `\n  ERR_MODULE_NOT_FOUND etc: tsc and tsx both rewrite a "./foo.js" specifier` +
+      `\n    to foo.ts; node does not. Import the real extension, or reach the file` +
+      `\n    through an exports subpath instead of a relative re-export.` +
+      `\n  ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX: node strips types (no transform), so a` +
+      `\n    buildless package must avoid parameter properties, enum, namespace, and` +
+      `\n    decorators. Declare the field and assign it in the constructor body.`,
   );
   process.exit(1);
 }

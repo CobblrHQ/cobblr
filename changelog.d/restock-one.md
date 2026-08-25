@@ -2,7 +2,7 @@
 type: feature
 scope: inventory
 date: 2026-08-23
-docs_target: docs/USER_GUIDE.md#Adding another one
+docs_target: docs/USER_GUIDE.md#3.1 Inventory
 ---
 **Adding another one now dates it properly instead of making it inherit the last one's use-by.** Say how long something keeps and adding one records that it arrived today and works out its own date. Eating one always takes the oldest, so once the urgent one is gone the warning moves on by itself. Nothing to type, and nothing you already track changes until you use it.
 

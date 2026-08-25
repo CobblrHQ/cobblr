@@ -2,7 +2,7 @@
 type: feature
 scope: bundles
 date: 2026-08-24
-docs_target: docs/USER_GUIDE.md#Module instances ("+ New category")
+docs_target: docs/USER_GUIDE.md#3.18 Module instances ("+ New category")
 ---
 Groceries is now its own table rather than extra columns on Inventory, so a
 scanned cucumber and a scanned bolt no longer share a list. Groceries, Tea and

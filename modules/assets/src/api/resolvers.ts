@@ -135,8 +135,10 @@ export function registerAssetsResolvers(): void {
     const rows = await q.limit(limit).offset(offset).execute();
     return { items: rows.map((r) => toResolvedAsset(r)) };
   };
+  // Scoped to the default instance - same leak as inventory's base kind; see
+  // the note there. A Vehicles instance's cars must not double up under Assets.
   platform().entities.registerListResolver("assets:asset", (orgId, query) =>
-    assetsListResolver(orgId, query),
+    assetsListResolver(orgId, query, "assets"),
   );
   platform().entities.registerInstanceListResolver("assets", (orgId, instance, query) =>
     assetsListResolver(orgId, query, instance),

@@ -20,6 +20,9 @@
 // handler would fail at invoke time, in front of a user (the exact half-wire
 // class lint:dead-exports caught in #1938).
 
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
+
 /** The reserved owner. lint-manifests refuses a module named this. */
 export const PLATFORM_ACTION_OWNER = "platform";
 
@@ -38,6 +41,31 @@ export interface PlatformActionDecl {
   undoable: boolean;
   /** How a person asks for it. See EntityAction.examples in the contract. */
   examples?: string[];
+  /**
+   * The floor a caller must clear to invoke this action, declared EXPLICITLY for
+   * every platform action (no default) so a new one cannot silently ship without
+   * the decision having been made:
+   *
+   *   • a role rung ("owner", "admin", …) — a HARD floor, rank-based, that NO
+   *     capability grant overrides. Use this when the REST twin is stricter than
+   *     "owner/admin or a grant" — e.g. `platform:rename-workspace` is hard
+   *     `role === "owner"` over REST (PATCH /orgs/:slug), so it is "owner" here.
+   *   • "grantable" — no hard floor: the invoke route's default gate governs
+   *     (`requireCapability` — owner/admin pass, a member needs an explicit
+   *     grant). Use this when the REST twin is `requireRole("owner","admin")` and
+   *     the fine-grained grant is intended (all the field/instance/module/config
+   *     actions).
+   *
+   * THE BUG THIS EXISTS FOR (audit M-ACTION-PARITY). The action rail only ran
+   * `requireCapability`, which passes any admin, so an admin who could not rename
+   * the workspace in Settings could rename it through Cobb / the generic invoke.
+   * A rung floor makes the invoke route enforce the SAME gate as the REST twin.
+   * Making the field REQUIRED (this is the strengthening over the original) means
+   * `lint:action-role-parity` can pin every platform action to an explicit,
+   * reviewed floor rather than pattern-matching the description wording — a future
+   * owner-only action whose prose omits "owner only" can no longer slip through.
+   */
+  min_role: OrgRoleName | "grantable";
   args_schema: Record<string, { label: string; type: "text" | "boolean" | "number" }>;
   version: string;
 }
@@ -45,6 +73,7 @@ export interface PlatformActionDecl {
 export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     id: "platform:add-field",
+    min_role: "grantable",
     label: "Add a field",
     description:
       "Add a custom field to one kind of record (e.g. inventory:part), or to a whole class of them with a trait scope (e.g. @physical puts it on everything physical). Types: text (choices makes it a dropdown), number (with a unit), date, boolean, relation (needs ref_kind: the kind it points at). Runs on the workspace, not a record. Check the kind's existing fields with list_record_kinds first. Fields cannot be edited or deleted this way, only added.",
@@ -68,6 +97,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     id: "platform:edit-field",
+    min_role: "grantable",
     label: "Change a field",
     description:
       "Change a field that already exists on a kind of record: rename its label, hide it from forms and lists (or show it again), make it required, or replace the choices of a dropdown. Works on the workspace's own fields AND on the ones a module ships (a part's manufacturer, a machine's serial number), of which the label, whether it shows, and its choices are yours to set. Name the field the way it appears on the form. Runs on the workspace, not a record. What it CANNOT do is change a field's type or its storage name, because values already recorded are stored under both.",
@@ -97,6 +127,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     id: "platform:remove-field",
+    min_role: "grantable",
     label: "Remove a field",
     description:
       "Take a custom field off a kind of record. The field stops appearing on forms and lists. Anything already recorded in it is left alone, so adding a field with the same storage name back brings those values into view again. Runs on the workspace, not a record.",
@@ -116,6 +147,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     id: "platform:group-fields",
+    min_role: "grantable",
     label: "Group fields under a heading",
     description:
       "Put custom fields under a named heading on a kind's form, creating the heading if it does not exist yet. Name the fields the way they appear on the form; the order you name them is the order they get. Pass rename_to instead of fields to RENAME a heading that is already there. Runs on the workspace, not a record. Fields that apply to a whole class of records cannot be grouped this way, since their layout is not one kind's to set.",
@@ -140,6 +172,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     id: "platform:ungroup-fields",
+    min_role: "grantable",
     label: "Take fields out of a heading",
     description:
       "Take custom fields back out of whatever heading they sit under on a kind's form; they return to the ungrouped list. A heading left empty is removed with them. Runs on the workspace, not a record.",
@@ -158,6 +191,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     id: "platform:create-instance",
+    min_role: "grantable",
     label: "Create a list (instance)",
     description:
       "Create a separate skinned list from a module the workspace already has — 3D Printers and CNC both from Machines, each with its own nav entry, fields and label codes. Runs on the workspace, not a record. The result names the new list's kind id (e.g. cnc:item) — use that with list_records and create_record. Check what exists with get_workspace_setup (instances) first.",
@@ -177,6 +211,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     id: "platform:enable-module",
+    min_role: "grantable",
     label: "Turn on a feature",
     description:
       "Turn on one of Cobblr's features for this workspace (Purchases, Maintenance, Shipments, …) so its screens and records appear. Name it the way it is written in the app. Turning one on is safe and repeatable: a feature already on says so rather than doing anything. Runs on the workspace, not a record. Use get_workspace_setup to see what is already on.",
@@ -195,6 +230,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     id: "platform:disable-module",
+    min_role: "grantable",
     label: "Turn off a feature",
     description:
       "Turn one of Cobblr's features off for this workspace: its screens leave the navigation. Records already stored are kept and come back if it is turned on again, but the fields and automations that came WITH the feature are cleared out. Refuses when another feature in use depends on it, and says which. Runs on the workspace, not a record.",
@@ -213,6 +249,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     id: "platform:rename-thing",
+    min_role: "grantable",
     label: "Rename what a list is called",
     description:
       "Change the words this workspace uses for a kind of record or a list: Parts becomes Spools, Machines becomes Printers. It renames the LABEL only, everywhere it is shown (navigation, headings, buttons); nothing recorded moves and no id changes. Give both the singular and the plural when they are not the plain +s. Runs on the workspace, not a record. Use get_workspace_setup to see what the lists are called now.",
@@ -232,6 +269,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     id: "platform:promote-category",
+    min_role: "grantable",
     label: "Give a category its own list",
     description:
       "Take one category out of a list and give it a list of its own: the Spices in Pantry become their own Spices list, with its own nav entry, fields and label codes. Records keep their ids, their history and their printed labels; only which list they are in changes. Reversible with the fold-back action. Runs on the workspace, not a record.",
@@ -253,6 +291,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     id: "platform:demote-category",
+    min_role: "grantable",
     label: "Fold a list back into another",
     description:
       "Fold a list back into another list of the same kind, as a category there: the Spices list goes back into Pantry, stamped with the category you name. Everything in it moves; records keep their ids and their labels. The exact reverse of giving a category its own list. Runs on the workspace, not a record.",
@@ -279,6 +318,10 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     scope: "workspace",
     invoke_handler: "platform.rename-workspace",
     user_invokable: true,
+    // Owner-only on BOTH rails. The REST twin (PATCH /orgs/:slug) is hard
+    // `role === "owner"`; without this floor the action rail let any admin
+    // rename through the generic invoke (audit M-ACTION-PARITY).
+    min_role: "owner",
     // a name: setting it back is the whole undo
     undoable: true,
     examples: ["call this workspace The Garage", "rename my workspace to Home"],
@@ -289,6 +332,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     id: "platform:set-simple-mode",
+    min_role: "grantable",
     label: "Turn simple mode on or off",
     description:
       "Simple mode declutters this workspace to a calm everyday view: the advanced configuration surfaces are put away, and the things you use daily stay. Nothing is deleted or turned off, and switching it back shows everything again. Owner or admin. Runs on the workspace, not a record.",
@@ -306,6 +350,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     id: "platform:set-field-preset",
+    min_role: "grantable",
     label: "Switch a set of fields on or off",
     description:
       "Switch on a named SET of fields that belong together, in one go, across everything they apply to: 'provenance' puts where each thing came from, when, and what it cost onto every physical thing the workspace tracks, now and in future. Switching it off takes the fields away and KEEPS anything already recorded in them, which comes back if it goes on again. Runs on the workspace, not a record. Ask for the list with get_workspace_setup.",
@@ -324,6 +369,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     id: "platform:set-wire-enabled",
+    min_role: "grantable",
     label: "Turn an automation on or off",
     description:
       "Switch one automation (wire) on or off by its id — find the id with get_workspace_setup (automations). Toggling only stops or restarts behavior the user already set up; automations cannot be created or edited this way. Runs on the workspace, not a record.",
@@ -341,3 +387,67 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     version: "0.1.0",
   },
 ];
+
+/**
+ * The minimum role this action requires, or null if it inherits the invoke
+ * route's default gate (`requireCapability`). The invoke route reads this AFTER
+ * `requireCapability` and enforces it with `roleSatisfies`, so a kernel action
+ * can be pinned to the same floor as its REST twin (audit M-ACTION-PARITY).
+ *
+ * Sourced from the in-memory declarations — no DB round-trip. Only the kernel's
+ * own "platform:*" actions can carry a floor today (a module manifest has no
+ * `min_role` field), so a non-platform id is always null.
+ */
+export function platformActionMinRole(actionId: string): OrgRoleName | null {
+  const floor = PLATFORM_ACTIONS.find((a) => a.id === actionId)?.min_role;
+  // "grantable" is an explicit "no hard floor" — the invoke route's
+  // requireCapability (owner/admin, or a member with a grant) governs. Only a
+  // real role rung is enforced as a floor.
+  return floor && floor !== "grantable" ? floor : null;
+}
+
+/** Thrown by {@link assertActingRoleClearsActionFloor} when the acting user's
+ *  role does not clear an action's min_role floor. Carries the pieces a caller
+ *  needs to shape its own refusal (an HTTP 403 body, a neutral Discord card). */
+export class ActionRoleFloorError extends Error {
+  constructor(
+    readonly actionId: string,
+    readonly requiredRole: OrgRoleName,
+    readonly actingRole: string | null,
+  ) {
+    super(`The ${actionId} action requires the ${requiredRole} role.`);
+    this.name = "ActionRoleFloorError";
+  }
+}
+
+/**
+ * Enforce a platform action's min_role floor for an identity-carrying caller
+ * that reaches {@link ActionsAPI.invoke} DIRECTLY — the Discord button press and
+ * the bundle-upgrade migration — instead of through the HTTP POST /actions/invoke
+ * route (which enforces the same floor inline against `req.tenant.role`). Throws
+ * {@link ActionRoleFloorError} when the role is short; a no-op for any action
+ * without a floor, which is every module action and every platform action that
+ * inherits the default `requireCapability` gate.
+ *
+ * This is the ONE seam for that check off the HTTP route. It exists because the
+ * floor was landed in the route ALONE (audit M-ACTION-PARITY), so the two other
+ * callers of invoke() that act for a specific user could reach a floored action
+ * without it — benign today (no owner-only platform:* action is card- or
+ * migration-reachable), but the floor must hold at every door, not only the REST
+ * one.
+ *
+ * NOT for automation. Wires and recurrence run with the wire AUTHOR's authority,
+ * not a triggering user's, and MUST NOT be role-gated at firing (see the NOTE in
+ * actions.ts `invoke`). They never call this; only a path acting on behalf of a
+ * signed-in USER does. `roleSatisfies` is rank-based, so a higher role always
+ * clears a lower floor.
+ */
+export function assertActingRoleClearsActionFloor(
+  actionId: string,
+  actingRole: string | null | undefined,
+): void {
+  const minRole = platformActionMinRole(actionId);
+  if (minRole && !roleSatisfies(actingRole, [minRole])) {
+    throw new ActionRoleFloorError(actionId, minRole, actingRole ?? null);
+  }
+}

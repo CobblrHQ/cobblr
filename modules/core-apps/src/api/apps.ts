@@ -10,6 +10,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { isSafeFontUrl } from "@cobblr/platform-contract/safe-font-url";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 
@@ -92,7 +93,14 @@ const Theme = z
     font: z.enum(["sans", "serif", "mono", "rounded", "slab"]).optional(),
     radius: z.number().int().min(0).max(36).optional(), // card corner px
     logo: assetRef.max(500_000).optional(),       // wordmark image in the app's top bar
-    font_url: assetRef.max(1_200_000).optional(), // a custom font (uploaded → data: URL, or a hosted URL)
+    // A custom font (uploaded → data: URL, or a hosted URL). Fetched by every
+    // visitor's browser via @font-face, so it must be same-origin / data: / an
+    // allowlisted font host — never an arbitrary beacon origin. Same predicate
+    // the render site (web appTheme) enforces.
+    font_url: assetRef
+      .max(1_200_000)
+      .refine(isSafeFontUrl, "font_url must be a data: URL, a same-origin path, or an allowlisted font host")
+      .optional(),
     font_name: z.string().max(60).optional(),     // family name for the custom font
   })
   .strict();

@@ -16,7 +16,7 @@
 // multi-image support that three of the five lacked.
 
 import { platform } from "@cobblr/platform-contract";
-import { assertSafeOutboundUrl, isPlaceholderImageUrl } from "./enrich.js";
+import { guardedImageFetch, isPlaceholderImageUrl } from "./enrich.js";
 import { browserImageHeaders } from "./image-fetch-headers.js";
 import type { DdgImageResult } from "./ddg-images.js";
 import { composeContactSheet } from "./contact-sheet.js";
@@ -76,12 +76,9 @@ export function shouldAutoRank(row: AutoRankRow, askedQuery: string | null): boo
 export async function fetchImageBase64(url: string): Promise<{ b64: string; mediaType: string } | null> {
   if (!url || isPlaceholderImageUrl(url)) return null;
   try {
-    assertSafeOutboundUrl(url);
-  } catch {
-    return null;
-  }
-  try {
-    const res = await fetch(url, { headers: browserImageHeaders(url), signal: AbortSignal.timeout(6_000) });
+    // guardedImageFetch runs the safe-URL check per hop, so a guard failure
+    // throws here and is caught below (returns null), same as before.
+    const res = await guardedImageFetch(url, { headers: browserImageHeaders(url), signal: AbortSignal.timeout(6_000) });
     if (!res.ok) return null;
     if (Number(res.headers.get("content-length") ?? 0) > MAX_BYTES) return null;
     const blob = await res.blob();

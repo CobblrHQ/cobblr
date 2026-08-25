@@ -14,6 +14,7 @@
 // Cross-INSTANCE on purpose: a part's price history is the history of that
 // part, whichever purchasing instance the order was filed under.
 
+import { localDayOf } from "./route-helpers.js";
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
@@ -37,9 +38,9 @@ function num(v: unknown): number | null {
 }
 
 function isoDay(v: unknown): string | null {
-  if (!v) return null;
-  if (v instanceof Date) return v.toISOString().slice(0, 10);
-  return String(v).slice(0, 10);
+  // localDayOf, because a pg date arrives as a Date at LOCAL midnight and
+  // toISOString moved it a day for any server east of Greenwich.
+  return localDayOf(v) ?? (v ? String(v).slice(0, 10) : null);
 }
 
 itemsRouter.get(

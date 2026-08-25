@@ -28,6 +28,26 @@ export interface ChannelEvent {
    *  channel that cannot MUST still deliver: the message stands alone and the
    *  link_url is the fallback route to the same place. */
   actions?: NotificationAction[] | null;
+  /** The substance behind the one-line message, when there is any, for a
+   *  channel that can render more than a sentence.
+   *
+   *  A mention DM that says only "X mentioned you in Y" makes the reader open
+   *  the app to find out what was actually said - which is the opposite of what
+   *  a notification is for. A channel that cannot render this MUST still
+   *  deliver: `message` stands alone and `link_url` reaches the same place. */
+  card?: NotificationCard | null;
+}
+
+/** Deliberately not Discord's embed shape. Channels own their own rendering,
+ *  and a contract that spoke embeds would make every other channel translate
+ *  out of a vocabulary it does not share. */
+export interface NotificationCard {
+  /** The thing being reported, e.g. a record or workspace name. */
+  heading?: string;
+  /** What was said or changed. Rendered as the body. */
+  body?: string;
+  /** Small print - who, where, when. */
+  context?: string;
 }
 
 export interface Channel {

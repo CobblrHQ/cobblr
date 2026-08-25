@@ -776,7 +776,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Track the fridge/pantry with expiry + storage, and auto-build a shopping list when something runs low or is about to expire. Check an item off → it restocks.",
     manifest: {
       id: "cobblr.flagship.groceries",
-      version: "0.9.0",
+      version: "0.10.0",
       // What its items are actually CALLED. A bundle's suggestion has to be
       // corroborated by the capture's own text before it is trusted, and a
       // category whose members never share its name can never corroborate:
@@ -1009,7 +1009,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           entity_kind: "inventory:part",
           name: "What's on hand",
           view_type: "vending",
-          pinned: true,
+          // UNPINNED since the Groceries table shipped: the pinned pair lives
+          // on groceries:item now, and pinning this one too put two cards named
+          // "What's on hand" on every fresh dashboard - one of them empty
+          // forever. This copy stays (findable under /views) for workspaces
+          // whose food still lives in plain Inventory; the dashboard card
+          // offering to move that food is how they converge.
+          pinned: false,
           // No group_by: the vending renderer draws one flat wall of slots. Declaring a
           // key it ignores reads as a feature and behaves as nothing.
           config: { qty_field: "qty", expiry_field: "expires_on", min_qty_field: "min_qty" },
@@ -1189,6 +1195,26 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                               }
                       ],
                       "saved_views": [
+                              {
+                                      "entity_kind": "groceries:item",
+                                      "name": "Re-buy soonest",
+                                      "view_type": "table",
+                                      "config": {
+                                              "sort_by": "runs_out_in",
+                                              "sort_dir": "asc",
+                                              "visible_fields": ["title", "qty", "runs_out_in", "replenish_every", "min_qty"]
+                                      }
+                              },
+                              {
+                                      "entity_kind": "groceries:item",
+                                      "name": "How often you re-buy",
+                                      "view_type": "table",
+                                      "config": {
+                                              "sort_by": "replenish_every",
+                                              "sort_dir": "asc",
+                                              "visible_fields": ["title", "replenish_every", "runs_out_in", "qty"]
+                                      }
+                              },
                               {
                                       "entity_kind": "groceries:item",
                                       "name": "What's on hand",

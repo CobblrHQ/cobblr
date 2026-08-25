@@ -2,7 +2,7 @@
 type: feature
 scope: inventory
 date: 2026-08-23
-docs_target: docs/USER_GUIDE.md#Letting Cobblr work out how long things keep
+docs_target: docs/USER_GUIDE.md#3.1 Inventory
 ---
 **Cobblr can now work out how long your things keep, from what you tell it you did.** You do not need to know that a jar of pesto lasts five days once opened. Mark it opened when you open it, and mark it thrown out if it goes off, and after a couple of jars Cobblr knows. Finishing something never counts as a measurement, because eating it early proves nothing about when it would have gone bad, so the figure is only ever learned from things that actually spoiled.
 

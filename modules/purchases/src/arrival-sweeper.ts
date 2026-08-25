@@ -16,7 +16,7 @@
 // withDb so a tenant pool cannot outlive the closure (CLAUDE.md section 8.1).
 
 import { sql, type Kysely } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, parcelAudience } from "@cobblr/platform-contract";
 import { arrivedEverywhere } from "@cobblr/platform-contract";
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
@@ -35,6 +35,19 @@ export function startArrivalSweeper(): void {
   intervalHandle = setInterval(safeTick, TICK_MS);
   setTimeout(safeTick, 40_000); // after boot settles
   console.log(`[purchases] arrival sweeper started — every ${TICK_MS / 60_000} min`);
+
+  // A bridge push means the carrier already answered: re-check that number
+  // NOW, off-cadence. The bell is trusted, the data is not — the state still
+  // comes through the authenticated read path, forced past the is-it-due gate.
+  platform().events.on("core-shipments.tracker.pushed", "purchases", async (payload: unknown) => {
+    const p = payload as { orgId?: string; tracking_number?: string };
+    if (!p.orgId || !p.tracking_number) return;
+    try {
+      await arrivalTick({ orgId: p.orgId, number: p.tracking_number, force: true });
+    } catch (err) {
+      console.error("[purchases] pushed tracker re-check failed:", (err as Error).message);
+    }
+  });
 }
 
 async function safeTick(): Promise<void> {
@@ -154,12 +167,13 @@ export function askMessage(
     : `${what} was due today. Did it turn up?`;
 }
 
-interface DueRow {
+export interface DueRow {
   id: string;
   vendor: string | null;
   order_number: string | null;
   expected_arrival: string | null;
   tracking_number: string | null;
+  tracking_added_by_user_id: string | null;
   shipment_state: string | null;
   shipment_checked_at: Date | null;
   eta_source: string | null;
@@ -169,8 +183,36 @@ interface DueRow {
   prior_carrier_state: string | null;
 }
 
+/** Rebuild the ask history a decision needs from one swept row. Pure, so the
+ *  ledger round-trip is testable without a database.
+ *
+ *  A ledger row EXISTS whenever `asks`/`last_asked_at` are present — both are
+ *  NOT NULL columns, so their presence is the reliable "we asked before" signal.
+ *  Its `expected_arrival` may be NULL for a carrier-driven ask on an order with
+ *  no estimate (migration 0006), so keying "did we ask?" off a non-null DATE
+ *  wrongly treated every null-ETA ledger row as no prior ask at all — which made
+ *  a delivered parcel with no ETA re-ask on every hourly tick, forever. The row's
+ *  presence, not its date, is what proves the prior ask. */
+export function askStateFromRow(row: DueRow, today: string): AskState {
+  const askedBefore = row.prior_asks != null && row.prior_last_asked != null;
+  return {
+    expectedArrival: row.expected_arrival ?? today,
+    prior: askedBefore
+      ? {
+          expectedArrival: row.prior_expected ?? today,
+          asks: row.prior_asks as number,
+          lastAskedAt: new Date(row.prior_last_asked as Date),
+          carrierState: row.prior_carrier_state,
+        }
+      : null,
+    carrierState: row.shipment_state,
+  };
+}
+
 /** One sweep. Exported so tests and a CLI can fire it deterministically. */
-export async function arrivalTick(opts: { orgId?: string; now?: Date } = {}): Promise<{ due: number; asked: number }> {
+export async function arrivalTick(
+  opts: { orgId?: string; now?: Date; number?: string; force?: boolean } = {},
+): Promise<{ due: number; asked: number }> {
   const now = opts.now ?? new Date();
   const meta = platform().db.meta as unknown as Kysely<{
     orgs: { id: string };
@@ -210,6 +252,7 @@ export async function arrivalTick(opts: { orgId?: string; now?: Date } = {}): Pr
                  o.order_number            as order_number,
                  o.expected_arrival::text  as expected_arrival,
                  o.tracking_number         as tracking_number,
+                 o.tracking_added_by_user_id as tracking_added_by_user_id,
                  o.shipment_state          as shipment_state,
                  o.shipment_checked_at     as shipment_checked_at,
                  o.eta_source              as eta_source,
@@ -248,6 +291,8 @@ export async function arrivalTick(opts: { orgId?: string; now?: Date } = {}): Pr
         // seam, so purchases never imports it.
         for (const row of rows) {
           if (!row.tracking_number?.trim()) continue;
+          // A pushed re-check is about ONE parcel; leave the rest on cadence.
+          if (opts.number && row.tracking_number !== opts.number) continue;
           try {
             const res = (await platform().actions.invoke("core-shipments:track", {
               orgId: org.id,
@@ -266,11 +311,20 @@ export async function arrivalTick(opts: { orgId?: string; now?: Date } = {}): Pr
                 currentEtaSource: row.eta_source ?? (row.expected_arrival ? "receipt" : "none"),
                 lastState: row.shipment_state,
                 lastCheckedAt: row.shipment_checked_at?.toISOString() ?? null,
+                // When we first saw 'delivered' - the dispute window measures
+                // from here. Without it the window never elapsed and a
+                // delivered-but-unconfirmed parcel polled daily forever
+                // (2026-08-25 audit; cadence.ts says the intent this defeats).
+                deliveredAt:
+                  row.shipment_state === "delivered" ? row.shipment_checked_at?.toISOString() ?? null : null,
                 // Only the user's confirmation finishes a parcel. The sweep
                 // only selects orders with arrived_at null, so anything it
                 // sees is by definition unconfirmed -- said explicitly so the
                 // capability never has to infer it.
                 confirmed: false,
+                // A push means the carrier already answered; skip the
+                // is-it-due gate for this one read.
+                ...(opts.force ? { force: true } : {}),
               },
             })) as {
               followed?: boolean;
@@ -279,7 +333,15 @@ export async function arrivalTick(opts: { orgId?: string; now?: Date } = {}): Pr
               nextPollAt?: string | null;
             } | null;
 
-            if (!res?.followed || !res.status?.state) continue;
+            if (!res?.followed || !res.status?.state) {
+              // The ATTEMPT is what the cadence paces. Skipping the stamp kept
+              // lastCheckedAt null for an unrecognised or failing number, so
+              // it was "due" on every hourly tick forever (2026-08-25 audit).
+              await tdb.executeQuery(
+                sql`update purchases_orders set shipment_checked_at = ${now}, updated_at = now() where id = ${row.id}`.compile(tdb),
+              );
+              continue;
+            }
 
             // Local copy, so the ask decision below sees this tick's answer.
             row.shipment_state = res.status.state;
@@ -325,22 +387,7 @@ export async function arrivalTick(opts: { orgId?: string; now?: Date } = {}): Pr
         const decisions = askable
           .map((r) => ({
             row: r,
-            decision: decideAsk(
-              {
-                expectedArrival: r.expected_arrival ?? today,
-                prior:
-                  r.prior_expected && r.prior_asks != null && r.prior_last_asked
-                    ? {
-                        expectedArrival: r.prior_expected,
-                        asks: r.prior_asks,
-                        lastAskedAt: new Date(r.prior_last_asked),
-                        carrierState: r.prior_carrier_state,
-                      }
-                    : null,
-                carrierState: r.shipment_state,
-              },
-              now,
-            ),
+            decision: decideAsk(askStateFromRow(r, today), now),
           }))
           .filter((d) => d.decision !== "quiet");
         if (decisions.length === 0) return;
@@ -355,7 +402,40 @@ export async function arrivalTick(opts: { orgId?: string; now?: Date } = {}): Pr
             state: row.shipment_state,
             detail: null,
           });
-          for (const userId of memberIds) {
+          // Stamp BEFORE dispatching. The old order ("stamp after, repeating
+          // is the harmless direction") had the asymmetry backwards: for a
+          // delivered parcel decideAsk answers "ask" unconditionally, so a
+          // failed stamp meant the same question to every member on every
+          // tick, forever, uncapped by MAX_ASKS (2026-08-25 audit). Claiming
+          // first costs at most one lost ask, and the nudge tier re-asks.
+          try {
+            const up = sql`
+              insert into purchases_arrival_asks (order_id, expected_arrival, asks, first_asked_at, last_asked_at, carrier_state)
+              values (${row.id}, ${askedAbout}::date, 1, ${now}, ${now}, ${row.shipment_state})
+              on conflict (order_id) do update set
+                expected_arrival = excluded.expected_arrival,
+                carrier_state = excluded.carrier_state,
+                -- A moved date restarts the count; the same date increments it.
+                -- IS NOT DISTINCT FROM, not =, so two null ETAs (a carrier-driven
+                -- ask on an order with no estimate) count as the SAME question
+                -- rather than NULL = NULL never being true and resetting to 1.
+                asks = case when purchases_arrival_asks.expected_arrival is not distinct from excluded.expected_arrival
+                            then purchases_arrival_asks.asks + 1 else 1 end,
+                last_asked_at = excluded.last_asked_at
+            `.compile(tdb);
+            await tdb.executeQuery(up);
+          } catch (err) {
+            // No claim, no send: sending anyway is how the unbounded re-ask
+            // happened. This parcel gets asked about next tick instead.
+            console.error("[purchases] arrival ledger write failed:", (err as Error).message);
+            continue;
+          }
+
+          // The order's owner — whoever set its tracking number — or everyone
+          // when no owner is known (orders never recorded a creator, so
+          // legacy rows broadcast exactly as before).
+          const audience = parcelAudience([row.tracking_added_by_user_id], new Set(memberIds));
+          for (const userId of audience) {
             try {
               await platform().notifications.dispatch({
                 orgId: org.id,
@@ -363,12 +443,24 @@ export async function arrivalTick(opts: { orgId?: string; now?: Date } = {}): Pr
                 eventType: "purchases.order.due",
                 message,
                 module: "purchases",
+                // This sweeper IS the clock - its asks belong to the user's
+                // digest window, not to whatever hour the tick ran.
+                triggeredBy: "schedule",
                 entityType: "purchases:order",
                 entityId: row.id,
                 // Without this the notification asks a question and gives no
                 // way to answer it: dispatch does NOT derive a link from
                 // entityType/entityId, it passes link_url straight through.
                 link_url: orderLink(row.id),
+                // The DM renders this as one rich card with the button in it,
+                // instead of a sentence trailing a bare URL.
+                card: {
+                  heading: askedAbout
+                    ? `An order was due ${askedAbout}`
+                    : "An order should have arrived",
+                  body: message,
+                  ...(row.vendor ? { context: row.vendor } : {}),
+                },
                 payload: { expectedArrival: askedAbout, nudge: decision === "nudge" },
                 // The answer to the question the message asks, offered in the
                 // message. `mark-arrived` is idempotent, so pressing it twice
@@ -393,25 +485,6 @@ export async function arrivalTick(opts: { orgId?: string; now?: Date } = {}): Pr
             }
           }
 
-          // Stamp AFTER dispatching. Stamping first would lose the question
-          // entirely if dispatch threw; stamping after can at worst repeat it
-          // on the next tick, which is the harmless direction to fail in.
-          try {
-            const up = sql`
-              insert into purchases_arrival_asks (order_id, expected_arrival, asks, first_asked_at, last_asked_at, carrier_state)
-              values (${row.id}, ${askedAbout}::date, 1, ${now}, ${now}, ${row.shipment_state})
-              on conflict (order_id) do update set
-                expected_arrival = excluded.expected_arrival,
-                carrier_state = excluded.carrier_state,
-                -- A moved date restarts the count; the same date increments it.
-                asks = case when purchases_arrival_asks.expected_arrival = excluded.expected_arrival
-                            then purchases_arrival_asks.asks + 1 else 1 end,
-                last_asked_at = excluded.last_asked_at
-            `.compile(tdb);
-            await tdb.executeQuery(up);
-          } catch (err) {
-            console.error("[purchases] arrival ledger write failed:", (err as Error).message);
-          }
           asked += 1;
         }
       });

@@ -26,6 +26,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
+  BookOpen,
   Blocks,
   Bot,
   Boxes,
@@ -299,6 +300,16 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
   },
   {
     section: "build",
+    icon: BookOpen,
+    label: "Catalogs",
+    description:
+      "Reference catalogs this workspace matches scanned items against - browse what is loaded, and see how a lookup resolved.",
+    to: "/configuration/catalogs",
+    module: "core-catalogs",
+    keywords: ["reference", "lookup", "match", "library"],
+  },
+  {
+    section: "build",
     icon: Sliders,
     label: "Fields & forms",
     description:
@@ -403,6 +414,16 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
       "move in",
       "switch",
     ],
+  },
+  {
+    section: "connections",
+    icon: ScanLine,
+    label: "QR codes",
+    description:
+      "This workspace's QR label tokens, and the rules that teach the scanner to read labels printed by another app.",
+    to: "/configuration/qr-tokens",
+    module: "labels",
+    keywords: ["qr", "label", "token", "sticker"],
   },
   {
     section: "connections",

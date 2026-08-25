@@ -90,16 +90,46 @@ export const LABELLED_PARTS = [...new Set(LABELS.map((l) => l.part))];
 /** Money on a line. Handles $1,234.56, 1234.56, and the unicode minus vendors
  *  love. Returns the LAST number on the line, because a label can carry its own
  *  digits ("10% off" then the amount). */
+/**
+ * One string of digits and separators -> an amount, in either separator
+ * convention. "1.234,56" and "1,234.56" are the same amount; the decimal
+ * separator is the LAST one, except a lone separator before exactly three
+ * digits, which reads as a thousands group when it is a comma and as a decimal
+ * when it is a dot ("3.599"/gal is a price; "1,234" is not 1.234).
+ *
+ * Exported because receipt money is read in two places - the totals block here
+ * and the line coercion in core-scan - and two copies of this rule WILL drift;
+ * the old copies disagreed about "1.234,56" by a factor of a thousand.
+ */
+export function moneyValue(raw: string): number | null {
+  const digits = raw.replace(/[^0-9.,]/g, "");
+  if (!/[0-9]/.test(digits)) return null;
+  const lastDot = digits.lastIndexOf(".");
+  const lastComma = digits.lastIndexOf(",");
+  const sep = Math.max(lastDot, lastComma);
+  let normal: string;
+  if (sep === -1) {
+    normal = digits;
+  } else {
+    const frac = digits.slice(sep + 1);
+    const both = lastDot !== -1 && lastComma !== -1;
+    const decimal = both || frac.length !== 3 || sep === lastDot;
+    normal = decimal
+      ? digits.slice(0, sep).replace(/[.,]/g, "") + "." + frac
+      : digits.replace(/[.,]/g, "");
+  }
+  const n = Number(normal);
+  return Number.isFinite(n) ? n : null;
+}
+
 function moneyOn(line: string): number | null {
   // "free" is a real, and common, zero.
   if (/\bfree\b/i.test(line) && !/[\d]/.test(line.replace(/\bfree\b/i, ""))) return 0;
-  const matches = [...line.matchAll(/(-|−|–)?\s*[$£€]?\s*(\d{1,3}(?:,\d{3})*|\d+)(?:\.(\d{1,2}))?/g)];
+  const matches = [...line.matchAll(/(-|−|–)?\s*[$£€]?\s*(\d[\d.,]*)/g)];
   if (matches.length === 0) return null;
   const m = matches[matches.length - 1]!;
-  const whole = m[2]!.replace(/,/g, "");
-  const cents = m[3] ?? "0";
-  const n = Number(`${whole}.${cents.padEnd(2, "0")}`);
-  if (!Number.isFinite(n)) return null;
+  const n = moneyValue(m[2]!);
+  if (n === null) return null;
   return m[1] ? -n : n;
 }
 

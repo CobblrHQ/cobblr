@@ -43,9 +43,6 @@ export function CatalogsPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
-          Catalogs
-        </h1>
         <span className="text-sm text-muted dark:text-slate-400">
           {items.length} {items.length === 1 ? "catalog" : "catalogs"}
         </span>

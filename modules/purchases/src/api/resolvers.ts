@@ -2,7 +2,7 @@
 // the platform's EntityActionsBar look up an order or order_item by
 // (kind, id) without touching the purchases tables directly.
 
-import { platform, parseSort, type ResolvedEntity } from "@cobblr/platform-contract";
+import { platform, parseSort, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { PurchasesDB } from "../db.js";
 
@@ -104,7 +104,11 @@ export function registerPurchasesResolvers(): void {
         "o.status as order_status",
         "o.ordered_at",
       ])
-      .select(purchasedAt.as("purchased_at"));
+      .select(purchasedAt.as("purchased_at"))
+      // Scoped to the default instance - same leak as inventory's base kind
+      // (see the note there): a purchases table's lines must not double up
+      // under the module's own kind.
+      .where("i.instance", "=", "purchases");
     if (query.q) {
       const needle = `%${query.q.toLowerCase()}%`;
       q = q.where((eb) => eb(eb.fn("lower", ["i.description"]), "like", needle));
@@ -158,11 +162,16 @@ export function registerPurchasesResolvers(): void {
     };
   });
 
-  platform().entities.registerListResolver("purchases:order", async (orgId, query) => {
+  // Shared by the base kind (scoped to the default instance) and any purchases
+  // instance kind (`<name>:item`), which until now had NO resolvers at all: a
+  // purchases table created through "+ New category" listed nothing in views,
+  // search or the AI - the only instanceable module missing the pair.
+  const ordersListResolver = async (orgId: string, query: EntityListQuery, instance?: string) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<PurchasesDB>;
     const limit = Math.min(query.limit ?? 50, 200);
     const offset = query.offset ?? 0;
     let q = db.selectFrom("purchases_orders").selectAll();
+    if (instance) q = q.where("instance", "=", instance as never);
     if (query.q) {
       const needle = `%${query.q.toLowerCase()}%`;
       q = q.where((eb) =>
@@ -236,12 +245,37 @@ export function registerPurchasesResolvers(): void {
       .execute();
     return {
       items: rows.map((row) => ({
-        kind: "purchases:order",
+        kind: instance && instance !== "purchases" ? `${instance}:item` : "purchases:order",
         id: row.id,
         title: row.vendor || row.order_number || "(order)",
         subtitle: row.status,
         fields: { ...row } as Record<string, unknown>,
       })),
+    };
+  };
+  platform().entities.registerListResolver("purchases:order", (orgId, query) =>
+    ordersListResolver(orgId, query, "purchases"),
+  );
+  platform().entities.registerInstanceListResolver("purchases", (orgId, instance, query) =>
+    ordersListResolver(orgId, query, instance),
+  );
+  // The single-entity twin - lint:instance-resolvers enforces the pair, and a
+  // list whose rows 404 on click is worse than no list.
+  platform().entities.registerInstanceResolver("purchases", async (orgId, instance, id) => {
+    const db = (await platform().tenants.getDb(orgId)) as Kysely<PurchasesDB>;
+    const row = await db
+      .selectFrom("purchases_orders")
+      .selectAll()
+      .where("id", "=", id)
+      .where("instance", "=", instance as never)
+      .executeTakeFirst();
+    if (!row) return null;
+    return {
+      kind: `${instance}:item`,
+      id: row.id,
+      title: row.vendor || row.order_number || "(order)",
+      subtitle: row.status,
+      fields: { ...row } as Record<string, unknown>,
     };
   });
 

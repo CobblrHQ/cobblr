@@ -3,6 +3,7 @@
 // than mysteriously at request time.
 
 import { z } from "zod";
+import { weakSecretReasons } from "./env-secret-guard.js";
 
 const Schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -35,8 +36,8 @@ const Schema = z.object({
   // sets its own size; this is the fallback when the pool starts empty.
   COBBLR_TEST_ORG_POOL_SIZE: z.coerce.number().int().positive().optional(),
 
-  // Auth & secrets. Replace defaults for prod (validated by checking
-  // they don't start with the dev sentinel).
+  // Auth & secrets. In production a dev/placeholder value is refused at boot
+  // by assertNoDevSecretsInProd (below) — not just length-checked here.
   JWT_SECRET: z.string().min(16),
   SESSION_TTL_DAYS: z.coerce.number().int().positive().default(30),
   TENANT_CREDS_ENCRYPTION_KEY: z.string().min(16),
@@ -186,6 +187,17 @@ const Schema = z.object({
   COBBLR_DEPLOYMENT: z.string().optional(),
 });
 
+/** Boot guard: in production, a dev/placeholder secret or DB password is a
+ *  refuse-to-start condition, not a warning. Keeps the comment on JWT_SECRET
+ *  honest — that guard used to be claimed but never implemented, and the
+ *  shipped .env.example carried `dev-only-...` values that passed `min(16)`.
+ *  The rule lives in env-secret-guard.ts so lint:selfhost-secrets shares it.
+ *  See docs/history/2026-08-25-prerelease-audit.md B1. */
+function assertNoDevSecretsInProd(val: Env): string[] {
+  if (val.NODE_ENV !== "production") return [];
+  return weakSecretReasons(val);
+}
+
 export type Env = z.infer<typeof Schema>;
 
 /** Drop empty-string values, so `${VAR:-}` means "unset" everywhere.
@@ -227,9 +239,16 @@ function loadEnv(): Env {
     }
     process.exit(1);
   }
+  const devSecretErrs = assertNoDevSecretsInProd(parsed.data);
+  if (devSecretErrs.length > 0) {
+    console.error("Refusing to boot with dev/placeholder secrets in production:");
+    for (const e of devSecretErrs) console.error(`  ${e}`);
+    process.exit(1);
+  }
   return parsed.data;
 }
 
 export const env = loadEnv();
 
 export { withoutEmpties as _withoutEmpties };
+export { assertNoDevSecretsInProd as _assertNoDevSecretsInProd };

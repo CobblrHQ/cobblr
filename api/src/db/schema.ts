@@ -8,6 +8,8 @@
 
 import type { ColumnType, Generated } from "kysely";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
+// Type-only: the card's one definition lives with the channels that render it.
+import type { NotificationCard } from "../platform/channels/types.js";
 
 export interface UsersTable {
   id: Generated<string>;
@@ -492,6 +494,9 @@ export interface NotificationsTable {
   /** What the reader can DO about it. Resolved server-side when a button comes
    *  back, so a client supplies an action ID and never an action. */
   actions: Generated<NotificationAction[] | null>;
+  /** Optional NotificationCard {heading, body, context} — the substance behind
+   *  `message`, for surfaces that can show more than one line. */
+  card: Generated<NotificationCard | null>;
   delivered_via: Generated<NotificationChannel[]>;
   read_at: Date | null;
   created_at: Generated<Date>;
@@ -1121,6 +1126,7 @@ export interface MetaDB {
   auth_password_reset_tokens: AuthPasswordResetTokensTable;
   auth_email_verify_tokens: AuthEmailVerifyTokensTable;
   auth_pair_codes: AuthPairCodesTable;
+  login_attempts: LoginAttemptsTable;
   workspace_module_instances: WorkspaceModuleInstancesTable;
   entity_kind_overrides: EntityKindOverridesTable;
   core_labels_qr_tokens: CoreLabelsQrTokensTable;
@@ -1239,6 +1245,19 @@ export interface AuthEmailVerifyTokensTable {
   created_at: Generated<Date>;
   request_ip: string | null;
   request_ua: string | null;
+}
+
+/** Per-account brute-force lockout state, shared across api instances (the IP
+ *  limiter is in-process + per-instance). One row per SUBMITTED login email
+ *  (lowercased+trimmed), bucketed whether or not the account exists so it is not
+ *  an enumeration oracle. See migrations/platform/20260825-112-login-attempts.sql
+ *  + auth/lockout.ts for the backoff math. Audit M-BRUTE. */
+export interface LoginAttemptsTable {
+  email: string;
+  failed_count: Generated<number>;
+  locked_until: ColumnType<Date | null, Date | null | undefined, Date | null>;
+  last_failed_at: ColumnType<Date | null, Date | null | undefined, Date | null>;
+  updated_at: Generated<Date>;
 }
 
 /** QR pair-login codes — hashed (sha256), single-use, ~90s default. A logged-in

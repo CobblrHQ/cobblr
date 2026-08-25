@@ -15,7 +15,8 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-discussion",
-  version: "0.7.0",
+  version: "0.7.2",
+  maturity: "beta",
   displayName: "Discussion",
   description:
     "Talk about a record with the people you share a workspace with. One conversation per record, flat and chronological, reachable from the record itself.",

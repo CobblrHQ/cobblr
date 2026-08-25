@@ -34,10 +34,10 @@ import {
 } from "./sql-guards.js";
 import { validateFetchTarget } from "./ssrf.js";
 import { isModuleRoleReady, moduleRoleName } from "./module-role.js";
-// undici's OWN fetch + Agent (NOT the global fetch): a dispatcher must be the
-// same undici instance the fetch uses, so we pair them. Lets us pin the
-// connection to a pre-validated IP (DNS-rebind defense). (Audit follow-up #3.)
-import { fetch as undiciFetch, Agent, type RequestInit as UndiciRequestInit } from "undici";
+// The redirect-following, IP-pinning loop is shared with the kernel egress and
+// scan image fetches; HOST_FETCH supplies the sandbox policy (validateFetchTarget)
+// and reads/caps the body itself.
+import { pinnedRedirectingFetch, type PinnedFetchResult } from "@cobblr/platform-net";
 import { platform } from "@cobblr/platform-contract";
 import {
   OP,
@@ -1205,81 +1205,52 @@ async function runHostFetch(
   let body: string | undefined =
     a.body !== undefined && method !== "GET" && method !== "HEAD" ? String(a.body) : undefined;
 
-  let currentUrl = String(a.url);
-  for (let hop = 0; ; hop++) {
-    const target = await validateFetchTarget(currentUrl, allowlist);
-    if ("error" in target) return { error: target.error };
-    // Pin the TCP connection to the exact IP the guard just validated, so a
-    // DNS rebind between our resolution and undici's own can't land on a
-    // private address. SNI/Host stay the original hostname (cert still
-    // verifies). Fresh Agent per hop; closed in finally.
-    let dispatcher: Agent | undefined;
-    if (target.pin) {
-      const { address, family } = target.pin;
-      dispatcher = new Agent({
-        connect: {
-          lookup: (_hostname, _opts, cb) =>
-            (cb as (e: Error | null, a: string, f: number) => void)(null, address, family),
-        },
-      });
+  // The shared pinnedRedirectingFetch owns the redirect + per-hop pin loop; the
+  // sandbox policy is validateFetchTarget (manifest allowlist + private-block),
+  // adapted to the callback's throw-to-block contract. ctx.abortSignal fires when
+  // the invocation deadline trips or the worker dies, so a hung-server fetch does
+  // not outlive the wasm. Every failure — a blocked hop, too-many-redirects, an
+  // invalid Location, an abort — reduces to { error }, preserving the original
+  // strings (the shared errors carry the same messages).
+  let result: PinnedFetchResult;
+  try {
+    result = await pinnedRedirectingFetch({
+      url: String(a.url),
+      method,
+      headers: safeHeaders,
+      body,
+      signal: ctx.abortSignal,
+      maxRedirects: MAX_REDIRECTS,
+      validate: async (u) => {
+        const target = await validateFetchTarget(u.href, allowlist);
+        if ("error" in target) throw new Error(target.error);
+        return target.pin;
+      },
+    });
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+  const { response, dispatcher } = result;
+  try {
+    const buf = await response.arrayBuffer();
+    if (buf.byteLength > MAX_BODY) {
+      return { error: `response too large (${buf.byteLength}B > ${MAX_BODY}B cap)` };
     }
-    try {
-      const init: UndiciRequestInit = {
-        method,
-        headers: safeHeaders,
-        // Follow redirects ourselves so each hop is re-validated.
-        redirect: "manual",
-        // ctx.abortSignal fires when the invocation deadline trips
-        // or the worker dies. fetch + arrayBuffer both observe it,
-        // so a hung-server fetch doesn't keep running after the
-        // wasm is gone.
-        signal: ctx.abortSignal,
-        ...(dispatcher ? { dispatcher } : {}),
-      };
-      if (body !== undefined) init.body = body;
-      const res = await undiciFetch(target.url.href, init);
-
-      if (res.status >= 300 && res.status < 400 && res.headers.has("location")) {
-        if (hop >= MAX_REDIRECTS) return { error: `too many redirects (> ${MAX_REDIRECTS})` };
-        const loc = res.headers.get("location")!;
-        let next: URL;
-        try {
-          next = new URL(loc, target.url); // resolve relative redirects
-        } catch {
-          return { error: `invalid redirect location: ${loc}` };
-        }
-        // 301/302/303 → re-issue as GET without a body (browser
-        // semantics); 307/308 preserve method + body.
-        if (res.status !== 307 && res.status !== 308) {
-          method = "GET";
-          body = undefined;
-        }
-        currentUrl = next.href;
-        continue;
-      }
-
-      const buf = await res.arrayBuffer();
-      if (buf.byteLength > MAX_BODY) {
-        return { error: `response too large (${buf.byteLength}B > ${MAX_BODY}B cap)` };
-      }
-      const respHeaders: Record<string, string> = {};
-      res.headers.forEach((value, key) => {
-        respHeaders[key] = value;
-      });
-      return {
-        status: res.status,
-        headers: respHeaders,
-        body: new TextDecoder().decode(buf),
-      };
-    } catch (err) {
-      // AbortError surfaces as { error: "This operation was aborted" }
-      // — useful in logs but the calling wasm has already been
-      // terminated, so the response never reaches it.
-      return { error: (err as Error).message };
-    } finally {
-      // Don't leak the pinned-connection pool past this hop.
-      if (dispatcher) await dispatcher.close().catch(() => {});
-    }
+    const respHeaders: Record<string, string> = {};
+    response.headers.forEach((value, key) => {
+      respHeaders[key] = value;
+    });
+    return {
+      status: response.status,
+      headers: respHeaders,
+      body: new TextDecoder().decode(buf),
+    };
+  } catch (err) {
+    return { error: (err as Error).message };
+  } finally {
+    // The final hop's pinned Agent — the sandbox reads the whole body above, so
+    // close it now rather than leaving it for the reaper.
+    await dispatcher?.close().catch(() => {});
   }
 }
 

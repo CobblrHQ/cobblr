@@ -109,8 +109,10 @@ export function registerMachinesResolvers(): void {
     return { items: rows.map((r) => toResolvedMachine(r)) };
   };
 
+  // Scoped to the default instance - same leak as inventory's base kind; see
+  // the note there. A 3D Printers instance's fleet must not double up here.
   platform().entities.registerListResolver("machines:machine", (orgId, query) =>
-    listMachines(orgId, query),
+    listMachines(orgId, query, "machines"),
   );
   // Multi-instance: `<instance_name>:item` lists just that instance's machines.
   // Mirrors inventory/assets so a named machines instance (3D Printers) is

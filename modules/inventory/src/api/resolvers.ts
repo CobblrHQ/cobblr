@@ -164,8 +164,16 @@ export function registerInventoryResolvers(): void {
       items: rows.map((r) => toResolvedPart(r)),
     };
   };
+  // SCOPED TO THE DEFAULT INSTANCE, deliberately. This used to pass no
+  // instance, which made the base kind a silent union of EVERY instance's
+  // rows: a workspace with a Groceries table saw its groceries a second time
+  // under plain Inventory - "Inventory - What's on hand" listed three items
+  // while the Inventory page itself showed zero, because the module CRUD
+  // scopes to the default instance and this resolver did not. Two doors, one
+  // workspace, contradictory counts - and the documented contract ("instances
+  // never mix") broken on the door views/search/AI all read through.
   platform().entities.registerListResolver("inventory:part", (orgId, query) =>
-    partsListResolver(orgId, query),
+    partsListResolver(orgId, query, "inventory"),
   );
   // Instance kinds (`<name>:item`) → this module's parts scoped to the instance.
   // Lets a Wardrobe/Filament/… instance's items flow through views/data/search.

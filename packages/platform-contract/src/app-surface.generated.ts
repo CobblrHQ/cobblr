@@ -107,6 +107,18 @@ export const GENERATED_SURFACE: Capability[] = [
     ]
   },
   {
+    "feature": "Catalogs",
+    "does": "Reference catalogs this workspace matches scanned items against - browse what is loaded, and see how a lookup resolved.",
+    "where": "/configuration/catalogs",
+    "also": [
+      "reference",
+      "lookup",
+      "match",
+      "library"
+    ],
+    "module": "core-catalogs"
+  },
+  {
     "feature": "Devices",
     "does": "Everything physical this workspace reaches: your on-site bridges, machine managers that run print jobs, and document printers.",
     "where": "/configuration/devices",
@@ -250,6 +262,18 @@ export const GENERATED_SURFACE: Capability[] = [
       "customize",
       "navigation"
     ]
+  },
+  {
+    "feature": "QR codes",
+    "does": "This workspace's QR label tokens, and the rules that teach the scanner to read labels printed by another app.",
+    "where": "/configuration/qr-tokens",
+    "also": [
+      "qr",
+      "label",
+      "token",
+      "sticker"
+    ],
+    "module": "labels"
   },
   {
     "feature": "Background queue",

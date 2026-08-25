@@ -16,6 +16,7 @@
 //   COBBLR_LINT_CONCURRENCY=4 pnpm run lint:all
 
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultConcurrency, runParallel } from "./lib/parallel.mjs";
@@ -151,6 +152,13 @@ function main() {
     }
 
     console.log(`[lints] ✓ all ${results.length} pass`);
+    // Record that this exact tree passed, so a push moments later does not redo
+    // 180 lints while other agents are fighting for the same cores.
+    try {
+      execFileSync("node", [join(ROOT, "scripts", "verify-cache.mjs"), "stamp", "lints"], { cwd: ROOT });
+    } catch {
+      /* the cache is an optimisation — never fail a green lint run over it */
+    }
   });
 }
 

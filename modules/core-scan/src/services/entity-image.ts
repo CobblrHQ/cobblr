@@ -11,7 +11,7 @@
 import { platform } from "@cobblr/platform-contract";
 import { searchImages } from "./ddg-images.js";
 import { pickImage } from "./barcode-websearch.js";
-import { assertSafeOutboundUrl } from "./enrich.js";
+import { guardedImageFetch } from "./enrich.js";
 import { curatedImageUrl } from "./curated-images.js";
 import { browserImageHeaders } from "./image-fetch-headers.js";
 
@@ -25,8 +25,7 @@ const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
  *  that route (e.g. the trial tier withholds user uploads). */
 async function fetchAndStoreImage(orgId: string, imageUrl: string): Promise<string | null> {
   try {
-    assertSafeOutboundUrl(imageUrl);
-    const dl = await fetch(imageUrl, { headers: browserImageHeaders(imageUrl), signal: AbortSignal.timeout(8_000) });
+    const dl = await guardedImageFetch(imageUrl, { headers: browserImageHeaders(imageUrl), signal: AbortSignal.timeout(8_000) });
     if (!dl.ok) return null;
     const declared = Number(dl.headers.get("content-length") ?? 0);
     if (declared && declared > MAX_IMAGE_BYTES) return null;

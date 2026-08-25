@@ -230,8 +230,8 @@ function PublicShell({
       <header className="border-b border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-6 py-4">
         <div className="max-w-6xl mx-auto flex items-center gap-3">
           <CobblestoneMark size={26} />
-          <span className="font-display font-extrabold text-content dark:text-mortar-100 lowercase">
-            cobblr
+          <span className="font-display font-extrabold text-content dark:text-mortar-100">
+            Cobblr
           </span>
           {title && (
             <>

@@ -69,6 +69,14 @@ function scoreRule(msg: string[], rule: BasicRule): number {
  * `rules` is passed in (built-ins today; built-ins overlaid with per-workspace
  * overrides + custom rows later) so this function stays pure + storage-agnostic.
  */
+/** "how do I add a part" is a question; "add a part called Brass Widget" is an
+ *  instruction. Deliberately coarse — a missed offer costs one keystroke (Enter
+ *  still asks the AI), a wrong interception costs trust. */
+export function looksLikeQuestion(message: string): boolean {
+  const m = message.trim().toLowerCase();
+  return /\?\s*$/.test(m) || /^(how|where|what|why|when|who|can i|do i|is there|does)\b/.test(m) || m.includes("how do i") || m.includes("how to");
+}
+
 export function matchBasics(
   message: string,
   rules: BasicRule[],
@@ -80,6 +88,14 @@ export function matchBasics(
   // connected") is a fine reply and a terrible offer. Both default off, so
   // /basics/answer behaves exactly as it did.
   if (opts.offering) rules = rules.filter((r) => !r.notBeforeSend);
+  // The finer cut, for HOW-TO rules whose keywords are bare imperatives ("add",
+  // "rename", "turn on"): as a reply to a sent message they are right either
+  // way, but as an OFFER they intercept the exact sentences the AI should act
+  // on — "add a part called Brass Widget" was offered a how-to strip (corpus,
+  // 2026-08-25). A question gets the offer; an instruction goes to the model.
+  if (opts.offering && !looksLikeQuestion(message)) {
+    rules = rules.filter((r) => !r.offerOnlyAsQuestion);
+  }
   const candidates: RuleCandidate[] = [];
   let winner: { rule: BasicRule; score: number; idx: number } | null = null;
 

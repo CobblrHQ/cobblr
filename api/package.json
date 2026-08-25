@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@cobblr/core-authoring": "workspace:*",
+    "@cobblr/platform-net": "workspace:*",
     "@cobblr/core-scan": "workspace:*",
     "@cobblr/platform-contract": "workspace:*",
     "@cobblr/workspace-tools": "workspace:*",

@@ -229,6 +229,17 @@ export interface EscortDestination {
   prefill: Record<string, string>;
   /** Why this surface is escort-only — surfaced to the model so it can say so. */
   why: string;
+  /** Actions that ALREADY do part of what this screen is for, listed so the
+   *  model is told to run them instead of escorting.
+   *
+   *  This exists because the `fields` entry went stale the day field editing
+   *  got actions: its `why` still read "editing or deleting a field touches the
+   *  data under it", and a local model duly answered "I've taken you to the
+   *  Fields & forms screen" to four separate requests it could have just done
+   *  (measured, 2026-08-25). An escort is the least useful answer there is when
+   *  a door exists, so the doors are named here and lint:escort-claims fails
+   *  when a surface gains an action and this list does not. */
+  covered_by?: string[];
 }
 
 export const ESCORT_DESTINATIONS: EscortDestination[] = [
@@ -268,14 +279,27 @@ export const ESCORT_DESTINATIONS: EscortDestination[] = [
     path: "/wires",
     label: "Automations (wires)",
     prefill: {},
-    why: "composing standing automation is consented in the composer, not a card",
+    why:
+      "the screen is for BUILDING an automation — the trigger, the filter, what it runs — which is " +
+      "consented in the composer, not a card. Switching one on or off is an action",
+    covered_by: ["platform:set-wire-enabled"],
   },
   {
     id: "fields",
     path: "/fields",
     label: "Fields & forms",
     prefill: {},
-    why: "editing or deleting a field touches the data under it; adding one is the platform:add-field action",
+    why:
+      "the screen is for what no action covers — a field's TYPE, and the stored data behind it. " +
+      "Adding, renaming, hiding, removing and grouping fields are actions: run those",
+    covered_by: [
+      "platform:add-field",
+      "platform:edit-field",
+      "platform:remove-field",
+      "platform:group-fields",
+      "platform:ungroup-fields",
+      "platform:set-field-preset",
+    ],
   },
 ];
 
@@ -283,8 +307,12 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "take_user_to",
     description:
-      "ESCORT the user to a configuration screen you cannot operate yourself — inviting members, API tokens, backup & restore, AI providers, composing automations, editing fields. In the Cobblr app this MOVES their screen there (elsewhere, give them the path as a link) and can PREFILL the form (e.g. the invite email), but nothing is submitted: the user presses the page's own button. Use this when they ask for something on those surfaces instead of refusing dry — say why it needs their hand, then take them there. Destinations: " +
-      ESCORT_DESTINATIONS.map((d) => `${d.id} (${d.why})`).join("; ") +
+      "ESCORT the user to a configuration screen you cannot operate yourself — inviting members, API tokens, backup & restore, AI providers, composing automations. In the Cobblr app this MOVES their screen there (elsewhere, give them the path as a link) and can PREFILL the form (e.g. the invite email), but nothing is submitted: the user presses the page's own button. Use this when they ask for something on those surfaces instead of refusing dry — say why it needs their hand, then take them there. " +
+      "NEVER use this for something an action covers: check list_actions and RUN it. Escorting someone to a screen to do a thing you could have done is the least useful answer you have. Destinations: " +
+      ESCORT_DESTINATIONS.map(
+        (d) =>
+          `${d.id} (${d.why}${d.covered_by?.length ? `; but ${d.covered_by.join(", ")} do those — run them, don't escort` : ""})`,
+      ).join("; ") +
       ".",
     mode: "read",
     params: {

@@ -251,3 +251,48 @@ export function bridgeUsage(body: unknown): {
     ...(output !== undefined ? { output_tokens: output } : {}),
   };
 }
+
+// ── How much room to ask an Ollama for ──────────────────────────────────────
+//
+// Ollama's default context window is small (4096 in the builds people run), and
+// it does two things silently when a request does not fit: it TRUNCATES the
+// prompt from the front, and it stops the answer at the window's edge with
+// done_reason "length".
+//
+// Both were happening to every local model this app talks to, and both look
+// exactly like a stupid model. Measured against a real box (2026-08-25):
+//
+//   qwen3 27B, default window → prompt_eval_count 2050 of the real 4367. Half
+//     the tool schemas never reached it. It still called something, chosen from
+//     a menu it had only half of.
+//   gemma 8B, default window → done_reason "length" after 136 tokens, mid
+//     reasoning, no tool call at all. The same request with room finished in
+//     727 tokens and called a tool.
+//
+// So the size of the window is not a tuning knob here, it is the difference
+// between "local models cannot do tool calling" and them doing it fine. We ask
+// for a window that fits what we are actually sending, plus room to answer in.
+//
+// Estimated, not counted: tokenisers differ per model and this only has to be
+// roughly right and never too small. ~3.5 chars per token is conservative for
+// JSON, which is punctuation-heavy and tokenises worse than prose.
+const CHARS_PER_TOKEN = 3.5;
+/** Room for the answer, including a thinking model's reasoning, which is where
+ *  the 8B was cut off. */
+const ANSWER_HEADROOM = 2048;
+/** Never ask for less than this: a small window is the failure above. */
+const MIN_CONTEXT = 8192;
+/** Nor more than this. The window is a KV-cache allocation on somebody's GPU,
+ *  and a request for a huge one on a small card fails to load the model at all —
+ *  which would turn a truncated answer into no answer. */
+const MAX_CONTEXT = 32768;
+
+/** The `num_ctx` to send for a request whose serialised body is this long. */
+export function contextWindowFor(bodyChars: number): number {
+  const need = Math.ceil(bodyChars / CHARS_PER_TOKEN) + ANSWER_HEADROOM;
+  if (need <= MIN_CONTEXT) return MIN_CONTEXT;
+  if (need >= MAX_CONTEXT) return MAX_CONTEXT;
+  // Round up to the next power of two: engines like tidy windows, and a bit of
+  // slack costs less than being one token short.
+  return 2 ** Math.ceil(Math.log2(need));
+}

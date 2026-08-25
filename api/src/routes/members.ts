@@ -18,6 +18,7 @@ import { sendAuthEmail, hasAuthEmailSender } from "../platform/hosted-seams.js";
 import type { OrgRole } from "../db/schema.js";
 import { hashPassword } from "../auth/password.js";
 import { buildAuthResponse } from "./auth.js";
+import { canActOnRole } from "../auth/capability.js";
 import { ORG_ROLES, INVITABLE_ORG_ROLES } from "@cobblr/platform-contract/org-roles";
 
 export const membersRouter = Router({ mergeParams: true });
@@ -92,21 +93,48 @@ membersRouter.patch("/:userId", requireAuth, withTenant, async (req, res, next) 
       res.status(400).json({ error: { code: "missing_id", message: "userId required" } });
       return;
     }
+    // Can't grant a role above your own (audit H2). assertAdmin lets an admin
+    // in, but an admin must not be able to set role:"owner" — on anyone,
+    // including themselves — and so cross into the owner-only powers.
+    if (!canActOnRole(req.tenant!.role, parsed.data.role)) {
+      res.status(403).json({
+        error: {
+          code: "forbidden",
+          message: "You can't grant a role higher than your own.",
+        },
+      });
+      return;
+    }
+    // Look up the TARGET's current role once — it gates two things below.
+    const target = await meta
+      .selectFrom("org_memberships")
+      .select("role")
+      .where("org_id", "=", req.tenant!.org.id)
+      .where("user_id", "=", userId)
+      .executeTakeFirst();
+    // Can't act on a role above your own either (audit H2 residual). The check
+    // above gates the NEW role being granted; this gates the TARGET's CURRENT
+    // role — otherwise an admin could demote a sitting owner (bounded only by
+    // the last-owner guard, which fires for the LAST owner alone). "admin: can
+    // change NON-owner roles" (org-roles.ts) requires BOTH ends actable-on.
+    if (target && !canActOnRole(req.tenant!.role, target.role)) {
+      res.status(403).json({
+        error: {
+          code: "forbidden",
+          message: "You can't change a member whose role is higher than your own.",
+        },
+      });
+      return;
+    }
     // Can't strip the last owner.
-    if (parsed.data.role !== "owner") {
+    if (parsed.data.role !== "owner" && target?.role === "owner") {
       const ownerCount = await meta
         .selectFrom("org_memberships")
         .select(({ fn }) => fn.countAll<string>().as("c"))
         .where("org_id", "=", req.tenant!.org.id)
         .where("role", "=", "owner")
         .executeTakeFirstOrThrow();
-      const target = await meta
-        .selectFrom("org_memberships")
-        .select("role")
-        .where("org_id", "=", req.tenant!.org.id)
-        .where("user_id", "=", userId)
-        .executeTakeFirst();
-      if (target?.role === "owner" && Number(ownerCount.c) <= 1) {
+      if (Number(ownerCount.c) <= 1) {
         res.status(400).json({
           error: { code: "last_owner", message: "Can't change the last owner's role." },
         });
@@ -145,13 +173,27 @@ membersRouter.delete("/:userId", requireAuth, withTenant, async (req, res, next)
       res.status(400).json({ error: { code: "missing_id", message: "userId required" } });
       return;
     }
-    // Don't let admins remove the last owner.
     const target = await meta
       .selectFrom("org_memberships")
       .select("role")
       .where("org_id", "=", req.tenant!.org.id)
       .where("user_id", "=", userId)
       .executeTakeFirst();
+    // Can't remove a member whose role outranks yours (audit H2 residual). The
+    // PATCH twin gates the same thing; DELETE had no canActOnRole check at all,
+    // so an admin could remove a co-owner (the last-owner guard below only
+    // fires for the LAST owner). "admin: can change NON-owner roles" means an
+    // admin must not evict an owner either.
+    if (target && !canActOnRole(req.tenant!.role, target.role)) {
+      res.status(403).json({
+        error: {
+          code: "forbidden",
+          message: "You can't remove a member whose role is higher than your own.",
+        },
+      });
+      return;
+    }
+    // Don't let admins remove the last owner.
     if (target?.role === "owner") {
       const ownerCount = await meta
         .selectFrom("org_memberships")
@@ -271,6 +313,18 @@ membersRouter.post("/invites", requireAuth, withTenant, async (req, res, next) =
     if (!parsed.success) {
       res.status(400).json({
         error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues },
+      });
+      return;
+    }
+    // Can't mint an invite at a role above your own (audit H2). `owner` is
+    // already absent from INVITABLE_ORG_ROLES, but an admin still must not
+    // hand out anything above admin-tier via a link.
+    if (!canActOnRole(req.tenant!.role, parsed.data.role)) {
+      res.status(403).json({
+        error: {
+          code: "forbidden",
+          message: "You can't mint an invite for a role higher than your own.",
+        },
       });
       return;
     }

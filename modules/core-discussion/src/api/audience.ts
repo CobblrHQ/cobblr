@@ -18,9 +18,46 @@
 // would be a second set of rules to keep in step with the first.
 
 import { platform } from "@cobblr/platform-contract";
+import { keepMembers } from "@cobblr/platform-contract/membership";
 import { userMentions } from "../mentions.js";
+import { plainBody, excerpt } from "../plain-body.js";
 import type { Kysely } from "kysely";
 import type { CoreDiscussionDB } from "../db.js";
+
+/** Split a comment's audience into the two volumes, dropping anyone who is not
+ *  a CURRENT member of the workspace.
+ *
+ *  Pure so it can be tested without a DB. Membership is the gate on BOTH tiers:
+ *  a `[[user:<uuid>]]` token names any real uuid the author cared to type, so
+ *  an unfiltered `named` was a way to DM a stranger — a non-member on another
+ *  workspace, or someone with no relationship at all — a Cobblr-branded message
+ *  with attacker-chosen text (audit M-MENTION). Followers/speakers are filtered
+ *  too, so a removed member with stale rows drops out here as well as at the
+ *  platform dispatcher (audit M-EXMEMBER, defence in depth).
+ *
+ *  `named` (mentioned by name → high priority) wins over `rest` (following /
+ *  spoke before → normal) when someone is both. */
+export function recipientsFor(args: {
+  /** Raw `userMentions(body)` — every `[[user:<uuid>]]` the author wrote. */
+  mentioned: string[];
+  /** Followers + prior speakers, author already excluded (from audienceFor). */
+  audience: string[];
+  authorUserId: string | null;
+  /** Current members of the conversation's workspace (orgMemberIds). */
+  members: ReadonlySet<string>;
+}): { named: string[]; rest: string[] } {
+  const named = keepMembers(
+    args.mentioned.filter((u) => u !== args.authorUserId),
+    args.members,
+  );
+  const namedSet = new Set(named);
+  // Never the author — audienceFor already excludes them, but the rule belongs
+  // to the pure function so it holds regardless of what the caller passes.
+  const rest = keepMembers(args.audience, args.members).filter(
+    (u) => u !== args.authorUserId && !namedSet.has(u),
+  );
+  return { named, rest };
+}
 
 /** Everyone who should hear, minus the person who just spoke.
  *
@@ -101,12 +138,25 @@ export async function notifyAboutComment(
     link: string | null;
   },
 ): Promise<{ mentioned: number; followers: number }> {
-  const named = new Set(userMentions(args.body).filter((u) => u !== args.authorUserId));
-  const rest = (await audienceFor(db, {
-    conversationId: args.conversationId,
-    source: args.source,
-    exclude: args.authorUserId,
-  })).filter((u) => !named.has(u));
+  // Who a comment may reach is gated by CURRENT workspace membership: a mention
+  // token can name any real uuid, so without this the high-priority DM was a
+  // channel to message strangers (audit M-MENTION). recipientsFor applies the
+  // filter to both tiers; orgMemberIds is the one definition of "a member".
+  const [audience, members] = await Promise.all([
+    audienceFor(db, {
+      conversationId: args.conversationId,
+      source: args.source,
+      exclude: args.authorUserId,
+    }),
+    platform().notifications.orgMemberIds(args.orgId),
+  ]);
+  const { named: namedList, rest } = recipientsFor({
+    mentioned: userMentions(args.body),
+    audience,
+    authorUserId: args.authorUserId,
+    members: new Set(members),
+  });
+  const named = new Set(namedList);
 
   // A card you can answer, not just read. The action is channel-agnostic —
   // Discord renders it as a button that opens a text box, a channel that
@@ -130,6 +180,16 @@ export async function notifyAboutComment(
   const send = (userId: string, priority: "high" | "normal", message: string) =>
     platform()
       .notifications.dispatch({
+        // The substance, for a channel that can show more than a sentence.
+        // "X mentioned you in Y" tells you that something happened and not what,
+        // so the only way to find out is to open the app — which is the opposite
+        // of what a notification is for. Tokens are rendered to words here;
+        // a raw [[user:<uuid>]] reaching somebody's chat client has happened
+        // once already.
+        card: {
+          heading: `${args.authorName} ${args.inRoom ? "in" : "on"} ${args.recordLabel}`,
+          body: excerpt(plainBody(args.body, { youUserId: userId }), 600),
+        },
         actions: replyAction,
         orgId: args.orgId,
         userId,

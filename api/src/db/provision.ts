@@ -102,6 +102,19 @@ async function provisionOnce(
       `CREATE USER "${userName}" WITH LOGIN PASSWORD '${escapedPassword}'`,
     );
     await superClient.query(`ALTER DATABASE "${dbName}" OWNER TO "${userName}"`);
+    // Belt-and-suspenders isolation (audit L-PGPUBLIC): Postgres grants CONNECT
+    // to PUBLIC by default, so database-per-tenant leaned entirely on "only this
+    // org's user has the password". GRANT the tenant user an EXPLICIT CONNECT
+    // FIRST (so removing PUBLIC's never locks the app out — the app connects as
+    // this very user), THEN revoke CONNECT from PUBLIC so no other principal can
+    // even open a connection to this tenant's database.
+    //   Order matters: GRANT before REVOKE. Reversing it is the mass-lockout bug.
+    //   New tenants only: existing tenants keep the default (harmless — no
+    //   principal holds another tenant's raw password, so none can cross-connect
+    //   anyway; a retroactive REVOKE across every live DB is an untestable
+    //   lockout risk for a hardening the audit rated non-exploitable).
+    await superClient.query(`GRANT CONNECT ON DATABASE "${dbName}" TO "${userName}"`);
+    await superClient.query(`REVOKE CONNECT ON DATABASE "${dbName}" FROM PUBLIC`);
   } finally {
     await superClient.end();
   }

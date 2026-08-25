@@ -22,6 +22,29 @@ export function registerScanHandlers(): void {
   if (registered) return;
   registered = true;
 
+  platform().actions.registerHandler("core-scan.confirm-receipt-arrival", async (ctx) => {
+    const args = (ctx.args as { batch_id?: string } | null) ?? {};
+    // The ambient entity is the fallback subject, same as purchases'
+    // mark-arrived: run from a receipt's own context, no args needed.
+    const batchId = args.batch_id ?? (ctx.entity?.id || undefined);
+    if (!batchId) return { ok: true, skipped: "no receipt in scope" };
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreScanDB>;
+    const row = await db
+      .selectFrom("core_scan_batches")
+      .select(["id", "shipment_confirmed_at"])
+      .where("id", "=", batchId)
+      .executeTakeFirst();
+    if (!row) return { ok: false, error: "receipt not found" };
+    // Idempotent: two devices, or a stale card, answering twice is harmless.
+    if (row.shipment_confirmed_at) return { ok: true, skipped: "already confirmed" };
+    await db
+      .updateTable("core_scan_batches")
+      .set({ shipment_confirmed_at: new Date() })
+      .where("id", "=", batchId)
+      .execute();
+    return { ok: true, confirmed: true };
+  });
+
   platform().actions.registerHandler("core-scan.fill-fields-from-receipts", async (ctx) => {
     const args = (ctx.args ?? {}) as { dry_run?: boolean };
     return await runReceiptBackfill(ctx.orgId, { dryRun: args.dry_run === true });

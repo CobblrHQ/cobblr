@@ -8,6 +8,7 @@
 import { type Kysely } from "kysely";
 import { platform, requireActionEntity } from "@cobblr/platform-contract";
 import type { CoreDiscussionDB } from "../db.js";
+import { fanOutComment } from "./after-comment.js";
 
 let registered = false;
 
@@ -73,19 +74,22 @@ export function registerDiscussionActionHandlers(): void {
       .returning("id")
       .executeTakeFirstOrThrow();
 
-    await db
-      .updateTable("core_discussion_conversations")
-      .set({ updated_at: new Date(), resolved_at: null, resolved_by: null })
-      .where("id", "=", conversationId)
-      .execute();
-
-    await platform().events.emit("core-discussion.comment.posted", {
+    // The SAME fan-out the web route runs — mention links, reopening, follows,
+    // notifications, the posted event. This door used to insert the row, emit
+    // the event, and stop, so a reply sent from Discord saved perfectly and
+    // told no one: the person who mentioned you never heard back, and the
+    // replier did not start following the thread they had just spoken in.
+    await fanOutComment(db, {
       orgId: ctx.orgId,
-      conversation_id: conversationId,
-      comment_id: comment.id,
-      ...src,
-      source_id: entity.id,
-      author_user_id: ctx.userId ?? null,
+      conversationId,
+      commentId: comment.id,
+      body,
+      authorUserId: ctx.userId ?? null,
+      // The invoke event carries who acted; the Discord door fills it from the
+      // presser's account. Every notification path downstream shows a name, so
+      // the honest generic beats a blank.
+      authorName: ctx.event?.actor?.display_name || "Somebody",
+      source: { ...src, source_id: entity.id },
     });
     return { ok: true, comment_id: comment.id };
   });

@@ -86,8 +86,10 @@ export function registerRecordsResolvers(): void {
     const rows = await q.limit(limit).offset(offset).execute();
     return { items: rows.map((r) => toResolvedRecord(r)) };
   };
+  // Scoped to the default instance - same leak as inventory's base kind; see
+  // the note there. A Bookshelf instance's books must not double up here.
   platform().entities.registerListResolver("records:record", (orgId, query) =>
-    recordsListResolver(orgId, query),
+    recordsListResolver(orgId, query, "records"),
   );
   platform().entities.registerInstanceListResolver("records", (orgId, instance, query) =>
     recordsListResolver(orgId, query, instance),

@@ -104,12 +104,21 @@ export function confirmBodyFor(
    *  target here, so the module and kind stay with the candidate, which knows
    *  which of them this item is for. */
   installedTarget?: InstalledBundleTarget | null,
+  /** The name of the table's DECLARED category axis (field_role: "category",
+   *  via categoryAxisKey and the scan menu). The value-guess below is the
+   *  drift sessionCategory was written to end - a row whose stored value
+   *  differs from the candidate's category matches nothing, so the agreed
+   *  category silently failed to apply on exactly the rows that needed it.
+   *  Optional so a caller with no menu degrades to the guess, not to nothing. */
+  categoryAxis?: string | null,
 ): ConfirmBody | null {
   const cand = it.suggested_candidates?.[0];
   if (!isReadyToFile(it) || !cand) return null;
   const fields = { ...(cand.fields ?? {}) };
-  if (agreedCategory && cand.category) {
-    const axis = Object.keys(fields).find((k) => fields[k] === cand.category);
+  if (agreedCategory) {
+    const axis =
+      (categoryAxis && categoryAxis in fields ? categoryAxis : null) ??
+      (cand.category ? Object.keys(fields).find((k) => fields[k] === cand.category) : undefined);
     if (axis) fields[axis] = agreedCategory;
   }
   return {

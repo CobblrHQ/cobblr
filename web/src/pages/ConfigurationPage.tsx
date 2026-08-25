@@ -122,6 +122,25 @@ export function ConfigurationPage() {
             <>
               <BundleUpdatesCallout slug={activeSlug} />
 
+              {/* Every destination is admin-gated, so a member's filtered view
+                  is empty — and an empty grid with no words reads as a broken
+                  page, not a permissions boundary. Say what this area is and
+                  where THEIR settings live instead. */}
+              {sections.length === 0 && panels.length === 0 && (
+                <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-6 text-center space-y-2">
+                  <div className="font-medium text-content dark:text-mortar-100">
+                    Workspace configuration is managed by this workspace's admins.
+                  </div>
+                  <p className="text-sm text-muted dark:text-slate-400">
+                    Your own settings - appearance, notifications, connections - live under{" "}
+                    <Link to="/me" className="text-accent hover:underline">
+                      Your account
+                    </Link>
+                    .
+                  </p>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {sections.map(({ id, meta, items }) => (
                   <SectionCard

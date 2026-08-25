@@ -10,6 +10,9 @@
 // this finish detached.
 
 import net from "node:net";
+import { lookup as dnsLookup } from "node:dns/promises";
+import { pinnedRedirectingFetch } from "@cobblr/platform-net";
+import { isPrivateIp } from "@cobblr/platform-contract/private-ip";
 import type { Kysely } from "kysely";
 import { sql } from "kysely";
 import { browserImageHeaders } from "./image-fetch-headers.js";
@@ -246,28 +249,78 @@ async function nameFromPhoto(ctx: EnrichContext): Promise<PhotoNameResult> {
   return { named: true, visionRan: true };
 }
 
-// SSRF guard for the externally-sourced catalog image_url: block
-// non-http(s) + internal targets (loopback/private/link-local incl.
-// cloud metadata). Hostname-based; not DNS-rebind-proof (follow-up).
-function isPrivateIp(ip: string): boolean {
-  if (ip === "::1" || ip.startsWith("fe80:") || ip.startsWith("fc") || ip.startsWith("fd")) return true;
-  const p = ip.split(".").map(Number);
-  if (p.length !== 4 || p.some((n) => Number.isNaN(n))) return false;
-  const a = p[0]!, b = p[1]!;
-  return (
-    a === 127 || a === 10 ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168) ||
-    (a === 169 && b === 254) ||
-    a === 0
-  );
-}
-export function assertSafeOutboundUrl(raw: string): void {
-  const u = new URL(raw);
+// SSRF guard for an externally-sourced image_url (a catalog image, a marketplace
+// listing photo). RESOLVES DNS and rejects any host that resolves to an internal
+// address, using the canonical strict block set. The previous guard only
+// inspected a LITERAL-IP host and skipped its own tailnet range, so a PUBLIC
+// hostname resolving to an internal IP (the tailnet reference-catalog service,
+// the LAN, 169.254 cloud metadata) sailed through — and the response was stored
+// as a downloadable file, a read-SSRF with exfiltration (audit B2a). A catalog
+// image is never legitimately on an internal network, so the strict set applies
+// on every deployment. Async because it resolves.
+/** Resolve + SSRF-validate an outbound URL and return the IP to PIN the
+ *  connection to. Every resolved address is checked; the first is the pin (they
+ *  all passed). Pinning closes the DNS-rebind window: a rebind between this check
+ *  and undici's own connect can no longer land on a private address. Throws on an
+ *  unsafe target. */
+async function resolveSafeOutboundPin(u: URL): Promise<{ address: string; family: number }> {
   if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("blocked non-http(s) URL");
-  const host = u.hostname.toLowerCase();
-  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal")) throw new Error("blocked internal host");
-  if (net.isIP(host) && isPrivateIp(host)) throw new Error("blocked private address");
+  const host = u.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal")) {
+    throw new Error("blocked internal host");
+  }
+  const literal = net.isIP(host);
+  if (literal) {
+    if (isPrivateIp(host)) throw new Error("blocked private address");
+    return { address: host, family: literal };
+  }
+  let records: Array<{ address: string; family: number }>;
+  try {
+    records = await dnsLookup(host, { all: true });
+  } catch {
+    throw new Error("blocked: host did not resolve");
+  }
+  if (records.length === 0 || records.some((r) => isPrivateIp(r.address))) {
+    throw new Error("blocked: host resolves to a private/internal address");
+  }
+  return { address: records[0]!.address, family: records[0]!.family };
+}
+
+export async function assertSafeOutboundUrl(raw: string): Promise<void> {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new Error("blocked invalid URL");
+  }
+  await resolveSafeOutboundPin(u);
+}
+
+/**
+ * Fetch an externally-sourced image, following redirects OURSELVES so every hop
+ * is re-validated by resolveSafeOutboundPin (audit B2b/ISSUE-3). Without this a
+ * public `image_url` that returns `302 -> http://<internal>/secret` would be
+ * followed blindly and the internal body stored as a downloadable file. GET only
+ * (all image paths are GET). Each hop also PINS the connection to the validated
+ * IP (undici Agent), so the DNS-rebind window between check and connect is closed
+ * too, matching the kernel guardedFetch.
+ */
+export async function guardedImageFetch(
+  url: string,
+  init: { headers?: Record<string, string>; signal?: AbortSignal },
+): Promise<Response> {
+  // The shared pinnedRedirectingFetch owns the redirect + pin loop; the image
+  // policy (block private, always) is resolveSafeOutboundPin. GET only, so no
+  // method/body handling. The final Agent is left for undici's idle reaper since
+  // the caller streams the body (.blob()).
+  const { response } = await pinnedRedirectingFetch({
+    url,
+    maxRedirects: 5,
+    ...(init.headers ? { headers: init.headers } : {}),
+    ...(init.signal ? { signal: init.signal } : {}),
+    validate: (u) => resolveSafeOutboundPin(u),
+  });
+  return response as unknown as Response;
 }
 
 interface EnrichContext {
@@ -1360,7 +1413,7 @@ export async function downloadCatalogImage(
   // A stock "no image" graphic is not a photo. Refuse before spending a fetch.
   if (isPlaceholderImageUrl(imageUrl)) return false;
   try {
-    assertSafeOutboundUrl(imageUrl);
+    await assertSafeOutboundUrl(imageUrl);
   } catch {
     return false; // not a safe outbound target — never retry
   }
@@ -1368,11 +1421,12 @@ export async function downloadCatalogImage(
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) await new Promise((r) => setTimeout(r, 500 * attempt));
     try {
-      const dlRes = await fetch(imageUrl, {
+      const dlRes = await guardedImageFetch(imageUrl, {
         // Look like a BROWSER, not a bot: a real UA + a same-origin Referer +
         // an image Accept. Hotlink protection keys on exactly these — a missing
         // Referer / bot UA is why an image the user can SEE full-screen (their
         // browser sends them) 403s when WE fetch it (reported 2026-07-24).
+        // guardedImageFetch re-validates each redirect hop.
         headers: browserImageHeaders(imageUrl),
         signal: AbortSignal.timeout(8_000),
       });

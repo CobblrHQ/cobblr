@@ -69,6 +69,7 @@ import {
   parseEstimatedDelivery,
   parseReceiptTotals,
   type ReceiptTotals,
+  moneyValue,
 } from "@cobblr/platform-contract/receipt-totals";
 
 export interface ParsedReceipt {
@@ -141,28 +142,78 @@ export type ReceiptResult =
 
 export function num(v: unknown): number | null {
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
-  if (typeof v === "string") {
-    // Strip currency symbols, thousands separators, spaces; keep digits/./-.
-    // A trailing/leading minus or parens (accounting negatives) → negative.
-    const neg = /^\s*\(.*\)\s*$/.test(v) || /-/.test(v);
-    const n = parseFloat(v.replace(/[^0-9.]/g, ""));
-    if (!Number.isFinite(n)) return null;
-    return neg ? -n : n;
-  }
-  return null;
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  if (!s) return null;
+  // A date is not an amount. "2026-08-18" used to coerce to -20260818 (the
+  // hyphen read as a sign), which is how a date cell in the wrong CSV column
+  // became a price.
+  if (/^\d{4}-\d{2}-\d{2}/.test(s) || /^\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4}$/.test(s)) return null;
+  // Accounting negatives: parens, or a minus TOUCHING the number. `/-/` over
+  // the whole string called "2026-08-18" negative (and then -20260818), so the
+  // sign has to be adjacent, not merely present.
+  const neg = /^\(.*\)$/.test(s) || /(?:^|[^\d])-\s*[\d.,]/.test(s) || /[\d][\s]*-$/.test(s);
+  const n0 = moneyValue(s);
+  if (n0 === null) return null;
+  return neg ? -n0 : n0;
 }
 
 export function str(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
 }
 
+const MONTHS: Record<string, number> = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+};
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/** A real calendar day, or null. Rejects Feb 31 instead of rolling it. */
+const ymd = (y: number, m: number, d: number): string | null => {
+  if (y < 1990 || y > 2100 || m < 1 || m > 12 || d < 1) return null;
+  const days = [31, y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (d > (days[m - 1] ?? 31)) return null;
+  return `${y}-${pad2(m)}-${pad2(d)}`;
+};
+
 export function isoDate(v: unknown): string | null {
   const s = str(v);
   if (!s) return null;
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-  const t = Date.parse(s);
-  if (Number.isNaN(t)) return null;
-  return new Date(t).toISOString().slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/)!;
+    return ymd(+m[1]!, +m[2]!, +m[3]!);
+  }
+  // Explicit formats only. The old Date.parse fallback had two faults this
+  // rewrite exists for: it read a non-ISO string in SERVER-LOCAL time and then
+  // converted to UTC, dating every receipt a day early east of nowhere; and it
+  // read "18/08/2026" as invalid while silently flipping "03/04/2026" to
+  // March 4 - a UK 3 April becomes a different purchase date with no marker.
+  //
+  // "12 Aug 2026" / "Aug 12, 2026" / "12 August 2026"
+  let m = s.match(/\b(\d{1,2})[\s.]+([A-Za-z]{3,})\.?,?[\s.]+(\d{4})\b/);
+  if (m) {
+    const mo = MONTHS[m[2]!.slice(0, 3).toLowerCase()];
+    if (mo) return ymd(+m[3]!, mo, +m[1]!);
+  }
+  m = s.match(/\b([A-Za-z]{3,})\.?[\s]+(\d{1,2})(?:st|nd|rd|th)?,?[\s]+(\d{4})\b/);
+  if (m) {
+    const mo = MONTHS[m[1]!.slice(0, 3).toLowerCase()];
+    if (mo) return ymd(+m[3]!, mo, +m[2]!);
+  }
+  // Numeric d/m/y or m/d/y. When one side exceeds 12 the reading is forced;
+  // a genuinely ambiguous "03/04/2026" defaults to month-first (the US print
+  // convention this parser has always assumed) - unchanged behaviour, but now
+  // "18/08/2026" parses instead of vanishing.
+  m = s.match(/\b(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})\b/);
+  if (m) {
+    const a = +m[1]!, b = +m[2]!;
+    const y = m[3]!.length === 2 ? 2000 + +m[3]! : +m[3]!;
+    if (a > 12 && b <= 12) return ymd(y, b, a);
+    if (b > 12 && a <= 12) return ymd(y, a, b);
+    return ymd(y, a, b);
+  }
+  return null;
 }
 
 /** Assemble + validate a receipt from loose parts. Returns null when there are
@@ -278,6 +329,28 @@ export function normalizeVendorKey(vendor: string | null | undefined): string {
  *  unique per vendor, so (normalized vendor, cleaned order #) names the receipt.
  *  Null when there's no order number to key on — without it we can't safely say
  *  two receipts are the same, so the caller must NOT dedup (avoids false hits). */
+/**
+ * A fingerprint for a receipt that prints NO order number - CSV, pdf-table and
+ * text-lines can never produce one, and a till receipt has none - so the same
+ * paper scanned twice used to duplicate every line, order and all.
+ *
+ * vendor|date|total|line-count. Null when too little was established to
+ * fingerprint honestly (no date AND no total): two receipts we know that
+ * little about are not provably the same one, and a false "already imported"
+ * is worse than a duplicate the user can see.
+ */
+export function receiptContentKey(receipt: ParsedReceipt): string | null {
+  const date = isoDate(receipt.date);
+  const total = num(receipt.total);
+  if (!date && total === null) return null;
+  return [
+    normalizeVendorKey(receipt.vendor),
+    date ?? "",
+    total === null ? "" : total.toFixed(2),
+    String(receipt.items.length),
+  ].join("|");
+}
+
 export function receiptDedupKey(
   vendor: string | null | undefined,
   orderRef: string | null | undefined,

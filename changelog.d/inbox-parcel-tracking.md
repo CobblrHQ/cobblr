@@ -2,7 +2,7 @@
 type: feature
 scope: purchases
 date: 2026-08-14
-docs_target: docs/USER_GUIDE.md#Purchases
+docs_target: docs/USER_GUIDE.md#3.25c Reading a purchase order
 ---
 A receipt with a tracking number is followed while it is still in your scan inbox, so you are told when the parcel lands without having to file it first.
 
@@ -15,8 +15,9 @@ parcel from there. You do not have to file it into a purchase order first.
 
 The receipt's row shows where the parcel is, updated on Cobblr's own schedule:
 **Label created**, **In transit**, **Out for delivery**, **Delivered**, or
-**Needs attention**. Hover it for the carrier's own wording and the last place
-it was scanned.
+**Needs attention**. Tap it to open a small panel with the carrier's own
+wording, the last place the parcel was scanned, the tracking number, and an
+Edit number link.
 
 You get a notification for the two states that change what you do today: out for
 delivery, and delivered. The delivered one links straight back to the inbox,

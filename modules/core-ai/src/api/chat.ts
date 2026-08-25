@@ -35,12 +35,13 @@ import { performWrite, performWrites, undoWrite, undoableOf, type WriteRequest, 
 import type { ToolCall, ChatTurn } from "../providers/tool-wire.js";
 import { summariseAction, type ActionCopy } from "./action-summary.js";
 import { appSurfacePrompt } from "./app-surface.js";
+import { inferMoveFromToolShape, jsonBlockIn } from "./tool-shaped-move.js";
 
 /** ToolCall → the ledgered write request shape (null = not a known write). */
 /** The writes a tool call MEANS — one for a single write, many for a bulk one.
  *  Both write paths (the in-app loop and the relayed one) go through here, so
  *  neither can learn about a new write tool without the other. */
-function writeRequestsOf(call: ToolCall): WriteRequest[] {
+export function writeRequestsOf(call: ToolCall): WriteRequest[] {
   const a = call.args ?? {};
   if (call.name === "create_records") {
     const kind = typeof a.kind === "string" ? a.kind : "";
@@ -53,6 +54,19 @@ function writeRequestsOf(call: ToolCall): WriteRequest[] {
   }
   const one = writeRequestOf(call);
   return one ? [one] : [];
+}
+
+/** In auto mode, which write calls STILL hold for confirmation instead of
+ *  auto-applying. Actions (irreversible side effects) hold, and so do
+ *  destructive record ops — a delete, including any bulk/multi delete. Creates
+ *  and updates auto-apply. The reason deletes hold even in auto: untrusted
+ *  workspace content (entity names/descriptions/scanned text pulled into Cobb's
+ *  context) must never be able to steer an UNCONFIRMED delete. Pure so the same
+ *  decision the auto-write closure makes can be asserted directly. */
+export function autoWriteMustHold(ws: WriteRequest[]): boolean {
+  const w = ws[0];
+  if (!w) return true;
+  return w.tool === "action" || ws.some((r) => r.tool === "delete");
 }
 
 /** One deliberate instruction may carry many records; a LOOP that keeps
@@ -113,8 +127,10 @@ export function chatWorkspaceApi(c: Ctx): WorkspaceApi {
  *  data into prompts, and the WRITE MODE — Claude-Code style:
  *    off  → no write proposals at all
  *    ask  → every write is a proposal the user confirms (default)
- *    auto → record creates/updates/deletes APPLY IMMEDIATELY (ledgered +
- *           undoable); ACTIONS still ask (irreversible side effects).
+ *    auto → record creates/updates APPLY IMMEDIATELY (ledgered + undoable);
+ *           DELETES and ACTIONS still ask (destructive / irreversible side
+ *           effects — an unconfirmed delete must never be steerable by
+ *           untrusted workspace content).
  *  Absent row = read on + ask. */
 export type WriteMode = "off" | "ask" | "auto";
 export interface ChatToolPrefs {
@@ -507,15 +523,15 @@ async function proposalOf(
 }
 
 function parseMove(raw: string): Move | null {
-  const s = raw.indexOf("{");
-  const e = raw.lastIndexOf("}");
-  if (s === -1 || e === -1 || e < s) return null;
-  try {
-    const o = JSON.parse(raw.slice(s, e + 1)) as Move;
-    return o && typeof o === "object" && typeof o.type === "string" ? o : null;
-  } catch {
-    return null;
+  const parsed = jsonBlockIn(raw);
+  if (parsed && typeof parsed === "object" && typeof (parsed as Move).type === "string") {
+    return parsed as Move;
   }
+  // No `type`, but it may still plainly BE a call: some models answer a request
+  // to act by writing out the tool's own arguments in a fenced block instead of
+  // calling it (granite3.3, command-r7b — measured 2026-08-25, both scoring 1/8
+  // for this reason alone). They wrote the right thing; nobody was reading it.
+  return inferMoveFromToolShape(parsed) as Move | null;
 }
 
 const ChatBody = z.object({
@@ -650,8 +666,10 @@ async function runTurn(
             executeWrite: async (call: ToolCall) => {
               const ws = writeRequestsOf(call);
               const w = ws[0];
-              // Actions keep the confirm gate (irreversible); over-cap too.
-              if (!w || w.tool === "action" || autoWrites >= AUTO_WRITE_CAP) return null;
+              // Actions + destructive record ops (delete, incl. bulk/multi
+              // delete) keep the confirm gate even in auto mode; over-cap too.
+              // See autoWriteMustHold for why deletes hold. Creates/updates auto-apply.
+              if (!w || autoWriteMustHold(ws) || autoWrites >= AUTO_WRITE_CAP) return null;
               autoWrites++;
               if (ws.length > 1) {
                 return performWrites(wsApi, ldb, userId, ws, {

@@ -41,8 +41,13 @@ for (const pattern of ROOTS) {
     if (src.includes("SANCTIONED-UTC-DAY")) continue;
     src.split("\n").forEach((line, i) => {
       if (!NOW_SLICE.test(line)) return;
-      // Compared anywhere on the line, either side of the slice.
-      if (!COMPARISON.test(withoutArrows(line))) return;
+      // Compared anywhere on the line, either side of the slice - or DEFAULTED
+      // into a value (`args.day ?? <today>`): a fallback stamp decides which
+      // calendar day an event happened on, and "Yes, it turned up" pressed at
+      // 8pm US Eastern recorded TOMORROW (2026-08-25 audit). Formatting that
+      // is neither compared nor defaulted stays legal.
+      const decided = COMPARISON.test(withoutArrows(line)) || /\?\?\s*new Date\(\)/.test(line);
+      if (!decided) return;
       failures.push({ file, line: i + 1, text: line.trim().slice(0, 110) });
     });
   }

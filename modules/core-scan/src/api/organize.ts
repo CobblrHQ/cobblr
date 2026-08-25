@@ -65,13 +65,17 @@ export function planItemPhotos(
     id: string;
     image_file_id?: string | null;
     catalog_image_file_id?: string | null;
+    catalog_image_url?: string | null;
   }>,
-): Record<string, { image_file_id?: string; catalog_image_file_id?: string }> {
-  const out: Record<string, { image_file_id?: string; catalog_image_file_id?: string }> = {};
+): Record<string, { image_file_id?: string; catalog_image_file_id?: string; catalog_image_url?: string }> {
+  const out: Record<string, { image_file_id?: string; catalog_image_file_id?: string; catalog_image_url?: string }> = {};
   for (const r of rows) {
     const entry = {
       ...(r.image_file_id ? { image_file_id: r.image_file_id } : {}),
       ...(r.catalog_image_file_id ? { catalog_image_file_id: r.catalog_image_file_id } : {}),
+      // The remote URL is a real picture too - the downloader localising it is
+      // an optimisation, not a precondition for the plan showing anything.
+      ...(r.catalog_image_url ? { catalog_image_url: r.catalog_image_url } : {}),
     };
     // A row with no picture at all stays out rather than storing an empty
     // object for every item in a large plan.
@@ -205,6 +209,7 @@ organizeRouter.post(
         // For the plan's own thumbnails - see planItemPhotos.
         "image_file_id",
         "catalog_image_file_id",
+        "catalog_image_url",
       ])
       .where("status", "=", "pending")
       // scope:"pending" is a one-click CTA — plan the newest cap-full rather
@@ -671,11 +676,16 @@ organizeRouter.post(
       appliedGroupIds.push(gid);
       applied.add(gid);
       const prior = group.destination.kind === "existing" ? group.destination : null;
+      // Only the ids this apply actually MOVED. An item that already had a
+      // different bin was deliberately left where it is (the guards above), so
+      // recording the full kept list would have the stored plan claim it
+      // belongs here - and the put-away walk reads that stored payload.
+      const moved = new Set(filedItemIds);
       resolved.set(gid, {
         location_id: locationId!,
         location_name: locationName ?? prior?.location_name ?? "",
         location_path: prior?.location_path ?? locationName ?? "",
-        item_ids: keptIds,
+        item_ids: keptIds.filter((id) => moved.has(id)),
       });
     }
 

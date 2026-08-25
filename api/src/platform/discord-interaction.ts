@@ -20,6 +20,7 @@
 // the process when the environment is incomplete.
 
 import { createPublicKey, verify as edVerify } from "node:crypto";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 
 /** Discord's interaction types, the three that matter here. */
 export const INTERACTION = { PING: 1, COMPONENT: 3 } as const;
@@ -122,18 +123,53 @@ export function resolvePress(
   };
 }
 
+/**
+ * May a resolved press actually RUN the action, given the presser's CURRENT
+ * membership role in the notification's workspace?
+ *
+ * A card action is a real write (the reply posts a comment everyone in the
+ * workspace sees), so proving-who-pressed (resolvePress) is necessary but not
+ * sufficient — the presser must also still be allowed to do it in that
+ * workspace. Two holes this closes, both of which resolvePress cannot see
+ * because the notification row and the Discord link outlive membership:
+ *   • a read-only GUEST, who is legitimately mentioned and DM'd but may only
+ *     read in-app (the in-app reply requires member+);
+ *   • a member whose access was REVOKED after the DM was sent (no membership
+ *     row → role is null/undefined here → refused).
+ *
+ * Mirrors the in-app twin POST /discussion/'s requireRole("owner","admin",
+ * "member"). The role is looked up in the route (a DB read); the DECISION is
+ * here so it is pure and tested, the same split as resolvePress.
+ */
+export function pressMayAct(role: string | null | undefined): boolean {
+  return roleSatisfies(role, ["owner", "admin", "member"]);
+}
+
 /** What the message becomes after a press.
  *
  *  The card is REPLACED rather than answered beside, so a pressed button cannot
  *  be pressed again from scrollback and the message reads as settled. The
  *  original text is kept: a card that erases what it was about leaves the
  *  reader with only the outcome. */
-export function settledMessage(original: string, outcome: string): {
+export function settledMessage(
+  original: string,
+  outcome: string,
+  /** What the person typed, when the press carried a reply. Shown back to them:
+   *  a DM that answers "✅ Sent." and nothing else leaves you unable to check
+   *  what you actually said, in the one place you cannot scroll back to it -
+   *  the message you typed lives in a modal that is already gone. */
+  echo?: string | null,
+): {
   type: number;
   data: { content: string; components: never[] };
 } {
+  const quoted = echo
+    ? // Discord's blockquote continues across newlines with each line prefixed,
+      // so a multi-line reply stays inside the quote instead of half escaping it.
+      "\n" + echo.split("\n").map((l) => `> ${l}`).join("\n")
+    : "";
   return {
     type: RESPONSE.UPDATE_MESSAGE,
-    data: { content: `${original}\n\n${outcome}`, components: [] },
+    data: { content: `${original}\n\n${outcome}${quoted}`, components: [] },
   };
 }

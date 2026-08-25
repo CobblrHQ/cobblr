@@ -347,10 +347,10 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
       <div className="flex items-center gap-2 min-w-0">
         {/* The brand row is the wordmark + controls ONLY. The env chip lives on
             the workspace row below, so no badge (Staging/Dev/Test, any label
-            length) can crowd "cobblr" down to "co..." — reported 2026-07-29. */}
+            length) can crowd "Cobblr" down to "Co..." — reported 2026-07-29. */}
         <Link to="/" className="flex items-center gap-1.5 min-w-0 shrink-0 hover:opacity-80 transition">
           <CobblestoneMark size={20} dot={envDot} />
-          <span className="font-display font-extrabold text-content dark:text-mortar-100 lowercase text-[15px]">cobblr</span>
+          <span className="font-display font-extrabold text-content dark:text-mortar-100 text-[15px]">Cobblr</span>
         </Link>
         <span className="flex-1" />
         <span className="shrink-0">{sidebarControls}</span>
@@ -531,7 +531,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             {navMode === "top" ? <PanelLeft size={15} /> : <PanelTop size={15} />}
           </button>
           {/* Brand. On mobile the distinctive mark alone carries it and the
-              "cobblr" wordmark is dropped, so the WORKSPACE NAME (the real context)
+              "Cobblr" wordmark is dropped, so the WORKSPACE NAME (the real context)
               gets that ~100px instead of truncating. Desktop keeps the full mark +
               wordmark. */}
           <Link
@@ -539,8 +539,8 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             className="relative flex items-center gap-2 shrink-0 hover:opacity-80 transition"
           >
             <CobblestoneMark size={26} dot={envDot} />
-            <span className="hidden sm:inline font-display font-extrabold text-content dark:text-mortar-100 lowercase">
-              cobblr
+            <span className="hidden sm:inline font-display font-extrabold text-content dark:text-mortar-100">
+              Cobblr
             </span>
             {/* Managed app: the wordmark IS the "Cobblr", so append the suffix
                 here ("for Yarn") instead of a separate label that repeats it. */}

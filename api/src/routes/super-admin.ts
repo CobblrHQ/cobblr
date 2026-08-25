@@ -15,6 +15,7 @@ import { sql } from "kysely";
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
 import { requireAuth, requirePlatformAdmin, isPlatformAdmin } from "../auth/middleware.js";
+import { inviteExpiresAt } from "../auth/signup-gate.js";
 import { scanResolversRouter } from "./super-admin-scan-resolvers.js";
 import { signImpersonation } from "../auth/jwt.js";
 import { log as activityLog } from "../platform/activity.js";
@@ -33,6 +34,7 @@ import { reporterCardFields } from "../platform/feedback-card.js";
 import {
   pokeDiscordResolved,
   sendDiscordDm,
+  dmOutcome,
   pokeDiscordWaitlistCard,
   pokeDiscordFeedbackStage,
   type FeedbackStage,
@@ -871,9 +873,9 @@ superAdminRouter.post("/signup-invites", async (req, res, next) => {
     }
     const userId = (req as unknown as { session?: { id: string } }).session?.id;
     const token = randomBytes(24).toString("base64url");
-    const expires_at = parsed.data.expires_in_days
-      ? new Date(Date.now() + parsed.data.expires_in_days * 86_400_000)
-      : null;
+    // Default expiry when none given — an invite link is a credential and
+    // must not be redeemable forever (audit L-INVITE).
+    const expires_at = inviteExpiresAt(parsed.data.expires_in_days);
     const row = await meta
       .insertInto("signup_invites")
       .values({
@@ -1087,9 +1089,7 @@ superAdminRouter.post("/waitlist/:id/approve", async (req, res, next) => {
     }
     const userId = (req as unknown as { session?: { id: string } }).session?.id;
     const token = randomBytes(24).toString("base64url");
-    const expires_at = parsed.data.expires_in_days
-      ? new Date(Date.now() + parsed.data.expires_in_days * 86_400_000)
-      : new Date(Date.now() + 14 * 86_400_000); // waitlist invites default to 14d
+    const expires_at = inviteExpiresAt(parsed.data.expires_in_days);
     const invite = await meta
       .insertInto("signup_invites")
       .values({
@@ -1959,7 +1959,7 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
           text: parsed.data.status === "resolved" ? `Fixed, this is live now. \u{1F389}\n\n${text}` : text,
         });
         notified = dm.ok || notified;
-        delivery.discord_dm = dm.ok ? "sent" : dm.deliverable ? "send-failed" : "blocked";
+        delivery.discord_dm = dmOutcome(dm);
       }
     }
     if (parsed.data.notify_reporter && replyRoute.via === "account" && row.user_id) {
@@ -2066,6 +2066,11 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
             // Land them on their feedback thread to read our reply + respond.
             link_url: "/me/feedback",
             email,
+            // A reply answers on the channel the report came in on: a Discord
+            // ticket gets the DM, everything else gets the email. The bell
+            // records it either way. Before this, one reply arrived as an
+            // email AND a DM saying the same sentence (reported 2026-08-24).
+            originChannel: row.origin === "discord" || row.origin === "discord-dm" ? "discord_dm" : "email",
           });
           notified = deliveredVia.length > 0 || notified;
           emailed = deliveredVia.includes("email");

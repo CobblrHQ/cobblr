@@ -12,10 +12,25 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, BellOff, CornerUpLeft, MessageSquare, Send, Sparkles, Trash2, X } from "lucide-react";
+import {
+  Bell,
+  BellOff,
+  Check,
+  CheckCircle2,
+  CornerUpLeft,
+  MessageSquare,
+  Pencil,
+  RotateCcw,
+  Send,
+  Sparkles,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useToast, useConfirm } from "@cobblr/platform-web";
 import { api, ApiError, type DiscussionComment } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { useAuth } from "../auth/AuthContext";
+import { canEditComment, canResolveConversation } from "../lib/discussionPermissions";
 import { useCurrentRecord } from "../lib/useCurrentRecord";
 import { RailTabContent, openRail, useRailTab } from "./SideRail";
 import { MentionText, useMentionPicker } from "./MentionText";
@@ -103,6 +118,8 @@ function Quote({
 
 export function DiscussionTab() {
   const { activeSlug, activeOrg } = useActiveOrg();
+  const { user } = useAuth();
+  const selfUserId = user?.id ?? null;
   const record = useCurrentRecord(activeSlug ?? "");
   const qc = useQueryClient();
   const toast = useToast();
@@ -300,6 +317,38 @@ export function DiscussionTab() {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't remove that."),
   });
 
+  // Editing your own words, in place. The row swaps its <p> for a small
+  // textarea; save PATCHes and refetches through the same query key post and
+  // delete invalidate, so an edit lands the same way a new comment does.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const edit = useMutation({
+    mutationFn: (vars: { id: string; body: string }) =>
+      api.editComment(activeSlug, vars.id, vars.body),
+    onSuccess: () => {
+      setEditingId(null);
+      setEditDraft("");
+      void qc.invalidateQueries({ queryKey: ["discussion", activeSlug] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't save that."),
+  });
+
+  // Settle a conversation, or open it again. Keyed by the CONVERSATION id (the
+  // resolve endpoint takes the conversation, not a comment), so it waits until
+  // the conversation has loaded. Member and up — a guest can read but not close.
+  const resolve = useMutation({
+    mutationFn: (resolved: boolean) =>
+      api.resolveConversation(activeSlug, conv.data!.conversation!.id, resolved),
+    onSuccess: (_r, resolved) => {
+      toast.success(resolved ? "Marked settled" : "Reopened");
+      void qc.invalidateQueries({ queryKey: ["discussion", activeSlug] });
+      void qc.invalidateQueries({ queryKey: ["discussion-inbox", activeSlug] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't change that."),
+  });
+  const canResolve = canResolveConversation(activeOrg?.role);
+  const resolved = !!conv.data?.conversation?.resolved_at;
+
   // No record in view: the tab is here, and says what it is for. Every hook has
   // already run above, so this is a plain render branch and not a conditional
   // hook (lint:hooks-after-return watches that, and would have caught it).
@@ -346,23 +395,50 @@ export function DiscussionTab() {
       id="discussion"
       title={<>Discussion</>}
       actions={
-        <button
-          type="button"
-          onClick={() => follow.mutate(!following)}
-          disabled={follow.isPending}
-          title={
-            following
-              ? "You hear about new comments here. Click to stop."
-              : "Hear about new comments on this record"
-          }
-          aria-pressed={following}
-          className={
-            "p-1 transition " +
-            (following ? "text-amber-500" : "text-faint hover:text-content dark:hover:text-mortar-200")
-          }
-        >
-          {following ? <Bell size={14} /> : <BellOff size={14} />}
-        </button>
+        <>
+          {/* Settle / reopen. Member and up; hidden entirely for a guest and
+              until the conversation exists (nothing to resolve on an empty
+              thread). The `settled` badge on the inbox row has had no way to be
+              set until this control existed. */}
+          {canResolve && conv.data?.conversation && (
+            <button
+              type="button"
+              onClick={() => resolve.mutate(!resolved)}
+              disabled={resolve.isPending}
+              title={
+                resolved
+                  ? "Settled. Click to reopen."
+                  : "Mark this conversation settled"
+              }
+              aria-pressed={resolved}
+              className={
+                "p-1 transition " +
+                (resolved
+                  ? "text-emerald-500"
+                  : "text-faint hover:text-content dark:hover:text-mortar-200")
+              }
+            >
+              {resolved ? <RotateCcw size={14} /> : <CheckCircle2 size={14} />}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => follow.mutate(!following)}
+            disabled={follow.isPending}
+            title={
+              following
+                ? "You hear about new comments here. Click to stop."
+                : "Hear about new comments on this record"
+            }
+            aria-pressed={following}
+            className={
+              "p-1 transition " +
+              (following ? "text-amber-500" : "text-faint hover:text-content dark:hover:text-mortar-200")
+            }
+          >
+            {following ? <Bell size={14} /> : <BellOff size={14} />}
+          </button>
+        </>
       }
     >
       <div className="flex-1 min-h-0 flex flex-col">
@@ -394,7 +470,7 @@ export function DiscussionTab() {
             </button>
           </div>
         )}
-        <div className="px-4 pt-3 shrink-0">
+        <div className="px-4 pt-3 shrink-0 flex items-center gap-2 flex-wrap">
           {/* The record's NAME. This said "machines:machine" until somebody
               looked at it — the machine's version of the answer, in the one
               place whose whole job is telling you which record you are talking
@@ -412,6 +488,14 @@ export function DiscussionTab() {
               {record ? (subject.data?.title ?? "…") : (activeOrg?.name ?? "this workspace")}
             </span>
           </span>
+          {resolved && (
+            <span
+              className="inline-flex items-center gap-1 rounded-md border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950 px-2 py-1 text-[11px] font-mono uppercase tracking-widest text-emerald-700 dark:text-emerald-300"
+              title="This conversation has been marked settled."
+            >
+              <Check size={11} /> settled
+            </span>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
@@ -453,7 +537,50 @@ export function DiscussionTab() {
                     message; a long message still fills and wraps, and then the
                     edge is where they belong anyway. */}
                 <div className="min-w-0 w-fit max-w-full">
-                  {c.status === "pending" ? (
+                  {editingId === c.id ? (
+                    // Inline editor: the raw body, so a mention token you keep
+                    // stays a token. Enter saves, Escape cancels — the same keys
+                    // the composer uses, so muscle memory carries over.
+                    <div className="flex flex-col gap-1.5">
+                      <textarea
+                        value={editDraft}
+                        autoFocus
+                        onChange={(e) => setEditDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            const body = editDraft.trim();
+                            if (body) edit.mutate({ id: c.id, body });
+                          } else if (e.key === "Escape") {
+                            e.preventDefault();
+                            setEditingId(null);
+                          }
+                        }}
+                        rows={2}
+                        className="w-full resize-none px-3 py-2 text-base sm:text-sm rounded-lg border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 text-content dark:text-mortar-200 leading-relaxed"
+                      />
+                      <div className="flex items-center gap-2 text-[11px]">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const body = editDraft.trim();
+                            if (body) edit.mutate({ id: c.id, body });
+                          }}
+                          disabled={!editDraft.trim() || edit.isPending}
+                          className="inline-flex items-center gap-1 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white px-2 py-1 transition disabled:opacity-50"
+                        >
+                          <Check size={11} /> Save
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingId(null)}
+                          className="text-faint hover:text-content dark:hover:text-mortar-200 transition"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : c.status === "pending" ? (
                     <p className="text-sm text-faint dark:text-slate-500 italic">Cobb is thinking…</p>
                   ) : c.status === "failed" ? (
                     // Failure says so out loud. A silent non-answer looks like a
@@ -469,7 +596,7 @@ export function DiscussionTab() {
                     </p>
                   )}
                 </div>
-                {!c.deleted_at && (
+                {!c.deleted_at && editingId !== c.id && (
                   <span className="hover-reveal shrink-0 flex items-center gap-0.5 pl-1">
                     <button
                       type="button"
@@ -483,6 +610,24 @@ export function DiscussionTab() {
                     >
                       <CornerUpLeft size={13} />
                     </button>
+                    {/* Edit only your OWN, live comment — the same rule the
+                        server enforces on PATCH. Cobb's posts and other people's
+                        never show a pencil; the "edited" badge above only
+                        becomes reachable through here. */}
+                    {canEditComment(c, selfUserId) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingId(c.id);
+                          setEditDraft(c.body);
+                        }}
+                        className="p-1 rounded text-faint hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/60 transition"
+                        aria-label="Edit comment"
+                        title="Edit"
+                      >
+                        <Pencil size={13} />
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={async () => {

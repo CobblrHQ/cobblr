@@ -2,7 +2,7 @@
 type: feature
 scope: discussion
 date: 2026-08-24
-docs_target: docs/USER_GUIDE.md#Discussion
+docs_target: docs/USER_GUIDE.md#4. The platform layer
 ---
 Discussion and tags now work on every record, including inventory parts.
 

@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/platform-contract",
-  "version": "0.5.0",
+  "version": "0.5.5",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
@@ -9,6 +9,8 @@
     "./qr-token": "./src/qr-token.ts",
     "./entity-tokens": "./src/entity-tokens.ts",
     "./org-roles": "./src/org-roles.ts",
+    "./private-ip": "./src/private-ip.ts",
+    "./safe-font-url": "./src/safe-font-url.ts",
     "./workspace-room": "./src/workspace-room.ts",
     "./category-reconcile": "./src/category-reconcile.ts",
     "./resolvables": "./src/resolvables.ts",
@@ -23,7 +25,9 @@
     "./said-names": "./src/said-names.ts",
     "./date-field-direction": "./src/date-field-direction.ts",
     "./plural": "./src/plural.ts",
-    "./destination-label": "./src/destination-label.ts"
+    "./destination-label": "./src/destination-label.ts",
+    "./membership": "./src/membership.ts",
+    "./expiry-grace": "./src/expiry-grace.ts"
   },
   "types": "src/index.ts",
   "scripts": {

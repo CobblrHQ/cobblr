@@ -17,10 +17,11 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "typecheck": "pnpm -r --no-sort --workspace-concurrency=${COBBLR_TSC_CONCURRENCY:-8} run --if-present typecheck",
+    "typecheck": "pnpm -r --no-sort --workspace-concurrency=${COBBLR_TSC_CONCURRENCY:-8} run --if-present typecheck && node scripts/verify-cache.mjs stamp typecheck",
     "verify:served": "node scripts/verify-served.mjs",
     "lint:all": "node scripts/run-lints.mjs",
     "lint:isolation": "tsx scripts/lint-module-isolation.ts",
+    "lint:action-role-parity": "tsx scripts/lint-action-role-parity.ts",
     "lint:overlay-safe-area": "tsx scripts/lint-overlay-safe-area.ts",
     "lint:unreachable-file-input": "tsx scripts/lint-unreachable-file-input.ts",
     "lint:locations-sibling-guard": "tsx scripts/lint-locations-sibling-guard.ts",
@@ -48,6 +49,7 @@
     "lint:role-gate-shared": "tsx scripts/lint-role-gate-shared.ts",
     "lint:role-vocabulary": "tsx scripts/lint-role-vocabulary.ts",
     "lint:wide-tables": "tsx scripts/lint-wide-tables.ts",
+    "lint:wordmark-casing": "tsx scripts/lint-wordmark-casing.ts",
     "lint:entity-action-uses-entity": "tsx scripts/lint-entity-action-uses-entity.ts",
     "lint:actions-bar-shrink": "tsx scripts/lint-actions-bar-shrink.ts",
     "lint:jsx-comment-text": "tsx scripts/lint-jsx-comment-text.ts",
@@ -70,6 +72,8 @@
     "lint:surface-names": "tsx scripts/lint-surface-names.ts",
     "lint:print-driver-options": "tsx scripts/lint-print-driver-options.ts",
     "lint:selfhost-mounts": "tsx scripts/lint-selfhost-mounts.ts",
+    "lint:selfhost-secrets": "tsx scripts/lint-selfhost-secrets.ts",
+    "lint:one-private-ip": "tsx scripts/lint-one-private-ip.ts",
     "lint:sweep-pool-eviction": "tsx scripts/lint-sweep-pool-eviction.ts",
     "lint:mcp-readme": "tsx scripts/lint-mcp-readme.ts",
     "lint:instance-resolvers": "tsx scripts/lint-instance-resolvers.ts",
@@ -106,6 +110,7 @@
     "lint:deprecated-fks": "tsx scripts/lint-deprecated-table-fks.ts",
     "lint:self-heal": "tsx scripts/lint-self-heal.ts",
     "lint:migration-additive": "tsx scripts/lint-migration-additive.ts",
+    "lint:migration-ordinals": "tsx scripts/lint-migration-ordinals.ts",
     "lint:env-icons": "node scripts/build-env-icons.mjs --check",
     "lint:hook-timeouts": "tsx scripts/lint-hook-timeouts.ts",
     "lint:identity-meta": "tsx scripts/lint-identity-meta.ts",
@@ -130,6 +135,7 @@
     "lint:header-rows": "tsx scripts/lint-header-rows.ts",
     "lint:section-headings": "tsx scripts/lint-section-headings.ts",
     "lint:page-headers": "tsx scripts/lint-page-headers.ts",
+    "lint:public-repo-urls": "tsx scripts/lint-public-repo-urls.ts",
     "lint:debug-globals": "tsx scripts/lint-debug-globals.ts",
     "lint:heal-shims": "tsx scripts/lint-heal-shims.ts",
     "lint:registry-headers-sync": "tsx scripts/lint-registry-headers-sync.ts",
@@ -219,7 +225,9 @@
     "lint:action-examples": "tsx scripts/lint-action-examples.ts",
     "lint:computed-context-kind": "tsx scripts/lint-computed-context-kind.ts",
     "lint:notification-channels-parity": "tsx scripts/lint-notification-channels-parity.ts",
-    "lint:invoke-envelope": "tsx scripts/lint-invoke-envelope.ts"
+    "lint:invoke-envelope": "tsx scripts/lint-invoke-envelope.ts",
+    "lint:escort-claims": "tsx scripts/lint-escort-claims.ts",
+    "lint:scan-filing-installs": "tsx scripts/lint-scan-filing-installs.ts"
   },
   "devDependencies": {
     "jsdom": "^30.0.1",

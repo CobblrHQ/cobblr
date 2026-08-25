@@ -172,13 +172,13 @@ export function MobileNav() {
                 style={{ paddingTop: "calc(0.25rem + env(safe-area-inset-top))" }}
               >
                 {/* The mark carries over from the bar. The bar drops the
-                    "cobblr" wordmark on a phone to give the workspace name that
+                    "Cobblr" wordmark on a phone to give the workspace name that
                     width; in here there is nothing competing for the row, so
                     both fit. */}
                 <span className="flex items-center gap-2 min-w-0">
                   <CobblestoneMark size={26} />
-                  <span className="font-display font-extrabold text-content dark:text-mortar-100 lowercase">
-                    cobblr
+                  <span className="font-display font-extrabold text-content dark:text-mortar-100">
+                    Cobblr
                   </span>
                 </span>
                 <button

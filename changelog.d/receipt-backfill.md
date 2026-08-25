@@ -2,7 +2,7 @@
 type: feature
 scope: scan
 date: 2026-08-23
-docs_target: docs/USER_GUIDE.md#Custom fields
+docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
 ---
 Fill provenance fields from receipts you scanned before those fields existed, and Groceries now records the day you bought something rather than the day you scanned it.
 

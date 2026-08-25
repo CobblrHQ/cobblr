@@ -22,6 +22,8 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, CheckCircle2, ChevronDown, Compass, Download, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Pin, Sliders, Sparkles, X } from "lucide-react";
 import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract";
+import { offerMoves } from "../lib/table-move-offer";
+import { choosePinnedViews, navNamesWithViewCards } from "../lib/dashboard-pinned";
 import { useBundleUpdates, type BundleUpdate } from "../lib/useBundleUpdates";
 import { classifyBundleUpdate, tierAutoApplies, updateMayTeardownCatalogs } from "../lib/bundleUpdateTier";
 import { useDetailRoute } from "../lib/useDetailRoute";
@@ -86,7 +88,12 @@ function QuickLinks({ slug }: { slug: string }) {
     }));
   if (dests.length === 0) return null;
   return (
-    <div>
+    // md:hidden - this exists for PHONES, where the nav hides behind the
+    // hamburger and these are the only visible doors. On desktop the top nav
+    // shows the same entries from the same source, so the grid was pure
+    // duplication - eight large buttons holding the first ~250px of every
+    // dashboard above any actual content.
+    <div className="md:hidden">
       <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-2">
         Jump to
       </div>
@@ -173,6 +180,7 @@ export function Dashboard() {
           message"). Each card now costs only its own height. */}
       <div className="flex flex-col md:flex-row gap-3 md:items-start empty:hidden">
         <PutAwayCard slug={activeSlug} />
+        <MoveIntoTablesCard slug={activeSlug} />
         <BundleSuggestionsCard slug={activeSlug} role={activeOrg.role} />
       </div>
 
@@ -259,6 +267,117 @@ function PutAwayCard({ slug }: { slug: string }) {
       >
         Put them away <ArrowRight size={14} />
       </Link>
+    </section>
+  );
+}
+
+
+/** Rows sitting in a module's default table that look like they belong in one
+ *  of its named tables, offered - never moved - one press per table.
+ *
+ *  The Kitchen case: groceries lived as food-fielded rows in plain Inventory
+ *  before the Groceries table existed, and creating the table moved nothing
+ *  (an update never opts you in, and it does not relocate data either). So a
+ *  workspace could hold a populated Inventory and an empty Groceries forever.
+ *  The decision is offerMoves - generic: a row with a value for a field some
+ *  named table defines looks like it belongs there. A wrong offer teaches
+ *  people to dismiss the card, so ambiguous rows are left alone. */
+function MoveIntoTablesCard({ slug }: { slug: string }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const instancesQ = useQuery({
+    queryKey: ["instances", slug],
+    queryFn: () => api.listInstances(slug),
+    enabled: !!slug,
+    staleTime: 30_000,
+  });
+  const tables = instancesQ.data?.items ?? [];
+  // Modules with at least one NAMED table and a movable default are the only
+  // ones an offer can exist for; today that is effectively the inventory family.
+  const candidateModules = [
+    // Finding modules that can RECEIVE a move offer; nothing a user sees is
+    // narrowed by this.
+    // registry-filter-ok: who can receive a move offer
+    ...new Set(tables.filter((t) => t.movable !== false && t.instance_name !== t.module_name).map((t) => t.module_name)),
+  ];
+  const moduleName = candidateModules[0] ?? null;
+  const defsQ = useQuery({
+    queryKey: ["field-defs-all", slug],
+    queryFn: () => api.request<{ items: Array<{ entity_kind: string; name: string }> }>("GET", `/orgs/${slug}/field-defs`),
+    enabled: !!slug && !!moduleName,
+    staleTime: 60_000,
+  });
+  const rowsQ = useQuery({
+    queryKey: ["default-table-rows", slug, moduleName],
+    queryFn: () =>
+      api.request<{ items: Array<{ id: string; name?: string; metadata?: Record<string, unknown> }> }>(
+        "GET",
+        `/orgs/${slug}/instances/${moduleName}/items?limit=200`,
+      ),
+    enabled: !!slug && !!moduleName,
+    staleTime: 60_000,
+  });
+  const move = useMutation({
+    mutationFn: (o: { ids: string[]; to: string }) =>
+      api.request("POST", `/orgs/${slug}/record-move`, {
+        module: moduleName,
+        ids: o.ids,
+        from: moduleName,
+        to: o.to,
+      }),
+    onSuccess: (_r, o) => {
+      toast.success(`Moved ${countOf(o.ids.length, "item")} to ${o.to}.`);
+      void qc.invalidateQueries({ queryKey: ["default-table-rows", slug] });
+      void qc.invalidateQueries({ queryKey: ["instances", slug] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "The move failed - nothing was changed."),
+  });
+
+  if (!moduleName || !rowsQ.data || !defsQ.data) return null;
+  const offers = offerMoves(
+    (rowsQ.data.items ?? []).map((r) => ({
+      id: r.id,
+      name: r.name ?? null,
+      fields: { ...(r as Record<string, unknown>), ...(r.metadata ?? {}) },
+    })),
+    tables,
+    defsQ.data.items ?? [],
+    moduleName,
+  );
+  if (offers.length === 0) return null;
+  const total = offers.reduce((n, o) => n + o.ids.length, 0);
+
+  return (
+    <section
+      className="md:flex-1 md:min-w-0 rounded-lg border border-cobble-400 dark:border-cobble-600 border-l-4 border-l-cobble-500 dark:border-l-cobble-400 bg-cobble-100 dark:bg-cobble-900 shadow-sm px-4 py-3 flex flex-col items-start gap-3 sm:flex-row sm:items-center"
+      data-testid="move-into-tables-card"
+    >
+      <div className="flex min-w-0 flex-1 items-start gap-3">
+        <span className="text-xl shrink-0 leading-tight">🗂️</span>
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-content dark:text-mortar-100">
+            {total === 1 ? "1 item looks" : `${total} items look`} like {offers.length === 1 ? `they belong in ${offers[0]!.label}` : "they belong in your other tables"}.
+          </div>
+          <div className="text-xs text-muted dark:text-slate-400 truncate">
+            {offers
+              .map((o) => `${o.ids.length} → ${o.label}: ${o.names.slice(0, 2).join(", ")}${o.names.length > 2 ? `, +${o.names.length - 2}` : ""}`)
+              .join(" · ")}
+          </div>
+        </div>
+      </div>
+      <div className="flex shrink-0 flex-wrap gap-2">
+        {offers.slice(0, 2).map((o) => (
+          <button
+            key={o.instance}
+            type="button"
+            disabled={move.isPending}
+            onClick={() => move.mutate({ ids: o.ids, to: o.instance })}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm font-medium transition disabled:opacity-50"
+          >
+            Move {o.ids.length} to {o.label} <ArrowRight size={14} />
+          </button>
+        ))}
+      </div>
     </section>
   );
 }
@@ -1398,6 +1517,18 @@ function TileGrid({
   // empty modules stops burning a tile row on zeros. Arrange mode shows every
   // tile (you can still hide/reorder empties there).
   const [empties, setEmpties] = useState<Map<string, string>>(new Map());
+  // Which tables already have a view card in "your views" - shares the
+  // ["dash-views"] cache with that section, so this costs no extra fetch. The
+  // "Also enabled" line must not repeat a table whose card, fifteen pixels
+  // below, already says it is empty.
+  const dashViewsQ = useQuery({
+    queryKey: ["dash-views", slug],
+    queryFn: () => api.listSavedViews(slug),
+    staleTime: 30_000,
+    enabled: !!slug,
+  });
+  const carded = navNamesWithViewCards(dashViewsQ.data?.items ?? []);
+  const alsoEnabled = [...empties.entries()].filter(([, to]) => !carded.has(to.replace(/^\//, "")));
   const reportEmpty = useCallback((label: string, to: string, empty: boolean) => {
     setEmpties((prev) => {
       const has = prev.has(label);
@@ -1443,14 +1574,14 @@ function TileGrid({
               );
             })}
           </div>
-          {empties.size > 0 && (
+          {alsoEnabled.length > 0 && (
             <p className="mt-2 text-xs text-faint dark:text-slate-500">
               {/* "Also enabled" only reads right when there ARE populated tiles
                   above for it to be "also" to. When every module is empty the
                   grid renders nothing, so "also" is orphaned (the author, 2026-07-05) —
                   drop it to a plain "Enabled". */}
               {empties.size >= visible.length ? "Enabled:" : "Also enabled:"}{" "}
-              {[...empties.entries()].map(([label, to], i) => (
+              {alsoEnabled.map(([label, to], i) => (
                 <span key={label}>
                   {i > 0 && " · "}
                   <Link to={to} className="lowercase hover:text-accent underline decoration-dotted underline-offset-2">
@@ -1568,11 +1699,9 @@ function PinnedViews({ slug, editing = false }: { slug: string; editing?: boolea
   // shows something useful on the dashboard without first having
   // to go pin things.
   const allViews = views.data?.items ?? [];
-  const explicitPinned = allViews.filter((v) => v.pinned);
-  const pinned =
-    explicitPinned.length > 0
-      ? explicitPinned.slice(0, 4)
-      : allViews.filter((v) => v.owner_user_id === null).slice(0, 2);
+  // The choice lives in dashboard-pinned.ts because the "Also enabled" line
+  // needs the SAME answer to know which tables already have a card.
+  const pinned = choosePinnedViews(allViews);
   // When arranging, the section bar (ArrangeableBody) supplies the title, and
   // an empty section must still show SOMETHING so it stays reorderable.
   if (pinned.length === 0) {

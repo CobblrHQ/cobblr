@@ -16,7 +16,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-scan",
-  version: "0.47.7",
+  version: "0.47.13",
   displayName: "Scan",
   description:
     "Scan a barcode or take a photo of a thing; end up with a draft inventory row, pre-filled with the resolved name + brand + catalog photo. One tap to commit.",
@@ -111,6 +111,18 @@ export default defineModule({
       },
     ],
     actions: [
+      {
+        id: "core-scan:confirm-receipt-arrival",
+        examples: ["I have the parcel", "the package is here", "got the delivery in hand"],
+        label: "Confirm a parcel is in hand",
+        description:
+          "Record that a tracked receipt's parcel physically arrived: stamps the receipt confirmed, which ends the carrier watch for it. The receipt itself still gets filed in the inbox. Idempotent. Args: { batch_id }.",
+        invokeHandler: "core-scan.confirm-receipt-arrival",
+        argsSchema: {
+          batch_id: { label: "Which receipt session", type: "text" },
+        },
+        userInvokable: true,
+      },
       {
         // NO-PHRASING: the scan pipeline's own step; a person asking to identify something means core-scan:identify
         id: "core-scan:identify-photo",

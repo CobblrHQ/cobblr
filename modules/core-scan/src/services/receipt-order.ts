@@ -18,6 +18,7 @@
  *  docs/architecture/module-coupling-census.md for why the count matters.
  */
 
+import { arrivedEverywhere } from "@cobblr/platform-contract";
 import { fileReceiptAs, type KnownShipment } from "./receipt-arrival.js";
 
 export interface ReceiptOrderInput {
@@ -29,6 +30,10 @@ export interface ReceiptOrderInput {
   orderedAt: string | null;
   trackingNumber: string | null;
   knownShipment: KnownShipment | null;
+  /** The receipt's promised delivery date, when it stated one. Reaches the
+   *  order's own expected_arrival - before this it lived only on scan-item
+   *  metadata, so the order had no ETA, no calendar event, and no due ask. */
+  expectedArrival?: string | null;
   /** Receipt total, when the parse actually saw one. */
   total: number | null;
   groupId: string;
@@ -71,9 +76,17 @@ export async function createReceiptOrder(input: ReceiptOrderInput): Promise<stri
         vendor: vendorId ? undefined : input.vendor, // vendor_id dual-writes the name
         order_number: input.orderRef ?? undefined,
         ordered_at: input.orderedAt,
-        // Already here, or still coming — the tracking number decides. See
-        // services/receipt-arrival.ts; the arrival sweep skips 'arrived'.
-        ...fileReceiptAs(input.trackingNumber, input.orderedAt, input.knownShipment),
+        // Already here, or still coming — the tracking number or a future
+        // promised date decides. See services/receipt-arrival.ts; the arrival
+        // sweep skips 'arrived'.
+        ...fileReceiptAs(
+          input.trackingNumber,
+          input.orderedAt,
+          input.knownShipment,
+          input.expectedArrival ?? null,
+          arrivedEverywhere(new Date()),
+        ),
+        expected_arrival: input.expectedArrival ?? undefined,
         total_cost: input.total ?? undefined,
         notes: "Imported from a receipt.",
         metadata: {

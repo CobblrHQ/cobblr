@@ -97,8 +97,10 @@ export function registerProjectsHandlers(): void {
     const rows = await q.limit(limit).offset(offset).execute();
     return { items: rows.map((r) => toResolvedProject(r)) };
   };
+  // Scoped to the default instance - same leak as inventory's base kind; see
+  // the note there. An Outfits instance's rows must not double up here.
   platform().entities.registerListResolver("projects:project", (orgId, query) =>
-    projectsListResolver(orgId, query),
+    projectsListResolver(orgId, query, "projects"),
   );
   // Projects instances (e.g. the Outfits table) → projects scoped to instance.
   platform().entities.registerInstanceListResolver("projects", (orgId, instance, query) =>

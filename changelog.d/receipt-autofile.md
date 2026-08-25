@@ -2,7 +2,7 @@
 type: feature
 scope: scan
 date: 2026-08-24
-docs_target: docs/USER_GUIDE.md#Filing a whole inbox at once
+docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
 ---
 **One button files everything waiting, adding to what you already have instead of making a second one.** A receipt saying three cucumbers now finds the cucumbers already in your kitchen and adds to them. It shows you what it would do before it does anything, and anything it cannot tell apart is left for you rather than guessed at.
 

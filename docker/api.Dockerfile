@@ -21,6 +21,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY api/package.json ./api/
 COPY web/package.json ./web/
 COPY packages/platform-contract/package.json ./packages/platform-contract/
+COPY packages/platform-net/package.json ./packages/platform-net/
 COPY packages/platform-web/package.json ./packages/platform-web/
 COPY packages/workspace-tools/package.json ./packages/workspace-tools/
 COPY packages/thermal-print/package.json ./packages/thermal-print/
@@ -80,6 +81,7 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 
 # Source for every workspace the runtime needs.
 COPY packages/platform-contract ./packages/platform-contract
+COPY packages/platform-net ./packages/platform-net
 # workspace-tools: the shared AI tool registry (chat + MCP). Multi-file, so it
 # ships dist (built by the fast-build pass below) — type-stripping cannot
 # follow its internal .js relative imports.
@@ -171,6 +173,7 @@ COPY --from=builder /app/api/dist ./api/dist
 COPY --from=builder /app/api/migrations ./api/migrations
 COPY --from=builder /app/api/package.json ./api/
 COPY --from=builder /app/packages/platform-contract ./packages/platform-contract
+COPY --from=builder /app/packages/platform-net ./packages/platform-net
 COPY --from=builder /app/packages/workspace-tools ./packages/workspace-tools
 # Each module ships its compiled dist/ + migrations/ alongside its
 # package.json. The loader resolves package.json#main to dist/module.js.

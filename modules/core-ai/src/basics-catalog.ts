@@ -25,6 +25,10 @@ export interface BasicRule {
    *  yet, and an unprompted "I can't help with that" is worse than silence.
    *  Also keeps them out of connected workspaces, where they are false. */
   notBeforeSend?: true;
+  /** Offer this rule only for a QUESTION. For a how-to rule with imperative
+   *  keywords, an offer over an instruction ("add a part called…") intercepts
+   *  work the AI should do; the sent-message reply path is unaffected. */
+  offerOnlyAsQuestion?: true;
   /** ...unless the question is still worth answering with AI on, just worded
    *  for that world. Wins over `reply` whenever a provider is available. */
   replyWhenAiOn?: string;
@@ -64,7 +68,7 @@ export const BUILTIN_BASICS: BasicRule[] = [
   {
     key: "what-is-cobblr",
     intent: "what is Cobblr",
-    keywords: ["what is cobblr", "what is this", "what does this do", "what's this app", "how does cobblr work", "what can this do"],
+    keywords: ["what is cobblr", "what is this", "what does this do", "what's this app", "how does cobblr work", "what can this do", "what does this app do"],
     reply:
       "Cobblr is a build-it-yourself workspace: switch on the pieces you need (inventory, machines, projects, labels…) and it becomes a tool shaped to *your* thing, no code. Ask me **\"what can you do\"** for the tour, or open **Build** to describe what you want.",
   },
@@ -85,7 +89,8 @@ export const BUILTIN_BASICS: BasicRule[] = [
   {
     key: "add-item",
     intent: "add a part / item",
-    keywords: ["how do i add", "add a part", "add an item", "new part", "new item", "create a", "add something", "add"],
+    keywords: ["how do i add", "how do i create", "add a part", "add an item", "new part", "new item", "add something", "add"],
+    offerOnlyAsQuestion: true,
     reply:
       "Use **+ New** at the top of the relevant list (Parts, Printers, Orders…), or hit **Scan** to add something by its barcode or a photo. Once AI's connected you can just tell me here (\"add a part called Widget\") and I'll do it.",
   },
@@ -121,9 +126,12 @@ export const BUILTIN_BASICS: BasicRule[] = [
       "one more time",
       "again please",
       "can you retry",
+      "do that over",
+      "do it over",
+      "once more",
     ],
     reply:
-      "Trying again will land in the same place, I am afraid: without AI connected I cannot act on your workspace, so there is nothing to retry. Connect AI using the link at the top and ask me again, and I will actually do it. If it already failed WITH AI connected, tell me what you asked for and I will say what went wrong.",
+      "I don't see anything in this conversation to run again. If a command ran earlier, saying \"again\" right after it works - I re-run the same one. For anything new, teach me a command under Configuration \u2192 Assistant, or connect AI using the link at the top.",
     notBeforeSend: true,
   },
   {
@@ -133,9 +141,9 @@ export const BUILTIN_BASICS: BasicRule[] = [
     intent: "yes / go ahead / do it",
     // NOT a bare "confirm": confirming a scan is a real thing people ask how to
     // do, and this rule would answer "there is nothing waiting for a yes".
-    keywords: ["yes do it", "go ahead", "do it", "yes please", "yes go", "sounds good", "yep"],
+    keywords: ["yes do it", "go ahead", "do it", "yes please", "yes go", "sounds good", "yep", "go for it"],
     reply:
-      "There is nothing waiting for a yes from me: with no AI connected I answer questions but never queue up a change. Connect AI using the link at the top and I will propose the change first, then do it once you confirm.",
+      "There is nothing waiting for a yes right now. When I offer to run a command, saying yes runs it - and without AI connected that is the only kind of change I make. Connect AI using the link at the top for everything else.",
     notBeforeSend: true,
   },
   {
@@ -151,7 +159,7 @@ export const BUILTIN_BASICS: BasicRule[] = [
     intent: "undo / revert",
     keywords: ["undo", "undo that", "revert", "put it back", "take that back"],
     reply:
-      "I cannot undo anything from here: without AI connected I have not changed anything to undo. When AI IS connected, every change I make shows an undo right in the chat, and you can undo an undo. A change you made yourself is edited or deleted on the record itself.",
+      "There is no change of mine in this conversation to undo. When a command runs from here, typing undo right after puts it back - and every change also shows an Undo button on its own message. For changes beyond commands, connect AI using the link at the top; a change you made yourself is edited on the record itself.",
     notBeforeSend: true,
   },
   {
@@ -171,7 +179,16 @@ export const BUILTIN_BASICS: BasicRule[] = [
       "what's low",
       "running low",
       "what needs my attention",
+      "overdue",
       "show me my",
+      "how much",
+      "do i have any",
+      "have any",
+      "any left",
+      "which bin",
+      "where did",
+      "end up",
+      "is there any",
     ],
     reply:
       "Questions about your own records need AI connected, because answering them means reading your workspace. Connect AI using the link at the top and I will search and answer properly. In the meantime the search box at the top finds anything by name, and each list has filters and a low-stock view where the module offers one.",
@@ -188,6 +205,7 @@ export const BUILTIN_BASICS: BasicRule[] = [
     key: "edit-update",
     intent: "edit / update something",
     keywords: ["how do i edit", "edit a", "edit an", "update a", "change a", "rename", "modify"],
+    offerOnlyAsQuestion: true,
     reply:
       "Open the item and hit its **edit** button (the pencil). Changes save right away. To change what *fields* a kind of thing has, that's **custom fields** in Configuration.",
   },
@@ -195,6 +213,7 @@ export const BUILTIN_BASICS: BasicRule[] = [
     key: "delete-remove",
     intent: "delete / remove something",
     keywords: ["how do i delete", "delete", "remove", "get rid of", "trash"],
+    offerOnlyAsQuestion: true,
     reply:
       "Open the item and use **delete** (usually a trash icon), then confirm: that removes just that item. To drop a whole *feature*, turn its module off under Configuration → Build → Modules.",
   },
@@ -209,6 +228,7 @@ export const BUILTIN_BASICS: BasicRule[] = [
     key: "enable-module",
     intent: "enable a module / feature",
     keywords: ["how do i add a module", "enable a module", "enable module", "turn on", "add a module", "enable inventory", "enable machines", "modules", "features", "add a feature"],
+    offerOnlyAsQuestion: true,
     reply:
       "Turn features on under **Configuration → Build → Modules**. A new workspace starts lean; switch on the parts you want (inventory, machines, projects, labels, and more) whenever you need them. They do nothing until you enable them.",
   },
@@ -237,6 +257,7 @@ export const BUILTIN_BASICS: BasicRule[] = [
     key: "labels-qr",
     intent: "labels / QR / printing",
     keywords: ["print a label", "print label", "label", "print", "sticker"],
+    offerOnlyAsQuestion: true,
     reply:
       "With **Labels & QR** enabled, open an item to print a label or generate a **QR code** that links back to it, great for bins and shelves. Don't see it? Turn it on under Configuration → Build → Modules.",
   },

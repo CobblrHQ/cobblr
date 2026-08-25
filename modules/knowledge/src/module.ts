@@ -13,7 +13,8 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "knowledge",
-  version: "0.3.0",
+  version: "0.3.1",
+  maturity: "beta",
   displayName: "Knowledge Base",
   description:
     "A knowledge base: rich Markdown entries (notes, references, SOPs, prompts, papers) with custom fields, tags, and attachments. Categorise inside one vault; pin entries for quick access.",

@@ -248,6 +248,15 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
                   <div className="prose prose-sm dark:prose-invert max-w-none text-sm text-content dark:text-mortar-100 prose-p:my-1 prose-blockquote:my-1 break-words">
                     <ReactMarkdown>{n.message}</ReactMarkdown>
                   </div>
+                  {/* The substance, when the notification carries any: the
+                      comment you were mentioned in, not just the fact of it.
+                      The DM got this first, and the bell saying less than a
+                      chat app about the app's own conversation was backwards. */}
+                  {n.card?.body && (
+                    <div className="mt-1 border-l-2 border-line dark:border-slate-700 pl-2 text-[13px] text-muted dark:text-slate-400 line-clamp-3 break-words">
+                      {n.card.body}
+                    </div>
+                  )}
                   {/* A no-navigate notification still has somewhere to go for
                       anyone who wants it — just not by hijacking the click. */}
                   {NO_NAVIGATE.has(n.event_type) && n.link_url && (

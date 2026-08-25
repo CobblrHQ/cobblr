@@ -2,7 +2,7 @@
 type: feature
 scope: assistant
 date: 2026-08-24
-docs_target: docs/USER_GUIDE.md#Ask Cobb
+docs_target: docs/USER_GUIDE.md#2. Core concepts
 ---
 Ask Cobb to group sections in your navigation and he does it. "Put Spices and Tea under Kitchen" creates the heading and moves them under it, as a change you confirm and can undo, instead of telling you which settings screen to open.
 

@@ -93,30 +93,40 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
   // mount: every signed-in page renders this widget, and a closed widget has no
   // reason to cost two requests.
   useEffect(() => {
-    if (!open || hosted !== null) return;
+    if (!open) return;
     let live = true;
     void (async () => {
-      try {
-        const cfg = await api.authConfig();
-        if (!live) return;
-        setHosted(cfg.hosted === true);
-        if (cfg.hosted !== true && slug) {
-          try {
-            setDiag(await api.diagnostics(slug));
-          } catch {
-            // A report without the environment block still beats no report.
-          }
+      // Resolve the deployment flag once…
+      let h = hosted;
+      if (h === null) {
+        try {
+          const cfg = await api.authConfig();
+          h = cfg.hosted === true;
+        } catch {
+          // Unknown deployment: fall back to the hosted behaviour, which
+          // always works (the row is stored either way).
+          h = true;
         }
-      } catch {
-        // Unknown deployment: fall back to the hosted behaviour, which always
-        // works (the row is stored either way).
-        if (live) setHosted(true);
+        if (!live) return;
+        setHosted(h);
+      }
+      // …and fetch diagnostics SEPARATELY, so a slug that arrives after the
+      // flag resolves (orgs load async) still gets its environment block. The
+      // old single-shot guard latched on `hosted !== null` and could never
+      // recover: open the widget early and every report said "unknown".
+      if (h === false && slug && !diag) {
+        try {
+          const d = await api.diagnostics(slug);
+          if (live) setDiag(d);
+        } catch {
+          // A report without the environment block still beats no report.
+        }
       }
     })();
     return () => {
       live = false;
     };
-  }, [open, hosted, slug]);
+  }, [open, hosted, slug, diag]);
 
   function addFiles(list: FileList | null) {
     if (!list) return;
@@ -173,6 +183,7 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
   }
 
   function reset() {
+    setCopied(false);
     picks.forEach((p) => URL.revokeObjectURL(p.url));
     setPicks([]);
     setMessage("");
@@ -193,9 +204,15 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
       route: window.location.pathname,
       userAgent: navigator.userAgent,
       viewport: { w: window.innerWidth, h: window.innerHeight },
+      screenshots: picks.length,
       server: diag,
     };
   }
+
+  /** A fork's operator points "Open an issue" at their own tracker via
+   *  COBBLR_ISSUES_URL (the "issues" community link); stock self-hosts fall
+   *  back to the public upstream repo inside newIssueUrl. */
+  const issuesBase = user?.community_links?.find((l) => l.id === "issues")?.url;
 
   async function copyReport() {
     try {
@@ -379,7 +396,9 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
 
           <div className="text-[10px] text-faint dark:text-slate-500">
             {hosted === false
-              ? "This stays on your own instance. To report it to the Cobblr project, copy the report below - it includes your version, browser and enabled modules."
+              ? diag
+                ? "This stays on your own instance. To report it to the Cobblr project, copy the report below - it includes your version, browser and enabled modules."
+                : "This stays on your own instance. To report it to the Cobblr project, copy the report below - it carries your browser and page, but no server details until you're in a workspace."
               : "We attach the page you're on + your browser so we can track it down."}
           </div>
           {error && <div className="text-xs text-ember-500">{error}</div>}
@@ -402,7 +421,7 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
                 <Copy size={14} /> {copied ? "Copied" : "Copy report"}
               </button>
               <a
-                href={message.trim() ? newIssueUrl(currentReport()) : undefined}
+                href={message.trim() ? newIssueUrl(currentReport(), issuesBase) : undefined}
                 target="_blank"
                 rel="noopener noreferrer"
                 aria-disabled={!message.trim()}

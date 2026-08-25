@@ -121,9 +121,15 @@ export function candidateFromRow(row: {
   };
 }
 
-/** How many items one pass looks at per kind. A bounded sweep that REPORTS
- *  being bounded beats an unbounded one that times out halfway. */
+/** Page size for the per-kind walk. The old single-page read made this a hard
+ *  ceiling: rows past it were unreachable, re-running did not advance (no
+ *  ordering was specified, so a second read could return a DIFFERENT 2000),
+ *  and a one-shot miss was permanent (2026-08-25 audit). The walk now pages to
+ *  the end of each kind; the per-KIND cap below is the runaway bound. */
 export const BACKFILL_SCAN_CAP = 2000;
+/** The most rows one kind is walked in one run - a runaway bound, not a page.
+ *  A kind larger than this reports capped_at honestly, per kind. */
+export const BACKFILL_KIND_CAP = 20_000;
 
 export interface BackfillResult {
   scanned: number;
@@ -133,6 +139,14 @@ export interface BackfillResult {
   by_kind: Array<{ kind: string; filled: number }>;
   dry_run?: true;
   capped_at?: number;
+  /** Kinds whose walk hit BACKFILL_KIND_CAP - the honest version of the old
+   *  run-wide capped_at, which accumulated ACROSS kinds and so reported three
+   *  small kinds as capped while an actually-capped one was indistinguishable. */
+  capped_kinds?: string[];
+  /** Facts the field mapping DROPPED - a value a closed choice list refused.
+   *  Nothing consumed unlistedChoice before this; a dropped vendor was
+   *  indistinguishable from no vendor (2026-08-25 audit). */
+  dropped_facts?: number;
 }
 
 /**
@@ -146,6 +160,8 @@ export async function runReceiptBackfill(
   opts: { dryRun?: boolean } = {},
 ): Promise<BackfillResult> {
   const kinds = await platform().entities.listKindsForOrg(orgId);
+  const cappedKinds: string[] = [];
+  let droppedFacts = 0;
   let scanned = 0;
   let filled = 0;
   let alreadyFilled = 0;
@@ -158,10 +174,30 @@ export async function runReceiptBackfill(
     if (!roled.some((f) => f.field_role?.startsWith("acquired-") || f.field_role === "seller")) {
       continue;
     }
-    const listed = await platform().entities.list(orgId, kindId, { limit: BACKFILL_SCAN_CAP });
-    const candidates: BackfillCandidate[] = (listed.items ?? []).map(candidateFromRow);
+    // Page to the END of the kind. id-ordered so a page boundary cannot skip
+    // or repeat rows between reads.
+    const candidates: BackfillCandidate[] = [];
+    for (let offset = 0; offset < BACKFILL_KIND_CAP; offset += BACKFILL_SCAN_CAP) {
+      const listed = await platform().entities.list(orgId, kindId, {
+        limit: BACKFILL_SCAN_CAP,
+        offset,
+        sort: ["id"],
+      });
+      const page = (listed.items ?? []).map(candidateFromRow);
+      candidates.push(...page);
+      if (page.length < BACKFILL_SCAN_CAP) break;
+      if (offset + BACKFILL_SCAN_CAP >= BACKFILL_KIND_CAP) cappedKinds.push(kindId);
+    }
     scanned += candidates.length;
-    const plan = planBackfill(candidates, (facts) => roledFactsPatch(mapRoledFacts(facts, roled)));
+    const plan = planBackfill(candidates, (facts) => {
+      const mapped = mapRoledFacts(facts, roled);
+      // Count what the closed choice list refused: nothing consumed
+      // unlistedChoice before, so a dropped vendor was indistinguishable from
+      // no vendor. The count reaches the result, and the result reaches the
+      // person who ran the backfill.
+      droppedFacts += mapped.filter((m) => m.unlistedChoice).length;
+      return roledFactsPatch(mapped);
+    });
     alreadyFilled += plan.already_filled;
     noRecord += plan.no_record;
     if (plan.patches.length === 0) continue;
@@ -187,6 +223,7 @@ export async function runReceiptBackfill(
     no_receipt: noRecord,
     by_kind: byKind,
     ...(opts.dryRun ? { dry_run: true as const } : {}),
-    ...(scanned >= BACKFILL_SCAN_CAP ? { capped_at: BACKFILL_SCAN_CAP } : {}),
+    ...(cappedKinds.length ? { capped_at: BACKFILL_KIND_CAP, capped_kinds: cappedKinds } : {}),
+    ...(droppedFacts ? { dropped_facts: droppedFacts } : {}),
   };
 }

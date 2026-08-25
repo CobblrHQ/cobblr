@@ -4,7 +4,6 @@
 // (parts, machines, etc.) match against rows inside them via
 // entity_pairings with relationship_kind='matches'.
 
-import { gunzipSync } from "node:zlib";
 import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
@@ -12,6 +11,7 @@ import { platform, CatalogSchemaConfig } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { catalogResolverConfigured, datasetForKind, hostedSearch, isHostedSearchable } from "../services/hosted-resolver.js";
+import { gunzipBounded, readBodyBounded } from "../services/bounded-decompress.js";
 
 export const catalogsRouter = Router({ mergeParams: true });
 
@@ -610,6 +610,12 @@ catalogsRouter.post(
 // BOM (that one still uses the bulk seeder — it would OOM an in-request import).
 // See docs/architecture/invokable-flows-and-lego-redesign.md §C.5–C.6.
 const PULL_MAX_BYTES = 80 * 1024 * 1024; // 80 MB decompressed
+// A compressed body larger than the decompressed cap is never a legitimate
+// catalog (gzip only ever SHRINKS), so we reject an over-large compressed read
+// early — before it is materialized — to stop a huge compressed payload OOMing
+// us on its own. The decompressed ceiling (PULL_MAX_BYTES) is enforced during
+// gunzip via zlib's maxOutputLength, so a gzip bomb aborts mid-inflate.
+const PULL_MAX_COMPRESSED_BYTES = PULL_MAX_BYTES;
 
 /** Fetch a catalog's source_url and import it. Shared with the
  *  core-catalogs:refresh ACTION so refreshing by hand and asking the assistant
@@ -630,8 +636,26 @@ export async function pullCatalogFromSource(
     if (!resp.ok) {
       return { ok: false, status: 502, code: "fetch_failed", message: `Source responded ${resp.status}.` };
     }
-    const buf = Buffer.from(await resp.arrayBuffer());
-    const raw = url.endsWith(".gz") ? gunzipSync(buf) : buf;
+    // Bound BOTH the compressed read and the decompressed output, aborting
+    // before a decompression bomb (small .gz → many GB) can be materialized.
+    let raw: Buffer;
+    try {
+      const buf = await readBodyBounded(resp, PULL_MAX_COMPRESSED_BYTES);
+      raw = url.endsWith(".gz") ? gunzipBounded(buf, PULL_MAX_BYTES) : buf;
+    } catch (e) {
+      // zlib throws RangeError past maxOutputLength; readBodyBounded throws a
+      // (Range)DecompressLimitError past the compressed cap — both mean the
+      // dataset is over the ceiling, not a transient fetch failure.
+      if (e instanceof RangeError) {
+        return {
+          ok: false,
+          status: 413,
+          code: "too_large",
+          message: "This dataset is too large to pull in one request. Use the bulk CSV importer / seeder.",
+        };
+      }
+      throw e;
+    }
     if (raw.length > PULL_MAX_BYTES) {
       return {
         ok: false,

@@ -316,6 +316,9 @@ export async function ingestReceiptEmail(
 
   if (parsedCount > 0) {
     await notifyAccount({
+      // An emailed receipt is answered by email - the bell records it, Discord
+      // stays quiet. The double-send this ends was reported 2026-08-24.
+      originChannel: "email",
       userId,
       representativeOrgId: orgId,
       notificationType: "core-scan.email.imported",
@@ -336,6 +339,9 @@ export async function ingestReceiptEmail(
     const reimportPath = `/w/${slug}/scan?reimport_file=${duplicate.fileId}${duplicate.order_ref ? `&ref=${encodeURIComponent(duplicate.order_ref)}` : ""}`;
     const reimportUrl = absoluteAppUrl(reimportPath);
     await notifyAccount({
+      // An emailed receipt is answered by email - the bell records it, Discord
+      // stays quiet. The double-send this ends was reported 2026-08-24.
+      originChannel: "email",
       userId,
       representativeOrgId: orgId,
       notificationType: "core-scan.email.duplicate",
@@ -349,6 +355,9 @@ export async function ingestReceiptEmail(
     }).catch(() => {});
   } else if (noteCreated) {
     await notifyAccount({
+      // An emailed receipt is answered by email - the bell records it, Discord
+      // stays quiet. The double-send this ends was reported 2026-08-24.
+      originChannel: "email",
       userId,
       representativeOrgId: orgId,
       notificationType: "core-scan.email.received",
@@ -362,6 +371,9 @@ export async function ingestReceiptEmail(
     }).catch(() => {});
   } else {
     await notifyAccount({
+      // An emailed receipt is answered by email - the bell records it, Discord
+      // stays quiet. The double-send this ends was reported 2026-08-24.
+      originChannel: "email",
       userId,
       representativeOrgId: orgId,
       notificationType: "core-scan.email.no_receipt",

@@ -76,6 +76,9 @@ interface Msg {
   offerForceCount?: number;
   undoable?: boolean;
   undone?: boolean; // this write was undone from the chat
+  /** The learned command this result message came from, kept so a later
+   *  "do that again" can name it (see the prior sent with answerBasic). */
+  ranCommand?: { id: string; message: string };
   entityKind?: string; // an executed CREATE's entity — powers a "View it" link
   entityId?: string;
   /** A learned command that fits what was typed, offered for confirmation. The
@@ -564,11 +567,18 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
     setBusy(true);
     try {
       const out = await api.runCommand(activeSlug, m.command.id, m.command.message, getChatSelection()?.ids);
+      if (out.ok) workspaceChanged();
       setMessages((prev) => {
         const copy = [...prev];
         const at = copy[i];
         if (at) copy[i] = { ...at, resolved: true };
-        return [...copy, { role: "assistant", content: (out.ok ? "✓ " : "✗ ") + out.message }];
+        return [...copy, {
+          role: "assistant",
+          content: (out.ok ? "✓ " : "✗ ") + out.message,
+          // Kept so "do that again" and "undo" can point here later.
+          ...(out.ok ? { ranCommand: { id: m.command!.id, message: m.command!.message } } : {}),
+          ...(out.ledger_ids?.length ? { resolved: true, ledgerIds: out.ledger_ids, undoable: true } : {}),
+        }];
       });
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : "That didn't work.";
@@ -747,7 +757,63 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
     if (aiOff) {
       setBusy(true);
       try {
-        const r = await api.answerBasic(activeSlug, text);
+        // The prior turn, so control words can point at something: the last
+        // untaken offer, the last command that ran, the last change's handles.
+        const prior: import("../lib/api").BasicPrior = {};
+        for (let i = next.length - 1; i >= 0; i--) {
+          const m = next[i]!;
+          if (!prior.ran && m.ranCommand) prior.ran = m.ranCommand;
+          if (!prior.offered && m.command && !m.resolved) {
+            prior.offered = { id: m.command.id, message: m.command.message };
+          }
+          if (!prior.ledger_ids && !m.undone) {
+            const handles = m.ledgerIds ?? (m.ledgerId ? [m.ledgerId] : []);
+            if (handles.length) prior.ledger_ids = handles;
+          }
+        }
+        const r = await api.answerBasic(activeSlug, text, Object.keys(prior).length ? prior : undefined);
+        if (r.act) {
+          const act = r.act;
+          // Mark what the act consumed, so the next "yes" cannot take it twice.
+          const consume = (pred: (m: Msg) => boolean, patch: Partial<Msg>) =>
+            setMessages((prev) => {
+              const copy = [...prev];
+              for (let i = copy.length - 1; i >= 0; i--) {
+                if (pred(copy[i]!)) { copy[i] = { ...copy[i]!, ...patch }; break; }
+              }
+              return copy;
+            });
+          setMessages([...next, { role: "assistant", content: r.reply }]);
+          if (act.kind === "run-command") {
+            const out = await api.runCommand(activeSlug, act.id, act.message, getChatSelection()?.ids).catch(
+              (e: unknown) => ({ ok: false, message: e instanceof ApiError ? e.message : "That didn't work.", ledger_ids: [] as string[] }),
+            );
+            if (out.ok) workspaceChanged();
+            consume((m) => !!m.command && !m.resolved, { resolved: true });
+            setMessages((prev) => [...prev, {
+              role: "assistant",
+              content: (out.ok ? "✓ " : "✗ ") + out.message,
+              ...(out.ok ? { ranCommand: { id: act.id, message: act.message } } : {}),
+              ...(out.ledger_ids?.length ? { resolved: true, ledgerIds: out.ledger_ids, undoable: true } : {}),
+            }]);
+          } else if (act.kind === "undo") {
+            let ok = 0;
+            for (const id of act.ledger_ids) {
+              const u = await api.aiChatUndo(activeSlug, id).catch(() => ({ ok: false, message: "" }));
+              if (u.ok) ok++;
+            }
+            if (ok) workspaceChanged();
+            consume((m) => (m.ledgerIds ?? (m.ledgerId ? [m.ledgerId] : [])).length > 0 && !m.undone, { undone: true });
+            setMessages((prev) => [...prev, {
+              role: "assistant",
+              content: ok === act.ledger_ids.length ? "✓ Undone." : ok ? `✓ Undid ${ok} of ${act.ledger_ids.length}.` : "✗ I couldn't undo that.",
+            }]);
+          } else {
+            consume((m) => !!m.command && !m.resolved, { resolved: true });
+          }
+          setBusy(false);
+          return;
+        }
         setMessages([
           ...next,
           {

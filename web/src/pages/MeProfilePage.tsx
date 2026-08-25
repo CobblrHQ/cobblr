@@ -328,6 +328,11 @@ function PasswordSection({ onChanged }: { onChanged: () => void }) {
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
+  const signOutAll = useMutation({
+    mutationFn: () => api.signOutEverywhere(),
+    onSuccess: () => toast.success("Signed out of all other devices. This one stays signed in."),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
   const tooShort = next.length > 0 && next.length < 8;
   const mismatch = confirm.length > 0 && confirm !== next;
   const canSubmit =
@@ -395,6 +400,20 @@ function PasswordSection({ onChanged }: { onChanged: () => void }) {
           className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
         >
           {change.isPending ? "updating…" : "Change password"}
+        </button>
+      </div>
+      <div className="border-t border-line dark:border-slate-700 pt-3 flex items-center justify-between gap-3">
+        <div className="text-xs text-muted">
+          Signed in somewhere you no longer trust? Sign out of every other device.
+          This one stays signed in.
+        </div>
+        <button
+          type="button"
+          onClick={() => signOutAll.mutate()}
+          disabled={signOutAll.isPending}
+          className="shrink-0 px-3 py-1.5 text-sm rounded border border-line dark:border-slate-600 hover:bg-mist-50 dark:hover:bg-slate-800 disabled:opacity-50"
+        >
+          {signOutAll.isPending ? "signing out…" : "Sign out everywhere"}
         </button>
       </div>
     </section>

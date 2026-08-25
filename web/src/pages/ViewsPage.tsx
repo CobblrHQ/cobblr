@@ -6,6 +6,7 @@
 // renderers swap in here as they ship.
 
 import { useState, useMemo, useEffect } from "react";
+import { expiryState, expiryPhrase } from "@cobblr/platform-contract";
 import { tallyCadence, CADENCE_PRESETS } from "../lib/cadence";
 import { Link, useSearchParams } from "react-router-dom";
 import { useDetailRoute } from "../lib/useDetailRoute";
@@ -624,7 +625,7 @@ function EntityTitleLink({ row, className }: { row: ViewRow; className?: string 
 // name from cfg (defaults suit the Groceries bundle), so the same renderer
 // serves a filament shelf or a medicine cabinet. Nothing here knows about food.
 function VendingRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
-  const c = cfg as unknown as { qty_field?: string; expiry_field?: string; min_qty_field?: string };
+  const c = cfg as unknown as { qty_field?: string; expiry_field?: string; min_qty_field?: string; grace_field?: string };
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
@@ -685,6 +686,11 @@ function VendingRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) 
   const qtyField = c.qty_field ?? "qty";
   const expiryField = c.expiry_field ?? "expires_on";
   const minQtyField = c.min_qty_field ?? "min_qty";
+  // Food does not go bad at midnight. The item's own grace_days says how long
+  // past the date is still fine; within it the tile asks to be used, it does
+  // not scream. Meaning lives in the shared expiryState so this dot and the
+  // sweeper's event cannot drift on what "spoiled" is.
+  const graceField = c.grace_field ?? "grace_days";
 
   const dayDiff = (iso: unknown): number | null => {
     if (typeof iso !== "string" || !iso) return null;
@@ -744,30 +750,38 @@ function VendingRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) 
         const qty = num(pick(f, qtyField));
         const minQty = num(pick(f, minQtyField));
         const days = dayDiff(pick(f, expiryField));
+        const grace = expiryState(
+          typeof pick(f, expiryField) === "string" ? (pick(f, expiryField) as string) : null,
+          pick(f, graceField),
+        );
         const out = qty !== null && qty <= 0;
-        const expired = !out && days !== null && days < 0;
+        const expired = !out && grace?.state === "spoiled";
+        const pastDate = !out && grace?.state === "past_date";
         const expiring = !out && days !== null && days >= 0 && days <= 2;
         const low = !out && qty !== null && minQty !== null && qty <= minQty;
 
         // One dot carries the whole status, so the grid reads as a wall of
-        // lights instead of rows to scan.
+        // lights instead of rows to scan. Past-the-date-inside-grace is orange:
+        // more urgent than amber "expiring", not yet the red that means binned.
         const dot = out
           ? "bg-slate-400 dark:bg-slate-600"
           : expired
             ? "bg-red-500"
-            : expiring
-              ? "bg-amber-500"
-              : low
-                ? "bg-cobble-500"
-                : "bg-emerald-500";
+            : pastDate
+              ? "bg-orange-500"
+              : expiring
+                ? "bg-amber-500"
+                : low
+                  ? "bg-cobble-500"
+                  : "bg-emerald-500";
 
         // Same order as the dot, so the words never contradict the light. It
         // used to prefer any expiry date over low stock, so a tile with an
         // amber running-low dot read "expires in 60d" and the two disagreed.
         const meta = out
           ? "out of stock"
-          : expired
-            ? `expired ${-(days as number)}d ago`
+          : expired || pastDate
+            ? expiryPhrase(grace!)
             : expiring
               ? days === 0
                 ? "expires today"

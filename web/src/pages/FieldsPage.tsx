@@ -130,6 +130,23 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
             ? `${preset.label} on. Added ${r.created.length} field${r.created.length === 1 ? "" : "s"} to ${preset.hint.toLowerCase().replace(/\.$/, "")}.`
             : `${preset.label} was already on.`,
         );
+        // Fresh landing pads deserve their history: past receipts already
+        // established these facts, so fill them now rather than leaving old
+        // items blank while new ones fill themselves. Backend-only before this
+        // - the backfill existed and nothing on any screen could reach it.
+        if (r.created.length) {
+          try {
+            const b = await api.backfillReceiptFields(slug);
+            if (b.filled > 0) {
+              toast.success(
+                `Filled ${b.filled} item${b.filled === 1 ? "" : "s"} from receipts you already scanned.` +
+                  (b.dropped_facts ? ` ${b.dropped_facts} value${b.dropped_facts === 1 ? "" : "s"} did not fit a field's fixed choices.` : ""),
+              );
+            }
+          } catch {
+            /* scanning module off, or nothing to fill - the preset is still on */
+          }
+        }
       }
       await qc.invalidateQueries({ queryKey: ["field-presets", slug] });
       await qc.invalidateQueries({ queryKey: ["field-defs", slug] });
@@ -167,6 +184,9 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
           ? `Added "${label}" to ${created.scope_label.toLowerCase()}.`
           : `Added "${label}" to ${created.entity_kind}.`,
       );
+      // Shadowing a trait-scoped field is legal and easy to do by accident -
+      // the server says what just changed hands, so say it here too.
+      if (created.warning) toast.info(created.warning);
       void qc.invalidateQueries({ queryKey: ["field-defs", slug] });
       setEntityKind("");
       setScopeTraits([]);

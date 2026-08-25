@@ -153,8 +153,11 @@ async function scanScoped(wsApi: WorkspaceApi): Promise<{
 export const COMPUTED_COMMANDS: ComputedCommand[] = [
   {
     id: "duplicates",
-    // "delete duplicates", "remove the duplicates", "clean up duplicates".
-    match: /\b(delete|remove|clean\s*up|clear|get\s+rid\s+of)\s+(the\s+)?duplicates?\b/i,
+    // "delete duplicates", "remove the duplicates", "clean up duplicates" —
+    // but NOT "delete the duplicate rack": "duplicate" followed by a noun names
+    // ONE record, and sweeping the whole workspace when someone pointed at one
+    // thing is an interception, not a favour (chat corpus, 2026-08-25).
+    match: /\b(delete|remove|clean\s*up|clear|get\s+rid\s+of)\s+(the\s+)?(duplicates|duplicate\s+\w+s)\b|\b(delete|remove|clean\s*up|clear|get\s+rid\s+of)\s+duplicate\b(?!\s+\w)/i,
     template: "delete duplicates",
     description: "Find places with the same name in the same spot and remove the extra ones.",
     async plan({ wsApi, selectionIds }) {

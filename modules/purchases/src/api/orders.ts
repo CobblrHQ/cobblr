@@ -183,6 +183,10 @@ ordersRouter.post(
         instance: instanceOf(req),
         status: parsed.data.status ?? "ordered",
         metadata: parsed.data.metadata ?? {},
+        // An order born with a tracking number is owned by whoever placed it —
+        // the arrival sweep interrupts them alone (parcelAudience). Orders
+        // recorded no creator at all, so this is their only ownership signal.
+        ...(parsed.data.tracking_number ? { tracking_added_by_user_id: session.id } : {}),
       } as never)
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -227,6 +231,11 @@ ordersRouter.patch(
     }
     // Keep the legacy `vendor` text in sync when vendor_id changes in this PATCH.
     const patch: Record<string, unknown> = { ...parsed.data, updated_at: new Date() };
+    // Setting a tracking number claims the parcel; clearing it releases the
+    // claim. An edit that does not touch tracking leaves ownership alone.
+    if ("tracking_number" in parsed.data) {
+      patch.tracking_added_by_user_id = parsed.data.tracking_number ? session.id : null;
+    }
     if ("vendor_id" in parsed.data) {
       const vt = await vendorTextFor(req, parsed.data.vendor_id, parsed.data.vendor);
       if (vt !== undefined) patch.vendor = vt;

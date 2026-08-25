@@ -794,6 +794,7 @@ export const api = {
   diagnostics: (slug: string) =>
     request<{
       build_sha: string | null;
+      version: string | null;
       hosted: boolean;
       node: string;
       platform: string;
@@ -1438,6 +1439,13 @@ export const api = {
   listFieldPresets: (slug: string) =>
     request<{ items: FieldPresetState[] }>("GET", `/orgs/${slug}/field-presets`),
   /** Switch one ON: creates the fields it is missing, and only those. */
+  /** Move what past receipts recorded into the preset's fresh fields. Owner/
+   *  admin, same audience as the preset switch that calls it. */
+  backfillReceiptFields: (slug: string) =>
+    request<{ scanned: number; filled: number; dropped_facts?: number; capped_kinds?: string[] }>(
+      "POST",
+      `/orgs/${slug}/modules/core-scan/receipts/backfill-fields`,
+    ),
   applyFieldPreset: (slug: string, key: string) =>
     request<FieldPresetState & { created: string[]; failed?: Array<{ name: string; message: string }> }>(
       "POST",
@@ -1450,7 +1458,7 @@ export const api = {
       `/orgs/${slug}/field-presets/${key}`,
     ),
   createFieldDef: (slug: string, body: Partial<PlatformFieldDef>) =>
-    request<PlatformFieldDef>("POST", `/orgs/${slug}/field-defs`, body),
+    request<PlatformFieldDef & { warning?: string }>("POST", `/orgs/${slug}/field-defs`, body),
   updateFieldDef: (slug: string, id: string, body: Partial<PlatformFieldDef>) =>
     request<PlatformFieldDef>("PATCH", `/orgs/${slug}/field-defs/${id}`, body),
   deleteFieldDef: (slug: string, id: string) =>
@@ -1694,6 +1702,14 @@ export const api = {
   // user stays logged in on this device.
   changeMyPassword: async (body: { current_password: string; new_password: string }) => {
     const res = await request<{ token: string }>("POST", "/me/password", body);
+    if (res?.token) setToken(res.token);
+    return res;
+  },
+  // Sign out of every other device without changing the password. Revokes all
+  // prior tokens server-side and returns a fresh one for THIS device, which we
+  // persist so the current session survives.
+  signOutEverywhere: async () => {
+    const res = await request<{ token: string }>("POST", "/me/sign-out-everywhere", {});
     if (res?.token) setToken(res.token);
     return res;
   },
@@ -3707,8 +3723,11 @@ export const api = {
 
   // Ask Cobb "basic mode" — the no-AI floor. When AI is off, the chat asks the
   // server to match a message against the effective ruleset (no model, no cost).
-  answerBasic: (slug: string, message: string) =>
-    request<BasicAnswer>("POST", `/orgs/${slug}/modules/core-ai/basics/answer`, { message }),
+  answerBasic: (slug: string, message: string, prior?: BasicPrior) =>
+    request<BasicAnswer>("POST", `/orgs/${slug}/modules/core-ai/basics/answer`, {
+      message,
+      ...(prior ? { prior } : {}),
+    }),
   // The effective ruleset (built-ins overlaid with per-workspace overrides + customs).
   listBasics: (slug: string) =>
     request<{ rules: BasicRuleRow[] }>("GET", `/orgs/${slug}/modules/core-ai/basics`),
@@ -4538,6 +4557,22 @@ export interface BasicAnswer {
   /** Present when a learned command fits: an offer to RUN it, which the chat
    *  turns into a confirm rather than doing on its own. */
   command?: BasicCommandOffer;
+  /** Present when a control word (yes / again / undo / stop) resolved against
+   *  the prior turn: the act the chat should execute through the ordinary
+   *  endpoints. See modules/core-ai/src/control-context.ts. */
+  act?:
+    | { kind: "run-command"; id: string; message: string }
+    | { kind: "undo"; ledger_ids: string[] }
+    | { kind: "dismiss-offer" };
+}
+
+/** The prior turn, summarised for the no-AI answer call so control words can
+ *  point at something. The conversation lives on the client; this is its
+ *  bounded shadow. */
+export interface BasicPrior {
+  offered?: { id: string; message: string };
+  ran?: { id: string; message: string };
+  ledger_ids?: string[];
 }
 
 /** One rule in the effective ruleset (GET …/core-ai/basics). */
@@ -4922,6 +4957,10 @@ export interface ModuleInstance {
   created_at: string;
   /** Primary-item count for this instance; null if the module reports none. */
   item_count?: number | null;
+  /** Whether this module registered an instance mover (records can be moved
+   *  between its tables). The server has sent this since the mover shipped;
+   *  the type just never caught up. */
+  movable?: boolean;
 }
 
 export interface NavHeadingMember {
@@ -6304,6 +6343,9 @@ export interface NotificationEntry {
   module_name: string | null;
   message: string;
   link_url: string | null;
+  /** The substance behind the one-liner, when there is any — the same card a
+   *  Discord DM renders as an embed. Absent for most notifications. */
+  card?: { heading?: string; body?: string; context?: string } | null;
   read_at: string | null;
   created_at: string;
 }

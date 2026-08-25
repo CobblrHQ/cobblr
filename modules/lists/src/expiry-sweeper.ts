@@ -13,7 +13,7 @@
 // are skipped, so non-food workspaces pay nothing.
 
 import { Kysely, sql } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, expiryState, expiryPhrase } from "@cobblr/platform-contract";
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
@@ -128,7 +128,22 @@ export async function expiryTick(opts: { orgId?: string } = {}): Promise<{ scann
 
     for (const row of due) {
       const daysUntil = Math.ceil((new Date(row.expires_on).getTime() - Date.now()) / 86_400_000);
-      const tone = daysUntil < 0 ? `expired ${-daysUntil}d ago` : daysUntil === 0 ? "expires today" : `expires in ${daysUntil}d`;
+      // The item's own grace: food does not go bad at midnight, and the item
+      // says how long past its date is still fine. Read through the entities
+      // door so an instance row (a Groceries table's milk) answers too - the
+      // sweep's candidate set is small, so one lookup per due row is cheap.
+      let graceDays: unknown = 0;
+      if (daysUntil < 0) {
+        try {
+          const ent = await platform().entities.lookup(org.id, "inventory:part", row.id);
+          graceDays = ent?.fields?.grace_days;
+        } catch {
+          // Unreadable grace reads as none - the pre-grace behaviour, never a
+          // silently-extended one.
+        }
+      }
+      const reading = expiryState(row.expires_on, graceDays);
+      const tone = reading ? expiryPhrase(reading) : `expires in ${daysUntil}d`;
 
       // Event → food-cluster wire turns this into a shopping-list line. The
       // wire engine resolves the source entity from a `<kindSuffix>Id` payload
@@ -153,7 +168,11 @@ export async function expiryTick(opts: { orgId?: string } = {}): Promise<{ scann
         daysUntil,
       };
       void platform().events.emit("lists.item.expiring", payload);
-      if (daysUntil < 0) void platform().events.emit("lists.item.expired", payload);
+      // `expired` waits out the grace. Within it the honest fact is "past its
+      // date, still fine" - a wire that discards or re-buys on `expired` must
+      // not fire while the item's own grace says the food is good. (This is
+      // the grace-period ask the comment above anticipated.)
+      if (reading?.state === "spoiled") void platform().events.emit("lists.item.expired", payload);
 
       for (const userId of memberIds) {
         try {

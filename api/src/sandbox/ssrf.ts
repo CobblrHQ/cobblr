@@ -17,6 +17,7 @@
 
 import { lookup as dnsLookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { isPrivateIp as canonicalIsPrivateIp } from "@cobblr/platform-contract/private-ip";
 
 export function isAllowedScheme(url: string): boolean {
   try {
@@ -30,39 +31,11 @@ export function isAllowedScheme(url: string): boolean {
   }
 }
 
-export function isPrivateIp(ip: string): boolean {
-  if (!ip) return true;
-  const family = isIP(ip);
-  if (family === 4) {
-    const parts = ip.split(".").map((p) => Number.parseInt(p, 10));
-    if (parts.length !== 4 || parts.some((n) => Number.isNaN(n))) return true;
-    const [a, b] = parts as [number, number, number, number];
-    if (a === 10) return true;                                // 10/8
-    if (a === 127) return true;                               // loopback
-    if (a === 169 && b === 254) return true;                  // link-local + cloud metadata
-    if (a === 172 && b >= 16 && b <= 31) return true;         // 172.16/12
-    if (a === 192 && b === 168) return true;                  // 192.168/16
-    if (a === 0) return true;                                 // 0.0.0.0/8
-    if (a >= 224) return true;                                // multicast + reserved
-    return false;
-  }
-  if (family === 6) {
-    const lower = ip.toLowerCase();
-    if (lower === "::1") return true;
-    if (lower === "::") return true;
-    if (lower.startsWith("fc") || lower.startsWith("fd")) return true;      // ULA fc00::/7
-    if (lower.startsWith("fe8") || lower.startsWith("fe9") ||
-        lower.startsWith("fea") || lower.startsWith("feb")) return true;    // link-local fe80::/10
-    if (lower.startsWith("ff")) return true;                                // multicast
-    // IPv4-mapped IPv6 (::ffff:a.b.c.d) — re-check on the v4 form.
-    if (lower.startsWith("::ffff:")) {
-      const v4 = lower.slice("::ffff:".length);
-      if (isIP(v4) === 4) return isPrivateIp(v4);
-    }
-    return false;
-  }
-  return true;
-}
+// The private-IP rule is the ONE canonical predicate in the contract. This copy
+// used to be missing the Tailscale/CGNAT range (100.64/10) that the kernel guard
+// had, so a module allowlisting a host that resolved into the tailnet could
+// reach it. Re-exported under this module's name so callers/tests are unchanged.
+export const isPrivateIp = canonicalIsPrivateIp;
 
 /** Does `hostname` satisfy a HOST_FETCH network[] allowlist? Each entry
  *  is an exact hostname ("api.bricklink.com") or a leading-dot wildcard

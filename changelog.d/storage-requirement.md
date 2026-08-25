@@ -2,7 +2,7 @@
 type: feature
 scope: scan
 date: 2026-08-22
-docs_target: docs/USER_GUIDE.md#How something must be kept
+docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
 ---
 **Scanned food now records how it needs to be kept, separately from where it is.** Frozen, refrigerated or ambient, worked out from what the item is. That is a fact about the product; where it currently sits is a different fact and stays on its location. Keeping them apart means Cobblr can eventually tell you when they disagree. Anything you set yourself always wins, and nothing is guessed when the item does not say.
 

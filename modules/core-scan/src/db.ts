@@ -75,6 +75,12 @@ export interface CoreScanBatchesTable {
    *  its way. Its presence is what files the order as in-transit rather than
    *  arrived — see the receipt-confirm handler. */
   tracking_number: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  tracking_added_by_user_id: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  shipment_confirmed_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null | undefined>;
+  /** vendor|date|total|line-count fingerprint for receipts with no order
+   *  number, so the same paper scanned twice is caught. Null when the parse
+   *  established too little to fingerprint. */
+  content_key: ColumnType<string | null, string | null | undefined, string | null | undefined>;
   /** Where the parcel is, as last answered by core-shipments. Kept on the batch
    *  so a receipt still waiting in the inbox is followed too — filing it into an
    *  order is a bookkeeping decision, and the parcel moves either way. */

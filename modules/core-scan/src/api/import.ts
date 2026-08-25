@@ -306,7 +306,7 @@ async function fetchPhotoToFile(orgId: string, url: string): Promise<string> {
   // CI/test escape, same convention as the webhook + machine guards: the test
   // suite spins a loopback photo server and CI sets COBBLR_TEST_CALLBACK_HOST.
   const testHost = process.env.COBBLR_TEST_CALLBACK_HOST;
-  if (!(testHost && new URL(url).hostname === testHost)) assertSafeOutboundUrl(url);
+  if (!(testHost && new URL(url).hostname === testHost)) await assertSafeOutboundUrl(url);
   let res: Response;
   try {
     res = await fetch(url, { headers: { "user-agent": "cobblr-core-scan-import/1" }, signal: AbortSignal.timeout(PHOTO_TIMEOUT_MS) });

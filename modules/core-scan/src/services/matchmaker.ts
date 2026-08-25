@@ -970,41 +970,16 @@ export function heuristicMatch(item: PerceivedItem, menuIn: ScanMenuEntry[]): Ma
   });
 }
 
-export async function runMatchmaker(
-  orgId: string,
-  item: PerceivedItem,
-  menuIn: ScanMenuEntry[],
-  /** The inbox item's UUID — links the AI-log row to the scan (source_id is a
-   *  UUID column; passing the barcode/name here breaks the audit insert). */
-  sourceId?: string,
-  /** The scanning user (null for a cron/background match) — routes to their
-   *  personal AI connection. */
-  userId?: string | null,
-  /** REPLAY: recompute the routing from what the row ALREADY holds, with no model
-   *  call of any kind.
-   *
-   *  A stored candidate has the same shape as a model reply, so it goes through
-   *  the identical refinement below: re-validated against the CURRENT menu,
-   *  fields re-filtered to each table's schema, pack size re-seeded, category
-   *  re-snapped to the live vocabulary, corroboration gate re-applied. That is
-   *  the whole point of a replay — the same knowledge, the newest code.
-   *
-   *  It used to serve the model call cache-only instead, which fails like an
-   *  unavailable provider on a miss and landed on `heuristicMatch`. Since the
-   *  cache key is pinned to provider + model, a miss is the NORMAL case, so
-   *  "replay" in practice meant "answer with the dumbest available path" and
-   *  quietly downgraded the row (reported 2026-08-12). */
-  replay?: { storedCandidates: unknown[] },
-): Promise<MatchCandidate[]> {
-  // A physical scan never routes to a record table — drop them before the model
-  // even sees the menu, so it can't suggest one (and the heuristic fallback below
-  // inherits the already-filtered menu).
-  const menu = filterMenuForItem(item, menuIn);
-  // No table to route to. A first match legitimately has nothing to say; a REPLAY
-  // must still not empty a row that already had candidates.
-  if (menu.length === 0) return replay ? (replay.storedCandidates as MatchCandidate[]) : [];
+/** The user half of the matchmaker prompt. Exported for the same reason as the
+ *  system half: the bench must send exactly what the product sends. */
+export function matchmakerUserPrompt(itemBlock: Record<string, unknown>, compactMenu: unknown[]): string {
+  return "ITEM:\n" + JSON.stringify(itemBlock, null, 0) + "\n\nTABLES:\n" + JSON.stringify(compactMenu, null, 0);
+}
 
-  const system =
+/** The matchmaker's system prompt, exported so the scan-corpus bench sends
+ *  byte-identical text to a candidate model — a paraphrased prompt measures a
+ *  product that does not exist (the local-model bench learned this twice). */
+export const MATCHMAKER_SYSTEM =
     "You sort a scanned physical item into the user's catalog of tables and " +
     "extract its fields. You are given the ITEM (what a scanner/vision read, " +
     "including lookup_metadata — the raw catalog/web data: attributes, " +
@@ -1122,6 +1097,42 @@ export async function runMatchmaker(
     "with single quotes ('medium weight') — or the JSON will not parse. " +
     "Order candidates best-first. confidence is how well the table fits the item.";
 
+export async function runMatchmaker(
+  orgId: string,
+  item: PerceivedItem,
+  menuIn: ScanMenuEntry[],
+  /** The inbox item's UUID — links the AI-log row to the scan (source_id is a
+   *  UUID column; passing the barcode/name here breaks the audit insert). */
+  sourceId?: string,
+  /** The scanning user (null for a cron/background match) — routes to their
+   *  personal AI connection. */
+  userId?: string | null,
+  /** REPLAY: recompute the routing from what the row ALREADY holds, with no model
+   *  call of any kind.
+   *
+   *  A stored candidate has the same shape as a model reply, so it goes through
+   *  the identical refinement below: re-validated against the CURRENT menu,
+   *  fields re-filtered to each table's schema, pack size re-seeded, category
+   *  re-snapped to the live vocabulary, corroboration gate re-applied. That is
+   *  the whole point of a replay — the same knowledge, the newest code.
+   *
+   *  It used to serve the model call cache-only instead, which fails like an
+   *  unavailable provider on a miss and landed on `heuristicMatch`. Since the
+   *  cache key is pinned to provider + model, a miss is the NORMAL case, so
+   *  "replay" in practice meant "answer with the dumbest available path" and
+   *  quietly downgraded the row (reported 2026-08-12). */
+  replay?: { storedCandidates: unknown[] },
+): Promise<MatchCandidate[]> {
+  // A physical scan never routes to a record table — drop them before the model
+  // even sees the menu, so it can't suggest one (and the heuristic fallback below
+  // inherits the already-filtered menu).
+  const menu = filterMenuForItem(item, menuIn);
+  // No table to route to. A first match legitimately has nothing to say; a REPLAY
+  // must still not empty a row that already had candidates.
+  if (menu.length === 0) return replay ? (replay.storedCandidates as MatchCandidate[]) : [];
+
+  const system = MATCHMAKER_SYSTEM;
+
   // Prompt-size guard for the skins-at-scale era: the heuristic scales
   // linearly with menu size, but the MODEL prompt does not — with 100s of
   // installable skins in the catalog the full menu would blow the context (and
@@ -1176,30 +1187,25 @@ export async function runMatchmaker(
     })),
   }));
 
-  const user =
-    "ITEM:\n" +
-    JSON.stringify(
-      {
-        name: item.name,
-        brand: item.manufacturer ?? null,
-        category: item.category ?? null,
-        description: item.description ?? null,
-        kind_hint: item.entityType ?? null,
-        barcode: item.barcode ?? null,
-        sku: item.sku ?? null,
-        lookup_notes: item.notes ?? null,
-        scanned_in_area: item.scanArea ?? null,
-        // Everything the catalog/web lookup returned — mine it for field
-        // values (weights, lengths, colours, counts) before giving up on
-        // a field. Keys are the lookup's, not the table's.
-        lookup_metadata: item.metadata ?? null,
-        photo_observations: item.photoObservations ?? null,
-      },
-      null,
-      0,
-    ) +
-    "\n\nTABLES:\n" +
-    JSON.stringify(compactMenu, null, 0);
+  const user = matchmakerUserPrompt(
+    {
+      name: item.name,
+      brand: item.manufacturer ?? null,
+      category: item.category ?? null,
+      description: item.description ?? null,
+      kind_hint: item.entityType ?? null,
+      barcode: item.barcode ?? null,
+      sku: item.sku ?? null,
+      lookup_notes: item.notes ?? null,
+      scanned_in_area: item.scanArea ?? null,
+      // Everything the catalog/web lookup returned — mine it for field
+      // values (weights, lengths, colours, counts) before giving up on
+      // a field. Keys are the lookup's, not the table's.
+      lookup_metadata: item.metadata ?? null,
+      photo_observations: item.photoObservations ?? null,
+    },
+    compactMenu,
+  );
 
   // One model call → robust-parse, both calls SHARING a single MATCH_DEADLINE_MS
   // budget. bypass_cache lets the retry take a fresh sample (the cache key is the

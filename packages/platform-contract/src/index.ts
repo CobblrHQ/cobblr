@@ -12,6 +12,8 @@ import type { DateFieldDirection } from "@cobblr/platform-contract/date-field-di
 export type { DateFieldDirection } from "@cobblr/platform-contract/date-field-direction";
 export { dateFieldDirection, canBeOverdue, dateEventTitle } from "@cobblr/platform-contract/date-field-direction";
 export { pluralise, countOf, itemNounFor } from "@cobblr/platform-contract/plural";
+export { expiryState, expiryPhrase, EXPIRING_WITHIN_DAYS, type ExpiryState, type ExpiryReading } from "@cobblr/platform-contract/expiry-grace";
+export { keepMembers, isMember, parcelAudience } from "@cobblr/platform-contract/membership";
 export { destinationLabel, normaliseTargetKind, betterDestination, type DestinationTable } from "@cobblr/platform-contract/destination-label";
 import type {
   ResolvableProvider,
@@ -1260,8 +1262,11 @@ const ModuleManifest = z.object({
   //                 COBBLR_DISABLE_EXPERIMENTAL_MODULES=true (the public /
   //                 trial default) so a half-baked connector never fronts a
   //                 public deploy.
-  //   beta:         usable but still moving; a "Beta" badge. Reserved — the
-  //                 ladder in practice is hidden → experimental → stable.
+  //   beta:         usable but still moving; a "Beta" badge. Unlike
+  //                 experimental it is NEVER hidden — it always loads, even
+  //                 under COBBLR_DISABLE_EXPERIMENTAL_MODULES — it just tells
+  //                 the user "sub-1.0, expect change". The rung for a module
+  //                 that is real and shipping but not yet at 1.0.
   //   stable:       ready for general use; no badge.
   // The same ladder + badge applies to a FEATURE (a LiveControl) via the
   // capability gate — one vocabulary, two zooms. See
@@ -2917,6 +2922,17 @@ export interface PlatformNotifications {
     entityId?: string;
     payload?: unknown;
     /**
+     * The substance behind the one-line message, for a channel that can render
+     * more than a sentence (a Discord DM becomes a card; the bell and email are
+     * unaffected).
+     *
+     * Optional on purpose: a channel that cannot render it MUST still deliver,
+     * so `message` has to stand alone and `link_url` reaches the same place.
+     * Pass PLAIN TEXT — a body with entity tokens still in it will show a uuid
+     * to whoever reads the notification.
+     */
+    card?: { heading?: string; body?: string; context?: string };
+    /**
      * How urgent this is. Defaults to `normal`.
      *
      * It decides two separate things, and a module only has to think about the
@@ -2971,6 +2987,13 @@ export interface PlatformNotifications {
    *  broadcast a notification (e.g. "this task is now unblocked")
    *  iterate this and dispatch per-user. */
   orgMemberIds(orgId: string): Promise<string[]>;
+  /** The workspace's display name. Exists because a module has no other way to
+   *  say WHERE something happened: the discussion room's notifications read
+   *  "mentioned you in your workspace" from the action door, which is honest
+   *  and worse than the name. Beside orgMemberIds for the same reason that
+   *  lives here — workspace identity a notification needs, behind the contract
+   *  instead of a meta read isolation forbids. Null when the org is gone. */
+  orgName(orgId: string): Promise<string | null>;
 }
 
 // ── sync connectors (mirror external records into Cobblr entities) ──

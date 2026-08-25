@@ -27,6 +27,8 @@ interface RotateTarget {
   id: string;
   name: string;
   scopes: string[];
+  /** Already past its expiry — the cutover panel must not claim it "still works". */
+  expired: boolean;
 }
 
 export function TokenManager({ variant }: { variant: "personal" | "operator" }) {
@@ -80,16 +82,22 @@ export function TokenManager({ variant }: { variant: "personal" | "operator" }) 
   );
 
   return (
-    <div className="space-y-5 max-w-3xl">
+    <div className="space-y-5">
+      {/* On /configuration/tokens the layout already draws "API tokens" + its
+          description from the registry; repeating them here was the exact
+          double-title defect ConfigPageHeader exists to end. The operator
+          console has no shared header yet, so that variant keeps its own. */}
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h2 className="font-display text-xl font-extrabold text-content dark:text-mortar-100">
-          {variant === "operator" ? "Operator tokens" : "API tokens"}
-        </h2>
-        <span className="text-xs text-muted dark:text-slate-400">
-          {variant === "operator"
-            ? "restricted, deny-by-default tokens for daemons + bots"
-            : "long-lived bearer tokens for CLI / AI / automation"}
-        </span>
+        {variant === "operator" && (
+          <>
+            <h2 className="font-display text-xl font-extrabold text-content dark:text-mortar-100">
+              Operator tokens
+            </h2>
+            <span className="text-xs text-muted dark:text-slate-400">
+              restricted, deny-by-default tokens for daemons + bots
+            </span>
+          </>
+        )}
         <div className="flex-1" />
         <button
           onClick={() => setMintOpen(true)}
@@ -184,7 +192,12 @@ export function TokenManager({ variant }: { variant: "personal" | "operator" }) 
               <button
                 type="button"
                 onClick={() => {
-                  setRotating({ id: t.id, name: t.name, scopes: t.scopes ?? [] });
+                  setRotating({
+                    id: t.id,
+                    name: t.name,
+                    scopes: t.scopes ?? [],
+                    expired: !!t.expires_at && new Date(t.expires_at) < new Date(),
+                  });
                   setMintOpen(true);
                 }}
                 className="text-faint hover:text-accent transition shrink-0"
@@ -220,9 +233,21 @@ export function TokenManager({ variant }: { variant: "personal" | "operator" }) 
       <RevealedModal
         revealed={revealed}
         onClose={() => setRevealed(null)}
-        onRevokeOld={(id) => {
-          revoke.mutate(id);
-          setRevealed(null);
+        onRevokeOld={(id, name) => {
+          // Same confirm as every other revoke: this button sits one mis-click
+          // from the freshly-minted value, and killing the old credential is
+          // not undoable.
+          void (async () => {
+            const ok = await confirm({
+              title: `Revoke "${name}"?`,
+              message: "Anything still using the old token stops working immediately.",
+              confirmLabel: "Revoke old token",
+              destructive: true,
+            });
+            if (!ok) return;
+            revoke.mutate(id);
+            setRevealed(null);
+          })();
         }}
       />
     </div>
@@ -272,7 +297,13 @@ function MintModal({
       return api.mintApiToken({
         name: name.trim(),
         expires_at,
-        scopes: variant === "operator" && scopes.size > 0 ? [...scopes] : undefined,
+        // Rotation must carry the old token's scopes on BOTH variants. The
+        // personal surface lists scoped tokens too, and its mint dialog has no
+        // scope UI — so gating this on variant meant rotating a restricted
+        // daemon token from /configuration/tokens silently minted a FULL-ACCESS
+        // replacement with the same name. Widening is the one thing a rotation
+        // must never do.
+        scopes: scopes.size > 0 && (variant === "operator" || rotating) ? [...scopes] : undefined,
       });
     },
     onSuccess: (r) => {
@@ -342,6 +373,12 @@ function MintModal({
           </select>
         </label>
 
+        {variant !== "operator" && rotating && rotating.scopes.length > 0 && (
+          <p className="text-xs text-muted dark:text-slate-400 rounded-md border border-line dark:border-slate-700 p-2">
+            Keeps the same scopes:{" "}
+            <span className="font-mono">{rotating.scopes.join(", ")}</span>
+          </p>
+        )}
         {variant === "operator" ? (
           <div className="block">
             <div className="flex items-baseline justify-between mb-1 gap-3">
@@ -431,7 +468,7 @@ function RevealedModal({
 }: {
   revealed: { plaintext: string; name: string; supersedes?: RotateTarget | null } | null;
   onClose: () => void;
-  onRevokeOld?: (id: string) => void;
+  onRevokeOld?: (id: string, name: string) => void;
 }) {
   const toast = useToast();
   async function copy() {
@@ -466,7 +503,9 @@ function RevealedModal({
           // the bot down as a side effect of rotating it.
           <div className="rounded-md border border-line dark:border-slate-700 p-3 space-y-2">
             <p className="text-sm text-content dark:text-mortar-200">
-              The old token still works. Update wherever it is used, then revoke it.
+              {revealed.supersedes.expired
+                ? "The old token had already expired. Revoke it to keep the list honest."
+                : "The old token still works. Update wherever it is used, then revoke it."}
             </p>
             <div className="flex items-center justify-between gap-3">
               <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 truncate">
@@ -474,7 +513,7 @@ function RevealedModal({
               </span>
               <button
                 type="button"
-                onClick={() => onRevokeOld?.(revealed.supersedes!.id)}
+                onClick={() => onRevokeOld?.(revealed.supersedes!.id, revealed.supersedes!.name)}
                 className="shrink-0 px-2.5 py-1 rounded-md text-xs font-medium border border-ember-500/40 text-ember-500 hover:bg-ember-500/10 transition"
               >
                 Revoke the old one

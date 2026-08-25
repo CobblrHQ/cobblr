@@ -48,6 +48,7 @@ import {
 import { randomBytes } from "node:crypto";
 import * as activity from "../platform/activity.js";
 import { captureBlueprint, applyBlueprint, type BlueprintManifestT } from "./blueprint.js";
+import { makeUncompressedBudget, readEntryBounded, BackupTooLargeError } from "./backup-limits.js";
 
 // Tables the generic dump/restore must never touch:
 //  - `migrations`  — the tenant migration runner's bookkeeping; the fresh
@@ -195,6 +196,10 @@ function remapFileIds(value: unknown, map: Map<string, string>): unknown {
 }
 
 interface ColumnInfo {
+  /** Every REAL column of the table (from information_schema). A row key that
+   *  isn't in here never names a real column, so it must never be spliced into
+   *  the INSERT — see safeInsertColumns. */
+  all: Set<string>;
   jsonb: Set<string>;
   /** GENERATED ALWAYS columns (e.g. tsvector search_blob) — cannot be inserted
    *  into; Postgres recomputes them. We skip them on restore. */
@@ -206,9 +211,30 @@ async function columnInfo(tdb: Kysely<unknown>, table: string): Promise<ColumnIn
     where table_schema = 'public' and table_name = ${table}
   `.execute(tdb);
   return {
+    all: new Set(r.rows.map((c) => c.column_name)),
     jsonb: new Set(r.rows.filter((c) => c.data_type === "jsonb" || c.data_type === "json").map((c) => c.column_name)),
     generated: new Set(r.rows.filter((c) => c.is_generated === "ALWAYS").map((c) => c.column_name)),
   };
+}
+
+/** Which of a restored row's keys are safe to splice into the INSERT column list.
+ *
+ *  Restore reads column names straight from the uploaded backup's JSONL
+ *  (`Object.keys(row)`) and splices each one raw as `"${c}"` into an
+ *  `INSERT INTO "${t}" (...)` executed on a SUPERUSER connection. A `"` embedded
+ *  in a key would break out of the quoted identifier — superuser identifier
+ *  injection. So keep only keys that name a REAL, insertable column of the table:
+ *  present in `knownCols` (from information_schema) and not GENERATED ALWAYS.
+ *  A crafted key (`evil","x") VALUES ...`) is not a real column, so it is dropped
+ *  and never reaches SQL. Order is preserved so the INSERT column/param lists
+ *  stay aligned. Defense-in-depth on top of node-pg's extended-protocol
+ *  single-statement guarantee — never a substitute for it. */
+export function safeInsertColumns(
+  rowKeys: string[],
+  knownCols: Set<string>,
+  generatedCols: Set<string>,
+): string[] {
+  return rowKeys.filter((c) => knownCols.has(c) && !generatedCols.has(c));
 }
 
 interface ParsedBackup {
@@ -222,20 +248,35 @@ async function parseBackupZip(buf: Buffer): Promise<ParsedBackup> {
   let manifest: ParsedBackup["manifest"] | null = null;
   const tables = new Map<string, Array<Record<string, unknown>>>();
   const files = new Map<string, Buffer>();
+  // A restore is admin-triggered but the .zip is attacker-supplyable, so a
+  // decompression bomb here would OOM the shared host (audit M-BOMB). Read every
+  // entry through a running uncompressed-byte budget that aborts mid-stream, so
+  // a tiny .zip can never inflate past the ceiling — declared header size is
+  // only a cheap pre-check; the actual streamed bytes are what's enforced.
+  const budget = makeUncompressedBudget();
+  const readEntry = async (entry: (typeof dir.files)[number]): Promise<Buffer> => {
+    budget.precheck(entry.uncompressedSize);
+    const b = await readEntryBounded(entry.stream() as AsyncIterable<Uint8Array>, {
+      maxEntryBytes: budget.maxEntryBytes,
+      remainingTotalBytes: budget.remaining(),
+    });
+    budget.charge(b.length);
+    return b;
+  };
   for (const entry of dir.files) {
     if (entry.type !== "File") continue;
     if (entry.path === "manifest.json") {
-      manifest = JSON.parse((await entry.buffer()).toString("utf8"));
+      manifest = JSON.parse((await readEntry(entry)).toString("utf8"));
     } else if (entry.path.startsWith("data/") && entry.path.endsWith(".jsonl")) {
       const table = entry.path.slice("data/".length, -".jsonl".length);
-      const text = (await entry.buffer()).toString("utf8");
+      const text = (await readEntry(entry)).toString("utf8");
       const rows = text
         .split("\n")
         .filter((l) => l.trim())
         .map((l) => JSON.parse(l) as Record<string, unknown>);
       tables.set(table, rows);
     } else if (entry.path.startsWith("files/")) {
-      files.set(entry.path.slice("files/".length), await entry.buffer());
+      files.set(entry.path.slice("files/".length), await readEntry(entry));
     }
   }
   if (!manifest) throw Object.assign(new Error("manifest.json missing from backup"), { code: "bad_archive" });
@@ -257,6 +298,10 @@ backupRouter.post("/restore", requireAuth, withTenant, upload.single("file"), as
     try {
       parsed = await parseBackupZip(file.buffer);
     } catch (err) {
+      if (err instanceof BackupTooLargeError) {
+        res.status(413).json({ error: { code: err.code, message: err.message } });
+        return;
+      }
       res.status(400).json({ error: { code: "bad_archive", message: (err as Error).message } });
       return;
     }
@@ -375,11 +420,13 @@ backupRouter.post("/restore", requireAuth, withTenant, upload.single("file"), as
       for (const t of restorable) await client.query(`DELETE FROM "${t}"`);
       for (const t of restorable) {
         const rows = tables.get(t) ?? [];
-        const info = tableMeta.get(t) ?? { jsonb: new Set<string>(), generated: new Set<string>() };
+        const info = tableMeta.get(t) ?? { all: new Set<string>(), jsonb: new Set<string>(), generated: new Set<string>() };
         for (const raw of rows) {
           const row = remapFileIds(raw, fileMap) as Record<string, unknown>;
-          // Skip GENERATED columns — Postgres recomputes them on insert.
-          const cols = Object.keys(row).filter((c) => !info.generated.has(c));
+          // Only real, insertable columns reach the INSERT: drop any key that
+          // isn't a known column (superuser identifier-injection guard) and skip
+          // GENERATED columns (Postgres recomputes them). See safeInsertColumns.
+          const cols = safeInsertColumns(Object.keys(row), info.all, info.generated);
           if (cols.length === 0) continue;
           const placeholders = cols.map((c, i) => (info.jsonb.has(c) ? `$${i + 1}::jsonb` : `$${i + 1}`));
           const params = cols.map((c) => {

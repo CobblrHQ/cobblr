@@ -26,6 +26,7 @@ import { withTenant } from "../middleware/tenant.js";
 import { hashPassword } from "../auth/password.js";
 import * as activity from "../platform/activity.js";
 import { ORG_ROLES } from "@cobblr/platform-contract/org-roles";
+import { canActOnRole } from "../auth/capability.js";
 
 export const adminUsersRouter = Router({ mergeParams: true });
 
@@ -72,6 +73,19 @@ adminUsersRouter.post(
       if (!parsed.success) {
         res.status(400).json({
           error: { code: "invalid_body", message: "Bad body", details: parsed.error.issues },
+        });
+        return;
+      }
+      // Can't mint an account at a role above your own (audit H2). Only an
+      // owner may create an `owner`; an admin is capped at admin/editor and
+      // below. Without this, an admin could create an owner and inherit the
+      // owner-only powers (delete workspace, rename, app-mode lock).
+      if (!canActOnRole(req.tenant!.role, parsed.data.role)) {
+        res.status(403).json({
+          error: {
+            code: "forbidden",
+            message: "You can't create a user at a role higher than your own.",
+          },
         });
         return;
       }
@@ -178,13 +192,25 @@ adminUsersRouter.post(
       // Admins from workspace A can't reset workspace B users.
       const member = await meta
         .selectFrom("org_memberships")
-        .select("user_id")
+        .select(["user_id", "role"])
         .where("org_id", "=", req.tenant!.org.id)
         .where("user_id", "=", parsed.data.user_id)
         .executeTakeFirst();
       if (!member) {
         res.status(404).json({
           error: { code: "not_member", message: "User isn't a member of this workspace." },
+        });
+        return;
+      }
+      // Can't reset the password of someone who outranks you (audit H2). Only
+      // an owner may reset an owner — otherwise an admin could rotate the
+      // owner's password (shown once) and log in as them.
+      if (!canActOnRole(req.tenant!.role, member.role)) {
+        res.status(403).json({
+          error: {
+            code: "forbidden",
+            message: "You can't reset the password of a member who outranks you.",
+          },
         });
         return;
       }

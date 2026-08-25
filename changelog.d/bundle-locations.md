@@ -2,7 +2,7 @@
 type: feature
 scope: bundles
 date: 2026-08-23
-docs_target: docs/USER_GUIDE.md#Places a bundle sets up
+docs_target: docs/USER_GUIDE.md#4.4 Bundles (publishable presets)
 ---
 **A bundle can now offer to set up the places its things live in.** Groceries offers a Kitchen with a Fridge, Freezer and Pantry inside it, so you can put a label on each and scan things straight in. If you already have a Kitchen, they go inside the one you have and nothing already in it is moved. It is a question at install, not something that happens to you, and declining changes nothing else about how the bundle works.
 

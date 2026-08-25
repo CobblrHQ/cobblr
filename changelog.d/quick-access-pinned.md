@@ -2,7 +2,7 @@
 type: feature
 scope: knowledge
 date: 2026-08-23
-docs_target: docs/design-decisions/knowledge-base.md#Quick Access, as it shipped
+docs_target: docs/design-decisions/knowledge-base.md#Quick Access, as it shipped (2026-08-23)
 ---
 Pin a knowledge entry and it stays in the side panel on every page, so the things you keep needing are one glance away instead of one search away.
 

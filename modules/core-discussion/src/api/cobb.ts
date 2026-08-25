@@ -25,6 +25,7 @@
 
 import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { fanOutComment } from "./after-comment.js";
 import type { CoreDiscussionDB } from "../db.js";
 import { mentionsAssistant, splitMentions } from "../mentions.js";
 
@@ -221,14 +222,24 @@ export function registerCobbWorker(): void {
         .where("id", "=", p.comment_id)
         .execute();
 
-      await platform().events.emit("core-discussion.comment.posted", {
+      // The SAME fan-out a person's comment runs. Cobb's answer used to emit
+      // the event and stop, so the person who ASKED was never told the answer
+      // had arrived — fine if they were still watching the panel, silence if
+      // they asked and walked away. Speaking followed them to the thread, so
+      // the fan-out reaches them like any other reply; author null keeps every
+      // exclusion rule honest, and the name is the one they addressed.
+      await fanOutComment(db, {
         orgId: job.orgId,
-        conversation_id: p.conversation_id,
-        comment_id: p.comment_id,
-        source_module: conv.source_module,
-        source_type: conv.source_type,
-        source_id: conv.source_id,
-        author_user_id: null,
+        conversationId: p.conversation_id,
+        commentId: p.comment_id,
+        body: text,
+        authorUserId: null,
+        authorName: "Cobb",
+        source: {
+          source_module: conv.source_module,
+          source_type: conv.source_type,
+          source_id: conv.source_id,
+        },
       });
     } catch (e) {
       // A model that is not connected, a consent that was not granted, a

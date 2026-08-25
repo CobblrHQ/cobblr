@@ -5,6 +5,7 @@
 // (was previously inlined only in BundlesPage).
 
 import { useQuery } from "@tanstack/react-query";
+import { isDowngradeOrSame } from "./bundleUpdateTier";
 import { api, type PlatformBundleManifest } from "./api";
 import { useBundleCatalog } from "./useBundleCatalog";
 
@@ -52,7 +53,11 @@ export function useBundleUpdates(slug: string): BundleUpdate[] {
   const updates: BundleUpdate[] = [];
   for (const b of installed.data.items) {
     const cat = latestById.get(b.external_id);
-    if (cat && cat.manifest.version && cat.manifest.version !== b.version) {
+    // "Differs" is not "newer": during a registry lag the catalog can be BEHIND
+    // a freshly-installed version, and offering that as an update invites a
+    // hand-confirmed downgrade. Proven-backward (or equal) catalog versions are
+    // not updates; unparseable ones keep the old behaviour.
+    if (cat && cat.manifest.version && cat.manifest.version !== b.version && !isDowngradeOrSame(b.version, cat.manifest.version)) {
       updates.push({
         externalId: b.external_id,
         name: cat.manifest.name ?? b.name,

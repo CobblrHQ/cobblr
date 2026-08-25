@@ -14,11 +14,12 @@
 
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { AtSign } from "lucide-react";
-import { usePageTitle } from "@cobblr/platform-web";
-import { api, type DiscussionInboxItem } from "../lib/api";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AtSign, CheckCircle2, RotateCcw } from "lucide-react";
+import { usePageTitle, useToast } from "@cobblr/platform-web";
+import { api, ApiError, type DiscussionInboxItem } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { canResolveConversation } from "../lib/discussionPermissions";
 import { useDetailRoute } from "../lib/useDetailRoute";
 import { isWorkspaceRoom } from "@cobblr/platform-contract/workspace-room";
 
@@ -38,7 +39,23 @@ function ago(iso: string | null): string {
 /** One row, named by the record rather than by its kind. */
 function InboxRow({ item }: { item: DiscussionInboxItem }) {
   const { activeSlug, activeOrg } = useActiveOrg();
+  const qc = useQueryClient();
+  const toast = useToast();
   const detailRoute = useDetailRoute(activeSlug ?? "");
+  const canResolve = canResolveConversation(activeOrg?.role);
+  const resolved = !!item.resolved_at;
+  // Settle / reopen without leaving the list. Keyed by the conversation id the
+  // row already carries, and invalidates the same inbox key the tab does, so a
+  // change made in either place shows in both.
+  const resolve = useMutation({
+    mutationFn: (next: boolean) => api.resolveConversation(activeSlug, item.conversation_id, next),
+    onSuccess: (_r, next) => {
+      toast.success(next ? "Marked settled" : "Reopened");
+      void qc.invalidateQueries({ queryKey: ["discussion-inbox", activeSlug] });
+      void qc.invalidateQueries({ queryKey: ["discussion", activeSlug] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't change that."),
+  });
   const kind = `${item.source_module}:${item.source_type}`;
   // The room is not about a record, so there is nothing to look up. Asking
   // anyway returns nothing and renders as "(deleted)" — a workspace room that
@@ -97,16 +114,40 @@ function InboxRow({ item }: { item: DiscussionInboxItem }) {
   const card =
     "block rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3";
   return (
-    <li>
+    <li className="flex items-stretch gap-2">
       {to ? (
         <Link
           to={to}
-          className={card + " hover:border-cobble-300 dark:hover:border-cobble-700 transition"}
+          className={
+            card +
+            " flex-1 min-w-0 hover:border-cobble-300 dark:hover:border-cobble-700 transition"
+          }
         >
           {body}
         </Link>
       ) : (
-        <div className={card}>{body}</div>
+        <div className={card + " flex-1 min-w-0"}>{body}</div>
+      )}
+      {/* The settle / reopen toggle lives OUTSIDE the row's Link so tapping it
+          acts on the conversation instead of opening the record. Member and up;
+          a guest sees the "settled" badge but no way to flip it. */}
+      {canResolve && (
+        <button
+          type="button"
+          onClick={() => resolve.mutate(!resolved)}
+          disabled={resolve.isPending}
+          title={resolved ? "Settled. Click to reopen." : "Mark this conversation settled"}
+          aria-pressed={resolved}
+          aria-label={resolved ? "Reopen conversation" : "Mark settled"}
+          className={
+            "shrink-0 flex items-center justify-center w-10 rounded-md border transition " +
+            (resolved
+              ? "border-emerald-300 dark:border-emerald-800 text-emerald-500 hover:border-emerald-400"
+              : "border-line dark:border-slate-700 text-faint hover:text-content dark:hover:text-mortar-200 hover:border-cobble-300 dark:hover:border-cobble-700")
+          }
+        >
+          {resolved ? <RotateCcw size={15} /> : <CheckCircle2 size={15} />}
+        </button>
       )}
     </li>
   );

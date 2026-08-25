@@ -40,6 +40,11 @@ export interface ReceiptLineMeta {
   line_total?: unknown;
   discount?: unknown;
   code?: unknown;
+  /** What materializeReceiptLines actually stamps: the coupon key it writes is
+   *  line_discount, and the till code lands in barcode_text. The bare keys
+   *  above are kept for hand-written rows; production rows carry these. */
+  line_discount?: unknown;
+  barcode_text?: unknown;
 }
 
 /** What the receipt said, as recorded on the item it produced. */
@@ -90,13 +95,15 @@ export function receiptRecord(meta: ReceiptLineMeta | null | undefined): Receipt
     ...(str(meta.receipt_vendor) ? { vendor: str(meta.receipt_vendor)! } : {}),
     ...(str(meta.receipt_seller) ? { seller: str(meta.receipt_seller)! } : {}),
     ...(str(meta.receipt_currency) ? { currency: str(meta.receipt_currency)! } : {}),
-    ...(str(meta.code) ? { code: str(meta.code)! } : {}),
+    ...(str(meta.code ?? meta.barcode_text) ? { code: str(meta.code ?? meta.barcode_text)! } : {}),
     ...(str(meta.receipt_group_id) ? { group_id: str(meta.receipt_group_id)! } : {}),
     ...(str(meta.parse_method) ? { parse_method: str(meta.parse_method)! } : {}),
     ...(str(meta.expected_arrival) ? { expected_arrival: str(meta.expected_arrival)! } : {}),
     ...(num(meta.unit_price) !== undefined ? { unit_price: num(meta.unit_price)! } : {}),
     ...(num(meta.line_total) !== undefined ? { line_total: num(meta.line_total)! } : {}),
-    ...(num(meta.discount) !== undefined ? { discount: num(meta.discount)! } : {}),
+    ...(num(meta.discount ?? meta.line_discount) !== undefined
+      ? { discount: num(meta.discount ?? meta.line_discount)! }
+      : {}),
     ...(num(meta.net_price) !== undefined ? { net_price: num(meta.net_price)! } : {}),
     ...(num(meta.list_price) !== undefined ? { list_price: num(meta.list_price)! } : {}),
     ...(num(meta.discounts) !== undefined ? { discounts: num(meta.discounts)! } : {}),

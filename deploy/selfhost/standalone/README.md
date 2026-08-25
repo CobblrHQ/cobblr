@@ -22,7 +22,7 @@ docker compose up -d
 First boot migrates the database and creates the admin invite flow; open your
 site address and follow the signup. HTTPS ships in the box: the `caddy`
 profile (`COMPOSE_PROFILES=caddy`, the default) runs the bundled TLS proxy
-with four modes — `duckdns` | `cloudflare` | `internal` | `tsnet`
+with four modes — `cloudflare` | `internal` | `tsnet` | `duckdns` (legacy)
 (`COBBLR_TLS_MODE`). Set `COMPOSE_PROFILES=` empty to run bare behind your own
 proxy or `tailscale serve/funnel`. The web container binds to loopback always.
 
@@ -45,26 +45,25 @@ understand. Keep backups if you ride nightly; rolling back means restoring one.
 ## Backup
 
 Everything lives in bind mounts under `${COBBLR_DATA_ROOT:-./data}/` — the
-database, uploaded files, runtime-installed modules, TLS certs. Copying that
-tree while the stack is stopped is a complete backup. For a live database
-dump:
+database, uploaded files, runtime-installed modules, TLS certs. Set
+`COBBLR_DATA_ROOT` in `.env` to relocate every mount at once (a NAS, a data
+disk). Deliberately no named volumes.
+
+Copying that tree while the stack is **stopped** is a complete backup. Do not
+copy a Postgres data directory while the server is running: that is a torn
+snapshot that may not restore.
+
+For a live backup, use the dumps instead. A nightly `pg_dumpall` lands in
+`${COBBLR_DATA_ROOT}/backups/daily` (Sundays are also copied to `weekly/`),
+kept for 30 days and 12 weeks, and restores anywhere. A dump only counts as
+usable above `BACKUP_MIN_BYTES`, and retention counts only usable dumps —
+otherwise a bad week silently evicts the good backups underneath it. A
+truncated dump is kept for triage and pruned on its own shorter clock. To take
+one by hand:
 
 ```bash
 docker compose exec db sh -c 'pg_dumpall -U "$POSTGRES_USER"' | gzip > cobblr-$(date +%F).sql.gz
 ```
-
-Set `COBBLR_DATA_ROOT` in `.env` to relocate every mount at once (a NAS, a
-
-## Backups
-
-A nightly `pg_dumpall` lands in `${COBBLR_DATA_ROOT}/backups/daily` (Sundays are also
-copied to `weekly/`), kept for 30 days and 12 weeks. **Copying the data tree is not a
-substitute:** a Postgres data directory copied while the server is running is a torn
-snapshot that may not restore. The dumps restore anywhere.
-
-A dump only counts as usable above `BACKUP_MIN_BYTES`, and retention counts only usable
-dumps — otherwise a bad week silently evicts the good backups underneath it. A truncated
-dump is kept for triage and pruned on its own shorter clock.
 
 Restore one:
 
@@ -72,10 +71,8 @@ Restore one:
 gunzip -c data/backups/daily/cobblr-<stamp>.sql.gz | docker compose exec -T db psql -U cobblr
 ```
 
-**These dumps live on the same disk as the database.** Copy them somewhere else — that
-is the part this stack cannot do for you.
-
-data disk). Deliberately no named volumes.
+**These dumps live on the same disk as the database.** Copy them somewhere else
+— that is the part this stack cannot do for you.
 
 ## Troubleshooting
 

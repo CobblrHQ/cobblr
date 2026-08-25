@@ -2,7 +2,7 @@
 type: feature
 scope: fields
 date: 2026-08-22
-docs_target: docs/USER_GUIDE.md#Custom fields
+docs_target: docs/USER_GUIDE.md#4.5 Custom fields
 ---
 Sets of fields you can switch on in one click, starting with Provenance: where each thing came from, when, and what it cost.
 

@@ -19,7 +19,7 @@ export default defineModule({
   version: "0.1.0",
   displayName: "Notifications",
   description:
-    "In-app + browser-push notifications, dispatched via a per-user-per-event subscription. Other channels (email, Discord, webhook) plug in via the channel-adapter contract.",
+    "In-app notifications, dispatched via a per-user-per-event subscription. Other channels (Discord, email, browser push, webhook) plug in via the channel-adapter contract.",
   icon: "bell",
   band: "foundational",
 

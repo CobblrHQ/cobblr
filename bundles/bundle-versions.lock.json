@@ -68,8 +68,8 @@
     "hash": "24ca0447bad1d722cdd18aceb900cc1593de21513e082185d69b05a952306852"
   },
   "cobblr.flagship.groceries": {
-    "version": "0.9.0",
-    "hash": "8bf811a65cc42cbeb423275be47e7234c8b57a75c62e4c682fd1b503558797d9"
+    "version": "0.10.0",
+    "hash": "c0acaa0ac26913be2e2c35b3897b3192447b732a4b0649c26f231b926478f186"
   },
   "cobblr.flagship.grocery-spend": {
     "version": "0.1.2",

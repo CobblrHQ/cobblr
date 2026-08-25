@@ -2,7 +2,7 @@
 type: feature
 scope: purchases
 date: 2026-08-13
-docs_target: docs/USER_GUIDE.md#Purchases
+docs_target: docs/USER_GUIDE.md#3.25c Reading a purchase order
 ---
 Connect FedEx and an order with a tracking number shows where the parcel actually is, with its scan history.
 

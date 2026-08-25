@@ -149,7 +149,13 @@ export function isWindowDue(
   triggeredBy: TriggeredBy = "activity",
 ): boolean {
   const w = windowFor(window, triggeredBy);
-  if (w.mode !== "daily") return false;
+  // Immediate mode never DEFERS a new notification (shouldDefer returns false),
+  // so a bucket is only ever "immediate + non-empty" as a leftover backlog from
+  // a window that was daily when the mail queued and was then switched to
+  // immediate. That backlog must go out NOW, not sit forever — the sweeper only
+  // asks this for buckets that already have rows, so "immediate ⇒ due" flushes
+  // the backlog and nothing else (audit M-WINDOW: daily→immediate stranded it).
+  if (w.mode !== "daily") return w.mode === "immediate";
   if (localMinuteOfDay(now, w.timezone) < w.deliver_at_minute) return false;
   if (!w.last_delivered_at) return true;
   return localDay(w.last_delivered_at, w.timezone) !== localDay(now, w.timezone);
@@ -168,6 +174,52 @@ export function stampColumn(
   return triggeredBy === "schedule" && window.schedule_mode !== "inherit"
     ? "schedule_last_delivered_at"
     : "last_delivered_at";
+}
+
+/** One flush the sweeper should perform for a (user, channel): the deferred
+ *  classes to combine into a single digest, the one column to stamp after, and
+ *  whether it is due now. */
+export interface FlushGroup {
+  triggeredBys: TriggeredBy[];
+  stampColumn: "last_delivered_at" | "schedule_last_delivered_at";
+  due: boolean;
+}
+
+/**
+ * Plan the flushes for a (user, channel) given which deferred classes are
+ * present, grouping classes that share a window COLUMN so they flush together
+ * and stamp once.
+ *
+ * Why grouping and not per-class: under `schedule_mode: "inherit"` (the default,
+ * and what a window meant before there were two cadences) BOTH activity and
+ * schedule read and stamp `last_delivered_at`. Flushing them as two independent
+ * buckets let the first flush stamp the column and the second then read "already
+ * delivered today" and hold until tomorrow, where the same race repeats — so one
+ * class's mail, most visibly the morning brief, silently stopped arriving for
+ * anyone who also chats (audit B4b). Merging inherit's classes into one flush is
+ * both the fix and the faithful behaviour: inherit is one cadence, so it is one
+ * message. A non-inherit schedule keeps its own column and stays a separate
+ * group. A null window (no row) means everything is due now.
+ */
+export function planDeliveryGroups(
+  window: DeliveryWindow | null,
+  present: readonly TriggeredBy[],
+  now: Date,
+): FlushGroup[] {
+  const byColumn = new Map<FlushGroup["stampColumn"], TriggeredBy[]>();
+  for (const tb of present) {
+    const col = window ? stampColumn(window, tb) : "last_delivered_at";
+    const list = byColumn.get(col) ?? [];
+    list.push(tb);
+    byColumn.set(col, list);
+  }
+  return [...byColumn].map(([col, tbs]) => ({
+    triggeredBys: tbs,
+    stampColumn: col,
+    // Every class in a column group resolves to the same window VIEW (that is
+    // why they share a column), so any member decides dueness for the group.
+    due: window ? isWindowDue(window, now, tbs[0]!) : true,
+  }));
 }
 
 export interface DeferredItem {

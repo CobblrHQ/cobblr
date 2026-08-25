@@ -52,3 +52,19 @@ export async function listMembershipsForUser(userId: string) {
     .orderBy("m.joined_at", "asc")
     .execute();
 }
+
+/** THE query for "who is a current member of this workspace" — the one the
+ *  membership FILTER (@cobblr/platform-contract/membership keepMembers) is fed.
+ *
+ *  Every workspace-scoped notification path intersects its audience with this:
+ *  the platform dispatcher (one recipient) and the discussion module's mention
+ *  fan-out + follow rows (many). It exists as one function so those cannot
+ *  disagree on who counts — a stranger the filter forgot is a cross-tenant DM. */
+export async function orgMemberIds(orgId: string): Promise<Set<string>> {
+  const rows = await meta
+    .selectFrom("org_memberships")
+    .select("user_id")
+    .where("org_id", "=", orgId)
+    .execute();
+  return new Set(rows.map((r) => String(r.user_id)));
+}

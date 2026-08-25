@@ -72,16 +72,16 @@ export function ScanResolversTab() {
           {items.map((r) => {
             const m = (r.manifest ?? {}) as { match?: { pattern?: string } };
             return (
-              <li key={r.resolver_id} className="rounded-lg border border-line bg-surface p-3">
+              <li key={r.resolver_id} className="rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3">
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="font-medium text-content truncate">{r.label}</span>
-                      <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-subtle text-muted">
+                      <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-subtle dark:bg-slate-800 text-muted dark:text-slate-400">
                         {r.builtin ? "built-in" : "custom"}
                       </span>
                       {!r.enabled && (
-                        <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-subtle text-accent">
+                        <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-subtle dark:bg-slate-800 text-accent">
                           off
                         </span>
                       )}
@@ -93,13 +93,13 @@ export function ScanResolversTab() {
                   <div className="flex items-center gap-1 shrink-0">
                     <button
                       onClick={() => toggle.mutate(r)}
-                      className="px-2 py-1 text-xs rounded border border-line text-muted hover:text-content"
+                      className="px-2 py-1 text-xs rounded border border-line dark:border-slate-600 text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100"
                     >
                       {r.enabled ? "Disable" : "Enable"}
                     </button>
                     <button
                       onClick={() => setEditing(r)}
-                      className="p-1.5 rounded border border-line text-muted hover:text-content"
+                      className="p-1.5 rounded border border-line dark:border-slate-600 text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100"
                       title={r.builtin ? "Override" : "Edit"}
                     >
                       <Pencil size={13} />
@@ -118,7 +118,7 @@ export function ScanResolversTab() {
                           )
                             remove.mutate(r.resolver_id);
                         }}
-                        className="p-1.5 rounded border border-line text-muted hover:text-content"
+                        className="p-1.5 rounded border border-line dark:border-slate-600 text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100"
                         title="Remove"
                       >
                         <Trash2 size={13} />
@@ -154,14 +154,14 @@ function TestBox() {
     onSuccess: setResult,
   });
   return (
-    <div className="rounded-lg border border-line bg-subtle p-3">
+    <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 p-3">
       <div className="flex items-center gap-2">
         <FlaskConical size={15} className="text-muted shrink-0" />
         <input
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           placeholder="Paste a scanned URL to test (e.g. https://3dqr.co/?i=52435-20V0)"
-          className="flex-1 min-w-0 px-2 py-1.5 rounded border border-line bg-surface text-sm text-content"
+          className="flex-1 min-w-0 px-2 py-1.5 rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 text-sm text-content"
         />
         <button
           disabled={!url.trim() || run.isPending}
@@ -177,7 +177,7 @@ function TestBox() {
             <div className="text-content">
               <span className="text-accent font-medium">✓ resolved</span> — {result.resolution.name}{" "}
               <span className="text-faint">({result.resolution.source})</span>
-              <pre className="mt-1 text-xs bg-surface border border-line rounded p-2 overflow-x-auto">
+              <pre className="mt-1 text-xs bg-surface dark:bg-slate-900 border border-line dark:border-slate-700 rounded p-2 overflow-x-auto">
                 {JSON.stringify(result.resolution.fields, null, 2)}
               </pre>
             </div>
@@ -229,7 +229,7 @@ function EditModal({
           hint="The resolver manifest as JSON."
         />
         <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="px-3 py-2 rounded-md border border-line text-sm text-muted">
+          <button onClick={onClose} className="px-3 py-2 rounded-md border border-line dark:border-slate-600 text-sm text-muted dark:text-slate-400">
             Cancel
           </button>
           <button

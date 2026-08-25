@@ -2,7 +2,7 @@
 type: feature
 scope: purchases
 date: 2026-08-13
-docs_target: docs/USER_GUIDE.md#Purchases
+docs_target: docs/USER_GUIDE.md#3.25c Reading a purchase order
 ---
 An order with an expected arrival date now asks you whether it turned up, on the day it was due, instead of sitting open forever.
 

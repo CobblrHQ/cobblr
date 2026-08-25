@@ -194,6 +194,25 @@ if (LOCATION !== -1 && FILE_ALL !== -1) {
 // `gap-2` meant tightening the row's spacing - eleven gaps, so the half-step is
 // most of a control back - reported the bar as missing (2026-08-24). The
 // gap size is a style; `data-session-header` is the identity.
+// On a PHONE the row must scroll, not clip.
+//
+// The row deliberately never wraps, and on sm+ overflow-hidden clips it inside
+// its own bar. Below sm that same rule amputated the row's two primary actions:
+// Location and File all sat past the clip with no scroll and no way to reach
+// them (2026-08-25 audit, 497px of controls in a 350px row). So the class pair
+// is load-bearing: overflow-x-auto for phones, sm:overflow-hidden for the
+// desktop clip. Losing either half regresses one of the two reports.
+{
+  const hdrTag = src.slice(src.indexOf(ANCHOR), src.indexOf(ANCHOR) + 600);
+  if (!/overflow-x-auto\s+sm:overflow-hidden/.test(hdrTag)) {
+    errors.push(
+      "the session header row must carry `overflow-x-auto sm:overflow-hidden` - " +
+        "phones scroll to reach Location/File all, desktop clips instead of pushing " +
+        "the page sideways. One class without the other regresses a shipped fix.",
+    );
+  }
+}
+
 // Nothing inside this row may be ABSOLUTELY POSITIONED.
 //
 // The row is deliberately overflow-hidden so a row that does not fit is clipped

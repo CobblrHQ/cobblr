@@ -11,6 +11,7 @@
 // its own purchases_order_items.part_id for history) — it never touches
 // inventory's tables or imports its code.
 
+import { arrivedEverywhere } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { OrderStatus, PurchasesDB } from "../db.js";
@@ -182,7 +183,9 @@ export function registerPurchasesActionHandlers(): void {
     // not re-emit the arrival and double-bump stock.
     if (before.status === "arrived") return { ok: true, skipped: "already arrived" };
 
-    const arrivedOn = args.arrivedOn ?? new Date().toISOString().slice(0, 10);
+    // NOT the UTC day: pressing "Yes, it turned up" at 8pm US Eastern stamped
+    // TOMORROW's date. arrivedEverywhere lags, never leads.
+    const arrivedOn = args.arrivedOn ?? arrivedEverywhere(new Date());
     await db
       .updateTable("purchases_orders")
       .set({ status: "arrived" as OrderStatus, arrived_at: arrivedOn, updated_at: new Date() } as never)

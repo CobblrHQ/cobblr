@@ -11,23 +11,10 @@
 
 import net from "node:net";
 import { lookup } from "node:dns/promises";
-
-function isPrivateIp(ip: string): boolean {
-  if (ip === "::1" || ip.startsWith("fe80:") || ip.startsWith("fc") || ip.startsWith("fd")) return true;
-  // IPv4-mapped IPv6 (::ffff:10.0.0.1) — unwrap and recheck.
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
-  if (mapped) return isPrivateIp(mapped[1]!);
-  const p = ip.split(".").map(Number);
-  if (p.length !== 4 || p.some((n) => Number.isNaN(n))) return false;
-  const a = p[0]!, b = p[1]!;
-  return (
-    a === 127 || a === 10 ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168) ||
-    (a === 169 && b === 254) ||
-    a === 0
-  );
-}
+// The ONE canonical private-IP rule. This module's own copy used to miss the
+// Tailscale/CGNAT range (100.64/10), so an admin-configured webhook/http
+// connector pointed at a tailnet address slipped through (audit B2c).
+import { isPrivateIp } from "@cobblr/platform-contract/private-ip";
 
 function internalAllowed(): boolean {
   return (

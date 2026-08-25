@@ -7,11 +7,9 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { tenantContext, tenantDb, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { reconcileMentions } from "./reconcile.js";
-import { followRecord, notifyAboutComment } from "./audience.js";
 import { askCobb, summonsCobb } from "./cobb.js";
-import { userMentions } from "../mentions.js";
-import { isWorkspaceRoom } from "@cobblr/platform-contract/workspace-room";
+import { fanOutComment } from "./after-comment.js";
+import { reconcileMentions } from "./reconcile.js";
 
 export const discussionRouter = Router({ mergeParams: true });
 
@@ -199,31 +197,6 @@ discussionRouter.post(
       source_id: parsed.data.source_id,
     });
 
-    // A notification that says "commented on machines:machine" is the machine's
-    // version of the answer. Resolve the record's name; fall back to the kind
-    // rather than failing the comment if the resolver cannot.
-    // The ROOM is not a record, so there is nothing to look up and the kind is
-    // a sentinel. Left to the fallback below it produced, in a real Discord DM:
-    //
-    //   "Sam mentioned you on @workspace:workspace"
-    //
-    // The workspace's own name is the answer, and it is already in hand.
-    const room = isWorkspaceRoom(src);
-    let recordTitle = room
-      ? ctx.org.name || "your workspace"
-      : `${src.source_module}:${src.source_type}`;
-    try {
-      if (room) throw new Error("skip lookup");
-      const resolved = await platform().entities.lookup(
-        ctx.org.id,
-        `${src.source_module}:${src.source_type}`,
-        parsed.data.source_id,
-      );
-      if (resolved?.title) recordTitle = resolved.title;
-    } catch {
-      /* the name is a nicety; the notification still has to go */
-    }
-
     const comment = await db
       .insertInto("core_discussion_comments")
       .values({
@@ -236,54 +209,18 @@ discussionRouter.post(
       .returningAll()
       .executeTakeFirstOrThrow();
 
-    await reconcileMentions(db, {
+    // Everything a comment sets in motion — mention links, reopening, follows,
+    // notifications, the posted event — lives in ONE function, because it used
+    // to live here inline and the action door (a Discord Reply) had none of it.
+    await fanOutComment(db, {
       orgId: ctx.org.id,
       conversationId,
       commentId: comment.id,
       body: parsed.data.body,
-      record: { kind: `${src.source_module}:${src.source_type}`, id: parsed.data.source_id },
-      userId: user?.id ?? null,
-    });
-
-    // Posting into a settled conversation opens it again: a resolve is a
-    // bookmark meaning "decided", never a lock.
-    await db
-      .updateTable("core_discussion_conversations")
-      .set({ updated_at: new Date(), resolved_at: null, resolved_by: null })
-      .where("id", "=", conversationId)
-      .execute();
-
-    // Speaking is following. You are then told when somebody answers, which is
-    // the whole reason to say anything in a shared place.
-    if (user?.id) {
-      await followRecord(db, {
-        source: { ...src, source_id: parsed.data.source_id },
-        userId: user.id,
-        reason: "commented",
-      });
-    }
-    // Being NAMED also follows: you were pulled in, so you should hear the
-    // reply without having to remember to come back.
-    for (const named of userMentions(parsed.data.body)) {
-      await followRecord(db, {
-        source: { ...src, source_id: parsed.data.source_id },
-        userId: named,
-        reason: "mentioned",
-      });
-    }
-
-    await notifyAboutComment(db, {
-      orgId: ctx.org.id,
-      conversationId,
-      source: { ...src, source_id: parsed.data.source_id },
-      body: parsed.data.body,
       authorUserId: user?.id ?? null,
       authorName: user?.display_name || "Somebody",
-      recordLabel: recordTitle,
-      // "mentioned you ON the blue widget" but "IN the workspace": a room is
-      // somewhere you are, a record is something you are looking at.
-      inRoom: room,
-      link: null,
+      source: { ...src, source_id: parsed.data.source_id },
+      roomLabel: ctx.org.name || undefined,
     });
 
     // Cobb, if he was addressed. Either by name, or by replying to something he
@@ -312,15 +249,6 @@ discussionRouter.post(
         requestedBy: user?.id ?? null,
       });
     }
-
-    await platform().events.emit("core-discussion.comment.posted", {
-      orgId: ctx.org.id,
-      conversation_id: conversationId,
-      comment_id: comment.id,
-      ...src,
-      source_id: parsed.data.source_id,
-      author_user_id: user?.id ?? null,
-    });
 
     res.status(201).json({ comment });
   }),

@@ -21,7 +21,7 @@ import { RepurchaseControls } from "../components/RepurchaseControls";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, CheckCircle, ChevronDown, Download, ExternalLink, FileText, Flag, Image as ImageIcon, ImagePlus, LayoutGrid, Library, List, Loader2, MapPin, MonitorSmartphone, MoreHorizontal, Pencil, ReceiptText, RefreshCw, RotateCcw, ScanLine, Scissors, Search, Sparkles, Tag, Trash2, Truck, Upload, Wand2, X, Zap } from "lucide-react";
-import { Modal, useImageSrc, useOverlayOpenFlag, useToast, useConfirm, usePageTitle, colorSwatch, wantsSwatch } from "@cobblr/platform-web";
+import { Modal, useImageSrc, useOverlayOpenFlag, useToast, usePageTitle, colorSwatch, wantsSwatch } from "@cobblr/platform-web";
 import { ScanImportModal } from "../components/ScanImportModal";
 import { ExportInboxModal } from "../components/ExportInboxModal";
 import { CameraCaptureSheet } from "../components/CameraCaptureSheet";
@@ -1588,14 +1588,18 @@ export function ScanPage() {
     onSuccess: (r) => {
       const ids = r.confirmed.filter((c) => !c.error && c.itemId).map((c) => c.itemId);
       const n = ids.length;
+      // The server reports per-line failures IN the response - "4 lines, 2
+      // failed" must not read as a clean "2 items" (2026-08-25 audit).
+      const failedN = r.confirmed.filter((c) => c.error).length;
+      const trouble = failedN ? ` · ${failedN} line${failedN === 1 ? "" : "s"} failed and stayed in the inbox` : "";
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
       void qc.invalidateQueries({ queryKey: ["scan-inbox-resolved", activeSlug] });
       // Undo inline — a mis-tapped "Confirm as purchase order" sends every line
       // back to the inbox (and removes the created part), unsorted, in one tap.
       toast.action(
-        r.order_id
+        (r.order_id
           ? `Purchase order created — ${n} item${n === 1 ? "" : "s"}${r.vendor ? ` from ${r.vendor}` : ""}`
-          : `Confirmed ${n} item${n === 1 ? "" : "s"} (enable Purchases to group them into an order)`,
+          : `Confirmed ${n} item${n === 1 ? "" : "s"} (enable Purchases to group them into an order)`) + trouble,
         {
           actionLabel: "Undo",
           duration: 8000,
@@ -1614,26 +1618,46 @@ export function ScanPage() {
   const confirmAllReceipts = async () => {
     setConfirmingAll(true);
     let orders = 0;
+    let failedLines = 0;
+    let failedGroups = 0;
+    let lastErr: string | null = null;
     const committedIds: string[] = [];
     try {
       for (const g of receiptGroups) {
         try {
           const r = await api.confirmReceiptGroup(activeSlug, g.groupId);
           if (r.order_id) orders += 1;
-          for (const c of r.confirmed) if (!c.error && c.itemId) committedIds.push(c.itemId);
-        } catch {
-          /* skip a failed group; the others still go */
+          // The server reports per-line failures IN the response; filtering
+          // them out silently made "4-line receipt, 2 failed" read as a clean
+          // "2 items" success (2026-08-25 audit).
+          for (const c of r.confirmed) {
+            if (!c.error && c.itemId) committedIds.push(c.itemId);
+            else if (c.error) failedLines++;
+          }
+        } catch (e) {
+          failedGroups++;
+          lastErr = e instanceof ApiError ? e.message : String(e);
         }
       }
       await qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
       await qc.invalidateQueries({ queryKey: ["scan-inbox-resolved", activeSlug] });
       const itemsN = committedIds.length;
+      if (itemsN === 0 && (failedGroups > 0 || failedLines > 0)) {
+        // Nothing landed. The old message here blamed a missing Purchases
+        // module for what was an API failure, over an Undo that undid nothing.
+        toast.error(`Couldn't confirm the receipts${lastErr ? ` - ${lastErr}` : ""}`);
+        return;
+      }
+      const trouble =
+        failedLines || failedGroups
+          ? ` · ${failedLines + failedGroups} ${failedLines ? "line" : "receipt"}${failedLines + failedGroups === 1 ? "" : "s"} failed and stayed in the inbox`
+          : "";
       // Undo the WHOLE bulk commit — one tap sends every line from every receipt
       // back to the inbox, unsorted, if "Confirm all" was premature (reported 2026-07-24).
       toast.action(
-        orders
+        (orders
           ? `Created ${orders} purchase order${orders === 1 ? "" : "s"} (${itemsN} item${itemsN === 1 ? "" : "s"})`
-          : `Confirmed ${itemsN} item${itemsN === 1 ? "" : "s"} (enable Purchases to group them into orders)`,
+          : `Confirmed ${itemsN} item${itemsN === 1 ? "" : "s"} (enable Purchases to group them into orders)`) + trouble,
         {
           actionLabel: "Undo all",
           duration: 10000,
@@ -1780,6 +1804,9 @@ export function ScanPage() {
   //   waiting to BECOME records, and their ids mean nothing to the tools
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  /** "Filing 12 of 40…" while a long batch runs - the only honest feedback a
+   *  serial loop can give. Null when nothing is in flight. */
+  const [bulkProgress, setBulkProgress] = useState<string | null>(null);
   const toggleSelected = (id: string) =>
     setSelected((s) => {
       const n = new Set(s);
@@ -2013,6 +2040,9 @@ export function ScanPage() {
   useEffect(() => {
     if (!editingPo && !editingTracking && !trackingPopover) return;
     const closeAll = () => {
+      // Escape must not dump keyboard users at the document root - hand focus
+      // back to the trigger, the way the destination menu does.
+      if (trackingPopover) trackingPopRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
       setEditingPo(null);
       setEditingTracking(null);
       setTrackingPopover(null);
@@ -2116,7 +2146,16 @@ export function ScanPage() {
   // the per-session "File all" button. A pending item without a confident
   // candidate or a name stays pending for a manual look and is reported;
   // already-resolved items in the set are skipped silently.
-  const confirm = useConfirm();
+  // The batch question, with a choice PER TABLE. The shared confirm was
+  // all-or-nothing: "file where they belong" moved every group or none, so
+  // agreeing about the teas meant also agreeing about the spices. Same promise
+  // bridge the ConfirmProvider uses - the async chokepoint awaits, the modal
+  // resolves - with the answer being which tables you accepted.
+  const [batchAsk, setBatchAsk] = useState<{
+    groups: Array<{ instance: string; label: string; count: number; sample: string }>;
+    resolve: (accepted: Set<string> | null) => void;
+  } | null>(null);
+  const [batchAccepted, setBatchAccepted] = useState<Set<string>>(new Set());
 
   const confirmItemsToTheirCandidate = async (
     ids: Iterable<string>,
@@ -2163,20 +2202,29 @@ export function ScanPage() {
     }
     if (misrouted.size > 0) {
       const groups = [...misrouted.values()];
-      const total = groups.reduce((n, g) => n + g.names.length, 0);
-      const lines = groups
-        .map((g) => `${g.names.length} look${g.names.length === 1 ? "s" : ""} like ${g.label}: ${g.names.slice(0, 3).join(", ")}${g.names.length > 3 ? `, +${g.names.length - 3}` : ""}`)
-        .join("\n");
-      const useSuggested = await confirm({
-        title: `${total} of these may belong somewhere else`,
-        message: `${lines}\n\nFile them where they look like they belong, or carry on filing everything as it is.`,
-        confirmLabel: "File where they belong",
-        cancelLabel: "File as-is",
+      // Every table starts ACCEPTED: the common case is "yes, obviously" (five
+      // teas to Tea), and the checkbox exists for the one group you disagree
+      // with - unticking it files that group as-is without costing the others.
+      setBatchAccepted(new Set(groups.map((g) => g.entry.instance ?? g.entry.module)));
+      const accepted = await new Promise<Set<string> | null>((resolve) => {
+        setBatchAsk({
+          groups: groups.map((g) => ({
+            instance: g.entry.instance ?? g.entry.module,
+            label: g.label,
+            count: g.ids.length,
+            sample: `${g.names.slice(0, 3).join(", ")}${g.names.length > 3 ? `, +${g.names.length - 3}` : ""}`,
+          })),
+          resolve,
+        });
       });
-      if (useSuggested) {
-        // Each group goes to ITS OWN table in the one pass: five teas to Tea and
-        // five spices to Spices, from a single press.
-        for (const g of groups) {
+      setBatchAsk(null);
+      // Closing the dialog aborts the whole filing - nothing moves, nothing
+      // files. Escape must never mean "do the irreversible thing anyway".
+      if (accepted === null) return;
+      {
+        // Each ACCEPTED group goes to its own table in the one pass: five teas
+        // to Tea and five spices to Spices; an unticked group files as-is.
+        for (const g of groups.filter((g) => accepted.has(g.entry.instance ?? g.entry.module))) {
           for (const id of g.ids) {
             const it = byId.get(id);
             if (!it) continue;
@@ -2239,12 +2287,26 @@ export function ScanPage() {
     let ok = 0;
     let skipped = 0;
     let failed = 0;
-    for (const id of ids) {
+    let lastErr: string | null = null;
+    let n = 0;
+    for (const id of idList) {
+      n++;
+      // A 40-line receipt is 40 serial round-trips; with no visible progress
+      // users reloaded the tab mid-batch. The label is the progress bar.
+      if (idList.length > 5) setBulkProgress(`Filing ${n} of ${idList.length}…`);
       const it = byId.get(id);
       const bundleId = (it?.suggested_candidates?.[0] as { bundle_external_id?: string } | undefined)
         ?.bundle_external_id;
       const body = it
-        ? confirmBodyFor(it, agreedCategory, agreedLocationId, (bundleId && installed.get(bundleId)) || null)
+        ? confirmBodyFor(
+            it,
+            agreedCategory,
+            agreedLocationId,
+            (bundleId && installed.get(bundleId)) || null,
+            // The DECLARED category axis, so the agreed category applies even
+            // when the stored value spells it differently than the candidate.
+            categoryAxisKey(it, menu),
+          )
         : null;
       if (!body) {
         if (it && it.status === "pending") skipped++;
@@ -2253,15 +2315,22 @@ export function ScanPage() {
       try {
         await api.confirmScanItem(activeSlug, id, body);
         ok++;
-      } catch {
+      } catch (e) {
         failed++;
+        // The endpoint's message is actionable ("Enable Inventory in
+        // Configuration") - throwing it away turned every total failure into
+        // an unexplained green "0 confirmed · N failed" (2026-08-25 audit).
+        lastErr = e instanceof Error ? e.message : String(e);
       }
     }
+    setBulkProgress(null);
     void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
     const parts = [`${ok} confirmed`];
     if (skipped) parts.push(`${skipped} need a manual look`);
-    if (failed) parts.push(`${failed} failed`);
-    toast.success(parts.join(" · "));
+    if (failed) parts.push(`${failed} failed${lastErr ? ` - ${lastErr}` : ""}`);
+    if (ok === 0 && failed > 0) toast.error(parts.join(" · "));
+    else if (failed > 0) toast.info(parts.join(" · "));
+    else toast.success(parts.join(" · "));
     return { ok, skipped, failed };
   };
   const bulkConfirm = async () => {
@@ -2291,23 +2360,40 @@ export function ScanPage() {
   /** Give every item in a session one location, without filing anything. The
    *  header's location chip uses this: a person who wants to say "these all live
    *  in the closet" should not have to commit them in the same breath. */
-  const applySessionLocation = async (ids: string[], locId: string) => {
+  const applySessionLocation = async (ids: string[], locId: string, onlyUnset = false) => {
     setBulkBusy(true);
     let ok = 0;
-    for (const id of ids) {
+    let lastErr: string | null = null;
+    // A location a user picked for ONE item (the camera's "where does this one
+    // go?", the card picker) is a decision, not a blank - the session chip must
+    // fill gaps, never overwrite it. The chip itself knows the set is mixed;
+    // the write has to know it too.
+    const byId = new Map(items.map((i) => [i.id, i]));
+    const targets = onlyUnset
+      ? ids.filter((id) => !byId.get(id)?.target_location_id)
+      : ids;
+    for (const id of targets) {
       try {
         await api.updateScanItem(activeSlug, id, { target_location_id: locId });
         ok++;
-      } catch {
-        /* skip failures - the toast reports the count that landed */
+      } catch (e) {
+        lastErr = e instanceof Error ? e.message : String(e);
       }
     }
     setBulkBusy(false);
     void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
     const loc = (locsQ.data?.items ?? []).find((l) => l.id === locId);
-    toast.success(
-      `${ok} item${ok === 1 ? "" : "s"} set to ${loc ? filingLabel(loc) : "the location"}. File when you are ready.`,
-    );
+    const where = loc ? filingLabel(loc) : "the location";
+    if (ok === 0 && targets.length > 0) {
+      // "0 items set to Kitchen Shelf" in a green toast is a failure wearing a
+      // success costume (2026-08-25 audit).
+      toast.error(`Couldn't set the location${lastErr ? ` - ${lastErr}` : ""}`);
+    } else {
+      const kept = onlyUnset && targets.length < ids.length ? ids.length - targets.length : 0;
+      toast.success(
+        `${ok} item${ok === 1 ? "" : "s"} set to ${where}${kept ? ` (${kept} kept the place you already gave them)` : ""}. File when you are ready.`,
+      );
+    }
   };
 
   return (
@@ -2948,7 +3034,24 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
       )}
 
       {list.isLoading && <div className="text-sm text-faint">loading…</div>}
-      {!list.isLoading && items.length === 0 && (
+      {/* An error is NOT an empty inbox. Rendering the friendly empty state on
+          a failed fetch told a user with 80 pending scans that they had none,
+          and they re-scanned things they already had (2026-08-25 audit). */}
+      {list.isError && !list.isLoading && (
+        <div className="rounded-md border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 p-6 text-center">
+          <div className="text-sm text-red-800 dark:text-red-300">
+            Couldn't load your scan inbox. Your items are still there.
+          </div>
+          <button
+            type="button"
+            onClick={() => void list.refetch()}
+            className="mt-2 rounded-md border border-red-300 dark:border-red-700 px-3 py-1 text-sm text-red-800 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/30"
+          >
+            Try again
+          </button>
+        </div>
+      )}
+      {!list.isLoading && !list.isError && items.length === 0 && (
         <div className="rounded-md border border-dashed border-line dark:border-slate-700 p-8 text-center">
           <ScanLine size={28} className="mx-auto text-faint dark:text-slate-600 mb-2" />
           <div className="text-sm text-muted dark:text-slate-400">
@@ -3331,6 +3434,22 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
               {visibleItems.length} of {items.length} shown
             </span>
           )}
+          {/* Filtered to NOTHING: without this the list under "0 of 81 shown"
+              was a blank void, and the tiny counter is easy to miss. One click
+              back to everything. */}
+          {items.length > 0 && visibleItems.length === 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                setSearchQ("");
+                setReviewOnly(false);
+                setStaleOnly(false);
+              }}
+              className="rounded-md border border-line dark:border-slate-700 px-2 py-0.5 text-xs text-muted dark:text-slate-400 hover:bg-subtle dark:hover:bg-slate-800"
+            >
+              nothing matches - clear filters
+            </button>
+          )}
           <span className="flex-1" />
           <div className="inline-flex items-center rounded-full border border-line dark:border-slate-700 p-0.5">
             {(
@@ -3554,9 +3673,15 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
             const trackingArrival = arrivalOf(g.items);
             return (
               <div key={g.key} id={g.batchId ? `s-${g.batchId}` : undefined} className="space-y-2 scroll-mt-24">
-                {/* ONE row, always. No `flex-wrap`, and `overflow-hidden` so a
-                    session with every control present clips inside its own bar
-                    instead of pushing the page sideways.
+                {/* ONE row, always. No `flex-wrap`; on sm+ `overflow-hidden`
+                    clips a session with every control present inside its own
+                    bar instead of pushing the page sideways. Below sm the SAME
+                    rule amputated the row's two primary actions - Location and
+                    File all sat past the clip with no way to reach them
+                    (2026-08-25 audit, measured 497px of controls in a 350px
+                    row) - so a phone gets a horizontally scrollable row: every
+                    control reachable by swipe, page body still never scrolls
+                    sideways.
 
                     `data-session-header` is the anchor lint:scan-session-header
                     slices on. It used to find this row by the first
@@ -3569,7 +3694,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                   data-session-header
                   // gap-1.5, not gap-2: eleven gaps across this row, so the
                   // half-step is most of a control's width back.
-                  className="flex w-full items-center gap-1.5 overflow-hidden rounded-md bg-mortar-50 dark:bg-slate-800/40 px-2.5 py-1.5 text-left text-xs"
+                  className="flex w-full items-center gap-1.5 overflow-x-auto sm:overflow-hidden rounded-md bg-mortar-50 dark:bg-slate-800/40 px-2.5 py-1.5 text-left text-xs"
                 >
                   {/* Burst select-all: grab the whole session for the
                       bulk toolbar (location / confirm / discard). */}
@@ -3781,9 +3906,6 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       receipt-only, so leaving them on the right made the trio
                       shift column depending on whether a session came from a
                       receipt or a scan. */}
-                  {g.sourceFileId && (
-                    <span className="hidden" />
-                  )}
                   {/* Edit the order/invoice #. Purchase-only — see isReceiptSession. */}
                   {isReceiptSession &&
                     (editingPo === g.batchId ? (
@@ -3798,7 +3920,10 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                           value={poInput}
                           onChange={(e) => setPoInput(e.target.value)}
                           onKeyDown={(e) => {
-                            if (e.key === "Enter") setOrderRef.mutate({ batchId: g.batchId!, orderRef: poInput.trim() || null });
+                            // The save button is disabled while pending; Enter
+                            // must carry the same guard or held-Enter fires N
+                            // identical PATCHes.
+                            if (e.key === "Enter" && !setOrderRef.isPending) setOrderRef.mutate({ batchId: g.batchId!, orderRef: poInput.trim() || null });
                           }}
                           placeholder="order #"
                           // Sized to the number it is HOLDING. A fixed w-24 fits
@@ -3822,9 +3947,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                           ✕
                         </button>
                       </span>
-                    ) : (
-                      <span className="hidden" />
-                    ))}
+                    ) : null)}
                   {/* Out on the row, not behind a glyph, and BEFORE the parcel
                       control: these two read the document, and following a parcel
                       or adding a number are things you do once. Rare last.
@@ -3870,7 +3993,9 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                           value={trackingInput}
                           onChange={(e) => setTrackingInput(e.target.value)}
                           onKeyDown={(e) => {
-                            if (e.key === "Enter")
+                            // Same pending guard the save button has - held
+                            // Enter fired N identical PATCHes without it.
+                            if (e.key === "Enter" && !setTracking.isPending)
                               setTracking.mutate({ batchId: g.batchId!, tracking: trackingInput.trim() || null });
                           }}
                           placeholder="tracking #"
@@ -3924,9 +4049,17 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                             // Measured from the button, because the panel is
                             // PORTALED out of this row - see below.
                             const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                            setTrackingRect({ top: r.bottom + 6, left: r.left });
+                            // Clamped: the button sits near the row's right
+                            // edge, so a raw r.left put most of the 256px panel
+                            // past a phone's viewport.
+                            setTrackingRect({
+                              top: r.bottom + 6,
+                              left: Math.max(8, Math.min(r.left, window.innerWidth - 256 - 8)),
+                            });
                             setTrackingPopover(trackingPopover === g.batchId ? null : g.batchId!);
                           }}
+                          aria-haspopup="dialog"
+                          aria-expanded={trackingPopover === g.batchId}
                           title={
                             g.trackingNumber
                               ? "Where this parcel is, and the number"
@@ -3983,6 +4116,8 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                           // the surface a phone user reaches for most.
                           <div
                             data-portal-panel
+                            role="dialog"
+                            aria-label="Parcel status"
                             onClick={(e) => e.stopPropagation()}
                             style={{ top: trackingRect.top, left: trackingRect.left }}
                             className="fixed z-[61] w-64 rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-2.5 shadow-lg space-y-1.5 text-left"
@@ -4030,7 +4165,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       location only surfaced as a surprise question after the tap
                       (reported 2026-07-30). Now the missing half says so, and is one
                       tap from being set - set the location, then file. */}
-                  {busy === 0 && readyIds.length > 0 && !fileBin && (
+                  {busy === 0 && readyIds.length > 0 && !fileBin && hasLocations && (
                     <button
                       type="button"
                       onClick={(e) => {
@@ -4095,7 +4230,12 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       disabled={bulkBusy}
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (filing.reason === "location") {
+                        // No locations to pick from (module off, or none made
+                        // yet) -> filing directly IS the answer. The old flow
+                        // opened a picker showing "No locations yet" and made
+                        // the user find the small "File without a location"
+                        // link on every session, forever (2026-08-25 audit).
+                        if (filing.reason === "location" && hasLocations) {
                           setPlacingMode("file");
                           setPlacingSession(g.key);
                         } else {
@@ -4143,7 +4283,11 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                               already in them — a visible double space
                               (reported 2026-08-21). */}
                           <span>
-                            File<span className="hidden sm:inline"> all</span> {readyIds.length}
+                            {bulkProgress ?? (
+                              <>
+                                File<span className="hidden sm:inline"> all</span> {readyIds.length}
+                              </>
+                            )}
                           </span>
                           {sessionCat.suggestion ? (
                             <span className="hidden sm:inline max-w-[9rem] truncate opacity-80">
@@ -4160,7 +4304,11 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                               already in them — a visible double space
                               (reported 2026-08-21). */}
                           <span>
-                            File<span className="hidden sm:inline"> all</span> {readyIds.length}
+                            {bulkProgress ?? (
+                              <>
+                                File<span className="hidden sm:inline"> all</span> {readyIds.length}
+                              </>
+                            )}
                           </span>
                           {sessionCat.suggestion ? (
                             // "as", the same word the other branch uses. The two
@@ -4200,7 +4348,10 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                     <Link
                       to={`/scan?batch=${g.batchId}`}
                       title="Review just this session"
-                      className="hidden sm:inline shrink-0 text-faint hover:text-accent"
+                      // Visible on phones too: this is the ONLY route to the
+                      // per-session view, and the row scrolls now, so hiding it
+                      // below sm made per-session review unreachable on mobile.
+                      className="shrink-0 text-faint hover:text-accent"
                     >
                       open →
                     </Link>
@@ -4243,7 +4394,11 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                 currentLocationId={sessionLoc.id}
                 onPick={(v) => {
                   setPlacingSession(null);
-                  if (placingMode === "set") void applySessionLocation(readyIds, v);
+                  if (placingMode === "set")
+                    // Fill only items with no location when the set is MIXED -
+                    // the modal opened with no current value then, and a blanket
+                    // write would flatten every per-item choice silently.
+                    void applySessionLocation(readyIds, v, sessionLoc.mixed);
                   else void fileSession(readyIds, filing.category, v);
                 }}
                 onFileWithoutLocation={() => {
@@ -4433,6 +4588,63 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
         </div>
       )}
 
+      {batchAsk && (
+        <Modal
+          open
+          onClose={() => batchAsk.resolve(null)}
+          title={`${batchAsk.groups.reduce((n, g) => n + g.count, 0)} of these may belong somewhere else`}
+          size="sm"
+        >
+          <div className="space-y-2">
+            <p className="text-xs text-muted dark:text-slate-400">
+              Tick the tables you agree with - anything unticked keeps its
+              current routing. Closing this files nothing.
+            </p>
+            {batchAsk.groups.map((g) => (
+              <label
+                key={g.instance}
+                className="flex items-start gap-3 rounded-md border border-line dark:border-slate-700 p-3 cursor-pointer hover:border-cobble-300 dark:hover:border-cobble-700 transition"
+              >
+                <input
+                  type="checkbox"
+                  checked={batchAccepted.has(g.instance)}
+                  onChange={() =>
+                    setBatchAccepted((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(g.instance)) next.delete(g.instance);
+                      else next.add(g.instance);
+                      return next;
+                    })
+                  }
+                  className="mt-0.5 h-4 w-4 shrink-0 accent-cobble-600"
+                />
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-content dark:text-mortar-100">
+                    {g.count} → {g.label}
+                  </span>
+                  <span className="block text-xs text-muted dark:text-slate-400 truncate">{g.sample}</span>
+                </span>
+              </label>
+            ))}
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => batchAsk.resolve(new Set())}
+                className="rounded border border-line dark:border-slate-600 px-3 py-1.5 text-xs text-muted hover:text-content transition"
+              >
+                File all as-is
+              </button>
+              <button
+                type="button"
+                onClick={() => batchAsk.resolve(new Set(batchAccepted))}
+                className="rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-xs font-medium transition"
+              >
+                File
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
       <ScanImportModal
         slug={activeSlug}
         open={importOpen}
@@ -4729,7 +4941,9 @@ function InboxCard({
   const [destRect, setDestRect] = useState<{ top: number; left: number } | null>(null);
   const openDest = () => {
     const r = destBtnRef.current?.getBoundingClientRect();
-    if (r) setDestRect({ top: r.bottom + 4, left: r.left });
+    // Clamped to the viewport for the same reason as the tracking panel: a
+    // pill near the right edge put the menu mostly off-screen on a phone.
+    if (r) setDestRect({ top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - 288 - 8)) });
     setDestOpen(true);
   };
   const closeDest = () => {
@@ -4927,12 +5141,22 @@ function InboxCard({
         actionLabel: "Undo",
         duration: 7000,
         onAction: async () => {
-          await api.restoreScanItem(activeSlug, item.id);
+          try {
+            await api.restoreScanItem(activeSlug, item.id);
+          } catch (e) {
+            // An unhandled rejection here dismissed the toast, kept the item
+            // deleted, and let the user believe it came back.
+            toast.error(e instanceof ApiError ? e.message : "Couldn't bring it back - it is in Recently deleted");
+            return;
+          }
           void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
           void qc.invalidateQueries({ queryKey: ["scan-inbox-discarded", activeSlug] });
         },
       });
     },
+    // The only mutation in this file that had no onError: a failed discard
+    // showed nothing, the card stayed put, and the user tapped again.
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
   // Apply the photo cross-check's identification as the name (one tap). The
   // rename PATCH reports the correction to the Barcode Intelligence DB, so the
@@ -4967,7 +5191,11 @@ function InboxCard({
   // The top match can be a bundle this workspace hasn't installed (a scanned VIN
   // → "Vehicles"). Surface the install right on the CLOSED card — most people
   // won't open the accordion. Owner/admin only (install changes composition).
-  const canInstallBundle = activeOrg?.role === "owner" || activeOrg?.role === "admin";
+  // Editor included: the server-side enable path (module enable behind the
+  // confirm) allows editor too, and gating the UI stricter than the API just
+  // hands editors a raw 409 instead of the install flow (2026-08-25 audit).
+  const canInstallBundle =
+    activeOrg?.role === "owner" || activeOrg?.role === "admin" || activeOrg?.role === "editor";
   const topBundle = canInstallBundle && dest?.bundle_external_id ? dest : null;
   // Ready to one-tap confirm from the collapsed card. A not-installed-bundle top
   // match is only "ready" when the user can install it (else the green check
@@ -8082,7 +8310,11 @@ function ConfirmForm({
   // Installing a bundle changes workspace composition → owner/admin only (the
   // materialize endpoint enforces this). Gate the install-and-add card on it so
   // an editor doesn't hit a 403 dead-end; they still get the normal picker.
-  const canInstallBundle = activeOrg?.role === "owner" || activeOrg?.role === "admin";
+  // Editor included: the server-side enable path (module enable behind the
+  // confirm) allows editor too, and gating the UI stricter than the API just
+  // hands editors a raw 409 instead of the install flow (2026-08-25 audit).
+  const canInstallBundle =
+    activeOrg?.role === "owner" || activeOrg?.role === "admin" || activeOrg?.role === "editor";
   const qc = useQueryClient();
   const toast = useToast();
   // Platform-admin only: capture this corrected commit as a matchmaker eval case.
@@ -8198,9 +8430,11 @@ function ConfirmForm({
   const persistName = useMutation({
     mutationFn: (next: string) => api.updateScanItem(activeSlug, item.id, { name: next }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] }),
-    // Silent: the commit below sends the name regardless, so a failed
-    // rename costs the live title, not the user's edit.
-    onError: () => {},
+    // NOT silent: this card's own Confirm re-sends the name, but "File all"
+    // reads the ROW's stored name - so a rename that silently failed meant the
+    // bulk path filed the AI's original with no sign the correction was lost
+    // (2026-08-25 audit).
+    onError: () => toast.error("Couldn't save the new name - File all would use the old one. Try again."),
   });
   const commitNameEditWith = (next: string) => {
     if (shouldPersistNameEdit({ dirty: true, next, rowName: item.suggested_name })) {

@@ -6,6 +6,8 @@
 // runtime (and don't need to be in Phase 0).
 
 import { meta } from "../db/meta.js";
+import { orgMemberIds } from "./memberships.js";
+import { isMember } from "@cobblr/platform-contract/membership";
 import { inAppChannel } from "./channels/in-app.js";
 import { browserPushChannel } from "./channels/browser-push.js";
 import { discordChannel } from "./channels/discord.js";
@@ -14,11 +16,11 @@ import { slackChannel } from "./channels/slack.js";
 import { webhookChannel } from "./channels/webhook.js";
 import { emailChannel } from "./channels/email.js";
 import { smsChannel } from "./channels/sms.js";
-import type { Channel } from "./channels/types.js";
+import type { Channel, NotificationCard } from "./channels/types.js";
 import type { NotificationAction } from "../db/schema.js";
 import type { NotificationChannel, NotificationPriority } from "../db/schema.js";
 import { hasAuthEmailSender, sendAuthEmail } from "./hosted-seams.js";
-import { sendDiscordDm } from "./discord-bot-trigger.js";
+import { sendDiscordDm, dmOutcome, dmResultUnverifies } from "./discord-bot-trigger.js";
 import { discordConnectionState } from "./discord-connection.js";
 import type { DeliveryOutcomes } from "@cobblr/platform-contract/delivery-outcome";
 import { absoluteAppUrl } from "./public-url.js";
@@ -93,6 +95,8 @@ export interface DispatchParams {
    *  render them however they can; one that cannot ignores them, so `message`
    *  must still stand alone. */
   actions?: NotificationAction[];
+  /** Substance behind the one-liner, for channels that can render a card. */
+  card?: NotificationCard;
 }
 
 export interface DispatchResult {
@@ -102,6 +106,25 @@ export interface DispatchResult {
 
 export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
   const priority: NotificationPriority = p.priority ?? "normal";
+
+  // 0. A dispatch() notification is WORKSPACE-scoped (it is filed under a
+  //    specific org and carries that workspace's content). It must reach only
+  //    people who are CURRENTLY members of that workspace. The in-app read
+  //    paths already enforce this by joining org_memberships (see
+  //    listForUserAcrossOrgs), so a removed member never sees the bell — but
+  //    the PUSH channels do not read through that join, so a user removed from
+  //    a workspace who still has follow/mention/speaker rows kept getting that
+  //    workspace's comment content over Discord (audit M-EXMEMBER). Intersect
+  //    the audience with live membership before writing or fanning out anything.
+  //
+  //    notifyAccount() below is deliberately NOT gated here: it is ACCOUNT
+  //    scoped (sign-in, billing, feedback replies) and reaches a person about
+  //    their account regardless of any workspace, so membership is irrelevant
+  //    to it.
+  const members = await orgMemberIds(p.orgId);
+  if (!isMember(p.userId, members)) {
+    return { notificationId: "", deliveredVia: [] };
+  }
 
   // 1. Insert the notification row first so it exists in the DB even
   //    if every channel fails. delivered_via starts empty.
@@ -117,6 +140,11 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
       message: p.message,
       link_url: p.link_url ?? null,
       priority,
+      // Stored for the same reason as `actions` below: the bell reads the row,
+      // and a card that only ever existed in flight left the app's own inbox
+      // saying "something happened" while the Discord DM showed what.
+      // jsonb-object-ok: one small document, written once at dispatch.
+      card: p.card ? (JSON.stringify(p.card) as never) : null,
       // Stored, not merely rendered: a press comes back carrying an ID, and
       // the action it maps to is read from HERE.
       //
@@ -272,6 +300,7 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
           subscriptionConfig: config,
           payload: p.payload,
           actions: p.actions ?? null,
+          card: p.card ?? null,
         });
         return { name, ok };
       } catch (err) {
@@ -401,6 +430,13 @@ export interface NotifyAccountParams {
    *  `replyTo` (optional) carries a tokenized reply-by-email address; `html`
    *  (optional) is a rich body sent alongside `text` (the plaintext fallback). */
   email?: { subject: string; text: string; html?: string; replyTo?: string; from?: string; inReplyTo?: string; references?: string };
+  /** Set when this notification ANSWERS something the user sent on a specific
+   *  channel. An acknowledgement replies where the conversation is - the bell
+   *  always records it, but only the origin channel gets the outbound copy.
+   *  Without this, a feedback reply emailed AND Discord-DM'd the same sentence
+   *  to the same person (reported 2026-08-24). NEWS (a parcel arriving, a
+   *  digest) has no origin and still fans out to every enabled channel. */
+  originChannel?: "email" | "discord_dm" | "in_app";
 }
 
 /** Deliver an account-level (platform) notification across the user's chosen
@@ -445,7 +481,9 @@ export async function notifyAccount(
   // email — only when the caller supplies an email payload (so an event that
   // isn't meant to email never does), gated by the user's pref + the PLATFORM
   // sender (managed mailer in prod), not per-user BYO SMTP.
-  if (!args.email) {
+  if (args.originChannel && args.originChannel !== "email") {
+    outcomes.email = "ack-on-origin";
+  } else if (!args.email) {
     outcomes.email = "not-offered";
   } else if (!prefs.email) {
     outcomes.email = "opted-out";
@@ -467,7 +505,9 @@ export async function notifyAccount(
   }
 
   // discord_dm — only when the user has connected + verified Discord.
-  if (!prefs.discord_dm) {
+  if (args.originChannel && args.originChannel !== "discord_dm") {
+    outcomes.discord_dm = "ack-on-origin";
+  } else if (!prefs.discord_dm) {
     outcomes.discord_dm = "opted-out";
   } else {
     const conn = await meta
@@ -492,14 +532,17 @@ export async function notifyAccount(
         : dmBody;
       const res = await sendDiscordDm({ discord_user_id: conn!.discord_user_id!, text });
       if (res.ok) deliveredVia.push("discord_dm");
-      outcomes.discord_dm = res.ok ? "sent" : res.deliverable ? "send-failed" : "blocked";
-      if (!res.ok && !res.deliverable) {
+      outcomes.discord_dm = dmOutcome(res);
+      if (dmResultUnverifies(res)) {
         // BLOCKED is durable, not a blip: privacy settings, a bot that shares no
         // server, a deleted account. Leaving `verified` true means every future
         // notification goes quietly nowhere and the settings page keeps claiming
         // Discord works. Dropping it surfaces the reconnect prompt and lets the
         // account-pref fallback route this person somewhere they will see it.
-        // A transient send-failed is left alone on purpose.
+        //
+        // A transient failure (bot not configured, non-2xx, timeout) is left
+        // alone — dmResultUnverifies is false for those, so a bot restart during
+        // a notification wave no longer unverifies everyone at once (audit B4a).
         await meta
           .updateTable("discord_connections")
           .set({ verified: false, updated_at: new Date() })
@@ -518,6 +561,10 @@ export interface NotificationListItem {
   module_name: string | null;
   message: string;
   link_url: string | null;
+  /** The substance behind the one-liner, when there is any — same card the
+   *  Discord DM renders as an embed, so the bell is not the one surface left
+   *  saying "something happened" without saying what. */
+  card: { heading?: string; body?: string; context?: string } | null;
   read_at: Date | null;
   created_at: Date;
 }
@@ -536,6 +583,7 @@ export async function listForUser(
       "module_name",
       "message",
       "link_url",
+      "card",
       "read_at",
       "created_at",
     ])
@@ -609,6 +657,7 @@ export async function listForUserAcrossOrgs(
       "n.module_name as module_name",
       "n.message as message",
       "n.link_url as link_url",
+      "n.card as card",
       "n.read_at as read_at",
       "n.created_at as created_at",
       "n.org_id as org_id",

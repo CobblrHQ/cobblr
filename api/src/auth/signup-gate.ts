@@ -43,3 +43,14 @@ export function selfServeInvitesEnabled(): boolean {
   if (raw === "false" || raw === "0" || raw === "no") return false;
   return process.env.NODE_ENV !== "production";
 }
+
+// Signup-invite expiry (audit L-INVITE). An invite link is a credential;
+// "no expiry given" used to mean "live forever", which left years-old links
+// redeemable. Every mint site (super-admin, waitlist approve, self-serve)
+// computes its expiry HERE so none of them can regress to never-expiring:
+// an explicit expires_in_days is honoured, an omitted one gets the default.
+export const DEFAULT_INVITE_EXPIRY_DAYS = 14;
+
+export function inviteExpiresAt(expiresInDays: number | undefined, now: number = Date.now()): Date {
+  return new Date(now + (expiresInDays ?? DEFAULT_INVITE_EXPIRY_DAYS) * 86_400_000);
+}

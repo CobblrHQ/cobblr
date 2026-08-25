@@ -16,7 +16,7 @@ import * as notifications from "../platform/notifications.js";
 import * as activity from "../platform/activity.js";
 import { listMembershipsForUser } from "../platform/memberships.js";
 import { hasAuthEmailSender, sendAuthEmail } from "../platform/hosted-seams.js";
-import { selfServeInvitesEnabled } from "../auth/signup-gate.js";
+import { selfServeInvitesEnabled, inviteExpiresAt } from "../auth/signup-gate.js";
 import { issueAndSendVerifyEmail } from "./auth.js";
 import { captureBlueprint } from "./blueprint.js";
 import {
@@ -305,6 +305,47 @@ meRouter.post("/me/password", requireAuth, async (req, res, next) => {
     // Return the re-minted token so the client can keep THIS session alive
     // (all prior tokens were just revoked). Clients that ignore it simply get
     // logged out on their next request — also safe.
+    res.status(200).json({ token: freshToken });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Sign out everywhere without changing the password. Until now the ONLY way to
+// revoke a session (a lost/stolen token, a shared device) was a password change
+// — so a user who suspected a token was exposed had to rotate their password to
+// kill it. Stamping tokens_valid_from = now invalidates every existing JWT for
+// this account (the middleware rejects any token minted before the cutoff), then
+// re-mints THIS device so the caller stays signed in. Same mechanism as the
+// password change, minus the password. See docs/history/2026-08-25-prerelease-audit.md H1.
+// AI-REACH: exempt — self-only session revocation. An agent has no business
+// signing a person out of their own devices; this is reachable only by the
+// authenticated user acting on themselves.
+meRouter.post("/me/sign-out-everywhere", requireAuth, async (req, res, next) => {
+  try {
+    const at = new Date();
+    await meta
+      .updateTable("users")
+      .set({ tokens_valid_from: at })
+      .where("id", "=", req.session!.id)
+      .execute();
+    const freshToken = await signSession(req.session!.id);
+    const firstOrg = await meta
+      .selectFrom("org_memberships")
+      .select("org_id")
+      .where("user_id", "=", req.session!.id)
+      .limit(1)
+      .executeTakeFirst();
+    if (firstOrg) {
+      await activity
+        .log({
+          orgId: firstOrg.org_id,
+          userId: req.session!.id,
+          action: "sessions_revoked",
+          ref: { module: null, entityType: "user", entityId: req.session!.id },
+        })
+        .catch((err) => console.error("[me/sign-out-everywhere] activity log failed:", err));
+    }
     res.status(200).json({ token: freshToken });
   } catch (err) {
     next(err);
@@ -1600,9 +1641,9 @@ meRouter.post("/me/signup-invites", requireAuth, async (req, res, next) => {
       blueprint = await captureBlueprint(org.id);
     }
     const token = randomBytes(24).toString("base64url");
-    const expires_at = parsed.data.expires_in_days
-      ? new Date(Date.now() + parsed.data.expires_in_days * 86_400_000)
-      : null;
+    // Default expiry when none given — an invite link is a credential and
+    // must not be redeemable forever (audit L-INVITE).
+    const expires_at = inviteExpiresAt(parsed.data.expires_in_days);
     const row = await meta
       .insertInto("signup_invites")
       .values({

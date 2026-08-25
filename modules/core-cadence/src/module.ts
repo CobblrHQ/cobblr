@@ -2,7 +2,8 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-cadence",
-  version: "0.2.1",
+  version: "0.2.2",
+  maturity: "beta",
   displayName: "Cadence",
   description:
     "Learns how fast you go through a consumable and predicts when you'll run out, so a reorder can be suggested before you notice. Generic: it reads a kind's quantity field role, so the same engine serves groceries, filament, coffee and medications. Exposes signals other modules surface; it has no page of its own.",

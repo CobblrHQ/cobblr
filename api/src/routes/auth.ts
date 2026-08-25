@@ -13,7 +13,9 @@
 
 import { Router, type Request } from "express";
 import { z } from "zod";
+import { sql } from "kysely";
 import { meta, metaPool } from "../db/meta.js";
+import { lockoutState, isLocked } from "../auth/lockout.js";
 import { applyBlueprint, BlueprintManifest } from "./blueprint.js";
 import { provisionTenantDb } from "../db/provision.js";
 import { slugifyBase } from "../lib/slugify.js";
@@ -608,17 +610,65 @@ authRouter.get("/signup-invite/:token", async (req, res, next) => {
 
 // ────────────────────────── POST /login ──────────────────────────
 
+// Response shape when an account is currently in its lockout window. Generic
+// and identical whether or not the email is registered — the counter is bucketed
+// by the SUBMITTED email regardless (see auth/lockout.ts + migration 112) — so it
+// stays out of the anti-enumeration posture the 401 path already holds.
+const ACCOUNT_LOCKED = {
+  error: {
+    code: "account_locked",
+    message: "Too many failed attempts. Try again in a few minutes, or reset your password.",
+  },
+} as const;
+
+/** Read the shared per-account lockout row for a (lowercased) email. */
+async function readLoginAttempt(email: string): Promise<{ failed_count: number; locked_until: Date | null } | undefined> {
+  return meta
+    .selectFrom("login_attempts")
+    .select(["failed_count", "locked_until"])
+    .where("email", "=", email)
+    .executeTakeFirst();
+}
+
+/** Record one failed login for `email`: atomically bump the consecutive-failure
+ *  count in cobblr_meta (shared across api instances) and set locked_until per
+ *  the backoff once the threshold is crossed. Bucketed by submitted email so it
+ *  behaves the same for registered and unregistered addresses. */
+async function recordFailedLogin(email: string, now: Date): Promise<void> {
+  const row = await meta
+    .insertInto("login_attempts")
+    .values({ email, failed_count: 1, last_failed_at: now, updated_at: now })
+    .onConflict((oc) =>
+      oc.column("email").doUpdateSet({
+        failed_count: sql`login_attempts.failed_count + 1`,
+        last_failed_at: now,
+        updated_at: now,
+      }),
+    )
+    .returning("failed_count")
+    .executeTakeFirstOrThrow();
+  const decision = lockoutState(row.failed_count, now);
+  if (decision.locked) {
+    await meta
+      .updateTable("login_attempts")
+      .set({ locked_until: decision.lockedUntil, updated_at: now })
+      .where("email", "=", email)
+      .execute();
+  }
+}
+
+/** Clear the counter after a proven-correct password so a legitimate user's
+ *  earlier typos never accumulate toward a lock. */
+async function clearLoginAttempts(email: string): Promise<void> {
+  await meta.deleteFrom("login_attempts").where("email", "=", email).execute();
+}
+
 authRouter.post("/login", async (req, res, next) => {
   try {
     if (overLimit(loginLimiter, req)) return res.status(429).json(RATE_LIMITED);
     const body = LoginBody.parse(req.body);
     const email = body.email.toLowerCase().trim();
-
-    const user = await meta
-      .selectFrom("users")
-      .select(["id", "email", "password_hash", "active", "email_verified_at"])
-      .where("email", "=", email)
-      .executeTakeFirst();
+    const now = new Date();
 
     // Same response for "no user" + "wrong password" so we don't
     // leak which emails are registered.
@@ -627,14 +677,41 @@ authRouter.post("/login", async (req, res, next) => {
         error: { code: "invalid_credentials", message: "Email or password incorrect." },
       });
 
+    // Per-account lockout (shared across api instances via cobblr_meta), checked
+    // BEFORE the password so a locked account never reaches the hash. Bucketed by
+    // submitted email, so a locked response is identical for existing and
+    // non-existing accounts — no enumeration oracle. Skipped under the test rig,
+    // which logs in thousands of times as the same handful of accounts.
+    if (!AUTH_LIMITS_OFF) {
+      const attempt = await readLoginAttempt(email);
+      if (attempt && isLocked(attempt.locked_until, now)) {
+        // Spend ~bcrypt time so the locked path's latency matches the others.
+        await verifyPassword(body.password, await dummyPasswordHash());
+        return res.status(429).json(ACCOUNT_LOCKED);
+      }
+    }
+
+    const user = await meta
+      .selectFrom("users")
+      .select(["id", "email", "password_hash", "active", "email_verified_at"])
+      .where("email", "=", email)
+      .executeTakeFirst();
+
     if (!user || !user.active) {
       // Spend the same ~bcrypt time as the real path so a missing/inactive
       // account isn't distinguishable by latency. (Audit 2026-06-26 P2.)
       await verifyPassword(body.password, await dummyPasswordHash());
+      if (!AUTH_LIMITS_OFF) await recordFailedLogin(email, now);
       return denied();
     }
     const ok = await verifyPassword(body.password, user.password_hash);
-    if (!ok) return denied();
+    if (!ok) {
+      if (!AUTH_LIMITS_OFF) await recordFailedLogin(email, now);
+      return denied();
+    }
+    // Correct password — the credential is proven, so clear any prior failures
+    // (the account is not brute-forced) before the email-verification gate.
+    if (!AUTH_LIMITS_OFF) await clearLoginAttempts(email);
 
     // Email-verification gate (trial): deny login until verified, and resend the
     // link so the user has a fresh one. No-op unless COBBLR_REQUIRE_EMAIL_VERIFY.
@@ -1159,6 +1236,15 @@ authRouter.post("/password/forgot", async (req, res, next) => {
     let devToken: string | undefined;
     if (user && user.active) {
       const { plain, hash } = mintToken();
+      // A new link supersedes any outstanding one: only the newest unconsumed
+      // token stays live (audit L-INVITE). Marking priors consumed means an
+      // older email sitting in an inbox can no longer reset the account.
+      await meta
+        .updateTable("auth_password_reset_tokens")
+        .set({ consumed_at: new Date() })
+        .where("user_id", "=", user.id)
+        .where("consumed_at", "is", null)
+        .execute();
       await meta
         .insertInto("auth_password_reset_tokens")
         .values({

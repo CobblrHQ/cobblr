@@ -18,6 +18,9 @@ export interface ReceiptMeta {
   receipt_seller?: unknown;
   receipt_date?: unknown;
   net_price?: unknown;
+  receipt_line_count?: unknown;
+  line_net?: unknown;
+  line_total?: unknown;
 }
 
 const str = (v: unknown): string | null => {
@@ -51,13 +54,19 @@ export function receiptFacts(meta: ReceiptMeta | null | undefined): RoledFacts {
   const date = str(meta.receipt_date);
   if (date) facts["acquired-on"] = date;
 
-  // net_price ONLY. It is null unless the receipt's own numbers reconciled, so
-  // a price we could not corroborate never reaches a field. The list price and
-  // the card charge are both real numbers and neither answers "what did this
-  // cost me", which is what the role means.
-  if (typeof meta.net_price === "number" && Number.isFinite(meta.net_price)) {
-    facts["acquired-for"] = meta.net_price;
-  }
+  // What THIS item cost - the line's own number, never the basket's. The
+  // receipt-level net_price is subtotal minus discounts for the whole order;
+  // stamping it per line recorded a 20-line grocery run as twenty items that
+  // each cost the entire basket. The order-level number is only an answer when
+  // the receipt HAS one line, which is when the two mean the same thing.
+  const money = (v: unknown): number | null =>
+    typeof v === "number" && Number.isFinite(v) ? v : null;
+  const lineCount = money(meta.receipt_line_count);
+  const price =
+    money(meta.line_net) ??
+    money(meta.line_total) ??
+    (lineCount === 1 ? money(meta.net_price) : null);
+  if (price !== null) facts["acquired-for"] = price;
 
   return facts;
 }

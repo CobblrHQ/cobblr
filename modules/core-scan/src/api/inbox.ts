@@ -101,7 +101,8 @@ import { resolvePaintCodeViaWeb } from "../services/paint-code-websearch.js";
 import { parseReceipt } from "../services/receipt.js";
 import { lineNet } from "../services/receipt-shared.js";
 import { looksLikeReceiptPhoto, routeScannedReceiptPhoto } from "../services/receipt-photo.js";
-import { cleanOrderRef, receiptDedupKey, receiptSessionLabel, vendorFromLabel, type ParsedReceipt, type ParseMethod } from "../services/receipt-shared.js";
+import { cleanOrderRef, receiptDedupKey,
+  receiptContentKey, receiptSessionLabel, vendorFromLabel, type ParsedReceipt, type ParseMethod } from "../services/receipt-shared.js";
 import { reportBarcodeCorrection, meaningfullyChanged } from "../services/barcode-corrections.js";
 import { normalizeBarcode, barcodeFromHint } from "../services/barcode-correction.js";
 import { findBinContents, findTracked } from "../services/entity-match.js";
@@ -706,6 +707,10 @@ async function materializeReceiptLines(opts: {
           price_reconciled: t.reconciled,
         }
       : {}),
+    // How many lines this receipt carries, so the fact extractor can tell
+    // "the order's net price IS this item's price" (one line) from "it is the
+    // whole basket" (many). See receipt-facts.ts.
+    receipt_line_count: opts.receipt.items.length,
   };
   const rows: Array<{ id: string }> = [];
   for (const line of opts.receipt.items) {
@@ -820,14 +825,57 @@ inboxRouter.post(
 
     const result = await parseReceipt(ctx.org.id, parsed.data.file_id, session?.id ?? null);
     if (!result.ok) {
-      // 422: the file was read but yielded no usable line items (bad scan, no
-      // AI provider, not a receipt). The reason is user-facing.
+      // NEVER-VANISH: keep the upload as a re-parseable session instead of
+      // orphaning the file. The email path has done this since it shipped
+      // ("capture the whole body as one note item"); the in-app path returned
+      // a toast and left the file with nothing pointing at it - no retry, no
+      // way to find it, no sign it happened (2026-08-25 audit). A batch with
+      // the original attached gets the session header's own View original +
+      // Re-parse controls, so "no AI provider yet" is a set-it-up-and-retry,
+      // not a rescan.
+      let keptBatchId: string | null = null;
+      try {
+        const failedBatch = await db
+          .insertInto("core_scan_batches")
+          .values({
+            created_by_user_id: session.id,
+            label: "Receipt · not read yet",
+            origin: parsed.data.origin ?? null,
+            source_file_id: parsed.data.file_id,
+          })
+          .returning("id")
+          .executeTakeFirst();
+        if (failedBatch) {
+          keptBatchId = failedBatch.id;
+          await db
+            .insertInto("core_scan_inbox_items")
+            .values({
+              source_kind: "note",
+              scan_batch_id: failedBatch.id,
+              suggested_name: `Receipt couldn't be read - ${result.reason}`.slice(0, 300),
+              quantity: 1,
+              suggested_metadata: JSON.stringify({
+                receipt_parse_failure: result.code,
+                receipt_parse_reason: result.reason,
+              }) as never,
+              created_by_user_id: session.id,
+            })
+            .execute();
+        }
+      } catch (err) {
+        console.warn("[core-scan] could not keep the failed receipt:", (err as Error).message);
+      }
+      // Still 422: the client's error toast stays honest. kept_batch_id says
+      // where the original now lives.
       res
         .status(422)
         // `failure` says WHY in a form a caller can branch on. The prose in
         // `message` is for a person; matching on it is a string comparison
         // waiting to be reworded.
-        .json({ error: { code: "receipt_unparsed", message: result.reason, failure: result.code } });
+        .json({
+          error: { code: "receipt_unparsed", message: result.reason, failure: result.code },
+          ...(keptBatchId ? { kept_batch_id: keptBatchId } : {}),
+        });
       return;
     }
     const { receipt, method } = result;
@@ -839,6 +887,48 @@ inboxRouter.post(
     // count (a batch with at least one non-discarded item); a receipt you threw
     // away re-imports. `force` (user chose "import anyway") skips the guard.
     const dupKey = receiptDedupKey(receipt.vendor, orderRef);
+    const contentKey = receiptContentKey(receipt);
+    // No order number on the receipt -> fall back to the content fingerprint.
+    // Same duplicate flow as below: tell the user, let force override.
+    if (!dupKey && contentKey && !parsed.data.force) {
+      const prior = await db
+        .selectFrom("core_scan_batches as b")
+        .select(["b.id", "b.label"])
+        .where("b.content_key", "=", contentKey)
+        .where((eb) =>
+          eb.exists(
+            eb
+              .selectFrom("core_scan_inbox_items as i")
+              .select("i.id")
+              .whereRef("i.scan_batch_id", "=", "b.id")
+              .where("i.status", "!=", "discarded"),
+          ),
+        )
+        .orderBy("b.created_at", "desc")
+        .limit(1)
+        .executeTakeFirst();
+      if (prior) {
+        const live = await db
+          .selectFrom("core_scan_inbox_items")
+          .select((eb) => eb.fn.countAll<number>().as("n"))
+          .where("scan_batch_id", "=", prior.id)
+          .where("status", "!=", "discarded")
+          .executeTakeFirst();
+        // Same contract as the order-ref guard below, so the client's one
+        // "already imported - import anyway?" flow covers both.
+        res.status(200).json({
+          duplicate: true,
+          existing: {
+            batch_id: prior.id,
+            label: prior.label,
+            vendor: receipt.vendor,
+            order_ref: null,
+            item_count: Number(live?.n ?? 0),
+          },
+        });
+        return;
+      }
+    }
     if (dupKey && !parsed.data.force) {
       const prior = await db
         .selectFrom("core_scan_batches as b")
@@ -895,6 +985,7 @@ inboxRouter.post(
         // Vendor + order # as their own fields so the order # is editable later.
         vendor: receipt.vendor,
         order_ref: orderRef,
+        content_key: contentKey,
       })
       .returning("id")
       .executeTakeFirst();
@@ -947,6 +1038,7 @@ inboxRouter.post(
         orderedAt: receipt.date,
         trackingNumber: null, // nobody has had a chance to add one yet
         knownShipment: null,
+        expectedArrival: receipt.expected_arrival ?? null,
         total: receipt.total,
         groupId: receiptGroupId,
         sourceFileId: parsed.data.file_id,
@@ -1149,7 +1241,7 @@ inboxRouter.patch(
     const db = tenantDb(req);
     const batch = await db
       .selectFrom("core_scan_batches")
-      .select(["id"])
+      .select(["id", "purchases_order_id"])
       .where("id", "=", req.params.batchId ?? "")
       .executeTakeFirst();
     if (!batch) {
@@ -1162,9 +1254,52 @@ inboxRouter.patch(
     const tracking = raw.length > 0 ? raw : null;
     await db
       .updateTable("core_scan_batches")
-      .set({ tracking_number: tracking })
+      // Whoever types the number owns the parcel: its arrival interrupts THEM,
+      // not the whole workspace (parcelAudience in the platform contract).
+      // Clearing the number clears the claim with it.
+      .set({
+        tracking_number: tracking,
+        tracking_added_by_user_id: tracking ? sessionUser(req).id : null,
+        // A different number is a different parcel: the previous parcel's
+        // state, cadence and told-the-user marker must not survive onto it.
+        // Keeping them meant the row showed the OLD parcel's "Delivered" and,
+        // because shipment_notified_state still said delivered, the new
+        // parcel's delivery was never announced (2026-08-25 audit).
+        shipment_state: null,
+        shipment_description: null,
+        shipment_location: null,
+        shipment_checked_at: null,
+        shipment_next_poll_at: null,
+        shipment_notified_state: null,
+      })
       .where("id", "=", batch.id)
       .execute();
+    // The order already exists by the time a person types the number (created
+    // at parse), so the ATTACH path never calls createReceiptOrder again -
+    // without this hop the number stayed on the batch, the parcel vanished
+    // from the dashboard the moment its lines were filed, and the order's
+    // shipment panel stayed empty (2026-08-25 audit).
+    if (batch.purchases_order_id) {
+      const ctx = tenantContext(req);
+      const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+      try {
+        await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/purchases/orders/${batch.purchases_order_id}`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${bearer(req)}`, "Content-Type": "application/json" },
+          // jsonb-replace-ok: an HTTP request body, not a jsonb column - the
+          // orders route merges what it stores.
+          body: JSON.stringify({
+            tracking_number: tracking,
+            // Un-arrive the order when a number arrives: a parcel with a live
+            // tracking number is not in your hands, and 'arrived' is the one
+            // status the arrival sweep never looks at again.
+            ...(tracking ? { status: "in-transit", arrived_at: null } : {}),
+          }),
+        });
+      } catch (err) {
+        console.warn("[core-scan] tracking did not reach the order:", (err as Error).message);
+      }
+    }
     res.json({ id: batch.id, tracking_number: tracking });
   }),
 );

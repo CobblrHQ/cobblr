@@ -21,7 +21,8 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-shipments",
-  version: "0.6.2",
+  version: "0.6.3",
+  maturity: "beta",
   displayName: "Shipments",
   description:
     "Tells you where a parcel is. Paste a tracking number and Cobblr works out the carrier from the number itself, links you straight to their page, and (once a carrier is connected) follows the parcel so an order marks itself arrived instead of asking you.",
@@ -61,7 +62,7 @@ export default defineModule({
   },
 
   exposes: {
-    events: [],
+    events: ["core-shipments.tracker.pushed"],
     api: [],
     actions: [
       {

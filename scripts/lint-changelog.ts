@@ -27,6 +27,9 @@ import { lintProse } from "./prose-rules.mjs";
 // @ts-expect-error plain .mjs module, shared with the publisher so this gate and
 // the renderer can never disagree about who an entry is for
 import { ALL_ENTRY_TYPES, AUDIENCE_TYPES, isInternalChangelogEntry } from "./publish/changelog-filter.mjs";
+// @ts-expect-error plain .mjs module, shared with docs-flush so this gate and the
+// release-time splice can never disagree about what "the heading exists" means
+import { findHeadingLine, listHeadings, parseDocsTarget } from "./docs-target.mjs";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 
 function git(cmd: string): string {
@@ -78,6 +81,57 @@ function findBase(): string | null {
         (bad.length > 20 ? `\n  …and ${bad.length - 20} more` : ""),
     );
     process.exitCode = 1;
+  }
+}
+
+// ── a docs_target must point at a heading that EXISTS in the target file ──
+// docs-flush splices the entry's "## docs" body under the docs_target heading;
+// when the heading was absent it USED to append a stray "## <heading>" at
+// end-of-file, and six orphan sections piled up in USER_GUIDE.md that way (audit
+// H5). Now the flush refuses, and this gate catches it at authoring time. Whole
+// archive + cheap, like the type check above: a wrong anchor is broken whenever
+// it was written, and the entry that carries it is usually NOT the one a given
+// PR touches, so a diff-scoped check would never surface the backlog. Published
+// entries are skipped — their anchor was already consumed by an earlier flush.
+{
+  const bad: string[] = [];
+  for (const f of readdirSync("changelog.d")) {
+    if (!f.endsWith(".md") || f === "README.md") continue;
+    const raw = readFileSync(`changelog.d/${f}`, "utf8");
+    const fm = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
+    if (!/^type:\s*feature\s*$/m.test(fm)) continue;
+    if (/^docs_published:/m.test(fm)) continue;
+    const target = fm.match(/^docs_target:\s*(.+)$/m)?.[1]?.trim();
+    if (!target || /^none\s*\(.+\)$/.test(target)) continue;
+    const { file, heading } = parseDocsTarget(target);
+    if (!file.endsWith(".md") || !heading) {
+      bad.push(`  changelog.d/${f}: docs_target must be "<path.md>#<Heading>" — got "${target}"`);
+      continue;
+    }
+    if (!existsSync(file)) {
+      bad.push(`  changelog.d/${f}: docs_target file not found (${file})`);
+      continue;
+    }
+    if (findHeadingLine(readFileSync(file, "utf8"), heading) < 0) {
+      bad.push(`  changelog.d/${f}: docs_target heading "${heading}" not found in ${file}`);
+    }
+  }
+  if (bad.length) {
+    // List the real headings of each named file ONCE, so the fix is a copy-paste.
+    const files = new Set(
+      bad
+        .map((b) => b.match(/ not found in (\S+)$/)?.[1])
+        .filter((x): x is string => Boolean(x)),
+    );
+    const menus = [...files]
+      .map((file) => `  headings in ${file}:\n${listHeadings(readFileSync(file, "utf8")).map((h) => `    ${h}`).join("\n")}`)
+      .join("\n");
+    console.error(
+      `[lint:changelog] ✗ ${bad.length} entr${bad.length === 1 ? "y has a" : "ies have a"} docs_target whose heading does not exist ` +
+        `(docs-flush would mis-file the ## docs body at end-of-file). Point each at a real heading:\n${bad.join("\n")}` +
+        (menus ? `\n${menus}` : ""),
+    );
+    process.exit(1);
   }
 }
 

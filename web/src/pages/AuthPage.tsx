@@ -161,8 +161,8 @@ export function AuthPage() {
         <div className="flex flex-col items-center gap-4 mb-6 text-center">
           <CobblestoneMark size={64} />
           <div>
-            <h1 className="font-display text-3xl font-extrabold text-content dark:text-mortar-100 lowercase tracking-tight">
-              cobblr
+            <h1 className="font-display text-3xl font-extrabold text-content dark:text-mortar-100 tracking-tight">
+              Cobblr
             </h1>
             {/* Env indicator on the sign-in screen too, so testers pick the
                 right instance before logging in. Prod = no chip. */}

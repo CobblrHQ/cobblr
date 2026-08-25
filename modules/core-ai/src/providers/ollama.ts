@@ -10,10 +10,19 @@
 import { platform, type AiCapability } from "@cobblr/platform-contract";
 import { assertSafeAiEndpoint, pinnedFetch, type PinnedResponse } from "../ssrf.js";
 import { TRANSIT_FIELD, viaBridge, edgeKeyFor, edgeFetch } from "./edge-transit.js";
-import { toolsOf, turnsOf, openAiToolsOf, ollamaMessagesOf, parseOllamaToolCalls, looksLikeNoToolSupport } from "./tool-wire.js";
+import {
+  toolsOf,
+  turnsOf,
+  openAiToolsOf,
+  ollamaMessagesOf,
+  parseOllamaToolCalls,
+  looksLikeNoToolSupport,
+  contextWindowFor,
+} from "./tool-wire.js";
 import { promptFingerprint } from "./prompt-fingerprint.js";
 import { identifyPromptFor } from "./identify-prompt.js";
 import { rankImagesPromptFor } from "./rank-images-prompt.js";
+import { pickInstalledModel } from "./ollama-models.js";
 
 /** Optional bearer auth for the endpoint. Returns {} when no token is
  *  configured (a bare local Ollama). A remote endpoint behind a
@@ -24,22 +33,39 @@ export function authHeadersFor(credentials: Record<string, unknown>): Record<str
   return t ? { authorization: `Bearer ${t}` } : {};
 }
 
+// The menu shown at setup, and the fallback when a workspace names no model.
+//
+// MEASURED, not remembered (2026-08-25, scripts/bench-ollama*.ts against a real
+// box). The previous menu had aged badly in both directions: `llava` is a 2023
+// model nobody installs now, and `llama3.2-vision` does not even LOAD on current
+// Ollama — "unknown model architecture: 'mllama'", a 500 on every request. Two
+// recommendations, both dead ends, and a user with a perfectly good qwen2.5vl
+// installed got neither.
+//
+// Scores from that run (see docs/operations/local-model-bench.md):
+//   tools   qwen3:14b 7/8 · qwen3 27B 7/8 (9x slower) · gemma 8B 3/8
+//   vision  qwen2.5vl:7b 6/6 · minicpm-v 5/6 · granite3.2-vision:2b 2/6
+//
+// A name here is a SUGGESTION either way: pickInstalledModel() reads the box's
+// own /api/tags when one of these turns out not to be installed.
 export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
-  chat: { models: ["llama3.2", "qwen2.5", "phi3"], defaultModel: "llama3.2" },
-  summarise: { models: ["llama3.2", "qwen2.5"], defaultModel: "llama3.2" },
-  "classify-image": { models: ["llava", "llama3.2-vision"], defaultModel: "llava" },
+  chat: { models: ["qwen3:14b", "qwen3", "granite3.3", "command-r7b", "llama3.2"], defaultModel: "qwen3:14b" },
+  summarise: { models: ["qwen3:14b", "qwen3", "llama3.2"], defaultModel: "qwen3:14b" },
+  "classify-image": { models: ["qwen2.5vl", "minicpm-v", "granite3.2-vision"], defaultModel: "qwen2.5vl" },
   // identify-image was MISSING, so a workspace on a direct local Ollama threw
   // "no provider configured for capability identify-image" on every photo scan
   // (and every split) — the whole flagship photo-identify flow was dark for local
   // models. Ollama-over-the-edge-bridge worked only because that adapter declares
   // it. Same vision models as classify-image; same /api/chat + images call below.
-  "identify-image": { models: ["llava", "llama3.2-vision"], defaultModel: "llava" },
-  "rank-images": { models: ["llava", "llama3.2-vision"], defaultModel: "llava" },
-  "extract-text": { models: ["llava", "llama3.2-vision"], defaultModel: "llava" },
+  "identify-image": { models: ["qwen2.5vl", "minicpm-v", "granite3.2-vision"], defaultModel: "qwen2.5vl" },
+  "rank-images": { models: ["qwen2.5vl", "minicpm-v"], defaultModel: "qwen2.5vl" },
+  // Reading text off a photo: minicpm-v is built for it and scores level with
+  // qwen on the label cases, so it leads here and follows elsewhere.
+  "extract-text": { models: ["minicpm-v", "qwen2.5vl", "granite3.2-vision"], defaultModel: "minicpm-v" },
   "embed-text": { models: ["nomic-embed-text", "mxbai-embed-large"], defaultModel: "nomic-embed-text" },
   "match-to-catalog": {
-    models: ["llama3.2", "qwen2.5", "llava"],
-    defaultModel: "llama3.2",
+    models: ["qwen3:14b", "qwen3", "qwen2.5vl"],
+    defaultModel: "qwen3:14b",
   },
 };
 
@@ -55,7 +81,15 @@ export function register(): void {
         "which for reading photos means a reasonably modern one with plenty of memory.",
       steps: [
         { text: "Install Ollama on the machine that runs Cobblr, or one on the same network.", href: "https://ollama.com/download" },
-        { text: "Pull a model that can read images. In a terminal: ollama pull qwen2.5vl" },
+        // Two models, because the jobs are different and Cobblr routes them
+        // separately: reading a photo wants eyes, running an action wants a
+        // tool-caller. Both fit a 12 GB card on their own. Measured, not
+        // guessed — see docs/operations/local-model-bench.md.
+        {
+          text:
+            "Pull a model that can read images, and one that can run actions. In a terminal: " +
+            "ollama pull qwen2.5vl && ollama pull qwen3:14b",
+        },
         { text: "Make sure Ollama is reachable from Cobblr. On the same machine that is http://localhost:11434; in Docker it is usually http://ollama:11434." },
         { text: "Put that address below and save. No key is needed." },
       ],
@@ -102,6 +136,40 @@ export function register(): void {
         bridged
           ? edgeFetch(edgeKeyFor(ctx.credentials, ctx.orgId), base, path, init)
           : pinnedFetch(`${base}${path}`, pin!, init);
+
+      /** The model we were told to use is not on this box. Rather than fail with
+       *  "model not found" — which reads as the app being broken — ask what IS
+       *  installed and use the best fit. The shipped menu (llama3.2, llava) is a
+       *  guess about somebody else's disk: a real box measured 2026-08-25 had
+       *  neither, so every photo scan 404ed while a capable model sat idle. */
+      const retryOnMissingModel = async (
+        res: PinnedResponse,
+        reqBody: Record<string, unknown>,
+        path = "/api/chat",
+      ): Promise<PinnedResponse> => {
+        if (res.ok || res.status !== 404) return res;
+        const tags = await call("/api/tags", { method: "GET", headers: authHeaders });
+        if (!tags.ok) return res;
+        const installed = (((await tags.json()) as { models?: Array<{ name?: string }> }).models ?? [])
+          .map((m) => String(m.name ?? ""))
+          .filter(Boolean);
+        const picked = pickInstalledModel(ctx.capability, installed);
+        // Nothing suitable: say what the box HAS, because "model not found" for a
+        // name the user never chose is unanswerable.
+        if (!picked) {
+          throw new Error(
+            `ollama: no installed model can do ${ctx.capability}` +
+              (installed.length ? ` (installed: ${installed.slice(0, 6).join(", ")})` : " (no models installed)"),
+          );
+        }
+        if (picked === reqBody.model) return res;
+        console.warn(`[ollama] ${String(reqBody.model)} is not installed; using ${picked} for ${ctx.capability}`);
+        return call(path, {
+          method: "POST",
+          headers: { "content-type": "application/json", ...authHeaders },
+          body: JSON.stringify({ ...reqBody, model: picked }),
+        });
+      };
       switch (ctx.capability) {
         case "embed-text": {
           const input = String(ctx.input.text ?? "");
@@ -140,11 +208,16 @@ export function register(): void {
           // ignores this unknown field. See core-ai's ai.ts invoke().
           const mcpRelay = (ctx.input as Record<string, unknown>).mcp;
           if (mcpRelay && typeof mcpRelay === "object") reqBody.mcp = mcpRelay;
+          // Ask for a window big enough to hold what we are sending. Without
+          // this, ollama's small default truncates the tool schemas out of the
+          // prompt and cuts the answer off mid-sentence — see contextWindowFor.
+          reqBody.options = { num_ctx: contextWindowFor(JSON.stringify(reqBody).length) };
           let res = await call("/api/chat", {
             method: "POST",
             headers: { "content-type": "application/json", ...authHeaders },
             body: JSON.stringify(reqBody),
           });
+          res = await retryOnMissingModel(res, reqBody);
           if (!res.ok && toolDefs) {
             const errText = await res.text().catch(() => "");
             if (looksLikeNoToolSupport(res.status, errText)) {
@@ -226,16 +299,18 @@ export function register(): void {
           const imageB64 = typeof ctx.input.image_b64 === "string" ? ctx.input.image_b64 : null;
           const msg: Record<string, unknown> = { role: "user", content: prompt };
           if (imageB64) msg.images = [imageB64];
-          const res = await call("/api/chat", {
+          const visionBody: Record<string, unknown> = {
+            model: ctx.model,
+            stream: false,
+            format: ctx.capability === "extract-text" ? undefined : "json",
+            messages: [msg],
+          };
+          let res = await call("/api/chat", {
             method: "POST",
             headers: { "content-type": "application/json", ...authHeaders },
-            body: JSON.stringify({
-              model: ctx.model,
-              stream: false,
-              format: ctx.capability === "extract-text" ? undefined : "json",
-              messages: [msg],
-            }),
+            body: JSON.stringify(visionBody),
           });
+          res = await retryOnMissingModel(res, visionBody);
           // Don't echo the upstream body — for a read-SSRF that body is the
           // exfil channel; the status alone is enough to diagnose.
           if (!res.ok) throw new Error(`ollama: ${res.status}`);

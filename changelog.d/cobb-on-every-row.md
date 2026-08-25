@@ -2,7 +2,7 @@
 type: feature
 scope: assistant
 date: 2026-08-21
-docs_target: docs/USER_GUIDE.md#Ask Cobb
+docs_target: docs/USER_GUIDE.md#2. Core concepts
 ---
 The Cobb button that puts one record in context now sits on list rows too, not only on a record's own page. Every area and container on Locations has one.
 

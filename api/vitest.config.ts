@@ -56,15 +56,25 @@ export default defineConfig({
     // when other connections need to drain first.
     hookTimeout: 120_000,
     // Run files across forks instead of one serial fork — the suite is ~2min
-    // serial and the A6 runner has 12 cores. 8 forks ≤ 12 cores, so each fork
-    // owns a full core: no oversubscription, tests finish faster, and the
-    // Postgres CREATE/DROP DATABASE template-lock window each signup holds is
-    // SHORTER — which is why 8-on-12 is both faster and no flakier than the
-    // proven 6-on-8 baseline. retry:1 above absorbs any transient. Each fork is
-    // its own process, so module mocks + process.env never bleed across files.
+    // serial and the runner has 12 cores.
+    //
+    // 6, not 8, and the constraint is MEMORY rather than cores. 8 was chosen
+    // when the runner had 20 GB; it has 12 GB, and at 8 forks the suite peaked
+    // at 11.9 GB of that 12 with 1.1 GB of swap. Nothing was OOM-killed —
+    // instead the kernel throttled socket allocations (54,652 events), so the
+    // api refused connections while staying alive and 488 assertions died as
+    // ECONNREFUSED across a dozen unrelated files. Every process healthy, no
+    // exception logged, and a red main blocking deploys.
+    //
+    // Raising the box is the other fix and is NOT available: the host has 27 GB
+    // with ~11 GB reserved by KVM guests, so a 20 GB ceiling here could starve
+    // the host — including the Forgejo container running the build.
+    //
+    // retry:1 above absorbs any transient. Each fork is its own process, so
+    // module mocks + process.env never bleed across files.
     pool: "forks",
     poolOptions: {
-      forks: { singleFork: false, maxForks: 8, minForks: 2 },
+      forks: { singleFork: false, maxForks: 6, minForks: 2 },
     },
     sequence: { sequencer: LongestFirstSequencer },
   },

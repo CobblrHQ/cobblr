@@ -493,10 +493,6 @@
   },
   {
     "file": "web/src/pages/ScanPage.tsx",
-    "text": "Purchase order created — item Confirmed item (enable Purchases to group them into an order"
-  },
-  {
-    "file": "web/src/pages/ScanPage.tsx",
     "text": "Renamed to \"\" — fix reported to the barcode DB."
   },
   {

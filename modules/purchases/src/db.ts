@@ -33,6 +33,7 @@ export interface PurchasesOrdersTable {
   total_cost: ColumnType<string | null, number | null | undefined, number | null | undefined>;
   shipping_cost: ColumnType<string | null, number | null | undefined, number | null | undefined>;
   tracking_number: string | null;
+  tracking_added_by_user_id: string | null;
   notes: string | null;
   metadata: ColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown> | undefined>;
   instance: Generated<string>;

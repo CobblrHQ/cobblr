@@ -34,6 +34,8 @@ import {
   type ScanInboxItem,
 } from "../lib/api";
 import { LocationTreePicker } from "./LocationTreePicker";
+import { resolveInstanceForFiling } from "../pages/scanInstall";
+import { installToastLine } from "../lib/installSummary";
 import { useAiStatus, AiOffNotice } from "./AiStatusNotice";
 import { planErrorView } from "./organizePlanError";
 
@@ -61,14 +63,18 @@ function ItemThumb({
   /** The plan's stored file ids, used when the live item is not in the caller's
    *  view. Without it a ready-group row drew a grey square, which is what a
    *  put-away list is read by. */
-  fallback?: { image_file_id?: string; catalog_image_file_id?: string };
+  fallback?: { image_file_id?: string; catalog_image_file_id?: string; catalog_image_url?: string };
 }) {
   const file = (id: string) => `/api/v1/orgs/${slug}/modules/core-files/files/${id}/raw?variant=thumb`;
   const catalogId = item?.catalog_image_file_id ?? fallback?.catalog_image_file_id ?? null;
   const yoursId = item?.image_file_id ?? fallback?.image_file_id ?? null;
+  // The raw catalog URL is the rung the By-session list has and this one
+  // lacked: a barcode item whose art the background downloader has not
+  // localised yet drew a grey square HERE while showing a picture THERE.
+  const catalogUrl = item?.catalog_image_url ?? fallback?.catalog_image_url ?? null;
   const src = useImageSrc(
     leadPhoto(item, {
-      catalog: [catalogId ? file(catalogId) : null],
+      catalog: [catalogId ? file(catalogId) : null, catalogUrl],
       yours: yoursId ? file(yoursId) : null,
     }).src,
   );
@@ -373,17 +379,16 @@ export function SortingPlanView({
           if (!latest || !plan) return;
           if (latest.plan_id === plan.plan_id) return;
           if ((latest.applied_group_ids ?? []).length > 0) return; // mid-walk plan, not a draft
+          // Spread, do not enumerate: the last hand-copied version silently
+          // dropped item_photos, and the `as` cast hid it from tsc - every
+          // auto-adopt un-applied the thumbnail fix mid-session.
           setPlan({
-            plan_id: latest.plan_id,
-            expires_at: latest.expires_at,
-            groups: latest.groups,
+            ...latest,
             already_filed_item_ids: latest.already_filed_item_ids ?? [],
             needs_review_item_ids: latest.needs_review_item_ids ?? [],
             census_truncated: latest.census_truncated ?? false,
             source: latest.source ?? "ai",
-            draft_hinted: (latest as { draft_hinted?: boolean }).draft_hinted,
-            item_names: latest.item_names,
-          } as OrganizePlanResponse);
+          });
           setApplied(new Set(latest.applied_group_ids ?? []));
           setOverrides(new Map());
           setSplitOut(new Map());
@@ -496,39 +501,74 @@ export function SortingPlanView({
     const filed: string[] = [];
     let skipped = 0;
     let failed = 0;
+    let lastErr: string | null = null;
+    // An item the user split out of this group is not this group's to file.
+    const excluded = splitOut.get(g.id) ?? new Set<string>();
+    // Which bundles these candidates need, installed ONCE before the loop.
+    // This surface skipped the install and re-created the 2026-08-22 Groceries
+    // failure: every line 404'd against a bundle nobody had installed.
+    const instanceByBundle = new Map<string, string | undefined>();
     for (const id of g.item_ids) {
-      const it = itemsById.get(id);
+      if (excluded.has(id)) continue;
+      // The plan covers up to 200 items; the inbox query pages by 50 and the
+      // plan view never scrolls the list that loads the rest. An item the page
+      // has not loaded is NOT unidentified - fetch it.
+      let it = itemsById.get(id);
+      if (!it) {
+        try {
+          it = await api.getScanItem(slug, id);
+        } catch {
+          /* falls through to skipped below */
+        }
+      }
       const cand = it?.suggested_candidates?.[0];
       if (!it || !cand || !it.suggested_name) {
         skipped++;
         continue;
       }
+      const bundleId = (cand as { bundle_external_id?: string }).bundle_external_id ?? null;
+      let instance = cand.instance ?? undefined;
+      if (bundleId) {
+        if (!instanceByBundle.has(bundleId)) {
+          instanceByBundle.set(
+            bundleId,
+            await resolveInstanceForFiling(slug, bundleId, cand.instance, (sum) => {
+              const line = installToastLine(sum);
+              if (line) toast.success(line);
+            }),
+          );
+        }
+        instance = instanceByBundle.get(bundleId);
+      }
       try {
         await api.confirmScanItem(slug, id, {
           target_module: cand.module,
           target_kind: cand.kind,
-          instance: cand.instance ?? undefined,
+          instance,
           name: it.suggested_name,
           quantity: it.quantity ?? cand.quantity ?? undefined,
           extras: cand.fields,
           location_id: overrideLoc ?? it.target_location_id ?? undefined,
         });
         filed.push(id);
-      } catch {
+      } catch (e) {
         failed++;
+        lastErr = e instanceof Error ? e.message : String(e);
       }
     }
     setReadyBusy(null);
     if (filed.length > 0) onApplied(filed);
-    // Only "done" when EVERY item filed — a partial keeps the group live so
-    // the skipped/failed ones stay actionable (the toast breaks it down).
-    if (filed.length === g.item_ids.length) {
+    // Only "done" when everything this group was ASKED to file filed - split-out
+    // items are not the group's to file, so they do not hold it open. A partial
+    // keeps the group live so the skipped/failed ones stay actionable.
+    const attempted = g.item_ids.filter((id) => !excluded.has(id)).length;
+    if (filed.length === attempted && attempted > 0) {
       setReadyDone((prev) => new Set([...prev, g.id]));
     }
     const parts: string[] = [];
     if (filed.length) parts.push(`${filed.length} filed to ${destName}`);
     if (skipped) parts.push(`${skipped} need identifying first`);
-    if (failed) parts.push(`${failed} failed`);
+    if (failed) parts.push(`${failed} failed${lastErr ? ` - ${lastErr}` : ""}`);
     if (filed.length) toast.success(parts.join(" · "));
     else toast.error(parts.join(" · ") || "Nothing to file yet");
   };

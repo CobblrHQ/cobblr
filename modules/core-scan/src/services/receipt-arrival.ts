@@ -47,9 +47,24 @@ export function fileReceiptAs(
   orderedAt: string | null,
   /** What the inbox already knows. Omitted by callers that never tracked. */
   known?: KnownShipment | null,
+  /** The receipt's own promised date ("arriving August 26"), when it stated
+   *  one. A promise still in the future is the same evidence a tracking number
+   *  is: nobody promises a delivery date for something already in your hands. */
+  expectedArrival?: string | null,
+  /** The day that has arrived everywhere on earth - passed in so this stays a
+   *  pure function a test can pin. */
+  today?: string,
 ): ArrivalFiling {
   const tracking = (trackingNumber ?? "").trim();
   if (!tracking) {
+    // A future promised date means the parcel is still coming even without a
+    // number yet. Orders born at parse time always land here (nobody has had a
+    // chance to type a number), and filing them 'arrived' put EVERY receipt
+    // order outside the arrival sweep's selection forever - the "was due
+    // today, did it turn up?" ask was structurally dead (2026-08-25 audit).
+    if (expectedArrival && today && expectedArrival >= today) {
+      return { tracking_number: undefined, arrived_at: undefined, status: "in-transit" };
+    }
     // Unchanged, and the common case: already in hand when the receipt arrived.
     return { tracking_number: undefined, arrived_at: orderedAt ?? undefined, status: "arrived" };
   }

@@ -2,7 +2,7 @@
 type: feature
 scope: scan
 date: 2026-07-13
-docs_target: docs/USER_GUIDE.md#Scan a VIN, get the vehicle
+docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
 docs_published: 2026-08-07
 ---
 Scan a VIN and get the whole vehicle. Point the camera at a car's door-jamb VIN barcode and Cobblr decodes it against the free NHTSA database, then mints a record already named "2003 Honda Accord" with make, model, year, body, and fuel filled in, the same one-tap flow a product barcode uses (a UPC still goes to the product catalogs; a VIN goes to the vehicle database, decided by the code's shape). You can still type a VIN into a vehicle form to fill the same fields. It's a suggestion you can double-check: only empty fields are touched, and a bad or partial VIN says so instead of guessing. Works on the shipped Vehicle Maintenance bundle and on any make/model/year table you build.

@@ -9,7 +9,7 @@ import { z } from "zod";
 import { parseWireFilter } from "../platform/wire-filter.js";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
-import { requireAuth } from "../auth/middleware.js";
+import { requireAuth, appTokenMayInvoke } from "../auth/middleware.js";
 import { requireCapability, requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
@@ -19,6 +19,8 @@ import { checkAvailability as checkAiAvailability } from "../platform/ai.js";
 import { AiCapabilities, type AiCapability } from "@cobblr/platform-contract";
 import { clearComputedDefsCache } from "../platform/computed-fields.js";
 import { effectiveAppliesTo, matchAction, getActionScope } from "../platform/actions.js";
+import { platformActionMinRole } from "../platform/platform-actions.js";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import type { ActionAppliesToDecl } from "@cobblr/platform-contract";
 import {
   FIELD_SCOPE_PRESETS,
@@ -362,11 +364,51 @@ platformOrgRouter.post(
         });
         return;
       }
+      // A Tier-B app-scoped token may fire capability-gated MODULE actions but
+      // never a kernel workspace-config one (`platform:*`). requireCapability
+      // below is not enough: an owner/admin identity passes it implicitly, so a
+      // managed-app bundle running under one could otherwise disable a module or
+      // rename the workspace. Server-side twin of the Player's client mediator.
+      if (req.session?.app_scope && !appTokenMayInvoke(parsed.data.actionId)) {
+        res.status(403).json({
+          error: {
+            code: "app_token_out_of_scope",
+            message:
+              "An app token may not invoke workspace-configuration (platform:*) actions.",
+          },
+        });
+        return;
+      }
+
       // Authorize: owner/admin pass; members/guests need an explicit
       // grant for this specific action. Closes the hole where any
       // authenticated member (incl. a read-only guest) could invoke any
       // action — e.g. hand-firing inventory:adjust-stock to move stock.
       if (!(await requireCapability(req, res, parsed.data.actionId))) return;
+
+      // Per-action role FLOOR — parity with the REST twin (audit
+      // M-ACTION-PARITY). requireCapability lets any admin through, but some
+      // kernel actions are owner-only over REST (platform:rename-workspace is
+      // hard `role === "owner"` on PATCH /orgs/:slug). Without this the action
+      // rail would be more permissive than the settings UI for the SAME
+      // operation, so an admin could rename through Cobb / the generic invoke
+      // what they cannot rename in Settings. roleSatisfies is rank-based, so a
+      // higher role always clears a lower floor.
+      const minRole = platformActionMinRole(parsed.data.actionId);
+      if (minRole && !roleSatisfies(req.tenant!.role, [minRole])) {
+        res.status(403).json({
+          error: {
+            code: "forbidden",
+            message: `The ${parsed.data.actionId} action requires the ${minRole} role.`,
+            details: {
+              action_id: parsed.data.actionId,
+              required_role: minRole,
+              your_role: req.tenant!.role,
+            },
+          },
+        });
+        return;
+      }
 
       // A workspace-scoped action runs on the workspace, not a record — it
       // takes no entityKind/entityId and skips entity resolution. Read the
@@ -1279,7 +1321,9 @@ platformOrgRouter.post(
         });
         return;
       }
-      res.status(201).json(result.def);
+      // `warning` rides beside the row: a per-kind field shadowing a scoped
+      // one is legitimate, but must not be silent (see createFieldDef).
+      res.status(201).json({ ...result.def, ...(result.warning ? { warning: result.warning } : {}) });
     } catch (err) {
       next(err);
     }

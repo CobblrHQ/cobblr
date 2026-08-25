@@ -20,6 +20,7 @@
 import type { Kysely } from "kysely";
 import { sql } from "kysely";
 import { serializeByKey, releaseKey } from "./serialize-by-key.js";
+import { insertWithSeqRetry, persistOrLog } from "./seq-retry.js";
 import type { CoreAiDB } from "../db.js";
 
 /** "text-delta" is the answer arriving as it is written, one piece per event.
@@ -46,26 +47,64 @@ export async function createTurn(db: Kysely<CoreAiDB>, userId: string, prompt: s
 
 /** Append one event.
  *
- *  Serialised per TURN. seq is allocated inside the insert, so concurrent
- *  writers never collide on a number — but they can still land out of ORDER,
- *  and the loop emits fire-and-forget so two were regularly in flight at once.
- *  The event that suffered was the last one: `done` could be inserted before an
- *  earlier `tool-result`, and a reader that stops at `done` (every reader) then
- *  saw a turn that used no tools. That is the intermittent replay-test failure,
- *  and the same reason a long answer sometimes showed no steps.
+ *  Serialised per TURN so events cannot land out of ORDER: the loop emits
+ *  fire-and-forget, so two were regularly in flight at once and `done` could be
+ *  inserted before an earlier `tool-result`. A reader that stops at `done`
+ *  (every reader) then saw a turn that used no tools — the intermittent
+ *  replay-test failure, and the same reason a long answer sometimes showed no
+ *  steps. Queueing here rather than at each call site means every emitter gets
+ *  it: the loop's sink, an applied write, and finishTurn's terminal event.
  *
- *  Queueing here rather than at each call site means every emitter gets it:
- *  the loop's sink, an applied write, and finishTurn's terminal event. */
+ *  That chain is IN-PROCESS, though. The step-relay endpoint can run on another
+ *  api replica, so seq collisions and persist failures are still possible across
+ *  the fleet; persistTurnEvent (retry + log) and insertTurnEvent (seq retry on
+ *  the PK conflict) are what make a collision or a blip recoverable instead of a
+ *  silently-lost step. */
 export async function emitTurnEvent(
   db: Kysely<CoreAiDB>,
   turnId: string,
   kind: TurnEventKind,
   payload: Record<string, unknown> = {},
 ): Promise<TurnEvent> {
-  const ev = await serializeByKey(turnId, () => insertTurnEvent(db, turnId, kind, payload));
+  const ev = await serializeByKey(turnId, () => persistTurnEvent(db, turnId, kind, payload));
   // A turn is over after these; nothing may queue behind them.
   if (kind === "done" || kind === "error") releaseKey(turnId);
   return ev;
+}
+
+/** Persist one event durably, absorbing the two failures that would otherwise
+ *  make it vanish. A lost progress event is invisible AND permanent: a reader
+ *  that stops at `done` sees a finished turn missing a step forever, which is
+ *  the same class of bug the per-turn serialisation (adc1116d) started closing.
+ *
+ *  Handled here:
+ *   * a TRANSIENT persist failure (a dropped connection, a deadlock) — logged so
+ *     it is at least observable, retried ONCE, and if that also fails given up
+ *     without throwing, because a failed progress write must never crash the
+ *     turn (the row is the source of truth; a poll still finds the rest).
+ *  Handled one layer down, in insertTurnEvent:
+ *   * a seq COLLISION across replicas — the PK (turn_id, seq) rejects it and the
+ *     insert re-computes max(seq)+1 and retries. */
+function persistTurnEvent(
+  db: Kysely<CoreAiDB>,
+  turnId: string,
+  kind: TurnEventKind,
+  payload: Record<string, unknown> = {},
+): Promise<TurnEvent> {
+  return persistOrLog(
+    () => insertTurnEvent(db, turnId, kind, payload),
+    (phase, err) =>
+      console.error(
+        phase === "retry"
+          ? `[core-ai] turn ${turnId} event "${kind}" failed to persist, retrying once:`
+          : `[core-ai] turn ${turnId} event "${kind}" LOST after retry:`,
+        err,
+      ),
+    // The row never got this event. A placeholder keeps callers from crashing on
+    // a missing value; seq 0 sorts before any real event and the SSE relay
+    // dedupes it out, so it cannot corrupt ordering for a reader.
+    () => ({ seq: 0, kind, payload }),
+  );
 }
 
 async function insertTurnEvent(
@@ -74,17 +113,21 @@ async function insertTurnEvent(
   kind: TurnEventKind,
   payload: Record<string, unknown> = {},
 ): Promise<TurnEvent> {
-  const rows = await sql<{ seq: number }>`
-    insert into core_ai_chat_turn_events (turn_id, seq, kind, payload)
-    values (
-      ${turnId},
-      coalesce((select max(seq) from core_ai_chat_turn_events where turn_id = ${turnId}), 0) + 1,
-      ${kind},
-      ${JSON.stringify(payload)}::jsonb
-    )
-    returning seq
-  `.execute(db);
-  const seq = rows.rows[0]!.seq;
+  // seq is allocated inside the insert; a cross-replica collision on
+  // (turn_id, seq) is a retryable unique violation, not a lost event.
+  const seq = await insertWithSeqRetry(async () => {
+    const rows = await sql<{ seq: number }>`
+      insert into core_ai_chat_turn_events (turn_id, seq, kind, payload)
+      values (
+        ${turnId},
+        coalesce((select max(seq) from core_ai_chat_turn_events where turn_id = ${turnId}), 0) + 1,
+        ${kind},
+        ${JSON.stringify(payload)}::jsonb
+      )
+      returning seq
+    `.execute(db);
+    return rows.rows[0]!.seq;
+  });
   const ev: TurnEvent = { seq, kind, payload };
   await db
     .updateTable("core_ai_chat_turns")

@@ -29,6 +29,9 @@ importers:
       '@cobblr/platform-contract':
         specifier: workspace:*
         version: link:../packages/platform-contract
+      '@cobblr/platform-net':
+        specifier: workspace:*
+        version: link:../packages/platform-net
       '@cobblr/workspace-tools':
         specifier: workspace:*
         version: link:../packages/workspace-tools
@@ -720,6 +723,9 @@ importers:
       '@cobblr/platform-contract':
         specifier: workspace:*
         version: link:../../packages/platform-contract
+      '@cobblr/platform-net':
+        specifier: workspace:*
+        version: link:../../packages/platform-net
       express:
         specifier: ^4.21.2
         version: 4.22.2
@@ -1331,6 +1337,16 @@ importers:
     devDependencies:
       typescript:
         specifier: ^5.7.2
+        version: 5.9.3
+
+  packages/platform-net:
+    dependencies:
+      undici:
+        specifier: ^6.27.0
+        version: 6.27.0
+    devDependencies:
+      typescript:
+        specifier: ^5.6.3
         version: 5.9.3
 
   packages/platform-web:

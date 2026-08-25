@@ -25,53 +25,10 @@ import { lookup as dnsLookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { platform } from "@cobblr/platform-contract";
 
-/** Always blocked under BOTH policies — loopback, link-local + cloud metadata
- *  (169.254.169.254), 0.0.0.0, multicast, IPv6 loopback/ULA/link-local. */
-export function isDangerousIp(ip: string): boolean {
-  if (!ip) return true;
-  const family = isIP(ip);
-  if (family === 4) {
-    const p = ip.split(".").map((n) => Number.parseInt(n, 10));
-    if (p.length !== 4 || p.some((n) => Number.isNaN(n))) return true;
-    const [a, b] = p as [number, number, number, number];
-    if (a === 127) return true; // loopback
-    if (a === 0) return true; // 0.0.0.0/8
-    if (a === 169 && b === 254) return true; // link-local + cloud metadata
-    if (a >= 224) return true; // multicast + reserved
-    return false;
-  }
-  if (family === 6) {
-    const lower = ip.toLowerCase();
-    if (lower === "::1" || lower === "::") return true;
-    if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // ULA
-    if (/^fe[89ab]/.test(lower)) return true; // link-local fe80::/10
-    if (lower.startsWith("ff")) return true; // multicast
-    if (lower.startsWith("::ffff:")) {
-      const v4 = lower.slice("::ffff:".length);
-      if (isIP(v4) === 4) return isDangerousIp(v4);
-    }
-    return false;
-  }
-  return true; // not a parseable IP → unsafe
-}
-
-/** The strict (cloud) set: dangerous + RFC1918 private + CGNAT/tailnet. */
-export function isPrivateIp(ip: string): boolean {
-  if (isDangerousIp(ip)) return true;
-  if (isIP(ip) === 4) {
-    const [a, b] = ip.split(".").map((n) => Number.parseInt(n, 10)) as [number, number, number, number];
-    if (a === 10) return true; // 10/8
-    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16/12
-    if (a === 192 && b === 168) return true; // 192.168/16
-    if (a === 100 && b >= 64 && b <= 127) return true; // 100.64/10 CGNAT (incl. tailnet)
-    return false;
-  }
-  if (isIP(ip) === 6 && ip.toLowerCase().startsWith("::ffff:")) {
-    const v4 = ip.toLowerCase().slice("::ffff:".length);
-    if (isIP(v4) === 4) return isPrivateIp(v4);
-  }
-  return false;
-}
+// The dangerous/private split is the ONE canonical rule in the contract, so
+// this driver's copy cannot drift from the kernel's (audit B2).
+import { isDangerousIp, isPrivateIp } from "@cobblr/platform-contract/private-ip";
+export { isDangerousIp, isPrivateIp };
 
 /** Throw if `raw` isn't an http(s) URL safe for a server-side fetch to a
  *  machine manager under the current deployment's egress policy. Async because

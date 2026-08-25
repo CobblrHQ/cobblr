@@ -49,6 +49,12 @@ export interface SessionUser {
    *  full-access token). When non-null, requireAuth has already clamped the
    *  request to these scopes' allowlist (`tokenScopeAllows`). */
   token_scopes: string[] | null;
+  /** True while the account carries a temp/admin-set password. Re-read from
+   *  the DB on every request, so completing the reset (POST /me/password or
+   *  /auth/password/reset) clears it immediately. `withTenant` refuses
+   *  mutating workspace requests while this is set — the client redirect is
+   *  UX, THIS is the enforcement (audit L-MUSTRESET). */
+  must_reset_password: boolean;
 }
 
 // H1 Tier B — server-side clamp for capability-scoped app tokens. The
@@ -86,6 +92,19 @@ function appTokenPathAllowed(method: string, rel: string, appScope: string): boo
   if (method === "PUT") return ownData;
   if (method === "POST") return rel === "/actions/invoke";
   return false;
+}
+
+// The path clamp above lets an app token POST /actions/invoke, but says nothing
+// about WHICH action — and the invoke route's only authz is requireCapability,
+// which an owner/admin passes implicitly. So an app bundle running under an
+// owner/admin identity could server-side fire a KERNEL workspace-config action
+// (`platform:*` — disable-module, remove-field, rename-workspace) even though
+// the Player's client-side mediator would never offer it. That mediator lives
+// in browser JS and is bypassable; this is its server-side twin. An app token
+// may invoke a capability-gated MODULE action but never a `platform:*` one.
+// Enforced at the invoke route, where the actionId (request body) is known.
+export function appTokenMayInvoke(actionId: string): boolean {
+  return !actionId.startsWith("platform:");
 }
 
 // MCP read-grant clamp (Ask Cobb over the subscription bridge). A JWT with
@@ -274,7 +293,7 @@ export async function requireAuth(
     }
     const user = await meta
       .selectFrom("users")
-      .select(["id", "email", "display_name", "active", "tokens_valid_from"])
+      .select(["id", "email", "display_name", "active", "tokens_valid_from", "must_reset_password"])
       .where("id", "=", userId)
       .executeTakeFirst();
     if (!user || !user.active) {
@@ -359,6 +378,7 @@ export async function requireAuth(
       is_platform_admin: isPlatformAdmin(user.email),
       app_scope: appScope,
       token_scopes: tokenScopes,
+      must_reset_password: user.must_reset_password,
     };
     // Wrap the rest of the request chain in actor context so any
     // deeply-nested activity.log() call automatically picks up

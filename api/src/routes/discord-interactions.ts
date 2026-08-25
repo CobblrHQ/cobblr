@@ -20,8 +20,13 @@
 
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "../auth/middleware.js";
+import { requireScope } from "../auth/capability.js";
 import { platform } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
+import {
+  assertActingRoleClearsActionFloor,
+  ActionRoleFloorError,
+} from "../platform/platform-actions.js";
 import {
   MODAL_SUBMIT,
   readReply,
@@ -32,6 +37,7 @@ import {
   INTERACTION,
   RESPONSE,
   parsePress,
+  pressMayAct,
   resolvePress,
   settledMessage,
   verifySignature,
@@ -86,11 +92,20 @@ discordInteractionsRouter.post("/discord/interactions", async (req, res) => {
  *  token, and the scope registry already enforces which paths a token may
  *  touch. The scope confers no authority of its own — the action still comes
  *  from the stored row and the presser must own it — so the worst a leaked
- *  token can do is replay a press its holder was already shown. */
+ *  token can do is replay a press its holder was already shown.
+ *
+ *  requireScope is NOT redundant with requireAuth's scope clamp. That clamp
+ *  only bounds a SCOPED token; an unscoped token (`token_scopes === null`) and
+ *  every browser session JWT skip it and are unrestricted. Since this handler
+ *  reads the acting identity from the request BODY (member/user id → discord
+ *  connection), not from the session, an unscoped caller reaching here could
+ *  forge a press AS the victim the body names. requireScope refuses anything
+ *  that was not deliberately minted with `discord:interactions`. */
 discordInteractionsRouter.post(
   "/discord/interactions/forwarded",
   requireAuth,
   async (req, res) => {
+    if (!requireScope(req, res, "discord:interactions")) return;
     await handlePress(req, res);
   },
 );
@@ -139,21 +154,50 @@ async function handlePress(req: Request, res: Response): Promise<void> {
       discordUserId
         ? meta
             .selectFrom("discord_connections")
-            .select(["user_id"])
+            .innerJoin("users", "users.id", "discord_connections.user_id")
+            // The display name rides along so the fan-out a press triggers can
+            // say WHO replied. With `null` here, every reply posted from
+            // Discord was attributed to "Somebody" in the notifications it
+            // caused, while the same reply typed in the app carried the name.
+            .select(["discord_connections.user_id as user_id", "users.display_name as display_name"])
             .where("discord_user_id", "=", discordUserId)
             .where("verified", "=", true)
             .executeTakeFirst()
         : Promise.resolve(undefined),
     ]);
 
+    // The card runs a real write (a comment posts to the workspace), so the
+    // presser must be a CURRENT member with enough role — not just the
+    // recipient of the DM. Two holes this closes: a read-only guest, who is
+    // legitimately mentioned and legitimately DM'd but may only READ in-app
+    // (the in-app reply requires member+); and a member whose access was
+    // revoked AFTER the DM was sent, since the notification row and the Discord
+    // link both outlive the membership. The invoke() path is deliberately not
+    // capability-gated (it is the wire/automation entry too), so the gate lives
+    // here, mirroring the in-app twin's requireRole("owner","admin","member").
+    const notifRow = notification as StoredNotification | undefined;
+    const pressRole =
+      conn?.user_id && notifRow
+        ? (
+            await meta
+              .selectFrom("org_memberships")
+              .select("role")
+              .where("org_id", "=", notifRow.org_id)
+              .where("user_id", "=", conn.user_id)
+              .executeTakeFirst()
+          )?.role
+        : undefined;
+    const mayAct = pressMayAct(pressRole);
+
     // A press of Reply does not DO anything: it opens a box. So it is answered
     // before the action is resolved, and the ownership check still has to pass
     // first — otherwise a forged id would open a modal naming somebody else's
-    // record, which leaks the subject even if the submit later fails.
+    // record, which leaks the subject even if the submit later fails. The same
+    // member gate applies: a guest/ex-member must not even open the reply box.
     if (!isModalSubmit && ref.actionId === REPLY_ACTION_ID) {
       const owns =
         notification && conn?.user_id && (notification as StoredNotification).user_id === conn.user_id;
-      if (!owns) {
+      if (!owns || !mayAct) {
         res.json(settledMessage(original, "This button is no longer valid."));
         return;
       }
@@ -176,6 +220,13 @@ async function handlePress(req: Request, res: Response): Promise<void> {
     if (!resolved.ok) {
       // Deliberately one message for every refusal. Distinguishing "not yours"
       // from "no such notification" tells a prober which ids exist.
+      res.json(settledMessage(original, "This button is no longer valid."));
+      return;
+    }
+    // Same member gate as the reply-modal branch, for a plain button press (and
+    // the modal submit that follows an opened box). A guest or ex-member reaches
+    // here owning the notification but must not perform the write.
+    if (!mayAct) {
       res.json(settledMessage(original, "This button is no longer valid."));
       return;
     }
@@ -206,6 +257,24 @@ async function handlePress(req: Request, res: Response): Promise<void> {
         ? { kind: `${row.module_name}:${row.entity_type}`, id: row.entity_id, fields: {} }
         : undefined;
 
+    // Per-action role FLOOR, on top of the pressMayAct member gate above (audit
+    // M-ACTION-PARITY). pressMayAct proves member+, but a floored action — an
+    // owner-only platform:* one — must hold the SAME floor here that the HTTP
+    // /actions/invoke route holds, because a card press reaches invoke()
+    // directly. No such action is card-reachable today (they are workspace-
+    // scoped, not notification actions), so this is defensive; the floor must
+    // not depend on which door was used. Same neutral refusal as the other
+    // gates so a prober learns nothing about roles or ids.
+    try {
+      assertActingRoleClearsActionFloor(resolved.action, pressRole);
+    } catch (err) {
+      if (err instanceof ActionRoleFloorError) {
+        res.json(settledMessage(original, "This button is no longer valid."));
+        return;
+      }
+      throw err;
+    }
+
     await platform().actions.invoke(resolved.action, {
       orgId: resolved.orgId,
       userId: resolved.userId,
@@ -219,7 +288,7 @@ async function handlePress(req: Request, res: Response): Promise<void> {
         // activity-log reader depends on. The provenance is not lost: the
         // event payload names the notification and the action, so the trail
         // says Discord even though this field cannot.
-        actor: { user_id: resolved.userId, display_name: null, auth_method: "session" },
+        actor: { user_id: resolved.userId, display_name: conn?.display_name ?? null, auth_method: "session" },
         timestamp: new Date().toISOString(),
         trigger_type: "user-invoked",
       },
@@ -227,7 +296,12 @@ async function handlePress(req: Request, res: Response): Promise<void> {
     });
 
     res.json(
-      settledMessage(original, isModalSubmit ? "✅ Sent." : `✅ ${resolved.label}`),
+      settledMessage(
+        original,
+        isModalSubmit ? "✅ Sent." : `✅ ${resolved.label}`,
+        // Only a reply has anything to echo; a plain action press does not.
+        typed,
+      ),
     );
   } catch (err) {
     console.error("[discord-interactions]", (err as Error).message);

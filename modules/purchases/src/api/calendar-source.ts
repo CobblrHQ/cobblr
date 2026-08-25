@@ -3,6 +3,7 @@
 // the requested window. purchases never imports the calendar — it contributes
 // through the platform seam.
 
+import { localDayOf } from "./route-helpers.js";
 import { Kysely, sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { CalendarEvent } from "@cobblr/platform-contract";
@@ -40,7 +41,7 @@ export function registerPurchasesCalendarSource(): void {
         return {
           id: `order:${r.id}`,
           title: `${label}${num} arrives`,
-          date: new Date(r.expected_arrival).toISOString().slice(0, 10),
+          date: localDayOf(r.expected_arrival) ?? String(r.expected_arrival).slice(0, 10),
           allDay: true,
           source: "order",
           category: "order",

@@ -117,7 +117,15 @@ export function nextPollAt(
 
   // Out for delivery is the one state where hours matter: it will either be
   // delivered this evening or it will not, and both are worth knowing tonight.
-  if (state === "out_for_delivery") return nextAt(now, [POLL_HOURS.evening]);
+  //
+  // BOTH windows, not just the evening. With [evening] alone, a poll at 19:05
+  // schedules the next look for TOMORROW 19:00 — and the delivered scan lands
+  // in exactly that gap (a real one hit at 19:49, and would have sat unseen
+  // for 24 hours). The overnight window catches tonight's delivery by 05:00,
+  // which is also when a failed attempt's re-schedule shows up.
+  if (state === "out_for_delivery") {
+    return nextAt(now, [POLL_HOURS.overnight, POLL_HOURS.evening]);
+  }
 
   // An exception is waiting on a person, not on the carrier. Daily is plenty;
   // the useful signal was the state change itself, which we already have.

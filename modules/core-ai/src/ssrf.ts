@@ -33,60 +33,11 @@ export function isAllowedAiScheme(url: string): boolean {
   }
 }
 
-/** Always blocked, under BOTH policies — never a legitimate AI endpoint
- *  and the actual SSRF danger. */
-export function isDangerousIp(ip: string): boolean {
-  if (!ip) return true;
-  const family = isIP(ip);
-  if (family === 4) {
-    const parts = ip.split(".").map((p) => Number.parseInt(p, 10));
-    if (parts.length !== 4 || parts.some((n) => Number.isNaN(n))) return true;
-    const [a, b] = parts as [number, number, number, number];
-    if (a === 127) return true; // loopback
-    if (a === 0) return true; // 0.0.0.0/8
-    if (a === 169 && b === 254) return true; // link-local + cloud metadata (169.254.169.254)
-    if (a >= 224) return true; // multicast + reserved
-    return false;
-  }
-  if (family === 6) {
-    const lower = ip.toLowerCase();
-    if (lower === "::1" || lower === "::") return true;
-    if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // ULA fc00::/7
-    if (/^fe[89ab]/.test(lower)) return true; // link-local fe80::/10
-    if (lower.startsWith("ff")) return true; // multicast
-    if (lower.startsWith("::ffff:")) {
-      // IPv4-mapped IPv6 (::ffff:a.b.c.d) — re-check on the v4 form.
-      const v4 = lower.slice("::ffff:".length);
-      if (isIP(v4) === 4) return isDangerousIp(v4);
-    }
-    return false;
-  }
-  return true; // not a parseable IP → treat as unsafe
-}
-
-/** The "strict" set: dangerous + the RFC1918 private ranges + CGNAT. */
-export function isPrivateIp(ip: string): boolean {
-  if (isDangerousIp(ip)) return true;
-  const family = isIP(ip);
-  if (family === 4) {
-    const [a, b] = ip.split(".").map((p) => Number.parseInt(p, 10)) as [
-      number,
-      number,
-      number,
-      number,
-    ];
-    if (a === 10) return true; // 10/8
-    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16/12
-    if (a === 192 && b === 168) return true; // 192.168/16
-    if (a === 100 && b >= 64 && b <= 127) return true; // 100.64/10 CGNAT (incl. tailnet)
-    return false;
-  }
-  if (family === 6 && ip.toLowerCase().startsWith("::ffff:")) {
-    const v4 = ip.toLowerCase().slice("::ffff:".length);
-    if (isIP(v4) === 4) return isPrivateIp(v4);
-  }
-  return false;
-}
+// The dangerous/private split is the ONE canonical rule in the contract, so
+// this module's copy cannot drift (it had already lost sync in other files).
+// This file keeps the PINNED fetch below; only the predicate moves out.
+import { isDangerousIp, isPrivateIp } from "@cobblr/platform-contract/private-ip";
+export { isDangerousIp, isPrivateIp };
 
 function blocked(policy: AiEndpointPolicy, ip: string): boolean {
   return policy === "strict" ? isPrivateIp(ip) : isDangerousIp(ip);

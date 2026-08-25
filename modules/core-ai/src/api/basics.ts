@@ -15,6 +15,7 @@ import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext, sessionUserId } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { matchBasics, normalize } from "../basics-match.js";
+import { CONTROL_KEYS, actReply, resolveControlAct } from "../control-context.js";
 import { COMPUTED_COMMANDS, computedCommandFor } from "../computed-commands.js";
 import type { WorkspaceApi } from "@cobblr/workspace-tools";
 import { bindCommand, deriveCommand, type LearnedCommand, type Operation } from "../learned-commands.js";
@@ -60,6 +61,17 @@ const Keywords = z.array(z.string().trim().min(1).max(80)).min(1).max(40);
 const AnswerBody = z.object({
   message: z.string().min(1).max(2000),
   selection_ids: z.array(z.string().max(64)).max(200).optional(),
+  /** The prior turn, summarised by the client (which keeps the conversation) so
+   *  control words — yes, again, undo — can point at something. Bounded, and
+   *  never trusted to act by itself: every act it produces is executed through
+   *  endpoints that re-validate (see control-context.ts). */
+  prior: z
+    .object({
+      offered: z.object({ id: z.string().max(64), message: z.string().max(2000) }).optional(),
+      ran: z.object({ id: z.string().max(64), message: z.string().max(2000) }).optional(),
+      ledger_ids: z.array(z.string().uuid()).max(50).optional(),
+    })
+    .optional(),
 });
 
 const BasicCreate = z.object({
@@ -97,6 +109,30 @@ basicsRouter.post(
     const parsed = AnswerBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
+    // Control words FIRST, when the prior turn gives them something to point
+    // at: "go for it" after an offer is the person saying yes, and matching it
+    // against learned commands or keyword rules would answer a different
+    // question than the one asked. Without a usable prior these fall through
+    // to the rules below, whose replies honestly say nothing is queued.
+    if (parsed.data.prior) {
+      const effectiveForProbe = await loadEffectiveRules(db);
+      const probe = matchBasics(parsed.data.message, toMatchable(effectiveForProbe));
+      if (probe.matched && probe.key && CONTROL_KEYS.has(probe.key)) {
+        const act = resolveControlAct(probe.key, parsed.data.prior);
+        if (act) {
+          res.json({
+            matched: true,
+            intent: probe.intent,
+            key: probe.key,
+            score: probe.score,
+            candidates: [],
+            reply: actReply(act),
+            act,
+          });
+          return;
+        }
+      }
+    }
     // A COMMAND this workspace taught itself wins over a keyword answer: the
     // keyword rules explain how to do something, and a command just does it.
     // It is offered, never run from here — writing to a workspace needs a

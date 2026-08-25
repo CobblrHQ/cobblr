@@ -14,6 +14,10 @@ import { requireAuth } from "../auth/middleware.js";
 import { requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
+import {
+  assertActingRoleClearsActionFloor,
+  ActionRoleFloorError,
+} from "../platform/platform-actions.js";
 import { getTenantDb } from "../db/tenant.js";
 import { resolveAppViewRefs, type SeededView } from "./bundle-app-view-refs.js";
 import * as activity from "../platform/activity.js";
@@ -2032,9 +2036,33 @@ export async function applyValidatedBundle(
       api_token_id: sess.api_token_id ?? null,
       api_token_name: null,
     };
+    // Per-action role FLOOR for the migration invoke (audit M-ACTION-PARITY). A
+    // migration runs a bundle-DECLARED action with the INSTALLER's authority; a
+    // crafted bundle that names an owner-only platform:* action (e.g.
+    // rename-workspace) as a migration would otherwise let a non-owner installer
+    // perform it, bypassing the floor the /actions/invoke route holds. Install
+    // already requires owner/admin, so this only bites the owner-only sliver.
+    // Look the installer's CURRENT role up once. Skipped for system provisioning
+    // (auth_method 'system' has no user being impersonated — a trusted infra
+    // install, e.g. a managed app), where there is no membership row to read.
+    const enforceFloor = sess.auth_method !== "system";
+    const installerRole = enforceFloor
+      ? ((
+          await meta
+            .selectFrom("org_memberships")
+            .select("role")
+            .where("org_id", "=", orgId)
+            .where("user_id", "=", sess.id)
+            .executeTakeFirst()
+        )?.role ?? null)
+      : null;
     for (const mig of m.migrations) {
       if (cmpVersion(priorVersion, mig.to_version) >= 0) continue; // already past it
       try {
+        // Refuse a floored action the installer cannot clear before it runs.
+        // A no-op for every module migration (they carry no floor); the caught
+        // ActionRoleFloorError is logged as a refusal and the install continues.
+        if (enforceFloor) assertActingRoleClearsActionFloor(mig.action, installerRole);
         const result = await platform().actions.invoke(mig.action, {
           orgId: orgId,
           userId: sess.id,
@@ -2046,7 +2074,8 @@ export async function applyValidatedBundle(
         });
         migrationsRun.push({ to_version: mig.to_version, action: mig.action, result });
       } catch (err) {
-        console.error(`[bundle-install] migration ${mig.action} (→${mig.to_version}) failed for ${inserted.id}:`, (err as Error).message);
+        const why = err instanceof ActionRoleFloorError ? "refused (role floor)" : "failed";
+        console.error(`[bundle-install] migration ${mig.action} (→${mig.to_version}) ${why} for ${inserted.id}:`, (err as Error).message);
       }
     }
   }

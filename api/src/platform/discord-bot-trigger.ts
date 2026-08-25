@@ -32,8 +32,16 @@ export interface DiscordDmResult {
   /** The bot accepted the request and Discord acknowledged the send. */
   ok: boolean;
   /** The user is reachable by DM (false = privacy settings blocked it / unknown
-   *  user). This is exactly what the verified test DM detects. */
+   *  user). This is exactly what the verified test DM detects. Only meaningful
+   *  when `transient` is false — a value the bot actually returned. */
   deliverable: boolean;
+  /** We could not get an authoritative answer from the bot: it is not
+   *  configured, it returned a non-2xx, or the request errored/timed out.
+   *  `deliverable:false` under `transient:true` means "unknown", NOT "blocked" —
+   *  the difference matters because a caller that unverifies a Discord link on
+   *  an undeliverable result must NOT do so on a blip, or one bot restart
+   *  unverifies everyone (audit B4a). */
+  transient: boolean;
 }
 
 /** Send a DM to a Discord user via the bot. Awaitable (unlike the fire-and-forget
@@ -54,8 +62,16 @@ export async function sendDiscordDm(args: {
    *  instinct on receiving a DM is to reply to it. See
    *  docs/design-decisions/discord-workspace-app.md. */
   components?: unknown[];
+  /** Already in Discord's embed shape — the channel owns the rendering, this
+   *  is a pipe. Same reasoning as `components`. */
+  embeds?: unknown[];
+  /** The plain form (message + app link) the bot falls back to when Discord
+   *  rejects the rich payload. The degraded shape still leads somewhere. */
+  fallback_text?: string;
 }): Promise<DiscordDmResult> {
-  if (!BOT_URL) return { ok: false, deliverable: false };
+  // No bot (every self-host box, and the hosted box mid-restart): we cannot
+  // judge deliverability, so this is transient, never "blocked".
+  if (!BOT_URL) return { ok: false, deliverable: false, transient: true };
   try {
     const r = await fetch(`${BOT_URL.replace(/\/+$/, "")}/dm`, {
       method: "POST",
@@ -63,12 +79,34 @@ export async function sendDiscordDm(args: {
       body: JSON.stringify(args),
       signal: AbortSignal.timeout(8000),
     });
-    if (!r.ok) return { ok: false, deliverable: false };
+    // A non-2xx is the bot being up-but-unhappy (5xx, a rolling restart, a 429):
+    // we did not get an authoritative deliverability verdict, so treat it as
+    // transient rather than as the user having blocked us.
+    if (!r.ok) return { ok: false, deliverable: false, transient: true };
+    // The bot answered. NOW deliverable is authoritative: false here means the
+    // user genuinely cannot be DM'd (privacy, no shared server, deleted).
     const d = (await r.json().catch(() => ({}))) as Partial<DiscordDmResult>;
-    return { ok: Boolean(d.ok), deliverable: Boolean(d.deliverable) };
+    return { ok: Boolean(d.ok), deliverable: Boolean(d.deliverable), transient: false };
   } catch {
-    return { ok: false, deliverable: false };
+    // Network error / timeout — the bot may be fine and just slow. Transient.
+    return { ok: false, deliverable: false, transient: true };
   }
+}
+
+/** Should an undeliverable DM cause us to mark the Discord link unverified?
+ *  ONLY when the bot authoritatively said the user is unreachable — never on a
+ *  transient blip. The bug this guards (audit B4a): every failure path used to
+ *  look identical, so one bot restart during a notification wave unverified
+ *  every recipient at once and Discord silently went dark for all of them. */
+export function dmResultUnverifies(res: DiscordDmResult): boolean {
+  return !res.ok && !res.deliverable && !res.transient;
+}
+
+/** The delivery outcome label. `blocked` is durable (the link gets dropped);
+ *  `send-failed` is transient (retry / leave the link alone). */
+export function dmOutcome(res: DiscordDmResult): "sent" | "send-failed" | "blocked" {
+  if (res.ok) return "sent";
+  return dmResultUnverifies(res) ? "blocked" : "send-failed";
 }
 
 export interface DiscordWaitlistCardPoke {

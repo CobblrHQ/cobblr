@@ -2,7 +2,7 @@
 type: feature
 scope: ai
 date: 2026-08-21
-docs_target: docs/USER_GUIDE.md#AI connections
+docs_target: docs/USER_GUIDE.md#3.22 AI providers & the AI kill-switch (operator)
 ---
 When more than one of your AI connections serves a workspace, you now choose which goes first, and the screen tells you what is already powering it. Before, whichever connection you edited most recently quietly won.
 

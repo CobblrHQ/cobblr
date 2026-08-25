@@ -13,12 +13,16 @@ import { aggregatorConnectedFor, aggregatorNames, driverStatus } from "../driver
 import { CarrierError } from "../status.js";
 import { registerShipmentsActionHandlers } from "./action-handlers.js";
 import { registerTrackingConnection } from "../drivers/connection.js";
+import { registerParcelTrackingInbound } from "../inbound.js";
 import { requestOrg } from "./request-org.js";
 
 registerShipmentsActionHandlers(); // core-shipments.track
 // Offers "connect your own tracking service" under /me/connections, so a parcel
 // can be followed with its OWNER's credentials on an instance that has none.
 registerTrackingConnection();
+// The inbound door: a bridge pushes "this parcel moved" and the modules that
+// own parcels re-check it now instead of at the next polling window.
+registerParcelTrackingInbound();
 
 const router = Router({ mergeParams: true });
 

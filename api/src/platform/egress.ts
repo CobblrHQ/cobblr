@@ -12,13 +12,21 @@
 //     cannot reach the host's LAN, co-located stacks, or cloud internals.
 //   • SELF-HOSTED (default): private LAN is allowed — it's the user's own network.
 //
-// Known residual (tracked): check-then-fetch isn't pinned against DNS rebinding;
-// the resolved IP is validated but fetch() re-resolves. Same gap the prior
-// per-module guards had; pin-the-IP is a follow-up.
+// Redirect + DNS-rebind safe (audit B2b): guardedFetch follows redirects itself
+// with redirect:"manual", re-validating EVERY hop's target (so a public host that
+// 302s to http://<tailnet>/ is caught at the hop, not followed blindly), and pins
+// each hop's TCP connection to the exact IP the guard just validated via an
+// undici Agent (so a DNS rebind between our check and the connect can't land on a
+// private address). Mirrors the sandbox HOST_FETCH loop.
 
 import { lookup } from "node:dns/promises";
 import net from "node:net";
+import { pinnedRedirectingFetch, type PinnedFetchArgs } from "@cobblr/platform-net";
 import { platform } from "@cobblr/platform-contract";
+import { isPrivateIp, isLinkLocalIp } from "@cobblr/platform-contract/private-ip";
+
+/** A redirect chain longer than this is refused rather than followed. */
+const MAX_REDIRECTS = 5;
 
 export type EgressAllow = (orgId: string, ip: string, url: URL) => boolean | Promise<boolean>;
 
@@ -33,32 +41,11 @@ export function registerAllow(p: EgressAllow): void {
 // honours that escape hatch where a raw COBBLR_HOSTED check wouldn't.
 const isStrict = (): boolean => platform().ai.getEndpointPolicy() === "strict";
 
-export function isLinkLocal(ip: string): boolean {
-  if (ip.startsWith("169.254.")) return true; // IPv4 link-local incl. 169.254.169.254
-  return ip.toLowerCase().startsWith("fe80:"); // IPv6 link-local
-}
-
-/** RFC1918 + loopback + CGNAT/tailnet + IPv6 ULA/loopback + IPv4-mapped. */
-export function isPrivate(ip: string): boolean {
-  if (net.isIPv4(ip)) {
-    const o = ip.split(".").map(Number);
-    if (o[0] === 10) return true; // 10.0.0.0/8
-    if (o[0] === 172 && o[1]! >= 16 && o[1]! <= 31) return true; // 172.16.0.0/12
-    if (o[0] === 192 && o[1] === 168) return true; // 192.168.0.0/16
-    if (o[0] === 127) return true; // loopback
-    if (o[0] === 100 && o[1]! >= 64 && o[1]! <= 127) return true; // 100.64.0.0/10 CGNAT (Tailscale)
-    if (o[0] === 0) return true; // 0.0.0.0/8
-    return false;
-  }
-  const low = ip.toLowerCase();
-  if (low === "::1" || low === "::") return true;
-  if (low.startsWith("fc") || low.startsWith("fd")) return true; // ULA fc00::/7
-  if (low.startsWith("::ffff:")) {
-    const mapped = low.slice(7);
-    if (net.isIPv4(mapped)) return isPrivate(mapped);
-  }
-  return false;
-}
+// The private/link-local rule is the ONE canonical predicate in the contract
+// (@cobblr/platform-contract/private-ip) — re-exported here under the names this
+// module's callers already use, so there is one rule, not five that drift.
+export const isLinkLocal = isLinkLocalIp;
+export const isPrivate = isPrivateIp;
 
 /** Pure policy decision (the testable core). `strict` = block private (the cloud
  *  egress policy); else LAN is allowed (self-host). Returns a block reason, or null. */
@@ -70,16 +57,45 @@ export function egressBlockReason(ip: string, opts: { strict: boolean; allowed: 
   return null;
 }
 
-async function resolveIp(host: string): Promise<string> {
-  if (net.isIP(host)) return host;
+/** Resolve EVERY address for a host (a public+private split answer must not pass
+ *  on the public record then connect to the private one). Returns them all. */
+async function resolveAll(host: string): Promise<{ address: string; family: number }[]> {
+  if (net.isIP(host)) return [{ address: host, family: net.isIP(host) }];
   try {
-    return (await lookup(host)).address;
+    return await lookup(host, { all: true });
   } catch {
     throw new Error(`egress: cannot resolve host ${host}`);
   }
 }
 
-/** SSRF-guarded outbound fetch for a tenant. */
+/** Validate one hop's URL under the current policy and return the IP to pin the
+ *  connection to (all resolved addresses are checked; the first is the pin, since
+ *  they all passed). Throws with the block reason on any disallowed address. */
+async function validateEgressHop(orgId: string, url: URL): Promise<{ address: string; family: number }> {
+  const host = url.hostname.replace(/^\[|\]$/g, "");
+  const addrs = await resolveAll(host);
+  if (addrs.length === 0) throw new Error(`egress: cannot resolve host ${host}`);
+  const strict = isStrict();
+  for (const { address } of addrs) {
+    let allowed = false;
+    if (strict && isPrivate(address)) {
+      for (const p of allowProviders) {
+        if (await p(orgId, address, url)) {
+          allowed = true;
+          break;
+        }
+      }
+    }
+    const reason = egressBlockReason(address, { strict, allowed });
+    if (reason) throw new Error(`egress: ${reason}`);
+  }
+  return addrs[0]!;
+}
+
+/** SSRF-guarded outbound fetch for a tenant. Follows redirects and re-pins every
+ *  hop through the shared pinnedRedirectingFetch (the policy is validateEgressHop).
+ *  Returns a WHATWG Response (undici's); its pinned Agent is left for undici's
+ *  idle reaper, since the caller streams the body (e.g. the bounded gunzip read). */
 export async function guardedFetch(
   orgId: string,
   input: string | URL | Request,
@@ -87,22 +103,18 @@ export async function guardedFetch(
 ): Promise<Response> {
   const href =
     typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
-  const ip = await resolveIp(new URL(href).hostname);
-
-  // Under the strict (cloud) policy, a private target is permitted only if some
-  // allow-provider claims it for this org (the tenant's registered edge endpoint).
-  const strict = isStrict();
-  let allowed = false;
-  if (strict && isPrivate(ip)) {
-    const url = new URL(href);
-    for (const p of allowProviders) {
-      if (await p(orgId, ip, url)) {
-        allowed = true;
-        break;
-      }
-    }
-  }
-  const reason = egressBlockReason(ip, { strict, allowed });
-  if (reason) throw new Error(`egress: ${reason}`);
-  return fetch(input, init);
+  const method = (init?.method ?? "GET").toUpperCase();
+  const { response } = await pinnedRedirectingFetch({
+    url: href,
+    method,
+    body:
+      init?.body !== undefined && method !== "GET" && method !== "HEAD"
+        ? (init.body as PinnedFetchArgs["body"])
+        : undefined,
+    maxRedirects: MAX_REDIRECTS,
+    ...(init?.headers ? { headers: init.headers as Record<string, string> } : {}),
+    ...(init?.signal ? { signal: init.signal as AbortSignal } : {}),
+    validate: (url) => validateEgressHop(orgId, url),
+  });
+  return response as unknown as Response;
 }

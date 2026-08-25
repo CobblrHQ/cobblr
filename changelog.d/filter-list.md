@@ -2,7 +2,7 @@
 type: feature
 scope: views
 date: 2026-08-24
-docs_target: docs/USER_GUIDE.md#Filtering a view to more than one place
+docs_target: docs/USER_GUIDE.md#3.5 Views
 ---
 **A view can now be filtered to several places at once, not just one.** A screen mounted between a fridge and a pantry can show both cupboards and nothing else. Filtering to a list of values used to be quietly ignored, which showed you everything instead of what you asked for; an unusable filter now shows nothing, so a mistake is visible rather than silent.
 

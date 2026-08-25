@@ -7,7 +7,7 @@
 // links redirect here cleanly).
 
 import { useSearchParams } from "react-router-dom";
-import { QrCode } from "lucide-react";
+import {} from "lucide-react";
 import { QrTokensPage } from "./QrTokensPage";
 import { ScanRulesPage } from "./ScanRulesPage";
 
@@ -23,12 +23,6 @@ export function QrPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title flex items-center gap-2">
-          <QrCode size={22} /> QR codes
-        </h1>
-      </div>
-
       <div className="flex gap-1 border-b border-line dark:border-slate-700">
         <button type="button" onClick={() => go("tokens")} className={tabCls(tab === "tokens")}>
           Tokens

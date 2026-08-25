@@ -56,6 +56,28 @@ export function classifyBundleUpdate(installed: string, latest: string): BundleU
   return "patch";
 }
 
+/**
+ * A "latest" that is BEHIND (or equal to) the installed version is not an
+ * update, and must not be dressed as one.
+ *
+ * The registry can lag a deploy: install 0.10.0 from a fresh manifest while the
+ * catalog still serves 0.9.4 and the dashboard read "v0.10.0 -> v0.9.4 - Update
+ * now" - an invitation to hand-confirm a downgrade, on every workspace, for the
+ * whole lag window. The tier classifier already refuses to AUTO-apply these;
+ * this is the other half: do not offer them at all.
+ *
+ * Unparseable versions return false - they keep today's banner-and-prompt
+ * behaviour, because "cannot read it" must not silently hide a real update.
+ */
+export function isDowngradeOrSame(installed: string, latest: string): boolean {
+  const a = parse(installed);
+  const b = parse(latest);
+  if (!a || !b) return false;
+  if (b[0] !== a[0]) return b[0] < a[0];
+  if (b[1] !== a[1]) return b[1] < a[1];
+  return b[2] <= a[2];
+}
+
 /** Whether a tier is eligible for auto-apply (patch or minor). Major/prompt are
  *  NOT — they always require the explicit confirm flow. */
 export function tierAutoApplies(tier: BundleUpdateTier): boolean {

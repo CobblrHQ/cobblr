@@ -1,7 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.flagship.groceries",
-    "version": "0.9.4",
+    "version": "0.10.0",
     "scan_keywords": [
       "tomato",
       "tomatoes",
@@ -338,7 +338,7 @@
         "entity_kind": "inventory:part",
         "name": "What's on hand",
         "view_type": "vending",
-        "pinned": true,
+        "pinned": false,
         "config": {
           "qty_field": "qty",
           "expiry_field": "expires_on",
@@ -511,6 +511,37 @@
           }
         ],
         "saved_views": [
+          {
+            "entity_kind": "groceries:item",
+            "name": "Re-buy soonest",
+            "view_type": "table",
+            "config": {
+              "sort_by": "runs_out_in",
+              "sort_dir": "asc",
+              "visible_fields": [
+                "title",
+                "qty",
+                "runs_out_in",
+                "replenish_every",
+                "min_qty"
+              ]
+            }
+          },
+          {
+            "entity_kind": "groceries:item",
+            "name": "How often you re-buy",
+            "view_type": "table",
+            "config": {
+              "sort_by": "replenish_every",
+              "sort_dir": "asc",
+              "visible_fields": [
+                "title",
+                "replenish_every",
+                "runs_out_in",
+                "qty"
+              ]
+            }
+          },
           {
             "entity_kind": "groceries:item",
             "name": "What's on hand",

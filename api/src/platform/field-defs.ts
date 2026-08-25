@@ -234,6 +234,12 @@ export const FieldDefCreate = z.object({
    *  different names. Validated with the SAME schema the manifest uses so the
    *  two can't drift. */
   field_role: FieldRoleSchema.nullable().optional(),
+  /** One sentence of purpose shown on the field's form ("A receipt fills this
+   *  from the vendor it names"). A real column since day one; this schema
+   *  never accepted it, so the presets passed it and the insert silently
+   *  dropped it - TypeScript missed the mismatch because the value arrived
+   *  via a spread (2026-08-25 audit). */
+  help: z.string().max(500).nullable().optional(),
 }).refine(
   (d) => !d.choices || d.type === "text",
   { message: "choices is only valid for type='text'", path: ["choices"] },
@@ -248,7 +254,7 @@ export const FieldDefCreate = z.object({
 export type FieldDefCreateInput = z.infer<typeof FieldDefCreate>;
 
 export type CreateFieldDefResult =
-  | { ok: true; def: FieldDefRow }
+  | { ok: true; def: FieldDefRow; warning?: string }
   | { ok: false; code: "missing_ref_kind" | "unknown_scope" | "duplicate_name"; message: string };
 
 /** Create one custom field def — the shared body of POST /field-defs and the
@@ -285,6 +291,31 @@ export async function createFieldDef(
     };
   }
   const entityKind = scopeTraits.length ? fieldScopeSentinel(scopeTraits) : input.entity_kind;
+  // A per-kind def SHADOWS a trait-scoped def of the same name for that kind
+  // (resolveFieldDefsForKind keeps the specific one), and when the scoped def
+  // carried a field_role the role vanishes with it - a preset's landing pad
+  // dies while the Fields page still reads "on", and parsed facts silently
+  // stop landing (2026-08-25 audit). Not a refusal: shadowing is a legitimate
+  // per-kind override. But it must not be a SILENT one.
+  let warning: string | undefined;
+  if (!scopeTraits.length) {
+    const scoped = await meta
+      .selectFrom("module_field_defs")
+      .select(["entity_kind", "field_role"])
+      .where("org_id", "=", orgId)
+      .where("name", "=", input.name)
+      .where("entity_kind", "like", "@%")
+      .executeTakeFirst();
+    if (scoped) {
+      warning =
+        `"${input.name}" also exists as a ${scoped.entity_kind} field` +
+        (scoped.field_role ? ` carrying the "${scoped.field_role}" meaning` : "") +
+        `. This kind now uses YOUR field instead - ` +
+        (scoped.field_role && !input.field_role
+          ? `and without that meaning set here, receipts and scans stop filling it for this kind. Set the same meaning on your field to keep that working.`
+          : `values land on your field for this kind.`);
+    }
+  }
   try {
     const inserted = await meta
       .insertInto("module_field_defs")
@@ -309,6 +340,7 @@ export async function createFieldDef(
           ? sql`${JSON.stringify({ traits: scopeTraits })}::jsonb`
           : null,
         field_role: input.field_role ?? null,
+        help: input.help ?? null,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -319,7 +351,7 @@ export async function createFieldDef(
       ref: { module: null, entityType: "field_def", entityId: inserted.id },
       diff: { entity_kind: entityKind, name: input.name, type: input.type },
     });
-    return { ok: true, def: inserted };
+    return { ok: true, def: inserted, ...(warning ? { warning } : {}) };
   } catch (err) {
     // unique (org_id, entity_kind, name) — the same field twice is a refusal
     // with a name, not a 500.

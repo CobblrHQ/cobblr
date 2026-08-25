@@ -42,6 +42,18 @@ declare module "express-serve-static-core" {
 
 const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
+/** True when a workspace request must be refused because the user still
+ *  carries a temp/admin-set password (audit L-MUSTRESET). Reads (GET/HEAD)
+ *  pass so the reset page can still load its data; every mutation is blocked
+ *  until the reset completes. The reset flow itself never hits this: both
+ *  POST /me/password and /auth/password/reset are meta-level routes that do
+ *  not go through withTenant. Pure so it's unit-testable without a DB. */
+export function blocksForPasswordReset(mustReset: boolean, method: string): boolean {
+  if (!mustReset) return false;
+  const m = method.toUpperCase();
+  return m !== "GET" && m !== "HEAD";
+}
+
 /** Reads org slug from `req.params.slug` (route param) or the
  *  `X-Org-Slug` header. Returns 400 if neither is present. */
 function resolveSlug(req: Request): string | null {
@@ -59,6 +71,15 @@ export async function withTenant(
 ): Promise<void> {
   if (!req.session) {
     res.status(401).json({ error: { code: "unauthenticated", message: "Auth required" } });
+    return;
+  }
+  // Forced password reset is enforced HERE, not just by the client redirect:
+  // a user on a temp password can read (so the shell/reset page loads) but
+  // cannot mutate workspace data until they set their own password.
+  if (blocksForPasswordReset(req.session.must_reset_password, req.method)) {
+    res.status(403).json({
+      error: { code: "must_reset_password", message: "Reset your password before continuing." },
+    });
     return;
   }
   const slug = resolveSlug(req);
@@ -164,6 +185,14 @@ async function resolveImpersonatedTenant(
   // The token must belong to the operator making the call (their Bearer session).
   if (!req.session || claims.sub !== req.session.id) {
     res.status(403).json({ error: { code: "impersonation_mismatch", message: "Impersonation token does not match the authenticated operator." } });
+    return;
+  }
+  // Re-check platform-admin on THIS request, not just at mint time. is_platform_admin
+  // is recomputed from SUPERADMIN_EMAILS every request, so an operator removed from
+  // that list stops impersonating immediately rather than riding an outstanding
+  // token for up to its 60-minute TTL (audit L-IMPADMIN).
+  if (!req.session.is_platform_admin) {
+    res.status(403).json({ error: { code: "impersonation_revoked", message: "Operator is no longer a platform admin." } });
     return;
   }
   const sess = await meta

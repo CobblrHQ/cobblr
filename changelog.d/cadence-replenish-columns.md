@@ -2,7 +2,7 @@
 type: feature
 scope: cadence
 date: 2026-08-20
-docs_target: docs/USER_GUIDE.md#Consumption cadence
+docs_target: docs/USER_GUIDE.md#3.25b Stock that reorders itself (purchases:draft-po)
 ---
 **Your tables can now show how often you re-buy something, and how long what you have will last.** Cobblr has been learning both from ordinary shopping for a while, but the only way to see them was one item at a time. They are now field values, so you can put them in a table, sort by them, and see the whole cupboard ranked by what runs out first. Both stay blank until Cobblr has seen you buy the thing twice, because a guess from one shop would be made up.
 

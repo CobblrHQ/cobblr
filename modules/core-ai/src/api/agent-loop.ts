@@ -109,17 +109,29 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
 
     if (calls.length === 0) {
       if (r.content.trim()) return { kind: "reply", text: stripStageDirections(scrubIds(r.content, seenNames)), applied };
-      // No tool calls AND no words. Some models answer a data question by
-      // trying to call a tool, malforming it, and having the provider strip the
-      // broken call — leaving an empty message (gemini-3.1-flash-lite returns
-      // finish_reason "MALFORMED_FUNCTION_CALL" this way on 3 of 9 runs). The
-      // user sees a blank bubble and cannot tell whether Cobb is broken or
-      // ignoring them. Ask once for plain words, then say something true.
+      // No tool calls AND no words. Two different models arrive here for two
+      // opposite reasons, and the nudge has to serve both:
+      //
+      //   a broken CALL — the model tried to call a tool, malformed it, and the
+      //   provider stripped it (gemini-3.1-flash-lite returns finish_reason
+      //   "MALFORMED_FUNCTION_CALL" this way on 3 of 9 runs);
+      //
+      //   a silent THINK — a local reasoning model spends its turn reasoning and
+      //   emits an empty final message with done_reason "stop" (qwen3:14b, on a
+      //   request to run an action, measured 2026-08-25: 900 chars of thinking,
+      //   zero content, no call).
+      //
+      // Either way the user sees a blank bubble. The nudge used to say "Do not
+      // call a tool this time", which is right for the first and exactly wrong
+      // for the second: it tells a model that went quiet mid-action to describe
+      // the action instead of doing it. So it asks for either, and names both.
       if (!nudgedForSilence) {
         nudgedForSilence = true;
         transcript.push({
           role: "user",
-          content: "(Your last message arrived empty. Answer in plain words. Do not call a tool this time.)",
+          content:
+            "(Your last message arrived empty — the user saw nothing. If you were part-way through " +
+            "running something, call the tool now. Otherwise answer in plain words.)",
         });
         continue;
       }

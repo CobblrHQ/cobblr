@@ -23,7 +23,10 @@ export type ChannelOutcome =
    *  answer rather than folded into "unverified". One re-confirmation fixes it. */
   | "stale-app"
   | "send-failed"
-  | "not-offered";
+  | "not-offered"
+  // An acknowledgement replies on the channel the conversation came in on;
+  // this channel was not that one. Deliberate quiet, not a failure.
+  | "ack-on-origin";
 
 export type DeliveryChannel = "in_app" | "email" | "discord_dm";
 export type DeliveryOutcomes = Partial<Record<DeliveryChannel, ChannelOutcome>>;
@@ -41,6 +44,7 @@ export function describeOutcome(outcome: ChannelOutcome): string {
     case "stale-app": return "linked to the previous Discord app - needs one re-confirm";
     case "send-failed": return "send failed";
     case "not-offered": return "not offered for this message";
+    case "ack-on-origin": return "answered on the channel it came in on";
     default: {
       const unreachable: never = outcome;
       throw new Error(`unnamed delivery outcome: ${String(unreachable)}`);
