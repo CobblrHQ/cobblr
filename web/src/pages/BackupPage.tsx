@@ -231,11 +231,11 @@ export function BackupPage() {
   return (
     <div className="space-y-6">
       {/* Blueprint */}
-      <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-800/40 p-5 space-y-3">
-        <div className="flex items-center gap-2">
-          <Layers className="h-5 w-5 text-accent" />
-          <h2 className="font-display text-lg font-bold text-content dark:text-mortar-100">Blueprint</h2>
-        </div>
+      <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
+        <h2 className="text-sm font-semibold text-content dark:text-mortar-100 flex items-center gap-2">
+          <Layers className="h-4 w-4 shrink-0 text-accent" aria-hidden />
+          Blueprint
+        </h2>
         <p className="text-sm text-muted">
           Your workspace <strong>setup</strong>  - enabled modules, installed bundles, custom fields, wires, shared
           views and public surfaces. <strong>No data.</strong> Install one to reproduce the setup on a fresh workspace.
@@ -282,11 +282,11 @@ export function BackupPage() {
       </section>
 
       {/* Backup */}
-      <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-800/40 p-5 space-y-3">
-        <div className="flex items-center gap-2">
-          <FileArchive className="h-5 w-5 text-accent" />
-          <h2 className="font-display text-lg font-bold text-content dark:text-mortar-100">Backup &amp; restore</h2>
-        </div>
+      <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
+        <h2 className="text-sm font-semibold text-content dark:text-mortar-100 flex items-center gap-2">
+          <FileArchive className="h-4 w-4 shrink-0 text-accent" aria-hidden />
+          Backup &amp; restore
+        </h2>
         <p className="text-sm text-muted">
           A full copy of this workspace - the blueprint <strong>plus every row and every file</strong>, as a <code>.zip</code>.
           Download one and keep it in your Google Drive or NAS. Restore one into a <strong>fresh</strong> workspace to
@@ -492,11 +492,11 @@ function DestinationsSection({ base, auth }: { base: string; auth: () => Record<
     "inline-flex items-center gap-1 rounded-md border border-amber-400/70 px-2 py-0.5 font-semibold text-amber-800 dark:text-amber-200 hover:bg-amber-100/60 dark:hover:bg-amber-800/30 disabled:opacity-50";
 
   return (
-    <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-800/40 p-5 space-y-3">
-      <div className="flex items-center gap-2">
-        <HardDrive className="h-5 w-5 text-accent" />
-        <h2 className="font-display text-lg font-bold text-content dark:text-mortar-100">Automatic destinations</h2>
-      </div>
+    <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
+      <h2 className="text-sm font-semibold text-content dark:text-mortar-100 flex items-center gap-2">
+        <HardDrive className="h-4 w-4 shrink-0 text-accent" aria-hidden />
+        Automatic destinations
+      </h2>
       <p className="text-sm text-muted">
         Push a backup automatically on a schedule to a <strong>server path / NAS</strong> or <strong>Google Drive</strong>. Or hit
         <em> Back up now</em> to send one immediately.

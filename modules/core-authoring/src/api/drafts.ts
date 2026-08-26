@@ -21,14 +21,14 @@ import {
   assembleContext,
   compilePrompt,
   repairPrompt,
-  parseJsonObject,
   unwrapBuild,
   unwrapApp,
-  applyLeanNatives,
   nativeFieldsByBaseKind,
   type ValidationError,
   type SeedGroup,
 } from "../services/compile.js";
+import type { KindFields } from "../services/corroborate.js";
+import { kindFieldsOf, modulesOf, shapeCandidate } from "../services/shape.js";
 import { listTemplates, getTemplate } from "../services/templates.js";
 import { matchTemplateHosted } from "../services/match-template.js";
 
@@ -105,6 +105,7 @@ async function validateArtifact(
 }
 
 const jsonb = (v: unknown) => sql`${JSON.stringify(v ?? null)}::jsonb`;
+
 
 // Kind → that module's create endpoint, for seeding starter records on apply
 // (mirrors core-scan's commit map + core-ai chat). Only these kinds can be
@@ -308,6 +309,9 @@ async function runBuild(
   basePrompt: string,
   userId: string | null,
   task: string,
+  /** What the request said and what the workspace already has — the two
+   *  things the corroboration layer checks a candidate against. */
+  corroborate: { intent: string; kinds: Map<string, KindFields>; modules?: ReadonlySet<string> },
 ): Promise<void> {
   const db = tenantDb(req);
   let prompt = basePrompt;
@@ -321,6 +325,13 @@ async function runBuild(
         const r = await platform().ai.invoke({
           orgId,
           capability: "chat",
+          // NOT constrained to an output schema, deliberately. The adapters can
+          // take one (ollama `format`, OpenAI-compatible `response_format`) and
+          // the wrapper schema exists (outputSchemaFor), but measured 2026-08-26
+          // it hurt both wires: qwen3:14b timed out at 120s on every case under
+          // schema-constrained decoding, and Gemini conformed so strictly to a
+          // permissive schema that it emitted null list items. It comes back
+          // when the FULL bundle schema is what gets sent, not a wrapper.
           input: { messages: [{ role: "user", content: prompt }] },
           source: { kind: "core-authoring:build", id: draftId },
           userId,
@@ -345,20 +356,17 @@ async function runBuild(
         return;
       }
 
-      const parsedJson = parseJsonObject(text);
-      if (isAppTask(task)) {
-        const u = unwrapApp(parsedJson);
-        candidate = u.app;
-        if (u.interpretation) interpretation = u.interpretation;
-      } else {
-        const u = unwrapBuild(parsedJson);
-        // Expand each instance's native_fields hint into concrete hide-overrides
-        // BEFORE validation — so a lean collection (a Bookshelf) drops the
-        // borrowed module natives at author time, not via a later cleanup.
-        candidate = applyLeanNatives(u.bundle, await nativeFieldsByBaseKind());
-        if (u.interpretation) interpretation = u.interpretation;
-        if (u.seed.length > 0) seed = u.seed;
-      }
+      // ONE implementation of parse → unwrap → lean natives → corroborate, shared
+      // with the operator eval so what gets measured is what ships.
+      const shaped = shapeCandidate(text, task, {
+        intent: corroborate.intent,
+        kinds: corroborate.kinds,
+        ...(corroborate.modules ? { modules: corroborate.modules } : {}),
+        natives: await nativeFieldsByBaseKind(),
+      });
+      candidate = shaped.candidate;
+      if (shaped.interpretation) interpretation = shaped.interpretation;
+      if (shaped.seed.length > 0 || isAppTask(task)) seed = shaped.seed;
       if (candidate === null || typeof candidate !== "object") {
         const wrapperKey = isAppTask(task) ? "app" : "bundle";
         prompt = repairPrompt(basePrompt, text, [
@@ -445,7 +453,11 @@ draftsRouter.post(
     // Fire-and-forget: the loop drives the draft to a terminal status; the
     // client polls GET /drafts/:id. (Single api instance — in-process detach
     // is fine; a crash mid-build just leaves a stale "building" draft.)
-    void runBuild(req, draft.id, orgId, basePrompt, user?.id ?? null, ctx.task);
+    void runBuild(req, draft.id, orgId, basePrompt, user?.id ?? null, ctx.task, {
+      intent: parsed.data.intent,
+      kinds: kindFieldsOf(ctx),
+      modules: modulesOf(ctx),
+    });
 
     res.status(202).json({ draft_id: draft.id, status: "building" });
   }),
@@ -525,7 +537,11 @@ draftsRouter.post(
       .executeTakeFirstOrThrow();
 
     if (run) {
-      void runBuild(req, draft.id, tc.org.id, basePrompt, user?.id ?? null, refineTask);
+      void runBuild(req, draft.id, tc.org.id, basePrompt, user?.id ?? null, refineTask, {
+        intent: parsed.data.intent,
+        kinds: kindFieldsOf(ctx),
+      modules: modulesOf(ctx),
+      });
       res.status(202).json({ draft_id: draft.id, parent_draft_id: parent.id, status: "building" });
       return;
     }
@@ -543,16 +559,28 @@ draftsRouter.post(
     const parsed = CandidateBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
-    const draft = await db.selectFrom("core_authoring_drafts").select(["id", "task"]).where("id", "=", req.params.id!).executeTakeFirst();
+    const draft = await db
+      .selectFrom("core_authoring_drafts")
+      .select(["id", "task", "intent"])
+      .where("id", "=", req.params.id!)
+      .executeTakeFirst();
     if (!draft) {
       res.status(404).json({ error: { code: "not_found", message: "Draft not found." } });
       return;
     }
-    // Unwrap the pasted reply to the artifact (bundle or app), tolerating either
-    // the `{ interpretation, <key> }` wrapper or a bare object, then validate via
-    // the task's gate (apps → /apps/validate, else /bundles/validate).
-    const candidate =
-      isAppTask(draft.task) ? unwrapApp(parsed.data.manifest).app : unwrapBuild(parsed.data.manifest).bundle;
+    // A pasted reply is still a model's reply: it goes through the SAME
+    // parse → unwrap → lean natives → corroborate as a generated one. This
+    // route used to unwrap by hand, which was a door around the corroboration
+    // layer — the class lint:capabilities now closes.
+    const tc = tenantContext(req);
+    const ctx = await assembleContext(tc.org.id, undefined, draft.task, undefined, tc.role);
+    const shaped = shapeCandidate(JSON.stringify(parsed.data.manifest), draft.task, {
+      intent: draft.intent ?? "",
+      kinds: kindFieldsOf(ctx),
+      modules: modulesOf(ctx),
+      natives: await nativeFieldsByBaseKind(),
+    });
+    const candidate = shaped.candidate;
     const { body: v } = await validateArtifact(req, draft.task, candidate);
     await db
       .updateTable("core_authoring_drafts")

@@ -1,7 +1,12 @@
-// /me/force-password-reset — shown when the user logged in with an
+// The set-a-password gate — shown when the user logged in with an
 // admin-minted temp password. Login response carries
-// must_reset_password=true and ActiveOrgScopedRoutes redirects here
-// until the user picks their own password.
+// must_reset_password=true and WorkspaceRoutes renders THIS COMPONENT in
+// place of every route until the user picks their own password.
+//
+// There is no /me/force-password-reset URL and there should not be: a
+// route would be somewhere to navigate away to, and somewhere that shows
+// this screen to a user who does not need it. Six comments and two docs
+// used to name that URL as if it existed (2026-08-26).
 //
 // No nav, no escape — full-page card. The user can sign out, but
 // every other route bounces back here.

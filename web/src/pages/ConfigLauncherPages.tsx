@@ -42,7 +42,7 @@ export function ConfigModulesPage() {
   usePageTitle("Modules");
   const navigate = useNavigate();
   return (
-    <div className="max-w-4xl mx-auto">
+    <div>
       <ModulePickerModal
         open
         inline
@@ -58,7 +58,7 @@ export function ConfigMembersPage({ focus }: { focus?: "invite" } = {}) {
   const navigate = useNavigate();
   const { activeSlug } = useActiveOrg();
   return (
-    <div className="max-w-4xl mx-auto">
+    <div>
       <MembersModal
         open
         inline
@@ -82,7 +82,7 @@ export function ConfigNewThingPage() {
   usePageTitle("New category");
   const navigate = useNavigate();
   return (
-    <div className="max-w-4xl mx-auto">
+    <div>
       <PageHead
         icon={<FolderPlus size={22} />}
         title="New category"

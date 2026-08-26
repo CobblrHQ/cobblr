@@ -194,8 +194,8 @@ export interface SessionUser {
    *  origin and a new workspace all agree. */
   tour_seen_at?: string | null;
   /** True when an admin minted this account with a temp password. UI
-   *  redirects to /me/force-password-reset until cleared. PATCH
-   *  /me/password clears it. */
+   *  renders the set-a-password screen in place of every route until
+   *  cleared (a gate, not a URL). PATCH /me/password clears it. */
   must_reset_password: boolean;
   /** True once the user confirmed their email via a verification link.
    *  Informational — the app shows a "verify your email" banner while false.
@@ -716,6 +716,9 @@ export const api = {
       /** Present only when this surface can BOTH reach the account service and redeem
        *  a code from it. Null means "no such button", not "not configured yet". */
       identity?: { authorize_url: string; deployment: string; name?: string } | null;
+      /** A public demo's shared login, to show and pre-fill. Null on every instance
+       *  that has not deliberately published one. */
+      demo_signin?: { email: string; password: string; note: string | null } | null;
     }>("GET", "/auth/config"),
   // Mint an API token (plaintext returned ONCE). Used by the edge-bridge setup to
   // generate a least-privilege devices:edge token in-flow, and by the API Recipes
@@ -3137,10 +3140,12 @@ export const api = {
     },
   ) => request<OrganizeApplyResponse>("POST", `/orgs/${slug}/modules/core-scan/organize/apply`, body),
   /** Guided Organize: the most recent unexpired plan (put-away-walk resume). */
-  getLatestOrganizePlan: (slug: string) =>
+  /** planId set = pin that exact plan (the put-away walk asks for the plan it
+   *  just applied, so a warm re-plan cannot shadow it); absent = the newest. */
+  getLatestOrganizePlan: (slug: string, planId?: string) =>
     request<{ plan: OrganizeStoredPlan | null }>(
       "GET",
-      `/orgs/${slug}/modules/core-scan/organize/plan/latest`,
+      `/orgs/${slug}/modules/core-scan/organize/plan/latest${planId ? `?plan_id=${encodeURIComponent(planId)}` : ""}`,
     ),
   /** Put-away sessions (the shared execution engine): start/resume one.
    *  plan_id set = plan mode (the walk; idempotent per plan, returns the

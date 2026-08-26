@@ -168,8 +168,24 @@ export function settledMessage(
       // so a multi-line reply stays inside the quote instead of half escaping it.
       "\n" + echo.split("\n").map((l) => `> ${l}`).join("\n")
     : "";
+  // A card-only message has no text of its own; the embed stays on the edited
+  // message (the bot leaves embeds alone), so the outcome goes under the card
+  // rather than under two blank lines.
+  const lead = original.trim() ? `${original}\n\n` : "";
   return {
     type: RESPONSE.UPDATE_MESSAGE,
-    data: { content: `${original}\n\n${outcome}${quoted}`, components: [] },
+    data: { content: `${lead}${outcome}${quoted}`, components: [] },
   };
+}
+
+/** The text a press was about. The message's own content when it had any;
+ *  otherwise the card's title and body, which is what the person was looking
+ *  at when a notification arrived as an embed with no line above it. */
+export function originalOf(
+  message: { content?: string | null; embeds?: Array<{ title?: string | null; description?: string | null }> | null } | null | undefined,
+): string {
+  const content = (message?.content ?? "").trim();
+  if (content) return content;
+  const e = message?.embeds?.[0];
+  return [e?.title, e?.description].filter((x): x is string => !!x && x.trim().length > 0).join("\n");
 }

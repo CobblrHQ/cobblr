@@ -7,14 +7,13 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
-import { History } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { api, type CrossOrgActivityEntry } from "../lib/api";
 import { QueryError } from "../components/QueryError";
 import { usePageTitle } from "@cobblr/platform-web";
 
 export function MeActivityPage() {
-  usePageTitle("My activity");
+  usePageTitle("Your activity");
   const { orgs } = useAuth();
   const [params, setParams] = useSearchParams();
   const orgFilter = params.get("org") ?? undefined;
@@ -68,11 +67,7 @@ export function MeActivityPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <History size={20} className="text-accent" />
-        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
-          Your activity
-        </h1>
+      <div className="flex items-baseline gap-3 pb-1 flex-wrap">
         <span className="text-sm text-muted dark:text-slate-400">
           {items.length >= total ? `${total} actions` : `${items.length} of ${total} actions`}
         </span>

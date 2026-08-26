@@ -11,11 +11,34 @@
 // The section content area (the Outlet) renders in the normal theme so the
 // tables stay readable. See docs/modules/member-portal-and-permissions.md.
 
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { ArrowLeft, LogOut, Moon, ShieldCheck, Sun } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { ADMIN_GROUP_ORDER, ADMIN_SECTIONS } from "../lib/adminSections";
+
+/** The one page header, from the registry — the same move ConfigPageHeader and
+ *  AccountPageHeader made. Before this, 0 of 18 sections had a title and the
+ *  two that improvised one restated the rail label in two different styles. */
+function AdminSectionHeader() {
+  const { pathname } = useLocation();
+  const id = pathname.split("/")[2];
+  const here = ADMIN_SECTIONS.find((s) => s.id === id) ?? ADMIN_SECTIONS[0]!;
+  const Icon = here.icon;
+  return (
+    <header className="mb-5">
+      <div className="flex items-start gap-3">
+        <Icon size={22} className="mt-0.5 shrink-0 text-cobble-600 dark:text-cobble-300" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
+            {here.label}
+          </h1>
+          <p className="page-subtitle mt-0.5">{here.description}</p>
+        </div>
+      </div>
+    </header>
+  );
+}
 
 function AdminNavRow({ section }: { section: (typeof ADMIN_SECTIONS)[number] }) {
   const Icon = section.icon;
@@ -64,7 +87,8 @@ export function AdminLayout() {
           window resized. A vertical rail gives every cluster its heading, keeps
           the whole map visible at once, and matches the workspace shell's own
           sidebar so the operator console stops feeling like a different app. */}
-      <aside className="hidden md:flex w-56 shrink-0 flex-col border-r border-line dark:border-slate-800 bg-surface dark:bg-slate-900">
+      <aside className="hidden md:block w-56 shrink-0 border-r border-line dark:border-slate-800 bg-surface dark:bg-slate-900">
+        <div className="sticky top-0 max-h-dvh flex flex-col overflow-hidden">
         <div className="px-4 py-3 border-b border-line dark:border-slate-800">
           <div className="flex items-center gap-2 min-w-0">
             <ShieldCheck size={18} className="text-cobble-600 dark:text-cobble-300 shrink-0" />
@@ -125,12 +149,13 @@ export function AdminLayout() {
             {user.display_name}
           </div>
         </div>
+        </div>
       </aside>
 
       {/* Phone: no rail. One scrolling row of sections under a compact bar,
           which is what a phone can actually carry. */}
       <div className="flex-1 min-w-0 flex flex-col">
-        <header className="md:hidden bg-surface dark:bg-slate-900 border-b-2 border-cobble-500 dark:border-b dark:border-slate-700">
+        <header className="md:hidden sticky top-0 z-30 bg-surface dark:bg-slate-900 border-b-2 border-cobble-500 dark:border-b dark:border-slate-700">
           <div className="px-4 py-2.5 flex items-center gap-2 min-w-0">
             <ShieldCheck size={16} className="text-cobble-600 dark:text-cobble-300 shrink-0" />
             <span className="font-display font-extrabold tracking-tight text-sm">Cobblr</span>
@@ -154,6 +179,14 @@ export function AdminLayout() {
               return (
                 <NavLink
                   key={s.id}
+                  ref={(el) => {
+                    // Deep-link on a phone: the row is ~1900px wide with ~5
+                    // tabs visible; without this the active one sits off-screen
+                    // and nothing on screen says which section you are in.
+                    if (el && el.getAttribute("aria-current") === "page") {
+                      el.scrollIntoView({ inline: "center", block: "nearest" });
+                    }
+                  }}
                   to={`/admin/${s.id}`}
                   className={({ isActive }) =>
                     "inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition border-b-2 whitespace-nowrap " +
@@ -171,7 +204,12 @@ export function AdminLayout() {
         </header>
 
         <main className="flex-1 min-w-0">
-          <div className="max-w-6xl mx-auto w-full px-5 py-6">
+          {/* page-shell, not a literal max-w: AdminConsole declares
+              usePageWidth("wide") and the hook targets .page-shell — with the
+              hardcoded 6xl every wide table (AI 9-col, Barcodes 9-col, View-as
+              8-col) was clamped to 1152px and side-scrolled on a big monitor. */}
+          <div className="page-shell w-full px-5 py-6">
+            <AdminSectionHeader />
             <Outlet />
           </div>
         </main>

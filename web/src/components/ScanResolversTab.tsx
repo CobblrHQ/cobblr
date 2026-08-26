@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Modal, JsonField, useToast, useConfirm } from "@cobblr/platform-web";
-import { ScanLine, FlaskConical, Plus, Trash2, Pencil } from "lucide-react";
+import { FlaskConical, Plus, Trash2, Pencil } from "lucide-react";
 import { api, type ScanUrlResolverRow, type ScanUrlResolution } from "../lib/api";
 
 const TEMPLATE = `{
@@ -46,13 +46,8 @@ export function ScanResolversTab() {
     <div className="space-y-5">
       <header className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-content flex items-center gap-2">
-            <ScanLine size={18} /> Scan resolvers
-          </h2>
-          <p className="text-sm text-muted mt-0.5 max-w-2xl">
-            The vendor list the scanner consults: a scanned maker URL (e.g. a Polar Filament spool
-            QR) is matched, fetched, and mapped to a product - no code per vendor. Built-ins ship
-            with Cobblr; add your own as data.
+          <p className="text-sm text-muted dark:text-slate-400 max-w-2xl">
+            Built-ins ship with Cobblr; add your own as data.
           </p>
         </div>
         <button

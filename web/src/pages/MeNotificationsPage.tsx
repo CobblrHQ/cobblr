@@ -10,7 +10,7 @@ import { AreaTabs, NOTIFICATION_TABS } from "../components/AreaTabs";
 import { Link, useNavigate } from "react-router-dom";
 import { notificationAction } from "../lib/notification-action";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Check, CheckCheck } from "lucide-react";
+import { Check, CheckCheck } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { QueryError } from "../components/QueryError";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -85,11 +85,7 @@ export function MeNotificationsPage() {
   return (
     <div className="space-y-4">
       <AreaTabs tabs={NOTIFICATION_TABS} area="notifications" />
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3 flex-wrap">
-        <Bell size={20} className="text-accent" />
-        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
-          Notifications
-        </h1>
+      <div className="flex items-baseline gap-3 pb-1 flex-wrap">
         <span className="text-sm text-muted dark:text-slate-400">
           {items.length} {unreadOnly ? "unread" : "total"}
         </span>

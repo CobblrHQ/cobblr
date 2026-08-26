@@ -401,15 +401,37 @@ export function LocationsPage() {
       )}
 
       {tab === "plan" && !list.isLoading && (
-        <LocationFloorPlanTab items={items} slug={activeSlug} />
+        <LocationFloorPlanTab
+          items={items}
+          slug={activeSlug}
+          onCreate={() => {
+            setCreateParentId(null);
+            setCreateOpen(true);
+          }}
+        />
       )}
 
       {tab === "list" && (
         <>
       {items.length === 0 && !list.isLoading && (
-        <div className="text-sm italic text-muted dark:text-slate-400">
-          No locations yet. Add a top-level area (a room, a workshop, a garage)
-          and start nesting bins and shelves inside it.
+        /* The create button shares the search row below, which only renders once
+           there IS a location. So the empty state needs its own, or a brand-new
+           workspace is told to "add a top-level area" with no button to do it. */
+        <div className="flex flex-col items-start gap-3">
+          <p className="text-sm italic text-muted dark:text-slate-400">
+            No locations yet. Add a top-level area (a room, a workshop, a garage)
+            and start nesting bins and shelves inside it.
+          </p>
+          <button
+            onClick={() => {
+              setCreateParentId(null);
+              setCreateOpen(true);
+            }}
+            className="inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition"
+          >
+            <Plus size={14} />
+            New location
+          </button>
         </div>
       )}
 

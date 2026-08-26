@@ -91,8 +91,36 @@ for (const page of [...pages].sort()) {
   }
 }
 
+// ── The account area obeys the same rule ────────────────────────────────────
+//
+// AccountLayout draws the header from ACCOUNT_DESTINATIONS (AccountPageHeader),
+// exactly as ConfigurationLayout does — and the account area is where the
+// pattern previously existed for the COLUMN only, while 13 pages hand-rolled
+// headers in two font dialects. The hub file (MeProfilePage.tsx) is exempt: it
+// hosts the /me hub, whose heading IS the page, alongside the leaf components.
+const ACCOUNT_LEAF_FILES = [
+  "AppSettingsPage",
+  "ConnectionsPage",
+  "CommunicationPreferencesPage",
+  "MeNotificationChannelsPage",
+  "MeNotificationsPage",
+  "DriveSettingsPage",
+  "MeActivityPage",
+  "MyFeedbackPage",
+];
+for (const page of ACCOUNT_LEAF_FILES) {
+  let src: string;
+  try {
+    src = readFileSync(join(PAGES, `${page}.tsx`), "utf8");
+  } catch {
+    continue;
+  }
+  const h1 = src.match(/<h1[^>]*>/);
+  if (h1) bad.push({ page, snippet: h1[0].slice(0, 96) });
+}
+
 if (bad.length) {
-  console.error("[lint:page-headers] settings page writing its own header text:\n");
+  console.error("[lint:page-headers] settings/account page writing its own header text:\n");
   for (const b of bad) {
     console.error(`  web/src/pages/${b.page}.tsx`);
     console.error(`      ${b.snippet}`);

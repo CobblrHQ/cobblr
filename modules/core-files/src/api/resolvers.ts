@@ -81,6 +81,115 @@ export function registerFileResolvers(): void {
     platform().metering.record({ orgId, kind: "files.bytes_stored", quantity: stored.size_bytes, meta: { fileId, kind: stored.kind } });
     return { fileId, mimeType: stored.mime_type, sizeBytes: stored.size_bytes, kind: stored.kind };
   });
+
+  // The ATTACH seam - POST /attachments without a request. A module reacting
+  // to an upload from an event handler has no bearer to self-call with, and
+  // the row is core-files' to write. Emits the same event the route does, so a
+  // wire on core-files.attachment.created cannot tell the two doors apart.
+  platform().files.registerAttacher(async (orgId, spec) => {
+    const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreFilesDB>;
+    const file = await db
+      .selectFrom("core_files_files")
+      .select("id")
+      .where("id", "=", spec.fileId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!file) throw new Error(`core-files: no such file ${spec.fileId}`);
+    const role = spec.role ?? null;
+    const existing = await db
+      .selectFrom("core_files_attachments")
+      .select("id")
+      .where("file_id", "=", spec.fileId)
+      .where("source_module", "=", spec.source_module)
+      .where("source_type", "=", spec.source_type)
+      .where("source_id", "=", spec.source_id)
+      .where((eb) => (role === null ? eb("role", "is", null) : eb("role", "=", role)))
+      .executeTakeFirst();
+    if (existing) return { attachmentId: existing.id, existed: true };
+    const row = await db
+      .insertInto("core_files_attachments")
+      .values({
+        file_id: spec.fileId,
+        source_module: spec.source_module,
+        source_type: spec.source_type,
+        source_id: spec.source_id,
+        role,
+        sort_order: spec.sort_order ?? 0,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    await platform().events.emit("core-files.attachment.created", {
+      orgId,
+      attachmentId: row.id,
+      fileId: row.file_id,
+      source_module: row.source_module,
+      source_type: row.source_type,
+      source_id: row.source_id,
+      role: row.role,
+    });
+    return { attachmentId: row.id, existed: false };
+  });
+
+  // The DETACH seam - DELETE /attachments/:id without a request. The file
+  // stays; only the "is the <role> of" row goes, and the same event fires.
+  platform().files.registerDetacher(async (orgId, attachmentId) => {
+    const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreFilesDB>;
+    const row = await db
+      .deleteFrom("core_files_attachments")
+      .where("id", "=", attachmentId)
+      .returning(["id", "file_id", "source_module", "source_type", "source_id", "role"])
+      .executeTakeFirst();
+    if (!row) return false;
+    await platform().events.emit("core-files.attachment.deleted", {
+      orgId,
+      attachmentId: row.id,
+      fileId: row.file_id,
+      source_module: row.source_module,
+      source_type: row.source_type,
+      source_id: row.source_id,
+      role: row.role,
+    });
+    return true;
+  });
+
+  // The LIST seam - GET /attachments for one entity, same order, no request.
+  platform().files.registerAttachmentLister(async (orgId, source) => {
+    const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreFilesDB>;
+    const rows = await db
+      .selectFrom("core_files_attachments as fa")
+      .innerJoin("core_files_files as f", "f.id", "fa.file_id")
+      .select([
+        "fa.id as id",
+        "fa.file_id as file_id",
+        "fa.role as role",
+        "fa.sort_order as sort_order",
+        "fa.created_at as created_at",
+        "f.filename as filename",
+        "f.mime_type as mime_type",
+        "f.kind as kind",
+        "f.width as width",
+        "f.height as height",
+      ])
+      .where("fa.source_module", "=", source.source_module)
+      .where("fa.source_type", "=", source.source_type)
+      .where("fa.source_id", "=", source.source_id)
+      .where("f.deleted_at", "is", null)
+      .orderBy("fa.sort_order", "asc")
+      .orderBy("fa.created_at", "asc")
+      .execute();
+    return rows.map((r) => ({
+      id: r.id,
+      fileId: r.file_id,
+      role: r.role,
+      sort_order: r.sort_order,
+      filename: r.filename,
+      mimeType: r.mime_type,
+      kind: r.kind,
+      width: r.width,
+      height: r.height,
+      createdAt: r.created_at,
+    }));
+  });
 }
 
 function toResolvedFile(

@@ -60,7 +60,7 @@ export function AiOffNotice({ status, compact, children }: { status: AiStatus | 
           state for exactly this moment: Cobb is off the clock because no AI is
           connected, greyed rather than absent, so the notice reads as "he can't
           do that here" instead of a system warning about a feature. */}
-      <CobbHead size={compact ? 18 : 22} sleeping className="shrink-0 mt-0.5" title="Cobb is resting" />
+      <CobbHead size={compact ? 18 : 22} className="shrink-0 mt-0.5" title="Cobb" />
       <div>
         {/* A reason the SURFACE cannot speak to overrides its copy. Every caller passes
             children explaining what basic mode means there ("scans run in basic mode"),

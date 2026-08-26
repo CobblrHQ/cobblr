@@ -194,8 +194,8 @@ function Tester({ slug }: { slug: string }) {
     onSuccess: (r) => setResult(r),
   });
   return (
-    <section className="border border-line dark:border-slate-700 rounded-md bg-subtle dark:bg-slate-800/40 p-3">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">// try it</div>
+    <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
+      <h2 className="text-sm font-semibold text-content dark:text-mortar-100 mb-2">Try it</h2>
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -300,8 +300,8 @@ function Commands({ slug }: { slug: string }) {
   if (!mine.length && !offers.length) return null;
 
   return (
-    <section className="border border-line dark:border-slate-700 rounded-md bg-subtle dark:bg-slate-800/40 p-3">
-      <h2 className="text-sm font-medium text-content dark:text-mortar-200 flex items-center gap-2">
+    <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
+      <h2 className="text-sm font-semibold text-content dark:text-mortar-100 flex items-center gap-2">
         <Wand2 size={15} className="text-muted dark:text-slate-400" />
         Things this workspace can do on its own
       </h2>
@@ -405,8 +405,8 @@ function Unanswered({ slug, onAnswer }: { slug: string; onAnswer: (m: BasicMissR
   if (!items.length) return null;
 
   return (
-    <section className="border border-line dark:border-slate-700 rounded-md bg-subtle dark:bg-slate-800/40 p-3">
-      <h2 className="text-sm font-medium text-content dark:text-mortar-200 flex items-center gap-2">
+    <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
+      <h2 className="text-sm font-semibold text-content dark:text-mortar-100 flex items-center gap-2">
         <MessageCircleQuestion size={15} className="text-muted dark:text-slate-400" />
         Asked, but not answered
       </h2>

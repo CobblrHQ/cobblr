@@ -48,7 +48,7 @@ export function UnitsPage() {
     <div className="space-y-5">
       {/* Display mode */}
       <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">// display</div>
+        <h2 className="text-sm font-semibold text-content dark:text-mortar-100">Display</h2>
         <p className="text-sm text-content dark:text-mortar-200">
           How a quantity + unit shows everywhere in this workspace.
         </p>
@@ -131,7 +131,7 @@ function AddCustomUnit({ slug }: { slug: string }) {
 
   return (
     <form onSubmit={submit} className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-accent">// add a unit</div>
+      <h2 className="text-sm font-semibold text-content dark:text-mortar-100">Add a unit</h2>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         <Labeled label="Code (a-z 0-9 -)">
           <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="skein" className="input font-mono text-xs" />

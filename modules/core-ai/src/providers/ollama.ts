@@ -208,6 +208,13 @@ export function register(): void {
           // ignores this unknown field. See core-ai's ai.ts invoke().
           const mcpRelay = (ctx.input as Record<string, unknown>).mcp;
           if (mcpRelay && typeof mcpRelay === "object") reqBody.mcp = mcpRelay;
+          // A caller that knows the SHAPE it needs back (the builder) hands it
+          // over as a JSON schema, and ollama constrains decoding to it: a
+          // non-JSON reply or a wrapper missing its parts becomes impossible to
+          // emit, rather than something a prompt asks nicely for and a parser
+          // then salvages. Structure stops being the model's job.
+          const outputSchema = (ctx.input as Record<string, unknown>).output_schema;
+          if (outputSchema && typeof outputSchema === "object") reqBody.format = outputSchema;
           // Ask for a window big enough to hold what we are sending. Without
           // this, ollama's small default truncates the tool schemas out of the
           // prompt and cuts the answer off mid-sentence — see contextWindowFor.

@@ -30,8 +30,9 @@ export interface UsersTable {
   tour_seen_at: Date | null;
   /** True when an admin minted this account with a temp password.
    *  Login succeeds; the response carries the flag and the web
-   *  client redirects to /me/force-password-reset until the user
-   *  picks their own password. PATCH /me/password clears it. */
+   *  client renders the set-a-password screen IN PLACE OF every route
+   *  until the user picks their own. Not a URL: a gate, so there is
+   *  nothing to navigate around. PATCH /me/password clears it. */
   must_reset_password: Generated<boolean>;
   /** uuid of the admin who minted the account (null = self-signup). */
   created_by: string | null;

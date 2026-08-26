@@ -12,6 +12,14 @@
     "./services/compile": {
       "types": "./src/services/compile.ts",
       "import": "./dist/services/compile.js"
+    },
+    "./services/shape": {
+      "types": "./src/services/shape.ts",
+      "import": "./dist/services/shape.js"
+    },
+    "./services/corroborate": {
+      "types": "./src/services/corroborate.ts",
+      "import": "./dist/services/corroborate.js"
     }
   },
   "scripts": {

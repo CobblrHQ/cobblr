@@ -32,14 +32,30 @@
          browser tab are unmistakably NOT public prod (beta request: tell staging apart
          from cobblr.me at a glance).
 
-           canary.cobblr.me  → YELLOW-DOT set (stock mark + a yellow dot)
-           any *.cobblr.me   → prod set (the default markup below)
-           anything else     → PURPLE staging set (the .ts.net URL, localhost)
+           canary.*                    → YELLOW-DOT set (stock mark + a yellow dot)
+           INTERNAL (.ts.net, localhost,
+             127.0.0.1/::1, .local,
+             staging.*)                → PURPLE staging set
+           everything else             → prod set (the default markup below)
 
-         ORDER MATTERS. Canary is checked BEFORE the cobblr.me bail-out: canary
-         is a cobblr.me subdomain, so a plain "is it cobblr.me?" test hands it the
-         PRODUCTION icon — which is the precise confusion this block exists to
-         prevent. `lint:env-icons` fails if a variant loses its branch here.
+         THE LIST THAT IS ENUMERATED IS THE INTERNAL ONE, and that is the whole
+         point. This used to bail out for `*.cobblr.me` and treat EVERYTHING ELSE
+         as staging — written when cobblr.me was the only public surface. The
+         moment public surfaces appeared on another domain, try.cobblr.xyz,
+         app.cobblr.xyz and demo.cobblr.xyz all served a PURPLE icon and called
+         themselves "Cobblr · staging" to the public, including in the PWA name
+         a visitor would install to their home screen (found 2026-08-26).
+
+         Internal hosts are the enumerable set: they are reached over the tailnet
+         (.ts.net) or on the machine itself. A NEW PUBLIC hostname now inherits
+         the Cobblr identity by default, which is the safe direction to fail; a
+         new INTERNAL one is on the tailnet and so is caught by suffix.
+
+         ORDER MATTERS. Canary is checked FIRST: it is a cobblr.me subdomain and
+         a production host, so any earlier branch would hand it the plain prod
+         icon — the precise confusion this block exists to prevent.
+         `lint:env-icons` fails if a variant loses its branch here, AND asserts
+         the hostname→variant mapping for every real surface.
 
          Canary keeps the stock mark rather than recolouring it like staging,
          because canary runs REAL production data and should still read as
@@ -60,7 +76,16 @@
             set('meta[name="application-name"]', "content", "Cobblr · canary");
             return;
           }
-          if (/(^|\.)cobblr\.me$/i.test(location.hostname)) return;
+          var h = location.hostname;
+          var internal =
+            /(^|\.)ts\.net$/i.test(h) ||
+            /(^|\.)local$/i.test(h) ||
+            /^localhost$/i.test(h) ||
+            /^127\./.test(h) ||
+            h === "::1" ||
+            /^\[?::1\]?$/.test(h) ||
+            /^staging\./i.test(h);
+          if (!internal) return;
           set('meta[name="theme-color"]', "content", "#6D28D9");
           set('link[rel="icon"]', "href", "/favicon-staging.svg");
           set('link[rel="apple-touch-icon"]', "href", "/apple-touch-icon-staging.png");

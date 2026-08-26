@@ -218,8 +218,16 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
           if (ctx.capability === "chat" && mcpRelay && typeof mcpRelay === "object") body.mcp = mcpRelay;
           // response_format json_object is OpenAI-specific; local servers vary.
           // The JSON-shaped prompts already instruct the model, and every
-          // consumer robust-parses (parseJsonReply) — so omit it and stay
-          // compatible with the widest server set.
+          // consumer robust-parses (parseJsonReply) — so it is NOT sent by
+          // default. A caller that hands over an explicit output_schema (the
+          // builder) gets it forwarded as a json_schema constraint: it is the
+          // one case where the shape matters more than the widest server set,
+          // and a server that rejects the field is retried without it below.
+          const outputSchema = (ctx.input as Record<string, unknown>).output_schema;
+          const constrained = ctx.capability === "chat" && outputSchema && typeof outputSchema === "object";
+          if (constrained) {
+            body.response_format = { type: "json_schema", json_schema: { name: "cobblr_output", schema: outputSchema } };
+          }
           // SSE arrives in chunks that do not respect line boundaries, so a
           // partial line is held until the rest of it turns up.
           let sseTail = "";
@@ -256,6 +264,13 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
             body: JSON.stringify(body),
             ...(onChunk ? { onChunk } : {}),
           });
+          if (!res.ok && constrained && res.status >= 400 && res.status < 500) {
+            // A server that does not speak json_schema says so with a 4xx; the
+            // prompt already asks for the shape, so drop the constraint and go on.
+            await res.text().catch(() => "");
+            delete body.response_format;
+            res = await call("/chat/completions", { method: "POST", headers, body: JSON.stringify(body), ...(onChunk ? { onChunk } : {}) });
+          }
           if (!res.ok && toolDefs) {
             const errText = await res.text();
             if (!looksLikeNoToolSupport(res.status, errText)) throw new Error(`${id}: ${res.status} ${errText}`);

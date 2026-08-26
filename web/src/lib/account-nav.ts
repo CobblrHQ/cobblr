@@ -46,8 +46,11 @@ export const ACCOUNT_PAGES: AccountPage[] = [
   { to: "/me/app-settings" },
   { to: "/me/connections" },
   { to: "/me/communication" },
-  { to: "/me/notification-channels" },
-  { to: "/me/app-settings" },
+  {
+    to: "/me/notification-channels",
+    width: "wide",
+    wideBecause: "a bindings table: channel, event type, priority and per-workspace routing on one row each",
+  },
   { to: "/me/drive" },
   { to: "/me/feedback" },
   {
@@ -135,7 +138,7 @@ export interface AccountDestination {
  *  destinations now rather than forms stacked on the hub. */
 export const ACCOUNT_DESTINATIONS: AccountDestination[] = [
   { label: "Identity & password", description: "Your display name, the address you sign in with, and your password.", to: "/me/identity", section: "you", icon: UserCog },
-  { label: "Appearance", description: "Light or dark, for your account and for this device.", to: "/me/appearance", section: "you", icon: Moon },
+  { label: "Appearance", description: "Light or dark, and your desktop layout - for your account and for this device.", to: "/me/appearance", section: "you", icon: Moon },
   { label: "Menu & surfaces", description: "Hide the parts of the app you do not use.", to: "/me/app-settings", platformOnly: true, section: "you", icon: LayoutList },
   { label: "Communication preferences", description: "Whether Cobblr reaches you in-app, by Discord DM, or by email.", to: "/me/communication", section: "notifications", icon: Bell },
   { label: "Notification channels", description: "Per-workspace Discord, Slack, email, SMS and webhook routes.", to: "/me/notification-channels", platformOnly: true, section: "notifications", icon: Bell },

@@ -103,6 +103,7 @@
     "lint:bundles-synced": "tsx scripts/sync-bundles.ts --check",
     "lint:bundle-content": "tsx scripts/lint-bundle-content.ts",
     "lint:bundle-id-noun": "tsx scripts/lint-bundle-id-noun.ts",
+    "lint:e2e-bundle-refs": "tsx scripts/lint-e2e-bundle-refs.ts",
     "lint:bundle-app-view-refs": "tsx scripts/lint-bundle-app-view-refs.ts",
     "lint:bundle-schema": "tsx scripts/lint-bundle-schema.ts",
     "lint:bundle-location-dupe": "tsx scripts/lint-bundle-location-dupe.ts",
@@ -227,7 +228,9 @@
     "lint:notification-channels-parity": "tsx scripts/lint-notification-channels-parity.ts",
     "lint:invoke-envelope": "tsx scripts/lint-invoke-envelope.ts",
     "lint:escort-claims": "tsx scripts/lint-escort-claims.ts",
-    "lint:scan-filing-installs": "tsx scripts/lint-scan-filing-installs.ts"
+    "lint:scan-filing-installs": "tsx scripts/lint-scan-filing-installs.ts",
+    "kiosk:check-recording": "node scripts/check-recording-static.mjs",
+    "lint:pattern-photo-one-extractor": "tsx scripts/lint-pattern-photo-one-extractor.ts"
   },
   "devDependencies": {
     "jsdom": "^30.0.1",

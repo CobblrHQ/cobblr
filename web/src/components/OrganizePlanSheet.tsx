@@ -192,7 +192,7 @@ export function SortingPlanView({
   /** Fired after any successful apply, with the item ids that were filed. */
   onApplied: (filedItemIds: string[]) => void;
   /** Phase 2: open the put-away walk over the just-applied groups. */
-  onStartWalk?: () => void;
+  onStartWalk?: (planId: string) => void;
   /** Leave the Sorting-plan lens and go review the unidentified items — the
    *  only path out of the "everything still needs a name" empty state (and the
    *  "N need identifying first" note). The page owns where that lands (the
@@ -1046,7 +1046,7 @@ export function SortingPlanView({
               <button
                 type="button"
                 disabled={busy}
-                onClick={onStartWalk}
+                onClick={() => onStartWalk(plan.plan_id)}
                 title="Walk the accepted groups bin by bin - scan or tap each item as you put it away"
                 className="rounded border border-accent/60 text-accent text-sm font-medium px-3 py-1.5 hover:bg-cobble-50 dark:hover:bg-cobble-900/30 transition disabled:opacity-50"
               >
@@ -1088,7 +1088,7 @@ export function OrganizePlanSheet({
   open: boolean;
   onClose: () => void;
   onApplied: (filedItemIds: string[]) => void;
-  onStartWalk?: () => void;
+  onStartWalk?: (planId: string) => void;
   scope?: "unplaced" | "pending" | "refs";
   refs?: string[];
   renderItemCard?: (itemId: string, onCollapse: () => void) => ReactNode;

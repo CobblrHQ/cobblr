@@ -413,11 +413,19 @@ function ProviderAddModal({
       void qc.invalidateQueries({ queryKey: ["ai-providers", activeSlug] });
       onClose();
       const id = (created as { id?: string } | undefined)?.id;
+      // Say which it is. An additional provider arrives OFF (the server decides,
+      // so this reads what came back rather than guessing) — otherwise adding
+      // one silently repoints every AI call in the workspace and the toast that
+      // said "added" was the only notice anybody got.
+      const isOn = (created as { enabled?: boolean } | undefined)?.enabled !== false;
+      const addedMsg = isOn
+        ? "Provider added and in use."
+        : "Provider added, switched off. Turn it on when you want the workspace to use it.";
       if (!id) {
-        toast.success("Provider added.");
+        toast.success(addedMsg);
         return;
       }
-      toast.success("Provider added. Testing the connection...");
+      toast.success(`${addedMsg} Testing the connection...`);
       try {
         const r = await api.testAiProvider(activeSlug, id);
         // The provider IS saved either way; a failed test is a fixable detail, not a

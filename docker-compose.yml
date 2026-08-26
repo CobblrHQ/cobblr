@@ -145,6 +145,13 @@ services:
       # set it when federating with your own.
       IDENTITY_NAME: ${IDENTITY_NAME:-}
       COBBLR_DEPLOYMENT: ${COBBLR_DEPLOYMENT:-}
+      # A PUBLIC demo's shared login, shown on and pre-filled into the sign-in
+      # form. Setting the pair PUBLISHES that password to anyone who loads the
+      # page: right for a demo that wipes itself on a timer, catastrophic
+      # anywhere else. Both are required or the whole block is withheld.
+      COBBLR_DEMO_SIGNIN_EMAIL: ${COBBLR_DEMO_SIGNIN_EMAIL:-}
+      COBBLR_DEMO_SIGNIN_PASSWORD: ${COBBLR_DEMO_SIGNIN_PASSWORD:-}
+      COBBLR_DEMO_SIGNIN_NOTE: ${COBBLR_DEMO_SIGNIN_NOTE:-}
       # "true" gives a central account with no workspace here one on arrival.
       # What an open trial surface wants; what a private one must never do.
       COBBLR_IDENTITY_AUTOPROVISION: ${COBBLR_IDENTITY_AUTOPROVISION:-}

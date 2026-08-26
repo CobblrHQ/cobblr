@@ -18,6 +18,9 @@
 // dependency of the projects bundle's static graph.
 
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 export interface ExtractedImage {
   /** PNG-encoded bytes, ready to hand to core-files. */
@@ -41,6 +44,31 @@ export interface ExtractPdfImagesOptions {
   /** Stop after this many pages (a hero photo is almost always on page 1–2;
    *  bounds the work on a 100-page catalog). Default: all pages. */
   maxPages?: number;
+}
+
+/** How far into a pattern PDF the photo hunt reads.
+ *
+ *  A finished-object photo sits at the FRONT of a pattern. Past that a document
+ *  is body matter, and on a long datasheet the later pages are wiring diagrams,
+ *  pinout charts and package drawings that the floor was never measured against.
+ *  Reading everything is also slow: every page gets decoded.
+ *
+ *  This is a policy, and it has to be ONE number. It was two: the scoreboard
+ *  scored the floor 26/26 reading 12 pages while the product read every page and
+ *  scored 21/26, because each call site picked for itself and nothing made them
+ *  agree. Same corpus, same picker, same labels - only the page range differed,
+ *  and maker-guides fell from 5/5 to 2/5.
+ *
+ *  So every caller goes through extractPatternImages(), and
+ *  scripts/lint-pattern-photo-one-extractor.ts keeps it that way. */
+export const PATTERN_PDF_PAGE_LIMIT = 12;
+
+/** The ONE way to read images out of a pattern PDF.
+ *
+ *  Use this, not extractPdfImages directly - the measured score only describes
+ *  the product while both read the same range. */
+export function extractPatternImages(pdfBytes: Uint8Array): Promise<ExtractedImage[]> {
+  return extractPdfImages(pdfBytes, { maxPages: PATTERN_PDF_PAGE_LIMIT });
 }
 
 // pdfjs ImageKind → raw channel count for sharp.
@@ -90,6 +118,16 @@ export async function extractPdfImages(
       data: new Uint8Array(pdfBytes),
       disableWorker: true,
       isEvalSupported: false,
+      // WITHOUT THIS, JPEG 2000 IMAGES DECODE TO NULL — silently. pdfjs decodes
+      // JPX (and ICC colour management for JPEGs) through wasm modules it
+      // ships in its own package, and in Node it only finds them when told
+      // where they are. Measured on the corpus: three of nine knitting
+      // patterns from one mainstream publisher (InDesign exports, JPXDecode
+      // throughout) yielded ZERO images and the UI said "no photo found";
+      // with this line they yield every photo. The failure mode is exactly the
+      // one this whole feature exists to avoid: a button that looks like it
+      // worked and attached nothing.
+      wasmUrl: pdfjsWasmDir(),
       // We only walk operator lists for images — never render text — so the
       // missing standard-font data is irrelevant. verbosity:0 mutes pdfjs's
       // font/eval warnings so they don't spam the api logs.
@@ -123,7 +161,7 @@ export async function extractPdfImages(
       // from the page store; inline images pass the decoded object directly.
       let obj: PdfImageObj | undefined;
       if (typeof arg0 === "string") {
-        obj = resolveObj(page, arg0);
+        obj = await resolveObj(page, arg0);
       } else if (arg0 && typeof arg0 === "object") {
         obj = arg0 as PdfImageObj;
       }
@@ -170,6 +208,16 @@ export async function extractPdfImages(
   return out;
 }
 
+/** pdfjs-dist ships its decoders (openjpeg, qcms) as wasm beside the build.
+ *  Resolved from the package rather than a hardcoded path so a hoisted or
+ *  nested install both work; a file: URL with a trailing slash is what pdfjs
+ *  joins the module names onto. */
+function pdfjsWasmDir(): string {
+  const require = createRequire(import.meta.url);
+  const pkg = require.resolve("pdfjs-dist/package.json");
+  return pathToFileURL(join(dirname(pkg), "wasm") + "/").href;
+}
+
 // ── minimal structural types for the dynamically-imported deps ──────────────
 
 interface PdfDocument {
@@ -184,26 +232,46 @@ interface PdfPage {
 }
 interface PdfObjs {
   has(name: string): boolean;
-  get(name: string): PdfImageObj | undefined;
+  /** Callback form: invoked once the object has decoded, or immediately when
+   *  it already has. The zero-arg form returns only what is ready now. */
+  get(name: string, onReady?: (obj: PdfImageObj | null | undefined) => void): PdfImageObj | undefined;
 }
 type SharpFactory = (
   input: Buffer,
   opts: { raw: { width: number; height: number; channels: 1 | 3 | 4 } },
 ) => { png(): { toBuffer(): Promise<Buffer> } };
 
-function resolveObj(page: PdfPage, name: string): PdfImageObj | undefined {
-  // After getOperatorList resolves, the raster lives in the page store
-  // (occasionally the shared common store). `.get` throws if not yet ready;
-  // both are already populated at this point, so guard with `.has`.
-  try {
-    if (page.objs.has(name)) return page.objs.get(name);
-  } catch {
-    /* fall through */
-  }
-  try {
-    if (page.commonObjs.has(name)) return page.commonObjs.get(name);
-  } catch {
-    /* fall through */
-  }
-  return undefined;
+/** How long to wait for a decoder before treating an image as absent. JPX
+ *  through wasm on a page-one hero is tens of milliseconds; a whole second is
+ *  generous, and past it something is wrong with the file, not the clock. */
+const RESOLVE_TIMEOUT_MS = 1_000;
+
+/**
+ * Resolve a painted image by name, WAITING for it to decode.
+ *
+ * The synchronous `objs.get(name)` returns what is decoded RIGHT NOW, and the
+ * `has(name)` guard before it reads false for anything still in flight. With
+ * pure-JS JPEG decoding everything is ready by the time getOperatorList
+ * resolves, so the sync form looked correct; JPEG 2000 decodes through wasm on
+ * its own schedule, so every JPX image read as "not present" and the extractor
+ * returned nothing for a PDF full of photos. The callback form is pdfjs's
+ * own "tell me when it is ready", and a timeout keeps a broken object from
+ * holding the request open.
+ */
+function resolveObj(page: PdfPage, name: string): Promise<PdfImageObj | undefined> {
+  // pdfjs keeps globally shared resources (fonts, and images reused across
+  // pages) under a `g_` prefix in commonObjs; everything else is per page.
+  const store = name.startsWith("g_") ? page.commonObjs : page.objs;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(undefined), RESOLVE_TIMEOUT_MS);
+    try {
+      store.get(name, (obj: PdfImageObj | null | undefined) => {
+        clearTimeout(timer);
+        resolve(obj ?? undefined);
+      });
+    } catch {
+      clearTimeout(timer);
+      resolve(undefined);
+    }
+  });
 }

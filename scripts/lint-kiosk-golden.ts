@@ -12,11 +12,22 @@
 //
 // Local + CI, free, zero deps.
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 const YARN = "kiosk/guided-yarn.mjs";
+const LEGO = "kiosk/guided-lego.mjs";
 const LIB = "kiosk/lib.mjs";
 const FIXTURE = "kiosk/fixtures/redheart-inbox.json";
+const STATIC_CHECK = "scripts/check-recording-static.mjs";
+const CATALOG_ASSET = "kiosk/assets/redheart-catalog.png";
+
+/** Every guided tour, not just the golden one.
+ *
+ *  This list is the fix for the reason the lego tour shipped with a 27.5-second
+ *  frozen modal in it: every check in this file named YARN, so guided-lego.mjs
+ *  was never held to the floor at all. A tour that is not in TOURS is a tour
+ *  nobody is checking. */
+const TOURS = [YARN, LEGO];
 
 interface Check {
   file: string;
@@ -107,6 +118,43 @@ const CHECKS: Check[] = [
     needle: /skipping the triage beat/,
     why: "a not-ready beat is SKIPPED, never frozen (a missing beat is invisible; dead air is not)",
   },
+  // ── every tour carries the two watchdogs (invariant 8) ──
+  ...TOURS.flatMap((file) => [
+    {
+      file,
+      needle: /installLeakWatchdog\(ctx\)/,
+      why:
+        "the vendor-leak watchdog is installed — a published cut carried a scraped eBay listing " +
+        "title in a toast even though the confirm body WAS rewritten, because the leak came " +
+        "through a field nobody had staged",
+    },
+    {
+      file,
+      needle: /leaks\.assertClean\(\)/,
+      why: "the take FAILS on a leak instead of quietly becoming a published file",
+    },
+  ]),
+  {
+    file: LIB,
+    needle: /export async function softly\(/,
+    why:
+      "softly() exists — a swallowed tour step needs a budget and a log line, or it burns " +
+      "Playwright's 30s default on camera and erases the evidence",
+  },
+  {
+    file: STATIC_CHECK,
+    needle: /DEFAULT_MAX_STATIC/,
+    why: "the pixel-level dead-air check exists — the log saying VERIFY YES is not evidence",
+  },
+  // ── the scanned card shows BOTH pictures (invariant 12) ──
+  {
+    file: YARN,
+    needle: /catalog\.kiosk\.invalid/,
+    why:
+      "the catalog photo is served from kiosk/assets, not the live web — a scanned product must show " +
+      "the catalog picture BESIDE the shot you took, and fetching it from the open web each run is how " +
+      "a scraped listing title reached a published cut",
+  },
 ];
 
 const failures: string[] = [];
@@ -132,6 +180,66 @@ for (const { file, needle, why } of CHECKS) {
   }
 }
 
+// ── the rule that would have caught the 27.5-second freeze at authoring time ──
+//
+// `await thing.click().catch(() => {})` inherits Playwright's THIRTY-SECOND
+// default actionTimeout, and the catch destroys the evidence. That is how a
+// two-button KIND control being driven with selectOption() became half a minute
+// of dead air in a published file while the run log still said VERIFY YES. Two
+// more calls in the same tour and two in the golden one had the same shape.
+//
+// So: a swallowed locator action must carry an explicit timeout. Comments are
+// skipped (this file's own prose describes the bad pattern), as is
+// page.keyboard.* (no element, so no actionability wait to blow).
+const ACTION = /\.(?:click|dblclick|tap|fill|selectOption|selectText|check|uncheck|press|hover|focus|setInputFiles|scrollIntoViewIfNeeded|waitFor)\(/;
+for (const file of [...TOURS, LIB]) {
+  let src: string;
+  try {
+    src = read(file);
+  } catch {
+    continue; // the missing-file failure is already recorded above
+  }
+  src.split("\n").forEach((line, i) => {
+    const code = line.trim();
+    if (code.startsWith("//") || code.startsWith("*") || code.startsWith("/*")) return;
+    if (!code.includes(".catch(() => {})")) return;
+    if (!ACTION.test(code)) return;
+    if (/keyboard\./.test(code) || /\.evaluate\(/.test(code) || /\broute\./.test(code)) return;
+    if (/timeout/.test(code)) return;
+    failures.push(
+      `${file}:${i + 1}: swallowed action with no timeout — it can block for Playwright's 30s\n` +
+        `    default and the catch hides it (27.5s of one frozen modal shipped this way).\n` +
+        `    → wrap it in softly(...) or pass an explicit { timeout }.\n` +
+        `    ${code.slice(0, 110)}`,
+    );
+  });
+}
+
+// ── controls that are no longer <select>s ──
+//
+// selectOption() on anything but a <select> never becomes actionable, so it does
+// not fail fast — it burns the full actionTimeout and then throws into whatever
+// catch is nearby. KIND was a <select> when the tours were written and is now two
+// buttons. (PARENT in the same modal is still a real <select>, verified against a
+// live instance — the tree picker on that page is a different control. Check the
+// DOM before adding a row here; a wrong entry costs a take.)
+const NOT_SELECTS: Array<{ re: RegExp; what: string }> = [
+  { re: /getByLabel\(\/kind\/i\)\s*\.selectOption/, what: "the location modal's KIND control is two <button>s, not a dropdown" },
+];
+for (const file of TOURS) {
+  let src: string;
+  try {
+    src = read(file);
+  } catch {
+    continue;
+  }
+  for (const { re, what } of NOT_SELECTS) {
+    if (re.test(src)) {
+      failures.push(`${file}: selectOption on a control that is not a <select> — ${what}.\n    → drive the real control; this call stalls for the whole actionTimeout.`);
+    }
+  }
+}
+
 // The fixture is the single source of the curated identity; a stray extra
 // candidate puts a second row in the triage list and the take stops matching.
 try {
@@ -147,6 +255,18 @@ try {
   }
   if (!fx.item_overlay?.suggested_name) {
     failures.push(`${FIXTURE}: item_overlay.suggested_name is required (the triage name field reads it).`);
+  }
+  // The card renders catalog + yours side by side only when BOTH exist. Without
+  // this the beat silently degrades to one big barcode photo, which is what the
+  // published cut showed.
+  const catalogUrl = (fx.item_overlay as Record<string, unknown> | undefined)?.catalog_image_url;
+  if (typeof catalogUrl !== "string" || !catalogUrl) {
+    failures.push(`${FIXTURE}: item_overlay.catalog_image_url is required — without it the scanned card shows only the barcode photo.`);
+  } else if (!/^https:\/\/catalog\.kiosk\.invalid\//.test(catalogUrl)) {
+    failures.push(`${FIXTURE}: catalog_image_url must point at the staged host (got ${catalogUrl}) — a live URL puts the take back on the open web.`);
+  }
+  if (!existsSync(CATALOG_ASSET)) {
+    failures.push(`${CATALOG_ASSET} is missing — the staged catalog route serves this file.`);
   }
 } catch (e) {
   failures.push(`${FIXTURE} is missing or invalid JSON — the staged identity comes from it. (${(e as Error).message})`);

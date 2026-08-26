@@ -3,12 +3,19 @@
 // Images render as authed thumbnails; other files (the pattern) as chips.
 // Upload accepts images + PDFs: a PDF lands as role=pattern, an image as
 // role=gallery. Mirrors inventory's PartGallery, slimmed (no cover logic).
+//
+// A pattern PDF pulls its own photo: the server extracts the images the
+// moment the pattern is attached and attaches the best photograph. What the
+// panel adds is the STRIP - the other images the pattern holds, revealed by a
+// button that only exists when there is a choice to make, and a tile tap
+// swaps the photo. Same idiom as "find a better catalog photo" on a scan card.
 
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileText, ImageDown, Trash2, Upload } from "lucide-react";
+import { FileText, Images, Trash2, Upload } from "lucide-react";
 import { useConfirm, useImageSrc, useToast } from "@cobblr/platform-web";
 import { useProjects } from "./context";
+import type { PatternPhotoState } from "./api";
 
 interface AttachmentRow {
   id: string;
@@ -19,21 +26,33 @@ interface AttachmentRow {
   role: string | null;
 }
 
+/** A strip is worth revealing when it offers a CHOICE: more than one image,
+ *  or a single image the pull did not attach (below the floor) - a single
+ *  image already in use would be a button that does nothing. */
+export function stripOffersChoice(s: PatternPhotoState | undefined): boolean {
+  if (!s || s.status !== "ready") return false;
+  if (s.candidates.length > 1) return true;
+  return s.candidates.length === 1 && s.used_index === null;
+}
+
 export function DesignFiles({ designId }: { designId: string }) {
   const { orgSlug, getToken, api } = useProjects();
   const qc = useQueryClient();
   const confirm = useConfirm();
   const toast = useToast();
   const fileInput = useRef<HTMLInputElement>(null);
+  const [stripOpen, setStripOpen] = useState(false);
 
   const auth = (): Record<string, string> => {
     const t = getToken();
     return t ? { Authorization: `Bearer ${t}` } : {};
   };
   const base = `/api/v1/orgs/${orgSlug}/modules/core-files`;
+  const filesKey = ["design-files", orgSlug, designId];
+  const patternKey = ["design-pattern-photo", orgSlug, designId];
 
   const list = useQuery({
-    queryKey: ["design-files", orgSlug, designId],
+    queryKey: filesKey,
     queryFn: async () => {
       const res = await fetch(
         `${base}/attachments?source_module=projects&source_type=project&source_id=${encodeURIComponent(designId)}`,
@@ -44,6 +63,26 @@ export function DesignFiles({ designId }: { designId: string }) {
     },
     enabled: !!orgSlug,
   });
+
+  const items = list.data ?? [];
+  const images = items.filter((a) => a.kind === "image" || a.mime_type.startsWith("image/"));
+  const files = items.filter((a) => !(a.kind === "image" || a.mime_type.startsWith("image/")));
+  const hasPattern = files.some((a) => a.role === "pattern" || a.mime_type === "application/pdf");
+
+  // The pull's result. Polls while a pull is running (a fresh upload, or a
+  // design that had its pattern before pulls were automatic), then settles.
+  const pattern = useQuery({
+    queryKey: patternKey,
+    queryFn: () => api.patternPhoto(designId),
+    enabled: !!orgSlug && hasPattern,
+    refetchInterval: (q) => (q.state.data?.status === "pending" ? 1500 : false),
+  });
+  // When the pull lands its photo, the photo grid is stale: refresh it once.
+  const landed = pattern.data?.status === "ready" ? pattern.data.photo_file_id : null;
+  useEffect(() => {
+    if (landed) void qc.invalidateQueries({ queryKey: filesKey });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [landed]);
 
   const upload = useMutation({
     mutationFn: async (file: File) => {
@@ -65,8 +104,17 @@ export function DesignFiles({ designId }: { designId: string }) {
         }),
       });
       if (!ares.ok) throw new Error(`attach ${ares.status}`);
+      return role;
     },
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["design-files", orgSlug, designId] }),
+    onSuccess: (role) => {
+      void qc.invalidateQueries({ queryKey: filesKey });
+      if (role === "pattern") {
+        // The pull starts server-side on attach; the state read picks it up
+        // as pending and the poll above carries it to ready.
+        void qc.invalidateQueries({ queryKey: patternKey });
+        toast.info("Reading the pattern for its photo…");
+      }
+    },
   });
 
   const detach = useMutation({
@@ -74,29 +122,29 @@ export function DesignFiles({ designId }: { designId: string }) {
       const res = await fetch(`${base}/attachments/${id}`, { method: "DELETE", headers: auth() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
     },
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["design-files", orgSlug, designId] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: filesKey });
+      void qc.invalidateQueries({ queryKey: patternKey });
+    },
   });
 
-  // Pull the finished-object photo straight out of the attached pattern PDF —
-  // no separate upload needed. The server extracts the embedded images, saves
-  // the largest as a core-file and attaches it as role=photo.
-  const pullPhoto = useMutation({
-    mutationFn: () => api.extractPatternImages(designId),
+  const usePhoto = useMutation({
+    mutationFn: (index: number) => api.usePatternPhoto(designId, index),
     onSuccess: (r) => {
       if (r.ok && r.file) {
-        toast.success(`Pulled a ${r.file.width}×${r.file.height} photo from the pattern.`);
-        void qc.invalidateQueries({ queryKey: ["design-files", orgSlug, designId] });
+        toast.success(`Using the ${r.file.width}×${r.file.height} image as the photo.`);
+        void qc.invalidateQueries({ queryKey: filesKey });
+        void qc.invalidateQueries({ queryKey: patternKey });
       } else {
-        toast.info(r.reason ?? "No photo found in that pattern.");
+        toast.info(r.reason ?? "Couldn't use that image.");
       }
     },
-    onError: (e) => toast.error(`Couldn't read the pattern: ${(e as Error).message}`),
+    onError: (e) => toast.error(`Couldn't use that image: ${(e as Error).message}`),
   });
 
-  const items = list.data ?? [];
-  const images = items.filter((a) => a.kind === "image" || a.mime_type.startsWith("image/"));
-  const files = items.filter((a) => !(a.kind === "image" || a.mime_type.startsWith("image/")));
-  const hasPattern = files.some((a) => a.role === "pattern" || a.mime_type === "application/pdf");
+  const state = pattern.data;
+  const offersChoice = stripOffersChoice(state);
+  const belowFloor = state?.status === "ready" && state.extracted > 0 && state.hero_index === null && state.used_index === null;
 
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5">
@@ -105,15 +153,21 @@ export function DesignFiles({ designId }: { designId: string }) {
           // pattern &amp; photos
         </div>
         <div className="flex items-center gap-3">
-          {hasPattern && (
+          {hasPattern && state?.status === "pending" && (
+            <span className="text-xs text-faint dark:text-slate-500" data-testid="pattern-photo-pending">
+              reading the pattern…
+            </span>
+          )}
+          {offersChoice && state && (
             <button
               type="button"
-              onClick={() => pullPhoto.mutate()}
-              disabled={pullPhoto.isPending}
-              className="inline-flex items-center gap-1.5 text-xs text-accent hover:text-content dark:hover:text-mortar-100 transition disabled:opacity-40"
-              title="Extract the finished-object photo embedded in the pattern PDF"
+              onClick={() => setStripOpen((o) => !o)}
+              className="inline-flex items-center gap-1.5 text-xs text-accent hover:text-content dark:hover:text-mortar-100 transition"
+              title="The other images inside the pattern PDF; tap one to use it as the photo"
+              aria-expanded={stripOpen}
+              data-testid="pattern-photo-strip-toggle"
             >
-              <ImageDown size={13} /> {pullPhoto.isPending ? "reading…" : "pull photo from PDF"}
+              <Images size={13} /> {stripOpen ? "hide" : "other images in the pattern"} ({state.candidates.length})
             </button>
           )}
           <button
@@ -140,6 +194,20 @@ export function DesignFiles({ designId }: { designId: string }) {
         <p className="text-xs text-faint dark:text-slate-500 italic">
           No pattern or photos yet - upload the pattern PDF or a photo of the make.
         </p>
+      )}
+      {belowFloor && !stripOpen && (
+        <p className="text-xs text-faint dark:text-slate-500 italic mb-3" data-testid="pattern-photo-below-floor">
+          None of the images in the pattern looks like a photograph, so nothing was attached. Open the strip to pick one.
+        </p>
+      )}
+      {stripOpen && state && state.status === "ready" && (
+        <CandidateStrip
+          designId={designId}
+          state={state}
+          busy={usePhoto.isPending}
+          onUse={(i) => usePhoto.mutate(i)}
+          thumbUrl={(i) => api.patternPhotoThumbUrl(designId, i)}
+        />
       )}
       {files.length > 0 && (
         <ul className="space-y-1.5 mb-3">
@@ -185,6 +253,7 @@ export function DesignFiles({ designId }: { designId: string }) {
               thumb={`${base}/files/${a.file_id}/raw?variant=thumb`}
               full={`${base}/files/${a.file_id}/raw`}
               alt={a.filename}
+              fromPattern={a.role === "photo" && a.file_id === state?.photo_file_id}
             />
           ))}
         </div>
@@ -193,20 +262,115 @@ export function DesignFiles({ designId }: { designId: string }) {
   );
 }
 
+/** The other images the pattern holds. The one in use is ringed; images that
+ *  failed the photograph floor (charts, logos, drawings) are dimmed but still
+ *  offered - the floor is a default, not a rule about what you may pick. */
+function CandidateStrip({
+  designId,
+  state,
+  busy,
+  onUse,
+  thumbUrl,
+}: {
+  designId: string;
+  state: PatternPhotoState;
+  busy: boolean;
+  onUse: (index: number) => void;
+  thumbUrl: (index: number) => string;
+}) {
+  return (
+    <div className="mb-3" data-testid="pattern-photo-strip">
+      <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">
+        {state.candidates.length} image{state.candidates.length === 1 ? "" : "s"} in the pattern - tap one to use it as the photo
+      </div>
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {state.candidates.map((c) => (
+          <CandidateTile
+            key={`${designId}-${c.index}`}
+            src={thumbUrl(c.index)}
+            inUse={c.index === state.used_index}
+            photo={c.photo}
+            label={`${c.width}×${c.height}, page ${c.page}`}
+            disabled={busy || c.index === state.used_index}
+            onClick={() => onUse(c.index)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CandidateTile({
+  src,
+  inUse,
+  photo,
+  label,
+  disabled,
+  onClick,
+}: {
+  src: string;
+  inUse: boolean;
+  photo: boolean;
+  label: string;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  const resolved = useImageSrc(src);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={inUse ? `In use - ${label}` : photo ? `Use this photo - ${label}` : `Looks like a diagram - ${label}`}
+      data-testid="pattern-photo-candidate"
+      data-in-use={inUse ? "1" : undefined}
+      data-photo={photo ? "1" : "0"}
+      className={`relative shrink-0 w-20 h-20 rounded-md border overflow-hidden transition ${
+        inUse
+          ? "border-accent ring-2 ring-accent/40"
+          : "border-line dark:border-slate-700 hover:border-accent"
+      } ${photo ? "" : "opacity-60 hover:opacity-100"} disabled:cursor-default`}
+    >
+      {resolved ? (
+        <img src={resolved} alt={label} className="w-full h-full object-cover" />
+      ) : (
+        <div className="w-full h-full bg-subtle dark:bg-slate-800 animate-pulse" />
+      )}
+      {inUse && (
+        <span className="absolute bottom-0 inset-x-0 bg-accent text-white text-[9px] font-mono uppercase tracking-widest text-center py-0.5">
+          in use
+        </span>
+      )}
+    </button>
+  );
+}
+
 /** Authed thumbnail — a bare <img> can't send the Bearer token. */
-function DesignThumb({ thumb, full, alt }: { thumb: string; full: string; alt: string }) {
+function DesignThumb({ thumb, full, alt, fromPattern }: { thumb: string; full: string; alt: string; fromPattern?: boolean }) {
   const resolved = useImageSrc(thumb);
   const resolvedFull = useImageSrc(full);
   if (!resolved) {
     return <div className="aspect-square rounded-md bg-subtle dark:bg-slate-800 animate-pulse" />;
   }
   return (
-    <a href={resolvedFull ?? undefined} target="_blank" rel="noreferrer" title={alt}>
+    <a
+      href={resolvedFull ?? undefined}
+      target="_blank"
+      rel="noreferrer"
+      title={fromPattern ? `${alt} (pulled from the pattern)` : alt}
+      className="relative block"
+      data-testid={fromPattern ? "design-photo-from-pattern" : undefined}
+    >
       <img
         src={resolved}
         alt={alt}
         className="aspect-square w-full object-cover rounded-md border border-line dark:border-slate-700 hover:border-accent transition"
       />
+      {fromPattern && (
+        <span className="absolute bottom-1 left-1 bg-surface/90 dark:bg-slate-900/90 text-accent text-[9px] font-mono uppercase tracking-widest rounded px-1 py-0.5">
+          from pattern
+        </span>
+      )}
     </a>
   );
 }

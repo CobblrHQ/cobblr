@@ -4024,6 +4024,50 @@ export type FileWriter = (
   opts: { filename?: string; mimeType?: string },
 ) => Promise<FileWriteResult>;
 
+/** "This file is the <role> of that entity" - the same row POST
+ *  /attachments writes, for a module that is acting server-side with no
+ *  request to carry a bearer (an event handler reacting to an upload). */
+export interface FileAttachSpec {
+  fileId: string;
+  source_module: string;
+  source_type: string;
+  source_id: string;
+  role?: string | null;
+  sort_order?: number;
+}
+export interface FileAttachResult {
+  attachmentId: string;
+  /** True when the (file, entity, role) row already existed and was returned
+   *  rather than created - the seam is idempotent. */
+  existed: boolean;
+}
+/** One attachment on an entity, as the list seam reports it. */
+export interface FileAttachmentRow {
+  id: string;
+  fileId: string;
+  role: string | null;
+  sort_order: number;
+  filename: string;
+  mimeType: string;
+  kind: string;
+  width: number | null;
+  height: number | null;
+  createdAt: Date;
+}
+/** Attaches a stored file to an entity. core-files registers it; it emits the
+ *  same core-files.attachment.created event the HTTP route does, so wires see
+ *  no difference between a user's upload and a module's server-side attach. */
+export type FileAttacher = (orgId: string, spec: FileAttachSpec) => Promise<FileAttachResult>;
+/** Removes one attachment by id (the file itself stays). Resolves false when
+ *  there was no such row. Emits core-files.attachment.deleted like the route. */
+export type FileDetacher = (orgId: string, attachmentId: string) => Promise<boolean>;
+/** Lists what is attached to one entity, oldest first (sort_order, then
+ *  created_at) - the server-side twin of GET /attachments. */
+export type FileAttachmentLister = (
+  orgId: string,
+  source: { source_module: string; source_type: string; source_id: string },
+) => Promise<FileAttachmentRow[]>;
+
 /** Server-side access to stored file bytes, brokered so a module never
  *  imports core-files or touches its on-disk layout. core-files
  *  registers the reader at boot; everyone else just calls read(). */
@@ -4047,6 +4091,25 @@ export interface PlatformFiles {
     bytes: Uint8Array,
     opts: { filename?: string; mimeType?: string },
   ): Promise<FileWriteResult | null>;
+  /** A file-storage module registers the attacher once at boot. */
+  registerAttacher(attacher: FileAttacher): void;
+  /** Attach a stored file to an entity with a role, server-side (no request,
+   *  no bearer). Returns null if no attacher is registered. Idempotent: an
+   *  attachment that already exists is returned with `existed: true`. */
+  attach(orgId: string, spec: FileAttachSpec): Promise<FileAttachResult | null>;
+  /** A file-storage module registers the detacher once at boot. */
+  registerDetacher(detacher: FileDetacher): void;
+  /** Remove one attachment server-side. Returns null if no detacher is
+   *  registered, false if the row did not exist. */
+  detach(orgId: string, attachmentId: string): Promise<boolean | null>;
+  /** A file-storage module registers the attachment lister once at boot. */
+  registerAttachmentLister(lister: FileAttachmentLister): void;
+  /** What is attached to one entity. Returns null if no lister is registered
+   *  (distinct from [] - nothing attached). */
+  listAttachments(
+    orgId: string,
+    source: { source_module: string; source_type: string; source_id: string },
+  ): Promise<FileAttachmentRow[] | null>;
   /** Override the blob-storage driver (the overlay injects S3/R2). If none is
    *  registered, core-files uses its built-in local-disk driver. */
   registerDriver(driver: FilesDriver): void;

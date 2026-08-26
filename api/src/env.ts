@@ -185,6 +185,17 @@ const Schema = z.object({
   //    is per-deployment and off unless set.
   COBBLR_IDENTITY_AUTOPROVISION: z.string().optional(),
   COBBLR_DEPLOYMENT: z.string().optional(),
+
+  // A PUBLIC demo instance: the shared login shown on, and pre-filled into, the
+  // sign-in form. Setting these PUBLISHES that password to anyone who loads the
+  // page - which is the point on a demo whose data is wiped on a timer, and
+  // catastrophic anywhere else. Both must be set or the block is withheld
+  // entirely; there is no half-configured state that leaks an address.
+  // COBBLR_DEMO_SIGNIN_NOTE is optional free text under the credentials
+  // ("Everything here resets every 15 minutes.").
+  COBBLR_DEMO_SIGNIN_EMAIL: z.string().optional(),
+  COBBLR_DEMO_SIGNIN_PASSWORD: z.string().optional(),
+  COBBLR_DEMO_SIGNIN_NOTE: z.string().optional(),
 });
 
 /** Boot guard: in production, a dev/placeholder secret or DB password is a

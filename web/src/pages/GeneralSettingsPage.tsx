@@ -21,7 +21,7 @@ export function GeneralSettingsPage() {
     <div className="space-y-5">
 
       <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-2">
-        <h2 className="text-sm font-medium text-content dark:text-mortar-100">Identity</h2>
+        <h2 className="text-sm font-semibold text-content dark:text-mortar-100">Identity</h2>
         <dl className="text-sm">
           <div className="flex gap-3 py-1">
             <dt className="text-faint w-24 shrink-0">Name</dt>

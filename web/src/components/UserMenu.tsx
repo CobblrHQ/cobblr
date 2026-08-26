@@ -199,7 +199,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
               tables you don't use) without exposing the platform Configuration. */}
           {appMode && (
             <Link to="/me/app-settings" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
-              <SlidersHorizontal size={14} className="text-faint dark:text-slate-400" /> Settings
+              <SlidersHorizontal size={14} className="text-faint dark:text-slate-400" /> Menu & surfaces
             </Link>
           )}
           {/* Managed app: the grow door — start a full Cobblr workspace or jump
@@ -410,7 +410,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
               tables you don't use) without exposing the platform Configuration. */}
           {appMode && (
             <Link to="/me/app-settings" onClick={() => setOpen(false)} className={itemCls} role="menuitem">
-              <SlidersHorizontal size={14} className="text-faint dark:text-slate-400" /> Settings
+              <SlidersHorizontal size={14} className="text-faint dark:text-slate-400" /> Menu & surfaces
             </Link>
           )}
           {/* Managed app: the grow door — start a full Cobblr workspace or jump

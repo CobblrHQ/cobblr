@@ -13,12 +13,11 @@ import { useState } from "react";
 import { AreaTabs, NOTIFICATION_TABS } from "../components/AreaTabs";
 import { DiscordUnsubscribedCallout } from "../components/DiscordUnsubscribedCallout";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Plus, Send, Trash2, Zap } from "lucide-react";
+import { Plus, Send, Trash2, Zap } from "lucide-react";
 import {
   Modal,
   useConfirm,
-  usePageTitle, usePageWidth,
-  useToast,
+  usePageTitle, useToast,
 } from "@cobblr/platform-web";
 import { useAuth } from "../auth/AuthContext";
 import {
@@ -157,9 +156,9 @@ const CHANNEL_OPTIONS: Array<{
 
 export function MeNotificationChannelsPage() {
   usePageTitle("Notification channels");
+  // wide-table: via registry /me/notification-channels (ACCOUNT_PAGES grants the wide column; usePageWidth is a no-op under AccountLayout)
   // Channel, event, priority, enabled, config and an action per row: a data
   // table, not a settings matrix, so it gets the room.
-  usePageWidth("wide");
   const { orgs } = useAuth();
   const [activeOrgId, setActiveOrgId] = useState<string>(
     () => orgs[0]?.id ?? "",
@@ -168,13 +167,6 @@ export function MeNotificationChannelsPage() {
   return (
     <div className="space-y-5">
       <AreaTabs tabs={NOTIFICATION_TABS} area="notifications" />
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <Bell size={20} className="text-accent" />
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
-          notification channels
-        </h1>
-      </div>
-
       <p className="text-sm text-content dark:text-mortar-200">
         Send Cobblr events to Discord, Slack, your email, SMS, or any
         webhook. Each binding picks a channel, an event type (or{" "}

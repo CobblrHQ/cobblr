@@ -161,9 +161,15 @@ export function LinksPage() {
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  // A labelled REGION of a flowing list, so it wears the app's mono section
+  // rule — the family every other list page uses — not a card title. The old
+  // text-sm font-medium heading was a fourth heading family nothing else had.
   return (
     <section className="space-y-2">
-      <h2 className="text-sm font-medium text-content dark:text-slate-300">{title}</h2>
+      <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
+        {"// "}
+        {title.toLowerCase()}
+      </div>
       <div className="space-y-2">{children}</div>
     </section>
   );

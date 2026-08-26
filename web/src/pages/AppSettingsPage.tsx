@@ -22,11 +22,8 @@ export function AppSettingsPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
-        Settings
-      </h1>
-      <p className="mt-1 text-sm text-muted dark:text-slate-400">
-        Tailor {appLabel}. Hide what you don't use - nothing is deleted, and you can turn it back on anytime.
+      <p className="text-sm text-muted dark:text-slate-400">
+        Nothing here deletes anything from {appLabel} - hidden surfaces can be turned back on anytime.
       </p>
 
       <div className="mt-6">

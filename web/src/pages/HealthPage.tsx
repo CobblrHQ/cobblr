@@ -56,6 +56,16 @@ export function HealthPage() {
         endpoint and look at the HTTP status (503 ⇒ red).
       </p>
 
+      <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
+        {"// module probes"}
+      </div>
+      {snap.isLoading && <div className="text-xs text-faint">loading…</div>}
+      {snap.data && Object.keys(probes).length === 0 && (
+        <div className="text-xs text-faint dark:text-slate-500 italic">
+          No probes registered - a module adds one in its onBoot.
+        </div>
+      )}
+      {Object.keys(probes).length > 0 && (
       <div className="border border-line dark:border-slate-700 rounded divide-y divide-line dark:divide-slate-800">
         {Object.entries(probes).map(([name, p]) => (
           <div key={name} className="px-3 py-2 text-sm flex items-baseline gap-3">
@@ -76,6 +86,7 @@ export function HealthPage() {
           </div>
         ))}
       </div>
+      )}
     </div>
   );
 }

@@ -59,6 +59,7 @@ export function AuthPage() {
   // null (rather than showing the button optimistically) means we never offer a route
   // that fails after the redirect, on a site that cannot explain what went wrong.
   const [identityCfg, setIdentityCfg] = useState<{ authorize_url: string; deployment: string; name?: string } | null>(null);
+  const [demoCfg, setDemoCfg] = useState<{ email: string; password: string; note: string | null } | null>(null);
   useEffect(() => {
     api
       .authConfig()
@@ -66,6 +67,16 @@ export function AuthPage() {
         setSignupEnabled(cfg.signup_enabled);
         setCaptchaCfg(cfg.captcha ?? null);
         setIdentityCfg(cfg.identity ?? null);
+        // A public demo pre-fills its shared login, so the first thing a visitor
+        // does is press one button rather than copy two strings. Only when the
+        // fields are still untouched: someone who has started typing their own
+        // credentials must never have them overwritten by a late config reply.
+        const demo = cfg.demo_signin ?? null;
+        setDemoCfg(demo);
+        if (demo) {
+          setEmail((cur) => (cur ? cur : demo.email));
+          setPassword((cur) => (cur ? cur : demo.password));
+        }
         if (!cfg.signup_enabled) setMode("login");
       })
       .catch(() => {
@@ -235,6 +246,23 @@ export function AuthPage() {
                 />
               </Field>
             </>
+          )}
+
+          {/* A public demo says so, and hands over its shared login rather than
+              making a visitor find it elsewhere. The fields are already filled;
+              this is here so the credentials are legible when they are not (a
+              password manager overwriting them, a visitor clearing the form). */}
+          {demoCfg && mode === "login" && (
+            <div className="rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-slate-900 px-3 py-2.5 text-sm">
+              <div className="font-medium text-content dark:text-mortar-100">This is a live demo. Just press Sign in.</div>
+              <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-xs">
+                <dt className="text-muted">Email</dt>
+                <dd className="font-mono break-all">{demoCfg.email}</dd>
+                <dt className="text-muted">Password</dt>
+                <dd className="font-mono break-all">{demoCfg.password}</dd>
+              </dl>
+              {demoCfg.note && <p className="mt-1.5 text-xs text-muted">{demoCfg.note}</p>}
+            </div>
           )}
 
           <Field label="Email">

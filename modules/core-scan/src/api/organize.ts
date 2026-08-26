@@ -736,15 +736,23 @@ organizeRouter.get(
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member", "guest")) return;
     const db = tenantDb(req);
-    const row = await db
+    // A specific plan can be requested by id — the put-away walk asks for the
+    // plan the user JUST applied, not "whatever is latest". Without that, a warm
+    // re-plan the scan page fires after Accept all (newer, no applied groups)
+    // becomes "latest" within ~1.5s, and Start put-away walk read
+    // applied_group_ids: [] and silently did nothing ("Nothing applied to walk
+    // yet"). "Latest" must stay strictly newest (a fresh user plan supersedes an
+    // older applied one — scan-organize.test.ts), so the walk pins the id instead.
+    const wantId = typeof req.query.plan_id === "string" ? req.query.plan_id : null;
+    let q = db
       .selectFrom("core_scan_organize_plans")
       .select(["id", "payload", "applied_group_ids", "walk_state", "expires_at"])
-      .where("expires_at", ">", new Date())
-      // seq tiebreaks same-timestamp plans so "the latest" is deterministic.
-      .orderBy("created_at", "desc")
-      .orderBy("seq", "desc")
-      .limit(1)
-      .executeTakeFirst();
+      .where("expires_at", ">", new Date());
+    q = wantId
+      ? q.where("id", "=", wantId)
+      : // seq tiebreaks same-timestamp plans so "the latest" is deterministic.
+        q.orderBy("created_at", "desc").orderBy("seq", "desc");
+    const row = await q.limit(1).executeTakeFirst();
     if (!row) {
       res.json({ plan: null });
       return;

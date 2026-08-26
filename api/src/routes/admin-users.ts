@@ -9,7 +9,8 @@
 //      / on paper / in chat. No SMTP needed.
 //   3. User logs in with those credentials. Login response carries
 //      `user.must_reset_password = true`.
-//   4. Web client redirects to /me/force-password-reset.
+//   4. Web client renders the set-a-password screen in place of every
+//      route (a gate, not a URL - nothing to navigate around).
 //   5. User PATCHes /me/password with the new one. Server clears
 //      the flag (see me.ts:/me/password).
 //

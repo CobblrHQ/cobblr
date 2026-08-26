@@ -15,13 +15,14 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { KeyRound, Monitor, Moon, Sun, Unlock, UserCog } from "lucide-react";
+import { KeyRound, Monitor, Moon, Sun, Unlock, UserCog , PanelLeft} from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, ApiError } from "../lib/api";
 import { accountSections } from "../lib/account-nav";
 import { useTheme } from "../theme/ThemeContext";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
+import { setNavMode, useNavMode } from "../lib/nav-mode";
 
 function AccountHead({ title, blurb }: { title: string; blurb?: string }) {
   return (
@@ -140,10 +141,6 @@ export function MeIdentityPage() {
   const toast = useToast();
   return (
     <div className="space-y-4">
-      <AccountHead
-        title="Identity & password"
-        blurb="Your display name, the address you sign in with, and the password you sign in with."
-      />
       {user && (
         <DisplayNameSection
           initial={user.display_name}
@@ -163,8 +160,8 @@ export function MeAppearancePage() {
   usePageTitle("Appearance");
   return (
     <div className="space-y-4">
-      <AccountHead title="Appearance" blurb="Light or dark - for your account everywhere, or just this device." />
       <AppearanceSection />
+      <LayoutSection />
     </div>
   );
 }
@@ -307,6 +304,63 @@ function AppearanceSection() {
 
       <p className="text-[11px] text-faint leading-tight">
         Precedence: <span className="font-medium">this device</span> → <span className="font-medium">account default</span> → the device's OS. This device can follow its own OS (Match OS) even when your account default is a fixed Light/Dark. The header toggle sets this device only; only you see it.
+      </p>
+    </section>
+  );
+}
+
+/** The desktop nav layout (top bar vs sidebar + its options) syncs to the
+ *  account like the theme does — but until this section existed it was settable
+ *  only through three unlabeled icons in the shell, with nowhere to SEE the
+ *  current value or stop the syncing. Phones ignore all of it (the sidebar is
+ *  `hidden md:block`), which is why the section says desktop. */
+function LayoutSection() {
+  const navMode = useNavMode();
+  const toast = useToast();
+  return (
+    <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
+      <h2 className="text-sm font-semibold text-content dark:text-mortar-100 flex items-center gap-2">
+        <PanelLeft size={14} /> Layout (desktop)
+      </h2>
+      <div className="flex flex-wrap items-center gap-2">
+        {(
+          [
+            { value: "top", label: "Top bar" },
+            { value: "side", label: "Sidebar" },
+          ] as const
+        ).map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            onClick={() => setNavMode(o.value)}
+            className={
+              "px-3 py-1.5 rounded-md border text-sm transition " +
+              (navMode === o.value
+                ? "border-cobble-400 bg-cobble-50 text-accent dark:border-cobble-600 dark:bg-cobble-900/30 dark:text-mortar-100"
+                : "border-line dark:border-slate-600 text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-200")
+            }
+          >
+            {o.label}
+          </button>
+        ))}
+        <div className="flex-1" />
+        <button
+          type="button"
+          onClick={() => {
+            void api
+              .setNavPref(null)
+              .then(() => toast.info("Layout no longer syncs - each desktop keeps its own."))
+              .catch(() => toast.error("Couldn't update - try again."));
+          }}
+          className="text-xs text-muted dark:text-slate-400 hover:text-accent underline-offset-2 hover:underline"
+          title="Clear the synced preference; every desktop keeps whatever it currently shows"
+        >
+          Stop syncing across desktops
+        </button>
+      </div>
+      <p className="text-[11px] text-faint leading-tight">
+        Follows your account to every desktop, like the theme. The sidebar's own pin and
+        top-bar toggles live in the sidebar itself; phones keep the mobile menu regardless.
       </p>
     </section>
   );

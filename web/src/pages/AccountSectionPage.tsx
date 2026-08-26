@@ -41,7 +41,7 @@ export function AccountSectionPage() {
           <Icon size={19} />
         </span>
         <div className="min-w-0">
-          <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100">
+          <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
             {hit.meta.label}
           </h1>
           <p className="text-xs text-faint dark:text-slate-500 mt-0.5">{hit.meta.blurb}</p>

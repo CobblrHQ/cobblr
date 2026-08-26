@@ -101,17 +101,14 @@ export function CobbBust({
   );
 }
 
-/** Head-only cobblestone mark — avatars, inline chips, the AI-face. `sleeping`
- *  greys him out (Cobb's off the clock → AI not connected). The crop is square
+/** Head-only cobblestone mark — avatars, inline chips, the AI-face. The crop is square
  *  and tight to the head, so it still reads at ~20px. */
 export function CobbHead({
   size = 22,
-  sleeping = false,
   className,
   title,
 }: {
   size?: number;
-  sleeping?: boolean;
   className?: string;
   title?: string;
 }) {
@@ -121,9 +118,8 @@ export function CobbHead({
       width={size}
       height={size}
       role="img"
-      aria-label={title ?? (sleeping ? "Cobb (resting)" : "Cobb")}
+      aria-label={title ?? "Cobb"}
       className={className}
-      style={sleeping ? { opacity: 0.55, filter: "grayscale(0.5)" } : undefined}
     >
       {COBB_ART.Head}
     </svg>

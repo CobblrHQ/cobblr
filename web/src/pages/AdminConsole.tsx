@@ -21,7 +21,7 @@ import {
   X,
   Eye,
 } from "lucide-react";
-import { Link, useParams } from "react-router-dom";
+import { Link, Navigate, useParams } from "react-router-dom";
 import { useConfirm, usePageTitle, usePageWidth, useToast, Modal } from "@cobblr/platform-web";
 import { setImpersonation } from "../lib/impersonation";
 import { displaySlug } from "../lib/workspaceSlug";
@@ -53,6 +53,14 @@ export function AdminConsole() {
 
   // A wide table is the page here, so it gets the screen.
   usePageWidth("wide");
+
+  // A typo'd /admin/<x> used to silently render Overview UNDER THE WRONG URL,
+  // with no nav item lit — redirect so the address bar and the page agree.
+  // AFTER the hooks: an early return above them is a rules-of-hooks violation
+  // (lint:hooks-after-return caught exactly that in the first cut).
+  if (section !== undefined && !isAdminSection(section)) {
+    return <Navigate to="/admin/overview" replace />;
+  }
   return (
     <div className="space-y-5">
       {active === "overview" && <OverviewTab />}
@@ -618,6 +626,10 @@ function ModulesTab() {
   });
   return (
     <div className="space-y-3">
+      {q.isLoading && <div className="text-xs text-faint">loading…</div>}
+      {q.data && q.data.items.length === 0 && (
+        <div className="text-xs text-faint dark:text-slate-500 italic">No modules registered.</div>
+      )}
       {(q.data?.items ?? []).map((m) => (
         <div
           key={m.module_name}
@@ -664,7 +676,12 @@ function ActivityTab() {
     refetchInterval: 15_000,
   });
   return (
-    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
+    <div className="space-y-2">
+      {q.isLoading && <div className="text-xs text-faint">loading…</div>}
+      {q.data && q.data.items.length === 0 && (
+        <div className="text-xs text-faint dark:text-slate-500 italic">No activity yet.</div>
+      )}
+      <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
       <table className="w-full text-sm">
         <thead className="bg-subtle/50 dark:bg-slate-800/40">
           <tr>
@@ -691,10 +708,13 @@ function ActivityTab() {
           ))}
         </tbody>
       </table>
+      </div>
+      <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 px-1">
+        latest 100 events
+      </div>
     </div>
   );
 }
-
 function HealthTab() {
   const q = useQuery({
     queryKey: ["super-admin-health"],
@@ -1892,7 +1912,7 @@ function AnnouncementsTab() {
   const [postTitle, setPostTitle] = useState("");
   const [postBody, setPostBody] = useState("");
   const post = useMutation({
-    mutationFn: () => api.postAnnouncement({ category: postCat, title: postTitle.trim(), body: postBody.trim() || undefined }),
+    mutationFn: () => api.postAnnouncement({ category: effectivePostCat, title: postTitle.trim(), body: postBody.trim() || undefined }),
     onSuccess: () => {
       toast.success("Posted to Discord.");
       setPostTitle("");
@@ -1900,8 +1920,10 @@ function AnnouncementsTab() {
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't post."),
   });
-  // Default the composer category to the first composable one.
-  if (!postCat && composable.length > 0) setPostCat(composable[0]!.key);
+  // Default the composer category to the first composable one — DERIVED, not
+  // set during render: a setState here re-renders in a loop the day a
+  // composable key is ever falsy.
+  const effectivePostCat = postCat || composable[0]?.key || "";
 
   return (
     <div className="space-y-3">
@@ -1924,7 +1946,7 @@ function AnnouncementsTab() {
           <div className="text-[10px] font-mono uppercase tracking-widest text-accent">post an update</div>
           <div className="flex gap-2">
             <select
-              value={postCat}
+              value={effectivePostCat}
               onChange={(e) => setPostCat(e.target.value)}
               className="text-sm rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2 py-1.5"
             >

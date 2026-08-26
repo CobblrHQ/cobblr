@@ -64,6 +64,18 @@ export interface VocabularyCapability extends Base {
 
 export const CAPABILITIES: Capability[] = [
   {
+    id: "authoring:post-model-pipeline",
+    kind: "owns",
+    what: "parse → unwrap → lean natives → corroborate, on a model's bundle reply",
+    why:
+      "the interactive build and the operator eval each carried a copy; the corroboration layer landed in one, " +
+      "and the eval kept measuring the old pipeline (2026-08-26) - an eval that skips the product's path measures a product that does not exist",
+    owner: "modules/core-authoring/src/services/shape.ts",
+    scope: ["modules/core-authoring/src/api/drafts.ts", "api/src/routes/super-admin.ts"],
+    detect: /\b(parseJsonObject|unwrapBuild|unwrapApp|applyLeanNatives)\s*\(/,
+    use: "shapeCandidate(text, task, { intent, kinds, natives }) from core-authoring's services/shape",
+  },
+  {
     kind: "owns",
     id: "placement:whats-inside",
     what: "answering what is stored inside a container - a room, a shelf, a bin",

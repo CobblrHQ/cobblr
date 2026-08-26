@@ -6,7 +6,13 @@ import { platform } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { routeUnknownToMetadata } from "./route-helpers.js";
-import { extractPdfImages } from "./pdf-images.js";
+import {
+  latestPatternFileId,
+  patternPhotoThumb,
+  readPatternPhotoState,
+  runPatternPhoto,
+  usePatternPhoto,
+} from "./pattern-photo.js";
 
 export const projectsRouter = Router({ mergeParams: true });
 
@@ -290,30 +296,11 @@ projectsRouter.post(
   }),
 );
 
-// The "pull the photo out of the pattern" path. A pattern PDF carries the
-// finished-object photo embedded on page one; rather than make the user upload
-// a separate image, we read the images straight out of the stored PDF, pick
-// the largest real photo, save it as a core-file, and attach it to this design
-// as role=photo — the same attachment shape the UI's upload path writes. Body
-// takes an optional `file_id` (a specific PDF); otherwise we use the design's
-// most-recently-attached pattern PDF.
-//
-// core-files is a different module, so we don't touch its tables directly:
-// reads/writes of bytes go through the platform().files seam, and the
-// attachment lookup/create go through core-files' own HTTP endpoints carrying
-// the caller's bearer (same loopback-self-call pattern core-scan uses to
-// attach catalog photos — runs through requireAuth + withTenant like a real
-// upload). Keeps the module boundary honest.
+// The "pull the photo out of the pattern" door, kept for the API and the
+// assistant. The pull itself runs by itself when a pattern is attached (see
+// pattern-photo.ts); this route is the explicit re-run. Body takes an optional
+// `file_id` (a specific PDF); otherwise the design's most recent pattern PDF.
 const ExtractImagesBody = z.object({ file_id: z.string().uuid().optional() });
-
-// Loopback base for the self-call. `x-cobblr-base-url` override stays for
-// isolated-stack e2e (matches core-scan).
-const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
-
-function bearerToken(req: import("express").Request): string | null {
-  const auth = req.headers.authorization;
-  return typeof auth === "string" && auth.startsWith("Bearer ") ? auth.slice(7) : null;
-}
 
 // AI-REACH: takes an uploaded pattern file/images; the assistant cannot carry a file
 projectsRouter.post(
@@ -324,31 +311,7 @@ projectsRouter.post(
     const ctx = tenantContext(req);
     const designId = req.params.id ?? "";
 
-    const token = bearerToken(req);
-    if (!token) {
-      res.status(401).json({ error: { code: "no_auth", message: "missing bearer" } });
-      return;
-    }
-    const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
-    const filesBase = `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-files`;
-    const authHeader = { authorization: `Bearer ${token}` };
-
-    // Resolve the source PDF: the one named, else the design's latest pattern.
-    // The attachments list endpoint doesn't filter by role, so we filter here.
-    let fileId = parsed.data.file_id ?? null;
-    if (!fileId) {
-      const q = `${filesBase}/attachments?source_module=projects&source_type=project&source_id=${encodeURIComponent(designId)}`;
-      const r = await fetch(q, { headers: authHeader });
-      if (r.ok) {
-        const body = (await r.json()) as {
-          items?: Array<{ file_id: string; role: string | null; sort_order?: number }>;
-        };
-        const pattern = (body.items ?? [])
-          .filter((a) => a.role === "pattern")
-          .sort((a, b) => (b.sort_order ?? 0) - (a.sort_order ?? 0))[0];
-        fileId = pattern?.file_id ?? null;
-      }
-    }
+    const fileId = parsed.data.file_id ?? (await latestPatternFileId(ctx.org.id, designId));
     if (!fileId) {
       res.status(404).json({
         error: {
@@ -359,68 +322,86 @@ projectsRouter.post(
       return;
     }
 
-    const bytes = await platform().files.read(ctx.org.id, fileId, "original");
-    if (!bytes) {
-      res.status(404).json({ error: { code: "file_not_found", message: "pattern file not found" } });
+    // A fresh read every time this door is used: it is the explicit "pull
+    // again" (and the AI's), so a recorded below-floor answer does not stick.
+    const state = await runPatternPhoto(ctx.org.id, designId, fileId, { force: true });
+    if (state.error) {
+      res.json({ ok: false, reason: `Couldn't read images from that PDF (${state.error}).`, images: [] });
       return;
     }
-
-    let images;
-    try {
-      images = await extractPdfImages(bytes.bytes);
-    } catch {
-      res.json({ ok: false, reason: "Couldn't read images from that PDF.", images: [] });
-      return;
-    }
-    if (images.length === 0) {
+    if (state.extracted === 0) {
       res.json({ ok: false, reason: "No usable photos were embedded in that PDF.", images: [] });
       return;
     }
-
-    // Save the hero (largest) image and attach it as this design's photo.
-    const hero = images[0]!;
-    const baseName = (bytes.filename || "pattern").replace(/\.pdf$/i, "");
-    const written = await platform().files.write(ctx.org.id, hero.png, {
-      filename: `${baseName}-photo.png`,
-      mimeType: "image/png",
-    });
-    if (!written) {
-      res.status(500).json({ error: { code: "write_failed", message: "couldn't save the image" } });
+    if (state.photo_file_id === null) {
+      res.json({
+        ok: false,
+        reason:
+          state.hero_index === null
+            ? `None of the ${state.extracted} images in that PDF looks like a photograph. Open the strip to choose one by hand.`
+            : "The design already has a photo; open the strip to swap it.",
+        images: [],
+        candidates: state.extracted,
+      });
       return;
     }
-
-    // Attach role=photo via core-files' own endpoint (mirrors the UI upload
-    // path). A repeat pull writes a fresh file, so multiple photos are fine —
-    // core-files assigns sort_order.
-    const ar = await fetch(`${filesBase}/attachments`, {
-      method: "POST",
-      headers: { ...authHeader, "content-type": "application/json" },
-      body: JSON.stringify({
-        file_id: written.fileId,
-        source_module: "projects",
-        source_type: "project",
-        source_id: designId,
-        role: "photo",
-      }),
-    });
-    if (!ar.ok) {
-      res.status(502).json({ error: { code: "attach_failed", message: `attach ${ar.status}` } });
-      return;
-    }
-    const attachment = (await ar.json()) as { id?: string };
-
+    const used = state.candidates.find((c) => c.index === state.used_index);
     res.status(201).json({
       ok: true,
       file: {
-        id: written.fileId,
-        width: hero.width,
-        height: hero.height,
-        bytes: hero.bytes,
-        mime_type: written.mimeType,
+        id: state.photo_file_id,
+        width: used?.width ?? 0,
+        height: used?.height ?? 0,
+        bytes: 0,
+        mime_type: "image/png",
       },
-      attachment_id: attachment.id ?? null,
-      candidates: images.length,
+      attachment_id: null,
+      candidates: state.extracted,
     });
+  }),
+);
+
+// What the pattern & photos panel renders: the pull's result and the strip
+// of alternatives. A design with a pattern and no recorded pull starts one.
+projectsRouter.get(
+  "/:id/pattern-photo",
+  asyncHandler(async (req, res) => {
+    const ctx = tenantContext(req);
+    res.json(await readPatternPhotoState(ctx.org.id, req.params.id ?? ""));
+  }),
+);
+
+projectsRouter.get(
+  "/:id/pattern-photo/candidates/:idx/thumb",
+  asyncHandler(async (req, res) => {
+    const ctx = tenantContext(req);
+    const idx = Number(req.params.idx);
+    if (!Number.isInteger(idx) || idx < 0) {
+      res.status(400).json({ error: { code: "bad_index", message: "idx must be a non-negative integer" } });
+      return;
+    }
+    const jpeg = await patternPhotoThumb(ctx.org.id, req.params.id ?? "", idx);
+    if (!jpeg) {
+      res.status(404).json({ error: { code: "not_found", message: "no such candidate" } });
+      return;
+    }
+    res.setHeader("content-type", "image/jpeg");
+    res.setHeader("cache-control", "private, max-age=3600");
+    res.send(jpeg);
+  }),
+);
+
+const UsePatternPhotoBody = z.object({ index: z.number().int().min(0) });
+
+// AI-REACH: exempt media - picks among image tiles the user is looking at; the assistant cannot see the strip
+projectsRouter.post(
+  "/:id/pattern-photo/use",
+  asyncHandler(async (req, res) => {
+    const parsed = UsePatternPhotoBody.safeParse(req.body ?? {});
+    if (!parsed.success) return badBody(res, parsed.error);
+    const ctx = tenantContext(req);
+    const r = await usePatternPhoto(ctx.org.id, req.params.id ?? "", parsed.data.index);
+    res.status(r.ok ? 201 : 200).json(r);
   }),
 );
 

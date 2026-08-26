@@ -59,8 +59,7 @@ export function SurfacesPage() {
       </ConfigHeaderActions>
 
       <p className="text-sm text-muted dark:text-slate-400">
-        Share a saved view's data over a long-random URL - no account
-        required to view. Cross-module readers go through{" "}
+        Cross-module readers go through{" "}
         <code className="font-mono">exposableFields</code> projection
         so private fields stay private.
       </p>
@@ -72,6 +71,7 @@ export function SurfacesPage() {
         </div>
       )}
 
+      {items.length > 0 && (
       <ul className="border border-line dark:border-slate-700 rounded divide-y divide-line dark:divide-slate-800">
         {items.map((s) => (
           <li key={s.id} className="px-3 py-2 text-sm space-y-1">
@@ -152,6 +152,7 @@ export function SurfacesPage() {
           </li>
         ))}
       </ul>
+      )}
 
       {createOpen && (
         <CreateSurfaceModal

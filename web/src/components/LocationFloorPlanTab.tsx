@@ -4,7 +4,7 @@
 // scale). Reuses the same <FloorPlan> editor the detail page mounts.
 
 import { useMemo, useState } from "react";
-import { Boxes, MapPin } from "lucide-react";
+import { Boxes, MapPin, Plus } from "lucide-react";
 import type { Location } from "../lib/api";
 import { readBound } from "../lib/floorplanGeometry";
 import { FloorPlan } from "./FloorPlan";
@@ -24,7 +24,15 @@ function viewableSpaces(items: Location[]): { areas: Location[]; containers: Loc
   return { areas, containers };
 }
 
-export function LocationFloorPlanTab({ items, slug }: { items: Location[]; slug: string }) {
+export function LocationFloorPlanTab({
+  items,
+  slug,
+  onCreate,
+}: {
+  items: Location[];
+  slug: string;
+  onCreate?: () => void;
+}) {
   const { areas, containers } = useMemo(() => viewableSpaces(items), [items]);
   const first = areas[0]?.id ?? containers[0]?.id ?? null;
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -35,9 +43,20 @@ export function LocationFloorPlanTab({ items, slug }: { items: Location[]; slug:
   if (!active) {
     return (
       <div className="rounded-xl border border-dashed border-line dark:border-slate-700 p-6 text-sm text-muted dark:text-slate-400">
-        No rooms or containers to lay out yet. Add a top-level area (a room, a
-        garage) or a container (a tool chest, a shelving unit), then draw or
-        describe its layout here.
+        <p>
+          No rooms or containers to lay out yet. Add a top-level area (a room, a
+          garage) or a container (a tool chest, a shelving unit), then draw or
+          describe its layout here.
+        </p>
+        {onCreate && (
+          <button
+            onClick={onCreate}
+            className="mt-3 inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition"
+          >
+            <Plus size={14} />
+            New location
+          </button>
+        )}
       </div>
     );
   }

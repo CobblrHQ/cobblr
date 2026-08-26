@@ -282,10 +282,13 @@ export function SideRail({
                       }
                     >
                       <span className="shrink-0">{t.icon}</span>
-                      {/* Words cost room the close control cannot give up. Below
-                          `sm` only the ACTIVE tab keeps its label; the others are
-                          their icon, so three tabs plus the X still fit 390px. */}
-                      <span className={on ? "truncate" : "hidden sm:inline truncate"}>{t.label}</span>
+                      {/* Every tab keeps its word, on a phone too. This used to
+                          drop the INACTIVE labels below `sm` to save room, and
+                          three icons in a row read as unnamed controls: "the
+                          inactive other tabs are not named" (reported 2026-08-26).
+                          "Cobb", "Discussion" and "Pinned" fit beside the X at
+                          390px; truncate is the guard if a fourth ever arrives. */}
+                      <span className="truncate">{t.label}</span>
                       {!!t.badge && t.badge > 0 && (
                         <span className="shrink-0 rounded-full bg-amber-400 text-cobble-900 text-[10px] leading-none px-1.5 py-0.5">
                           {t.badge > 99 ? "99+" : t.badge}

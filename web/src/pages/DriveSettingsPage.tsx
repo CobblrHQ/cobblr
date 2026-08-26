@@ -6,7 +6,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Monitor, Check } from "lucide-react";
+import { Check } from "lucide-react";
 import { usePageTitle, useToast } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, ApiError } from "../lib/api";
@@ -40,11 +40,6 @@ export function DriveSettingsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <Monitor size={20} className="text-accent" />
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">browser driving</h1>
-      </div>
-
       <p className="text-sm text-content dark:text-mortar-200">
         Let Claude (from Claude Code / Desktop on your machine, via MCP) drive the Cobblr tab you have open in{" "}
         <strong>this workspace</strong>  - opening pages and views as a shared, collaborative session. It's{" "}

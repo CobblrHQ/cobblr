@@ -36,6 +36,26 @@ import { RailTabContent, openRail, useRailTab } from "./SideRail";
 import { MentionText, useMentionPicker } from "./MentionText";
 import { workspaceRoomSource, isWorkspaceRoom } from "@cobblr/platform-contract/workspace-room";
 
+/** How often the open conversation re-reads itself. There is no push channel
+ *  for comments, so a message somebody else posts reaches this tab by asking
+ *  again; four seconds is fast enough to feel live and one small GET. */
+export const LIVE_REFETCH_MS = 4_000;
+
+/** The query options that keep a SHOWING conversation current.
+ *
+ *  Reported: a message sent from Discord "does not auto show up in the
+ *  Discussions tab, she had to switch tabs back and forth to get the message
+ *  to show up". The query only re-read on mount and on tab switch, so an
+ *  open conversation was a snapshot. While the tab is showing it now polls
+ *  (TanStack pauses interval polling while the browser tab is hidden), and
+ *  coming back to the window re-reads at once. Hidden in the rail: nothing. */
+export function conversationLiveness(active: boolean): {
+  refetchInterval: number | false;
+  refetchOnWindowFocus: boolean;
+} {
+  return { refetchInterval: active ? LIVE_REFETCH_MS : false, refetchOnWindowFocus: active };
+}
+
 /** How long ago, in the shortest form that is still unambiguous. */
 function ago(iso: string): string {
   const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
@@ -186,6 +206,7 @@ export function DiscussionTab() {
     queryFn: () => api.getConversation(activeSlug, src!),
     // Only while showing: a mounted-but-hidden tab must not poll.
     enabled: !!activeSlug && !!src && active,
+    ...conversationLiveness(active),
   });
 
   // Names live in cobblr_meta, the comments in the tenant DB, so the join
@@ -498,7 +519,11 @@ export function DiscussionTab() {
           )}
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+        {/* min-h-0: a flex child defaults to min-height:auto, so a long thread
+            grew this list past the panel and pushed the composer below the
+            fold on a phone ("the bottom is cut off sometimes"). With it, the
+            list scrolls and the composer stays pinned. */}
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4">
           {conv.isLoading && <p className="text-xs text-faint">loading…</p>}
           {!conv.isLoading && comments.length === 0 && (
             <p className="text-sm text-faint dark:text-slate-500 italic">

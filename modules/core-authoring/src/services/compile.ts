@@ -651,7 +651,7 @@ export function applyLeanNatives(
     const i = inst as {
       native_fields?: unknown;
       field_defs?: Array<{ entity_kind?: string }>;
-      field_overrides?: Array<{ name: string; hidden?: boolean }>;
+      field_overrides?: Array<{ entity_kind?: string; name: string; hidden?: boolean }>;
     };
     const policy = i.native_fields;
     delete i.native_fields; // transient hint — never leave it on the manifest
@@ -663,7 +663,17 @@ export function applyLeanNatives(
     if (!natives || natives.length === 0) continue;
     const hide = nativesToHide(natives, policy as NativeFieldsPolicy);
     const existing = new Set((i.field_overrides ?? []).map((o) => o.name));
-    const add = hide.filter((n) => !existing.has(n)).map((n) => ({ name: n, hidden: true }));
+    // entity_kind is REQUIRED on a field override (FieldOverrideEntry), and
+    // these are overrides on the module's BASE kind — the same kind the natives
+    // were read from. Omitting it made every bundle this function touched fail
+    // validation with invalid_bundle@…field_overrides.N.entity_kind, so asking
+    // for a LEAN kind — the more thoughtful authoring choice — was the one way
+    // to author a bundle that could not install. Measured 2026-08-26: both
+    // gemini variants hit it on 3 of 9 eval cases; the models that never asked
+    // for lean natives sailed past, which read as those models being better.
+    const add = hide
+      .filter((n) => !existing.has(n))
+      .map((n) => ({ entity_kind: baseKind, name: n, hidden: true }));
     if (add.length) i.field_overrides = [...(i.field_overrides ?? []), ...add];
   }
   return bundle;

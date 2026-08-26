@@ -352,8 +352,11 @@ function WorkspaceRoutes({ urlHandle }: { urlHandle: string }) {
   if (!user) return <AuthPage />;
   // Force-password-reset gate: if the admin minted this account with
   // a temp password, the user must pick a new one before anything
-  // else. /me/force-password-reset is rendered standalone (no portal,
-  // no admin shell, no nav) so the user can't navigate around it.
+  // else. ForcePasswordResetPage is rendered standalone (no portal, no
+  // admin shell, no nav) so the user can't navigate around it. NOT a
+  // route, deliberately: a route would be a URL to escape to, and a URL
+  // that shows the screen to someone who does not need it. The gate is
+  // the whole mechanism.
   // See docs/operations/PRODUCTION_DEPLOY.md (no-email onboarding).
   if (user.must_reset_password) return <ForcePasswordResetPage />;
   return (

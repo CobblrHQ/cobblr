@@ -12,7 +12,7 @@ import { AreaTabs, NOTIFICATION_TABS } from "../components/AreaTabs";
 import { DeliveryWindows } from "../components/DeliveryWindows";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Check, Lock, MessageCircle } from "lucide-react";
+import { Check, Lock, MessageCircle } from "lucide-react";
 import { usePageTitle, useToast, useConfirm } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
 
@@ -119,13 +119,6 @@ export function CommunicationPreferencesPage() {
   return (
     <div className="space-y-6">
       <AreaTabs tabs={NOTIFICATION_TABS} area="notifications" />
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <Bell size={20} className="text-accent" />
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
-          communication preferences
-        </h1>
-      </div>
-
       <p className="text-sm text-content dark:text-mortar-200">
         Choose how we reach you for each kind of notification. Critical account &
         security messages always go to email. Everything else is yours to route - 

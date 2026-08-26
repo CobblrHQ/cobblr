@@ -169,9 +169,9 @@ export function ConfigurationPage() {
                 )}
               </div>
 
-              {/* The recurring "where do I change MY stuff" dead-end. Kept as a
-                  signpost until /me is relabelled "Your account" (P5), after
-                  which the naming pair carries it. */}
+              {/* The recurring "where do I change MY stuff" dead-end. The
+                  rename shipped and the pair (this card + /me's mirror) still
+                  earns its keep - kept deliberately, not pending anything. */}
               <Link
                 to="/me"
                 className="flex items-center gap-3 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-4 py-3 hover:border-cobble-300 dark:hover:border-cobble-700 transition"
@@ -234,7 +234,7 @@ export function SectionCard({
         {action && (
           <Link
             to={action.to}
-            className="shrink-0 rounded-md bg-amber-100 dark:bg-amber-500/20 text-amber-800 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-500/30 px-2 py-0.5 text-xs font-medium transition"
+            className="inline-flex items-center rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-xs font-medium px-2.5 py-1 transition"
           >
             {action.label}
           </Link>

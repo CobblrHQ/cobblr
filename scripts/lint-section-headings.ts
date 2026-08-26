@@ -59,6 +59,39 @@ for (const rel of files) {
   }
 }
 
+// ── Card titles: the second sanctioned family, with a shrink-only baseline ──
+//
+// A card's title is `text-sm font-semibold` (SettingsSection's shape). The
+// drifted settings pages used font-medium, font-display text-lg, and one
+// text-xs — none of which any rule sanctioned, which is how four families
+// accumulated. 19 pre-existing off-family headings live in the baseline
+// (shrink-only, the no-emdash precedent): fixing them is welcome, adding one
+// is not. Page titles (font-display text-2xl/xl) belong to the layouts and are
+// exempt; uppercase headings are the region-rule family judged above.
+const BASELINE_PATH = join(ROOT, "scripts/section-headings-baseline.json");
+const baseline = new Set<string>(JSON.parse(readFileSync(BASELINE_PATH, "utf8")));
+const nowOffFamily: string[] = [];
+for (const rel of files) {
+  const src = readFileSync(join(WEB, rel), "utf8");
+  for (const m of src.matchAll(/<h[23] className="([^"]*)"/g)) {
+    const cls = m[1]!;
+    if (/\buppercase\b/.test(cls)) continue;
+    if (/\btext-(sm|base)\b.*\bfont-semibold\b|\bfont-semibold\b.*\btext-(sm|base)\b/.test(cls)) continue;
+    if (/font-display/.test(cls) && /text-(2xl|xl)\b/.test(cls)) continue;
+    nowOffFamily.push(`web/src/${rel}::${cls}`);
+  }
+}
+const fresh = nowOffFamily.filter((k) => !baseline.has(k));
+for (const k of fresh) {
+  const [file, cls] = k.split("::");
+  bad.push({ file: file!.replace("web/src/", ""), line: 0, cls: cls!.slice(0, 70) });
+}
+if (nowOffFamily.length < baseline.size && fresh.length === 0) {
+  console.log(
+    `[lint:section-headings] baseline can shrink: ${baseline.size} -> ${nowOffFamily.length} (regenerate scripts/section-headings-baseline.json)`,
+  );
+}
+
 if (bad.length) {
   console.error("[lint:section-headings] section heading from a foreign type family:\n");
   for (const b of bad) {
@@ -66,7 +99,8 @@ if (bad.length) {
     console.error(`      className="${b.cls}"`);
   }
   console.error(`
-  The app writes a section rule as monospace + uppercase + wide tracking:
+  A card title is text-sm font-semibold (SettingsSection's shape); a section
+  rule is monospace + uppercase + wide tracking:
 
       <h3 className="text-[10px] font-mono uppercase tracking-widest text-accent">
         // tags

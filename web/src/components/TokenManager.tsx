@@ -87,17 +87,9 @@ export function TokenManager({ variant }: { variant: "personal" | "operator" }) 
           description from the registry; repeating them here was the exact
           double-title defect ConfigPageHeader exists to end. The operator
           console has no shared header yet, so that variant keeps its own. */}
+      {/* Both shells draw the page header from their registry now (Config +
+          AdminSectionHeader) — this component renders only its own action. */}
       <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        {variant === "operator" && (
-          <>
-            <h2 className="font-display text-xl font-extrabold text-content dark:text-mortar-100">
-              Operator tokens
-            </h2>
-            <span className="text-xs text-muted dark:text-slate-400">
-              restricted, deny-by-default tokens for daemons + bots
-            </span>
-          </>
-        )}
         <div className="flex-1" />
         <button
           onClick={() => setMintOpen(true)}

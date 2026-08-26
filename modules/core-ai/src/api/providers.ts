@@ -15,6 +15,10 @@ const ProviderCreate = z.object({
   provider_id: z.string().min(1),
   label: z.string().min(1).max(120),
   credentials: z.record(z.unknown()),
+  /** Omitted, an ADDITIONAL provider arrives off and the FIRST one arrives on
+   *  (see the insert below). Pass it explicitly to switch the workspace's AI
+   *  in the same call that adds it. */
+  enabled: z.boolean().optional(),
   config: z.record(z.unknown()).optional(),
   monthly_budget_cents: z.number().int().positive().nullable().optional(),
 });
@@ -120,11 +124,27 @@ providersRouter.post(
       parsed.data.credentials,
     );
     const db = tenantDb(req);
+    // An ADDITIONAL provider arrives OFF. The column defaults to enabled, which
+    // is right for the first one — a workspace connecting its only AI wants it
+    // on — and wrong for the second: adding a provider to a workspace that
+    // already has a working one silently repointed every AI call to the new,
+    // unproven credentials. Nobody asked for that, and nothing said it had
+    // happened. (Found the honest way, 2026-08-26: registering a benchmark
+    // provider on a shared rig took over the AI of another session's run
+    // mid-capture.) An explicit `enabled: true` in the request still wins, so
+    // a caller that MEANS to switch can say so.
+    const alreadyActive = await db
+      .selectFrom("core_ai_providers")
+      .select("id")
+      .where("enabled", "=", true)
+      .executeTakeFirst();
+    const enabled = parsed.data.enabled ?? !alreadyActive;
     const row = await db
       .insertInto("core_ai_providers")
       .values({
         provider_id: parsed.data.provider_id,
         label: parsed.data.label,
+        enabled,
         credentials_enc: enc,
         config: sql`${JSON.stringify(parsed.data.config ?? {})}::jsonb` as never,
         monthly_budget_cents: parsed.data.monthly_budget_cents ?? null,

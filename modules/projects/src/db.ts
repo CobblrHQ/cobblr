@@ -55,10 +55,37 @@ export interface ProjectsTaskDependenciesTable {
   created_at: Generated<Date>;
 }
 
+export interface ProjectsPatternPhotosTable {
+  design_id: string;
+  pattern_file_id: string;
+  extracted: Generated<number>;
+  hero_index: number | null;
+  used_index: number | null;
+  photo_file_id: string | null;
+  attachment_id: string | null;
+  error: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+export interface ProjectsPatternPhotoCandidatesTable {
+  design_id: string;
+  pattern_file_id: string;
+  idx: number;
+  page: number;
+  width: number;
+  height: number;
+  photo: boolean;
+  metrics: Generated<Record<string, unknown>>;
+  thumb: Buffer;
+}
+
 export interface ProjectsDB {
   projects_projects: ProjectsProjectsTable;
   projects_tasks: ProjectsTasksTable;
   projects_task_dependencies: ProjectsTaskDependenciesTable;
+  projects_pattern_photos: ProjectsPatternPhotosTable;
+  projects_pattern_photo_candidates: ProjectsPatternPhotoCandidatesTable;
 }
 
 /** Re-exported from the contract so this module cannot fall behind the

@@ -7,11 +7,14 @@
 
 import { Outlet, useLocation } from "react-router-dom";
 import { accountColumnFor } from "../lib/account-nav";
+import { AccountCrumb, AccountPageHeader } from "./AccountPageHeader";
 
 export function AccountLayout() {
   const { pathname } = useLocation();
   return (
     <div className={accountColumnFor(pathname)}>
+      <AccountCrumb />
+      <AccountPageHeader />
       <Outlet />
     </div>
   );

@@ -9,9 +9,8 @@ import { useMemo, useState } from "react";
 import { incumbentConnection } from "../lib/incumbent-connection";
 import { CredentialFields } from "../components/CredentialFields";
 import { ProviderSetupSteps } from "../components/ProviderSetupSteps";
-import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Pencil, Plug, Plus, Trash2, X } from "lucide-react";
+import { Pencil, Plug, Plus, Trash2, X } from "lucide-react";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
 import {
   ApiError,
@@ -66,15 +65,6 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
 
   return (
     <div className="space-y-5">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <Link to="/me" className="text-sm text-muted hover:text-accent inline-flex items-center gap-1">
-          <ArrowLeft size={14} /> Your account
-        </Link>
-        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100 flex items-center gap-2">
-          <Plug size={20} className="text-accent" /> Connections
-        </h1>
-      </div>
-
       <p className="text-sm text-muted dark:text-slate-400">
         Set up a service of your own once - an AI provider, a parcel-tracking account -
         and route it to the workspaces you choose. It follows you instead of being

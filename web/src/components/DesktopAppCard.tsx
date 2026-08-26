@@ -11,6 +11,7 @@
 // code path. Absent app = the probe fails and this renders nothing, which is the
 // common case and must stay silent.
 
+import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Laptop, Bluetooth, Loader2 } from "lucide-react";
 
@@ -79,22 +80,48 @@ async function probeApp(): Promise<DesktopApp | null> {
   }
 }
 
+/** Has someone ASKED us to look for the desktop app on this computer?
+ *
+ *  ON REQUEST, NEVER ON ARRIVAL. Reaching 127.0.0.1 from a web page is a
+ *  local-network request, and browsers now gate that behind a permission prompt
+ *  - Chrome asks "<site> wants to access other apps and services on this
+ *  device". Firing it on mount meant simply OPENING this page asked a visitor
+ *  for LAN access, for a capability almost none of them have. On a public
+ *  instance that is alarming and inexplicable; on any instance it is a
+ *  permission nobody agreed to spend.
+ *
+ *  So the probe is off until pressed. Someone running the app clicks once; the
+ *  browser asks then, when the question makes sense and the answer is worth
+ *  something. Inside the app's own webview the Tauri bridge answers with no
+ *  HTTP at all, so this costs its actual users nothing.
+ *
+ *  Deliberately NOT persisted: a permission this page asked for once should not
+ *  be re-triggered on every later visit by a remembered flag. */
+let asked = false;
+
 /** Shared so the card and the page's empty-state cannot disagree about whether
  *  a desktop app is here — one query key, one answer. */
-export function useDesktopApp() {
+export function useDesktopApp(enabled = asked) {
   return useQuery({
     queryKey: ["desktop-app"],
     queryFn: probeApp,
+    enabled,
     // Slow: a local probe that mostly returns nothing, and a tight interval
     // would knock on a port every few seconds for every user forever.
-    refetchInterval: 30_000,
+    refetchInterval: enabled ? 30_000 : false,
     staleTime: 20_000,
     retry: false,
   });
 }
 
 export function DesktopAppCard() {
-  const app = useDesktopApp();
+  // Inside the desktop app there is no HTTP and no permission to spend, so it
+  // can look immediately; a browser waits to be asked.
+  const [look, setLook] = useState(() => appInvoke() !== null);
+  const app = useDesktopApp(look);
+  useEffect(() => {
+    if (look) asked = true;
+  }, [look]);
 
   const printers = useQuery({
     queryKey: ["desktop-app-printers"],
@@ -132,7 +159,44 @@ export function DesktopAppCard() {
     },
   });
 
-  if (!app.data) return null;
+  // Not looked yet: offer to, rather than knocking on a local port uninvited.
+  // The row is small and unexcited on purpose - most people do not have the app,
+  // and this must not read as a thing they are missing.
+  if (!look) {
+    return (
+      <li className="rounded-lg border border-line dark:border-slate-800 px-3 py-2 text-sm flex items-center gap-2 text-muted">
+        <Laptop size={15} className="shrink-0" />
+        <span>Using the Cobblr desktop app on this computer?</span>
+        <button
+          type="button"
+          onClick={() => setLook(true)}
+          className="ml-auto shrink-0 rounded border border-line dark:border-slate-700 px-2 py-0.5 text-xs font-medium hover:bg-subtle dark:hover:bg-slate-800 transition"
+        >
+          Check for it
+        </button>
+      </li>
+    );
+  }
+
+  // Looked and found nothing. Say so once rather than vanishing, so pressing the
+  // button is not mistaken for a broken control.
+  if (!app.data) {
+    return (
+      <li className="rounded-lg border border-line dark:border-slate-800 px-3 py-2 text-sm flex items-center gap-2 text-muted">
+        <Laptop size={15} className="shrink-0" />
+        <span>{app.isFetching ? "Looking for the desktop app…" : "No desktop app running on this computer."}</span>
+        {!app.isFetching && (
+          <button
+            type="button"
+            onClick={() => void app.refetch()}
+            className="ml-auto shrink-0 rounded border border-line dark:border-slate-700 px-2 py-0.5 text-xs font-medium hover:bg-subtle dark:hover:bg-slate-800 transition"
+          >
+            Look again
+          </button>
+        )}
+      </li>
+    );
+  }
 
   const invoke = appInvoke();
   const busy = probe.isPending;

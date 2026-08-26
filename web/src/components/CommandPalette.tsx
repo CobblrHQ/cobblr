@@ -13,6 +13,7 @@ import { useTheme } from "../theme/ThemeContext";
 import { useThemeToggle } from "../theme/useThemeToggle";
 import { fuzzyMatch } from "../lib/fuzzy";
 import { searchFeatures } from "../lib/feature-index";
+import { useHostedPanels } from "../lib/useHostedPanels";
 import { mergePaletteRows, PALETTE_RANK, type PaletteRow, type PaletteRowKind } from "../lib/paletteRows";
 import { OverlayFlag } from "@cobblr/platform-web";
 
@@ -122,6 +123,24 @@ export function CommandPalette() {
     [q, allActions],
   );
   const featureHits = useMemo(() => searchFeatures(q, 6), [q]);
+  // Hosted panels (billing + managed connectors) are RUNTIME data from the
+  // overlay, so they can't join the static feature index — merged here instead.
+  // Label-only matching: the overlay sends no description; open core renders
+  // none of these, so a self-hosted palette is unchanged.
+  const { panels } = useHostedPanels();
+  const panelHits = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    if (!needle) return [];
+    return panels
+      .filter((p) => p.label.toLowerCase().includes(needle))
+      .slice(0, 3)
+      .map((p) => ({
+        label: p.label,
+        hint: "Cloud",
+        route: `/configuration/x/${p.id}`,
+        keywords: p.label.toLowerCase(),
+      }));
+  }, [q, panels]);
 
   // Exact identifier + token hits (surface: "palette"): typing a part's serial
   // surfaces that part ABOVE fuzzy name matches. Same registry the scanner uses.
@@ -160,7 +179,7 @@ export function CommandPalette() {
       icon: a.icon,
       run: () => { a.run(navigate); close(); },
     }));
-    const featureRows: PaletteRow[] = featureHits.map((f) => ({
+    const featureRows: PaletteRow[] = [...featureHits, ...panelHits].map((f) => ({
       key: `feature-${f.route}-${f.label}`,
       kind: "feature",
       label: f.label,
@@ -186,7 +205,7 @@ export function CommandPalette() {
       { rank: PALETTE_RANK.entity, rows: entityRows },
     ]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [actions, featureHits, exactHits.data, hits.data, debounced, q, navigate]);
+  }, [actions, featureHits, panelHits, exactHits.data, hits.data, debounced, q, navigate]);
   const total = rows.length;
 
   function runSelected(i: number) {

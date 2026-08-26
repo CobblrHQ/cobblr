@@ -54,13 +54,16 @@ export const discordDmChannel: Channel = {
     const plainForm = event.link_url
       ? `${event.message}\n${absoluteAppUrl(event.link_url)}`
       : event.message;
-    const text = event.card ? event.message : plainForm;
+    // With a card there is NO text line: the embed's title already says who and
+    // where ("Alex in the Workshop"), so a sentence above it saying "Alex said
+    // something in the Workshop" was the same fact twice. The interactions
+    // endpoint reads the embed back as the message's "original" (the bot
+    // forwards it), and the plain form below is what a failed embed degrades to.
+    const text = event.card ? "" : plainForm;
 
     // The card becomes ONE embed. Discord renders it with a coloured spine and
     // its own block, which is what makes a notification readable at a glance
-    // instead of a sentence you have to act on to understand. The one-line
-    // `text` stays either way: it is what the phone's lock screen previews, and
-    // what the interactions endpoint reads back as the message's "original".
+    // instead of a sentence you have to act on to understand.
     const embeds = event.card
       ? [
           {

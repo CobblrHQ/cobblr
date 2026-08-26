@@ -127,8 +127,9 @@ interface AuthResponseUser {
   display_name: string;
   /** True when the user must pick a new password before doing
    *  anything substantive — admin minted the account with a temp
-   *  password. Web client redirects to /me/force-password-reset
-   *  until the user clears the flag via PATCH /me/password. */
+   *  password. Web client renders the set-a-password screen in place
+   *  of every route until the flag is cleared via PATCH /me/password.
+   *  A gate, not a URL - there is nothing to navigate around. */
   must_reset_password: boolean;
   /** True once the user confirmed their email via a verification link.
    *  Informational (login is not gated on it); the web shows a "verify your
@@ -339,6 +340,18 @@ authRouter.get("/config", (_req, res) => {
     //
     // `authorize_url` is where the browser goes; the surface names itself so the
     // account service knows which secret to expect back.
+    // A public demo's shared login, shown on and pre-filled into the sign-in
+    // form. Null unless BOTH halves are set, deliberately: a demo credential is
+    // meant to be public, so the opt-in has to be explicit and unmistakable
+    // rather than something a missing variable could half-enable.
+    demo_signin:
+      (process.env.COBBLR_DEMO_SIGNIN_EMAIL ?? "").trim() && (process.env.COBBLR_DEMO_SIGNIN_PASSWORD ?? "").trim()
+        ? {
+            email: (process.env.COBBLR_DEMO_SIGNIN_EMAIL ?? "").trim(),
+            password: (process.env.COBBLR_DEMO_SIGNIN_PASSWORD ?? "").trim(),
+            note: (process.env.COBBLR_DEMO_SIGNIN_NOTE ?? "").trim() || null,
+          }
+        : null,
     identity: identityCallbackEnabled()
       ? {
           authorize_url: `${browserBase()}/authorize`,

@@ -152,6 +152,19 @@ export class ProjectsApi {
       fileId ? { file_id: fileId } : {},
     );
 
+  /** The pull's result for the design's pattern: what was extracted, which
+   *  image the floor picked, which one is attached, and the strip of
+   *  candidates. `pending` while a pull is running (the read starts one for a
+   *  design that never had one). */
+  patternPhoto = (designId: string) =>
+    this.request<PatternPhotoState>("GET", `/projects/${designId}/pattern-photo`);
+  /** Authed URL of a candidate's strip thumbnail (render via useImageSrc). */
+  patternPhotoThumbUrl = (designId: string, index: number) =>
+    `${this.base()}/projects/${designId}/pattern-photo/candidates/${index}/thumb`;
+  /** Use one of the pattern's other images as the design's photo instead. */
+  usePatternPhoto = (designId: string, index: number) =>
+    this.request<PatternPhoto>("POST", `/projects/${designId}/pattern-photo/use`, { index });
+
   // ── core-files: the photos attached to a design ────────────────────
   private filesBase(): string {
     return `/api/v1/orgs/${this.slug}/modules/core-files`;
@@ -213,6 +226,24 @@ export interface PatternPhoto {
   file?: { id: string; width: number; height: number; bytes: number; mime_type: string };
   attachment_id?: string;
   candidates?: number;
+}
+export interface PatternPhotoCandidate {
+  index: number;
+  page: number;
+  width: number;
+  height: number;
+  /** Passed the photograph floor (as opposed to a chart, logo or drawing). */
+  photo: boolean;
+}
+export interface PatternPhotoState {
+  status: "none" | "pending" | "ready";
+  pattern_file_id: string | null;
+  extracted: number;
+  hero_index: number | null;
+  used_index: number | null;
+  photo_file_id: string | null;
+  error: string | null;
+  candidates: PatternPhotoCandidate[];
 }
 export interface Attachment {
   id: string;

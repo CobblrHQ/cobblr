@@ -39,6 +39,7 @@ import {
   parsePress,
   pressMayAct,
   resolvePress,
+  originalOf,
   settledMessage,
   verifySignature,
   type StoredNotification,
@@ -133,7 +134,7 @@ async function handlePress(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  const original = body.message?.content ?? "";
+  const original = originalOf(body.message);
   const ref = parsePress(String(body.data?.custom_id ?? ""));
   if (!ref) {
     // Someone else's component, or a probe. Say nothing useful.

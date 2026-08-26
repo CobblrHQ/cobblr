@@ -53,7 +53,8 @@ import {
 import { llmIdentify } from "@cobblr/core-scan/services/barcode-websearch";
 import { identifyImage } from "@cobblr/core-scan/services/enrich-photo";
 import { platform } from "@cobblr/platform-contract";
-import { assembleContext, compilePrompt, unwrapBuild, parseJsonObject, applyLeanNatives, nativeFieldsByBaseKind } from "@cobblr/core-authoring/services/compile";
+import { assembleContext, compilePrompt, nativeFieldsByBaseKind, repairPrompt } from "@cobblr/core-authoring/services/compile";
+import { kindFieldsOf, modulesOf, shapeCandidate } from "@cobblr/core-authoring/services/shape";
 import { validateBundle } from "./bundles.js";
 import { operatorEmail } from "@cobblr/platform-contract/outbound-identity";
 
@@ -3128,33 +3129,55 @@ superAdminRouter.post("/authoring-eval", async (req, res, next) => {
       }
       ctx.baseArtifact = parsed.data.base_artifact;
     }
-    const prompt = compilePrompt(ctx, parsed.data.intent);
-    let text = "";
-    try {
-      // ai-userless: super-admin operator authoring (bundle generation), not a
-      // workspace user's request — no personal connection to route to.
-      const r = await platform().ai.invoke({
-        orgId,
-        capability: "chat",
-        input: { messages: [{ role: "user", content: prompt }] },
-        source: { kind: "core-authoring:eval", id: parsed.data.intent.slice(0, 60) },
-        userId,
-      });
-      const result = r.result as { content?: string; text?: string } | string;
-      text = typeof result === "string" ? result : result?.content ?? result?.text ?? "";
-    } catch (err) {
-      res.json({ interpretation: null, bundle: null, seed: [], validation: { valid: false, preview: null, errors: [{ path: "", code: "ai_error", message: (err as Error).message }] }, warnings: ctx.warnings });
+    const basePrompt = compilePrompt(ctx, parsed.data.intent);
+    // The ONE post-model pipeline (parse → unwrap → lean natives → corroborate),
+    // shared with drafts.ts. This route used to carry its own copy, and the
+    // corroboration layer shipped in the other one: the eval then reported the
+    // local models unchanged, which read as "the layer does nothing" and was
+    // "the eval never ran it". lint:capabilities keeps a third copy out.
+    //
+    // And the same ONE retry on a reply that is not JSON that the interactive
+    // build takes: a model that answers a hard case in prose gets asked once
+    // for the object. Without it the eval scored a zero the product would not
+    // have shown the user (design-book-library, both gemini variants).
+    const natives = await nativeFieldsByBaseKind();
+    let prompt = basePrompt;
+    let shaped: ReturnType<typeof shapeCandidate> | null = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      let text = "";
+      try {
+        // ai-userless: super-admin operator authoring (bundle generation), not a
+        // workspace user's request — no personal connection to route to.
+        const r = await platform().ai.invoke({
+          orgId,
+          capability: "chat",
+          // Same request the interactive build sends (and, like it, NOT schema-
+          // constrained - see drafts.ts for the measured reason).
+          input: { messages: [{ role: "user", content: prompt }] },
+          source: { kind: "core-authoring:eval", id: parsed.data.intent.slice(0, 60) },
+          userId,
+        });
+        const result = r.result as { content?: string; text?: string } | string;
+        text = typeof result === "string" ? result : result?.content ?? result?.text ?? "";
+      } catch (err) {
+        res.json({ interpretation: null, bundle: null, seed: [], validation: { valid: false, preview: null, errors: [{ path: "", code: "ai_error", message: (err as Error).message }] }, warnings: ctx.warnings });
+        return;
+      }
+      shaped = shapeCandidate(text, ctx.task, { intent: parsed.data.intent, kinds: kindFieldsOf(ctx), modules: modulesOf(ctx), natives });
+      if (shaped.candidate && typeof shaped.candidate === "object") break;
+      prompt = repairPrompt(basePrompt, text, [
+        { path: "", code: "not_json", message: 'Your output was not valid JSON. Return ONLY one JSON object: { "interpretation": "...", "bundle": {...} } — no prose, no fences.' },
+      ]);
+    }
+    if (!shaped) {
+      res.json({ interpretation: null, bundle: null, seed: [], validation: { valid: false, preview: null, errors: [{ path: "", code: "not_json", message: "Model output did not unwrap to a bundle object." }] }, warnings: ctx.warnings });
       return;
     }
-
-    const unwrapped = unwrapBuild(parseJsonObject(text));
-    // Expand native_fields hints → hide-overrides before validation, so an
-    // autopilot-authored collection is lean too (same as the interactive path).
-    const bundle = applyLeanNatives(unwrapped.bundle, await nativeFieldsByBaseKind());
+    const bundle = shaped.candidate;
     const validation = bundle && typeof bundle === "object"
       ? await validateBundle(orgId, bundle, { autoEnable: true })
       : { valid: false, preview: null, errors: [{ path: "", code: "not_json", message: "Model output did not unwrap to a bundle object." }] };
-    res.json({ interpretation: unwrapped.interpretation, bundle, seed: unwrapped.seed, validation, warnings: ctx.warnings });
+    res.json({ interpretation: shaped.interpretation, bundle, seed: shaped.seed, validation, warnings: ctx.warnings });
   } catch (err) {
     next(err);
   }

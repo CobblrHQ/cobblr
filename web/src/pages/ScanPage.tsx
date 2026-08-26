@@ -1905,10 +1905,12 @@ export function ScanPage() {
     );
   };
 
-  const startWalk = async () => {
+  const startWalk = async (planId?: string) => {
     setOrganizeOpen(false);
     try {
-      const r = await api.getLatestOrganizePlan(activeSlug);
+      // Pin the plan the user just applied when we know its id — a warm re-plan
+      // fired after Accept all is newer and empty, so "latest" alone would miss.
+      const r = await api.getLatestOrganizePlan(activeSlug, planId);
       if (r.plan && r.plan.applied_group_ids.length > 0) setWalkPlan(r.plan);
       else toast.error("Nothing applied to walk yet - accept a group first.");
     } catch {
@@ -3301,7 +3303,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
             void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
             void qc.invalidateQueries({ queryKey: ["organize-plan-latest", activeSlug] });
           }}
-          onStartWalk={() => void startWalk()}
+          onStartWalk={(planId) => void startWalk(planId)}
           renderItemCard={renderPlanItemCard}
         />
       )}
@@ -3320,9 +3322,9 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
           onApplied={() => {
             void qc.invalidateQueries({ queryKey: ["organize-plan-latest", activeSlug] });
           }}
-          onStartWalk={() => {
+          onStartWalk={(planId) => {
             setOrganizeUnplacedOpen(false);
-            void startWalk();
+            void startWalk(planId);
           }}
           renderItemCard={renderPlanItemCard}
         />
@@ -3514,7 +3516,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
               void qc.invalidateQueries({ queryKey: ["scan-stats", activeSlug] });
               void qc.invalidateQueries({ queryKey: ["organize-plan-latest", activeSlug] });
             }}
-            onStartWalk={() => void startWalk()}
+            onStartWalk={(planId) => void startWalk(planId)}
             onReviewItems={() => {
               // Land the user ON the unidentified items: back to the By-session
               // lens with the review-only filter armed, so a scan that "won't

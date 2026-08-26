@@ -90,9 +90,18 @@ export function EdgeBridgesPage({ embedded = false }: { embedded?: boolean } = {
           <span className="text-[11px] text-faint dark:text-slate-500">auto-refreshes</span>
         </div>
         {agents.length === 0 && direct.length === 0 && !hasDesktopApp ? (
-          <p className="text-sm text-faint dark:text-slate-400">
-            No bridge is connected in this workspace. Set one up below - the moment it dials in, it appears here.
-          </p>
+          <>
+            <p className="text-sm text-faint dark:text-slate-400">
+              No bridge is connected in this workspace. Set one up below - the moment it dials in, it appears here.
+            </p>
+            {/* The card offers to look for a desktop app on THIS computer, and
+                it only looks when asked. So it has to be reachable here too:
+                left in the list branch alone it was unreachable in exactly the
+                case it matters, a workspace with nothing connected yet. */}
+            <ul className="space-y-1.5 mt-2">
+              <DesktopAppCard />
+            </ul>
+          </>
         ) : (
           <ul className="space-y-1.5">
             {agents.map((a) => {
