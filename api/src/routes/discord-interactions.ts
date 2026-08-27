@@ -39,6 +39,7 @@ import {
   parsePress,
   pressMayAct,
   resolvePress,
+  cardOf,
   originalOf,
   settledMessage,
   verifySignature,
@@ -302,6 +303,9 @@ async function handlePress(req: Request, res: Response): Promise<void> {
         isModalSubmit ? "✅ Sent." : `✅ ${resolved.label}`,
         // Only a reply has anything to echo; a plain action press does not.
         typed,
+        // With a card, the reply is written INTO it, under the message it
+        // answers.
+        cardOf(body.message),
       ),
     );
   } catch (err) {

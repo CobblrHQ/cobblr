@@ -6,7 +6,7 @@
 //   select entity_kind, count(*) from core_cadence_events
 //    where entity_kind like '%:item' group by 1;
 // When that is empty on prod, staging and dev, delete this file and its boot
-// call. The write path (api/index.ts) normalises now, so nothing re-creates them.
+// call. The write path (record.ts, every door) normalises now, so nothing re-creates them.
 //
 // WHY IT EXISTS: callers held the presentation kind and the insert stored it
 // verbatim, so an item scanned into a skinned table filed its purchases under

@@ -7,7 +7,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "machines",
-  version: "0.3.2",
+  version: "0.3.3",
   displayName: "Machines",
   description:
     "Physical machines you own. The base layer. Install a specialisation (3D Printers / Laser Cutters / CNC Machines) for type-specific fields.",

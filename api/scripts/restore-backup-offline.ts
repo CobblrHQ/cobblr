@@ -80,6 +80,13 @@ async function main() {
   console.log(`${tables.size} dumped table(s), ${totalRows} row(s), ${fileCount} file blob(s).`);
 
   const pool = new Pool({ connectionString: dbUrl });
+  // A pool 'error' with no listener terminates Node outright, so a database
+  // blip mid-restore would abort with a raw unhandled-event stack rather than
+  // saying what happened. This is a RESTORE: the operator needs to know whether
+  // it stopped, and where.
+  pool.on("error", (err) => {
+    console.error("[restore] database connection error:", (err as Error).message);
+  });
   const existing = new Set(
     (
       await pool.query<{ tablename: string }>(

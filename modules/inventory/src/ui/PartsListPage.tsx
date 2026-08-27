@@ -1260,9 +1260,12 @@ function PartsTable({
                   value={p.name}
                   onCommit={(v) => setCol(p, "name", v)}
                 >
+                  {/* Wraps to two lines rather than truncating: on a yarn the
+                      distinguishing part of the name is its END ("- Country
+                      Blue"), which an ellipsis would hide. */}
                   <Link
                     to={`${basePath}/parts/${p.id}`}
-                    className="font-medium text-content dark:text-mortar-100 hover:text-accent truncate"
+                    className="font-medium text-content dark:text-mortar-100 hover:text-accent min-w-0 break-words line-clamp-2"
                   >
                     {p.name}
                   </Link>

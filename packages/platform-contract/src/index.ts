@@ -14,6 +14,7 @@ export { dateFieldDirection, canBeOverdue, dateEventTitle } from "@cobblr/platfo
 export { pluralise, countOf, itemNounFor } from "@cobblr/platform-contract/plural";
 export { expiryState, expiryPhrase, EXPIRING_WITHIN_DAYS, type ExpiryState, type ExpiryReading } from "@cobblr/platform-contract/expiry-grace";
 export { keepMembers, isMember, parcelAudience } from "@cobblr/platform-contract/membership";
+export { splitEntityKind, entityKindOf, type EntityKindParts } from "@cobblr/platform-contract/entity-kind";
 export { destinationLabel, normaliseTargetKind, betterDestination, type DestinationTable } from "@cobblr/platform-contract/destination-label";
 import type {
   ResolvableProvider,
@@ -3023,6 +3024,9 @@ export interface SyncRecord {
    *  stores the bytes in core-files, and sets the field to the served file URL.
    *  Relative paths are resolved against the source base. */
   images?: Record<string, string>;
+  /** Tag names to attach to the mirrored entity (by name; created if missing).
+   *  Additive: a tag absent here is never detached. */
+  tags?: string[];
   /** Per-record target instance (multi-instance modules) — the section's
    *  `instanceBy` routes each row to an instance by a field value, so ONE section
    *  fans a single endpoint out to several instances. Overrides the section's
@@ -3824,6 +3828,23 @@ export interface PlatformPlacement {
   contents(args: { orgId: string; container: EntityRef }): Promise<EntityRef[]>;
 }
 
+/** Tags as a platform seam. core-tags OWNS the tables and the HTTP surface;
+ *  this is the in-process way for a background writer with no request bearer
+ *  (the sync engine) to attach a tag to an entity it just wrote, without
+ *  reaching into core-tags' tables or looping through HTTP. Attach-by-name,
+ *  created on first use, idempotent on (tag, entity). Org-scoped; the caller
+ *  passes orgId. `target.kind` is "<module>:<type>", the same spelling the
+ *  entity-kind registry uses. */
+export interface PlatformTags {
+  /** Attach `tagName` to `target`, creating the tag if it does not exist.
+   *  `created` says whether a NEW assignment was made (false = already there). */
+  attach(args: { orgId: string; tagName: string; target: EntityRef }): Promise<{ tagId: string; created: boolean }>;
+  /** Remove `tagName` from `target`. No-op if absent; never deletes the tag. */
+  detach(args: { orgId: string; tagName: string; target: EntityRef }): Promise<void>;
+  /** The tag names on `target`. */
+  of(args: { orgId: string; target: EntityRef }): Promise<string[]>;
+}
+
 export interface PlatformPairings {
   /** Insert a pairing. Returns the new row id. Org-scoped: the
    *  caller passes orgId; the function inserts with that org_id. */
@@ -4511,6 +4532,7 @@ export interface Platform {
   auth: PlatformAuth;
   pairings: PlatformPairings;
   placement: PlatformPlacement;
+  tags: PlatformTags;
   catalogs: PlatformCatalogs;
   files: PlatformFiles;
   instances: PlatformInstances;

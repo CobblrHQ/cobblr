@@ -9,6 +9,8 @@
 // ignores the field) degrade to the legacy one-JSON-move protocol below.
 
 import { Router, type Response } from "express";
+import { humanizeProviderError } from "./provider-error.js";
+import { renderEntityActions, renderWorkspaceActions, RAIL_LOOKUP_NOTE, type RailMode } from "./action-rail.js";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { matchCommand } from "./basics.js";
@@ -262,7 +264,7 @@ export const GROUNDING_RULES = `WHAT YOU CAN SEE, AND WHAT YOU CANNOT. This matt
 - Anything about the user's own records comes from a tool call you just made, never from memory. If you have not looked, look — or say you have not.
 - None of this makes you cagey. Explain, teach, suggest, and talk through anything you actually do know — how to do a thing, how this app works, what you would try. Answer the part you know and name the part you do not.`;
 
-async function buildSystemPrompt(c: Ctx): Promise<string> {
+async function buildSystemPrompt(c: Ctx, railMode: RailMode = "full"): Promise<string> {
   // include=custom_fields → the workspace's user-defined fields ride along, so
   // the hints below cover the WHOLE settable shape, not just native fields.
   const kindsRes = await callApi(c, "GET", "/entity-kinds?include=custom_fields");
@@ -307,22 +309,13 @@ async function buildSystemPrompt(c: Ctx): Promise<string> {
           examples?: string[];
         }>
       | undefined) ?? [];
-  // How a person asks for it. The list above says what EXISTS; an example says
-  // what a request for it sounds like, which is the part a model has to guess
-  // at otherwise.
-  const saidLike = (a: { examples?: string[] }): string =>
-    a.examples?.length ? ` — said like: ${a.examples.map((e) => `"${e}"`).join(", ")}` : "";
-  const argsHint = (a: { args_schema?: Record<string, { label?: string; type?: string }> | null }): string => {
-    const entries = Object.entries(a.args_schema ?? {});
-    if (!entries.length) return "";
-    return ` — args: ${entries.map(([n, spec]) => `${n} (${spec?.type ?? "text"}${spec?.label ? `, ${spec.label}` : ""})`).join("; ")}`;
-  };
-  const actionLines = allActions
-    .filter((a) => a.scope !== "workspace" && (a.matched_kinds?.length ?? 0) > 0)
-    .map((a) => `- ${a.id} (on ${a.matched_kinds!.join(", ")}) — ${a.label}${a.description ? `: ${a.description}` : ""}${argsHint(a)}${saidLike(a)}`);
-  const workspaceActionLines = allActions
-    .filter((a) => a.scope === "workspace")
-    .map((a) => `- ${a.id} — ${a.label}${a.description ? `: ${a.description}` : ""}${argsHint(a)}${saidLike(a)}`);
+  // With tools, the model can call list_actions for an action's description,
+  // arguments and phrasings, so the prompt carries an INDEX (id + label) and
+  // spends its tokens elsewhere. Without tools there is nothing to call, so
+  // the full rail is the only description it will ever see. See action-rail.ts
+  // for what this costs.
+  const actionLines = renderEntityActions(allActions, railMode);
+  const workspaceActionLines = renderWorkspaceActions(allActions, railMode);
   // Createable = exactly what resolveCreatePath will accept at execute time —
   // the prompt never advertises a create that would 404 on confirm.
   const createableKinds = kinds.filter((k) => resolveCreatePath(k.id, kinds) !== null);
@@ -382,8 +375,9 @@ ${actionLines.join("\n") || "(none)"}
 
 ACTIONS that run on the WORKSPACE (no record — omit entity_kind/entity_query):
 ${workspaceActionLines.join("\n") || "(none)"}
+${railMode === "full" ? "" : RAIL_LOOKUP_NOTE}
 
-TOOLS: when tools are available to you, PREFER them over the JSON shapes below. Use the read tools (search_records, list_records, get_record, list_record_kinds, list_actions, get_putaway_plan) to look at the user's ACTUAL data before answering questions about it — never guess what they have. get_putaway_plan is the live put-away/organize state — reach for it whenever the user mentions putting things away, bins, or their plan. After creating/renaming locations for them, call replan_putaway ONCE (non-destructive; their open plan refreshes itself) — optionally with a hint distilling the conversation. Use the write tools (create_record, update_record, delete_record, invoke_action) to act; they only PROPOSE — the user confirms every change. You can chain: read first, then write. The JSON shapes below are the fallback for when you cannot call tools.
+TOOLS: when tools are available to you, PREFER them over the JSON shapes below. Use the read tools (search_records, list_records, count_records, get_record, list_record_kinds, list_actions, get_putaway_plan) to look at the user's ACTUAL data before answering questions about it — never guess what they have. For "how many", "which do I have the most of", "do I have any X": call count_records (group_by a field) — it counts every record in code. A list page marked PARTIAL is never the whole set: do not count, rank, or say "none" from it. get_putaway_plan is the live put-away/organize state — reach for it whenever the user mentions putting things away, bins, or their plan. After creating/renaming locations for them, call replan_putaway ONCE (non-destructive; their open plan refreshes itself) — optionally with a hint distilling the conversation. Use the write tools (create_record, update_record, delete_record, invoke_action) to act; they only PROPOSE — the user confirms every change. You can chain: read first, then write. The JSON shapes below are the fallback for when you cannot call tools.
 
 Reply with ONE JSON object and nothing else, in ONE of these shapes:
 - Chat/answer/ask:   {"type":"reply","text":"<your full, helpful answer or question>"}
@@ -879,9 +873,16 @@ chatRouter.post(
     const c = ctxOf(req);
     const orgId = tenantContext(req).org.id;
 
+    // Tools give the model list_actions, so the rail can drop each action's
+    // argument names and example phrasings — the half that only matters once
+    // an action has been chosen. Measured over 33 utterances against 83 real
+    // actions: identical accuracy to the full rail (31/33 both, missing the
+    // same two), 30% smaller. Dropping the DESCRIPTIONS as well is a further
+    // 68% smaller and loses 12 points, so descriptions stay.
+    const promptPrefs = await chatPrefsOf(req).catch(() => DEFAULT_PREFS);
     let system: string;
     try {
-      system = await buildSystemPrompt(c);
+      system = await buildSystemPrompt(c, promptPrefs.read_tools ? "brief" : "full");
     } catch {
       system = `You are Cobb, the helpful assistant inside the "${c.orgName}" Cobblr workspace. Introduce yourself as Cobb if asked.${c.userName ? ` You are talking to ${c.userName}.` : ""} Chat helpfully; reply with {"type":"reply","text":"..."}.`;
     }
@@ -966,7 +967,9 @@ chatRouter.post(
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (!(err instanceof TurnError) || err.status === 502) console.error(`[core-ai] chat failed: ${msg}`);
-        await finishTurn(tdb, turnId, { ok: false, error: msg }).catch(() => {});
+        // The raw provider text is in the log above and in the AI call log;
+        // the person gets one sentence, never a JSON body.
+        await finishTurn(tdb, turnId, { ok: false, error: humanizeProviderError(msg).message }).catch(() => {});
       }
     })();
   }),

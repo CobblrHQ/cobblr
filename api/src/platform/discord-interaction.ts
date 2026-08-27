@@ -159,10 +159,40 @@ export function settledMessage(
    *  what you actually said, in the one place you cannot scroll back to it -
    *  the message you typed lives in a modal that is already gone. */
   echo?: string | null,
+  /** The card the press was on, when the notification arrived as one. With a
+   *  reply, the card is REWRITTEN as the conversation so far: the message it
+   *  carried, then the reply under it with a time, in the order they happened,
+   *  and the outcome in the footer. The reply belongs with the message it
+   *  answers, not as a quote below the card. */
+  card?: PressCard | null,
+  /** Injected for tests; the reply's Discord timestamp. */
+  now: Date = new Date(),
 ): {
   type: number;
-  data: { content: string; components: never[] };
+  data: { content: string; components: never[]; embeds?: PressEmbed[] };
 } {
+  if (card && echo) {
+    const stamp = `<t:${Math.floor(now.getTime() / 1000)}:t>`;
+    const reply = `**You** · ${stamp}\n${echo}`;
+    const description = [card.description?.trim(), reply].filter(Boolean).join("\n\n").slice(0, 4000);
+    const footer = [outcome, card.footer].filter((x): x is string => !!x && x.trim().length > 0).join(" · ");
+    return {
+      type: RESPONSE.UPDATE_MESSAGE,
+      data: {
+        content: "",
+        components: [],
+        embeds: [
+          {
+            ...(card.title ? { title: card.title } : {}),
+            ...(card.url ? { url: card.url } : {}),
+            description,
+            footer: { text: footer.slice(0, 2000) },
+            color: card.color ?? 0xc98a3f,
+          },
+        ],
+      },
+    };
+  }
   const quoted = echo
     ? // Discord's blockquote continues across newlines with each line prefixed,
       // so a multi-line reply stays inside the quote instead of half escaping it.
@@ -176,6 +206,45 @@ export function settledMessage(
     type: RESPONSE.UPDATE_MESSAGE,
     data: { content: `${lead}${outcome}${quoted}`, components: [] },
   };
+}
+
+/** The card a press was on, as the bot forwards it. */
+export interface PressCard {
+  title?: string | null;
+  description?: string | null;
+  url?: string | null;
+  /** The footer's text. */
+  footer?: string | null;
+  color?: number | null;
+}
+export interface PressEmbed {
+  title?: string;
+  url?: string;
+  description: string;
+  footer: { text: string };
+  color: number;
+}
+
+/** The card on the pressed message, or null when it had none. */
+export function cardOf(
+  message:
+    | {
+        content?: string | null;
+        embeds?: Array<{
+          title?: string | null;
+          description?: string | null;
+          url?: string | null;
+          footer?: { text?: string | null } | string | null;
+          color?: number | null;
+        }> | null;
+      }
+    | null
+    | undefined,
+): PressCard | null {
+  const e = message?.embeds?.[0];
+  if (!e) return null;
+  const footer = typeof e.footer === "string" ? e.footer : (e.footer?.text ?? null);
+  return { title: e.title ?? null, description: e.description ?? null, url: e.url ?? null, footer, color: e.color ?? null };
 }
 
 /** The text a press was about. The message's own content when it had any;

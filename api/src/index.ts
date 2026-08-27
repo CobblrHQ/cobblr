@@ -19,7 +19,7 @@ import { withFieldLabels } from "./platform/field-labels.js";
 import { dirname, resolve } from "node:path";
 import { setPlatform, canContain, canBeContained } from "@cobblr/platform-contract";
 import { resolveFieldDefsForKind } from "./platform/field-defs.js";
-import { sql, type Kysely } from "kysely";
+import { sql, type Kysely, type Generated } from "kysely";
 import { env } from "./env.js";
 import { meta, metaPool, pingMeta } from "./db/meta.js";
 import { runMigrations } from "./db/migrate.js";
@@ -119,6 +119,27 @@ type PlacementDB = {
     placed_at: unknown;
   };
 };
+
+// The per-tenant DB slice platform().tags touches. Owned by the core-tags
+// foundational module; mirrors its 0001 migration (name is unique on lower()).
+type TagsDB = {
+  core_tags_tags: { id: Generated<string>; name: string; color: string | null };
+  core_tags_assignments: {
+    id: Generated<string>;
+    tag_id: string;
+    source_module: string;
+    source_type: string;
+    source_id: string;
+  };
+};
+
+/** "<module>:<type>" → [module, type]. The rest after the FIRST colon is the
+ *  type, so an instance kind ("<instance>:item") splits the same way. */
+function splitKind(kind: string): [string, string] {
+  const i = kind.indexOf(":");
+  if (i <= 0 || i === kind.length - 1) throw new Error(`tags: kind must be "<module>:<type>", got "${kind}"`);
+  return [kind.slice(0, i), kind.slice(i + 1)];
+}
 
 async function boot() {
   // Boot-phase profiler: logs `[bootphase] <label>: <ms>` per pass so we can see
@@ -577,6 +598,80 @@ async function boot() {
     // container." One relationship for the whole platform (a part in a machine,
     // a component in a server, an item in a location); see
     // docs/design-decisions/placement-and-containment.md.
+    // Tags — the in-process seam over core-tags' tables for writers that have
+    // no request bearer (the sync engine). Same semantics as POST /attachments:
+    // attach by name, create the tag on first use, idempotent per (tag, entity).
+    tags: {
+      attach: async ({ orgId, tagName, target }) => {
+        const name = tagName.trim();
+        if (!name) throw new Error("tags: a tag name is required");
+        const [source_module, source_type] = splitKind(target.kind);
+        const tdb = (await getTenantDb(orgId)) as unknown as Kysely<TagsDB>;
+        const findTag = () =>
+          tdb.selectFrom("core_tags_tags").select("id").where(sql`lower(name)`, "=", name.toLowerCase()).executeTakeFirst();
+        let tag = await findTag();
+        if (!tag) {
+          // Two concurrent attaches of the same NEW tag race the unique index on
+          // lower(name); the loser re-reads instead of failing the import.
+          const ins = await tdb
+            .insertInto("core_tags_tags")
+            .values({ name, color: null })
+            .onConflict((oc) => oc.expression(sql`lower(name)`).doNothing())
+            .returning("id")
+            .executeTakeFirst();
+          tag = ins ?? (await findTag());
+        }
+        if (!tag) throw new Error(`tags: could not create tag "${name}"`);
+        const row = await tdb
+          .insertInto("core_tags_assignments")
+          .values({ tag_id: tag.id, source_module, source_type, source_id: target.id })
+          .onConflict((oc) => oc.columns(["tag_id", "source_module", "source_type", "source_id"]).doNothing())
+          .returning("id")
+          .executeTakeFirst();
+        if (row) {
+          await events.emit("core-tags.assignment.created", {
+            orgId,
+            tagId: tag.id,
+            source_module,
+            source_type,
+            source_id: target.id,
+          });
+        }
+        return { tagId: tag.id, created: !!row };
+      },
+      detach: async ({ orgId, tagName, target }) => {
+        const [source_module, source_type] = splitKind(target.kind);
+        const tdb = (await getTenantDb(orgId)) as unknown as Kysely<TagsDB>;
+        const tag = await tdb
+          .selectFrom("core_tags_tags").select("id").where(sql`lower(name)`, "=", tagName.trim().toLowerCase()).executeTakeFirst();
+        if (!tag) return;
+        const gone = await tdb
+          .deleteFrom("core_tags_assignments")
+          .where("tag_id", "=", tag.id)
+          .where("source_module", "=", source_module)
+          .where("source_type", "=", source_type)
+          .where("source_id", "=", target.id)
+          .returning("id")
+          .executeTakeFirst();
+        if (gone) {
+          await events.emit("core-tags.assignment.deleted", { orgId, tagId: tag.id, source_module, source_type, source_id: target.id });
+        }
+      },
+      of: async ({ orgId, target }) => {
+        const [source_module, source_type] = splitKind(target.kind);
+        const tdb = (await getTenantDb(orgId)) as unknown as Kysely<TagsDB>;
+        const rows = await tdb
+          .selectFrom("core_tags_assignments as a")
+          .innerJoin("core_tags_tags as t", "t.id", "a.tag_id")
+          .select("t.name")
+          .where("a.source_module", "=", source_module)
+          .where("a.source_type", "=", source_type)
+          .where("a.source_id", "=", target.id)
+          .orderBy("t.name")
+          .execute();
+        return rows.map((r) => r.name);
+      },
+    },
     placement: {
       place: async ({ orgId, containee, container, slot, placedBy }) => {
         if (containee.kind === container.kind && containee.id === container.id) {

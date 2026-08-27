@@ -98,11 +98,6 @@ export const HOMEBOX_MANIFEST = SyncSourceManifest.parse({
                 purchase_from: "$.purchaseFrom",
                 purchase_date: "$.purchaseDate",
                 fields: "$.fields",
-                // Tags ride along losslessly: the sync engine writes one target
-                // kind (the part) — it can't attach core-tags — so Homebox labels
-                // are kept here rather than lost. (Real tag attachment would need
-                // an engine feature; the one-shot CSV importer does attach them.)
-                tags: "$.tags",
               },
             },
           },
@@ -110,6 +105,8 @@ export const HOMEBOX_MANIFEST = SyncSourceManifest.parse({
       },
       // Compose the attachment URL from the item id + its primary image id.
       images: { image_path: "/api/v1/entities/{$.id}/attachments/{$.imageId}" },
+      // Homebox labels become Cobblr tags (attached by name; created if missing).
+      tags: { from: "$.tags" },
     },
   ],
 });

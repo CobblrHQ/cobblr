@@ -18,8 +18,21 @@
 
 import { z } from "zod";
 
-/** A dot-path (`$.x.y`) or literal (`='lit'`) string extract. */
-const Extract = z.string().min(1);
+/** Operators a `$.path|<op>` extract may carry. `last`: the final segment of a
+ *  URL/IRI value, for sources that express a foreign key as a link. */
+const EXTRACT_OPS = new Set(["last"]);
+
+/** A dot-path (`$.x.y`, optionally `$.x.y|last`) or literal (`='lit'`) string
+ *  extract. An unknown operator is rejected HERE, at manifest-parse time: a typo
+ *  like `$.parent|lst` would otherwise resolve to nothing at sync time and
+ *  quietly flatten a whole tree. */
+const Extract = z
+  .string()
+  .min(1)
+  .refine(
+    (s) => !s.startsWith("$.") || !s.includes("|") || EXTRACT_OPS.has(s.slice(s.indexOf("|") + 1)),
+    { message: "unknown extract operator (supported: |last)" },
+  );
 const Method = z.enum(["GET", "POST"]).default("GET");
 
 /** A field mapping value — recursive (nested objects + value remaps + fallbacks). */
@@ -135,6 +148,11 @@ export const SyncEntityTypeManifest = z.object({
    *  attachment URL: { "image_path": "/api/v1/entities/{$.id}/attachments/{$.imageId}" }.
    *  Plain `$.image_url` still works. */
   images: z.record(Extract).optional(),
+  /** Source tags → Cobblr tags on the mirrored record, attached by name through
+   *  platform().tags (created if missing, idempotent, never detached). `from`
+   *  yields an array (strings, or objects carrying a `name`) or, with `split`,
+   *  one delimited string. e.g. { "from": "$.tags", "split": "," } */
+  tags: z.object({ from: Extract, split: z.string().min(1).max(4).optional() }).optional(),
 });
 export type SyncEntityTypeManifest = z.infer<typeof SyncEntityTypeManifest>;
 

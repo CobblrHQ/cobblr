@@ -56,6 +56,29 @@ export function conversationLiveness(active: boolean): {
   return { refetchInterval: active ? LIVE_REFETCH_MS : false, refetchOnWindowFocus: active };
 }
 
+/** How long a just-arrived message stays lit. Long enough to be seen from
+ *  across the room, short enough that a busy thread is not a wall of amber. */
+export const FRESH_MS = 8_000;
+
+/** Which of these comments just ARRIVED: not in the set this tab had already
+ *  shown, and not the reader's own (you know what you just sent). `seen` is
+ *  null on the first read of a conversation, which is a baseline, not news.
+ *
+ *  Reported: a reply that landed in the open tab "is very bland and if she had
+ *  not received the discord notification at the same time, she would not have
+ *  realized that there was a response at all". A message that appears without
+ *  anyone touching the page has to look like it appeared. */
+export function arrivedComments(
+  seen: Set<string> | null,
+  comments: ReadonlyArray<{ id: string; author_kind: string; author_user_id: string | null }>,
+  selfUserId: string | null,
+): string[] {
+  if (!seen) return [];
+  return comments
+    .filter((c) => !seen.has(c.id) && !(c.author_kind === "user" && c.author_user_id === selfUserId))
+    .map((c) => c.id);
+}
+
 /** How long ago, in the shortest form that is still unambiguous. */
 function ago(iso: string): string {
   const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
@@ -208,6 +231,34 @@ export function DiscussionTab() {
     enabled: !!activeSlug && !!src && active,
     ...conversationLiveness(active),
   });
+
+  // What this tab has already shown, per conversation, so a message that turns
+  // up later lights up and scrolls into view. The first read of a conversation
+  // sets the baseline; switching conversations starts over.
+  const convId = conv.data?.conversation?.id ?? null;
+  const seenRef = useRef<{ conv: string | null; ids: Set<string> } | null>(null);
+  const [fresh, setFresh] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    const list = conv.data?.comments;
+    if (!list) return;
+    const prior = seenRef.current && seenRef.current.conv === convId ? seenRef.current.ids : null;
+    const arrived = arrivedComments(prior, list, selfUserId);
+    seenRef.current = { conv: convId, ids: new Set(list.map((c) => c.id)) };
+    if (arrived.length === 0) return;
+    setFresh((prev) => new Set([...prev, ...arrived]));
+    requestAnimationFrame(() => {
+      document.getElementById(`c-${arrived[arrived.length - 1]}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+    // No cleanup on purpose: every poll replaces conv.data, and a cleanup here
+    // would cancel the fade before it ever fired.
+    setTimeout(() => {
+      setFresh((prev) => {
+        const next = new Set(prev);
+        for (const id of arrived) next.delete(id);
+        return next;
+      });
+    }, FRESH_MS);
+  }, [conv.data, convId, selfUserId]);
 
   // Names live in cobblr_meta, the comments in the tenant DB, so the join
   // happens here rather than in SQL. Cached workspace-wide; a comment stores an
@@ -400,6 +451,7 @@ export function DiscussionTab() {
   }
 
   const comments = conv.data?.comments ?? [];
+
   // The same rule the server applies, shown BEFORE sending. The failure this
   // prevents: replying "ok, agreed, let's take it" to Cobb's answer, addressed
   // to a person, and getting an answer from Cobb anyway. Harmless once,
@@ -533,7 +585,17 @@ export function DiscussionTab() {
             </p>
           )}
           {comments.map((c) => (
-            <div key={c.id} id={`c-${c.id}`} className="group scroll-mt-4 transition-colors">
+            <div
+              key={c.id}
+              id={`c-${c.id}`}
+              data-fresh={fresh.has(c.id) ? "1" : undefined}
+              className={
+                "group scroll-mt-4 -mx-2 px-2 py-1.5 rounded-md transition-colors duration-1000 " +
+                (fresh.has(c.id)
+                  ? "bg-amber-100 dark:bg-amber-900/40 ring-1 ring-amber-300 dark:ring-amber-700"
+                  : "ring-0 ring-transparent")
+              }
+            >
               <div className="flex items-baseline gap-2 text-[11px]">
                 <span className="font-medium text-content dark:text-mortar-100">{nameOf(c)}</span>
                 {c.author_kind === "assistant" && c.requested_by && (
@@ -541,6 +603,11 @@ export function DiscussionTab() {
                 )}
                 <span className="text-faint">{ago(c.created_at)}</span>
                 {c.edited_at && <span className="text-faint italic">edited</span>}
+                {fresh.has(c.id) && (
+                  <span className="rounded-full bg-amber-400 text-cobble-900 text-[9px] font-mono uppercase tracking-widest px-1.5 py-0.5 animate-pulse">
+                    new
+                  </span>
+                )}
               </div>
               {c.in_reply_to && <Quote id={c.in_reply_to} comments={comments} names={nameOfUser} />}
               {/* THE TOOLS LIVE WITH THE MESSAGE.
@@ -717,6 +784,12 @@ export function DiscussionTab() {
           )}
           {mention.element}
           <div className="flex items-end gap-2">
+            {/* The placeholder is OURS, not the textarea's. iOS Safari renders a
+                textarea's native placeholder in a box sized from the text it
+                just cleared, so after every send the hint came back as "Say"
+                and nothing else (reported twice, 2026-08-26). A span over an
+                empty box wraps and clips like any other text. */}
+            <div className="relative flex-1 min-w-0">
             <textarea
               ref={taRef}
               value={draft}
@@ -735,9 +808,20 @@ export function DiscussionTab() {
                 }
               }}
               rows={2}
-              placeholder="Say something about this… (@ to mention)"
-              className="flex-1 resize-none px-3 py-2 text-base sm:text-sm rounded-lg border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 text-content dark:text-mortar-200 leading-relaxed"
+              aria-label="Say something about this"
+              data-testid="discussion-composer"
+              className="block w-full resize-none px-3 py-2 text-base sm:text-sm rounded-lg border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 text-content dark:text-mortar-200 leading-relaxed"
             />
+            {!draft && (
+              <span
+                aria-hidden
+                data-testid="discussion-placeholder"
+                className="pointer-events-none absolute left-3 right-3 top-2 truncate text-base sm:text-sm leading-relaxed text-faint dark:text-slate-500"
+              >
+                Say something… (@ to mention)
+              </span>
+            )}
+            </div>
             <button
               type="button"
               onClick={send}

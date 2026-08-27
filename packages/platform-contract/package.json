@@ -8,6 +8,7 @@
     ".": "./src/index.ts",
     "./qr-token": "./src/qr-token.ts",
     "./entity-tokens": "./src/entity-tokens.ts",
+    "./entity-kind": "./src/entity-kind.ts",
     "./org-roles": "./src/org-roles.ts",
     "./private-ip": "./src/private-ip.ts",
     "./safe-font-url": "./src/safe-font-url.ts",

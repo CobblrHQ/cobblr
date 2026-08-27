@@ -131,6 +131,21 @@ async function provisionOnce(
     password,
     max: 2,
   });
+  // WITHOUT THIS, A DROPPED DATABASE KILLS THE WHOLE API. pg emits 'error' on a
+  // pool whose backend goes away, and an unhandled 'error' event terminates
+  // Node. This pool is connected to a BRAND-NEW tenant DB while its migrations
+  // run, and a parallel test fork's end-of-file teardown drops tenant databases
+  // — so the backend really does vanish underneath it, with SQLSTATE 57P01
+  // (admin_shutdown).
+  //
+  // Measured 2026-08-25: this accounted for ~10% of `test` runs going red. It
+  // does not read as one bug, either — the api dies once and every later request
+  // fails, so a single run showed 472 ECONNREFUSED assertions across 34 files.
+  // tenant.ts has carried this listener for exactly this reason; provisioning
+  // was the copy that never got it.
+  provisioningPool.on("error", (err) => {
+    console.error(`[provisioning-pool ${dbName}] idle client error:`, (err as Error).message);
+  });
   try {
     const result = await runMigrations({
       pool: provisioningPool,

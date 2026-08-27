@@ -41,6 +41,7 @@ import {
   traitAxisValue,
   type DecodeFillTarget,
 } from "@cobblr/platform-contract";
+import { splitEntityKind, entityKindOf } from "@cobblr/platform-contract/entity-kind";
 import { displayed as displayedNote } from "../services/routing-note.js";
 import {
   matchesScanFacet,
@@ -200,7 +201,7 @@ inboxRouter.get(
         // an arbitrary item and calls it the parcel.
         sql<string | null>`
           case when count(i.id) filter (where i.status in ('pending','enriching')) = 1
-               then max(i.name) filter (where i.status in ('pending','enriching'))
+               then max(i.suggested_name) filter (where i.status in ('pending','enriching'))
           end
         `.as("only_item_name"),
         eb.fn.countAll<number>().as("count"),
@@ -215,8 +216,8 @@ inboxRouter.get(
         eb.or([
           eb("i.status", "in", ["pending", "enriching"]),
           eb.and([
-            eb(sql<boolean>`nullif(btrim(coalesce(b.tracking_number, '')), '') is not null`, "=", true),
-            eb(sql<boolean>`coalesce(b.shipment_state, '') <> 'delivered'`, "=", true),
+            sql<boolean>`nullif(btrim(coalesce(b.tracking_number, '')), '') is not null`,
+            sql<boolean>`coalesce(b.shipment_state, '') <> 'delivered'`,
           ]),
         ]),
       )
@@ -2306,10 +2307,10 @@ inboxRouter.post(
     ].filter((t) => t.trim());
     for (const tag_name of tagNames) {
       try {
-        await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-tags/attachments`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ tag_name, source_module: target.module, source_type: target.kind, source_id: created.id }),
+        await platform().tags.attach({
+          orgId: ctx.org.id,
+          tagName: tag_name,
+          target: { kind: entityKindOf({ module: target.module, type: target.kind }), id: created.id },
         });
       } catch (err) {
         console.error(`[core-scan] confirm tag "${tag_name}" failed:`, (err as Error)?.message ?? err);
@@ -2337,16 +2338,12 @@ inboxRouter.post(
     if (galleryFiles.length) {
       try {
         for (const fileId of galleryFiles) {
-          await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-files/attachments`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-            body: JSON.stringify({
-              file_id: fileId,
-              source_module: target.module,
-              source_type: target.kind,
-              source_id: created.id,
-              role: "gallery",
-            }),
+          await platform().files.attach(ctx.org.id, {
+            fileId,
+            source_module: target.module,
+            source_type: target.kind,
+            source_id: created.id,
+            role: "gallery",
           });
         }
         // Thumbnail: a user's own captured photo wins over the catalog image. With
@@ -2519,8 +2516,8 @@ inboxRouter.post(
 
     // The FIRST purchase is still a purchase. Only add-qty used to file one, so
     // the ledger began at your second buy and cold start lasted one shop longer
-    // than it needed to. Same HTTP-under-the-caller's-bearer hop as the attach
-    // path, same swallow-on-failure: a workspace without Cadence is unaffected.
+    // than it needed to. Announced on the bus, not called: a workspace without
+    // Cadence has nobody listening and is unaffected.
     if (created?.id) {
       const firstBuy = buildCadenceEvents({
         mode: "add-qty",
@@ -2537,16 +2534,14 @@ inboxRouter.post(
         added: Math.max(1, Number(qty ?? 1)),
         priorQty: 0,
       });
+      // Announced, not called. Whoever keeps a consumption ledger listens;
+      // this module does not know or care who that is. emit() never rejects.
       for (const ev of firstBuy) {
-        try {
-          await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-cadence/events`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-            body: JSON.stringify(ev),
-          });
-        } catch (err) {
-          console.warn("[core-scan] first-purchase not recorded:", err);
-        }
+        await platform().events.emit("core-scan.stock.observed", {
+          orgId: ctx.org.id,
+          userId: sessionUser(req)?.id ?? null,
+          ...ev,
+        });
       }
     }
 
@@ -4644,18 +4639,19 @@ inboxRouter.post(
     if (parsed.data.mode === "add-qty" && !entity.image_path) {
       const photoId = row.catalog_image_file_id ?? row.image_file_id;
       if (photoId) {
-        const [module] = parsed.data.kind.split(":");
-        void fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-files/attachments`, {
-          method: "POST",
-          headers: authHeaders,
-          body: JSON.stringify({
-            file_id: photoId,
+        // Both halves from one split. This used to hand-roll it and pass the
+        // WHOLE kind as source_type, so the row was written "inventory:part"
+        // while every reader queries "part" - orphaned on write, and invisible
+        // because the PATCH below sets image_path regardless.
+        const { module, type } = splitEntityKind(parsed.data.kind);
+        void platform()
+          .files.attach(ctx.org.id, {
+            fileId: photoId,
             source_module: module,
-            source_type: parsed.data.kind,
+            source_type: type,
             source_id: parsed.data.entity_id,
             role: "gallery",
-          }),
-        })
+          })
           .then(() =>
             fetch(entityPath, {
               method: "PATCH",
@@ -4700,11 +4696,11 @@ inboxRouter.post(
       mode: parsed.data.mode,
     });
 
-    // File the purchase in the consumption ledger. Over HTTP under the caller's
-    // bearer, exactly like the entity write above - core-scan must not import
-    // core-cadence, and the ledger is optional (the capability is opt-in), so
-    // every failure here is logged and swallowed: a scan must never fail
-    // because a workspace does not track cadence.
+    // File the purchase in the consumption ledger by ANNOUNCING it. core-scan
+    // does not know who keeps the ledger, or whether anyone does: the ledger
+    // is opt-in, and a workspace without one simply has no subscriber. A scan
+    // can never fail because a workspace does not track cadence - emit()
+    // never rejects, and the subscriber swallows its own failures.
     const cadenceEvents = buildCadenceEvents({
       mode: parsed.data.mode,
       cadence: parsed.data.cadence,
@@ -4714,16 +4710,11 @@ inboxRouter.post(
       priorQty: priorQty,
     });
     for (const ev of cadenceEvents) {
-      try {
-        const r = await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-cadence/events`, {
-          method: "POST",
-          headers: authHeaders,
-          body: JSON.stringify(ev),
-        });
-        if (!r.ok) console.warn(`[core-scan] cadence ${ev.event_type} not recorded (${r.status})`);
-      } catch (err) {
-        console.warn(`[core-scan] cadence ${ev.event_type} not recorded:`, err);
-      }
+      await platform().events.emit("core-scan.stock.observed", {
+        orgId: ctx.org.id,
+        userId: sessionUser(req)?.id ?? null,
+        ...ev,
+      });
     }
 
     res.json({

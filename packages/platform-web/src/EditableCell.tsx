@@ -142,8 +142,14 @@ export function EditableCell({
   if (!editing) {
     // The display owns the click, so the pencil carries the edit.
     if (children !== undefined) {
+      // max-w-full, or the whole class comes back: an inline-flex box is as
+      // wide as its content, so a child that truncates (nowrap) made this
+      // wrapper wider than its column and the row spilled off a phone
+      // ("Red Heart Super Saver - Country Blue" pushed the pencil past the
+      // screen edge and scrolled the page sideways, 2026-08-27). Capped at
+      // the column, the child is the one that gives.
       return (
-        <span className="inline-flex items-center gap-1 min-w-0">
+        <span className="inline-flex items-center gap-1 min-w-0 max-w-full">
           {children}
           <PencilButton label={def.display_label} onOpen={() => setEditing(true)} />
         </span>

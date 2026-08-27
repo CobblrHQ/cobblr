@@ -1,7 +1,7 @@
 // "Migrate in from another app" — a section on the Integrations page for
 // imports FROM other inventory systems (as opposed to the ongoing live-sync
 // connectors above). This is APP-FIRST: you pick the app you're coming from
-// (Homebox is the first; Snipe-IT etc. slot in as more entries), and only THEN
+// (Homebox and Part-DB today; Snipe-IT etc. slot in as more entries), and only THEN
 // choose how (live connect vs CSV) in a second step. That keeps any one app
 // from dominating the section and scales as more sources arrive.
 
@@ -10,6 +10,7 @@ import { Download, ArrowRight, Zap, FileUp, type LucideIcon } from "lucide-react
 import { Modal } from "@cobblr/platform-web";
 import { HomeboxImportModal } from "./HomeboxImportModal";
 import { HomeboxLiveImportModal } from "./HomeboxLiveImportModal";
+import { PartdbLiveImportModal } from "./PartdbLiveImportModal";
 import { SettingsSection } from "./SettingsSection";
 
 type Method = { id: string; label: string; desc: string; icon: LucideIcon };
@@ -37,6 +38,19 @@ const SOURCES: Source[] = [
       },
     ],
   },
+  {
+    id: "partdb",
+    name: "Part-DB",
+    blurb: "Bring your Part-DB components into Cobblr.",
+    methods: [
+      {
+        id: "live",
+        label: "Live connect",
+        desc: "Connect with your Part-DB URL + API token. Parts, categories, and the storage-location tree come across. Import once, or keep it synced.",
+        icon: Zap,
+      },
+    ],
+  },
 ];
 
 export function MigrateInSection() {
@@ -44,11 +58,13 @@ export function MigrateInSection() {
   const [picked, setPicked] = useState<Source | null>(null);
   const [homeboxLive, setHomeboxLive] = useState(false);
   const [homeboxCsv, setHomeboxCsv] = useState(false);
+  const [partdbLive, setPartdbLive] = useState(false);
 
   function runMethod(sourceId: string, methodId: string) {
     setPicked(null);
     if (sourceId === "homebox" && methodId === "live") setHomeboxLive(true);
     else if (sourceId === "homebox" && methodId === "csv") setHomeboxCsv(true);
+    else if (sourceId === "partdb" && methodId === "live") setPartdbLive(true);
   }
 
   function openSource(s: Source) {
@@ -112,6 +128,7 @@ export function MigrateInSection() {
 
       <HomeboxLiveImportModal open={homeboxLive} onClose={() => setHomeboxLive(false)} />
       <HomeboxImportModal open={homeboxCsv} onClose={() => setHomeboxCsv(false)} />
+      <PartdbLiveImportModal open={partdbLive} onClose={() => setPartdbLive(false)} />
     </SettingsSection>
   );
 }

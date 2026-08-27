@@ -15,16 +15,30 @@ import type {
 import type { FieldSpec, SyncEntityTypeManifest, SyncSourceManifest } from "./manifest.js";
 
 /** Resolve a "$.a.b" dot-path against a record; "='lit'" returns the literal.
+ *  A `$.path|last` suffix takes the final segment of a URL/IRI value, so a
+ *  source that expresses a foreign key as a link ("/api/storage_locations/1")
+ *  resolves to the id its id-map holds ("1"). Null and empty pass through
+ *  untouched, so a root node's null parent stays null rather than becoming the
+ *  string "null"; a bare id is a no-op, so a source that already sends ids is
+ *  unaffected. The literal check runs first, so a literal containing a bar is
+ *  returned verbatim.
  *  Returns the RAW value (number/null/object preserved), undefined if missing. */
 function resolve(expr: string, data: unknown): unknown {
   if (expr.startsWith("='") && expr.endsWith("'")) return expr.slice(2, -1);
   if (!expr.startsWith("$.")) return expr; // bare literal fallback
+  const bar = expr.indexOf("|");
+  const path = bar >= 0 ? expr.slice(0, bar) : expr;
+  const op = bar >= 0 ? expr.slice(bar + 1) : "";
   let cur: unknown = data;
-  for (const key of expr.slice(2).split(".")) {
+  for (const key of path.slice(2).split(".")) {
     if (cur == null || typeof cur !== "object") return undefined;
     cur = (cur as Record<string, unknown>)[key];
   }
-  return cur;
+  if (op !== "last") return cur;
+  if (cur == null || cur === "") return cur;
+  const s = String(cur).replace(/\/+$/, "");
+  const seg = s.slice(s.lastIndexOf("/") + 1);
+  return seg === "" ? null : seg;
 }
 
 /** Resolve an image extract → a URL/path string, or null. If the extract carries
@@ -143,6 +157,31 @@ function passesInstanceBy(et: SyncEntityTypeManifest, data: unknown): boolean {
   return !et.instanceBy || instanceFor(et, data) != null;
 }
 
+/** Normalise a source's tag value to names: an array of strings or of objects
+ *  carrying `name`, or (with `split`) one delimited string. Blank and duplicate
+ *  names (case-insensitive) drop; first spelling and order are kept. */
+function tagNames(v: unknown, split?: string): string[] {
+  let raw: unknown[] = [];
+  if (Array.isArray(v)) raw = v;
+  else if (typeof v === "string") raw = split ? v.split(split) : [v];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const x of raw) {
+    const name =
+      typeof x === "string"
+        ? x
+        : x != null && typeof x === "object" && typeof (x as { name?: unknown }).name === "string"
+          ? (x as { name: string }).name
+          : "";
+    const t = name.trim();
+    const k = t.toLowerCase();
+    if (!t || seen.has(k)) continue;
+    seen.add(k);
+    out.push(t);
+  }
+  return out;
+}
+
 function mapRecord(et: SyncEntityTypeManifest, data: unknown): SyncRecord {
   const idVal = resolve(et.idField, data);
   const parentVal = et.parentField ? resolve(et.parentField, data) : null;
@@ -162,12 +201,14 @@ function mapRecord(et: SyncEntityTypeManifest, data: unknown): SyncRecord {
       if (v) images[field] = v;
     }
   }
+  const tags = et.tags ? tagNames(resolve(et.tags.from, data), et.tags.split) : [];
   return {
     externalId: String(idVal),
     parentExternalId: parentVal != null ? String(parentVal) : null,
     fields,
     ...(Object.keys(references).length ? { references } : {}),
     ...(Object.keys(images).length ? { images } : {}),
+    ...(tags.length ? { tags } : {}),
     ...(instance ? { instance } : {}),
   };
 }
@@ -192,6 +233,15 @@ function authHeaders(manifest: SyncSourceManifest, ctx: SyncFetchContext): Recor
  *  otherwise the per-connection base the user entered. */
 function baseFor(manifest: SyncSourceManifest, ctx: SyncFetchContext): string {
   return (manifest.baseUrl ?? ctx.baseUrl).replace(/\/+$/, "");
+}
+
+/** True when `url` is on the same scheme+host+port as `base` (the source). */
+function sameOrigin(url: string, base: string): boolean {
+  try {
+    return new URL(url).origin === new URL(base).origin;
+  } catch {
+    return false;
+  }
 }
 
 /** Substitute `{name}` tokens in a path with resolved bootstrap vars (URL-encoded).
@@ -291,10 +341,14 @@ function buildEntityType(manifest: SyncSourceManifest, et: SyncEntityTypeManifes
         const url = /^https?:\/\//.test(urlOrPath)
           ? urlOrPath
           : `${base}${urlOrPath.startsWith("/") ? urlOrPath : `/${urlOrPath}`}`;
-        const res = await ctx.fetch(url, {
-          method: "GET",
-          headers: { ...authHeaders(manifest, ctx), Accept: "image/*,*/*" },
-        });
+        // The source's credentials go to the SOURCE host only. An image that
+        // lives elsewhere (Part-DB's external attachments are third-party URLs)
+        // is fetched bare, or a Bearer token would be handed to whoever hosts
+        // the picture.
+        const headers: Record<string, string> = sameOrigin(url, base)
+          ? { ...authHeaders(manifest, ctx), Accept: "image/*,*/*" }
+          : { Accept: "image/*,*/*" };
+        const res = await ctx.fetch(url, { method: "GET", headers });
         if (!res.ok) return null;
         const buf = await res.arrayBuffer();
         if (!buf || buf.byteLength === 0) return null;

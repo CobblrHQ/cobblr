@@ -179,6 +179,12 @@ services:
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
       DISCORD_REDIRECT_URI: ${DISCORD_REDIRECT_URI:-}
       DISCORD_INVITE_URL: ${DISCORD_INVITE_URL:-}
+      # Community links offered in the account menu + Send Feedback. The
+      # COBBLR_-prefixed invite wins over the bare name above when both are set.
+      COBBLR_DISCORD_INVITE_URL: ${COBBLR_DISCORD_INVITE_URL:-}
+      COBBLR_FORUM_URL: ${COBBLR_FORUM_URL:-}
+      COBBLR_DOCS_URL: ${COBBLR_DOCS_URL:-}
+      COBBLR_ISSUES_URL: ${COBBLR_ISSUES_URL:-}
       # A second instance sharing this Postgres (the canary channel): the
       # peer's DSN, so each side can notice a migration the other lacks.
       COBBLR_SHARED_DB_PEER: ${COBBLR_SHARED_DB_PEER:-}

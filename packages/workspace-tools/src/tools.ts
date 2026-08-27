@@ -13,7 +13,7 @@
 // tool to a consumer directly.
 
 import { z } from "zod";
-import { type WorkspaceApi, type ToolResult, toolOk, toolFail, apiErrorMessage } from "./api.js";
+import { type WorkspaceApi, type WorkspaceApiResponse, type ToolResult, toolOk, toolFail, apiErrorMessage } from "./api.js";
 import {
   withKindsTitleField,
   fetchKinds,
@@ -36,6 +36,105 @@ export interface WorkspaceTool {
 
 /** Clamp big reads so a tool result stays prompt-sized. */
 const LIST_LIMIT_MAX = 50;
+/** count_records walks the whole kind in pages; the route caps a page at 200. */
+const COUNT_PAGE = 200;
+const COUNT_SCAN_MAX = 5000;
+
+/** Case-insensitive "does any text on this record contain q" — title, every
+ *  field, nested bags. What a person means by "the Bambu" or "my deltas". */
+export function recordMatchesText(rec: unknown, q: string): boolean {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return true;
+  let text: string;
+  try {
+    text = JSON.stringify(rec) ?? "";
+  } catch {
+    text = String(rec);
+  }
+  return text.toLowerCase().includes(needle);
+}
+
+/** A record's value for a key: top-level, or inside `fields` / `data`. */
+function fieldValue(rec: Record<string, unknown>, key: string): unknown {
+  if (key in rec) return rec[key];
+  for (const bag of ["fields", "data", "custom_fields"]) {
+    const inner = rec[bag];
+    if (inner && typeof inner === "object" && key in (inner as Record<string, unknown>)) {
+      return (inner as Record<string, unknown>)[key];
+    }
+  }
+  return undefined;
+}
+
+/** Every record of a kind, page by page (the route caps a page at 200). */
+async function walkKind(
+  api: WorkspaceApi,
+  kind: string,
+): Promise<
+  | { ok: true; items: Array<Record<string, unknown>>; total: number; complete: boolean }
+  | { ok: false; res: WorkspaceApiResponse }
+> {
+  const items: Array<Record<string, unknown>> = [];
+  let total = 0;
+  for (let offset = 0; offset < COUNT_SCAN_MAX; offset += COUNT_PAGE) {
+    const res = await api.request("GET", `/entities/${encodeURIComponent(kind)}?limit=${COUNT_PAGE}&offset=${offset}`);
+    if (res.status >= 400) return { ok: false, res };
+    const body = res.body as { items?: unknown[]; total?: number };
+    const page = Array.isArray(body.items) ? (body.items as Array<Record<string, unknown>>) : [];
+    items.push(...page);
+    total = typeof body.total === "number" ? body.total : items.length;
+    if (page.length < COUNT_PAGE || items.length >= total) break;
+  }
+  return { ok: true, items, total: Math.max(total, items.length), complete: items.length >= total };
+}
+
+/** list_records' fallback when the kind's own search found nothing: the same
+ *  page shape, matched over every text field, and labelled as such. */
+async function scanByText(api: WorkspaceApi, kind: string, q: string, limit: number): Promise<unknown | null> {
+  const walked = await walkKind(api, kind);
+  if (!walked.ok) return null;
+  const hits = walked.items.filter((r) => recordMatchesText(r, q));
+  const items = hits.slice(0, limit);
+  const notes: string[] = [];
+  if (items.length < hits.length) notes.push(`PARTIAL: ${items.length} of ${hits.length} records. Do not count, rank, or say "none" from this page; use count_records for exact totals.`);
+  if (!walked.complete) notes.push(`scanned the first ${walked.items.length} of ${walked.total} records only`);
+  return {
+    shown: items.length,
+    total: hits.length,
+    partial: items.length < hits.length,
+    matched_by: `any text field (the kind's own search found no NAME containing "${q}")`,
+    ...(notes.length ? { note: notes.join(" ") } : {}),
+    items,
+  };
+}
+
+/**
+ * A list page that tells the truth about itself FIRST. The route returns
+ * `{items, total}`; the model used to get the items with a "there may be
+ * more" note at the very end, which is the part the agent loop's clamp cut
+ * off. So the count leads: `shown` / `total` / `partial`, and the note comes
+ * before the items, where a model reads it.
+ */
+export function pageWithTruth(body: unknown, limit: number): unknown {
+  const b = (body ?? {}) as { items?: unknown[]; total?: number };
+  if (!Array.isArray(b.items)) return body;
+  const shown = b.items.length;
+  const known = typeof b.total === "number";
+  const total = known ? (b.total as number) : undefined;
+  const partial = known ? shown < (total as number) : shown === limit;
+  const extent = known ? `${shown} of ${total} records` : `the first ${shown} records, there may be more`;
+  return {
+    shown,
+    ...(known ? { total } : {}),
+    partial,
+    ...(partial
+      ? {
+          note: `PARTIAL: ${extent}. Do not count, rank, or say "none" from this page. Narrow with q, or use count_records for exact totals.`,
+        }
+      : {}),
+    ...b,
+  };
+}
 
 /** The dashboard's "needs you" rows (api/src/routes/attention.ts). */
 interface AttentionRow {
@@ -369,7 +468,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     mode: "read",
     params: {
       kind: z.string().describe("Entity kind id, e.g. inventory:part (see list_record_kinds)"),
-      q: z.string().optional().describe("Text filter"),
+      q: z.string().optional().describe("Text filter: matches the record name first; if nothing matches by name, every text field is searched instead"),
       limit: z.number().optional().describe(`Max results (default 20, max ${LIST_LIMIT_MAX})`),
     },
     execute: async (api, args) => {
@@ -378,16 +477,61 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       const q = typeof args.q === "string" && args.q.trim() ? `&q=${encodeURIComponent(args.q.trim())}` : "";
       const res = await api.request("GET", `/entities/${encodeURIComponent(kind)}?limit=${limit}${q}`);
       if (res.status >= 400) return toolFail(apiErrorMessage(res, `couldn't list ${kind}`));
-      // Honest truncation: a page exactly at the limit probably isn't the whole
-      // set — say so, so the model never claims "you have 20 X" off a capped page.
-      const body = res.body as { items?: unknown[] };
-      if (Array.isArray(body.items) && body.items.length === limit) {
-        return toolOk({
-          ...body,
-          note: `showing the first ${limit} — there may be more; narrow with q or raise limit (max ${LIST_LIMIT_MAX})`,
-        });
+      const page = pageWithTruth(res.body, limit) as { items?: unknown[] };
+      if (q && Array.isArray(page.items) && page.items.length === 0) {
+        // The kind's own search matched nothing by name. Before the model tells
+        // the user "you have none", look at every text field ourselves.
+        const scan = await scanByText(api, kind, String(args.q).trim(), limit);
+        if (scan) return toolOk(scan);
       }
-      return toolOk(res.body);
+      return toolOk(page);
+    },
+  },
+  {
+    name: "count_records",
+    description:
+      "Count records of ONE kind, optionally grouped by a field (e.g. group_by \"model\" or \"kinematics\"). Use this for \"how many\", \"which do I have the most of\", \"do I have any X\" — it counts EVERY record in code, so the answer is exact even when the list is too long to read. Group values are compared case-insensitively.",
+    mode: "read",
+    params: {
+      kind: z.string().describe("Entity kind id, e.g. inventory:part (see list_record_kinds)"),
+      group_by: z.string().optional().describe("Field key to group by (title, or any field key from the kind's fields)"),
+      q: z.string().optional().describe("Text filter, matched against EVERY text field of each record (name, brand, notes, custom fields), case-insensitive"),
+    },
+    execute: async (api, args) => {
+      const kind = String(args.kind ?? "");
+      const groupBy = typeof args.group_by === "string" ? args.group_by.trim() : "";
+      const qText = typeof args.q === "string" ? args.q.trim() : "";
+      // The text filter is applied HERE, over every field of every record, not
+      // by the kind's own search (which may look at the name only).
+      const walked = await walkKind(api, kind);
+      if (!walked.ok) return toolFail(apiErrorMessage(walked.res, `couldn't count ${kind}`));
+      const all = qText ? walked.items.filter((r) => recordMatchesText(r, qText)) : walked.items;
+      const total = qText ? all.length : walked.total;
+      const scanned = walked.items.length;
+      const complete = walked.complete;
+      if (!groupBy) return toolOk({ kind, ...(qText ? { q: qText, matched_by: "any text field" } : {}), total, scanned, complete });
+      const counts = new Map<string, { value: string; count: number }>();
+      for (const rec of all) {
+        const raw = fieldValue(rec, groupBy);
+        const value = raw === undefined || raw === null || raw === "" ? "(blank)" : String(raw);
+        const key = value.toLowerCase();
+        const hit = counts.get(key);
+        if (hit) hit.count += 1;
+        else counts.set(key, { value, count: 1 });
+      }
+      const groups = [...counts.values()].sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
+      return toolOk({
+        kind,
+        group_by: groupBy,
+        ...(qText ? { q: qText, matched_by: "any text field" } : {}),
+        total,
+        scanned,
+        complete,
+        groups,
+        ...(groups.length === 1 && groups[0]?.value === "(blank)"
+          ? { note: `no record has a value for "${groupBy}"; check the field key with list_record_kinds` }
+          : {}),
+      });
     },
   },
   {

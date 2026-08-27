@@ -799,6 +799,12 @@ export async function list(
     }
   }
 
+  // A resolver that did not count still yields a known total when the page
+  // came back short: everything there is fits in it. Small workspaces (the
+  // common case) then get "N of N" instead of "the first N, there may be more".
+  if (total === undefined && typeof query.limit === "number" && items.length < query.limit) {
+    total = (query.offset ?? 0) + items.length;
+  }
   return { items, total };
 }
 

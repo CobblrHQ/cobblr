@@ -75,6 +75,10 @@ export default defineModule({
   exposes: {
     events: [
       "core-scan.scan.received",
+      // Stock moved: a purchase filed, a quantity added or used. Announced so
+      // whoever keeps a consumption ledger can listen; core-scan does not
+      // know who that is.
+      "core-scan.stock.observed",
       "core-scan.scan.enriched",
       "core-scan.scan.confirmed",
       "core-scan.scan.unconfirmed",

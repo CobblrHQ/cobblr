@@ -225,6 +225,7 @@ for (const file of [...TOURS, LIB]) {
 // DOM before adding a row here; a wrong entry costs a take.)
 const NOT_SELECTS: Array<{ re: RegExp; what: string }> = [
   { re: /getByLabel\(\/kind\/i\)\s*\.selectOption/, what: "the location modal's KIND control is two <button>s, not a dropdown" },
+  { re: /getByLabel\(\/parent\/i\)\s*\.selectOption/, what: "the location modal's PARENT control is the LocationTreePicker (a role=button that opens a panel), not a dropdown" },
 ];
 for (const file of TOURS) {
   let src: string;

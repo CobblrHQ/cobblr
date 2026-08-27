@@ -1141,6 +1141,38 @@ meRouter.post("/me/api-tokens", requireAuth, async (req, res, next) => {
     }
     const { plaintext, hash, tokenPrefix } = mintTokenString();
     const cleanScopes = parsed.data.scopes ? sanitizeScopes(parsed.data.scopes) : [];
+
+    // Asking for a scope this build does not know must FAIL, not quietly mint a
+    // weaker token. sanitizeScopes drops unknown keys by design (typos, removed
+    // scopes), and dropping them silently means the caller walks away holding a
+    // credential that looks like what they asked for and is not — discovered
+    // later as a 403 from whatever the missing scope was for.
+    //
+    // And a downgrade is the MILD case. If every requested scope is unknown,
+    // sanitize returns [], resolveApiToken maps an empty array to null
+    // (api-tokens.ts), and requireAuth's clamp is `if (tokenScopes && ...)` —
+    // so the token is not clamped at all, while still carrying the user's full
+    // identity including is_platform_admin. Asking for a scope this build has
+    // never heard of therefore minted an UNRESTRICTED token, which is the
+    // opposite of what the caller was reaching for.
+    //
+    // The realistic way in is not a typo. It is a deploy lag: the scope exists
+    // in `main`, the instance runs an older build, and the mint "succeeds".
+    const requested = parsed.data.scopes ?? [];
+    const unknown = requested.filter((r) => !cleanScopes.includes(r));
+    if (unknown.length > 0) {
+      res.status(400).json({
+        error: {
+          code: "unknown_scope",
+          message:
+            `This build does not recognise: ${unknown.join(", ")}. ` +
+            "Either the name is wrong, or this instance is older than the scope. " +
+            "No token was created.",
+          details: { unknown, granted: cleanScopes },
+        },
+      });
+      return;
+    }
     const inserted = await meta
       .insertInto("api_tokens")
       .values({

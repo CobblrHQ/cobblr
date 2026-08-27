@@ -66,16 +66,70 @@ export type AgentLoopOutcome =
   | { kind: "writes"; calls: ToolCall[]; text: string; applied: AppliedWrite[] };
 
 const DEFAULT_MAX_ROUNDS = 5;
-const DEFAULT_MAX_RESULT_CHARS = 4000;
+// 4000 held about nine of fourteen seeded machines; a real record carries
+// more text than a seed. 12000 chars is roughly 3k tokens against a system
+// prompt that already costs ~15k, and a list is trimmed by whole records
+// with the truth first either way (clampJson).
+const DEFAULT_MAX_RESULT_CHARS = 12000;
 
+/**
+ * Fit a tool result into the model's budget WITHOUT lying about what it holds.
+ *
+ * The old clamp cut the JSON string at maxChars, mid-array, and appended
+ * "…[truncated]". For a list, that put the truncation notice at the END —
+ * the one place the model does not read carefully — and it put any `note`
+ * ("showing the first 20, there may be more") after the cut, so it was gone.
+ * Asked which printer model she had the most of, a workspace with eight
+ * RailCores and three Cubes was told "Cube": the model saw the handful of
+ * records that fit in 4000 chars and answered as if they were the whole set.
+ * "How many Bambus?" — "None." (2026-08-27, reproduced).
+ *
+ * So a result with an `items` array is trimmed by WHOLE items, and the truth
+ * about the trim goes FIRST: how many are shown of how many there are, and
+ * that counting or concluding "none" from this is not allowed. Anything else
+ * falls back to the string cut, but with the notice at the front.
+ */
 export function clampJson(value: unknown, maxChars: number): string {
-  let s: string;
-  try {
-    s = JSON.stringify(value) ?? "null";
-  } catch {
-    s = String(value);
+  const str = (v: unknown): string => {
+    try {
+      return JSON.stringify(v) ?? "null";
+    } catch {
+      return String(v);
+    }
+  };
+  const whole = str(value);
+  if (whole.length <= maxChars) return whole;
+
+  const data = (value as { data?: unknown } | null)?.data;
+  const holder = data && typeof data === "object" ? (data as Record<string, unknown>) : null;
+  const items = holder && Array.isArray(holder.items) ? (holder.items as unknown[]) : null;
+  if (holder && items && items.length > 0) {
+    const total = typeof holder.total === "number" ? holder.total : items.length;
+    // Keep dropping whole items from the end until it fits, then say so at
+    // the top, where the model reads first.
+    let keep = items.length;
+    let out = "";
+    while (keep > 0) {
+      const partial = {
+        ok: (value as { ok?: unknown }).ok,
+        PARTIAL: `showing ${keep} of ${total} records. This is NOT the whole set: do not count, rank, or say "none" from it. Narrow with q, or use count_records for totals by field.`,
+        data: { ...holder, items: items.slice(0, keep), shown: keep, total },
+      };
+      out = str(partial);
+      if (out.length <= maxChars) return out;
+      keep = Math.floor(keep * 0.7);
+    }
   }
-  return s.length <= maxChars ? s : `${s.slice(0, maxChars)}…[truncated ${s.length - maxChars} chars]`;
+  // Not a list (or a list too big for even one record): a string cut, with
+  // the truncated notice FIRST and the budget honoured whatever it is.
+  const head = `{"PARTIAL":"truncated ${whole.length} to ${maxChars} chars; incomplete, do not count from it","cut":`;
+  let room = Math.max(0, maxChars - head.length - 1);
+  let cut = JSON.stringify(whole.slice(0, room));
+  while (cut.length > room + 1 && room > 0) {
+    room = Math.floor(room * 0.8);
+    cut = JSON.stringify(whole.slice(0, room));
+  }
+  return `${head}${cut}}`;
 }
 
 export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Promise<AgentLoopOutcome> {

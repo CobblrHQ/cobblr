@@ -8,7 +8,6 @@
 
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
-import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext, sessionUserId, loadEvents } from "../db.js";
 import { cadenceTick } from "../sweeper.js";
 import {
@@ -18,6 +17,7 @@ import {
   classifyRepurchase,
 } from "../model.js";
 import { requireRole } from "./util.js";
+import { recordCadenceEvent, RecordBody } from "../record.js";
 import { registerCadenceActionHandlers } from "./action-handlers.js";
 
 // Side effect on import: the record-event action handler.
@@ -25,17 +25,7 @@ registerCadenceActionHandlers();
 
 const router = Router({ mergeParams: true });
 
-const RecordBody = z.object({
-  entity_kind: z.string().min(1).max(120),
-  entity_id: z.string().uuid(),
-  event_type: z.enum(["purchase", "consume", "adjust", "discard"]),
-  qty_delta: z.number().finite(),
-  context: z.enum(["normal", "one_off", "bulk", "faster"]).optional(),
-  source: z.enum(["scan", "list", "manual", "wire", "checkin"]).optional(),
-  unit_price: z.number().nonnegative().nullable().optional(),
-  /** ISO date. Defaults to now; a receipt should pass its OWN date. */
-  occurred_at: z.string().datetime().optional(),
-});
+
 
 // AI-REACH: action core-cadence:record-event — the same append, exposed as an
 // action so Ask Cobb / MCP / wires drive it without speaking this HTTP shape.
@@ -52,37 +42,9 @@ router.post("/events", async (req: Request, res: Response, next) => {
       return;
     }
     const b = parsed.data;
-    // NORMALISE THE KIND ON WRITE, once, here.
-    //
-    // Callers hold the PRESENTATION kind: "inventory:part" for a module's
-    // default instance but "<instance>:item" for a skinned one ("tea:item").
-    // core-scan passes whatever kind the commit targeted, the bundle wires pass
-    // the wire's source_kind, and those are not the same string for the same
-    // item — so one tea ended up with a ledger under two identities, four rows
-    // under one and one row under the other. Every reader then got a different
-    // answer depending on which it asked for, and none of them got the truth.
-    //
-    // Fixing the readers means every future reader has to remember. Fixing the
-    // writers means every future writer has to. There is one insert, so the
-    // ledger is normalised here and holds exactly one kind per entity.
-    const entityKind = await platform()
-      .entities.baseKindOf(tenantContext(req).org.id, b.entity_kind)
-      .catch(() => b.entity_kind);
-    const row = await tenantDb(req)
-      .insertInto("core_cadence_events")
-      .values({
-        entity_kind: entityKind,
-        entity_id: b.entity_id,
-        event_type: b.event_type,
-        qty_delta: b.qty_delta,
-        context: b.context ?? "normal",
-        source: b.source ?? "manual",
-        unit_price: b.unit_price ?? null,
-        ...(b.occurred_at ? { occurred_at: new Date(b.occurred_at) } : {}),
-        user_id: sessionUserId(req),
-      })
-      .returning(["id", "occurred_at"])
-      .executeTakeFirstOrThrow();
+    // The write itself lives in ../record.js so the event subscriber and this
+    // route cannot drift. Role already checked above.
+    const row = await recordCadenceEvent(tenantDb(req), tenantContext(req).org.id, sessionUserId(req), b);
     res.status(201).json(row);
   } catch (err) {
     next(err);

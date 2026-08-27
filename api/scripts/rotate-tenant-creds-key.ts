@@ -71,6 +71,15 @@ async function main() {
   const newKey = keyFrom(newPass);
 
   const pool = new Pool({ connectionString: dbUrl });
+  // Same reason as the restore script, and it matters more here: this rewrites
+  // db_credentials_encrypted for every org. Dying on an unhandled pool 'error'
+  // mid-rotation gives a raw stack instead of a legible failure, on the one
+  // operation where knowing exactly where it stopped is the whole ballgame.
+  // (Phase 1 verifies every row before any write, so a failure here is safe —
+  // but it must be READABLE.)
+  pool.on("error", (err) => {
+    console.error("[rotate-key] database connection error:", (err as Error).message);
+  });
   const { rows } = await pool.query<{ id: string; slug: string; db_credentials_encrypted: string | null }>(
     "select id, slug, db_credentials_encrypted from orgs order by created_at",
   );

@@ -29,3 +29,4 @@ export {
   type KindRec,
 } from "./kinds.js";
 export { jsonSchemaOf } from "./schema.js";
+export { pageWithTruth } from "./tools.js";

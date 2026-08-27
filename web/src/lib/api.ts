@@ -4900,6 +4900,8 @@ export interface SyncRunResult {
   linked: number;
   tombstoned: number;
   total: number;
+  /** Source tags that could not be attached (counted, never swallowed). */
+  tagsFailed?: number;
 }
 
 // An import preview — what a reconcile WOULD do, computed without writing.

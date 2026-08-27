@@ -2,6 +2,26 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-08-27
+
+### Features
+- One-click "Import from Part-DB (live)." Under Configuration → Integrations → *Migrate in from another app*, a new Part-DB card imports an electronic-component inventory in one step: paste your Part-DB address and an API token, and it brings your storage-location tree, your categories, and your parts across (name, description, stock total, minimum, manufacturer and part number, unit, supplier link, with the rest of each part's Part-DB record kept in its details). A part that Part-DB stocks in more than one place lands at its first lot's location, and the import summary tells you how many parts that applied to. When it is done it asks whether to keep it synced or import just this once; either way the connection is saved under Live sync. A Part-DB on your local network is reached through your workspace's edge bridge.
+
+### Improvements
+- A message that arrives in the open Discussion tab now lights up amber with a "new" tag for a few seconds and the tab scrolls to it, so a reply is noticed without a notification. The message box's hint text no longer gets cut off on a phone after sending. A reply typed into a Discord notification card now shows inside the card, under the message it answers, with the time.
+- Chat now describes your workspace's actions more compactly and lets the assistant look up the details of the one it needs, instead of spelling out every action's arguments and phrasings on every message. On a workspace with many actions that is about a third of the text each message used to carry, which is part of what pushed free AI plans into their per minute limit after a few questions. Measured over 33 requests: it picks the same actions it did before.
+- The Part-DB live import now brings each part's master picture across as its photo. A sync source's API token is sent only to the source's own host when fetching pictures; an image that lives on a third-party site is fetched without it.
+- A sync-source manifest can now read a foreign key that the source sends as a link. Writing `$.parent|last` takes the last segment of a value like `/api/storage_locations/1`, so an API that expresses relations as URLs (API Platform, Django REST hyperlinked serializers, JSON:API) can feed the engine's parent and cross-section references without a code change. A manifest that misspells the operator is rejected when it is saved rather than silently importing a flat tree.
+- A live sync source can now turn the tags on a mirrored record into Cobblr tags. Homebox labels and Part-DB tags become real tags on the imported part (attached by name, created if missing, never removed), instead of riding along unseen in the item's details. If a tag cannot be attached the import result counts it rather than dropping it quietly.
+
+### Fixes
+- Ask Cobb "how many X do I have" or "which model do I have most of" and the answer is now counted in code, exact, instead of read off a partial list. A long list tells the assistant up front that it is partial, so it no longer says "none" about something further down the page. And when your AI provider is rate-limited or down, chat shows one plain sentence (with how long to wait) instead of a page of raw error text. Searching your records for a word now looks at every text field (brand, notes, custom fields), not just the name, so "how many Bambus?" finds the printer whose brand is Bambu.
+- A bundle whose automation runs an action from a module that has no records of its own (a discussion comment, say) now lists that module as required, so it installs instead of failing validation.
+- A stock event recorded by a wire or by Ask Cobb is now filed under the same identity as one recorded by a scan, so an item skinned by a bundle keeps a single consumption history instead of two partial ones that each answered differently.
+- Customising a starter template works end to end again. Pasting your own manifest back into a customised template returned an error instead of checking it, so that flow could not be finished.
+- A long item name on a phone (a yarn called "Red Heart Super Saver - Country Blue", say) no longer pushes its card past the screen edge and scrolls the whole list sideways. The name wraps to two lines inside the card, and the same fix in the shared editable-cell wrapper covers every list that uses it.
+- A photo attached when you add quantity to an item you already have now shows up in that item's gallery. It was being filed under a malformed type, so the gallery never listed it even though the thumbnail changed.
+
 ## 2026-08-26
 
 ### Features

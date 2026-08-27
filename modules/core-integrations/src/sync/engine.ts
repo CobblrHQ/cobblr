@@ -47,6 +47,9 @@ export interface ReconcileResult {
   linked: number;
   tombstoned: number;
   total: number;
+  /** Tags the source carried that could not be attached. Counted, never
+   *  swallowed, so the numbers above are not a lie about what came across. */
+  tagsFailed: number;
 }
 
 /** Normalised key for the import name-merge. Case-insensitive and
@@ -111,6 +114,7 @@ function hashRecord(
   references?: SyncRecord["references"],
   targetInstance?: string | null,
   images?: SyncRecord["images"],
+  tags?: SyncRecord["tags"],
 ): string {
   return createHash("sha1")
     .update(
@@ -121,6 +125,7 @@ function hashRecord(
         references: references ?? null,
         targetInstance: targetInstance ?? null,
         images: images ?? null,
+        tags: tags ?? null,
       }),
     )
     .digest("hex");
@@ -233,7 +238,7 @@ async function upsertOne(
    *  ADOPTED into that existing entity instead of creating a duplicate. Consumed
    *  on use so two source rows can't both claim the same target. */
   linkByName?: Map<string, { id: string; name: string }>,
-): Promise<"created" | "updated" | "linked" | "noop"> {
+): Promise<{ action: "created" | "updated" | "linked" | "noop"; tagsFailed: number }> {
   const writer = platform().entities.getWriter(type.targetKind);
   if (!writer) throw new Error(`sync: no entity writer registered for ${type.targetKind}`);
 
@@ -241,7 +246,7 @@ async function upsertOne(
   // Instance precedence: per-record instanceBy routing → the user's per-connection
   // target choice → the manifest's static default.
   const instance = record.instance ?? ref.targetInstances?.[type.key] ?? type.targetInstance ?? null;
-  const hash = hashRecord(type.targetKind, parentCobblrId, record.fields, record.references, instance, record.images);
+  const hash = hashRecord(type.targetKind, parentCobblrId, record.fields, record.references, instance, record.images, record.tags);
 
   const existing = await db
     .selectFrom("core_integrations_synced_records")
@@ -253,7 +258,7 @@ async function upsertOne(
 
   // Unchanged source → no-op BEFORE any image fetch: pulling an image is a
   // network round-trip through the bridge, only worth it when actually writing.
-  if (existing && !existing.deleted_at && existing.source_hash === hash) return "noop";
+  if (existing && !existing.deleted_at && existing.source_hash === hash) return { action: "noop", tagsFailed: 0 };
 
   // We're writing — resolve references + pull any images now (once per change).
   const { fields: imageFields, missing: missingImages } = await resolveImages(ref, type, record);
@@ -276,7 +281,7 @@ async function upsertOne(
       .set({ source_hash: storedHash, target_kind: type.targetKind, updated_at: new Date() })
       .where("id", "=", existing.id)
       .execute();
-    return "updated";
+    return { action: "updated", tagsFailed: await attachTags(ref.orgId, type.targetKind, existing.cobblr_entity_id, record.tags) };
   }
 
   // Import merge: an unmapped record whose name matches an existing entity →
@@ -298,7 +303,7 @@ async function upsertOne(
           source_hash: storedHash,
         })
         .execute();
-      return "linked";
+      return { action: "linked", tagsFailed: await attachTags(ref.orgId, type.targetKind, matched.id, record.tags) };
     }
   }
 
@@ -329,7 +334,24 @@ async function upsertOne(
       })
       .execute();
   }
-  return "created";
+  return { action: "created", tagsFailed: await attachTags(ref.orgId, type.targetKind, cobblrId, record.tags) };
+}
+
+/** Attach the record's tags to the mirrored entity. A failure is COUNTED, never
+ *  swallowed: the Homebox CSV importer once reported a clean import while its
+ *  tag attaches had silently failed, and the number it printed was a lie. */
+async function attachTags(orgId: string, targetKind: string, id: string, tags: string[] | undefined): Promise<number> {
+  if (!tags?.length) return 0;
+  let failed = 0;
+  for (const tagName of tags) {
+    try {
+      await platform().tags.attach({ orgId, tagName, target: { kind: targetKind, id } });
+    } catch (err) {
+      failed += 1;
+      console.warn(`[sync] tag "${tagName}" not attached to ${targetKind}/${id}:`, (err as Error).message);
+    }
+  }
+  return failed;
 }
 
 /** Tombstone one external id: delete the mirror + mark the map row. */
@@ -404,11 +426,13 @@ export async function runReconcile(
   let created = 0;
   let updated = 0;
   let linked = 0;
+  let tagsFailed = 0;
   for (const r of ordered) {
     const res = await upsertOne(db, ref, type, r, linkByName);
-    if (res === "created") created++;
-    else if (res === "updated") updated++;
-    else if (res === "linked") linked++;
+    tagsFailed += res.tagsFailed;
+    if (res.action === "created") created++;
+    else if (res.action === "updated") updated++;
+    else if (res.action === "linked") linked++;
   }
   // Delete-detection: a mapped, non-tombstoned id that's gone from the source.
   const present = new Set(records.map((r) => r.externalId));
@@ -425,7 +449,7 @@ export async function runReconcile(
       tombstoned++;
     }
   }
-  return { created, updated, linked, tombstoned, total: records.length };
+  return { created, updated, linked, tombstoned, total: records.length, tagsFailed };
 }
 
 /** Dry run: what runReconcile WOULD do, computed without a single write — the
@@ -467,7 +491,7 @@ export async function planReconcile(
   for (const r of ordered) {
     const name = String(r.fields.name ?? r.externalId);
     const parentCobblrId = await resolveParent(db, ref, type.key, r.parentExternalId);
-    const hash = hashRecord(type.targetKind, parentCobblrId, r.fields, r.references, r.instance ?? ref.targetInstances?.[type.key] ?? type.targetInstance, r.images);
+    const hash = hashRecord(type.targetKind, parentCobblrId, r.fields, r.references, r.instance ?? ref.targetInstances?.[type.key] ?? type.targetInstance, r.images, r.tags);
     // Show the resolved cross-section references in the preview (e.g. location_id
     // → the mirrored Cobblr id, or null if that section isn't imported yet).
     const fields = { ...r.fields, ...(await resolveReferences(db, ref, r)) };

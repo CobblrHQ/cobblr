@@ -9,6 +9,7 @@
 import { platform, requireActionEntity } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { CoreCadenceDB } from "../db.js";
+import { recordCadenceEvent } from "../record.js";
 
 let registered = false;
 
@@ -46,22 +47,24 @@ export function registerCadenceActionHandlers(): void {
         : new Date();
 
     const price = Number(args.unit_price);
+    // Through the SAME write as the route and the event subscriber. This used
+    // to insert directly and pass entity.kind straight through, skipping the
+    // baseKindOf normalisation the route does - so a wire or an AI invocation
+    // filed a skinned instance ("tea:item") under a different identity than a
+    // scan of the same item ("inventory:part"), which is precisely the split
+    // ledger the route's comment describes. One tea, two histories, and every
+    // reader got whichever half it happened to ask for.
     const db = (await platform().tenants.getDb(ctx.orgId)) as unknown as Kysely<CoreCadenceDB>;
-    const row = await db
-      .insertInto("core_cadence_events")
-      .values({
-        entity_kind: entity.kind,
-        entity_id: entity.id,
-        event_type: eventType as "purchase" | "consume" | "adjust" | "discard",
-        qty_delta: qtyDelta,
-        context: context as "normal" | "one_off" | "bulk" | "faster",
-        source: source as "scan" | "list" | "manual" | "wire" | "checkin",
-        unit_price: Number.isFinite(price) ? price : null,
-        occurred_at: occurredAt,
-        user_id: ctx.userId ?? null,
-      })
-      .returning(["id"])
-      .executeTakeFirstOrThrow();
+    const row = await recordCadenceEvent(db, ctx.orgId, ctx.userId ?? null, {
+      entity_kind: entity.kind,
+      entity_id: entity.id,
+      event_type: eventType as "purchase" | "consume" | "adjust" | "discard",
+      qty_delta: qtyDelta,
+      context: context as "normal" | "one_off" | "bulk" | "faster",
+      source: source as "scan" | "list" | "manual" | "wire" | "checkin",
+      unit_price: Number.isFinite(price) ? price : null,
+      occurred_at: occurredAt.toISOString(),
+    });
 
     return { ok: true, event_id: row.id, recorded: eventType, qty_delta: qtyDelta };
   });

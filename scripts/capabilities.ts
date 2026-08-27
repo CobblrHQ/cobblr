@@ -64,6 +64,21 @@ export interface VocabularyCapability extends Base {
 
 export const CAPABILITIES: Capability[] = [
   {
+    kind: "owns",
+    id: "cadence:ledger-write",
+    what: "appending a fact to the cadence ledger, including the baseKindOf normalisation on write",
+    why:
+      "three doors wrote core_cadence_events and only one normalised the kind. The HTTP route called baseKindOf; the " +
+      "record-event action handler inserted entity.kind raw, so a wire or an AI invocation filed a skinned instance " +
+      "('tea:item') under a different identity than a scan of the same item ('inventory:part') - one item, two histories, " +
+      "and every reader got whichever half it asked for. That is the exact split ledger the route's own comment was " +
+      "written to prevent, reintroduced through a door added later (found 2026-08-27). A fourth door would do it again",
+    owner: "modules/core-cadence/src/record.ts",
+    scope: ["modules/core-cadence/src/api/index.ts", "modules/core-cadence/src/api/action-handlers.ts"],
+    detect: /insertInto\(\s*["'`]core_cadence_events["'`]\s*\)/,
+    use: "recordCadenceEvent(orgId, userId, observation) from core-cadence's record.ts",
+  },
+  {
     id: "authoring:post-model-pipeline",
     kind: "owns",
     what: "parse → unwrap → lean natives → corroborate, on a model's bundle reply",

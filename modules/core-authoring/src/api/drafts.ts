@@ -561,7 +561,9 @@ draftsRouter.post(
     const db = tenantDb(req);
     const draft = await db
       .selectFrom("core_authoring_drafts")
-      .select(["id", "task", "intent"])
+      // base_template_id too: a customize-template draft cannot rebuild its
+      // context without it, and assembleContext throws when it is missing.
+      .select(["id", "task", "intent", "base_template_id"])
       .where("id", "=", req.params.id!)
       .executeTakeFirst();
     if (!draft) {
@@ -573,7 +575,24 @@ draftsRouter.post(
     // route used to unwrap by hand, which was a door around the corroboration
     // layer — the class lint:capabilities now closes.
     const tc = tenantContext(req);
-    const ctx = await assembleContext(tc.org.id, undefined, draft.task, undefined, tc.role);
+    // Carry the draft's base template through. Without it a customize-template
+    // draft threw 'requires a base_template_id' — surfaced as a 500 — so pasting
+    // your own manifest back into a customized template never validated.
+    let ctx;
+    try {
+      ctx = await assembleContext(
+        tc.org.id,
+        undefined,
+        draft.task,
+        draft.base_template_id ?? undefined,
+        tc.role,
+      );
+    } catch (e) {
+      // A knowable condition (unknown/removed template), not an internal fault —
+      // the sibling refine route already answers bad_task the same way.
+      res.status(400).json({ error: { code: "bad_task", message: e instanceof Error ? e.message : String(e) } });
+      return;
+    }
     const shaped = shapeCandidate(JSON.stringify(parsed.data.manifest), draft.task, {
       intent: draft.intent ?? "",
       kinds: kindFieldsOf(ctx),
