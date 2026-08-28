@@ -39,6 +39,7 @@
 // pure helpers + the injected-deps orchestration stay import-clean.
 
 import type { AuthEmailMessage } from "@cobblr/platform-contract";
+import { runExclusive } from "./exclusive.js";
 
 export type ReapMode = "off" | "dry" | "live";
 
@@ -319,8 +320,15 @@ export function startTrialReaper(): void {
   const intervalMs = reapIntervalMs();
   const graceDays = reapGraceDays();
   const warnDays = reapWarnDays();
+  // One process only. This one DELETES workspaces, and it emails the warning
+  // that precedes the delete; two apis against one database (the canary
+  // channel; a rolling deploy) would race the reap and could send the warning
+  // twice. The per-org `trial_expiry_warned_at` guard makes the email
+  // idempotent even so, but a destructive sweep should not be racing at all.
   const run = () =>
-    reapExpiredTrials().catch((err) => console.error("[reap-trials] sweep failed:", (err as Error).message));
+    runExclusive("platform.reap-trials", async () => {
+      await reapExpiredTrials();
+    }).catch((err) => console.error("[reap-trials] sweep failed:", (err as Error).message));
   void run(); // initial pass at boot
   timer = setInterval(run, intervalMs);
   console.log(

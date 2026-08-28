@@ -51,6 +51,10 @@ BANNER
     else
       echo "caddy-entrypoint: tsnet node '$COBBLR_TSNET_NAME' for $COBBLR_SITE_ADDRESS (auth key)"
     fi
+    # A certificate that never arrives is otherwise silent: Caddy keeps serving,
+    # nothing logs it, and the only symptom is the browser aborting the
+    # handshake. Watch for it in the background and say what to check.
+    /usr/local/bin/tsnet-cert-watchdog.sh "$COBBLR_TSNET_NAME" "$COBBLR_SITE_ADDRESS" &
   fi
 
   # The ACME variants carry `email {$COBBLR_ACME_EMAIL}` as an OPTIONAL contact

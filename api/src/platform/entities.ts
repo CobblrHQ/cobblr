@@ -168,6 +168,35 @@ const exposableFieldsCache = new Map<string, string[] | null>();
 // exposable-fields cache. Null = no per-field gating for the kind.
 const fieldReadScopesCache = new Map<string, Record<string, string> | null>();
 
+// The modules a workspace has enabled, memoised briefly. Enablement CHANGES at
+// runtime (enable/disable a module), so unlike the whitelist caches above this
+// one must expire rather than live until restart.
+const enabledModulesCache = new Map<string, { at: number; names: Set<string> }>();
+const ENABLED_MODULES_TTL_MS = 30_000;
+
+/** Has `orgId` enabled `moduleName`? Presence of an `org_modules` row is the
+ *  signal - there is no enabled flag, disabling deletes the row.
+ *
+ *  Fails OPEN: meta being unreachable is not the same as "nothing is enabled",
+ *  and answering "disabled" on a blip would make every list silently empty. */
+async function moduleEnabledForOrg(orgId: string, moduleName: string): Promise<boolean> {
+  const hit = enabledModulesCache.get(orgId);
+  const now = Date.now();
+  if (hit && now - hit.at < ENABLED_MODULES_TTL_MS) return hit.names.has(moduleName);
+  try {
+    const rows = await meta
+      .selectFrom("org_modules")
+      .select("module_name")
+      .where("org_id", "=", orgId)
+      .execute();
+    const names = new Set(rows.map((r) => r.module_name));
+    enabledModulesCache.set(orgId, { at: now, names });
+    return names.has(moduleName);
+  } catch {
+    return true;
+  }
+}
+
 // One-time deprecation warning per kind that's still on the legacy
 // (null) whitelist. Avoids log spam on hot paths.
 const legacyWarnedKinds = new Set<string>();
@@ -349,6 +378,15 @@ export function registerListResolver(
   resolver: EntityListResolver,
 ): void {
   listResolvers.set(kind, resolver);
+}
+
+/** Forget which modules a workspace has enabled. Called the moment enablement
+ *  changes, so a module someone just switched on is visible on the very next
+ *  read rather than after the TTL - a list that stays empty for thirty seconds
+ *  after you enable it would be a worse bug than the one the cache prevents. */
+export function clearEnabledModulesCache(orgId?: string): void {
+  if (orgId) enabledModulesCache.delete(orgId);
+  else enabledModulesCache.clear();
 }
 
 /** Clear the per-process exposable-fields cache. Called at the end
@@ -723,6 +761,16 @@ export async function list(
   const publicRead = viewer?.publicRead === true;
   const resolver = listResolvers.get(kind) ?? (await instanceFallbackResolver(orgId, kind));
   if (!resolver) return { items: [] };
+  // A kind whose module this workspace never enabled has no tables in that
+  // tenant, so calling its resolver can only raise `relation "<x>" does not
+  // exist`. listKindsForOrg already filters the kind LISTING for this reason
+  // (2026-08-08), but callers that enumerate the process-global registry
+  // instead - core-scan's findTracked walks `listScannable()` - arrive here
+  // directly and were still probing every disabled kind on every scan.
+  // Guarding the chokepoint covers them and anyone who shows up next.
+  // Instance kinds are already org-scoped by instanceFallbackResolver.
+  const baseModule = listResolvers.has(kind) ? kind.split(":")[0] : undefined;
+  if (baseModule && !(await moduleEnabledForOrg(orgId, baseModule))) return { items: [] };
   const whitelist = await getExposableFields(kind);
   const fieldReadScopes = await getFieldReadScopes(kind, orgId);
   // Resolve the viewer's field-read access ONLY when the kind actually

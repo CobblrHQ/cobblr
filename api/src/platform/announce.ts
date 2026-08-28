@@ -12,6 +12,7 @@
 import { meta } from "../db/meta.js";
 import { read as readFile } from "./files.js";
 import { announceWebhookUrl } from "./announce-url.js";
+import { routeForGuild } from "./announce-routes.js";
 
 /** Known announcement categories + their human labels (for the config UI).
  *  Adding a category here makes it appear in the super-admin toggle list;
@@ -47,6 +48,12 @@ export interface AnnouncePayload {
   images?: Array<{ orgId: string; fileId: string; name?: string }>;
   /** Decimal embed color. */
   color?: number;
+  /** The Discord guild this event came FROM, when it came from Discord at all.
+   *  Feedback raised in a chat server surfaces in that server; anything with no
+   *  origin (the in-app form) takes the default sink, because it carries the
+   *  reporter's workspace and email address and a community server is a
+   *  different audience from an ops one. See announce-routes.ts. */
+  originGuildId?: string | null;
 }
 
 function defaultWebhook(): string {
@@ -90,7 +97,10 @@ export async function logAnnounceRouting(): Promise<void> {
 
 /** Resolve a category's effective settings, applying registry defaults for any
  *  category the admin hasn't touched yet. */
-async function settingsFor(category: string): Promise<{ enabled: boolean; webhook: string }> {
+async function settingsFor(
+  category: string,
+  originGuildId?: string | null,
+): Promise<{ enabled: boolean; webhook: string }> {
   const row = await meta
     .selectFrom("platform_announce_settings")
     .select(["enabled", "webhook_url"])
@@ -98,7 +108,10 @@ async function settingsFor(category: string): Promise<{ enabled: boolean; webhoo
     .executeTakeFirst();
   const known = KNOWN.get(category);
   const enabled = row ? row.enabled : (known?.defaultEnabled ?? false);
-  const webhook = (row?.webhook_url || defaultWebhook()).trim();
+  // Origin wins over the per-category webhook: the category says WHAT this is,
+  // the origin says WHOSE it is, and "whose" is the privacy-relevant half.
+  const routed = routeForGuild(originGuildId, process.env.COBBLR_FEEDBACK_DISCORD_ROUTES);
+  const webhook = (routed || row?.webhook_url || defaultWebhook()).trim();
   return { enabled, webhook };
 }
 
@@ -119,7 +132,7 @@ const MISS: AnnounceResult = { delivered: false, messageId: null, channelId: nul
 async function deliver(category: string, payload: AnnouncePayload, opts?: { wait?: boolean }): Promise<AnnounceResult> {
   let cfg: { enabled: boolean; webhook: string };
   try {
-    cfg = await settingsFor(category);
+    cfg = await settingsFor(category, payload.originGuildId);
   } catch (err) {
     console.error(`[announce] settings lookup failed for ${category}:`, err);
     return MISS;

@@ -97,7 +97,7 @@ feedbackInboundRouter.post("/feedback/append-email", async (req, res, next) => {
 });
 
 const SubmitFeedback = z.object({
-  type: z.enum(["bug", "confusing", "idea", "other"]).default("bug"),
+  type: z.enum(["bug", "confusing", "idea", "use_case", "other"]).default("bug"),
   message: z.string().trim().min(1).max(5000),
   // best-effort: the workspace slug the user was in → resolved to org_id
   workspace_slug: z.string().max(255).optional(),

@@ -260,7 +260,9 @@ export const setFocused = (slug: string, focused: boolean) =>
 /** A feedback item as the REPORTER sees it (no internal triage fields). */
 export interface MyFeedbackItem {
   id: string;
-  type: "bug" | "confusing" | "idea" | "other";
+  type: "bug" | "confusing" | "idea" | "use_case" | "other";
+  /** Which chat server a discord-origin report came from, when configured. */
+  origin_label?: string | null;
   message: string;
   status: string;
   created_at: string;
@@ -805,7 +807,7 @@ export const api = {
       modules: string[];
     }>("GET", `/orgs/${slug}/diagnostics`),
   submitFeedback: (body: {
-    type: "bug" | "confusing" | "idea" | "other";
+    type: "bug" | "confusing" | "idea" | "use_case" | "other";
     message: string;
     workspace_slug?: string;
     context?: Record<string, unknown>;

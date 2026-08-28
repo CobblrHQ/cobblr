@@ -98,8 +98,23 @@ function pinnedAgent(pin: Pin): Agent {
     connect: {
       // SNI/Host stay the original hostname (TLS still verifies); only the IP
       // the socket dials is forced to the validated one.
-      lookup: (_hostname, _opts, cb) =>
-        (cb as (e: Error | null, a: string, f: number) => void)(null, pin.address, pin.family),
+      //
+      // A custom lookup has TWO answer shapes, and undici's connector asks for
+      // the second: it passes `{ all: true }`, and Node then reads
+      // `addresses[0].address`. Answering the single-address way hands it
+      // `undefined`, the connect dies with "Invalid IP address: undefined", and
+      // EVERY pinned fetch in the product fails at the socket — webhooks, sync
+      // connectors, sandboxed module fetch, catalog image downloads. Answer in
+      // whichever shape was asked for.
+      lookup: (_hostname, opts, cb) => {
+        if ((opts as { all?: boolean } | undefined)?.all) {
+          (cb as unknown as (e: Error | null, a: Pin[]) => void)(null, [
+            { address: pin.address, family: pin.family },
+          ]);
+          return;
+        }
+        (cb as (e: Error | null, a: string, f: number) => void)(null, pin.address, pin.family);
+      },
     },
   });
 }

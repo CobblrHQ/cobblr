@@ -5,7 +5,12 @@
 # are on the tailnet.
 #
 # Requires in .env:
-#   COBBLR_SITE_ADDRESS = cobblr.tail1234.ts.net   (your tailnet's name)
+#   COBBLR_SITE_ADDRESS = cobblr.<your-tailnet>.ts.net
+#     MUST be a name this node owns, tailnet included. Only the first label is
+#     used to register, so a wrong tailnet still joins and still reports
+#     Connected while no cert is ever issued, and the browser fails with
+#     SSL_ERROR_INTERNAL_ERROR_ALERT. Read the tailnet from the admin console's
+#     DNS page rather than copying the shape of an example.
 #   TS_AUTHKEY          = tskey-auth-...           (OPTIONAL, see below)
 #
 # Joining the tailnet, two ways:

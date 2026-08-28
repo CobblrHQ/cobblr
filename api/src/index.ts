@@ -24,6 +24,7 @@ import { env } from "./env.js";
 import { meta, metaPool, pingMeta } from "./db/meta.js";
 import { runMigrations } from "./db/migrate.js";
 import { getTenantDb, releaseIdleTenantPool, withTenantDbForSweep } from "./db/tenant.js";
+import { runExclusive } from "./platform/exclusive.js";
 import { bakeTestOrgPool, poolEnabled } from "./db/test-org-pool.js";
 import { signAppToken, signSession } from "./auth/jwt.js";
 import { loadAllModules } from "./modules/loader.js";
@@ -284,6 +285,7 @@ async function boot() {
       registerWorker: queue.registerWorker,
       hasPendingJob: queue.hasPendingJob,
     },
+    exclusive: { run: runExclusive },
     sharedCache: {
       get: sharedCache.get,
       put: sharedCache.put,

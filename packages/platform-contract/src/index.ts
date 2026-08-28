@@ -4089,6 +4089,25 @@ export type FileAttachmentLister = (
   source: { source_module: string; source_type: string; source_id: string },
 ) => Promise<FileAttachmentRow[]>;
 
+/** One owner per named job, across every api process sharing this database.
+ *
+ *  A module's periodic loop is started by EVERY api process, and this platform
+ *  now runs more than one against a single database (the canary channel; a
+ *  rolling deploy). An unguarded loop therefore does its side effects twice on
+ *  real user data - which is how one workspace's printer posted its progress
+ *  to Discord twice, every time, for weeks (2026-08-29).
+ *
+ *  `run` returns true when THIS process did the work and false when another
+ *  process held the job. A false is the normal outcome, never an error.
+ *
+ *  It prevents CONCURRENT runs, which is not the same as "runs once": the
+ *  loser's next tick may find the job free. Work that must not repeat has to
+ *  claim what it acts on (compare-and-set the row, delete the bucket) inside
+ *  the callback. */
+export interface PlatformExclusive {
+  run(name: string, work: () => Promise<void>): Promise<boolean>;
+}
+
 /** Server-side access to stored file bytes, brokered so a module never
  *  imports core-files or touches its on-disk layout. core-files
  *  registers the reader at boot; everyone else just calls read(). */
@@ -4520,6 +4539,7 @@ export interface Platform {
   recurrence: PlatformRecurrence;
   calendar: PlatformCalendar;
   queue: PlatformQueue;
+  exclusive: PlatformExclusive;
   sharedCache: PlatformSharedCache;
   notifications: PlatformNotifications;
   integrations: PlatformIntegrations;

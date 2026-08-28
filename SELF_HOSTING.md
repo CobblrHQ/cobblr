@@ -181,6 +181,18 @@ Database migrations run automatically on api start, including across
 PostgreSQL major versions (the db image upgrades its own data directory in
 place, leaving the old cluster untouched as the rollback).
 
+On the standalone image stack you can hand the update to the box: add the
+`autoupdate` profile (`COMPOSE_PROFILES=caddy,autoupdate` in `.env`) and run
+`docker compose up -d` once. A small updater then pulls newer images every
+four hours and restarts only the Cobblr containers that changed. There is
+about one new build a day, so a four-hourly check is still about one restart a
+day. It just never has to guess which hour is the right one in your part of the
+world. `WATCHTOWER_SCHEDULE` takes a cron expression if you would rather pick
+the moment, and `WATCHTOWER_TZ` reads it in your own zone. Pairs well with
+`COBBLR_VERSION=nightly`. It is off by default because it needs the Docker
+socket. The clone-and-build path above has nothing to pull, so it stays a
+manual `git pull` and rebuild.
+
 **Updates are a one-way door.** Migrations are forward-only: moving to a newer
 build is always supported, but going *back* to an older one can meet a database
 the older code does not understand. If you track a bleeding-edge build, keep

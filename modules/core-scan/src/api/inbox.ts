@@ -55,7 +55,7 @@ import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { resolveNativeIdentity } from "../native-identity.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { downloadCatalogImage, enrichBarcodeItem, isJunkName } from "../services/enrich.js";
-import { committedImagePath } from "../services/committed-image.js";
+import { committedImagePath, commitThumbPath } from "../services/committed-image.js";
 import { clampEntityName } from "../services/item-name.js";
 import { addedPhotoIntent } from "../services/crosscheck-policy.js";
 import {
@@ -2335,7 +2335,14 @@ inboxRouter.post(
       (fid): fid is string => !!fid,
     );
     const galleryFiles = [...userPhotos, ...(row.catalog_image_file_id ? [row.catalog_image_file_id] : [])];
-    if (galleryFiles.length) {
+    // A scan whose catalog image is still a raw URL (not downloaded yet, or
+    // committed mid-enrich) has NO file to attach, so the block below used to be
+    // skipped entirely and the new record was created with no picture at all.
+    // That is the same bug committedImagePath() exists to prevent, fixed for
+    // LOCATIONS on 2026-07-24 and never applied here: "if the scan carries ANY
+    // image representation the committed part MUST get an image_path".
+    // Run the block whenever there is any representation, file or URL.
+    if (galleryFiles.length || row.catalog_image_url) {
       try {
         for (const fileId of galleryFiles) {
           await platform().files.attach(ctx.org.id, {
@@ -2356,7 +2363,16 @@ inboxRouter.post(
         ).trim();
         const hasColorSwatch = /^#[0-9a-fA-F]{3,8}$/.test(committedColor);
         const thumb = userPhotos[0] ?? (hasColorSwatch ? null : (row.catalog_image_file_id ?? null));
-        if (thumb) {
+        // One decision, in the file that owns it. Set instantly - no network in
+        // the commit path, because downloading inline made a bulk "Confirm all"
+        // hang (~25s per line, reported 2026-07-25).
+        const thumbPath = commitThumbPath(ctx.org.slug, {
+          userPhotoFileIds: userPhotos,
+          catalogImageFileId: row.catalog_image_file_id,
+          catalogImageUrl: row.catalog_image_url,
+          colorHex: committedColor,
+        });
+        if (thumbPath) {
           // An instance-scoped entity is invisible to the bare module route (its
           // CRUD filters to the default instance), so the patch rides the same
           // instance path the create used.
@@ -2366,10 +2382,45 @@ inboxRouter.post(
           await fetch(patchUrl, {
             method: "PATCH",
             headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-            body: JSON.stringify({
-              image_path: `/api/v1/orgs/${ctx.org.slug}/modules/core-files/files/${thumb}/raw`,
-            }),
+            body: JSON.stringify({ image_path: thumbPath }),
           });
+          // A raw catalog URL can be hotlink-blocked and render broken, so kick
+          // off the same background download locations do: once the file lands,
+          // repoint the record at a stored same-origin copy. Commit stays fast.
+          if (!thumb && row.catalog_image_url) {
+            const url = row.catalog_image_url;
+            const inboxId = row.id;
+            const recordId = created.id;
+            void (async () => {
+              try {
+                const ok = await downloadCatalogImage({ db, orgId: ctx.org.id, itemId: inboxId }, url);
+                if (!ok) return;
+                const fresh = await db
+                  .selectFrom("core_scan_inbox_items")
+                  .select(["catalog_image_file_id"])
+                  .where("id", "=", inboxId)
+                  .executeTakeFirst();
+                const fid = fresh?.catalog_image_file_id;
+                if (!fid) return;
+                await platform().files.attach(ctx.org.id, {
+                  fileId: fid,
+                  source_module: target.module,
+                  source_type: target.kind,
+                  source_id: recordId,
+                  role: "gallery",
+                });
+                await fetch(patchUrl, {
+                  method: "PATCH",
+                  headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    image_path: committedImagePath(ctx.org.slug, fid, null),
+                  }),
+                });
+              } catch (err) {
+                console.warn("[core-scan] catalog-image upgrade failed:", (err as Error).message);
+              }
+            })();
+          }
         }
       } catch (err) {
         console.error("[core-scan] attach scan photos failed:", (err as Error).message);

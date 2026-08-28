@@ -1216,6 +1216,7 @@ chatRouter.get(
       send(ev);
       if (ev.kind === "done" || ev.kind === "error") end();
     });
+    // SINGLE-PROCESS-SAFE: a keepalive on ONE open response in this process.
     const hb = setInterval(() => !closed && res.write(": ping\n\n"), 25000);
     // The listener map is per-process; if the loop runs elsewhere (a second
     // api replica) the live push never arrives, so also poll the log. Cheap,
@@ -1231,6 +1232,9 @@ chatRouter.get(
     let terminalArmed = false;
     let armedTicks = 0;
     const ARMED_TICK_LIMIT = 8; // ~12s at the 1500ms poll
+    // SINGLE-PROCESS-SAFE: reads this turn's events for the one caller holding
+    // this stream open. It writes nothing; a second api streaming its own
+    // caller's turn is the correct behaviour, not a duplicate.
     const poll = setInterval(async () => {
       if (closed) return;
       try {

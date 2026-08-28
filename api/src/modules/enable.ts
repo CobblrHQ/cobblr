@@ -17,7 +17,7 @@ import { getTenantPool, evictTenantPool } from "../db/tenant.js";
 import { getEntry, listEntries } from "./registry.js";
 import * as activity from "../platform/activity.js";
 import { isTrialDenied, isTrialDeniedForOrg } from "../platform/trial.js";
-import { clearServerManagedCache } from "../platform/entities.js";
+import { clearServerManagedCache, clearEnabledModulesCache } from "../platform/entities.js";
 import { clearRelationDefsCache } from "../platform/relation-fields.js";
 import { clearMemberFieldCaches } from "../platform/member-fields.js";
 import { clearFieldLabelDefsCache } from "../platform/field-labels.js";
@@ -197,6 +197,7 @@ export async function enableModuleForOrg(
       last_migration: lastMigration,
     })
     .execute();
+  clearEnabledModulesCache(orgId);
 
   // Provision/refresh the DB-level isolation role(s). Re-ensures ALL of
   // the org's sandboxed modules so cross-module `reads` grants land
@@ -359,6 +360,7 @@ export async function disableModuleForOrg(orgId: string, moduleName: string): Pr
     .where("org_id", "=", orgId)
     .where("module_name", "=", moduleName)
     .execute();
+  clearEnabledModulesCache(orgId);
   try {
     await activity.log({
       orgId,

@@ -230,6 +230,7 @@ let evictTimer: NodeJS.Timeout | null = null;
 
 function ensureEvictTimer() {
   if (evictTimer) return;
+  // SINGLE-PROCESS-SAFE: evicts THIS process's in-memory sandbox workers.
   evictTimer = setInterval(() => {
     const now = Date.now();
     for (const [key, p] of pool.entries()) {

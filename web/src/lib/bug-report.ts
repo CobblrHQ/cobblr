@@ -22,6 +22,10 @@ export interface ServerDiagnostics {
 }
 
 export interface ReportInput {
+  /** The in-app widget deliberately does NOT offer "use_case". That type exists
+   *  for a chat channel where people describe what they want to DO, which is a
+   *  conversation, not a report — there is nobody to have it with in a one-shot
+   *  form. Widening this union would put it in the widget's picker. */
   type: "bug" | "confusing" | "idea" | "other";
   message: string;
   /** Route only, never the full URL: a path can carry record ids, and the query

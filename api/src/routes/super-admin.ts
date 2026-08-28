@@ -29,6 +29,9 @@ import { BlueprintManifest } from "./blueprint.js";
 import { getCpuStats, getInvocationStats } from "../sandbox/pool.js";
 import { hasAuthEmailSender, sendAuthEmail } from "../platform/hosted-seams.js";
 import { notifyAccount } from "../platform/notifications.js";
+import { guildLabelFor } from "../platform/discord-guild-labels.js";
+import { feedbackReplyText } from "../platform/feedback-reply-text.js";
+import { feedbackAttachmentOrg } from "../platform/feedback-attachment-org.js";
 import { announce, listAnnounceSettings, setAnnounceSetting, isComposable } from "../platform/announce.js";
 import { reporterCardFields } from "../platform/feedback-card.js";
 import {
@@ -1407,6 +1410,16 @@ const UpdateFeedback = z.object({
       summary: z.string().max(4000),
       action: z.string().max(2000),
       model: z.string().max(80).optional(),
+      // The analyzer may RE-FILE the item. A ticket arrives typed by the channel
+      // it was posted in, which is a guess made before anybody read it: a bug
+      // reported in #help arrives as "other", and a use case that turns out to
+      // be a real gap should become an idea. Content beats channel, so whoever
+      // read the words gets to correct it.
+      //
+      // Nested here rather than top-level BECAUSE of the scope: a feedback:triage
+      // token may write `triage` and `status` and nothing else, and a top-level
+      // `type` would widen what that narrow credential can reach.
+      type: z.enum(["bug", "confusing", "idea", "use_case", "other"]).optional(),
     })
     .optional(),
 });
@@ -1504,7 +1517,20 @@ superAdminRouter.get("/feedback", async (req, res, next) => {
       q = q.orderBy("f.created_at", "desc");
     }
     if (status) q = q.where("f.status", "=", status);
-    res.json({ items: await q.execute() });
+    // Resolve WHICH chat server each Discord report came from, here rather than
+    // in every client. Null when the report has no guild — an in-app submission,
+    // or a Discord one filed before the guild was recorded — because an
+    // unlabelled card is honest and a defaulted one reads as fact.
+    const rows = await q.execute();
+    res.json({
+      items: rows.map((r) => ({
+        ...r,
+        origin_label: guildLabelFor(
+          (r.origin_ref as { guild_id?: string } | null)?.guild_id,
+          process.env.COBBLR_DISCORD_GUILD_LABELS,
+        ),
+      })),
+    });
   } catch (err) {
     next(err);
   }
@@ -1515,14 +1541,26 @@ superAdminRouter.get("/feedback", async (req, res, next) => {
 // null); the reporter + how-to-reply live in origin_ref. Gated by the narrow
 // feedback:ingest scope (create-only). Fires triage like a normal submission.
 const IngestFeedback = z.object({
-  type: z.enum(["bug", "confusing", "idea", "other"]).default("other"),
+  type: z.enum(["bug", "confusing", "idea", "use_case", "other"]).default("other"),
   message: z.string().trim().min(1).max(5000),
+  // Screenshots on the OPENING message. The follow-up path has captured these
+  // for a while; the first message did not, which is the one most likely to
+  // carry them — a UI report is usually a picture and a sentence.
+  images: z
+    .array(z.object({ url: z.string().url().max(2000), name: z.string().max(200).optional() }))
+    .max(8)
+    .default([]),
   origin_ref: z.object({
     channel_id: z.string().max(40),
     thread_id: z.string().max(40),
     message_id: z.string().max(40).optional(),
     user_id: z.string().max(40).optional(),
     username: z.string().max(120).optional(),
+    // Which chat server this came from, so the announcement goes back to it
+    // rather than to the operator's own ops server. Optional: an older support
+    // bot does not send it, and the absence must degrade to the default sink,
+    // never to a guessed one.
+    guild_id: z.string().max(40).optional(),
   }),
 });
 superAdminRouter.post("/feedback/ingest", async (req, res, next) => {
@@ -1531,6 +1569,45 @@ superAdminRouter.post("/feedback/ingest", async (req, res, next) => {
     if (!parsed.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "Bad ticket", details: parsed.error.issues } });
       return;
+    }
+    // Pull the screenshots down NOW. Discord's CDN links are signed and expire
+    // within about a day, so a url kept for later is a report that loses its
+    // pictures before anybody works the queue — and a UI report is usually a
+    // picture and a sentence.
+    //
+    // They go in the OPERATOR's workspace, not the reporter's: a chat reporter
+    // has no account and no workspace, and org_id stays null so the card keeps
+    // saying so honestly. The attachment entry records where the bytes went.
+    const attachments: Array<{ file_id: string; name?: string; content_type?: string; org_id: string }> = [];
+    if (parsed.data.images.length) {
+      const shotsOrg = await feedbackAttachmentOrg();
+      if (!shotsOrg) {
+        console.warn(
+          `[feedback] ${parsed.data.images.length} screenshot(s) on a discord ticket were NOT kept: ` +
+            "no workspace to store them in. Set COBBLR_FEEDBACK_ATTACHMENT_ORG, or give a " +
+            "SUPERADMIN_EMAILS address an owned workspace.",
+        );
+      } else {
+        for (const img of parsed.data.images) {
+          // SSRF guard: Discord's own CDN only, never an arbitrary url. Same rule
+          // as the DM path.
+          if (!/^https:\/\/(cdn|media)\.discordapp\.(com|net)\//i.test(img.url)) continue;
+          try {
+            const r = await fetch(img.url);
+            if (!r.ok) continue;
+            const ct = r.headers.get("content-type") || "image/png";
+            if (!ct.startsWith("image/")) continue;
+            const bytes = new Uint8Array(await r.arrayBuffer());
+            const written = await platform().files.write(shotsOrg, bytes, {
+              filename: img.name || "screenshot.png",
+              mimeType: ct,
+            });
+            if (written) attachments.push({ file_id: written.fileId, name: img.name, content_type: ct, org_id: shotsOrg });
+          } catch {
+            // one bad image must not cost the ticket, or the other images
+          }
+        }
+      }
     }
     const row = await meta
       .insertInto("feedback")
@@ -1541,6 +1618,9 @@ superAdminRouter.post("/feedback/ingest", async (req, res, next) => {
         message: parsed.data.message,
         origin: "discord",
         origin_ref: sql`${JSON.stringify(parsed.data.origin_ref)}::jsonb`,
+        ...(attachments.length
+          ? { attachments: sql`${JSON.stringify(attachments)}::jsonb` }
+          : {}),
       })
       .returning(["id", "created_at"])
       .executeTakeFirstOrThrow();
@@ -1560,6 +1640,7 @@ superAdminRouter.post("/feedback/ingest", async (req, res, next) => {
       body: parsed.data.message.slice(0, 1500),
       color: 0x5865f2,
       fields: parsed.data.origin_ref.username ? [{ name: "from", value: parsed.data.origin_ref.username, inline: true }] : undefined,
+      originGuildId: parsed.data.origin_ref.guild_id ?? null,
     });
     res.status(201).json({ id: row.id, created_at: row.created_at });
   } catch (err) {
@@ -1863,6 +1944,9 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
       patch.triage_action = t.action;
       patch.triage_model = t.model ?? null;
       patch.triaged_at = new Date();
+      // Only when the analyzer actually offered one. Absent means "leave the
+      // channel's guess alone", never "reset it to a default".
+      if (t.type !== undefined) patch.type = t.type;
     }
     const row = await meta
       .updateTable("feedback")
@@ -1932,17 +2016,13 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
     if (parsed.data.notify_reporter && replyRoute.via === "discord-thread") {
       {
         const ref = { thread_id: replyRoute.thread_id };
-        const defaultMsg =
-          parsed.data.status === "resolved"
-            ? "Fixed — this is live now. 🎉"
-            : parsed.data.status === "wontfix"
-              ? "We reviewed this — thanks for flagging it."
-              : "We're looking into this.";
-        // Prefer the actual reply / what-we-did over the generic line.
+        // A written reply is the whole message. Nothing is prepended to it: the
+        // API used to glue a deployment claim in front, which made the author's
+        // own accurate timing wrong and left them no phrasing that survived.
         const did = parsed.data.reply_message?.trim() || parsed.data.public_summary?.trim();
         pokeDiscordResolved({
           thread_id: ref.thread_id,
-          text: parsed.data.status === "resolved" && did ? `Fixed — this is live now. 🎉\n\n${did}` : did || defaultMsg,
+          text: feedbackReplyText(parsed.data.status ?? "", did),
         });
         notified = true;
         // Fire-and-forget by design (the bot owns the Discord connection), so
@@ -1957,7 +2037,8 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
       if (text) {
         const dm = await sendDiscordDm({
           discord_user_id: replyRoute.discord_user_id,
-          text: parsed.data.status === "resolved" ? `Fixed, this is live now. \u{1F389}\n\n${text}` : text,
+          // Same rule as the thread path: what somebody wrote is the message.
+          text: feedbackReplyText(parsed.data.status ?? "", text),
         });
         notified = dm.ok || notified;
         delivery.discord_dm = dmOutcome(dm);
@@ -2092,8 +2173,13 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
       // did — never just re-echoes the complaint with a green check.
       const fixed = parsed.data.public_summary?.trim() || parsed.data.reply_message?.trim();
       const cardFields = await reporterCardFields({ userId: row.user_id, orgId: row.org_id, route: ctx.route });
+      // The resolved card threads UNDER the original announcement, so it has to
+      // use the same webhook the original went to. Route it by the same origin
+      // or the thread id names a message that does not exist on this webhook.
+      const resolvedGuild = ((row.origin_ref ?? {}) as { guild_id?: string }).guild_id ?? null;
       void announce("feedback.resolved", {
         title: "✅ Feedback resolved",
+        originGuildId: resolvedGuild,
         // When we have a "what we did" line, the post reads as a public changelog
         // entry (reported → fixed); otherwise just the original report.
         body: fixed ? `**Reported:** ${reported}\n\n**Fixed:** ${fixed.slice(0, 2400)}` : reported,
@@ -2191,11 +2277,7 @@ superAdminRouter.post("/feedback/batch-resolve", async (req, res, next) => {
           // line — mirrors the email's per-item block + the single-resolve DM.
           // The reporter's report is already in the thread, so don't re-quote it.
           const did = (fixNoteById.get(row.id) || summaryById.get(row.id) || reply_message || "").trim();
-          const dmsg = isResolved
-            ? did
-              ? `Fixed — this is live now. 🎉\n\n${did}`
-              : "Fixed — this is live now. 🎉"
-            : did || "We reviewed your feedback — thanks for flagging it.";
+          const dmsg = feedbackReplyText(isResolved ? "resolved" : "wontfix", did);
           void pokeDiscordResolved({ thread_id: ref.thread_id, text: dmsg });
         }
       }
@@ -2229,6 +2311,8 @@ superAdminRouter.post("/feedback/batch-resolve", async (req, res, next) => {
         const cardFields = await reporterCardFields({ userId: row.user_id, orgId: row.org_id, route: ctx.route });
         void announce("feedback.resolved", {
           title: "✅ Feedback resolved",
+          // Same rule as the single resolve: follow the original card's webhook.
+          originGuildId: ((row.origin_ref ?? {}) as { guild_id?: string }).guild_id ?? null,
           body: fixed ? `**Reported:** ${reported}\n\n**Fixed:** ${fixed.slice(0, 2400)}` : reported,
           color: 0x2e7d32,
           fields: cardFields,
@@ -2459,19 +2543,26 @@ superAdminRouter.get("/feedback/:id/attachments/:fileId/raw", async (req, res, n
       .select(["org_id", "attachments"])
       .where("id", "=", req.params.id)
       .executeTakeFirst();
-    if (!fb || !fb.org_id) {
+    if (!fb) {
       res.status(404).json({ error: { code: "not_found", message: "no such attachment" } });
       return;
     }
-    const atts = (fb.attachments ?? []) as Array<{ file_id: string }>;
-    if (!atts.some((a) => a.file_id === req.params.fileId)) {
+    const atts = (fb.attachments ?? []) as Array<{ file_id: string; org_id?: string | null }>;
+    const att = atts.find((a) => a.file_id === req.params.fileId);
+    // An attachment may name the org its BYTES live in, which is not the
+    // reporter's workspace. A Discord reporter has no account and no workspace,
+    // so the row's org_id is null and always will be — saying otherwise would
+    // claim they have an install we cannot see. Their screenshots are kept in
+    // the operator's own workspace instead, and the entry records that.
+    const bytesOrg = att?.org_id ?? fb.org_id;
+    if (!att || !bytesOrg) {
       res.status(404).json({ error: { code: "not_found", message: "no such attachment" } });
       return;
     }
     const variant = req.query.variant === "thumb" || req.query.variant === "medium" ? req.query.variant : "medium";
     const file =
-      (await platform().files.read(fb.org_id, req.params.fileId, variant)) ??
-      (await platform().files.read(fb.org_id, req.params.fileId, "original"));
+      (await platform().files.read(bytesOrg, req.params.fileId, variant)) ??
+      (await platform().files.read(bytesOrg, req.params.fileId, "original"));
     if (!file || !file.mimeType.startsWith("image/")) {
       res.status(404).json({ error: { code: "not_found", message: "no such image" } });
       return;

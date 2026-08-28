@@ -11,7 +11,7 @@
 // jobs queued through Cobblr.
 
 import { platform } from "@cobblr/platform-contract";
-import type { Kysely } from "kysely";
+import { sql, type Kysely } from "kysely";
 import type { DigifabDB } from "./db.js";
 import { bambuLanDriverFor } from "./jobs-core.js";
 
@@ -355,21 +355,75 @@ export async function evaluatePrintRules(
       const kind = String(r.channel_kind ?? "discord");
       if (kind !== "discord_bot" && !creds.webhook_url) continue; // webhook channel with no URL
 
-      // Advance the cadence/cap state NOW (so the next poll won't re-fire), then
-      // fire DETACHED — the pre/post hook delays (light settle, etc.) must never
-      // block the telemetry poll.
-      await upsertState(db, r.rule_id, serial, {
+      // CLAIM the cadence slot before firing. The write advances the state so
+      // this process's next poll won't re-fire — but it is also what stops a
+      // SECOND process from firing the same slot at all, which is the whole
+      // reason it is a conditional update rather than an upsert.
+      //
+      // Every api process runs its own telemetry pump, and more than one api
+      // now runs against a single database (the canary channel, and briefly a
+      // rolling deploy). Both pumps read the same `prev`, both find the cadence
+      // due, and both used to write and post: a workspace's printer posted its
+      // progress to Discord twice, every time, for weeks (2026-08-29). Only the
+      // process whose UPDATE actually matched the row it read may post.
+      const claimed = await claimFire(db, r.rule_id, serial, prev ?? null, {
         job_key: t.jobKey,
         last_percent: t.percent ?? prev?.last_percent ?? 0,
         last_layer: t.layer ?? prev?.last_layer ?? 0,
         last_fire_at: new Date(now),
       });
+      if (!claimed) continue; // another process got this slot — it is posting
+      // Fire DETACHED — the pre/post hook delays (light settle, etc.) must
+      // never block the telemetry poll.
       const hooks: RuleHooks = { pre: (r.pre_actions ?? []) as RuleStep[], post: (r.post_actions ?? []) as RuleStep[] };
       void fireRule(orgId, connectionId, serial, kind, creds, (r.message ?? {}) as RuleMessage, facts, hooks).catch(() => {});
     } catch {
       /* one rule/channel failing never breaks the poll */
     }
   }
+}
+
+/**
+ * Take the next fire slot for (rule, printer), or report that somebody else
+ * already has it. Returns true ONLY to the caller whose write landed.
+ *
+ * `prev` is the state row this decision was made from. The UPDATE re-states it
+ * as a WHERE, so it matches only while the row is still the one that was read
+ * (compare-and-set); a racing process finds 0 rows and does not post. When
+ * there was no row, the INSERT itself is the claim and the loser conflicts.
+ *
+ * `is not distinct from` rather than `=`, because a fresh row's last_fire_at
+ * can be null and `null = null` is null, which would match nothing and wedge
+ * the rule permanently.
+ */
+export async function claimFire(
+  db: Kysely<DigifabDB>,
+  rule_id: string,
+  serial: string,
+  prev: { job_key: string | null; last_percent: number | null; last_layer: number | null; last_fire_at: Date | null } | null,
+  next: { job_key: string | null; last_percent: number | null; last_layer: number | null; last_fire_at: Date | null },
+): Promise<boolean> {
+  if (!prev) {
+    const inserted = await db
+      .insertInto("digifab_print_rule_state")
+      .values({ rule_id, serial, ...next })
+      .onConflict((oc) => oc.columns(["rule_id", "serial"]).doNothing())
+      .returning("rule_id")
+      .executeTakeFirst()
+      .catch(() => undefined);
+    return !!inserted;
+  }
+  const won = await db
+    .updateTable("digifab_print_rule_state")
+    .set(next)
+    .where("rule_id", "=", rule_id)
+    .where("serial", "=", serial)
+    .where(sql<boolean>`last_fire_at is not distinct from ${prev.last_fire_at}`)
+    .where(sql<boolean>`job_key is not distinct from ${prev.job_key}`)
+    .returning("rule_id")
+    .executeTakeFirst()
+    .catch(() => undefined);
+  return !!won;
 }
 
 async function upsertState(

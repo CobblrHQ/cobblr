@@ -2,6 +2,18 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-08-28
+
+### Improvements
+- The household demo now stocks its bookshelf and its kitchen by scanning real barcodes, so the books and the groceries carry their real names, brands and cover photos instead of invented titles with no pictures.
+- Reports raised in a chat server now say WHICH server they came from, a report with no linked workspace says so rather than leaving a blank, and "use case" is its own kind of report so people describing what they want to do are not filed alongside firm feature requests. The analyzer can also correct a report's kind after reading it, since the kind it arrives with is a guess made from the channel it was posted in.
+
+### Fixes
+- Turning a module off now hides its entries everywhere, instead of leaving them visible through saved views, search and the assistant. Nothing is deleted, so switching the module back on brings everything straight back.
+- Pictures and other files Cobblr fetches on your behalf are saved into your workspace again, instead of being linked from wherever they came from. The same fault stopped outbound webhooks, sync connectors and sandboxed modules from reaching anything at all, so those work again too.
+- Screenshots attached to a report raised in a chat channel now reach the operator console. They were captured on follow-up messages but not on the first one, which is the message most likely to carry them. The triage-notes field also grows with what is in it, instead of showing one line of a paragraph.
+- A reply telling you your report is fixed no longer claims the change is already live. Merging is not shipping: a self-hosted install gets a fix with the next nightly and the hosted service with the next release, so the reply now says that instead. A reply somebody wrote by hand is sent exactly as written, with nothing added in front of it.
+
 ## 2026-08-27
 
 ### Features
@@ -20,7 +32,9 @@ User-facing changes, newest first. Dates are release dates.
 - A stock event recorded by a wire or by Ask Cobb is now filed under the same identity as one recorded by a scan, so an item skinned by a bundle keeps a single consumption history instead of two partial ones that each answered differently.
 - Customising a starter template works end to end again. Pasting your own manifest back into a customised template returned an error instead of checking it, so that flow could not be finished.
 - A long item name on a phone (a yarn called "Red Heart Super Saver - Country Blue", say) no longer pushes its card past the screen edge and scrolls the whole list sideways. The name wraps to two lines inside the card, and the same fix in the shared editable-cell wrapper covers every list that uses it.
+- Print updates posted to Discord arrived twice for workspaces on the hosted deployment. Two copies of the server watch the same printers there, and both were posting the same progress card. Each update is now claimed before it is sent, so it goes out once however many copies are watching. The same doubling was quietly affecting the reminder sweeps behind low-stock, expiry, parcel arrival, maintenance and reorder cadence; those now run in one place too.
 - A photo attached when you add quantity to an item you already have now shows up in that item's gallery. It was being filed under a malformed type, so the gallery never listed it even though the thumbnail changed.
+- A scanned item keeps its picture when you confirm it. If the catalog had found a photo but had not finished downloading it, confirming produced a record with no image at all. The picture is now carried across immediately and swapped for a stored copy in the background.
 
 ## 2026-08-26
 

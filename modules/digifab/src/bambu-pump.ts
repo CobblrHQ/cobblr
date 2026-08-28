@@ -102,6 +102,13 @@ let lanHandle: ReturnType<typeof setInterval> | null = null;
 
 export function startBambuPump(): void {
   if (intervalHandle) return;
+  // SINGLE-PROCESS-SAFE: each api holds its OWN MQTT subscriptions and its own
+  // LAN reads — telemetry has to be watched per process, and the status write
+  // is last-writer-wins on the same numbers. What must NOT double is the
+  // side effect further down: evaluatePrintRules claims each fire slot with a
+  // compare-and-set (print-rules.ts claimFire), so two pumps watching one
+  // printer still post once. That was found the hard way — a workspace's
+  // printer posted its progress to Discord twice, every time (2026-08-29).
   intervalHandle = setInterval(safeReconcile, RECONCILE_MS);
   setTimeout(safeReconcile, BOOT_DELAY_MS); // let the platform finish wiring first
   lanHandle = setInterval(() => void pollLanTelemetry().catch(() => {}), LAN_POLL_MS);

@@ -52,7 +52,12 @@ export function startArrivalSweeper(): void {
 
 async function safeTick(): Promise<void> {
   try {
-    await arrivalTick();
+      // One process only: every api runs this loop, and more than one api
+      // runs against a single database (the canary channel; a rolling deploy).
+      // Unguarded, each tick's notifications and writes happen twice.
+    await platform().exclusive.run("purchases.arrival-sweep", async () => {
+      await arrivalTick();
+    });
   } catch (err) {
     console.error("[purchases] arrival sweep failed:", (err as Error).stack ?? (err as Error).message);
   }

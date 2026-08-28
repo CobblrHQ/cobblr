@@ -7,7 +7,8 @@
 #
 # HTTPS is a compose PROFILE: COMPOSE_PROFILES=caddy (default, set in .env)
 # runs the bundled TLS proxy; empty runs bare, for `tailscale serve/funnel`
-# on the host. All data lives in bind mounts under ${COBBLR_DATA_ROOT:-./data}/ —
+# on the host. Daily auto-update is a second profile, off by default:
+# COMPOSE_PROFILES=caddy,autoupdate runs the updater at the bottom. All data lives in bind mounts under ${COBBLR_DATA_ROOT:-./data}/ —
 # set COBBLR_DATA_ROOT in .env to relocate every mount at once (e.g. onto a NAS
 # or a data disk). Deliberately NO named
 # volumes.
@@ -30,6 +31,10 @@ services:
       timeout: 3s
       retries: 20
     restart: unless-stopped
+    labels:
+      # The nightly updater (the autoupdate profile) touches only containers
+      # carrying this label, so other stacks on the same box are left alone.
+      com.centurylinklabs.watchtower.enable: "true"
 
   api:
     image: ghcr.io/cobblrhq/cobblr-api:${COBBLR_VERSION:-latest}
@@ -71,6 +76,8 @@ services:
       retries: 6
       start_period: 120s
     restart: unless-stopped
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
 
 
   # ─── Nightly database dumps ──────────────────────────────────────────
@@ -85,6 +92,8 @@ services:
   backup:
     image: ghcr.io/cobblrhq/cobblr-db:${COBBLR_VERSION:-latest}
     restart: unless-stopped
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
     depends_on:
       db:
         condition: service_healthy
@@ -146,6 +155,8 @@ services:
     ports:
       - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8088}:8080"
     restart: unless-stopped
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
 
   caddy:
     image: ghcr.io/cobblrhq/cobblr-caddy:${COBBLR_VERSION:-latest}
@@ -170,3 +181,53 @@ services:
     depends_on:
       - web
     restart: unless-stopped
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+
+  # ─── Daily auto-update (opt in) ───────────────────────────────────────
+  # COMPOSE_PROFILES=caddy,autoupdate in .env turns this on. Once a day it
+  # pulls newer images for the labelled services above and recreates only the
+  # ones that changed: the same thing as `docker compose pull && docker
+  # compose up -d`, run for you. Restart order is not promised (the updater
+  # knows container names, not compose services), and does not need to be:
+  # every service has a restart policy, and the api will not serve until the
+  # database answers and its migrations have applied. Pairs with
+  # COBBLR_VERSION=nightly. It needs the Docker socket, which is host-level
+  # access, so it is a profile you choose rather than part of the default stack.
+  # The selfhost boot test boots this profile and fails if the updater does not
+  # reach the point of scheduling its first run.
+  watchtower:
+    image: containrrr/watchtower:1.7.1
+    profiles: ["autoupdate"]
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      # Every four hours, UTC, rather than at one hour of one clock. Any fixed
+      # hour is only ever right for one part of the world: a box whose local
+      # morning falls before the day's build has been published would check just
+      # too early and sit a day behind, every day. Checking on a plain interval
+      # asks no questions about anyone's timezone and cannot go stale that way.
+      #
+      # It costs nothing in restarts. There is about one new build a day, so
+      # five of the six checks find nothing and change nothing; a check that
+      # finds no new image does not touch a container. Zulu, so the log
+      # timestamps and this expression agree, and no daylight-saving rule can
+      # move it.
+      #
+      # Six fields, seconds first. Set WATCHTOWER_SCHEDULE to a fixed hour if you
+      # would rather choose the moment, and WATCHTOWER_TZ to read it in your zone.
+      TZ: ${WATCHTOWER_TZ:-UTC}
+      WATCHTOWER_SCHEDULE: ${WATCHTOWER_SCHEDULE:-0 0 */4 * * *}
+      # Watchtower 1.7.1 asks the daemon for API 1.25, and every Docker engine
+      # since v25 refuses that outright ("client version 1.25 is too old"), so
+      # without this the updater dies seconds after it starts on any current
+      # install. 1.41 is Docker 20.10 and newer, which is everything still
+      # receiving security updates.
+      DOCKER_API_VERSION: ${DOCKER_API_VERSION:-1.41}
+      # Only containers with the enable label above; never another stack.
+      WATCHTOWER_LABEL_ENABLE: "true"
+      # Drop the superseded image after a successful update.
+      WATCHTOWER_CLEANUP: "true"
+      # A container mid-restart (the api during its migration boot) still counts.
+      WATCHTOWER_INCLUDE_RESTARTING: "true"

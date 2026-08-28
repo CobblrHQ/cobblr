@@ -75,6 +75,7 @@ function openSse(res: Response): { send: (event: string, data: unknown) => void;
     "x-accel-buffering": "no",
   });
   res.write(": connected\n\n");
+  // SINGLE-PROCESS-SAFE: a keepalive on one open response, not a background job.
   const hb = setInterval(() => res.write(": ping\n\n"), 25000);
   return {
     send: (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),

@@ -28,7 +28,7 @@ import { createInstance, getInstance } from "../platform/instances.js";
 import { checkInstalled, promisedInstances } from "../platform/install-postcondition.js";
 import { SCAN_CATEGORY_SOURCE } from "../platform/reconcile-scan-category.js";
 import { listNavHeadings, createNavHeading, addNavMember } from "../platform/nav-headings.js";
-import { tearDownInstance, countInstanceItems } from "../platform/instances.js";
+import { tearDownInstance, countInstanceItems, listInstances } from "../platform/instances.js";
 import { disableModuleForOrg } from "../modules/enable.js";
 import {
   recordClaims,
@@ -603,6 +603,21 @@ async function readInstalledFeatures(
 
 const moduleOf = (id: string): string | null => (id.includes(":") ? (id.split(":")[0] ?? null) : null);
 
+/** The module that OWNS a kind. A kind is `<module>:...` OR `<instance>:item`,
+ *  and for an INSTANCE the prefix is the instance NAME, not a module
+ *  (`bookshelf:item` belongs to `inventory`, not a module called `bookshelf`).
+ *  So resolve the prefix through `instanceModule` (instance_name → module_name)
+ *  before trusting it. Taking the bare `:`-prefix as a module is a recurring
+ *  bug: it made "enable Bookshelf labels" fail with `unknown_module bookshelf`,
+ *  because the labels wire's `bookshelf:item` source_kind demanded a nonexistent
+ *  `bookshelf` module. Reach for THIS, never `split(":")[0]`, whenever the module
+ *  name feeds a require/enable/exists decision on a kind that could be an
+ *  instance. `moduleOf` alone is safe only for `<module>:<action>` ids. */
+function moduleForKind(kind: string, instanceModule: ReadonlyMap<string, string>): string | null {
+  const prefix = moduleOf(kind);
+  return prefix && instanceModule.has(prefix) ? instanceModule.get(prefix)! : prefix;
+}
+
 /** Merge instance declarations that target the same (module, instance_name) into
  *  ONE — so a FEATURE that re-declares an existing instance only to attach a wire
  *  (e.g. yarn's shopping-list re-declares `yarn` to add a low-stock wire, with no
@@ -705,6 +720,38 @@ export async function validateBundle(
   const knownKindIds = new Set(knownKinds.map((k) => k.id));
   const kindList = [...knownKindIds].sort().join(", ") || "(none)";
 
+  // A kind like `bookshelf:item` names an INSTANCE, not a registered kind: it
+  // doesn't exist in the registry at validate time (this bundle, or a prior one,
+  // creates the instance), but post-install it IS a real kind — the instance's
+  // module PRIMARY. Build the instance→module map (this bundle's own
+  // provides_instances + instances the workspace already has) and resolve a
+  // referenced kind to what it will BE, so a top-level wire/field on an instance
+  // kind validates instead of being rejected as unknown. This is the exact bug
+  // behind "enable Bookshelf labels": the merged `labels` feature wires
+  // `bookshelf:item`, which the base install never surfaced. (The
+  // provides_instances wire loop below already did this for INSTANCE wires; this
+  // extends it to the top level, where merged features land.)
+  const primaryByModule = new Map(
+    knownKinds.filter((k) => k.is_primary).map((k) => [k.module_name, k] as const),
+  );
+  const instanceModule = new Map<string, string>();
+  for (const pi of m.provides_instances) instanceModule.set(pi.instance_name, pi.module);
+  for (const inst of await listInstances(orgId)) instanceModule.set(inst.instance_name, inst.module_name);
+  // The REGISTERED kind a referenced kind validates as: itself if known, else —
+  // ONLY for the canonical instance form `<instance>:item` (entities.ts) whose
+  // prefix is a known instance — the primary of that instance's module, else
+  // null (genuinely unknown). The `:item` guard matters: `inventory:prat` is a
+  // TYPO, not an instance kind, and must stay unknown even though `inventory`
+  // resolves to a module.
+  const resolvedKind = (kind: string): string | null => {
+    if (knownKindIds.has(kind)) return kind;
+    const [prefix, suffix] = kind.split(":");
+    if (suffix !== "item" || !prefix) return null;
+    const mod = instanceModule.get(prefix);
+    const primary = mod ? primaryByModule.get(mod) : undefined;
+    return primary ? primary.id : null;
+  };
+
   for (const f of m.field_defs) {
     // A trait SCOPE (`@physical`) is not a registered kind, deliberately: it
     // matches a CLASS of kinds through the same predicate actions use, so new
@@ -721,7 +768,7 @@ export async function validateBundle(
       }
       continue;
     }
-    if (!knownKindIds.has(f.entity_kind)) {
+    if (!resolvedKind(f.entity_kind)) {
       errors.push({
         path: "field_defs.entity_kind",
         code: "unknown_entity_kind",
@@ -730,16 +777,20 @@ export async function validateBundle(
     }
   }
 
-  // Actions applicable to each referenced source_kind (resolves appliesTo).
-  const referencedKinds = new Set<string>([...m.wires.map((w) => w.source_kind)]);
+  // Actions applicable to each referenced source_kind (resolves appliesTo). An
+  // instance kind resolves to its module primary — instances share the module's
+  // actions, so applicability is the same.
+  const referencedKinds = new Set<string>(
+    m.wires.map((w) => resolvedKind(w.source_kind)).filter((k): k is string => k !== null),
+  );
   const actionsByKind = new Map<string, Set<string>>();
   for (const kind of referencedKinds) {
-    if (!knownKindIds.has(kind)) continue;
     const apps = await platform().actions.listApplicable(kind, orgId);
     actionsByKind.set(kind, new Set(apps.map((a) => a.id)));
   }
   for (const w of m.wires) {
-    if (!knownKindIds.has(w.source_kind)) {
+    const rk = resolvedKind(w.source_kind);
+    if (rk === null) {
       errors.push({
         path: "wires.source_kind",
         code: "unknown_entity_kind",
@@ -747,7 +798,7 @@ export async function validateBundle(
       });
       continue;
     }
-    const applicable = actionsByKind.get(w.source_kind) ?? new Set<string>();
+    const applicable = actionsByKind.get(rk) ?? new Set<string>();
     if (!applicable.has(w.action_id)) {
       const list = [...applicable].sort().join(", ") || "(none)";
       errors.push({
@@ -772,10 +823,7 @@ export async function validateBundle(
   // can't apply and still install clean — then silently never fire. Its
   // source_kind (`<instance>:item`) doesn't exist yet at validate time (this
   // bundle creates it), so check against the kind the instance will BE: its
-  // module's primary.
-  const primaryByModule = new Map(
-    knownKinds.filter((k) => k.is_primary).map((k) => [k.module_name, k] as const),
-  );
+  // module's primary. (primaryByModule is built up top, with instanceModule.)
   for (const inst of m.provides_instances) {
     const primary = primaryByModule.get(inst.module);
     if (!primary) continue; // an unknown module is already reported elsewhere
@@ -801,11 +849,17 @@ export async function validateBundle(
   }
 
   // requires[] must name the module owning every referenced kind + action.
+  // moduleForKind resolves an instance-kind prefix to its owning module
+  // (instanceModule, built up top) — `bookshelf:item` -> `inventory`, not a
+  // module named `bookshelf`. Splitting on ":" and trusting the prefix was the
+  // dependency half of the "enable Bookshelf labels" bug (unknown_module
+  // bookshelf); the referential half (unknown_entity_kind) is resolvedKind above.
   const declaredRequires = new Set(m.requires.map((r) => r.module));
   const neededModules = new Set<string>();
-  for (const f of m.field_defs) { const mod = moduleOf(f.entity_kind); if (mod) neededModules.add(mod); }
+  for (const f of m.field_defs) { const mod = moduleForKind(f.entity_kind, instanceModule); if (mod) neededModules.add(mod); }
   for (const w of m.wires) {
-    const k = moduleOf(w.source_kind); if (k) neededModules.add(k);
+    const k = moduleForKind(w.source_kind, instanceModule); if (k) neededModules.add(k);
+    // action_id is always `<module>:<action>` — a real module, never an instance.
     const a = moduleOf(w.action_id); if (a) neededModules.add(a);
   }
   for (const mod of neededModules) {
@@ -1161,19 +1215,27 @@ bundlesRouter.get(
       // kind/action, field def's kind, or saved view's kind. Keeps
       // the manifest re-installable on a fresh org without bringing
       // the user's whole module set along.
+      // Resolve instance-kind prefixes to their owning module (see
+      // moduleForKind): a wire/field/view on `bookshelf:item` references the
+      // `inventory` module, not a `bookshelf` one. Without this the filter below
+      // drops the instance prefix and the exported manifest silently omits the
+      // owning module from requires — so re-installing it on a fresh org fails.
+      const exportInstanceModule = new Map(
+        (await listInstances(orgId)).map((i) => [i.instance_name, i.module_name] as const),
+      );
       const referencedModules = new Set<string>();
       for (const w of wires) {
-        const srcMod = w.source_kind.split(":")[0];
-        const actMod = w.action_id.split(":")[0];
+        const srcMod = moduleForKind(w.source_kind, exportInstanceModule);
+        const actMod = moduleOf(w.action_id);
         if (srcMod) referencedModules.add(srcMod);
         if (actMod) referencedModules.add(actMod);
       }
       for (const f of fieldDefs) {
-        const m = f.entity_kind.split(":")[0];
+        const m = moduleForKind(f.entity_kind, exportInstanceModule);
         if (m) referencedModules.add(m);
       }
       for (const v of savedViews) {
-        const m = v.entity_kind.split(":")[0];
+        const m = moduleForKind(v.entity_kind, exportInstanceModule);
         if (m) referencedModules.add(m);
       }
       const requires = installedModules
@@ -1301,13 +1363,24 @@ bundlesRouter.post(
   withTenant,
   async (req, res, next) => {
     try {
-      const Body = z.object({ manifest: z.unknown(), autoEnable: z.boolean().optional() });
+      const Body = z.object({
+        manifest: z.unknown(),
+        autoEnable: z.boolean().optional(),
+        // Preview the bundle WITH these optional features on — the same set the
+        // install modal would send. Without it, /validate only ever checks the
+        // base manifest, so a feature that only fails when enabled (e.g. a wire
+        // on an instance kind) passes here and breaks on the real toggle.
+        enabled_features: z.array(z.string()).optional(),
+      });
       const body = Body.safeParse(req.body);
       if (!body.success) {
         res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: body.error.issues } });
         return;
       }
-      const result = await validateBundle(req.tenant!.org.id, body.data.manifest, { autoEnable: body.data.autoEnable ?? false });
+      const result = await validateBundle(req.tenant!.org.id, body.data.manifest, {
+        autoEnable: body.data.autoEnable ?? false,
+        ...(body.data.enabled_features !== undefined ? { enabledFeatures: body.data.enabled_features } : {}),
+      });
       if (!result.valid) {
         // Thesis telemetry: a rejected artifact is a WALL for whoever authored
         // it (human paste or AI build) — counted, never blocking.

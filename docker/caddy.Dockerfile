@@ -36,7 +36,8 @@ COPY deploy/selfhost/Caddyfile.cloudflare /etc/caddy/variants/cloudflare
 COPY deploy/selfhost/Caddyfile.internal   /etc/caddy/variants/internal
 COPY deploy/selfhost/Caddyfile.tsnet      /etc/caddy/variants/tsnet
 COPY docker/caddy-entrypoint.sh /usr/local/bin/caddy-entrypoint.sh
+COPY docker/tsnet-cert-watchdog.sh /usr/local/bin/tsnet-cert-watchdog.sh
 # Drop the base image's stock /etc/caddy/Caddyfile so its presence genuinely
 # means "a user bind-mounted one" — otherwise it shadows COBBLR_TLS_MODE.
-RUN chmod +x /usr/local/bin/caddy-entrypoint.sh && rm -f /etc/caddy/Caddyfile
+RUN chmod +x /usr/local/bin/caddy-entrypoint.sh /usr/local/bin/tsnet-cert-watchdog.sh && rm -f /etc/caddy/Caddyfile
 ENTRYPOINT ["/usr/local/bin/caddy-entrypoint.sh"]

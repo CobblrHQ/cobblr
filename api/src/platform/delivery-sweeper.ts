@@ -8,9 +8,9 @@
 // anything in them", which is an index hit, and a box where nobody has set a
 // window does no work at all.
 
-import { Kysely, sql } from "kysely";
+import { Kysely } from "kysely";
 import { meta } from "../db/meta.js";
-import type { MetaDB } from "../db/schema.js";
+import { runExclusive } from "./exclusive.js";
 import { REGISTRY } from "./notifications.js";
 import {
   composeDigest,
@@ -30,13 +30,6 @@ const TICK_MS = 5 * 60 * 1000;
  *  digest window; the notification itself remains in the bell/history. */
 const MAX_DEFER_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** Postgres advisory-lock key for the periodic sweep. A stable arbitrary int so
- *  that only ONE api process flushes at a time: startDeliverySweeper runs in
- *  every process, and two processes share one cobblr_meta during a rolling
- *  deploy or on the canary channel. Without the lock both read the same
- *  undeleted buckets and each delivers them — a duplicate digest, the exact
- *  noise this feature exists to avoid (audit B4c). */
-const SWEEP_LOCK_KEY = 42420001;
 
 let handle: ReturnType<typeof setInterval> | null = null;
 /** In-process reentry guard: a slow tick (many recipients, 8s DM timeouts) can
@@ -51,62 +44,18 @@ export function startDeliverySweeper(): void {
   console.log(`[notify] delivery sweeper started — every ${TICK_MS / 60_000} min`);
 }
 
-/** Acquire a session-scoped advisory lock, run `work`, release the lock —
- *  guaranteeing acquire and release land on the SAME backend connection.
- *
- *  A `pg_try_advisory_lock` is bound to the backend connection that ran it, but
- *  `meta` is a POOL: Kysely checks out a fresh connection per statement, so
- *  acquiring and releasing as two separate `.execute(meta)` calls can land on
- *  DIFFERENT connections. The release then no-ops ("you don't own a lock…") and
- *  the lock stays held on the original connection until node-pg's idleTimeout
- *  reaps it — every intervening sweep sees it held and skips, so digests are
- *  delayed and the log fills with false-owner warnings (audit B4c). Pinning one
- *  connection for acquire+release closes the leak; `work` itself may still use
- *  the pool freely — the lock is only coordination.
- *
- *  Generic over the connection type so the mechanic (same conn for both, skip
- *  work and never unlock when not acquired) is unit-testable without a database. */
-export async function withAdvisoryLock<C>(deps: {
-  connect: <T>(fn: (conn: C) => Promise<T>) => Promise<T>;
-  tryLock: (conn: C) => Promise<boolean>;
-  unlock: (conn: C) => Promise<void>;
-  work: () => Promise<void>;
-}): Promise<void> {
-  await deps.connect(async (conn) => {
-    const locked = await deps.tryLock(conn);
-    if (!locked) return; // another holder — skip, and DO NOT release a lock we never took
-    try {
-      await deps.work();
-    } finally {
-      await deps.unlock(conn);
-    }
-  });
-}
-
 async function safeTick(): Promise<void> {
   if (running) return; // never overlap a still-running tick in this process
   running = true;
   try {
-    // Cross-process guard: take the sweep lock without blocking. If another api
-    // process holds it, skip this tick rather than double-deliver. Acquire and
-    // release share ONE pinned connection (see withAdvisoryLock) so the unlock
-    // cannot no-op on a different pooled connection and leak the lock. Held for
-    // the tick's duration — fine at a 5-minute cadence — and auto-released by
-    // Postgres if this process dies.
-    await withAdvisoryLock<Kysely<MetaDB>>({
-      connect: (fn) => meta.connection().execute(fn),
-      tryLock: async (conn) => {
-        const got = await sql<{
-          locked: boolean;
-        }>`select pg_try_advisory_lock(${SWEEP_LOCK_KEY}) as locked`.execute(conn);
-        return got.rows[0]?.locked ?? false;
-      },
-      unlock: async (conn) => {
-        await sql`select pg_advisory_unlock(${SWEEP_LOCK_KEY})`.execute(conn);
-      },
-      work: async () => {
-        await deliveryTick();
-      },
+    // Cross-process guard: only one api process flushes at a time. Two share
+    // one cobblr_meta during a rolling deploy and on the canary channel;
+    // without this both read the same undeleted buckets and each delivers them
+    // — a duplicate digest, the exact noise this feature exists to avoid
+    // (audit B4c). The buckets are deleted inside the tick, so the loser's next
+    // tick finds nothing rather than repeating the work.
+    await runExclusive("notify.delivery-sweep", async () => {
+      await deliveryTick();
     });
   } catch (err) {
     console.error("[notify] delivery sweep failed:", (err as Error).message);

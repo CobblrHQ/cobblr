@@ -277,6 +277,9 @@ export async function relayInfo(
 
 // Remove finished and abandoned rows. A waiter has already given up by
 // expires_at, so nothing is lost.
+// SINGLE-PROCESS-SAFE: an idempotent DELETE of rows already past their
+// expiry — running it in two processes removes the same rows, which is the
+// same outcome as running it in one.
 const sweeper = setInterval(() => {
   void meta
     .deleteFrom("edge_relay_jobs")

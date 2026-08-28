@@ -16,6 +16,7 @@
 import { Client } from "pg";
 import { env } from "../env.js";
 import { notifyOperators } from "./operator-alert.js";
+import { runExclusive } from "./exclusive.js";
 
 export interface DbUpgradeHold {
   reason: string;
@@ -37,6 +38,18 @@ export async function readDbUpgradeHold(): Promise<DbUpgradeHold | null> {
   const client = new Client({ connectionString: url.toString() });
   try {
     await client.connect();
+    // ASK whether the table is there before selecting from it. On a healthy
+    // instance it does not exist, and a SELECT against a missing relation is
+    // an ERROR the SERVER logs even though the catch below swallows it here.
+    // That made `relation "cobblr_db_status" does not exist` the first line in
+    // the database log of every new install, which teaches people that
+    // Cobblr's database errors are normal noise. `to_regclass` answers null
+    // instead of raising. The db entrypoint learned this same lesson on its
+    // DELETE (docker/db-auto-upgrade.sh); this is the read half of it.
+    const present = await client.query<{ ok: boolean }>(
+      "select to_regclass('public.cobblr_db_status') is not null as ok",
+    );
+    if (!present.rows[0]?.ok) return null;
     const r = await client.query<{
       reason: string | null;
       detail: string | null;
@@ -56,9 +69,10 @@ export async function readDbUpgradeHold(): Promise<DbUpgradeHold | null> {
       since: row.since,
     };
   } catch {
-    // Missing table (the normal, healthy case) or an unreachable maintenance
-    // DB — either way there is nothing to report from HERE; a genuinely down
-    // database is already screaming through every other connection.
+    // An unreachable maintenance DB, or a table that vanished between the two
+    // statements. Either way there is nothing to report from HERE, and a
+    // genuinely down database is already screaming through every other
+    // connection. The healthy no-table case no longer comes through here.
     return null;
   } finally {
     await client.end().catch(() => {});
@@ -100,6 +114,12 @@ async function checkAndAlert(): Promise<void> {
 export function startDbUpgradeHoldWatch(): void {
   if (timer) return; // already running — a second call must not orphan the first interval
   void checkAndAlert();
-  timer = setInterval(() => void checkAndAlert(), CHECK_INTERVAL_MS);
+  // One process only: the alert goes to an operator channel, and two apis
+  // share one database on the canary channel — without this the operator gets
+  // the same "database held back" alert twice per interval.
+  timer = setInterval(
+    () => void runExclusive("platform.db-upgrade-alert", checkAndAlert).catch(() => {}),
+    CHECK_INTERVAL_MS,
+  );
   timer.unref?.();
 }

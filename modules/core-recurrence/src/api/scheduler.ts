@@ -46,7 +46,12 @@ export function startRecurrenceScheduler(): void {
 
 async function safeTick(): Promise<void> {
   try {
-    await tick();
+      // One process only: every api runs this loop, and more than one api
+      // runs against a single database (the canary channel; a rolling deploy).
+      // Unguarded, a recurring task is created twice on every due date.
+    await platform().exclusive.run("core-recurrence.scheduler", async () => {
+      await tick();
+    });
   } catch (err) {
     console.error(
       "[core-recurrence] tick failed:",

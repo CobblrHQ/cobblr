@@ -45,7 +45,12 @@ export function stopMaintenanceSweeper(): void {
 
 async function safeTick(): Promise<void> {
   try {
-    await tick();
+      // One process only: every api runs this loop, and more than one api
+      // runs against a single database (the canary channel; a rolling deploy).
+      // Unguarded, each tick's notifications and writes happen twice.
+    await platform().exclusive.run("core-maintenance.sweep", async () => {
+      await tick();
+    });
   } catch (err) {
     console.error(
       "[core-maintenance] sweeper tick failed:",

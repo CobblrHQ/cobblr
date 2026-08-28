@@ -36,7 +36,12 @@ export function startCadenceSweeper(): void {
 
 async function safeTick(): Promise<void> {
   try {
-    await cadenceTick();
+      // One process only: every api runs this loop, and more than one api
+      // runs against a single database (the canary channel; a rolling deploy).
+      // Unguarded, each tick's notifications and writes happen twice.
+    await platform().exclusive.run("core-cadence.sweep", async () => {
+      await cadenceTick();
+    });
   } catch (err) {
     console.error("[core-cadence] sweep failed:", err);
   }

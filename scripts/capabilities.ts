@@ -79,6 +79,54 @@ export const CAPABILITIES: Capability[] = [
     use: "recordCadenceEvent(orgId, userId, observation) from core-cadence's record.ts",
   },
   {
+    kind: "owns",
+    id: "scan:committed-image-path",
+    what: "resolving the image_path to stamp on a record when a scan is committed",
+    why:
+      "committedImagePath states the invariant in its own header - if the scan carries ANY image representation, a " +
+      "stored catalog file OR a raw catalog URL, the committed record MUST get an image_path - because a scan " +
+      "committed mid-enrich lost its picture (2026-07-24). The location path was fixed to call it; the path that " +
+      "commits an item into a table kept building the URL by hand from catalog_image_file_id, so it silently skipped " +
+      "every scan whose image was still a URL, which is every barcode scan for its first seconds. Real barcodes came " +
+      "back correctly named and completely pictureless (found 2026-08-27 seeding a demo). A third commit path would " +
+      "do it again",
+    owner: "modules/core-scan/src/services/committed-image.ts",
+    // The paths that COMMIT a scan onto a record. Rendering an already-stored
+    // file elsewhere is not this rule's business.
+    scope: ["modules/core-scan/src/api/inbox.ts", "modules/core-scan/src/api/organize.ts"],
+    // A files/<id>/raw path built inline from a catalog image id, instead of asking the helper.
+    detect: /core-files\/files\/\$\{[^}]*catalog_image_file_id[^}]*\}\/raw/,
+    use: "committedImagePath(orgSlug, catalogImageFileId, catalogImageUrl) from core-scan's services/committed-image",
+  },
+  {
+    id: "net:pinned-outbound-fetch",
+    kind: "owns",
+    what: "follow redirects yourself, re-validating and IP-pinning every hop, on an SSRF-guarded outbound fetch",
+    why:
+      "three guards (kernel egress, wasm-sandbox HOST_FETCH, scan image fetch) each grew their own copy of this " +
+      "loop, and when pinning was added to close a DNS-rebind window (2026-08-25) all three copies got the SAME " +
+      "wrong lookup callback: undici asks with { all: true }, Node then reads addresses[0].address, and answering " +
+      "the single-address way made EVERY pinned fetch in the product die at the socket with 'Invalid IP address: " +
+      "undefined'. Outbound webhooks, sync connectors, edge devices, sandboxed module fetch and every catalog " +
+      "image download were dead for three days and no test noticed, because all three suites mock undici. One " +
+      "loop means one place to get the connector contract right - and one real-socket test that proves it",
+    owner: "packages/platform-net/src/index.ts",
+    // The three SSRF-guarded fetch paths. A module doing a plain fetch to a
+    // first-party service it was configured with is not this rule's business.
+    scope: [
+      "api/src/platform/egress.ts",
+      "api/src/sandbox/pool.ts",
+      "modules/core-scan/src/services/enrich.ts",
+    ],
+    // The lookup callback of a hand-rolled pinned Agent. `detect` is matched
+    // PER LINE, so it has to be the one line the copy always has - a
+    // multi-line `connect: { ... lookup:` pattern silently never fires, which
+    // is how the first version of this row passed while a planted copy sat in
+    // egress.ts. dns's own `lookup(host, …)` call and its import do not match.
+    detect: /^\s*lookup\s*:\s*\(/,
+    use: "pinnedRedirectingFetch({ url, validate }) from @cobblr/platform-net",
+  },
+  {
     id: "authoring:post-model-pipeline",
     kind: "owns",
     what: "parse → unwrap → lean natives → corroborate, on a model's bundle reply",

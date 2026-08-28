@@ -106,7 +106,15 @@ export function FeedbackCard({
   // Third-person "what we fixed" note for the Discord feedback-resolved post.
   const [publicSummary, setPublicSummary] = useState("");
   const ctx = (f.context ?? {}) as { url?: string; route?: string };
-  const emoji = f.type === "bug" ? "🐛" : f.type === "confusing" ? "😕" : f.type === "idea" ? "💡" : "•";
+  const emoji =
+    f.type === "bug" ? "🐛"
+    : f.type === "confusing" ? "😕"
+    : f.type === "idea" ? "💡"
+    : f.type === "use_case" ? "🎯"
+    : "•";
+  // A use case is somebody describing what they want to DO, not asking for a
+  // feature. Mixing the two buries the requests, so it reads as its own thing.
+  const typeLabel = f.type === "use_case" ? "use case" : f.type;
   // Acting means PATCHing the deployment that OWNS the item, so the question is whether
   // the SOURCE can do that — not whether the item is local. A hub source forwards to the
   // owning instance, so a foreign item is actionable there; an instance source only ever
@@ -127,17 +135,32 @@ export function FeedbackCard({
           </span>
         )}
         <span>
-          {emoji} <span className="font-mono uppercase text-accent">{f.type}</span>
+          {emoji} <span className="font-mono uppercase text-accent">{typeLabel}</span>
         </span>
         {f.triage_priority && <PriorityChip priority={f.triage_priority} />}
         {f.origin === "discord" && (
           <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300">
-            discord
+            {/* WHICH server, when we know it. One operator can run a private ops
+                server and a public community one, and "somebody on my team"
+                versus "a user in public" is the difference between them. */}
+            {f.origin_label ? `discord · ${f.origin_label}` : "discord"}
           </span>
         )}
         <span className="text-faint dark:text-slate-500">
           {f.user_name || f.user_email || f.origin_ref?.username || "?"}
         </span>
+        {/* A Discord reporter has no workspace, so the place one would go sits
+            blank and reads as missing data. It is not missing: we genuinely do
+            not know which install they run, or whether they self-host at all.
+            Saying so beats a gap somebody has to interpret. */}
+        {f.origin === "discord" && !f.workspace_slug && (
+          <span
+            className="text-faint dark:text-slate-500"
+            title="A Discord reporter is not linked to a workspace, so we cannot tell which install they run."
+          >
+            · no workspace linked
+          </span>
+        )}
         {f.workspace_slug && (
           <span className="text-faint dark:text-slate-500">· {f.workspace_name || f.workspace_slug}</span>
         )}
@@ -233,7 +256,11 @@ export function FeedbackCard({
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              rows={1}
+              // Grows with what is in it, up to a point. A resolution note is
+              // usually a paragraph of root cause, and one row showed a
+              // sentence of it behind a scrollbar — the field held the most
+              // useful text on the card and displayed the least.
+              rows={Math.min(8, Math.max(2, notes.split("\n").length, Math.ceil(notes.length / 110)))}
               placeholder="triage notes…"
               className="flex-1 text-xs rounded border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800/70 px-2 py-1 text-content dark:text-mortar-200"
             />

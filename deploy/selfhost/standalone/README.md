@@ -26,11 +26,40 @@ with four modes — `cloudflare` | `internal` | `tsnet` | `duckdns` (legacy)
 (`COBBLR_TLS_MODE`). Set `COMPOSE_PROFILES=` empty to run bare behind your own
 proxy or `tailscale serve/funnel`. The web container binds to loopback always.
 
+### If you pick `tsnet`
+
+Two things decide whether a certificate ever arrives, and neither of them
+reports a problem when it is wrong.
+
+- **Enable MagicDNS and HTTPS certificates on your tailnet first**, on the
+  admin console's DNS page. Without them, no certificate can be issued for any
+  name.
+- **`COBBLR_SITE_ADDRESS` must be the node's own full name**, tailnet included.
+  The proxy registers using only the first part of it, so a wrong tailnet still
+  joins, still shows Connected, and still looks healthy, while the certificate
+  is requested for a name you do not own and the browser fails with
+  `SSL_ERROR_INTERNAL_ERROR_ALERT`. The tailnet part is on that same DNS page
+  and is often not `tail1234`. Watch for a leftover node too: if `cobblr` is
+  taken, this one joins as `cobblr-1`.
+
+Correcting only the tailnet part keeps the node, so `docker compose up -d caddy`
+is the whole fix. Changing the first part makes a new node and asks for
+approval again. Full walkthrough: https://docs.cobblr.xyz/self-hosting/install
+
 ## Update
 
 ```bash
 docker compose pull && docker compose up -d
 ```
+
+To have that happen by itself every day, add the `autoupdate` profile
+(`COMPOSE_PROFILES=caddy,autoupdate`) and run `docker compose up -d` once: a
+small updater checks for newer images every four hours and recreates only the
+Cobblr containers that changed. About one build is published a day, so that is
+still about one restart a day, and no fixed hour has to be right for every
+timezone. `WATCHTOWER_SCHEDULE` takes a cron expression if you would rather
+pick the moment yourself. Pairs with
+`COBBLR_VERSION=nightly`. Off by default because it mounts the Docker socket.
 
 That is the whole update story, **including across PostgreSQL major
 versions** — the db image upgrades its own data directory in place, leaving
