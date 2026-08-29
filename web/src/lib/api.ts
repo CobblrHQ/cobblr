@@ -3300,6 +3300,27 @@ export const api = {
       dry_run?: boolean;
     };
   },
+  /** Bind an email to a no-account sandbox: it becomes an ordinary account
+   *  trial. `emailed` says whether the sign-in link actually went - when it did
+   *  not, the anonymous link is deliberately left working, because it is then
+   *  the only way back in. Branch on it rather than promising an inbox. */
+  /** The two ways to carry on, from the server so the modal and the email can
+   *  never disagree about where they point. */
+  sandboxPaths: () =>
+    request<{ cloud_url: string; selfhost_url: string; export_days: number }>("GET", "/try/paths"),
+  /** "Email me my work": builds the workspace backup, keeps it for a short
+   *  window and emails a link. `emailed` false still means the file exists -
+   *  the link comes back either way. */
+  takeSandboxWork: (email: string) =>
+    request<{ ok: boolean; emailed: boolean; link: string; expires_at: string; days: number }>(
+      "POST",
+      "/try/take",
+      { email },
+    ),
+
+  keepSandbox: (email: string) =>
+    request<{ ok: boolean; expires_at: string; emailed: boolean }>("POST", "/try/keep", { email }),
+
   confirmScanItem: (
     slug: string,
     id: string,

@@ -117,6 +117,9 @@ export interface OrgsTable {
   demo_unlocks: Generated<string[]>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
+  /** Handed out by GET /try — a one-hour sandbox, not an account trial. */
+  sandbox: Generated<boolean>;
+
 }
 
 export interface WorkspaceCapabilityGrantsTable {
@@ -1124,6 +1127,8 @@ export interface MetaDB {
   core_queue_jobs: CoreQueueJobsTable;
   shared_cache: SharedCacheTable;
   auth_magic_tokens: AuthMagicTokensTable;
+  try_sandbox_tokens: TrySandboxTokensTable;
+  try_sandbox_exports: TrySandboxExportsTable;
   auth_password_reset_tokens: AuthPasswordResetTokensTable;
   auth_email_verify_tokens: AuthEmailVerifyTokensTable;
   auth_pair_codes: AuthPairCodesTable;
@@ -1210,6 +1215,37 @@ export interface WorkspaceRoleAssignmentsTable {
 }
 
 /** core-auth-extensions v0.1: passwordless magic-link tokens. */
+/** The entry ticket for a no-account sandbox. The link IS the credential, so
+ *  it is stored hashed; unlike a magic token it is not consumed on use, because
+ *  it is the only way back into a workspace with no account. */
+interface TrySandboxTokensTable {
+  id: Generated<string>;
+  org_id: string;
+  user_id: string;
+  token_hash: string;
+  expires_at: Date;
+  revoked_at: Date | null;
+  created_at: Generated<Date>;
+  request_ip: string | null;
+  request_ua: string | null;
+}
+
+/** The one file a sandbox visitor asked us to email them. No FK to orgs: the
+ *  org is dropped an hour later and this has to outlive it, which is the point. */
+interface TrySandboxExportsTable {
+  id: Generated<string>;
+  org_id: string;
+  email: string;
+  token_hash: string;
+  filename: string;
+  bytes: Buffer;
+  size_bytes: number;
+  created_at: Generated<Date>;
+  expires_at: Date;
+  first_downloaded_at: Date | null;
+  download_count: Generated<number>;
+}
+
 export interface AuthMagicTokensTable {
   id: Generated<string>;
   email: string;

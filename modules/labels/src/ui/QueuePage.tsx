@@ -45,7 +45,7 @@ import { bleSettingsForSize } from "../ble-media";
 // Serial transport for Bluetooth-CLASSIC printers a browser cannot reach over Web
 // Bluetooth. Same renderer + encoder as the Bluetooth path; only the pipe differs.
 import { isWebSerialAvailable, NO_WEB_SERIAL, printBatchOverSerial, ConnectPrinterModal, usePrinterStatus, describePrinterStatus, getPrinterStatus,
-  isLocalBridgePrinter, readLocalBridgeStatus, setPrinterStatus, bridgeInstanceInfo, printerDisplayName, reportedMedia, needsReportedRemember, BatteryGauge, printerConnectionLabel, printerReach } from "@cobblr/platform-web";
+  isLocalBridgePrinter, readLocalBridgeStatus, setPrinterStatus, bridgeInstanceInfo, printerDisplayName, reportedMedia, needsReportedRemember, BatteryGauge, printerConnectionLabel, printerReach, allowLocalAccess } from "@cobblr/platform-web";
 import { rememberedSelection, needsRemember, byRecentlyUsed, recentSizeKeys, sizeByPaper, withSizeForPaper, withRememberedPaper } from "../printer-memory";
 import { assessScannability } from "../print/qr-overlay";
 import type { CustomLabelSize, Printable } from "./api";
@@ -162,6 +162,10 @@ export function QueuePage() {
   const hasLocalBridge = !!defaultPrinter && isLocalBridgePrinter(defaultPrinter.settings);
   useEffect(() => {
     if (!hasLocalBridge) return;
+    // Standing consent: connecting this printer was the ask. Without it the
+    // one-time gate would refuse the reads that make a configured bridge work,
+    // and re-prompting somebody who set a printer up last week is theatre.
+    allowLocalAccess("configured-bridge-printer");
     let live = true;
     void bridgeInstanceInfo().then((m) => { if (live) setInstanceInfo(m); });
     return () => { live = false; };

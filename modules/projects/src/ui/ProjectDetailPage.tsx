@@ -6,7 +6,7 @@ import { useLayoutEffect, useRef, useState, type ComponentProps, type FormEvent 
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, Plus, Sparkles, Trash2, Upload } from "lucide-react";
-import { ContributedDetailPanels, EntityActionsBar, CustomFieldsPanel, Modal, usePageTitle } from "@cobblr/platform-web";
+import { ContributedDetailPanels, EntityActionsBar, CustomFieldsPanel, Modal, usePageTitle, useUnits } from "@cobblr/platform-web";
 import { useProjects } from "./context";
 import { DesignFiles } from "./DesignFiles";
 import { useFieldPresentation } from "./useFieldPresentation";
@@ -454,6 +454,7 @@ function MaterialsPanel({
   api: ProjectsApi;
 }) {
   const qc = useQueryClient();
+  const units = useUnits();
   const allocs = useQuery({
     queryKey: ["design-allocations", designId],
     queryFn: () => api.listDesignAllocations(designId),
@@ -488,7 +489,6 @@ function MaterialsPanel({
   if (allocs.isError || parts.isError) return null;
   const items = allocs.data?.items ?? [];
   const partsList = parts.data?.items ?? [];
-  const selPart = partsList.find((p) => p.id === partId);
   const label: Record<string, string> = { reserved: "reserved", consumed: "used", released: "returned" };
   const open = status !== "done" && status !== "abandoned";
 
@@ -558,7 +558,7 @@ function MaterialsPanel({
             <option value="">Pick yarn / material…</option>
             {partsList.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.name} ({p.available_qty} {p.unit} free)
+                {p.name} ({[p.available_qty, units.suffix(p.unit)].filter(Boolean).join(" ")} free)
               </option>
             ))}
           </select>
@@ -568,7 +568,7 @@ function MaterialsPanel({
             type="number"
             min="0"
             step="any"
-            placeholder={selPart ? `amount (${selPart.unit})` : "amount"}
+            placeholder="amount"
             className="input text-sm w-32"
           />
           <button
@@ -706,6 +706,7 @@ function PatternExtractPanel({
 }) {
   const { orgSlug, getToken } = useProjects();
   const qc = useQueryClient();
+  const units = useUnits();
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const [patternName, setPatternName] = useState<string | null>(null);
@@ -868,7 +869,7 @@ function PatternExtractPanel({
                         {y.skeins ? <span className="text-muted dark:text-slate-400"> ({y.skeins} skein{y.skeins === 1 ? "" : "s"})</span> : null}
                         {stock ? (
                           <span className="mt-1 flex items-center gap-2 text-xs">
-                            <span className="text-moss-600">✓ in your stash: {stock.name} ({stock.available_qty} {stock.unit} free)</span>
+                            <span className="text-moss-600">✓ in your stash: {stock.name} ({[stock.available_qty, units.suffix(stock.unit)].filter(Boolean).join(" ")} free)</span>
                             <button
                               type="button"
                               disabled={reserveMatch.isPending || stock.available_qty <= 0}

@@ -16,6 +16,8 @@ import helmet from "helmet";
 import morgan from "morgan";
 import { env } from "./env.js";
 import { authRouter } from "./routes/auth.js";
+import { tryRouter } from "./routes/try.js";
+import { sandboxEnabled } from "./platform/try-sandbox.js";
 import { requestGuardMiddleware } from "./platform/hosted-seams.js";
 import { publicRouter } from "./routes/public.js";
 import { changelogRouter } from "./routes/changelog.js";
@@ -182,6 +184,15 @@ export function createApp(): AppHandles {
   v1.use(requestGuardMiddleware());
 
   v1.use("/auth", authRouter);
+
+  // The no-account sandbox, registered ONLY on a box that opted in
+  // (COBBLR_TRY_SANDBOX=true). On prod, staging and every self-host these
+  // routes do not exist at all — a stronger guarantee than a handler that
+  // checks a flag, because there is nothing mounted to reach.
+  if (sandboxEnabled()) {
+    v1.use(tryRouter);
+    console.log("[try-sandbox] routes mounted: GET /try, GET /try/redeem, POST /try/keep");
+  }
   // TEST-ONLY: org-pool checkout endpoints, mounted ONLY under the flag (never
   // in prod — the route mints tokens). See routes/test-support.ts.
   if (env.COBBLR_TEST_ORG_POOL) v1.use(testSupportRouter);

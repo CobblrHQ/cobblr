@@ -485,6 +485,16 @@ export default defineModule({
     onBoot: async () => {
       const { startBurnRateSweeper } = await import("./burn-rate.js");
       startBurnRateSweeper();
+      // Catalog instances the camera sheet latched to the stock face go back to
+      // the catalog face. One-shot and idempotent; meta-only for a workspace
+      // with nothing to heal. Awaited rather than fired off: it is a few
+      // queries, and a half-healed workspace serving its first request is worse
+      // than a boot that takes a moment longer.
+      const { healCatalogStockLatch } = await import("./heal-catalog-stock-latch.js");
+      const unlatched = await healCatalogStockLatch();
+      if (unlatched > 0) {
+        console.log(`[inventory] ${unlatched} catalog instance(s) returned to the catalog face`);
+      }
     },
     onShutdown: async () => {
       const { stopBurnRateSweeper } = await import("./burn-rate.js");

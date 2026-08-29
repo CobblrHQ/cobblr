@@ -7,6 +7,7 @@
 // middle of the content (reported 2026-07-10).
 import { useEffect, useRef } from "react";
 import { useToast } from "@cobblr/platform-web";
+import { isSandboxSession } from "../lib/sandbox-session";
 
 const POLL_MS = 3 * 60_000;
 
@@ -18,6 +19,13 @@ export function NewVersionNudge() {
   toastRef.current = toast;
   const fired = useRef(false);
   useEffect(() => {
+    // Not in a sandbox. This nudge is for a tab somebody has kept open across
+    // deploys; a sandbox lasts an hour and belongs to a stranger who is deciding
+    // whether they like Cobblr. "A new version is available" means nothing to
+    // them, it covers the page they came to look at, and it asks somebody
+    // evaluating the product to do maintenance on it. They get the new build
+    // with their next sandbox anyway.
+    if (isSandboxSession()) return;
     let first: string | null = null;
     let stop = false;
     async function check() {

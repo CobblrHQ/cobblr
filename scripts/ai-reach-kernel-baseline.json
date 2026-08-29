@@ -18,6 +18,8 @@
     "quickstart.ts POST /materialize",
     "record-move.ts POST /",
     "sandbox-install.ts DELETE /install/:x",
-    "sandbox-install.ts POST /install"
+    "sandbox-install.ts POST /install",
+    "try.ts POST /try/keep",
+    "try.ts POST /try/take"
   ]
 }

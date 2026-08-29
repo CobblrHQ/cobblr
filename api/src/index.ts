@@ -82,6 +82,7 @@ import { backfillIdentityLinks } from "./platform/backfill-identity.js";
 import { logAnnounceRouting } from "./platform/announce.js";
 import { logSignupGates } from "./platform/signup-gates.js";
 import { startTrialReaper } from "./platform/reap-trials.js";
+import { startSandboxReaper } from "./platform/reap-sandboxes.js";
 import { startDbUpgradeHoldWatch } from "./platform/db-upgrade-status.js";
 import { reconcileOrphanTenantRoles } from "./platform/reconcile-tenant-roles.js";
 import { reconcileScanCategoryFields } from "./platform/reconcile-scan-category.js";
@@ -1211,6 +1212,9 @@ async function boot() {
   // No-op unless COBBLR_TRIAL_REAP=dry|live; only ever touches trial_expires_at-stamped
   // orgs, so prod/staging/self-host are untouchable. See platform/reap-trials.ts.
   startTrialReaper();
+  // Sandboxes live an hour, so they are swept in minutes, not the trial
+  // reaper's six hours. No-op unless the box hands them out.
+  startSandboxReaper();
 
   // Alert the operator when the database image held back a major Postgres
   // upgrade (it serves the old major instead of dying — see

@@ -13,6 +13,16 @@
 // The existing writers all use `JSON.stringify(x) as never` for this reason.
 // This makes that convention checkable instead of folklore.
 //
+// BETTER THAN BEING WATCHED HERE: spell the column's WRITE type as a string —
+// `ColumnType<unknown[], string | undefined, string>` — and passing a JS array
+// stops typechecking at all. That needs no `as never` (which silences every
+// other error on the line too) and no lint. digifab_print_rule_state.fired is
+// the first column to do it. This lint stays for the columns typed the loose
+// way, and for the shape it CANNOT see: a literal handed to a helper that
+// writes it, where the value never appears at a `.values(` call at all
+// (2026-08-29 — that hole let an unencoded write through this lint into a
+// review).
+//
 //   npx tsx scripts/lint-jsonb-array-writes.ts   (npm run lint:jsonb-array-writes)
 
 import { readFileSync, readdirSync, statSync } from "node:fs";

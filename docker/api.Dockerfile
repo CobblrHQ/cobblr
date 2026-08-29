@@ -193,6 +193,11 @@ COPY --from=builder /app/changelog.d ./changelog.d
 # self-hoster, independent of the private GitHub registry. Lands at /app/bundles
 # (cwd is /app/api at runtime; the loader resolves ../bundles).
 COPY bundles ./bundles
+# Sandbox seeds — the blueprint a no-account sandbox opens on
+# (api/src/platform/try-sandbox-seed.ts resolves /app/deploy/seeds). A missing
+# seed is not an error, it is an empty workspace, so this is enforced by
+# scripts/lint-runtime-assets.ts rather than left to be noticed.
+COPY deploy/seeds ./deploy/seeds
 
 # pnpm (nodeLinker: hoisted) hoists EXTERNAL deps into the root node_modules, but
 # unlike npm's flat hoist it does NOT place the WORKSPACE packages (@cobblr/*)

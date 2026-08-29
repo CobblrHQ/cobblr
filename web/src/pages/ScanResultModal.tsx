@@ -96,7 +96,7 @@ export function ScanResultModal({
   // Quantity + its write, together: this sheet used to hold the count in local
   // state and PATCH it only from "Save & next", so closing any other way threw
   // the edit away (reported 2026-08-03). See lib/scanQuantity.
-  const { value: qty, bump: bumpQty, flush: flushQty } = useScanQuantity(activeSlug, item);
+  const { value: qty, commit: commitQty, bump: bumpQty, flush: flushQty } = useScanQuantity(activeSlug, item);
   // URLs that 404'd/hotlink-blocked — each candidate gets one try, then we
   // fall to the next rung (a URL that failed once will fail again).
   const [brokenSrcs, setBrokenSrcs] = useState<ReadonlySet<string>>(new Set());
@@ -176,7 +176,12 @@ export function ScanResultModal({
         target_kind: opts.kind,
         instance: opts.instance,
         name: item.suggested_name ?? `Barcode ${barcode}`,
-        quantity: qty > 0 ? qty : 1,
+        // NOT the stepper's display value: an untouched stepper shows 1 for
+        // an item with no count, and sending that 1 told the server "I counted
+        // one", which latches a catalog instance to the stock face off a single
+        // scanned book. Absent, the server derives the count from the target's
+        // own identity. See commitQuantity in lib/scanQuantity.
+        quantity: commitQty,
         // The scan area doubles as the putaway location on a one-tap
         // commit — you're filing the thing where you're standing.
         location_id: scanAreaId ?? undefined,

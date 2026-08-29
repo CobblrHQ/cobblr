@@ -79,3 +79,30 @@ export function formatUnit(
   if (mode === "both") return `${def.symbol} (${def.plural})`;
   return def.symbol;
 }
+
+/**
+ * The unit to show BESIDE A QUANTITY, or "" when it would say nothing.
+ *
+ * A count unit repeats what the number already said: a list of countable
+ * things became a column of "each", and a yarn workspace a column of
+ * "skeins" (reported 2026-08-29). A MEASURED unit is the opposite — `750`
+ * without `g` is not a quantity, it is a number.
+ *
+ * So the vocabulary decides, not a hardcoded list: anything in the `count`
+ * category is dropped, anything measured is kept. Always the symbol ("g",
+ * never "grams"), whatever the workspace's display mode is for other
+ * surfaces — a row is the one place where the shortest true form wins.
+ *
+ * Free text the vocabulary cannot place is dropped too. It is nearly always
+ * a count noun somebody typed ("skein", "spool"), which is the case this
+ * exists for; a measured unit is in the catalog or is a custom unit that
+ * declares its category, and both resolve.
+ */
+export function quantitySuffix(
+  raw: string | null | undefined,
+  units: PlatformUnitDef[],
+): string {
+  const def = resolveUnit(raw, units);
+  if (!def || def.category === "count") return "";
+  return def.symbol;
+}

@@ -36,7 +36,7 @@ import {
   usePublishChatContext,
   makeAreaResolver,
   LOCATION_GROUP_KEY,
-  type EditableCellDef, useAskCobbAboutSelection } from "@cobblr/platform-web";
+  type EditableCellDef, useAskCobbAboutSelection, useUnits } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { QtyStepper } from "./QtyStepper";
 import { assortedQty, isAssorted } from "./assorted";
@@ -958,6 +958,9 @@ function PartsTable({
   const commit = useCellCommit();
   // Candidate lists for the two native FK columns. Same query keys the page
   // already uses, so this is the cache, not a second fetch.
+  // The workspace vocabulary decides which units are worth showing beside a
+  // quantity: a measured one is part of the value, a countable one is noise.
+  const units = useUnits();
   const cats = useQuery({ queryKey: ["inventory-categories"], queryFn: () => api.listCategories() });
   const locs = useQuery({ queryKey: ["inventory-locations"], queryFn: () => api.listLocations() });
   const catOptions = useMemo(
@@ -1140,7 +1143,9 @@ function PartsTable({
                     ) : (
                       <QtyStepper partId={p.id} qty={Number(p.qty)} size="sm" />
                     )}
-                    <span className="text-faint dark:text-slate-500">{p.unit}</span>
+                    {units.suffix(p.unit) && (
+                      <span className="text-faint dark:text-slate-500">{units.suffix(p.unit)}</span>
+                    )}
                   </span>
                 </td>
               )}
@@ -1289,8 +1294,8 @@ function PartsTable({
                         <>
                           qty <QtyStepper partId={p.id} qty={Number(p.qty)} size="sm" />
                         </>
-                      )}{" "}
-                      {p.unit}
+                      )}
+                      {units.suffix(p.unit) ? ` ${units.suffix(p.unit)}` : ""}
                     </span>
                   )}
                   {showQty && !isAssorted(p) && (
@@ -1419,6 +1424,7 @@ function groupItems(
 function PartsTileGrid({ items, basePath }: { items: PartListItem[]; basePath: string }) {
   // A lean catalog tile shows no qty badge — it's a record, not stock.
   const disclosure = useDisclosure();
+  const units = useUnits();
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
       {items.map((p) => (
@@ -1431,13 +1437,13 @@ function PartsTileGrid({ items, basePath }: { items: PartListItem[]; basePath: s
             subtitle={p.manufacturer || p.category_name || null}
             badge={
               !disclosure.stock ? undefined : isAssorted(p) ? (
-                `${assortedQty(p)} ${p.unit}`
+                [assortedQty(p), units.suffix(p.unit)].filter(Boolean).join(" ")
               ) : p.low_stock ? (
                 <span className="text-ember-600 dark:text-ember-500">
                   {fmt(p.qty)} / {p.min_qty == null ? "—" : fmt(p.min_qty)}
                 </span>
               ) : (
-                `${fmt(p.qty)} ${p.unit}`
+                [fmt(p.qty), units.suffix(p.unit)].filter(Boolean).join(" ")
               )
             }
             attention={!disclosure.stock ? false : p.low_stock}

@@ -39,6 +39,7 @@ import {
 } from "./serial-printer.js";
 import { explainPairingFailure } from "./pairing-errors.js";
 import { discoverLocalPrinters, LOCAL_BRIDGE_URL, printerDisplayName, type DiscoveredPrinter } from "./bridge-printer.js";
+import { allowLocalAccess } from "./local-network.js";
 import { isBleDecoy } from "./bluetooth-label";
 import { isWebBluetoothAvailable } from "./bluetooth-label";
 import { setPrinterStatus } from "./printer-status.js";
@@ -115,6 +116,9 @@ export function ConnectPrinterModal(props: ConnectPrinterModalProps) {
 
   useEffect(() => {
     if (!open) return;
+    // Opening this is the ask: they pressed a button that says "connect a
+    // printer", and the local bridge is one of the two doors it offers.
+    allowLocalAccess("connect-printer");
     let live = true;
     setScanning(true);
     void discoverLocalPrinters()

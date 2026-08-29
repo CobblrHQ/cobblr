@@ -360,6 +360,15 @@ authRouter.get("/config", (_req, res) => {
           // Cobblr-specific: point IDENTITY_URL at your own service and the button
           // should say your name, not ours.
           name: (process.env.IDENTITY_NAME ?? "").trim() || "Cobblr",
+          // Will arriving from the identity service CREATE an account here?
+          //
+          // Published because a portal listing this surface has to answer "can
+          // you get in", and it was answering "can you sign up". Those were the
+          // same question until auto-provision existed. A surface with signup
+          // closed and auto-provision on is fully open to anyone holding a
+          // verified central account — and was invisible in the portal, because
+          // signup_enabled said false and nothing else was on offer to read.
+          auto_provision: autoProvisionEnabled(),
         }
       : null,
   });
@@ -990,17 +999,13 @@ authRouter.post("/identity/exchange", async (req, res, next) => {
 //     — same 202 response either way — to avoid email-enumeration.
 
 import { createHash, randomBytes } from "node:crypto";
+import {
+  MAGIC_TTL_MS,
+  hashMagicToken,
+  issueSignInLink,
+} from "../platform/sign-in-link.js";
+import { revokeSandboxLinksForUser } from "../platform/try-sandbox.js";
 
-const MAGIC_TTL_MS = 15 * 60 * 1000;
-
-function hashMagicToken(plain: string): string {
-  return createHash("sha256").update(plain).digest("hex");
-}
-function mintMagicToken(): { plain: string; hash: string } {
-  // 32 bytes → 43-char URL-safe base64.
-  const plain = randomBytes(32).toString("base64url");
-  return { plain, hash: hashMagicToken(plain) };
-}
 
 const MagicRequest = z.object({
   email: z.string().email().max(255),
@@ -1037,34 +1042,25 @@ authRouter.post("/magic/request", async (req, res, next) => {
       return;
     }
 
-    const { plain, hash } = mintMagicToken();
-    await meta
-      .insertInto("auth_magic_tokens")
-      .values({
-        email,
-        token_hash: hash,
-        request_ip: (req.ip ?? null) as string | null,
-        request_ua: (req.get("user-agent") ?? null) as string | null,
-      })
-      .execute();
 
     // Dev mode: return the plaintext + a copy-paste-able URL so the
     // demo flow works without SMTP. A production env that wires
     // email delivery (via an auth.magic.requested event subscriber
     // in a future module) should set NODE_ENV=production AND the
     // requester won't see the link in the response.
-    const link = `/auth/magic?token=${encodeURIComponent(plain)}`;
-    const absLink = `${req.protocol}://${req.get("host") ?? ""}${link}`;
+    const issued = await issueSignInLink({
+      email,
+      absBase: `${req.protocol}://${req.get("host") ?? ""}`,
+      requestIp: req.ip ?? null,
+      requestUa: req.get("user-agent") ?? null,
+    });
+    const plain = issued.plain;
+    const link = issued.path;
     // Deliver via the registered auth-email sender (a self-hoster's SMTP/API or
     // the managed overlay) when one exists. No sender → fall back to the inline
     // dev link below. This is the seam that turns magic-link from a dev-only
     // affordance into a real prod flow.
-    const emailed = await sendAuthEmail({
-      to: email,
-      subject: "Your Cobblr sign-in link",
-      text: `Sign in to Cobblr:\n\n${absLink}\n\nThe link expires shortly. If you didn't request it, you can ignore this email.`,
-      kind: "magic_link",
-    });
+    const emailed = issued.sent;
     res.status(202).json({
       ok: true,
       // Expose the link inline ONLY when we couldn't email it (dev / no sender),
@@ -1184,6 +1180,16 @@ authRouter.post("/magic/consume", async (req, res, next) => {
       .set({ last_login_at: new Date() })
       .where("id", "=", userId)
       .execute();
+    // They are in through the front door, so a sandbox link they still hold has
+    // done its job and stops working now. This is the closing half of the grace
+    // window keepSandbox opens: the anonymous URL survives the upgrade only
+    // until a real sign-in happens, so nobody is stranded between the two while
+    // an email is in flight. Anyone who never had a sandbox matches no rows.
+    await revokeSandboxLinksForUser(userId)
+      .then((n) => {
+        if (n > 0) console.log(`[magic/consume] closed ${n} sandbox link(s) for ${userId}`);
+      })
+      .catch((err) => console.error("[magic] sandbox link close failed:", err));
     await activity.log({
       orgId: (
         await meta

@@ -1,6 +1,6 @@
 // Tenant-side DB types + request helpers for digifab.
 
-import type { Generated, Kysely } from "kysely";
+import type { ColumnType, Generated, Kysely } from "kysely";
 import type { Request } from "express";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
 
@@ -212,6 +212,17 @@ export interface DigifabPrintRuleStateTable {
   last_percent: number | null;
   last_layer: number | null;
   last_fire_at: Date | null;
+  /** Lifecycle events already announced for `job_key` (["started"], …). Reset
+   *  when the job changes. Progress is never recorded here — it repeats by
+   *  design and is gated by the cadence instead.
+   *
+   *  READ as an array, WRITTEN as a JSON string, and typed to say so. node-pg
+   *  renders a JS array as a Postgres array literal, which a jsonb column
+   *  rejects at runtime; `lint:jsonb-array-writes` exists because the usual
+   *  spelling (`Generated<unknown[]>`) makes that mistake typecheck perfectly.
+   *  Spelling the write type as `string` makes it a compile error instead, so
+   *  this column needs no lint and no `as never` cast to silence one. */
+  fired: ColumnType<unknown[], string | undefined, string>;
 }
 
 export interface DigifabDB {

@@ -1,0 +1,21 @@
+-- Which lifecycle events a print-update rule has already announced for the
+-- print it is currently watching.
+--
+-- "Print started" and "Print complete" are transitions, so they are not
+-- cadence-gated: they fire the moment a rule sees printing begin or end. That
+-- was safe while one process watched a printer. It is not safe now — more than
+-- one api runs against a single database (the canary channel; a rolling
+-- deploy), each with its own telemetry pump, and each one independently sees
+-- the same transition a few seconds apart. Both announced it.
+--
+-- The compare-and-set added earlier stops two processes racing on the SAME
+-- read; it cannot stop the same transition being observed twice in sequence,
+-- which is why progress cards went single (the cadence cap suppressed the
+-- second process) and lifecycle cards stayed doubled.
+--
+-- So the claim moves from "this moment" to "this event, for this print":
+-- announcing `completed` for job X is recorded here, and a second process
+-- asking to announce `completed` for job X finds it already done. Reset when
+-- the job changes, so the next print announces normally.
+alter table digifab_print_rule_state
+  add column fired jsonb not null default '[]'::jsonb;

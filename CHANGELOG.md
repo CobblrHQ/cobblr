@@ -2,6 +2,28 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-08-29
+
+### Features
+- Try Cobblr for an hour without making an account. One link hands you a real workspace with a stocked kitchen and a shelf of books already in it, the scanner works, and everything you do is thrown away an hour later unless you press "keep this workspace" and give an email. Self-hosters can turn the same thing on with `COBBLR_TRY_SANDBOX=true`.
+- You can now try Cobblr without making an account: one button hands you a private workspace for an hour, already stocked with a bookshelf and a kitchen so there is something real to poke at. Add your email at any point to keep it.
+- A try sandbox can now email you everything you made in it as one file, along with both ways to carry on: hosted by us, or running Cobblr on your own machine. The same file restores into either.
+
+### Improvements
+- Quantity reads as the number in lists, cards and pickers, with the unit shown only when it is part of the value. A column of "each" (or "skeins") said nothing the QTY header had not, so countable units are gone; a part measured in grams still shows "750 g", abbreviated rather than spelled out. Your workspace's own units are classified the same way, so a custom "skein" is dropped and a custom "sq ft" is kept. The unit is still set and changed on the item's own page, where it converts between compatible units as before.
+- Try sandboxes are now prepared in advance, so one opens immediately with its book covers already in place instead of filling them in while you watch, and each gets its own unguessable address.
+- The try page now shows a spinner and what it is doing while your workspace is built, instead of sitting still after the human check passes, and book covers are fetched in parallel so there is less to wait for.
+
+### Fixes
+- "Print started" and "Print complete" reach your Discord channel once per print again. Progress updates stopped doubling in the previous fix, but the start and finish messages did not: they are not on a cadence, so when a second copy of the server saw the same moment a few seconds later it announced it too. Each of these is now recorded against the print it belongs to, so whichever copy gets there first is the only one that speaks, and the next print announces normally.
+- Restarting the server no longer announces "Print started" for a print that was already running. The printer watcher kept the last state it had seen in memory only, so a fresh process saw every printer as brand new and reported an ongoing print as one that had just begun (and opened a duplicate row for it in print history). It now reads the last state back from the workspace, and a first look at a printer, with nothing to compare against, reports progress rather than inventing a start.
+- Scanning something into a collection no longer treats it as stock. A shelf of books used to sprout a quantity stepper, a cost box, a supplier link and a row of warehouse actions after the first scan; now a scanned book is simply a book, and shelves that already turned into warehouses turn back on their own.
+- Backups now actually contain your uploaded files. They were being skipped entirely because the backup looked for a table under the wrong name, so a restore came back looking complete with every photo missing.
+- Cobblr no longer contacts the local print bridge while the Live box is closed, so browsers that gate local network access stop asking first-time visitors whether the site may reach other apps on their device.
+- Cobblr only contacts services on your own computer after you ask it to, such as pressing Connect a printer or opening the Live box, so browsers no longer prompt about local network access on a page you have just opened.
+- The "a new version is available" prompt no longer appears in a try sandbox, where it covered the page and asked someone who had been using Cobblr for a minute to go and refresh it.
+- Keeping a sandbox workspace now emails you a sign-in link, and the link you arrived on keeps working until you have signed in with it, so there is never a moment where the workspace you just saved has no way back into it.
+
 ## 2026-08-28
 
 ### Improvements

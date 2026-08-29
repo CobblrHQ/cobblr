@@ -123,6 +123,40 @@ const Schema = z.object({
   // Days until a trial workspace's expiry stamp. Reaping itself is DEFERRED —
   // the stamp is set at signup, but nothing sweeps until the reaper is added.
   TRY_TTL_DAYS: z.coerce.number().int().positive().default(30),
+
+  // ── the no-account sandbox (docs/design-decisions/try-sandbox.md) ──────────
+  // OFF unless COBBLR_TRY_SANDBOX=true, so prod / staging / self-host never
+  // hand out an anonymous workspace even if the other keys drift in.
+  COBBLR_TRY_SANDBOX: z.coerce.boolean().default(false),
+  /** How long a sandbox lives. Minutes, not days: this is the whole point. */
+  TRY_SANDBOX_TTL_MINUTES: z.coerce.number().int().positive().default(60),
+  /** Refuse to provision past this many LIVE sandboxes. The control that
+   *  protects the box whatever the rate limits miss — db-per-tenant means every
+   *  sandbox is a real Postgres database. */
+  TRY_SANDBOX_MAX_LIVE: z.coerce.number().int().positive().default(100),
+  TRY_SANDBOX_MAX_PER_IP_PER_HOUR: z.coerce.number().int().positive().default(2),
+  TRY_SANDBOX_MAX_PER_HOUR: z.coerce.number().int().positive().default(60),
+  /** How often expired sandboxes are swept. Minutes, unlike the trial reaper's
+   *  6h: an hour-long sandbox that lingers for six is not an hour-long one. */
+  TRY_SANDBOX_REAP_INTERVAL_MS: z.coerce.number().int().positive().default(300_000),
+  /** Blueprint seeded into a fresh sandbox, by name (files live in
+   *  deploy/seeds/). Empty = an empty workspace, which is a poor first
+   *  impression and is not the default. */
+  TRY_SANDBOX_SEED: z.string().default("household"),
+  //  • TRY_SANDBOX_EXPORT_DAYS — how long the ONE file a visitor asked us to
+  //    email them survives. Their database still dies on the hour; this is the
+  //    export artifact only, and only for somebody who gave an address. Kept
+  //    short because it is somebody's work sitting on our disk after they have
+  //    gone, and long enough to survive a weekend.
+  TRY_SANDBOX_EXPORT_DAYS: z.coerce.number().int().positive().default(7),
+  //  • The two ways to carry on, shown in the take-your-work modal and mirrored
+  //    in the email. UNSET BY DEFAULT and each shown only when configured: a
+  //    self-hosted Cobblr has no business advertising somebody else's hosted
+  //    service, and baking one deployment's hostname into the product is what
+  //    the instance-identity lint exists to stop. The box that hands out
+  //    sandboxes sets both.
+  COBBLR_SELFHOST_DOCS_URL: z.string().default(""),
+  COBBLR_CLOUD_SIGNUP_URL: z.string().default(""),
   // How many days before a trial's expiry to send the humane heads-up warning
   // email (the reaper's warn -> grace -> delete lifecycle). Only consulted when
   // COBBLR_TRIAL_REAP=dry|live; a workspace is never deleted until it was warned

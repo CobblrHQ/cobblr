@@ -247,11 +247,26 @@ export async function fireRule(
 
 const PRINTING = new Set(["printing", "paused"]);
 
-/** Map prev/current state to a lifecycle event, or "progress" while running. */
-function eventFor(prevState: string | null, state: string | null): PrintEvent | null {
+/**
+ * Map prev/current state to a lifecycle event, or "progress" while running.
+ *
+ * A lifecycle event is a TRANSITION, so it needs two states to compare. With no
+ * previous state there is nothing to transition FROM, and a printer that is
+ * already printing the first time we look at it has not just started — we have
+ * just arrived. Saying "Print started" there is a lie told confidently, and it
+ * is the one people notice: an api restart mid-print announced a new print at
+ * 43% and again at 49% (2026-08-29, right after a promote and a canary roll).
+ *
+ * So an unknown previous state yields "progress" (cadence-gated, and silent on
+ * a fresh cadence baseline) rather than "started". The cost is a genuinely new
+ * print going unannounced when its very first report is the one that starts it
+ * — which can only happen for a printer we have never persisted a state for,
+ * since the pump reads the last state back from the database.
+ */
+export function eventFor(prevState: string | null, state: string | null): PrintEvent | null {
   const now = state ?? "";
   const was = prevState ?? "";
-  if (now === "printing" && was !== "printing" && was !== "paused") return "started";
+  if (now === "printing" && was && was !== "printing" && was !== "paused") return "started";
   if (now === "completed" && PRINTING.has(was)) return "completed";
   if (now === "failed" && PRINTING.has(was)) return "failed";
   if (now === "printing") return "progress";
@@ -339,7 +354,10 @@ export async function evaluatePrintRules(
       if (ev === "progress") {
         // A brand-new print just baselines the cadence clocks (no immediate ping).
         if (newJob) {
-          await upsertState(db, r.rule_id, serial, { job_key: t.jobKey, last_percent: t.percent ?? 0, last_layer: t.layer ?? 0, last_fire_at: new Date(now) });
+          // `fired: []` re-arms started/completed/failed for the new print —
+          // without it the previous print's announcements would suppress this
+          // one's.
+          await upsertState(db, r.rule_id, serial, { job_key: t.jobKey, last_percent: t.percent ?? 0, last_layer: t.layer ?? 0, last_fire_at: new Date(now), fired: [] });
           continue;
         }
         const due = cadenceDue(
@@ -349,6 +367,24 @@ export async function evaluatePrintRules(
           { percent: t.percent, layer: t.layer, now },
         );
         if (!due) continue;
+      }
+
+      // A LIFECYCLE event is claimed per (rule, printer, print, event) — not
+      // per moment. `claimFire` below compares against the row THIS process
+      // just read, which stops two processes racing on the same read but not
+      // the same transition seen a few seconds apart: prod announced the print
+      // finishing, the canary saw the same finish on its own next tick, read
+      // the row fresh, matched its own read, and announced it again. Progress
+      // hid the problem because the cadence cap suppressed the second process;
+      // started/completed/failed skip the cadence entirely, so they doubled
+      // (reported 2026-08-29, after the concurrent-race fix had already landed).
+      if (ev !== "progress") {
+        const claimedEvent = await claimLifecycle(db, r.rule_id, serial, t.jobKey, ev, {
+          last_percent: t.percent ?? prev?.last_percent ?? 0,
+          last_layer: t.layer ?? prev?.last_layer ?? 0,
+          last_fire_at: new Date(now),
+        });
+        if (!claimedEvent) continue; // already announced for this print
       }
 
       const creds = await platform().integrations.decryptCredentials(orgId, r.credentials_enc);
@@ -366,13 +402,19 @@ export async function evaluatePrintRules(
       // due, and both used to write and post: a workspace's printer posted its
       // progress to Discord twice, every time, for weeks (2026-08-29). Only the
       // process whose UPDATE actually matched the row it read may post.
-      const claimed = await claimFire(db, r.rule_id, serial, prev ?? null, {
-        job_key: t.jobKey,
-        last_percent: t.percent ?? prev?.last_percent ?? 0,
-        last_layer: t.layer ?? prev?.last_layer ?? 0,
-        last_fire_at: new Date(now),
-      });
-      if (!claimed) continue; // another process got this slot — it is posting
+      if (ev === "progress") {
+        const claimed = await claimFire(db, r.rule_id, serial, prev ?? null, {
+          job_key: t.jobKey,
+          last_percent: t.percent ?? prev?.last_percent ?? 0,
+          last_layer: t.layer ?? prev?.last_layer ?? 0,
+          last_fire_at: new Date(now),
+        });
+        if (!claimed) continue; // another process got this slot — it is posting
+      }
+      // Say what went out, and from which process. A duplicate card was
+      // diagnosed twice from reasoning alone because nothing recorded a fire;
+      // one line makes the next one readable straight off the box.
+      console.log(`[digifab] print-rule ${r.rule_id} → ${ev} for ${serial} (${t.percent ?? "?"}%)`);
       // Fire DETACHED — the pre/post hook delays (light settle, etc.) must
       // never block the telemetry poll.
       const hooks: RuleHooks = { pre: (r.pre_actions ?? []) as RuleStep[], post: (r.post_actions ?? []) as RuleStep[] };
@@ -426,16 +468,67 @@ export async function claimFire(
   return !!won;
 }
 
+/**
+ * Announce a lifecycle event ONCE for this print, whichever process gets there
+ * first. Returns true only to the caller whose write landed.
+ *
+ * One statement, so the check and the record cannot be split by a second
+ * process arriving between them. The DO UPDATE's own WHERE is the guard: it
+ * matches when the print has changed (a new print re-arms every event) or when
+ * this event is not already in `fired`. An unchanged print whose event is
+ * recorded updates no row, and the caller stays quiet.
+ */
+export async function claimLifecycle(
+  db: Kysely<DigifabDB>,
+  rule_id: string,
+  serial: string,
+  job_key: string | null,
+  event: PrintEvent,
+  v: { last_percent: number | null; last_layer: number | null; last_fire_at: Date | null },
+): Promise<boolean> {
+  const one = JSON.stringify([event]);
+  const rows = await sql<{ rule_id: string }>`
+    insert into digifab_print_rule_state
+      (rule_id, serial, job_key, last_percent, last_layer, last_fire_at, fired)
+    values (${rule_id}, ${serial}, ${job_key}, ${v.last_percent}, ${v.last_layer}, ${v.last_fire_at}, ${one}::jsonb)
+    on conflict (rule_id, serial) do update set
+      job_key = excluded.job_key,
+      last_percent = excluded.last_percent,
+      last_layer = excluded.last_layer,
+      last_fire_at = excluded.last_fire_at,
+      fired = case
+        when digifab_print_rule_state.job_key is distinct from excluded.job_key then excluded.fired
+        else digifab_print_rule_state.fired || excluded.fired
+      end
+    where digifab_print_rule_state.job_key is distinct from excluded.job_key
+       or not (digifab_print_rule_state.fired @> excluded.fired)
+    returning digifab_print_rule_state.rule_id
+  `
+    .execute(db)
+    .catch(() => ({ rows: [] as { rule_id: string }[] }));
+  return rows.rows.length > 0;
+}
+
 async function upsertState(
   db: Kysely<DigifabDB>,
   rule_id: string,
   serial: string,
-  v: { job_key: string | null; last_percent: number | null; last_layer: number | null; last_fire_at: Date | null },
+  v: { job_key: string | null; last_percent: number | null; last_layer: number | null; last_fire_at: Date | null; fired?: string[] },
 ): Promise<void> {
+  // `fired` is a jsonb ARRAY, so it goes to Postgres as a JSON STRING: node-pg
+  // renders a JS array as a Postgres array literal ({}), which jsonb rejects,
+  // and this insert swallows its own errors — the write would have failed
+  // silently and every print would have kept announcing itself. The column's
+  // write type is `string`, so forgetting this is a compile error rather than
+  // something lint:jsonb-array-writes has to catch (and it could not have
+  // caught it here: the value arrives through a parameter, not as a literal at
+  // `.values(`).
+  const { fired, ...rest } = v;
+  const row = { ...rest, ...(fired === undefined ? {} : { fired: JSON.stringify(fired) }) };
   await db
     .insertInto("digifab_print_rule_state")
-    .values({ rule_id, serial, ...v })
-    .onConflict((oc) => oc.columns(["rule_id", "serial"]).doUpdateSet(v))
+    .values({ rule_id, serial, ...row })
+    .onConflict((oc) => oc.columns(["rule_id", "serial"]).doUpdateSet(row))
     .execute()
     .catch(() => {});
 }

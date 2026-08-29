@@ -6,7 +6,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePlatformWeb } from "./context";
 import type { PlatformUnitDef, UnitDisplayMode } from "./types";
-import { convertQuantity, formatQuantity, formatUnit, resolveUnit } from "./units";
+import { convertQuantity, formatQuantity, formatUnit, quantitySuffix, resolveUnit } from "./units";
 
 export interface UseUnits {
   /** built-in ∪ custom, deduped (custom wins on code collision) */
@@ -19,6 +19,9 @@ export interface UseUnits {
   format: (qty: number | null | undefined, raw: string | null | undefined) => string;
   /** render just the unit token per the workspace display mode */
   unit: (raw: string | null | undefined) => string;
+  /** the unit to show beside a quantity in a list — the symbol for a measured
+   *  unit, "" for a countable one (see quantitySuffix) */
+  suffix: (raw: string | null | undefined) => string;
   resolve: (raw: string | null | undefined) => PlatformUnitDef | null;
   /** convert a value between units (same category, both with a factor), else
    *  null — e.g. 1000 "g" → "kg" = 1 */
@@ -50,6 +53,7 @@ export function useUnits(): UseUnits {
       loading: q.isLoading,
       format: (qty, raw) => formatQuantity(qty, raw, all, displayMode),
       unit: (raw) => formatUnit(raw, all, displayMode),
+      suffix: (raw) => quantitySuffix(raw, all),
       resolve: (raw) => resolveUnit(raw, all),
       convert: (value, fromRaw, toRaw) => convertQuantity(value, fromRaw, toRaw, all),
     };

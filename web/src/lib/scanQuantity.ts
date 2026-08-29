@@ -61,8 +61,39 @@ export function createQuantityWriter(opts: {
   };
 }
 
+/** What the STEPPER shows. An item with no meaningful count shows 1, because a
+ *  stepper reading 0 invites you to press + to get to the number you already
+ *  meant. Display only — never send this to a commit. */
+export function displayQuantity(local: number | null, itemQty: number | null | undefined): number {
+  if (local !== null) return local;
+  const q = Number(itemQty ?? 0);
+  return Number.isFinite(q) && q > 0 ? q : 1;
+}
+
+/** What a COMMIT sends, which is NOT what the stepper shows.
+ *
+ *  `undefined` means "I am not telling you a count" — and the server then
+ *  derives one from what is being committed INTO: a unique catalog target
+ *  (a bookshelf, a film shelf) gets no count at all, a fungible stock target
+ *  gets the scan's own quantity. That derivation is deliberate
+ *  (core-scan/api/inbox.ts, `targetIsUnique`) and has been correct since it
+ *  shipped — but the camera sheet sent `qty > 0 ? qty : 1`, so a number was
+ *  ALWAYS present and the server's branch never ran. One scanned book then
+ *  counted as stock, which latched the whole shelf to the stock face: a
+ *  quantity stepper, cost, supplier URL, serial number and fifteen stock
+ *  actions on a paperback, permanently.
+ *
+ *  So a count is sent only when there IS one: the user bumped the stepper, or
+ *  the scan itself carried a quantity. Otherwise nothing, and the platform
+ *  decides. */
+export function commitQuantity(local: number | null, itemQty: number | null | undefined): number | undefined {
+  if (local !== null) return local;
+  const q = Number(itemQty ?? 0);
+  return Number.isFinite(q) && q > 0 ? q : undefined;
+}
+
 /** The quantity shown for an item, and the only correct way to change it.
- *  Returns 1 for an item with no meaningful count, so a stepper never shows 0. */
+ *  `value` is for display; `commit` is what a confirm should send. */
 export function useScanQuantity(slug: string, item: ScanInboxItem | null) {
   const qc = useQueryClient();
   const [local, setLocal] = useState<number | null>(null);
@@ -96,7 +127,7 @@ export function useScanQuantity(slug: string, item: ScanInboxItem | null) {
     };
   }, [itemId, writer]);
 
-  const value = local ?? (item && item.quantity > 0 ? item.quantity : 1);
+  const value = displayQuantity(local, item?.quantity);
   const bump = useCallback(
     (d: 1 | -1) => {
       if (!item) return;
@@ -107,5 +138,5 @@ export function useScanQuantity(slug: string, item: ScanInboxItem | null) {
     [item, local, writer],
   );
 
-  return { value, bump, flush: () => writer.flush() };
+  return { value, commit: commitQuantity(local, item?.quantity), bump, flush: () => writer.flush() };
 }

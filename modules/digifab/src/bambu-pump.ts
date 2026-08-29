@@ -368,6 +368,28 @@ async function handleReport(connId: string, orgId: string, serial: string, paylo
 
   const status = deriveStatus(merged);
   const db = (await platform().tenants.getDb(orgId)) as Kysely<DigifabDB>;
+
+  // What state did we last see this printer in? `pc.lastState` only knows what
+  // THIS process has seen, so after a restart it is empty and every printer
+  // looks brand new — an ongoing print then reads as one that just started, and
+  // the observed-print recorder below opens a duplicate row for it. The LAN
+  // path already reads the previous state back from the database before
+  // overwriting it; the cloud path did not, which is why a promote and a canary
+  // roll each announced "Print started" mid-print (2026-08-29).
+  //
+  // Read BEFORE putBambuStatus, which overwrites the row with the new state.
+  let prevState = pc.lastState.get(serial);
+  if (prevState === undefined) {
+    const row = await db
+      .selectFrom("digifab_bambu_status")
+      .select(["state"])
+      .where("connection_id", "=", connId)
+      .where("serial", "=", serial)
+      .executeTakeFirst()
+      .catch(() => undefined);
+    if (row?.state) prevState = row.state;
+  }
+
   await putBambuStatus(db, connId, serial, status);
   // Store the full live report (raw) + dump it once so we can see every field.
   await db.updateTable("digifab_bambu_status").set({ report: JSON.stringify(merged) as unknown as Record<string, unknown> }).where("connection_id", "=", connId).where("serial", "=", serial).execute().catch(() => {});
@@ -382,7 +404,7 @@ async function handleReport(connId: string, orgId: string, serial: string, paylo
   // history. Only when we actually saw it printing first — so the first report
   // after connect (an already-idle/finished printer) doesn't log a phantom.
   const newState = status.state ?? "";
-  const prev = pc.lastState.get(serial);
+  const prev = prevState;
   const file = (typeof merged.subtask_name === "string" && merged.subtask_name) || (typeof merged.gcode_file === "string" ? (merged.gcode_file as string) : null);
   if (newState === "printing" && prev !== "printing") {
     pc.printStart.set(serial, { file, at: new Date() });

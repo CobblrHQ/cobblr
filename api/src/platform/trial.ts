@@ -6,6 +6,7 @@
 import { env } from "../env.js";
 import { meta } from "../db/meta.js";
 import { registerEntitlementGuard, type EntitlementGuard } from "./hosted-seams.js";
+import { sandboxUploadDecision } from "./try-sandbox-limits.js";
 
 /** True on the `try` instance only. */
 export const TRIAL_MODE = env.COBBLR_TIER === "trial";
@@ -94,10 +95,38 @@ export function trialFeatureDecision(feature: string, unlocks: ReadonlySet<strin
 // route. The rest is structural: the module denylist above + strict egress
 // (COBBLR_HOSTED=true).
 export const trialEntitlementGuard: EntitlementGuard = async (ctx) => {
+  // A SANDBOX is the one place the upload ban is wrong. The ban exists so a
+  // free tier cannot become file hosting — but a sandbox is deleted, database
+  // and all, an hour after it is created, so nothing can be hosted in it. And
+  // without uploads the camera path does not work at all (the scan photo route
+  // posts a file_id, so the browser uploads first), which removes the feature
+  // the whole sandbox exists to show.
+  //
+  // So: uploads are allowed in a sandbox, bounded. The bound is per file rather
+  // than a running total, which is the shape this seam supports; the hour and
+  // the workspace's own deletion are what bound the rest.
+  if (ctx.feature === "files.upload" && (await isSandboxOrg(ctx.orgId))) {
+    return sandboxUploadDecision(ctx.quantity);
+  }
   // Only pay the unlock lookup for a feature the trial actually caps.
   const unlocks = TRIAL_CAPPED_FEATURES.has(ctx.feature) ? await orgDemoUnlocks(ctx.orgId) : EMPTY;
   return trialFeatureDecision(ctx.feature, unlocks);
 };
+
+
+
+/** Is this workspace a one-hour sandbox? Cached per call site by the caller;
+ *  one indexed lookup, and only ever asked about an upload. */
+async function isSandboxOrg(orgId: string): Promise<boolean> {
+  try {
+    const row = await meta.selectFrom("orgs").select("sandbox").where("id", "=", orgId).executeTakeFirst();
+    return row?.sandbox === true;
+  } catch {
+    // Unknown → treat as a normal trial, i.e. keep the ban. Failing closed is
+    // the right way round for a rule about storing strangers' bytes.
+    return false;
+  }
+}
 
 /** Call once at boot. No-op unless COBBLR_TIER=trial. */
 export function registerTrialMode(): void {

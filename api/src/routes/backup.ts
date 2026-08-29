@@ -11,7 +11,7 @@
 //   files/<file_id>        — the original bytes of every uploaded file
 //
 // Restore preserves entity ids (so foreign keys just work — no remap) and
-// only re-mints FILE ids (files.write owns the core_files row + re-derives
+// only re-mints FILE ids (files.write owns the core_files_files row + re-derives
 // image variants); file references in rows are value-swapped old→new.
 //
 // Mounted at /api/v1/orgs/:slug/backup. Owner/admin only.
@@ -53,9 +53,21 @@ import { makeUncompressedBudget, readEntryBounded, BackupTooLargeError } from ".
 // Tables the generic dump/restore must never touch:
 //  - `migrations`  — the tenant migration runner's bookkeeping; the fresh
 //                    target already has the correct rows.
-//  - `core_files`  — handled specially (files.write owns the row + re-derives
+//  - `core_files_files` — handled specially (files.write owns the row + re-derives
 //                    variants on restore).
-const EXCLUDED_TABLES = new Set(["migrations", "core_files"]);
+/** core-files owns its rows through files.write on restore (it re-mints the id
+ *  and re-derives image variants), so the table is collected as BLOBS rather
+ *  than dumped as data.
+ *
+ *  The name is the module's real one. It read "core_files" until 2026-08-29,
+ *  which is not a table that has ever existed - core-files prefixes with
+ *  `core_files_`, so its files table is `core_files_files`. Nothing failed
+ *  loudly: hasFiles was simply always false, so every backup ever taken carried
+ *  zero uploaded files, and the real table fell through to the generic dump and
+ *  was restored as plain rows pointing at blobs that were never in the archive.
+ *  A restore looked complete and came back with every photo broken. */
+const FILES_TABLE = "core_files_files";
+const EXCLUDED_TABLES = new Set(["migrations", FILES_TABLE]);
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 1024 * 1024 * 1024 } });
 
@@ -65,7 +77,7 @@ interface CoreFilesRow {
   mime_type: string | null;
 }
 interface BackupTenantDB {
-  core_files: CoreFilesRow;
+  core_files_files: CoreFilesRow;
 }
 
 interface DataIndexTable {
@@ -113,8 +125,8 @@ export async function buildBackupZip(orgId: string, slug: string): Promise<{ buf
   const blueprint = await captureBlueprint(orgId);
   const tdb = (await getTenantDb(orgId)) as unknown as Kysely<BackupTenantDB>;
   const allTables = await listTenantTables(tdb as unknown as Kysely<unknown>);
-  const hasFiles = allTables.includes("core_files");
-  const tables = allTables.filter((t) => t !== "core_files");
+  const hasFiles = allTables.includes(FILES_TABLE);
+  const tables = allTables.filter((t) => t !== FILES_TABLE);
 
   const dataFiles: Array<{ file: string; jsonl: string; index: DataIndexTable }> = [];
   for (const table of tables) {
@@ -127,7 +139,7 @@ export async function buildBackupZip(orgId: string, slug: string): Promise<{ buf
   }
 
   const fileRows = hasFiles
-    ? await (tdb as Kysely<BackupTenantDB>).selectFrom("core_files").select(["id", "filename", "mime_type"]).execute()
+    ? await (tdb as Kysely<BackupTenantDB>).selectFrom(FILES_TABLE).select(["id", "filename", "mime_type"]).execute()
     : [];
   const fileBlobs: Array<{ name: string; bytes: Buffer; index: DataIndexFile }> = [];
   for (const f of fileRows) {
@@ -383,7 +395,7 @@ backupRouter.post("/restore", requireAuth, withTenant, upload.single("file"), as
     const restorable = [...tables.keys()].filter((t) => targetTables.has(t) && !EXCLUDED_TABLES.has(t));
 
     // 3. Restore files → build old→new id map (files.write re-derives image
-    //    variants + owns the core_files row). File ids in rows are value-swapped.
+    //    variants + owns the core_files_files row). File ids in rows are value-swapped.
     const fileMap = new Map<string, string>();
     let filesRestored = 0;
     const indexByOld = new Map((manifest.data_index?.files ?? []).map((f) => [f.file_id, f]));

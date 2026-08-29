@@ -34,6 +34,7 @@ import { ActiveOrgProvider, useActiveOrg, pickDefaultOrg, urlHandleFor } from ".
 import { deepPathAfterWorkspace } from "./lib/deep-path";
 import { AuthPage, MagicConsumePage, IdentityCallbackPage } from "./pages/AuthPage";
 import { PairPage } from "./pages/PairPage";
+import { SandboxLanding } from "./pages/SandboxLanding";
 import { StartAppPage } from "./pages/StartAppPage";
 import { FeedbackWidget } from "./components/FeedbackWidget";
 import { Dashboard } from "./pages/Dashboard";
@@ -128,6 +129,7 @@ const BrickLinkPage = lazy(() => import("./pages/BrickLinkPage").then((m) => ({ 
 import { ForcePasswordResetPage } from "./pages/ForcePasswordResetPage";
 const AdminConsole = lazy(() => import("./pages/AdminConsole").then((m) => ({ default: m.AdminConsole })));
 import { AppLayout } from "./components/AppLayout";
+import { SandboxBar } from "./components/SandboxBar";
 import { ImpersonationBanner } from "./components/ImpersonationBanner";
 import { AdminLayout } from "./components/AdminLayout";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -205,6 +207,13 @@ function Shell() {
   // context, reachable by a platform admin with ZERO workspaces). Console
   // audit 2026-06-11: the old workspace-nested mount made every console URL
   // contradict the cross-tenant story it tells.
+  // /t/<token> — the no-account sandbox link. Handled BEFORE anything else
+  // resolves: the visitor has no session yet, and the token is what mints one.
+  // Deliberately not a /w/ route, because there is no workspace to name until
+  // the token has been exchanged for one.
+  if (window.location.pathname.startsWith("/t/")) {
+    return <SandboxLanding />;
+  }
   if (window.location.pathname === "/admin" || window.location.pathname.startsWith("/admin/")) {
     return (
       <BrowserRouter>
@@ -505,6 +514,15 @@ function ActiveOrgScopedRoutes() {
       {/* Always-on feedback button for every signed-in user — except the
           operator console, where the operator IS the recipient. */}
       {!onAdmin && !fullSide && <FeedbackWidget />}
+      {/* The sandbox countdown and its Keep button.
+          It lived in the sidebar foot, which only renders in full-sidebar mode -
+          so in the default top-nav layout a visitor saw no clock and had no way
+          to keep the workspace, and it simply vanished when the hour was up. It
+          portals to <body> anyway, so the only thing its position in the tree
+          decides is WHETHER it mounts. Here it always does; it still draws
+          nothing unless this browser is holding a sandbox expiry, which makes it
+          inert everywhere else, self-hosts included. */}
+      <SandboxBar />
       {shouldRedirectToPortal && <Navigate to={`/portal/${activeSlug}`} replace />}
       {shouldRedirectToAppHome && <Navigate to={appMode!.home_path} replace />}
       <Routes>

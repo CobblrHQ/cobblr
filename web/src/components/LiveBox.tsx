@@ -32,7 +32,7 @@ import { ChevronDown, Bot } from "lucide-react";
 import { api } from "../lib/api";
 import { HIDE_WHEN_SIDE_PANEL_OPEN } from "./SidePanel";
 import {
-  useToast, usePrintProgress, useBridgeLive, BridgePrinterCard,
+  useToast, usePrintProgress, useBridgeLive, BridgePrinterCard, allowLocalAccess,
   isLocalBridgePrinter, readLocalBridgeStatus, setPrinterStatus,
   type BridgeInstanceLive,
 } from "@cobblr/platform-web";
@@ -488,6 +488,11 @@ export function LiveBox({ mode, slug }: { mode: "sidebar" | "floating"; slug: st
   // The local bridge, polled only while the panel is OPEN. Its state is worth
   // knowing while someone is looking at it; a closed box has no reason to be
   // asking anything, and this is the surface that follows you across every page.
+  // Opening the box is the ask - the whole box is a live view of local
+  // hardware. Closed, the hook is passed 0 and never reaches the network.
+  useEffect(() => {
+    if (open) allowLocalAccess("live-box-opened");
+  }, [open]);
   const bridge = useBridgeLive(open ? 15_000 : 0);
   // Which Cobblr printer row each bridge instance belongs to, so the card can
   // show the roll/battery this workspace has already read from it.

@@ -224,3 +224,8 @@ export { scrimAlpha, scrimAlphaFor, percentileLuma } from "./photo-scrim";
 export { HIDE_WHEN_OVERLAY_OPEN, OverlayFlag, useOverlayOpenFlag } from "./overlay-open";
 export { LiveSurfaceProvider, useOverLiveSurface } from "./live-surface";
 export { describeUnreadableBody } from "./unreadableBody";
+
+// The one door to a local address from the browser (see local-network.ts).
+export {
+  localFetch, isLocalAddress, localAccessAllowed, allowLocalAccess, revokeLocalAccess, LocalAccessDenied,
+} from "./local-network.js";

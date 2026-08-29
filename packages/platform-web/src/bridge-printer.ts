@@ -18,6 +18,7 @@ import type { BatteryReading } from "@cobblr/thermal-print";
  *  range of ports from a web page is indistinguishable from a port scanner, and
  *  the bridge documents this default everywhere it is installed. */
 export const LOCAL_BRIDGE_URL = "http://127.0.0.1:8077";
+import { localFetch } from "./local-network.js";
 
 /** Bridge driver kinds that ARE label printers.
  *
@@ -63,7 +64,7 @@ export async function discoverLocalPrinters(
 ): Promise<DiscoveredPrinter[]> {
   let instances: Array<{ id?: string; driver?: string; health?: string }>;
   try {
-    const res = await fetch(bridgeUrl.replace(/\/+$/, "") + "/", {
+    const res = await localFetch(bridgeUrl.replace(/\/+$/, "") + "/", {
       headers: { accept: "application/json" },
       // The bridge health-checks every instance before answering, so this costs
       // as much as its SLOWEST driver: a LightBurn instance pinging a laser that

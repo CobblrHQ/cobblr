@@ -23,6 +23,7 @@ import { Laptop, Bluetooth, Loader2 } from "lucide-react";
  *  two repos cannot share a constant, so the contract is written down in
  *  docs/architecture/edge-bridge-relay.md. */
 const APP = "http://127.0.0.1:8079";
+import { localFetch, allowLocalAccess } from "@cobblr/platform-web";
 
 interface DesktopApp {
   app: string;
@@ -69,7 +70,7 @@ async function probeApp(): Promise<DesktopApp | null> {
     }
   }
   try {
-    const r = await fetch(`${APP}/app`, { signal: AbortSignal.timeout(1200) });
+    const r = await localFetch(`${APP}/app`, { signal: AbortSignal.timeout(1200) });
     if (!r.ok) return null;
     const j = (await r.json()) as DesktopApp;
     return j.app === "cobblr-desktop" ? j : null;
@@ -128,7 +129,7 @@ export function DesktopAppCard() {
     queryFn: async (): Promise<AppPrinter[]> => {
       const invoke = appInvoke();
       if (invoke) return ((await invoke("bt_printers")) as AppPrinter[]) ?? [];
-      const r = await fetch(`${APP}/app/printers`, { signal: AbortSignal.timeout(1500) });
+      const r = await localFetch(`${APP}/app/printers`, { signal: AbortSignal.timeout(1500) });
       if (!r.ok) return [];
       return (await r.json()).printers ?? [];
     },
@@ -150,7 +151,7 @@ export function DesktopAppCard() {
           return { ok: false, error: String(e) } satisfies Res;
         }
       }
-      const r = await fetch(`${APP}/app/probe`, {
+      const r = await localFetch(`${APP}/app/probe`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ mac: p.mac, unpairFirst: p.unpair_first }),
@@ -169,7 +170,7 @@ export function DesktopAppCard() {
         <span>Using the Cobblr desktop app on this computer?</span>
         <button
           type="button"
-          onClick={() => setLook(true)}
+          onClick={() => { allowLocalAccess("desktop-app-check"); setLook(true); }}
           className="ml-auto shrink-0 rounded border border-line dark:border-slate-700 px-2 py-0.5 text-xs font-medium hover:bg-subtle dark:hover:bg-slate-800 transition"
         >
           Check for it

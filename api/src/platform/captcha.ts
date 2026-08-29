@@ -10,6 +10,19 @@ const SITEVERIFY: Record<string, string> = {
   turnstile: "https://challenges.cloudflare.com/turnstile/v0/siteverify",
 };
 
+/** The PUBLIC site key, for a page the api renders itself.
+ *
+ *  The comment above is right that the web build normally carries this as
+ *  VITE_CAPTCHA_SITE_KEY — but GET /try is a link a stranger opens directly, so
+ *  the api has to be able to draw the widget without the SPA. Returns null when
+ *  it is unset or not the plain token shape every provider uses, so it can never
+ *  become an injection point in the markup that embeds it.
+ */
+export function captchaSiteKey(): string | null {
+  const key = (process.env.COBBLR_CAPTCHA_SITE_KEY ?? "").trim();
+  return /^[A-Za-z0-9_-]{8,64}$/.test(key) ? key : null;
+}
+
 export function captchaEnabled(): boolean {
   const provider = (process.env.COBBLR_CAPTCHA_PROVIDER ?? "").trim();
   return !!provider && !!(process.env.COBBLR_CAPTCHA_SECRET ?? "").trim() && provider in SITEVERIFY;

@@ -10,7 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Printer as PrinterIcon, Wifi, Send, Pencil, Star, Bluetooth, Activity } from "lucide-react";
 import { ApiError, api, type Printer, type PrinterInput } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useToast, useConfirm, usePageTitle, printLabelOverBluetooth, connectPrinter, closePrinter, isWebBluetoothAvailable, NO_WEB_BLUETOOTH, readSerialPrinterStatus, ConnectPrinterModal, setPrinterStatus, clearPrinterStatus, type SerialPrinterIdentity, type BluetoothPrinterSettings, isLocalBridgePrinter, testLocalBridge, printerDisplayName, describeReportedMedia, usePrinterStatus, PrinterReadout } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, usePageTitle, printLabelOverBluetooth, connectPrinter, closePrinter, isWebBluetoothAvailable, NO_WEB_BLUETOOTH, readSerialPrinterStatus, ConnectPrinterModal, setPrinterStatus, clearPrinterStatus, type SerialPrinterIdentity, type BluetoothPrinterSettings, isLocalBridgePrinter, testLocalBridge, printerDisplayName, describeReportedMedia, usePrinterStatus, PrinterReadout, allowLocalAccess } from "@cobblr/platform-web";
 import { mmToDots, dotsToMm, mmToInch, thermalFootprint, matchProfile, type FeedType } from "@cobblr/thermal-print";
 
 import { EdgeConnectField, type EdgeConnectValue } from "../components/EdgeConnectField";
@@ -78,10 +78,12 @@ export function PrintPage({ embedded = false }: { embedded?: boolean } = {}) {
     // A bridge on THIS machine is unreachable from the server (127.0.0.1 there is
     // a different computer), so the browser runs the identical check itself —
     // same shared client, same protocol, different transport.
-    mutationFn: (p: Printer) =>
-      isLocalBridgePrinter(p.settings)
-        ? testLocalBridge((p.settings as { bridge: Parameters<typeof testLocalBridge>[0] }).bridge)
-        : api.testPrinter(activeSlug, p.id),
+    mutationFn: (p: Printer) => {
+      if (!isLocalBridgePrinter(p.settings)) return api.testPrinter(activeSlug, p.id);
+      // They pressed Test on a printer they connected: consent twice over.
+      allowLocalAccess("test-bridge-printer");
+      return testLocalBridge((p.settings as { bridge: Parameters<typeof testLocalBridge>[0] }).bridge);
+    },
     onSuccess: (r) => {
       if (!r.ok) {
         toast.error(`Failed: ${r.error ?? "unknown"}`);

@@ -65,6 +65,41 @@ export interface VocabularyCapability extends Base {
 export const CAPABILITIES: Capability[] = [
   {
     kind: "owns",
+    id: "browser:local-network-door",
+    what: "reaching an address on the visitor's own machine from the browser",
+    why:
+      "the Live box polls the local print bridge on 127.0.0.1 and is passed a poll interval of 0 while closed - its call " +
+      "site says a closed box has no reason to be asking anything - and the hook did one read BEFORE it consulted the " +
+      "interval. One request, but that box follows you across every page, so it was every visitor on their first screen: " +
+      "a browser that gates local network access asked strangers whether the site could reach other apps on their device " +
+      "before they had clicked anything (2026-08-29). These three files exist to talk to local hardware, so a raw fetch " +
+      "here is exactly how the next one gets added without a gate",
+    owner: "packages/platform-web/src/local-network.ts",
+    scope: [
+      "packages/platform-web/src/bridge-printer.ts",
+      "packages/platform-web/src/bridge-live.ts",
+      "web/src/components/DesktopAppCard.tsx",
+    ],
+    detect: /(?<!local)(?<![.\w])fetch\s*\(/,
+    use: "localFetch() from local-network.ts, which refuses until somebody has asked for something on this machine",
+  },
+  {
+    kind: "owns",
+    id: "sandbox:countdown-mount",
+    what: "mounting the sandbox countdown bar and its Keep this workspace button",
+    why:
+      "it was mounted in AppLayout's sidebar foot, which only renders in full-sidebar mode. In the default top-nav " +
+      "layout it never mounted at all, so a visitor on a workspace that deletes itself in an hour saw no clock and had " +
+      "no way to keep it, and the whole thing simply vanished with their work in it (found 2026-08-29 by looking at " +
+      "the screenshot). The bar portals to <body>, so its place in the tree decides nothing except WHETHER it mounts - " +
+      "which is exactly why putting it inside a layout branch is silently wrong rather than visibly wrong",
+    owner: "web/src/App.tsx",
+    scope: ["web/src/components/AppLayout.tsx"],
+    detect: /<SandboxBar\b/,
+    use: "leave it at the app root in App.tsx, where it mounts in every nav mode",
+  },
+  {
+    kind: "owns",
     id: "cadence:ledger-write",
     what: "appending a fact to the cadence ledger, including the baseKindOf normalisation on write",
     why:

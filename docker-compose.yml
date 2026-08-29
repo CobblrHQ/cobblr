@@ -118,6 +118,18 @@ services:
       # off, which looks exactly like a working deploy.
       # lint:env-reaches-container now holds this list to api/src/env.ts.
       COBBLR_TIER: ${COBBLR_TIER:-}
+      # The no-account sandbox (docs/design-decisions/try-sandbox.md). Unset
+      # everywhere but the try box, where COBBLR_TRY_SANDBOX=true mounts it.
+      COBBLR_TRY_SANDBOX: ${COBBLR_TRY_SANDBOX:-}
+      TRY_SANDBOX_TTL_MINUTES: ${TRY_SANDBOX_TTL_MINUTES:-}
+      TRY_SANDBOX_MAX_LIVE: ${TRY_SANDBOX_MAX_LIVE:-}
+      TRY_SANDBOX_MAX_PER_IP_PER_HOUR: ${TRY_SANDBOX_MAX_PER_IP_PER_HOUR:-}
+      TRY_SANDBOX_MAX_PER_HOUR: ${TRY_SANDBOX_MAX_PER_HOUR:-}
+      TRY_SANDBOX_REAP_INTERVAL_MS: ${TRY_SANDBOX_REAP_INTERVAL_MS:-}
+      TRY_SANDBOX_SEED: ${TRY_SANDBOX_SEED:-}
+      TRY_SANDBOX_EXPORT_DAYS: ${TRY_SANDBOX_EXPORT_DAYS:-}
+      COBBLR_SELFHOST_DOCS_URL: ${COBBLR_SELFHOST_DOCS_URL:-}
+      COBBLR_CLOUD_SIGNUP_URL: ${COBBLR_CLOUD_SIGNUP_URL:-}
       TRY_TTL_DAYS: ${TRY_TTL_DAYS:-}
       COBBLR_TRIAL_REAP_WARN_DAYS: ${COBBLR_TRIAL_REAP_WARN_DAYS:-}
       COBBLR_TRIAL_DENY_MODULES: ${COBBLR_TRIAL_DENY_MODULES:-}

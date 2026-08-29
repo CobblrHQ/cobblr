@@ -23,6 +23,7 @@
 
 import { useEffect, useState } from "react";
 import { LOCAL_BRIDGE_URL } from "./bridge-printer.js";
+import { localFetch } from "./local-network.js";
 
 export type BridgeLinkState = "offline" | "unreachable" | "per-job" | "idle" | "connected" | "printing";
 
@@ -49,7 +50,7 @@ export async function readBridgeLive(bridgeUrl = LOCAL_BRIDGE_URL): Promise<Brid
   const base = bridgeUrl.replace(/\/+$/, "");
   let rows: Array<{ id?: string; driver?: string }>;
   try {
-    const res = await fetch(base + "/", { headers: { accept: "application/json" }, signal: AbortSignal.timeout(8000) });
+    const res = await localFetch(base + "/", { headers: { accept: "application/json" }, signal: AbortSignal.timeout(8000) });
     if (!res.ok) return EMPTY;
     const body = (await res.json()) as { service?: string; instances?: typeof rows };
     if (body.service !== "cobblr-edge-bridge" || !Array.isArray(body.instances)) return EMPTY;
@@ -65,7 +66,7 @@ export async function readBridgeLive(bridgeUrl = LOCAL_BRIDGE_URL): Promise<Brid
       .filter((r) => r.id)
       .map(async (r): Promise<BridgeInstanceLive | null> => {
         try {
-          const res = await fetch(`${base}/${r.id}/devices`, {
+          const res = await localFetch(`${base}/${r.id}/devices`, {
             headers: { accept: "application/json" },
             signal: AbortSignal.timeout(8000),
           });
@@ -107,7 +108,7 @@ export async function setBridgeLink(
 ): Promise<{ ok: boolean; detail?: string }> {
   const base = bridgeUrl.replace(/\/+$/, "");
   try {
-    const res = await fetch(`${base}/${instance}/command`, {
+    const res = await localFetch(`${base}/${instance}/command`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ command: want }),
@@ -131,13 +132,24 @@ export async function setBridgeLink(
 
 /** Live view of the local bridge, refreshed on a slow tick.
  *
- *  `pollMs = 0` disables the tick entirely, which is what a collapsed Live box
- *  should do: the state is only worth knowing while someone is looking at it. */
+ *  `pollMs = 0` means DO NOT LOOK - no tick and no first read either. That
+ *  distinction is the whole point and it used to be got wrong: the effect ran
+ *  one fetch before consulting pollMs, so a collapsed Live box still reached
+ *  127.0.0.1:8077 exactly once on mount. This box follows you across every page,
+ *  so "once on mount" meant every visitor, on their first screen.
+ *
+ *  In a browser that gates local-network access, one request is all it takes:
+ *  someone opening a Cobblr link for the first time got "try.cobblr.xyz wants to
+ *  access other apps and services on this device" before they had clicked
+ *  anything. A page must not reach into somebody's machine unasked, and opening
+ *  the Live box is what asking looks like. */
 export function useBridgeLive(pollMs = 15_000, bridgeUrl = LOCAL_BRIDGE_URL): BridgeLive & { refresh: () => void } {
   const [live, setLive] = useState<BridgeLive>(EMPTY);
   const [nonce, setNonce] = useState(0);
 
   useEffect(() => {
+    // Nobody is looking: do not touch the local network at all.
+    if (pollMs <= 0) return;
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const tick = async () => {
@@ -146,7 +158,7 @@ export function useBridgeLive(pollMs = 15_000, bridgeUrl = LOCAL_BRIDGE_URL): Br
       const next = await readBridgeLive(bridgeUrl);
       if (!alive) return;
       setLive(next);
-      if (pollMs > 0) timer = setTimeout(() => void tick(), pollMs);
+      timer = setTimeout(() => void tick(), pollMs);
     };
     void tick();
     return () => {

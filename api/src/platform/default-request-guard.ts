@@ -24,6 +24,7 @@ interface Rule {
 }
 
 const DAY_MS = 24 * 60 * 60_000;
+const HOUR_MS = 60 * 60_000;
 
 // Route classes and their limits, matched by path prefix (most specific first).
 const AUTH: Rule = { max: 20, windowMs: 5 * 60_000 };       // login/signup/magic/reset/verify
@@ -51,6 +52,17 @@ export function isSignupPath(path: string): boolean {
   return path === "/auth/signup";
 }
 
+/** Handing out a no-account sandbox is account creation without an account, so
+ *  it needs its own limit — the signup caps are per DAY, and a sandbox that
+ *  lives an hour wants an hourly one. Generic: the guard names no tier. */
+export function isSandboxPath(path: string): boolean {
+  // /try/start, NOT /try. /try only draws the "are you human" page, which
+  // provisions nothing - and counting it meant a person who opened the link and
+  // refreshed once was locked out for an hour without ever getting a sandbox.
+  // Looking must be free; asking is what costs.
+  return path === "/try/start";
+}
+
 // Optional daily caps on account creation, ON TOP of the AUTH brute-force limit.
 // Both unset (default) → no extra signup limiting, so a self-host / dev box is
 // unchanged. A public host that opens self-serve signup (e.g. try.cobblr.xyz)
@@ -60,6 +72,8 @@ export function isSignupPath(path: string): boolean {
 export interface GuardConfig {
   signupPerIpPerDay: number | null;
   signupGlobalPerDay: number | null;
+  sandboxPerIpPerHour: number | null;
+  sandboxGlobalPerHour: number | null;
 }
 
 function intEnv(name: string): number | null {
@@ -73,6 +87,8 @@ export function readGuardConfig(): GuardConfig {
   return {
     signupPerIpPerDay: intEnv("COBBLR_SIGNUP_MAX_PER_IP_PER_DAY"),
     signupGlobalPerDay: intEnv("COBBLR_SIGNUP_MAX_PER_DAY"),
+    sandboxPerIpPerHour: intEnv("TRY_SANDBOX_MAX_PER_IP_PER_HOUR"),
+    sandboxGlobalPerHour: intEnv("TRY_SANDBOX_MAX_PER_HOUR"),
   };
 }
 
@@ -114,7 +130,14 @@ export function decide(
   state: Map<string, number[]> = hits,
 ): Decision {
   const hasSignupCap = cfg.signupPerIpPerDay !== null || cfg.signupGlobalPerDay !== null;
-  const widest = Math.max(AUTH.windowMs, ANON.windowMs, FEEDBACK.windowMs, hasSignupCap ? DAY_MS : 0);
+  const hasSandboxCap = cfg.sandboxPerIpPerHour !== null || cfg.sandboxGlobalPerHour !== null;
+  const widest = Math.max(
+    AUTH.windowMs,
+    ANON.windowMs,
+    FEEDBACK.windowMs,
+    hasSignupCap ? DAY_MS : 0,
+    hasSandboxCap ? HOUR_MS : 0,
+  );
   sweep(state, now, widest);
 
   // 1. Path-class brute-force limit (auth / feedback / anon).
@@ -138,6 +161,27 @@ export function decide(
       !allow(state, "signup-global", { max: cfg.signupGlobalPerDay, windowMs: DAY_MS }, now)
     ) {
       return deny({ max: cfg.signupGlobalPerDay, windowMs: DAY_MS }, signupReason);
+    }
+  }
+
+  // 3. Hourly sandbox caps. A no-account sandbox is account creation without an
+  //    account: cheap to ask for, and each one is a real database. These stack
+  //    on the auth limit above the same way the signup caps do. The population
+  //    ceiling (how many exist AT ONCE) is a separate control in the route —
+  //    this only bounds arrivals.
+  if (hasSandboxCap && isSandboxPath(ctx.path)) {
+    const reason = "You've started a few sandboxes already. Try again in an hour, or make an account.";
+    if (
+      cfg.sandboxPerIpPerHour !== null &&
+      !allow(state, `sandbox-ip:${ctx.ip}`, { max: cfg.sandboxPerIpPerHour, windowMs: HOUR_MS }, now)
+    ) {
+      return deny({ max: cfg.sandboxPerIpPerHour, windowMs: HOUR_MS }, reason);
+    }
+    if (
+      cfg.sandboxGlobalPerHour !== null &&
+      !allow(state, "sandbox-global", { max: cfg.sandboxGlobalPerHour, windowMs: HOUR_MS }, now)
+    ) {
+      return deny({ max: cfg.sandboxGlobalPerHour, windowMs: HOUR_MS }, reason);
     }
   }
 
