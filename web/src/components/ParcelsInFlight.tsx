@@ -153,21 +153,34 @@ export function ParcelsInFlight({ slug }: { slug: string }): React.ReactElement 
               // One row per order, always: min-w-0 + truncate on the flexible
               // parts, nowrap on the rest. A parcel that wrapped to two lines
               // would make the box grow exactly when there is most to show.
-              className="flex items-center gap-2 px-2.5 py-1.5 text-[13px] whitespace-nowrap hover:bg-subtle dark:hover:bg-slate-800/60"
+              className="flex items-start sm:items-center gap-2 px-2.5 py-1.5 text-[13px] sm:whitespace-nowrap hover:bg-subtle dark:hover:bg-slate-800/60"
             >
               {delivered ? (
                 <PackageCheck size={15} className="text-emerald-600 dark:text-emerald-400 shrink-0" aria-hidden />
               ) : (
                 <Truck size={15} className="text-faint shrink-0" aria-hidden />
               )}
-              <span className="font-medium text-content dark:text-mortar-100 shrink-0">{p.what}</span>
+              {/* NOT shrink-0. The name is the row's identity and the most
+                  flexible thing in it - the comment above has said so since
+                  this shipped, and the class said the opposite, so the card's
+                  overflow-hidden cut the name mid-word with no ellipsis
+                  ("Front & Rear Drilled Brake Rotors & Pads Kit (2016-2",
+                  reported 2026-08-30).
+
+                  Two lines on a phone rather than an ellipsis: a truncated
+                  parcel name is worse than a wrapped one for the only question
+                  the row answers, WHICH parcel. One line from sm up, where the
+                  width makes that free. */}
+              <span className="font-medium text-content dark:text-mortar-100 min-w-0 line-clamp-2 sm:truncate">
+                {p.what}
+              </span>
               {/* What is in it. Two orders from the same vendor are otherwise
                   the same row twice. */}
               {/* The order it came from, once the name has taken the lead.
                   Without this a named row loses the vendor entirely. */}
-              {p.from && <span className="text-[11px] text-faint shrink-0">{p.from}</span>}
+              {p.from && <span className="text-[11px] text-faint shrink-0 hidden sm:inline">{p.from}</span>}
               {p.count != null && p.count > 1 && (
-                <span className="text-[11px] text-faint shrink-0">{p.count} items</span>
+                <span className="text-[11px] text-faint shrink-0 hidden sm:inline">{p.count} items</span>
               )}
               <span
                 className={`text-xs shrink-0 ${

@@ -25,7 +25,7 @@
 import { env } from "../env.js";
 import { runExclusive } from "./exclusive.js";
 import { hardDeleteOrg } from "./delete-org.js";
-import { expiredSandboxes, pruneOrphanTokens, sandboxEnabled } from "./try-sandbox.js";
+import { expiredSandboxes, pruneOrphanTokens, pruneOrphanSandboxUsers, sandboxEnabled } from "./try-sandbox.js";
 import { reapExpiredExports } from "./try-sandbox-export.js";
 
 /** Bounded per sweep so a backlog is drained over several ticks rather than
@@ -56,6 +56,23 @@ export async function reapExpiredSandboxes(now: number = Date.now()): Promise<Sa
       console.error(`[reap-sandboxes] could not delete ${org.slug}:`, (err as Error).message);
     }
   }
+  // The guest goes with the workspace. Deleting the org left the account behind
+  // holding a session that still worked, which is how somebody carried on
+  // inside an expired sandbox.
+  //
+  // EVERY sweep, not only one that deleted something. Gating it on this sweep's
+  // own deletions would leave every account already orphaned by an earlier
+  // release sitting there until the next sandbox happened to expire - and there
+  // were fourteen of those on the box when this was found, each one a live
+  // anonymous session. A cheap query with nothing to do is the right shape for
+  // a backlog somebody else created.
+  try {
+    const guests = await pruneOrphanSandboxUsers();
+    if (guests > 0) console.log(`[reap-sandboxes] removed ${guests} orphaned guest account(s)`);
+  } catch (err) {
+    console.error("[reap-sandboxes] guest prune failed:", (err as Error).message);
+  }
+
   if (deleted > 0) {
     try {
       await pruneOrphanTokens();

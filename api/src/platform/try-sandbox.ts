@@ -100,12 +100,55 @@ export interface ProvisionDeps {
  *  it. Same reasoning, and same code, as the central-identity path in
  *  routes/auth.ts: a sentinel string would have to be excluded at every
  *  comparison site forever. */
+/** The domain every sandbox user's address ends with. Not a real one (RFC 2606
+ *  reserves .invalid), which is the point: nothing can ever be delivered there,
+ *  and it doubles as the durable marker that an account was never a person -
+ *  still true after the workspace it belonged to has been deleted. */
+export const SANDBOX_EMAIL_DOMAIN = "try.invalid";
+
+/** Is this account a sandbox guest rather than somebody who signed up?
+ *
+ *  Asked at the doors a guest must not walk through. "Keep this workspace"
+ *  rebinds the address to a real one, so somebody who converted stops matching
+ *  and gets the ordinary account they asked for. */
+export async function isSandboxUser(userId: string): Promise<boolean> {
+  const row = await meta.selectFrom("users").select("email").where("id", "=", userId).executeTakeFirst();
+  return !!row?.email?.endsWith(`@${SANDBOX_EMAIL_DOMAIN}`);
+}
+
+/** Delete guest accounts that no longer belong to any workspace.
+ *
+ *  A sandbox user exists only for its sandbox, and hardDeleteOrg removes the
+ *  org without touching the account - so the guest survived their workspace,
+ *  holding a session that still authenticated. requireAuth loads the user on
+ *  every request, so removing it is what actually ends the session.
+ *
+ *  Scoped to guests with no remaining membership, so it can never reach
+ *  somebody who kept their workspace (their address is real by then) or a
+ *  sandbox still waiting in the pool (its org still exists). */
+export async function pruneOrphanSandboxUsers(): Promise<number> {
+  const res = await meta
+    .deleteFrom("users")
+    .where("email", "like", `%@${SANDBOX_EMAIL_DOMAIN}`)
+    .where(({ not, exists, selectFrom }) =>
+      not(
+        exists(
+          selectFrom("org_memberships")
+            .select("org_memberships.user_id")
+            .whereRef("org_memberships.user_id", "=", "users.id"),
+        ),
+      ),
+    )
+    .executeTakeFirst();
+  return Number(res.numDeletedRows ?? 0);
+}
+
 async function createSandboxUser(handle: string): Promise<string> {
   const password_hash = await hashPassword(randomBytes(32).toString("base64"));
   const row = await meta
     .insertInto("users")
     .values({
-      email: `sandbox-${handle}@try.invalid`,
+      email: `sandbox-${handle}@${SANDBOX_EMAIL_DOMAIN}`,
       password_hash,
       display_name: "Guest",
       // Nothing will ever be sent here, and an unverified flag would make the
@@ -117,24 +160,41 @@ async function createSandboxUser(handle: string): Promise<string> {
   return row.id;
 }
 
-/** Provision one sandbox: user → workspace → default modules → token.
+/** Build the workspace, and STOP before the clock starts.
  *
- *  The caller checks capacity and the rate limits first; this does the work. */
-export async function provisionSandbox(deps: ProvisionDeps): Promise<SandboxResult> {
-  const now = deps.now?.() ?? Date.now();
+ *  Split from handing one over so a sandbox can be made in advance. An
+ *  unclaimed one carries `trial_expires_at IS NULL`, which the reaper's
+ *  `trial_expires_at < now` can never match (SQL null comparison), so a waiting
+ *  sandbox is invisible to it without a column or a flag to keep in step. Its
+ *  hour begins when somebody actually arrives. */
+export interface SandboxWorkspace {
+  orgId: string;
+  slug: string;
+  userId: string;
+}
+
+export async function provisionSandboxWorkspace(deps: ProvisionDeps): Promise<SandboxWorkspace> {
   const handle = randomBytes(6).toString("hex");
   const userId = await createSandboxUser(handle);
-  // "Sandbox" rather than a person's name: it is what the switcher and the
-  // browser tab will say, and there is nobody to name it after.
-  const { orgId, slug } = await deps.provisionOrg(userId, "Sandbox");
-
-  const expiresAt = new Date(now + sandboxTtlMs());
-  // provisionOrgForUser stamps trial_expires_at in DAYS on the trial tier. A
-  // sandbox overrides it to minutes and marks itself, which is what tells the
-  // reaper this one is disposable rather than somebody's 30-day trial.
+  // Provisioned under a UNIQUE name so the slug is unguessable, then renamed to
+  // the thing a person should see.
+  //
+  // Naming every one "Sandbox" produced sandbox, sandbox-2, sandbox-4 - which
+  // put a guessable, sequential id in the address bar and told anybody looking
+  // how many sandboxes had ever been made. The display name is what the
+  // switcher and the browser tab show, so it is set back afterwards and nobody
+  // sees the handle.
+  const { orgId, slug } = await deps.provisionOrg(userId, `Sandbox ${handle}`);
+  // trial_expires_at back to NULL, explicitly.
+  //
+  // provisionOrgForUser stamps the tier's TTL - thirty DAYS on trial - and NULL
+  // is what marks a sandbox as not yet handed over. Leaving the stamp in place
+  // meant a pooled sandbox never looked ready, so the pool believed it was empty
+  // and built another every twenty seconds: eight databases in three minutes,
+  // none of them claimable, each one sitting for a month. Nothing errored.
   await meta
     .updateTable("orgs")
-    .set({ sandbox: true, trial_expires_at: expiresAt })
+    .set({ name: "Sandbox", sandbox: true, trial_expires_at: null })
     .where("id", "=", orgId)
     .execute();
 
@@ -142,14 +202,33 @@ export async function provisionSandbox(deps: ProvisionDeps): Promise<SandboxResu
   // module denylist still applies (it is enforced in enableModuleForOrg), so
   // this cannot hand out what the tier withholds.
   await deps.enableDefaults(orgId, userId);
+  return { orgId, slug, userId };
+}
 
+/** Start the clock and mint the link. The moment a sandbox becomes somebody's. */
+export async function handOverSandbox(
+  ws: SandboxWorkspace,
+  now: number = Date.now(),
+): Promise<SandboxResult> {
+  const expiresAt = new Date(now + sandboxTtlMs());
+  await meta
+    .updateTable("orgs")
+    .set({ trial_expires_at: expiresAt })
+    .where("id", "=", ws.orgId)
+    .execute();
   const { plain, hash } = mintSandboxToken();
   await meta
     .insertInto("try_sandbox_tokens")
-    .values({ org_id: orgId, user_id: userId, token_hash: hash, expires_at: expiresAt })
+    .values({ org_id: ws.orgId, user_id: ws.userId, token_hash: hash, expires_at: expiresAt })
     .execute();
+  return { ...ws, token: plain, expiresAt };
+}
 
-  return { orgId, slug, userId, token: plain, expiresAt };
+/** Provision one sandbox and hand it straight over. The path taken when no
+ *  ready-made one is waiting. */
+export async function provisionSandbox(deps: ProvisionDeps): Promise<SandboxResult> {
+  const ws = await provisionSandboxWorkspace(deps);
+  return handOverSandbox(ws, deps.now?.() ?? Date.now());
 }
 
 // ── redeeming ─────────────────────────────────────────────────────────────

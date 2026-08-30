@@ -30,6 +30,7 @@
 // ZXing (tuned, ~110ms cadence) is the fallback. Both run on the SAME
 // lens-locked stream.
 
+import { afterArmedShot, ignoresCodes, type ArmOrigin } from "../lib/scanArmedLanding";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
@@ -304,7 +305,7 @@ export function ScanCameraPage() {
   // capture always ended in the mini drawer, because that is what the arm
   // opened on its way out — so ＋ on the Scanned sheet felt like being dumped
   // into a different scan (reported 2026-08-17).
-  type Arm = { id: string; name: string; mode: ArmMode; fromSheet?: boolean };
+  type Arm = { id: string; name: string; mode: ArmMode; origin: ArmOrigin };
   const [arm, setArm] = useState<Arm | null>(null);
   const armRef = useRef<Arm | null>(null);
   armRef.current = arm;
@@ -313,18 +314,18 @@ export function ScanCameraPage() {
   // An arm taken FROM a sheet must also surface the mini drawer: the armed
   // strip ("taking another photo…") lives there, and the sheet is about to
   // close without restoring it.
-  const armFromSheet = (it: ScanInboxItem, mode: ArmMode) => {
-    armFor(it, mode, true);
+  const armFromSheet = (it: ScanInboxItem, mode: ArmMode, origin: "result" | "review") => {
+    armFor(it, mode, origin);
     setDrawerItem(it);
     setDrawerDismissed(false);
   };
   const armFor = useCallback(
-    (it: ScanInboxItem, mode: ArmMode, fromSheet = false) =>
+    (it: ScanInboxItem, mode: ArmMode, origin: ArmOrigin = "shutter") =>
       setArm({
         id: it.id,
         name: it.suggested_candidates?.[0]?.name ?? it.suggested_name ?? "this item",
         mode,
-        fromSheet,
+        origin,
       }),
     [],
   );
@@ -1026,13 +1027,22 @@ export function ScanCameraPage() {
   const onDetect = useCallback(
     (rawIn: string) => {
       if (phaseRef.current !== "scanning") return;
-      // Armed for ＋Photo / Retake: ignore codes entirely. You are pointing at a
-      // label to photograph it, and that label usually carries a barcode - a
-      // detection here would mint a separate item mid-append.
-      if (armedRef.current) return;
-      // The drawer's full sheet (or a barcode review sheet) is open: the user
-      // is editing, not scanning.
-      if (sheetOpenRef.current || reviewItemRef.current) return;
+      // Armed for ＋Photo / Retake - or ABOUT to be (a photo queued before the
+      // row landed): ignore codes entirely. You are pointing at a label to
+      // photograph it, and that label usually carries a barcode - a detection
+      // here would mint a separate item mid-append. The queued case was the
+      // hole: the early tap closed the sheet, the arm did not exist yet, and
+      // reframing the item re-fired its code. A sheet up means editing, not
+      // scanning. One tested rule: scanArmedLanding.ignoresCodes.
+      if (
+        ignoresCodes({
+          armed: armedRef.current,
+          earlyIntent: earlyIntentRef.current,
+          sheetOpen: sheetOpenRef.current,
+          reviewOpen: !!reviewItemRef.current,
+        })
+      )
+        return;
       const raw = rawIn.trim();
       if (!raw) return;
       // HOLD a generic web link (a product's marketing QR — NOT a Cobblr label,
@@ -1752,12 +1762,20 @@ export function ScanCameraPage() {
                   await api.setScanCatalogFile(activeSlug, targetId, rec.id)
                 : await api.addScanPhoto(activeSlug, targetId, rec.id);
           onSaved(updated);
-          setDrawerItem(updated);
-          // Back to the sheet you tapped ＋ on, with the new photo in its strip.
-          // The mini drawer is where the ARM lives, not where the shot belongs:
-          // landing there reads as a different scan, and the way back was an
-          // expand tap nobody knew to look for.
-          if (armed.fromSheet) setReviewItem(updated);
+          // Decided NOW, not when the arm was made: the upload took seconds and
+          // the person has usually scanned the next item by the time it lands.
+          // The old "arm came from a sheet, reopen the sheet" raised the
+          // PREVIOUS item's review sheet over the new scan - and a review sheet
+          // silences the detector, so they were stuck on a card they had
+          // already dealt with (reported 2026-08-30). See scanArmedLanding.
+          const landing = afterArmedShot({
+            origin: armed.origin,
+            phase: phaseRef.current,
+            reviewOpenId: reviewItemRef.current?.id ?? null,
+            targetId,
+          });
+          if (landing.showDrawer) setDrawerItem(updated);
+          if (landing.reopenReview) setReviewItem(updated);
           setLastFrame((prev) => (prev ? { ...prev, itemId: targetId } : prev));
           void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
           // The drawer reads its item from this key too. Without invalidating
@@ -1905,7 +1923,7 @@ export function ScanCameraPage() {
   // An action taken while the lookup is still running: the sheet closes NOW,
   // the intent executes when the row lands.
   const handleEarly = useCallback(
-    (intent: "discard" | "retake") => {
+    (intent: "discard" | "retake" | "photo") => {
       earlyIntentRef.current = intent;
       showFilingNote(
         intent === "discard"
@@ -2379,7 +2397,7 @@ export function ScanCameraPage() {
               kind: params.get("kind"),
               label: params.get("label"),
             }}
-            onRetake={(it) => armFromSheet(it, "retake")}
+            onRetake={(it) => armFromSheet(it, "retake", "result")}
             onAddPhoto={(it) =>
               // `catalog` for anything that is not already a photo scan, and
               // that is SETTLED, not a guess: scan-photo-wanted.md records that
@@ -2392,7 +2410,7 @@ export function ScanCameraPage() {
               // report that the shot "went to a different drawer". It does not
               // belong to this decision — the photo is not lost, it becomes the
               // lead image — and the change contradicted the spec.
-              armFromSheet(it, it.source_kind === "photo" ? "append" : "catalog")
+              armFromSheet(it, it.source_kind === "photo" ? "append" : "catalog", "result")
             }
             onEarly={handleEarly}
             onClose={(_outcome, _current) => {
@@ -2429,7 +2447,7 @@ export function ScanCameraPage() {
               kind: params.get("kind"),
               label: params.get("label"),
             }}
-            onRetake={(it) => armFromSheet(it, "retake")}
+            onRetake={(it) => armFromSheet(it, "retake", "review")}
             onAddPhoto={(it) =>
               // `catalog` for anything that is not already a photo scan, and
               // that is SETTLED, not a guess: scan-photo-wanted.md records that
@@ -2442,7 +2460,7 @@ export function ScanCameraPage() {
               // report that the shot "went to a different drawer". It does not
               // belong to this decision — the photo is not lost, it becomes the
               // lead image — and the change contradicted the spec.
-              armFromSheet(it, it.source_kind === "photo" ? "append" : "catalog")
+              armFromSheet(it, it.source_kind === "photo" ? "append" : "catalog", "review")
             }
             onClose={(outcome, current) => {
               setReviewItem(null);

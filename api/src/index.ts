@@ -83,6 +83,10 @@ import { logAnnounceRouting } from "./platform/announce.js";
 import { logSignupGates } from "./platform/signup-gates.js";
 import { startTrialReaper } from "./platform/reap-trials.js";
 import { startSandboxReaper } from "./platform/reap-sandboxes.js";
+import { startSandboxPool } from "./platform/try-sandbox-pool.js";
+import { seedSandbox } from "./platform/try-sandbox-seed.js";
+import { provisionOrgForUser } from "./routes/auth.js";
+import { enableDefaultModulesForOrg } from "./modules/enable.js";
 import { startDbUpgradeHoldWatch } from "./platform/db-upgrade-status.js";
 import { reconcileOrphanTenantRoles } from "./platform/reconcile-tenant-roles.js";
 import { reconcileScanCategoryFields } from "./platform/reconcile-scan-category.js";
@@ -1215,6 +1219,24 @@ async function boot() {
   // Sandboxes live an hour, so they are swept in minutes, not the trial
   // reaper's six hours. No-op unless the box hands them out.
   startSandboxReaper();
+  // Sandboxes built before anybody asks for one, so arriving is instant and the
+  // book covers are already there. No-op unless TRY_SANDBOX_POOL is set.
+  startSandboxPool({
+    provisionOrg: async (userId, name) => {
+      const r = await provisionOrgForUser(userId, name);
+      return { orgId: r.orgId, slug: r.slug };
+    },
+    enableDefaults: (orgId, userId) => enableDefaultModulesForOrg(orgId, userId),
+    seed: async (ws) => {
+      const out = await seedSandbox(ws.orgId, ws.userId, env.TRY_SANDBOX_SEED, ws.slug);
+      // WAIT for the covers here, unlike the on-demand path. Nobody is watching
+      // a pooled sandbox, and the entire point is that it is finished before
+      // anybody sees it - handing over one whose pictures are still arriving
+      // would reproduce the thing the pool exists to fix.
+      const landed = await (out.contents?.images ?? Promise.resolve(0));
+      console.log(`[try-pool] ${ws.slug} seeded: ${out.contents?.created ?? 0} records, ${landed} covers`);
+    },
+  });
 
   // Alert the operator when the database image held back a major Postgres
   // upgrade (it serves the old major instead of dying — see

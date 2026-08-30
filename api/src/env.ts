@@ -143,6 +143,12 @@ const Schema = z.object({
    *  deploy/seeds/). Empty = an empty workspace, which is a poor first
    *  impression and is not the default. */
   TRY_SANDBOX_SEED: z.string().default("household"),
+  //  • TRY_SANDBOX_POOL — how many finished sandboxes to keep waiting. 0 is off
+  //    and everything is built on demand. Above 0, arriving is instant and the
+  //    book covers are already there instead of filling in while somebody
+  //    watches. Each one is a real database, so it counts against MAX_LIVE.
+  TRY_SANDBOX_POOL: z.coerce.number().int().nonnegative().default(0),
+  TRY_SANDBOX_POOL_INTERVAL_MS: z.coerce.number().int().positive().default(20_000),
   //  • TRY_SANDBOX_EXPORT_DAYS — how long the ONE file a visitor asked us to
   //    email them survives. Their database still dies on the hour; this is the
   //    export artifact only, and only for somebody who gave an address. Kept

@@ -374,7 +374,7 @@ function Chip({
       {/* text-sm in BOTH states. Dropping it while editing changed the line
           height, which changed the chip height, which moved every chip below —
           the pinned min-width cannot save you from a typography change. */}
-      <span ref={valueRef} className={`${dense ? "text-[11.5px]" : "text-sm"} ${editing ? "flex-1 min-w-0" : "truncate"}`}>
+      <span ref={valueRef} className={`${dense ? "text-[11.5px]" : "text-sm"} ${editing ? "flex-1 min-w-0" : "min-w-0 whitespace-normal break-words sm:truncate"}`}>
         {hosting ? (
           <span
             className="block w-full"

@@ -15,6 +15,7 @@ import { sql } from "kysely";
 import { z } from "zod";
 import { meta } from "../db/meta.js";
 import { getManagedApp } from "../platform/managed-apps.js";
+import { isSandboxUser } from "../platform/try-sandbox.js";
 import { hardDeleteOrg } from "../platform/delete-org.js";
 import { convertDemoToKeep } from "../platform/provision-demo.js";
 import { requireAuth } from "../auth/middleware.js";
@@ -492,6 +493,27 @@ orgsRouter.post("/", requireAuth, async (req, res, next) => {
     if (!parsed.success) {
       res.status(400).json({
         error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues },
+      });
+      return;
+    }
+    // A sandbox guest cannot make workspaces.
+    //
+    // Reported from the live box: somebody in an EXPIRED sandbox created a new
+    // workspace and kept using it. Two things let that happen. The session
+    // outlives the sandbox, and a workspace made this way is not marked
+    // `sandbox`, so the reaper - which only ever deletes sandboxes - would never
+    // collect it. An anonymous visitor could mint permanent databases on a box
+    // that hands out anonymous logins, without limit and without an address to
+    // trace them to.
+    //
+    // The entitlement seam above cannot cover this: it is a no-op in open core,
+    // which is exactly where a self-hoster running try boxes lives.
+    if (await isSandboxUser(req.session!.id)) {
+      res.status(403).json({
+        error: {
+          code: "sandbox_cannot_create_workspace",
+          message: "A sandbox is one workspace. Add your email to keep this one, or make an account.",
+        },
       });
       return;
     }

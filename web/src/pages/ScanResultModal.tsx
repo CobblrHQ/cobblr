@@ -76,7 +76,7 @@ export function ScanResultModal({
   /** An action taken BEFORE the row exists (feedback: "if I'm moving fast… I
    *  should be able to do that"). The page closes the sheet immediately and
    *  runs the intent the moment its ingest lands. */
-  onEarly?: (intent: "discard" | "retake") => void;
+  onEarly?: (intent: "discard" | "retake" | "photo") => void;
   /** Move mode: a single exact "already tracked" barcode match
    *  auto-moves that entity to the active bin — no triage stop. */
   moveMode?: boolean;
@@ -433,20 +433,26 @@ export function ScanResultModal({
             {onAddPhoto && (
               <button
                 type="button"
-                // Present from the start so it never moves, disabled until
-                // there is a row to attach to. A button that appears late is
-                // worse than one that is visibly not ready yet.
-                disabled={busy || !item}
+                // Present from the start AND live from the start: before the
+                // row lands the press queues the photo (the + shutter's early
+                // path), the sheet closes now, and the shutter arms the moment
+                // the ingest returns. It used to sit disabled for the several
+                // seconds a lookup takes - exactly when someone reaches for it
+                // to help the identify (reported 2026-08-30).
+                disabled={busy}
                 onClick={() => {
-                  if (!item) return;
-                  onAddPhoto(item);
-                  onClose("dismissed", item);
+                  if (item) {
+                    onAddPhoto(item);
+                    onClose("dismissed", item);
+                  } else {
+                    onEarly?.("photo");
+                  }
                 }}
                 aria-label="Add a photo - the shutter arms"
                 title={
                   item
                     ? "Add a photo - the shutter arms and your next shot attaches"
-                    : "Add a photo - available once the scan lands"
+                    : "Add a photo - the shutter arms as soon as the scan lands"
                 }
                 className="w-11 h-11 shrink-0 rounded-lg border border-dashed border-line dark:border-slate-600 text-faint grid place-items-center disabled:opacity-40"
               >

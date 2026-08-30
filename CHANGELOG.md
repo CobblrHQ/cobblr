@@ -2,6 +2,15 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-08-30
+
+### Fixes
+- Adding a photo to a barcode scan no longer drops you into a different card afterwards: the shot attaches, the drawer shows it landed, and the next barcode is a new item. If you had already moved on to the next scan by the time the photo uploaded, nothing from the previous item surfaces over it. The photo strip's + works the moment a barcode is read instead of waiting out the lookup, and the scanner stays quiet while you frame that shot so the label's barcode cannot become a second item.
+- Parcel names on the dashboard's on-its-way list are no longer cut off mid-word: on a phone a long name wraps to two lines instead of running off the edge of the card, and the vendor and item count step aside to give it the room. Recently-added items get the same treatment.
+- Scan inbox cards fit a phone: the photo column gives the text more room, long field values and the maker line wrap instead of being cut off, and a session's name keeps a readable width. The camera button on a card now reads the new photo for details when the item is still being identified, instead of only swapping its display picture. A photo added from the inbox starts its own session rather than joining the one the camera is in the middle of.
+- Two more phone fits in the scan inbox: the destination pill takes the full card width so its table name shows, and a session's name in the header keeps its own width instead of shrinking into the controls.
+- A try sandbox is one workspace and ends when it says it does: a guest can no longer create additional workspaces, and their session stops working once the sandbox is deleted.
+
 ## 2026-08-29
 
 ### Features

@@ -708,10 +708,17 @@ export function ScanPage() {
     setUploading(true);
     if (multi) setUploadProgress({ done: 0, total: files.length });
     try {
+      // "inbox": a photo added at the desk is not part of the shelf-walk the
+      // camera is in the middle of. Sharing the camera's session key put a TV
+      // uploaded from the inbox into a session of two teas scanned minutes
+      // earlier (reported 2026-08-30). Uploads still cluster with each other.
       const sessionBatch =
         batchId ??
-        (await resolveSessionBatch(activeSlug, () =>
-          api.createScanBatch(activeSlug).then((b) => b.id).catch(() => null),
+        (await resolveSessionBatch(
+          activeSlug,
+          () => api.createScanBatch(activeSlug).then((b) => b.id).catch(() => null),
+          Date.now(),
+          "inbox",
         )) ??
         undefined;
       let ok = 0;
@@ -3785,12 +3792,17 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       // under shrink pressure at any width the desktop layout
                       // runs at. truncate + min-w-0 keeps it able to give way
                       // last if that ever stops being true.
-                      className="font-medium text-content dark:text-mortar-100 truncate min-w-0"
-                      title={g.label ?? `Session · ${formatSessionTime(g.latest)}`}
+                      className="font-medium text-content dark:text-mortar-100 truncate min-w-[6rem] max-sm:shrink-0 max-sm:max-w-[60vw] sm:min-w-0"
+                      // The DATE is the session's identity; the word was
+                      // boilerplate on every row of a view already called "By
+                      // session", and truncation ate the date to keep it
+                      // ("Session · Aug 1…" - the operator, 2026-08-30:
+                      // "I would prioritize the date time over the word").
+                      title={g.label ?? formatSessionTime(g.latest)}
                     >
                       {/* Without the order number — that is the control beside
                           it, so tapping the number edits it. */}
-                      {sessionName(g, isReceiptSession) ?? `Session · ${formatSessionTime(g.latest)}`}
+                      {sessionName(g, isReceiptSession) ?? formatSessionTime(g.latest)}
                     </span>
                   {/* The receipt's own number, edited where it is READ. A separate
                       "PO#" control said the same thing twice: the number was
@@ -5596,16 +5608,27 @@ function InboxCard({
       const uploaded = v instanceof Blob ? false : !!v.uploaded;
       return api
         .uploadFile(activeSlug, toFile(blob, "photo"))
-        .then((up) => api.addScanPhoto(activeSlug, item.id, up.id, { uploaded }));
+        .then(async (up) => {
+          const added = await api.addScanPhoto(activeSlug, item.id, up.id, { uploaded });
+          // A CAPTURE of a photo-sourced item still being triaged is the person
+          // saying "read THIS" - the label, the spec sticker, the box. Re-read
+          // with it now rather than leaving the pic inert behind a ↺ nobody
+          // finds. A barcode item keeps the server's cross-check (its identity
+          // came from the code, and a vision re-read would only second-guess
+          // it); a camera-roll file stays attached only, as before.
+          const reread = !uploaded && item.status === "pending" && !item.barcode_text;
+          if (reread) await api.rerunScanAi(activeSlug, item.id, { imageFileId: up.id });
+          return { added, reread };
+        });
     },
-    onSuccess: () => {
+    onSuccess: (r) => {
       setCaptureSheet(null);
-      // Adding a photo is inert for identification on its own - say where the
-      // "use it" button lives, or the pic sits there doing nothing.
       toast.success(
-        item.status === "pending"
-          ? "Photo added - tap ↺ on it to re-identify from this shot"
-          : "Photo added",
+        r.reread
+          ? "Photo added - reading it for details…"
+          : item.status === "pending"
+            ? "Photo added - tap ↺ on it to re-identify from this shot"
+            : "Photo added",
       );
       invalidateInbox();
     },
@@ -5758,7 +5781,7 @@ function InboxCard({
             makes the box too tall, and this is a bad use of screen real
             estate"). object-contain still shows the whole product; it is simply
             no longer allowed to set the card's height. */}
-        <div className="relative w-28 shrink-0 self-stretch min-h-[4.5rem] max-h-40 rounded-l-xl border-r border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 flex items-center justify-center overflow-hidden">
+        <div className="relative w-24 sm:w-28 shrink-0 self-stretch min-h-[4.5rem] max-h-40 rounded-l-xl border-r border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 flex items-center justify-center overflow-hidden">
           {thumb ? (
             <img
               src={thumb}
@@ -5878,7 +5901,7 @@ function InboxCard({
               </span>
             )}
           </div>
-          <div className="text-[11px] font-mono text-faint dark:text-slate-500 truncate min-w-0">
+          <div className="text-[11px] font-mono text-faint dark:text-slate-500 min-w-0 whitespace-normal break-words sm:truncate">
             {(() => {
               // Build the subtitle from the fields that are PRESENT and join them
               // with " · ". An absent field (a photo-identified book has no
@@ -6173,19 +6196,23 @@ function InboxCard({
                 // the eye had to hunt for it (reported 2026-08-20). `order-first`
                 // rather than moving the markup: the series stays next to the
                 // name it qualifies for a reader, and only the layout changes.
-                <span className="relative inline-flex max-w-full order-first">
+                <span className="relative inline-flex max-w-full order-first max-sm:w-full">
                 <span
                   className={
                     tentativeRoute
-                      ? "inline-flex max-w-full items-stretch rounded-full overflow-hidden border border-dashed border-cobble-500 text-content dark:text-mortar-100 text-xs font-medium"
-                      : "inline-flex max-w-full items-stretch rounded-full overflow-hidden border border-cobble-600 bg-cobble-600 text-white text-xs font-medium"
+                      ? "inline-flex max-w-full max-sm:w-full items-stretch rounded-full overflow-hidden border border-dashed border-cobble-500 text-content dark:text-mortar-100 text-xs font-medium"
+                      : "inline-flex max-w-full max-sm:w-full items-stretch rounded-full overflow-hidden border border-cobble-600 bg-cobble-600 text-white text-xs font-medium"
                   }
                   onClick={(e) => e.stopPropagation()}
                 >
                   {/* A native <select> paints the OS popup ON TOP of the pill,
                       covering the thing you are choosing. This is our own menu,
                       anchored under it. */}
-                  <span className="relative inline-flex min-w-0 items-center">
+                  {/* max-sm:flex-1 - on a phone the pill is full-width and this
+                      region absorbs the slack, so the table's NAME gets the room
+                      ("Home Invento…" at 61px of 91, second census 2026-08-30)
+                      and Add sits flush right. */}
+                  <span className="relative inline-flex min-w-0 items-center max-sm:flex-1">
                     <button
                       type="button"
                       ref={destBtnRef}
@@ -6200,16 +6227,16 @@ function InboxCard({
                       aria-haspopup="listbox"
                       aria-expanded={destOpen}
                       className={
-                        "inline-flex min-w-0 items-center gap-1 pl-2.5 pr-2 py-1 transition " +
+                        "inline-flex min-w-0 items-center gap-1 pl-2.5 max-sm:pl-2 pr-2 py-1 transition " +
                         (tentativeRoute ? "hover:bg-cobble-600/10" : "hover:bg-cobble-700")
                       }
                     >
-                      <Sparkles size={11} className="shrink-0" />
+                      <Sparkles size={11} className="shrink-0 max-sm:hidden" />
                       <span className="truncate">
                         {dest.label}
                         {tentativeRoute ? "?" : ""}
                       </span>
-                      {destOptions.length > 1 && <ChevronDown size={11} className="shrink-0 opacity-80" />}
+                      {destOptions.length > 1 && <ChevronDown size={11} className="shrink-0 opacity-80 max-sm:hidden" />}
                     </button>
                   </span>
                   {quickConfirmReady ? (
@@ -6537,7 +6564,13 @@ function InboxCard({
             onClick={(e) => {
               e.stopPropagation();
               const act = photoPressAction(measureDevice(), photoWanted);
-              if (act === "capture") setCaptureSheet("retake");
+              // "I'll photograph this" is EVIDENCE about the object, so the
+              // capture goes through the add-photo door (the server identifies
+              // an unnamed item from it, cross-checks a named one). It used to
+              // open the RETAKE sheet, which only swaps the display photo -
+              // "did not trigger an AI rerun to get info from the new image"
+              // (reported 2026-08-30).
+              if (act === "capture") setCaptureSheet("add");
               else setPhotoWanted.mutate(act === "mark");
             }}
             disabled={setPhotoWanted.isPending}

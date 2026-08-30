@@ -2000,7 +2000,7 @@ function PinnedView({
                   <>
                     <EntityThumb src={r.image_path} alt={r.title} size={40} />
                     <div className="min-w-0">
-                      <div className="truncate text-content dark:text-mortar-100 group-hover/row:text-accent">
+                      <div className="line-clamp-2 sm:truncate text-content dark:text-mortar-100 group-hover/row:text-accent">
                         {r.title}
                       </div>
                       {r.subtitle && <div className="text-xs text-muted truncate">{r.subtitle}</div>}

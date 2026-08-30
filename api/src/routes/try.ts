@@ -28,10 +28,15 @@ import {
   sandboxEnabled,
 } from "../platform/try-sandbox.js";
 import { seedSandbox } from "../platform/try-sandbox-seed.js";
+import { takeFromPool } from "../platform/try-sandbox-pool.js";
 import { issueSignInLink } from "../platform/sign-in-link.js";
 import { createSandboxExport, fetchSandboxExport } from "../platform/try-sandbox-export.js";
 import { takeYourWorkEmail } from "../platform/try-sandbox-export-copy.js";
 import { sendAuthEmail } from "../platform/hosted-seams.js";
+
+/** Not an error: a pooled sandbox was filled before it was handed over, so the
+ *  seed step is skipped rather than run a second time and double everything. */
+class PooledAlready extends Error {}
 
 export const tryRouter = Router();
 
@@ -216,18 +221,27 @@ tryRouter.get(
         return;
       }
 
-      const sandbox = await provisionSandbox({
-        provisionOrg: async (userId, name) => {
-          const r = await provisionOrgForUser(userId, name);
-          return { orgId: r.orgId, slug: r.slug };
-        },
-        enableDefaults: (orgId, userId) => enableDefaultModulesForOrg(orgId, userId),
-      });
+      // A ready-made one if the pool has any: instant, and its book covers are
+      // already in place rather than filling in while somebody watches.
+      const pooled = await takeFromPool();
+      const sandbox =
+        pooled ??
+        (await provisionSandbox({
+          provisionOrg: async (userId, name) => {
+            const r = await provisionOrgForUser(userId, name);
+            return { orgId: r.orgId, slug: r.slug };
+          },
+          enableDefaults: (orgId, userId) => enableDefaultModulesForOrg(orgId, userId),
+        }));
 
       // An empty workspace is a poor first impression - the lesson the demo
       // taught. Best-effort: a seed that fails leaves a usable empty sandbox
       // rather than no sandbox.
       try {
+        if (pooled) {
+          console.log(`[try-sandbox] handed over ${sandbox.slug} from the pool`);
+          throw new PooledAlready();
+        }
         const seed = await seedSandbox(
           sandbox.orgId,
           sandbox.userId,
@@ -246,7 +260,9 @@ tryRouter.get(
         // the visitor at a loading page for them.
         void r?.images.then((n) => console.log(`[try-sandbox] covers landed: ${n}`));
       } catch (err) {
-        console.error("[try-sandbox] seed failed (continuing empty):", (err as Error).message);
+        if (!(err instanceof PooledAlready)) {
+          console.error("[try-sandbox] seed failed (continuing empty):", (err as Error).message);
+        }
       }
 
       console.log(

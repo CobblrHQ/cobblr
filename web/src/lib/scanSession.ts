@@ -11,6 +11,11 @@
 // and resuming the same shelf-walk is the whole point) under the SAME key the
 // camera uses, so camera + wedge scans inside the window land in one session.
 
+/** WHO is scanning. The camera and the hardware wedge share one shelf-walk;
+ *  a photo added from the inbox at a desk is a different act and must never
+ *  join it - it used to, whenever it landed within the gap (2026-08-30). */
+export type ScanSessionOrigin = "camera" | "inbox";
+
 export interface ScanSession {
   batchId: string | null;
   /** The scan area/location tag carried through the session (optional). */
@@ -23,29 +28,30 @@ export interface ScanSession {
 /** New session after this much idle. 30 min = a generous shelf-walk pause. */
 export const SESSION_GAP_MS = 30 * 60 * 1000;
 
-const sessionKey = (slug: string) => `cobblr.scan-session.${slug}`;
+const sessionKey = (slug: string, origin: ScanSessionOrigin = "camera") =>
+  origin === "camera" ? `cobblr.scan-session.${slug}` : `cobblr.scan-session.${slug}.${origin}`;
 
-export function readScanSession(slug: string): ScanSession | null {
+export function readScanSession(slug: string, origin: ScanSessionOrigin = "camera"): ScanSession | null {
   try {
-    const raw = localStorage.getItem(sessionKey(slug));
+    const raw = localStorage.getItem(sessionKey(slug, origin));
     return raw ? (JSON.parse(raw) as ScanSession) : null;
   } catch {
     return null;
   }
 }
 
-export function writeScanSession(slug: string, s: ScanSession): void {
+export function writeScanSession(slug: string, s: ScanSession, origin: ScanSessionOrigin = "camera"): void {
   try {
-    localStorage.setItem(sessionKey(slug), JSON.stringify(s));
+    localStorage.setItem(sessionKey(slug, origin), JSON.stringify(s));
   } catch {
     // Storage full / private mode — sessions just won't persist.
   }
 }
 
 /** End the current session — the next scan mints a fresh batch ("New session"). */
-export function clearScanSession(slug: string): void {
+export function clearScanSession(slug: string, origin: ScanSessionOrigin = "camera"): void {
   try {
-    localStorage.removeItem(sessionKey(slug));
+    localStorage.removeItem(sessionKey(slug, origin));
   } catch {
     /* ignore */
   }
@@ -77,13 +83,14 @@ export async function resolveSessionBatch(
   slug: string,
   mint: () => Promise<string | null>,
   now = Date.now(),
+  origin: ScanSessionOrigin = "camera",
 ): Promise<string | null> {
-  const s = readScanSession(slug);
+  const s = readScanSession(slug, origin);
   if (isSessionFresh(s, now) && s) {
-    writeScanSession(slug, { ...s, count: s.count + 1, at: now });
+    writeScanSession(slug, { ...s, count: s.count + 1, at: now }, origin);
     return s.batchId;
   }
   const batchId = await mint();
-  writeScanSession(slug, { batchId, areaId: s?.areaId ?? null, count: 1, at: now });
+  writeScanSession(slug, { batchId, areaId: s?.areaId ?? null, count: 1, at: now }, origin);
   return batchId;
 }
