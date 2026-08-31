@@ -160,6 +160,17 @@ export async function runMigrations(opts: MigrationRunOptions): Promise<Migratio
   const { pool, directory, scope, sharedDbPeer } = opts;
 
   const client = await pool.connect();
+  // A checked-out client is NOT covered by the pool's 'error' listener - that
+  // only hears idle clients. This loop holds the client across `await readFile`
+  // gaps between queries, and a backend killed in such a gap (a parallel
+  // teardown DROPping this very tenant mid-enable) emits 'error' on the CLIENT
+  // with no query to reject into. Unlistened, that event killed the whole api
+  // (CI, 2026-08-31: "Emitted 'error' event on Client instance" straight out of
+  // this loop's log lines). With the listener, the death becomes a log line and
+  // the next query rejects into the ordinary error path below.
+  const onClientError = (err: Error) =>
+    console.error(`[migrate:${scope}] connection error mid-run:`, err.message);
+  client.on("error", onClientError);
   try {
     await acquireScopeLock(client, scope);
     try {
@@ -196,6 +207,9 @@ export async function runMigrations(opts: MigrationRunOptions): Promise<Migratio
       await releaseScopeLock(client, scope);
     }
   } finally {
+    // Detach before release: a pooled client keeps its listeners, and every
+    // checkout re-attaching would stack one more copy per migration run.
+    client.off("error", onClientError);
     client.release();
   }
 }

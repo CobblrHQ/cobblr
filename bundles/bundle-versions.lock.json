@@ -11,6 +11,10 @@
     "version": "0.3.1",
     "hash": "a6307e8a6a9c16202d96ca0082ee80ccb90da28bac982a44fbdcc5a63ef105ce"
   },
+  "cobblr.community.computers": {
+    "version": "0.1.0",
+    "hash": "91f9dc4626a22902a641fd3803e81fac59be086b6c341891731372b355a3a61e"
+  },
   "cobblr.community.garden": {
     "version": "0.1.1",
     "hash": "fc1bd40da35c74f4a18efed28f4c66aae004b404bd5b73ece403b70826ca1660"

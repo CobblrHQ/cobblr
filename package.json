@@ -19,6 +19,7 @@
   "scripts": {
     "typecheck": "pnpm -r --no-sort --workspace-concurrency=${COBBLR_TSC_CONCURRENCY:-8} run --if-present typecheck && node scripts/verify-cache.mjs stamp typecheck",
     "verify:served": "node scripts/verify-served.mjs",
+    "where": "tsx scripts/placement.ts",
     "lint:all": "node scripts/run-lints.mjs",
     "lint:isolation": "tsx scripts/lint-module-isolation.ts",
     "lint:action-role-parity": "tsx scripts/lint-action-role-parity.ts",
@@ -31,6 +32,7 @@
     "lint:dockerfile-modules": "tsx scripts/lint-dockerfile-modules.ts",
     "lint:runtime-assets": "tsx scripts/lint-runtime-assets.ts",
     "lint:guard-returns": "tsx scripts/lint-guard-returns.ts",
+    "lint:pg-client-errors": "tsx scripts/lint-pg-client-error-listener.ts",
     "lint:local-network": "tsx scripts/lint-local-network.ts",
     "lint:table-names": "tsx scripts/lint-table-names-exist.ts",
     "lint:org-helper": "tsx scripts/lint-tests-use-org-helper.ts",
@@ -98,6 +100,7 @@
     "lint:request-org": "tsx scripts/lint-request-org.ts",
     "lint:background-loops": "tsx scripts/lint-background-loops.ts",
     "lint:doc-owned-facts": "tsx scripts/lint-doc-owned-facts.ts",
+    "lint:placement": "tsx scripts/lint-placement.ts",
     "lint:versions": "tsx scripts/lint-versions.ts",
     "lint:docs": "tsx scripts/lint-docs.ts",
     "lint:doc-links": "tsx scripts/lint-doc-links.ts",

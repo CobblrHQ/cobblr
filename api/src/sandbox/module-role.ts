@@ -62,7 +62,9 @@ async function superuserClientTo(dbName: string | null): Promise<PgClient> {
   const { Client } = await import("pg");
   const u = new URL(env.SUPERUSER_DATABASE_URL);
   if (dbName) u.pathname = `/${dbName}`;
-  return new Client({ connectionString: u.toString() });
+  const client = new Client({ connectionString: u.toString() });
+  client.on("error", (err) => console.error("[module-role] connection error:", (err as Error).message));
+  return client;
 }
 
 /** Create (if missing) the module's role and (re)grant it exactly its

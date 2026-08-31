@@ -97,13 +97,18 @@ interface DataIndexFile {
  *  uses). Caller must `end()` it. */
 function superuserTenantClient(dbName: string): Client {
   const url = new URL(env.SUPERUSER_DATABASE_URL);
-  return new Client({
+  // This client sits connected to a TENANT database through a long restore,
+  // with plenty of await gaps between queries - the exact shape that killed
+  // the api from migrate.ts when the backend vanished in a gap.
+  const client = new Client({
     host: url.hostname,
     port: url.port ? Number(url.port) : 5432,
     user: decodeURIComponent(url.username),
     password: decodeURIComponent(url.password),
     database: dbName,
   });
+  client.on("error", (err) => console.error("[backup] tenant connection error:", (err as Error).message));
+  return client;
 }
 
 async function listTenantTables(tdb: Kysely<unknown>): Promise<string[]> {

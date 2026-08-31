@@ -18,6 +18,7 @@
 // obtained from a separate multipart endpoint — keeps the JSON
 // body limits sane.
 
+import { isMachineReadCode } from "../services/barcode-source.js";
 import { randomUUID } from "node:crypto";
 import { buildCadenceEvents } from "../cadence-events.js";
 import {
@@ -382,6 +383,7 @@ inboxRouter.post(
           .executeTakeFirstOrThrow();
         void platform().events.emit("core-scan.scan.received", {
           orgId: ctx.org.id,
+          visitor_ip: req.ip ?? null,
           itemId: bumped.id,
           barcode: body.barcode,
           sourceKind: "barcode",
@@ -445,6 +447,7 @@ inboxRouter.post(
 
     void platform().events.emit("core-scan.scan.received", {
       orgId: ctx.org.id,
+      visitor_ip: req.ip ?? null,
       itemId: inserted.id,
       barcode: inserted.barcode_text,
       sourceKind: inserted.source_kind,
@@ -628,6 +631,7 @@ inboxRouter.post(
 
     void platform().events.emit("core-scan.scan.received", {
       orgId: ctx.org.id,
+      visitor_ip: req.ip ?? null,
       itemId: inserted.id,
       barcode: null,
       sourceKind: "note",
@@ -733,10 +737,13 @@ async function materializeReceiptLines(opts: {
           description: line.description,
           unit_price: line.unit_price,
           line_total: line.line_total,
-          // Same flag the photo path uses for a code it read rather than
-          // scanned, so the card shows "(read from photo)" and nothing treats
-          // it as a hardware scan.
-          ...(line.code ? { barcode_source: "ai-photo" } : {}),
+          // Marked as READ rather than scanned, so nothing treats it as a
+          // hardware scan.
+          // "receipt", not "ai-photo": this came off the receipt DOCUMENT,
+          // which is usually an email or a PDF. Same low trust (see
+          // isMachineReadCode), a sentence that is actually true - the card
+          // said "read from photo" over an emailed eBay receipt (2026-08-31).
+          ...(line.code ? { barcode_source: "receipt" } : {}),
           // `model` is the key resolveNativeIdentity reads, so a model printed
           // on the receipt reaches the destination's own model column with
           // nothing further to wire - the same route a decoded VIN's model
@@ -824,7 +831,7 @@ inboxRouter.post(
     const ctx = tenantContext(req);
     const session = sessionUser(req);
 
-    const result = await parseReceipt(ctx.org.id, parsed.data.file_id, session?.id ?? null);
+    const result = await parseReceipt(ctx.org.id, parsed.data.file_id, session?.id ?? null, req.ip ?? null);
     if (!result.ok) {
       // NEVER-VANISH: keep the upload as a re-parseable session instead of
       // orphaning the file. The email path has done this since it shipped
@@ -1138,7 +1145,7 @@ inboxRouter.post(
       return;
     }
 
-    const result = await parseReceipt(ctx.org.id, batch.source_file_id, session?.id ?? null);
+    const result = await parseReceipt(ctx.org.id, batch.source_file_id, session?.id ?? null, req.ip ?? null);
     if (!result.ok) {
       res
         .status(422)
@@ -3411,6 +3418,7 @@ inboxRouter.post(
             imageFileId,
             userId: uid,
             force: true,
+            visitorIp: req.ip ?? null,
             hint: photoHint,
             hints: effectiveHints,
           });
@@ -4071,6 +4079,7 @@ inboxRouter.post(
           itemId: row.id,
           imageFileId: parsed.data.file_id,
           userId: sessionUser(req).id,
+          visitorIp: req.ip ?? null,
         }).catch((e) =>
           console.error("[core-scan] added-photo identify threw:", (e as Error).message),
         );
@@ -4588,8 +4597,9 @@ inboxRouter.post(
         qtyAdded = add;
       }
       // Barcode-append: a scanned (not AI-read) code the entity doesn't have yet.
-      const aiRead =
-        (row.suggested_metadata as { barcode_source?: string } | null)?.barcode_source === "ai-photo";
+      const aiRead = isMachineReadCode(
+        (row.suggested_metadata as { barcode_source?: string } | null)?.barcode_source,
+      );
       if (row.barcode_text && !aiRead && !entityMeta.barcode) {
         patch.metadata = { ...entityMeta, barcode: row.barcode_text };
       }
@@ -4640,7 +4650,7 @@ inboxRouter.post(
         ...((scanMeta.fields as Record<string, unknown> | undefined) ?? {}),
         ...(cand?.fields ?? {}),
       };
-      const aiRead = (scanMeta as { barcode_source?: string }).barcode_source === "ai-photo";
+      const aiRead = isMachineReadCode((scanMeta as { barcode_source?: string }).barcode_source);
       if (row.barcode_text && !aiRead) metaIn.barcode = row.barcode_text;
       if (row.suggested_sku) metaIn.sku = row.suggested_sku;
       const nextMeta = { ...entityMeta };
@@ -5025,6 +5035,7 @@ inboxRouter.post(
           itemId: updated.id,
           imageFileId: parsed.data.file_id,
           userId: sessionUser(req).id,
+          visitorIp: req.ip ?? null,
         }).catch((e) => console.error("[core-scan] added-photo identify threw:", (e as Error).message));
       }
     }
@@ -5235,6 +5246,7 @@ inboxRouter.post(
       );
       void platform().events.emit("core-scan.scan.received", {
         orgId: ctx.org.id,
+        visitor_ip: req.ip ?? null,
         itemId: (child as { id: string }).id,
         barcode: null,
         sourceKind: "photo",
@@ -5794,9 +5806,11 @@ inboxRouter.post(
     // be a digit off) — or it has none — but a merged item carries a SCANNED one,
     // adopt the scanned code as the kept item's barcode. So you keep the photo +
     // name you chose AND end up with the real barcode. Clear the ai-photo flag.
-    const primaryAiBarcode = (meta as { barcode_source?: string }).barcode_source === "ai-photo";
+    const primaryAiBarcode = isMachineReadCode((meta as { barcode_source?: string }).barcode_source);
     const scannedBarcode = others.find(
-      (o) => o.barcode_text && (o.suggested_metadata as { barcode_source?: string } | null)?.barcode_source !== "ai-photo",
+      (o) =>
+        o.barcode_text &&
+        !isMachineReadCode((o.suggested_metadata as { barcode_source?: string } | null)?.barcode_source),
     )?.barcode_text;
     const adoptBarcode = (primaryAiBarcode || !primary.barcode_text) && scannedBarcode ? scannedBarcode : null;
     const { barcode_source: _bs, ...metaNoSource } = meta as { barcode_source?: string };

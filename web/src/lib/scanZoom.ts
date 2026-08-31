@@ -33,6 +33,24 @@ export interface ZoomConfig {
   /** Nothing code-like in view for this long → ease back to wide, where
    *  finding a code is easiest. */
   emptyMs: number;
+  /** A "located" region at least this wide is the SCENE, not a code.
+   *
+   *  The region comes from the orientation estimator's VOTING TILES, which on
+   *  a real product shot are scattered over the label's text, the packaging
+   *  edges and the counter. Measured on a jug that would not scan
+   *  (2026-08-31): the code was 16% of the frame and both clusters reported
+   *  93%. A 1D code that genuinely filled the frame would have no quiet zones
+   *  and could not decode anyway, so a number this large is never a code
+   *  measurement - and believing it sent the lens the WRONG WAY, backing off
+   *  and making the code smaller still. */
+  implausibleFrac: number;
+  /** Aimed at something, reading nothing, for this long → lean in.
+   *
+   *  The size-based rules need a measurement that survives a real frame, and
+   *  on a busy label there often is not one. This is the reflex a person has
+   *  instead: if it will not read, get closer. Bounded by max and the step
+   *  cooldown like every other move. */
+  starveMs: number;
 }
 
 export const ZOOM_DEFAULTS: ZoomConfig = {
@@ -43,16 +61,20 @@ export const ZOOM_DEFAULTS: ZoomConfig = {
   smallFrac: 0.25,
   bigFrac: 0.55,
   emptyMs: 4000,
+  implausibleFrac: 0.85,
+  starveMs: 1500,
 };
 
 export interface ZoomState {
   zoom: number;
   lastChangeAt: number;
   emptySince: number | null;
+  /** Since when we have been aimed at something and reading nothing. */
+  starvingSince: number | null;
 }
 
 export function zoomInitial(zoom = 1): ZoomState {
-  return { zoom, lastChangeAt: 0, emptySince: null };
+  return { zoom, lastChangeAt: 0, emptySince: null, starvingSince: null };
 }
 
 export interface ZoomSample {
@@ -73,7 +95,7 @@ export function zoomPlan(
 ): { state: ZoomState; target: number | null } {
   // It is working. Never move the lens out from under a successful read —
   // whatever this zoom is, it is the right one for what the user is doing.
-  if (sample.decoded) return { state: { ...s, emptySince: null }, target: null };
+  if (sample.decoded) return { state: { ...s, emptySince: null, starvingSince: null }, target: null };
 
   const canStep = now - s.lastChangeAt >= cfg.stepEveryMs;
 
@@ -84,22 +106,36 @@ export function zoomPlan(
     const emptySince = s.emptySince ?? now;
     if (now - emptySince >= cfg.emptyMs && canStep && s.zoom > cfg.min) {
       const zoom = Math.max(cfg.min, round(s.zoom - cfg.step));
-      return { state: { zoom, lastChangeAt: now, emptySince }, target: zoom };
+      return { state: { zoom, lastChangeAt: now, emptySince, starvingSince: null }, target: zoom };
     }
-    return { state: { ...s, emptySince }, target: null };
+    return { state: { ...s, emptySince, starvingSince: null }, target: null };
   }
 
-  if (!canStep) return { state: { ...s, emptySince: null }, target: null };
+  // Aimed at something, and this frame did not read. Start the clock: the
+  // size rules below may have nothing usable to say, and then leaning in is
+  // the only move left.
+  const starvingSince = s.starvingSince ?? now;
+  if (!canStep) return { state: { ...s, emptySince: null, starvingSince }, target: null };
 
-  if (sample.regionWidth < cfg.smallFrac && s.zoom < cfg.max) {
+  // Only a PLAUSIBLE region may argue about size. An implausible one used to
+  // reach the "too big" branch below and zoom OUT of a code that was already
+  // too small to read.
+  const measured = sample.regionWidth < cfg.implausibleFrac;
+
+  if (measured && sample.regionWidth < cfg.smallFrac && s.zoom < cfg.max) {
     const zoom = Math.min(cfg.max, round(s.zoom + cfg.step));
-    return { state: { zoom, lastChangeAt: now, emptySince: null }, target: zoom };
+    return { state: { zoom, lastChangeAt: now, emptySince: null, starvingSince }, target: zoom };
   }
-  if (sample.regionWidth > cfg.bigFrac && s.zoom > cfg.min) {
+  if (measured && sample.regionWidth > cfg.bigFrac && s.zoom > cfg.min) {
     const zoom = Math.max(cfg.min, round(s.zoom - cfg.step));
-    return { state: { zoom, lastChangeAt: now, emptySince: null }, target: zoom };
+    return { state: { zoom, lastChangeAt: now, emptySince: null, starvingSince: null }, target: zoom };
   }
-  return { state: { ...s, emptySince: null }, target: null };
+  // No usable measurement, and still nothing read: lean in.
+  if (!measured && now - starvingSince >= cfg.starveMs && s.zoom < cfg.max) {
+    const zoom = Math.min(cfg.max, round(s.zoom + cfg.step));
+    return { state: { zoom, lastChangeAt: now, emptySince: null, starvingSince }, target: zoom };
+  }
+  return { state: { ...s, emptySince: null, starvingSince }, target: null };
 }
 
 /** Keep the value clean — a float drift like 2.4999999 is a nuisance in the

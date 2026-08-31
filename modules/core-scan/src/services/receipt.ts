@@ -20,6 +20,7 @@
 // — a receipt becomes N parts without retyping. Mirrors the invoice-parse path.
 
 import { platform } from "@cobblr/platform-contract";
+import { hostedIdentify, hostedIdentifyEnabled, receiptAsModelReply } from "./hosted-identify.js";
 import {
   buildReceipt,
   type ParsedReceipt,
@@ -140,7 +141,18 @@ async function visionExtract(
   mediaType: string,
   sourceId: string,
   userId?: string | null,
+  visitorIp?: string | null,
 ): Promise<string> {
+  // Hosted first (see hosted-identify.ts). The endpoint returns core's own
+  // receipt schema, so a stringify is the whole shim and the parser downstream
+  // never learns which engine answered. We send OUR receipt prompt - its
+  // recorded fixtures pin the exact text, and the endpoint honors the override.
+  if (hostedIdentifyEnabled()) {
+    const hosted = await hostedIdentify({ orgId, imageB64, receiptPrompt: RECEIPT_VISION_PROMPT, visitorIp });
+    if (hosted?.kind === "receipt" && hosted.receipt) return receiptAsModelReply(hosted.receipt);
+    // Any other outcome - an item mistaken for a receipt upstream, a hosted
+    // outage - falls through to the tenant path this call always had.
+  }
   const r = await platform().ai.invoke({
     orgId,
     userId: userId ?? undefined,
@@ -184,7 +196,12 @@ async function readPdf(bytes: Buffer): Promise<{ text: string; tables: string[][
 /** Parse a receipt file (CSV, PDF, or image, already stored in core-files) into
  *  a ParsedReceipt. Deterministic tiers run first; AI is the fallback. Never
  *  throws — every failure is a typed `{ ok:false, reason }`. */
-export async function parseReceipt(orgId: string, fileId: string, userId?: string | null): Promise<ReceiptResult> {
+export async function parseReceipt(
+  orgId: string,
+  fileId: string,
+  userId?: string | null,
+  visitorIp?: string | null,
+): Promise<ReceiptResult> {
   const file = await platform().files.read(orgId, fileId, "original");
   if (!file) return { ok: false, reason: "Couldn't read that file.", code: "unreadable" };
   const bytes = Buffer.from(file.bytes);
@@ -235,7 +252,7 @@ export async function parseReceipt(orgId: string, fileId: string, userId?: strin
   // ── Tier 3: image → AI vision ──────────────────────────────────────────────
   if (isImage) {
     try {
-      const receipt = shapeReceipt(await visionExtract(orgId, bytes.toString("base64"), mime, fileId, userId));
+      const receipt = shapeReceipt(await visionExtract(orgId, bytes.toString("base64"), mime, fileId, userId, visitorIp));
       if (!receipt) return { ok: false, reason: "Couldn't find any line items on that receipt.", code: "no_line_items" };
       return { ok: true, receipt, method: "ai-vision" };
     } catch (e) {

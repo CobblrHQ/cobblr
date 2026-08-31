@@ -12,8 +12,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { readBound } from "../lib/floorplanGeometry";
 import { LocationFloorPlanTab } from "../components/LocationFloorPlanTab";
+import { NewBinSheet } from "./NewBinSheet";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Printer, Trash2, Pencil, Box as BoxIcon, MapPin as AreaIcon, Upload, Download, GripVertical, CheckSquare, ChevronRight, Search, ChevronsDownUp, ChevronsUpDown, Layers } from "lucide-react";
+import { Camera, Plus, Printer, Trash2, Pencil, Box as BoxIcon, MapPin as AreaIcon, Upload, Download, GripVertical, CheckSquare, ChevronRight, Search, ChevronsDownUp, ChevronsUpDown, Layers } from "lucide-react";
 import {
   DndContext,
   type DragEndEvent,
@@ -87,6 +88,9 @@ export function LocationsPage() {
   const confirm = useConfirm();
   const [createOpen, setCreateOpen] = useState(false);
   const [createParentId, setCreateParentId] = useState<string | null>(null);
+  // Photograph a bin and name it in one go — the flow for when you are
+  // standing in front of it rather than sitting at this page.
+  const [binSheetOpen, setBinSheetOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<Location | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
@@ -432,8 +436,26 @@ export function LocationsPage() {
             <Plus size={14} />
             New location
           </button>
+            <button
+              onClick={() => setBinSheetOpen(true)}
+              className="shrink-0 inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-700 px-3 py-1.5 text-sm text-accent hover:border-cobble-300 transition"
+              title="Photograph a bin and name it in one go"
+            >
+              <Camera size={14} />
+              <span className="hidden sm:inline">New bin from a photo</span>
+            </button>
+          <button
+            onClick={() => setBinSheetOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-700 px-3 py-1.5 text-sm text-accent hover:border-cobble-300 transition"
+            title="Photograph a bin and name it in one go"
+          >
+            <Camera size={14} />
+            New bin from a photo
+          </button>
         </div>
       )}
+
+      <NewBinSheet open={binSheetOpen} onClose={() => setBinSheetOpen(false)} />
 
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
         {items.length > 0 && (

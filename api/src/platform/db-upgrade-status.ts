@@ -36,6 +36,7 @@ export async function readDbUpgradeHold(): Promise<DbUpgradeHold | null> {
   const url = new URL(env.DATABASE_URL);
   url.pathname = "/postgres";
   const client = new Client({ connectionString: url.toString() });
+  client.on("error", (err) => console.error("[db-upgrade-status] connection error:", (err as Error).message));
   try {
     await client.connect();
     // ASK whether the table is there before selecting from it. On a healthy

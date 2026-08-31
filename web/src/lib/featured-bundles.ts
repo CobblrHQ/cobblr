@@ -1656,6 +1656,120 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     },
   },
   {
+    glyph: "💻",
+    blurb:
+      "Every computer in the house on its own shelf: what is in it, who uses it, and when the warranty runs out.",
+    manifest: {
+      id: "cobblr.community.computers",
+      released_at: "2026-08-31",
+      changelog: "First release: computers as their own table, with the specs, an owner, and scan routing that stops laptops filing themselves as machines.",
+      version: "0.1.0",
+      name: "Computers",
+      description:
+        "Computers as their own top-level table rather than machines: CPU, memory, storage and OS beside the maker, model, serial and warranty Assets already keeps. Scans of a laptop land here.",
+      author: "Cobblr community",
+      requires: [{ module: "assets" }],
+      // ASSETS, not Machines. A laptop is a thing you own one of and identify by
+      // its serial, which is Assets' own definition ("things you own that aren't
+      // fungible stock and aren't machines"). Machines calls itself "the base
+      // layer" for machines you operate, so the identify read a laptop as a
+      // computing device and filed it there; with a table that says computer, it
+      // has somewhere truer to go (the operator, 2026-08-31).
+      provides_instances: [
+        {
+          module: "assets",
+          instance_name: "computers",
+          display_name: "Computers",
+          glyph: "💻",
+          item_noun: "computer",
+          qty_unit: "each",
+          // WHOLE computers only. A monitor, a keyboard or a graphics card is a
+          // part or an accessory, and pulling those in would make this table the
+          // dumping ground for anything with a chip in it.
+          scan_keywords: [
+            "laptop",
+            "notebook",
+            "macbook",
+            "chromebook",
+            "ultrabook",
+            "desktop pc",
+            "imac",
+            "mac mini",
+            "mac studio",
+            "workstation",
+            "thinkpad",
+            "all-in-one pc",
+            "mini pc",
+            "computer",
+          ],
+          // Assets already carries manufacturer, model, serial_number,
+          // purchased_at and warranty_until natively, so these are only what a
+          // computer ADDS. Duplicating the native ones would give every machine
+          // two boxes for the same fact.
+          field_defs: [
+            {
+              entity_kind: "assets:asset",
+              name: "form_factor",
+              display_label: "Form",
+              type: "text",
+              choices: ["Laptop", "Desktop", "All-in-one", "Mini PC", "Workstation", "Server", "Tablet"],
+              field_role: "category",
+              position: 1,
+              help: "What shape of computer. The table groups by this.",
+            },
+            {
+              entity_kind: "assets:asset",
+              name: "cpu",
+              display_label: "CPU",
+              type: "text",
+              position: 2,
+              help: "The processor, as it is written on the spec sheet.",
+            },
+            {
+              entity_kind: "assets:asset",
+              name: "gpu",
+              display_label: "Graphics",
+              type: "text",
+              position: 3,
+              help: "Discrete graphics, when there are any.",
+            },
+            { entity_kind: "assets:asset", name: "ram_gb", display_label: "Memory", type: "number", unit: "GB", position: 4 },
+            { entity_kind: "assets:asset", name: "storage_gb", display_label: "Storage", type: "number", unit: "GB", position: 5 },
+            {
+              entity_kind: "assets:asset",
+              name: "operating_system",
+              display_label: "OS",
+              type: "text",
+              choices: ["Windows", "macOS", "Linux", "ChromeOS", "Other"],
+              position: 6,
+            },
+            {
+              entity_kind: "assets:asset",
+              name: "used_by",
+              display_label: "Used by",
+              type: "text",
+              field_role: "assignee",
+              position: 7,
+              help: "Whose machine this is, when more than one person uses them.",
+            },
+          ],
+          saved_views: [
+            {
+              entity_kind: "assets:asset",
+              name: "By form",
+              view_type: "table",
+              pinned: true,
+              config: {
+                visible_fields: ["name", "form_factor", "cpu", "ram_gb", "storage_gb", "used_by", "warranty_until"],
+                group_by: "form_factor",
+              },
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     glyph: "📚",
     blurb:
       "Personal library: author, ISBN, year, read-status, on its own shelf that opens as a cover wall. Print spine labels with one wire.",

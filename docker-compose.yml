@@ -225,6 +225,9 @@ services:
       # a URL. Declared now because the dev compose enumerates env explicitly:
       # without the line, setting it in .env would silently do nothing here.
       COBBLR_BIDB_URL: ${COBBLR_BIDB_URL:-}
+      COBBLR_IDENTIFY_URL: ${COBBLR_IDENTIFY_URL:-}
+      COBBLR_IDENTIFY_KEY: ${COBBLR_IDENTIFY_KEY:-}
+      COBBLR_IDENTIFY_PER_WORKSPACE_DAY: ${COBBLR_IDENTIFY_PER_WORKSPACE_DAY:-}
       COBBLR_BIDB_KEY: ${COBBLR_BIDB_KEY:-}
       # Carrier credentials for following a parcel. Same reason as above: this
       # compose enumerates env, so an unlisted var set in .env reaches nothing.

@@ -31,6 +31,7 @@ import { sql } from "kysely";
 import { cropRegion, parseProductRegion } from "./image-ops.js";
 import { seedHistory, pushStep, type CatalogSource } from "./catalog-history.js";
 import { looksLikeReceiptPhoto } from "./receipt-photo.js";
+import { hostedIdentify, hostedIdentifyEnabled, toPhotoIdentity, receiptAsIdentity } from "./hosted-identify.js";
 
 /** Re-fetch the catalog image to match a (corrected) name. The card prefers the
  *  downloaded `catalog_image_file_id` over `catalog_image_url`, so a rename left
@@ -142,6 +143,8 @@ interface PhotoEnrichContext {
   /** A user-triggered re-run → bypass the AI cache so the identify reflects the
    *  current prompt, not a stale result cached for this image. */
   force?: boolean;
+  /** See IdentifyImageOpts.visitorIp. */
+  visitorIp?: string | null;
   /** The user's research hint (a short text correction) — folded into the vision
    *  identify as an AUTHORITATIVE correction that overrides the visual read, so
    *  a hint naming a DIFFERENT item than the obvious one re-identifies to it. */
@@ -271,6 +274,10 @@ export interface IdentifyImageOpts {
   /** The workspace's existing category vocabulary, so the identify reuses a
    *  label instead of inventing a synonym of one. */
   knownCategories?: string[];
+  /** The visitor driving this scan, when a request started it — forwarded to
+   *  the hosted identify so its per-person daily tier works. Detached work
+   *  with no visitor omits it. */
+  visitorIp?: string | null;
 }
 
 export async function identifyImage({
@@ -283,7 +290,20 @@ export async function identifyImage({
   hint,
   hints,
   knownCategories,
+  visitorIp,
 }: IdentifyImageOpts): Promise<PhotoIdentity | null> {
+  // Hosted identify first, when this deployment has it (the try sandbox, or a
+  // keyed self-host). Null falls through to the tenant path unchanged, so the
+  // hosted service being down is never worse than never having had it.
+  if (hostedIdentifyEnabled()) {
+    const hosted = await hostedIdentify({ orgId, imageB64, visitorIp });
+    if (hosted?.kind === "item" && hosted.item) {
+      const mapped = toPhotoIdentity(hosted.item);
+      if (mapped) return mapped;
+    }
+    if (hosted?.kind === "receipt") return receiptAsIdentity();
+    if (hosted?.kind === "person" || hosted?.kind === "unidentifiable") return null;
+  }
   let parsed: Record<string, unknown> | null = null;
   try {
     const r = await platform().ai.invoke({
@@ -996,6 +1016,7 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOu
     hint: ctx.hint,
     hints: ctx.hints,
     knownCategories: knownCats,
+    visitorIp: ctx.visitorIp,
   });
   // identifyImage's vision call can run tens of seconds. When enrichPhotoItem
   // runs detached (after the HTTP response has returned), the request's tenant

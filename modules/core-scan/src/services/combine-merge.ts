@@ -10,6 +10,8 @@
 // So: keep the richest item as the base, and fill its gaps from the others. Pure
 // + tested; the endpoint just persists the result.
 
+import { isMachineReadCode } from "./barcode-source.js";
+
 export interface CombineCandidate {
   module: string;
   instance: string | null;
@@ -33,7 +35,10 @@ const src = (it: CombineItem): string =>
 function identityRank(it: CombineItem): number {
   const s = src(it);
   if (s.startsWith("decoder:")) return 3; // VIN/etc — ground truth
-  if (it.barcode_text && (it.suggested_metadata as { barcode_source?: string } | null)?.barcode_source !== "ai-photo")
+  if (
+    it.barcode_text &&
+    !isMachineReadCode((it.suggested_metadata as { barcode_source?: string } | null)?.barcode_source)
+  )
     return 2; // a real scanned barcode
   if (s === "vision" || s === "photo") return 1; // read off a picture
   return 0;

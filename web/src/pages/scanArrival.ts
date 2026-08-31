@@ -79,6 +79,25 @@ export function arrivalLabel(a: Arrival, locale?: string): string {
   return `arriving ${formatDate(a.date, locale)}`;
 }
 
+/**
+ * The same fact, phone-width.
+ *
+ * Beside a truck glyph the word "arriving" is carried by the icon, and it costs
+ * ~50px of a 350px row - the exact 21px the session header was still over after
+ * three controls stood down (measured 2026-08-31). What a reader needs is WHEN,
+ * and whether it has slipped.
+ */
+export function arrivalLabelShort(a: Arrival, locale?: string): string {
+  if (a.daysAway === 0) return "today";
+  if (a.daysAway === 1) return "tomorrow";
+  if (a.daysAway === -1) return "due yesterday";
+  // "due" stays on a LATE parcel: dropping it makes a past date read as a
+  // future one, which is the one thing this label must never do.
+  if (a.daysAway < -1) return `due ${formatDate(a.date, locale)}`;
+  if (a.daysAway <= 6) return localMidnight(a.date).toLocaleDateString(locale, { weekday: "long" });
+  return formatDate(a.date, locale);
+}
+
 function formatDate(d: string, locale?: string): string {
   return localMidnight(d).toLocaleDateString(locale, { month: "short", day: "numeric" });
 }

@@ -1,0 +1,137 @@
+{
+  "manifest": {
+    "id": "cobblr.community.computers",
+    "released_at": "2026-08-31",
+    "changelog": "First release: computers as their own table, with the specs, an owner, and scan routing that stops laptops filing themselves as machines.",
+    "version": "0.1.0",
+    "name": "Computers",
+    "description": "Computers as their own top-level table rather than machines: CPU, memory, storage and OS beside the maker, model, serial and warranty Assets already keeps. Scans of a laptop land here.",
+    "author": "Cobblr community",
+    "requires": [
+      {
+        "module": "assets"
+      }
+    ],
+    "provides_instances": [
+      {
+        "module": "assets",
+        "instance_name": "computers",
+        "display_name": "Computers",
+        "glyph": "💻",
+        "item_noun": "computer",
+        "qty_unit": "each",
+        "scan_keywords": [
+          "laptop",
+          "notebook",
+          "macbook",
+          "chromebook",
+          "ultrabook",
+          "desktop pc",
+          "imac",
+          "mac mini",
+          "mac studio",
+          "workstation",
+          "thinkpad",
+          "all-in-one pc",
+          "mini pc",
+          "computer"
+        ],
+        "field_defs": [
+          {
+            "entity_kind": "assets:asset",
+            "name": "form_factor",
+            "display_label": "Form",
+            "type": "text",
+            "choices": [
+              "Laptop",
+              "Desktop",
+              "All-in-one",
+              "Mini PC",
+              "Workstation",
+              "Server",
+              "Tablet"
+            ],
+            "field_role": "category",
+            "position": 1,
+            "help": "What shape of computer. The table groups by this."
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "cpu",
+            "display_label": "CPU",
+            "type": "text",
+            "position": 2,
+            "help": "The processor, as it is written on the spec sheet."
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "gpu",
+            "display_label": "Graphics",
+            "type": "text",
+            "position": 3,
+            "help": "Discrete graphics, when there are any."
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "ram_gb",
+            "display_label": "Memory",
+            "type": "number",
+            "unit": "GB",
+            "position": 4
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "storage_gb",
+            "display_label": "Storage",
+            "type": "number",
+            "unit": "GB",
+            "position": 5
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "operating_system",
+            "display_label": "OS",
+            "type": "text",
+            "choices": [
+              "Windows",
+              "macOS",
+              "Linux",
+              "ChromeOS",
+              "Other"
+            ],
+            "position": 6
+          },
+          {
+            "entity_kind": "assets:asset",
+            "name": "used_by",
+            "display_label": "Used by",
+            "type": "text",
+            "field_role": "assignee",
+            "position": 7,
+            "help": "Whose machine this is, when more than one person uses them."
+          }
+        ],
+        "saved_views": [
+          {
+            "entity_kind": "assets:asset",
+            "name": "By form",
+            "view_type": "table",
+            "pinned": true,
+            "config": {
+              "visible_fields": [
+                "name",
+                "form_factor",
+                "cpu",
+                "ram_gb",
+                "storage_gb",
+                "used_by",
+                "warranty_until"
+              ],
+              "group_by": "form_factor"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

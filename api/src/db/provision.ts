@@ -87,6 +87,7 @@ async function provisionOnce(
   // Steps 1–4: superuser-only operations. Drop the connection as soon as the
   // privileged work is done.
   const superClient = new Client({ connectionString: env.SUPERUSER_DATABASE_URL });
+  superClient.on("error", (err) => console.error("[provision] superuser connection error:", (err as Error).message));
   await superClient.connect();
   try {
     if (reset) {

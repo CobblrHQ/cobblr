@@ -72,6 +72,7 @@ export async function hardDeleteOrg(orgId: string): Promise<void> {
   if (env.SUPERUSER_DATABASE_URL && /^tenant_[a-z0-9_]+$/.test(dbName.db_name)) {
     const roleName = `${dbName.db_name}_user`;
     const su = new Client({ connectionString: env.SUPERUSER_DATABASE_URL });
+    su.on("error", (err) => console.error("[delete-org] superuser connection error:", (err as Error).message));
     try {
       await su.connect();
       await su.query(`DROP ROLE IF EXISTS "${roleName}"`);

@@ -43,6 +43,7 @@ export async function reconcileOrphanTenantRoles(): Promise<OrphanRoleSweep> {
   if (!env.SUPERUSER_DATABASE_URL) return out;
 
   const client = new Client({ connectionString: env.SUPERUSER_DATABASE_URL });
+  client.on("error", (err) => console.error("[reconcile-tenant-roles] connection error:", (err as Error).message));
   try {
     await client.connect();
     // One round trip: every tenant-shaped role with no database of the same

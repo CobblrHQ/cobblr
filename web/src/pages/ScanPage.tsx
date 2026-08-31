@@ -70,7 +70,7 @@ import { matchParentType, readField } from "../lib/parent-type-match";
 import { isRerunInFlight, itemEnriching } from "./scan-status";
 import { baseKind, confirmBodyFor, isReadyToFile } from "./scanFileAll";
 import { resolveInstanceForFiling } from "./scanInstall";
-import { arrivalLabel, arrivalOf } from "./scanArrival";
+import { arrivalLabel, arrivalOf, arrivalLabelShort } from "./scanArrival";
 import type { BundleInstallSummary } from "../lib/api";
 import { installToastLine } from "../lib/installSummary";
 import { looksLikeContainer, nextBinName } from "./scanContainer";
@@ -178,6 +178,12 @@ function isUnidentified(name: string | null | undefined): boolean {
  *  that's a near-match to one you scanned earlier. */
 type CombineCluster = { items: ScanInboxItem[]; reason: "name" | "barcode" };
 
+/** Was the code READ by a machine (OCR off a photo, or lifted off a receipt)
+ *  rather than decoded from the symbol or typed by a person? The server's copy
+ *  of this rule, and the vocabulary, live in
+ *  modules/core-scan/src/services/barcode-source.ts. */
+const machineRead = (src: string | undefined): boolean => src === "ai-photo" || src === "receipt";
+
 const barcodeSourceOf = (it: ScanInboxItem): string | undefined =>
   (it.suggested_metadata as { barcode_source?: string } | null)?.barcode_source;
 
@@ -207,8 +213,12 @@ function editDistance(a: string, b: string): number {
  *  AI-read side (the uncertain one) to avoid matching two genuinely-different
  *  scanned UPCs. Cluster = [aiItem, scannedItem] (banner renders at the photo). */
 function findBarcodeMatchClusters(items: ScanInboxItem[]): ScanInboxItem[][] {
-  const ai = items.filter((i) => i.barcode_text && barcodeSourceOf(i) === "ai-photo");
-  const scanned = items.filter((i) => i.barcode_text && barcodeSourceOf(i) !== "ai-photo");
+  // Machine-READ on one side, decoded-or-typed on the other. Comparing to
+  // "ai-photo" by hand put a code lifted off a RECEIPT on the scanned side, so
+  // the pairing would have offered a receipt's own number as corroboration for
+  // an OCR'd one - two uncertain codes agreeing with each other.
+  const ai = items.filter((i) => i.barcode_text && machineRead(barcodeSourceOf(i)));
+  const scanned = items.filter((i) => i.barcode_text && !machineRead(barcodeSourceOf(i)));
   const out: ScanInboxItem[][] = [];
   const used = new Set<string>();
   for (const a of ai) {
@@ -531,6 +541,14 @@ function NameItInline({ slug, itemId }: { slug: string; itemId: string }) {
 /** The carrier vocabulary in words a person uses. Six states, so a table
  *  rather than a chain of conditions — and an unmapped one falls through to
  *  itself instead of rendering blank. */
+/** How a code's origin is worded on a card. Keys are the values
+ *  modules/core-scan/src/services/barcode-source.ts stamps; a scan stamps
+ *  nothing and needs no note. */
+const BARCODE_SOURCE_NOTE: Record<string, string | undefined> = {
+  "ai-photo": "read from photo",
+  receipt: "read from the receipt",
+};
+
 const SHIPMENT_LABEL: Record<string, string> = {
   pre_transit: "Label created",
   in_transit: "In transit",
@@ -538,6 +556,16 @@ const SHIPMENT_LABEL: Record<string, string> = {
   delivered: "Delivered",
   exception: "Needs attention",
   unknown: "No information yet",
+};
+/** Phone-width wording for the same states. The truck glyph beside them already
+ *  says "parcel", so these keep only the part that changes what you do. */
+const SHIPMENT_LABEL_SHORT: Record<string, string> = {
+  pre_transit: "Labelled",
+  in_transit: "In transit",
+  out_for_delivery: "Out today",
+  delivered: "Delivered",
+  exception: "Problem",
+  unknown: "No news",
 };
 
 function CorrectNameInline({
@@ -3682,15 +3710,28 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
             const trackingArrival = arrivalOf(g.items);
             return (
               <div key={g.key} id={g.batchId ? `s-${g.batchId}` : undefined} className="space-y-2 scroll-mt-24">
-                {/* ONE row, always. No `flex-wrap`; on sm+ `overflow-hidden`
-                    clips a session with every control present inside its own
-                    bar instead of pushing the page sideways. Below sm the SAME
-                    rule amputated the row's two primary actions - Location and
-                    File all sat past the clip with no way to reach them
-                    (2026-08-25 audit, measured 497px of controls in a 350px
-                    row) - so a phone gets a horizontally scrollable row: every
-                    control reachable by swipe, page body still never scrolls
-                    sideways.
+                {/* ONE row, always, and it FITS. No `flex-wrap`, no scrolling:
+                    `overflow-hidden` clips a row that does not fit rather than
+                    pushing the page sideways, so nothing may be allowed not to
+                    fit.
+
+                    A phone briefly got `overflow-x-auto` here instead. That was
+                    dodging the decision - "I want it to all fit on mobile,
+                    figure out what's most important, and then consolidate/drop
+                    the rest" (the operator, 2026-08-31). Measured at 390px the
+                    row wanted 629px of controls in 350px, so three things stand
+                    down below sm, each because it is reachable somewhere better:
+
+                      · the order number (134px) - it is IN the session when you
+                        open it, and editable there
+                      · the location chip (87px) - File all asks for a location
+                        when the items need one, and the page header sets one
+                      · the open arrow (43px) - the chevron beside the name
+                        expands the same session in place
+
+                    What stays is what the row is FOR: which session this is, is
+                    something still coming, and file it. e2e/mobile-text-not-cut
+                    fails if that ever stops fitting.
 
                     `data-session-header` is the anchor lint:scan-session-header
                     slices on. It used to find this row by the first
@@ -3703,7 +3744,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                   data-session-header
                   // gap-1.5, not gap-2: eleven gaps across this row, so the
                   // half-step is most of a control's width back.
-                  className="flex w-full items-center gap-1.5 overflow-x-auto sm:overflow-hidden rounded-md bg-mortar-50 dark:bg-slate-800/40 px-2.5 py-1.5 text-left text-xs"
+                  className="flex w-full items-center gap-1.5 overflow-hidden rounded-md bg-mortar-50 dark:bg-slate-800/40 px-2.5 py-1.5 text-left text-xs"
                 >
                   {/* Burst select-all: grab the whole session for the
                       bulk toolbar (location / confirm / discard). */}
@@ -3792,7 +3833,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       // under shrink pressure at any width the desktop layout
                       // runs at. truncate + min-w-0 keeps it able to give way
                       // last if that ever stops being true.
-                      className="font-medium text-content dark:text-mortar-100 truncate min-w-[6rem] max-sm:shrink-0 max-sm:max-w-[60vw] sm:min-w-0"
+                      className="font-medium text-content dark:text-mortar-100 truncate min-w-[4rem] sm:min-w-0"
                       // The DATE is the session's identity; the word was
                       // boilerplate on every row of a view already called "By
                       // session", and truncation ate the date to keep it
@@ -3817,7 +3858,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         setEditingPo(g.batchId!);
                       }}
                       title="Edit the order / invoice number"
-                      className="shrink-0 font-medium text-muted hover:text-accent transition"
+                      className="hidden sm:inline shrink-0 font-medium text-muted hover:text-accent transition"
                     >
                       #{g.orderRef}
                     </button>
@@ -3836,7 +3877,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         setEditingPo(g.batchId!);
                       }}
                       title="Add an order / invoice number, which tells two receipts from the same shop apart"
-                      className="shrink-0 inline-flex items-center gap-1 text-faint hover:text-accent transition"
+                      className="hidden sm:inline-flex shrink-0 items-center gap-1 text-faint hover:text-accent transition"
                     >
                       <Pencil size={11} /> + #
                     </button>
@@ -4105,13 +4146,28 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                               was the pair that tipped the row into clipping
                               (2026-08-24). Tapping still adds a number, so the
                               estimate never costs you the ability to follow it. */}
-                          {g.shipmentState
-                            ? (SHIPMENT_LABEL[g.shipmentState] ?? g.shipmentState)
-                            : trackingArrival
-                              ? arrivalLabel(trackingArrival)
-                              : g.trackingNumber
-                                ? "Tracking #"
-                                : "+ Tracking #"}
+                          {/* The same fact in two widths. A phone gets the
+                              wording without the words the truck already says
+                              - it is the last 21px the row needed to fit at
+                              360px (measured 2026-08-31). */}
+                          <span className="sm:hidden">
+                            {g.shipmentState
+                              ? (SHIPMENT_LABEL_SHORT[g.shipmentState] ?? g.shipmentState)
+                              : trackingArrival
+                                ? arrivalLabelShort(trackingArrival)
+                                : g.trackingNumber
+                                  ? "Tracking #"
+                                  : "+ Tracking #"}
+                          </span>
+                          <span className="hidden sm:inline">
+                            {g.shipmentState
+                              ? (SHIPMENT_LABEL[g.shipmentState] ?? g.shipmentState)
+                              : trackingArrival
+                                ? arrivalLabel(trackingArrival)
+                                : g.trackingNumber
+                                  ? "Tracking #"
+                                  : "+ Tracking #"}
+                          </span>
                         </button>
 
                         {trackingPopover === g.batchId && g.trackingNumber && trackingRect &&
@@ -4196,7 +4252,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                           ? `${readyIds.length - sessionLoc.missing} of ${readyIds.length} are in ${filingLabel(sessionLocName)}; the other ${sessionLoc.missing} have no location yet - tap to set it`
                           : `None of these ${readyIds.length} have a location yet - tap to set it`
                       }
-                      className={`shrink-0 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] font-medium ${
+                      className={`hidden sm:inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] font-medium ${
                         sessionLocName && sessionLoc.missing === 0
                           ? "border-line/70 dark:border-slate-700/70 text-content dark:text-mortar-100 hover:border-cobble-400"
                           : "border-amber-400 dark:border-amber-700/80 bg-amber-50 dark:bg-amber-900/25 text-amber-700 dark:text-amber-300 hover:border-amber-500"
@@ -4362,10 +4418,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                     <Link
                       to={`/scan?batch=${g.batchId}`}
                       title="Review just this session"
-                      // Visible on phones too: this is the ONLY route to the
-                      // per-session view, and the row scrolls now, so hiding it
-                      // below sm made per-session review unreachable on mobile.
-                      className="shrink-0 text-faint hover:text-accent"
+                      className="hidden sm:inline shrink-0 text-faint hover:text-accent"
                     >
                       open →
                     </Link>
@@ -5909,12 +5962,17 @@ function InboxCard({
               // reads as "something's missing here". Never a leading/trailing dot.
               const segs: ReactNode[] = [];
               if (item.barcode_text) {
-                const aiRead =
-                  (item.suggested_metadata as { barcode_source?: string } | null)?.barcode_source === "ai-photo";
+                // Say where it CAME FROM. "read from photo" over an emailed
+                // eBay receipt was simply untrue (reported 2026-08-31); the
+                // vocabulary lives with the server that stamps it, in
+                // modules/core-scan/src/services/barcode-source.ts.
+                const codeNote = BARCODE_SOURCE_NOTE[
+                  (item.suggested_metadata as { barcode_source?: string } | null)?.barcode_source ?? ""
+                ];
                 segs.push(
                   <>
                     {item.barcode_text}
-                    {aiRead && <span className="text-amber-600 dark:text-amber-500"> (read from photo)</span>}
+                    {codeNote && <span className="text-amber-600 dark:text-amber-500"> ({codeNote})</span>}
                   </>,
                 );
               }

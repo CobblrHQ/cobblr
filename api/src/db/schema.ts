@@ -378,6 +378,9 @@ export interface WaitlistTable {
   id: Generated<string>;
   email: string;
   source: Generated<string>;
+  /** What they asked for: `cloud` (a hosted invite) or `selfhost` (the updates
+   *  list only). BOTH are on the email list; only `cloud` awaits a decision. */
+  kind: Generated<string>;
   user_agent: string | null;
   signed_up_at: Date | null;
   status: Generated<string>; // pending | invited | dismissed

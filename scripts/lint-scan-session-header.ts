@@ -194,21 +194,31 @@ if (LOCATION !== -1 && FILE_ALL !== -1) {
 // `gap-2` meant tightening the row's spacing - eleven gaps, so the half-step is
 // most of a control back - reported the bar as missing (2026-08-24). The
 // gap size is a style; `data-session-header` is the identity.
-// On a PHONE the row must scroll, not clip.
+// The row CLIPS, and therefore must FIT.
 //
-// The row deliberately never wraps, and on sm+ overflow-hidden clips it inside
-// its own bar. Below sm that same rule amputated the row's two primary actions:
-// Location and File all sat past the clip with no scroll and no way to reach
-// them (2026-08-25 audit, 497px of controls in a 350px row). So the class pair
-// is load-bearing: overflow-x-auto for phones, sm:overflow-hidden for the
-// desktop clip. Losing either half regresses one of the two reports.
+// This rule was briefly the opposite: `overflow-x-auto sm:overflow-hidden`, so
+// a phone could swipe to reach controls that did not fit. That is dodging the
+// decision - "I want it to all fit on mobile, figure out what's most important,
+// and then consolidate/drop the rest" (the operator, 2026-08-31). A scrolling
+// row also hides its own overflow from every measurement, so nothing could tell
+// you it had grown too long again.
+//
+// So: one clipping row at every width. What that costs is a standing budget -
+// anything added here has to earn its place against what is already in it, and
+// e2e/mobile-text-not-cut.mjs fails when the row stops fitting at 390px.
 {
-  const hdrTag = src.slice(src.indexOf(ANCHOR), src.indexOf(ANCHOR) + 600);
-  if (!/overflow-x-auto\s+sm:overflow-hidden/.test(hdrTag)) {
+  const hdrTag = src.slice(src.indexOf(ANCHOR), src.indexOf(ANCHOR) + 900);
+  if (/overflow-x-auto/.test(hdrTag)) {
     errors.push(
-      "the session header row must carry `overflow-x-auto sm:overflow-hidden` - " +
-        "phones scroll to reach Location/File all, desktop clips instead of pushing " +
-        "the page sideways. One class without the other regresses a shipped fix.",
+      "the session header row must not scroll - it clips, so it has to FIT. " +
+        "Something new in it means something else stands down (the order number, " +
+        "the location chip and the open arrow already did, below sm). " +
+        "e2e/mobile-text-not-cut.mjs is the check.",
+    );
+  } else if (!/\boverflow-hidden\b/.test(hdrTag)) {
+    errors.push(
+      "the session header row must carry `overflow-hidden` - without it a row " +
+        "that does not fit pushes the whole page sideways.",
     );
   }
 }

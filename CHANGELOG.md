@@ -2,6 +2,17 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-08-31
+
+### Features
+- Register a bin the way you meet one: standing in front of it. New bin from a photo on the Locations page opens the camera, you photograph the bin and say what is in it, and the bin exists under that name with that picture. The phrase becomes the name exactly as you said it. One switch in the same sheet, off until you turn it on, queues a QR label for every new bin through the label queue and auto-print you already use.
+- On deployments with the hosted identify service, scanning a photo now identifies items, routes receipts, and verifies barcode matches without the workspace needing its own AI connection.
+
+### Fixes
+- A code taken off a receipt no longer claims it was read from a photo. An emailed or PDF receipt now says "read from the receipt", and only a code actually read off a picture says photo. Either way the code is still treated as read rather than scanned, so it is never recorded as the product's own barcode without corroboration.
+- A scan session's header row fits a phone instead of scrolling sideways. The order number, the location chip and the open arrow step aside below phone width, each because it is reachable somewhere better: the order number is inside the session, File all asks for a location when the items need one, and the chevron beside the name expands the same session in place. The parcel estimate keeps its meaning in fewer words ("tomorrow", "due Aug 25"), so what stays is which session it is, whether something is still coming, and File all.
+- The scanner now leans in when it can see something and cannot read it, instead of zooming away from it. A small barcode on a busy label used to defeat the automatic zoom entirely: the size estimate reported the whole scene rather than the code, so the camera concluded the barcode was too big and backed off, making it smaller still.
+
 ## 2026-08-30
 
 ### Fixes

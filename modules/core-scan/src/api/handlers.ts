@@ -65,12 +65,16 @@ export function registerScanHandlers(): void {
     if (row.barcode_text || !row.image_file_id || row.ai_suggested_at) {
       return { ok: true, skipped: "not an un-enriched photo-only scan" };
     }
+    // The emit put the visitor on the payload (the wire runs with no request),
+    // so the hosted identify's per-person tier still knows who is scanning.
+    const payloadIp = (ctx.event?.payload as { visitor_ip?: unknown } | undefined)?.visitor_ip;
     const outcome = await enrichPhotoItem({
       db,
       orgId: ctx.orgId,
       itemId,
       imageFileId: row.image_file_id,
       userId: ctx.userId,
+      visitorIp: typeof payloadIp === "string" ? payloadIp : null,
     });
     // You photographed a receipt. Hand it to the receipt parser instead of
     // filing the paper as a thing you own — the same route an uploaded receipt

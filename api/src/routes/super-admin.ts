@@ -30,6 +30,9 @@ import { getCpuStats, getInvocationStats } from "../sandbox/pool.js";
 import { hasAuthEmailSender, sendAuthEmail } from "../platform/hosted-seams.js";
 import { notifyAccount } from "../platform/notifications.js";
 import { guildLabelFor } from "../platform/discord-guild-labels.js";
+import { escHtml } from "../platform/esc-html.js";
+import { cobblrEmailHtml } from "../platform/email-html.js";
+import { signupSurfaceLink } from "../platform/signup-surface.js";
 import { feedbackReplyText } from "../platform/feedback-reply-text.js";
 import { feedbackAttachmentOrg } from "../platform/feedback-attachment-org.js";
 import { announce, listAnnounceSettings, setAnnounceSetting, isComposable } from "../platform/announce.js";
@@ -66,24 +69,18 @@ import { operatorEmail } from "@cobblr/platform-contract/outbound-identity";
 // so it reads as a designed message (greeting · the quoted report in a styled
 // blockquote · the fix · a button to the thread) rather than a wall of text.
 // The plaintext version is always sent alongside as the fallback.
-function escHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
 function feedbackEmailHtml(opts: { greeting: string; reportText?: string; bodyParas: string[]; ctaUrl: string; ctaLabel: string; footerNote?: string }): string {
-  const para = (t: string) => `<p style="margin:0 0 14px;">${escHtml(t).replace(/\n/g, "<br>")}</p>`;
-  const quote = opts.reportText
-    ? `<p style="margin:0 0 4px;color:#6b7280;font-size:13px;">You reported:</p>
-       <blockquote style="margin:0 0 18px;padding:10px 16px;border-left:3px solid #c7b8a6;background:#f6f3ee;color:#374151;border-radius:0 6px 6px 0;white-space:pre-wrap;">${escHtml(opts.reportText)}</blockquote>`
-    : "";
-  return `<!DOCTYPE html><html><body style="margin:0;background:#f3f4f6;padding:24px 12px;">
-  <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px 28px 24px;">
-    <p style="margin:0 0 16px;">${escHtml(opts.greeting)}</p>
-    ${quote}
-    ${opts.bodyParas.map(para).join("")}
-    <p style="margin:22px 0 8px;"><a href="${escHtml(opts.ctaUrl)}" style="display:inline-block;background:#8a6f47;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;">${escHtml(opts.ctaLabel)}</a></p>
-    ${opts.footerNote ? `<p style="margin:14px 0 0;color:#9ca3af;font-size:12px;">${escHtml(opts.footerNote)}</p>` : ""}
-    <p style="margin:18px 0 0;color:#9ca3af;font-size:12px;">— The Cobblr team</p>
-  </div></body></html>`;
+  // Thin adapter over the shared house template, so the feedback call sites read
+  // the same and "You reported:" stays feedback's wording.
+  return cobblrEmailHtml({
+    greeting: opts.greeting,
+    quoteLabel: "You reported:",
+    quoteText: opts.reportText,
+    bodyParas: opts.bodyParas,
+    ctaUrl: opts.ctaUrl,
+    ctaLabel: opts.ctaLabel,
+    footerNote: opts.footerNote,
+  });
 }
 
 export const superAdminRouter = Router();
@@ -897,18 +894,25 @@ superAdminRouter.post("/signup-invites", async (req, res, next) => {
     // straight to the invitee. Otherwise the caller copies the link by hand.
     let emailed = false;
     if (row.invited_email && hasAuthEmailSender()) {
-      const link = `${req.protocol}://${req.get("host") ?? ""}/join/${row.token}`;
-      const expiryLine = row.expires_at
-        ? `\n\nThis invite expires ${new Date(row.expires_at).toUTCString()}.`
-        : "";
+      // The surface a NEW person lands on, which is not necessarily the console
+      // this request arrived at. See signup-surface.ts.
+      const link = signupSurfaceLink(`join/${row.token}`, `${req.protocol}://${req.get("host") ?? ""}`);
+      const expiry = row.expires_at ? `This invite expires ${new Date(row.expires_at).toUTCString()}.` : "";
       emailed = await sendAuthEmail({
         to: row.invited_email,
         subject: "You're invited to Cobblr",
         text:
           `You've been invited to create your Cobblr workspace.\n\n` +
           `Open this link to get started:\n${link}` +
-          expiryLine +
+          (expiry ? `\n\n${expiry}` : "") +
           `\n\nIf you weren't expecting this, you can ignore this email.`,
+        html: cobblrEmailHtml({
+          greeting: "You've been invited to create your Cobblr workspace.",
+          bodyParas: ["Open the link below to get started.", ...(expiry ? [expiry] : [])],
+          ctaUrl: link,
+          ctaLabel: "Create your workspace",
+          footerNote: "If you weren't expecting this, you can ignore this email.",
+        }),
         kind: "invite",
       });
     }
@@ -973,6 +977,11 @@ superAdminRouter.post("/signup-invites/:id/revoke", async (req, res, next) => {
 
 const IngestWaitlist = z.object({
   email: z.string().email().max(255),
+  // What they asked for. BOTH buttons on the marketing form put someone on the
+  // email list; only `cloud` is also a request for hosted access. Absent means
+  // cloud, which is what the single old button meant, so an older Pages Function
+  // keeps working unchanged.
+  kind: z.enum(["cloud", "selfhost"]).default("cloud"),
   source: z.string().max(60).optional(),
   user_agent: z.string().max(500).optional(),
   signed_up_at: z.string().datetime().optional(),
@@ -989,6 +998,12 @@ superAdminRouter.post("/waitlist/ingest", async (req, res, next) => {
       return;
     }
     const email = parsed.data.email.toLowerCase().trim();
+    // A Pages Function older than the `kind` field folds it into source as
+    // "selfhost/<campaign>". Read that too, so a deploy where the site updates
+    // before the api does not silently file every self-hoster as a cloud ask.
+    const kind = parsed.data.kind === "selfhost" || /^selfhost\//.test(parsed.data.source ?? "")
+      ? "selfhost"
+      : "cloud";
     const existing = await meta
       .selectFrom("waitlist")
       .select(["id", "status"])
@@ -1004,15 +1019,44 @@ superAdminRouter.post("/waitlist/ingest", async (req, res, next) => {
       .insertInto("waitlist")
       .values({
         email,
+        kind,
         source: parsed.data.source ?? "marketing-site",
         user_agent: parsed.data.user_agent ?? null,
         signed_up_at: parsed.data.signed_up_at ? new Date(parsed.data.signed_up_at) : new Date(),
       })
       .returning(["id", "created_at"])
       .executeTakeFirstOrThrow();
+    // Confirm the thing that is true for BOTH buttons: they are on the list.
+    // Nothing was sent on signup before, so somebody who pressed "Just keep me
+    // posted" got silence and no way to know it had worked.
+    if (hasAuthEmailSender()) {
+      const cloudLine = "When a spot opens on hosted Cobblr, an invite comes back to you from a person.";
+      const selfLine = "Self-hosting is open right now, so there is nothing to wait for.";
+      void sendAuthEmail({
+        to: email,
+        subject: "You're on the Cobblr list",
+        text:
+          `Thanks for signing up.\n\n` +
+          `${kind === "cloud" ? cloudLine : selfLine}\n\n` +
+          `The updates list is occasional news, never spam.\n\n` +
+          `Self-hosting starts here: https://docs.cobblr.xyz/setup-builder`,
+        html: cobblrEmailHtml({
+          greeting: "Thanks for signing up.",
+          bodyParas: [
+            kind === "cloud" ? cloudLine : selfLine,
+            "The updates list is occasional news, never spam.",
+          ],
+          ctaUrl: "https://docs.cobblr.xyz/setup-builder",
+          ctaLabel: kind === "cloud" ? "Or self-host it today" : "Open the setup builder",
+        }),
+        kind: "invite",
+      });
+    }
     void announce("waitlist.new", {
-      title: "📋 New waitlist signup",
-      body: email,
+      title: kind === "selfhost" ? "📋 New self-host signup" : "📋 New waitlist signup",
+      // The card carries an Approve button, and approving a self-hoster would
+      // mint them a hosted invite they never asked for. Say which it is.
+      body: kind === "selfhost" ? `${email}\n(updates list only, no invite needed)` : email,
       color: 0x6b8e4e,
     });
     // Post an actionable card (embed + Approve button) to the Discord admin
@@ -1084,11 +1128,23 @@ superAdminRouter.post("/waitlist/:id/approve", async (req, res, next) => {
     }
     const entry = await meta
       .selectFrom("waitlist")
-      .select(["id", "email", "status"])
+      .select(["id", "email", "status", "kind"])
       .where("id", "=", req.params.id)
       .executeTakeFirst();
     if (!entry || entry.status !== "pending") {
       res.status(409).json({ error: { code: "not_pending", message: "Signup not found or already decided." } });
+      return;
+    }
+    // A self-hoster asked to be kept posted, not for hosted access. Approving
+    // would mint and EMAIL them an invite they never requested, and the Discord
+    // card carries an Approve button one tap away from doing exactly that.
+    if (entry.kind === "selfhost") {
+      res.status(409).json({
+        error: {
+          code: "not_an_invite_request",
+          message: "This person asked for the updates list, not hosted access. They are already on the list; there is nothing to approve.",
+        },
+      });
       return;
     }
     const userId = (req as unknown as { session?: { id: string } }).session?.id;
@@ -1107,15 +1163,25 @@ superAdminRouter.post("/waitlist/:id/approve", async (req, res, next) => {
       .executeTakeFirstOrThrow();
     let emailed = false;
     if (hasAuthEmailSender()) {
-      const link = `${req.protocol}://${req.get("host") ?? ""}/join/${invite.token}`;
+      // The public signup surface, not this console's host: an operator's
+      // private instance is never where a stranger should land.
+      const link = signupSurfaceLink(`join/${invite.token}`, `${req.protocol}://${req.get("host") ?? ""}`);
+      const expiry = `This invite expires ${new Date(invite.expires_at!).toUTCString()}.`;
       emailed = await sendAuthEmail({
         to: entry.email,
         subject: "You're off the Cobblr waitlist 🎉",
         text:
-          `Good news — a spot opened up.\n\n` +
+          `Good news, a spot opened up.\n\n` +
           `Open this link to create your Cobblr workspace:\n${link}` +
-          `\n\nThis invite expires ${new Date(invite.expires_at!).toUTCString()}.` +
+          `\n\n${expiry}` +
           `\n\nIf you weren't expecting this, you can ignore this email.`,
+        html: cobblrEmailHtml({
+          greeting: "Good news, a spot opened up.",
+          bodyParas: ["Your Cobblr workspace is ready to create.", expiry],
+          ctaUrl: link,
+          ctaLabel: "Create your workspace",
+          footerNote: "If you weren't expecting this, you can ignore this email.",
+        }),
         kind: "invite",
       });
     }
@@ -2112,7 +2178,7 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
               const head = `You reported:\n${bq(reportRaw.slice(0, 600))}`;
               email = {
                 subject: "Your Cobblr request is live",
-                text: `${hi}\n\n${head}\n\n${reply || defaultMsg}\n\nStill off? ${replyHere}\n\nThanks for helping make Cobblr better.\n— The Cobblr team`,
+                text: `${hi}\n\n${head}\n\n${reply || defaultMsg}\n\nStill off? ${replyHere}\n\nThanks for helping make Cobblr better.\nThe Cobblr team`,
                 html: feedbackEmailHtml({
                   greeting: hi,
                   reportText: reportRaw.slice(0, 600),
@@ -2126,14 +2192,14 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
             } else if (reply) {
               email = {
                 subject: "We replied to your Cobblr feedback",
-                text: `${hi}\n\n${reply}\n\n${replyHere}\n\n${sentUs}\n\n— The Cobblr team`,
+                text: `${hi}\n\n${reply}\n\n${replyHere}\n\n${sentUs}\n\nThe Cobblr team`,
                 html: feedbackEmailHtml({
                   greeting: hi,
                   reportText: (row.message ?? "").slice(0, 500),
                   bodyParas: [reply],
                   ctaUrl: feedbackUrl,
                   ctaLabel: "Open your feedback",
-                  footerNote: replyAddr ? "Reply to this email to answer, or use your feedback page." : "Reply on your feedback page — email replies aren't monitored yet.",
+                  footerNote: replyAddr ? "Reply to this email to answer, or use your feedback page." : "Reply on your feedback page; email replies aren't monitored yet.",
                 }),
                 replyTo: replyAddr ?? undefined,
               };
@@ -2389,8 +2455,8 @@ superAdminRouter.post("/feedback/batch-resolve", async (req, res, next) => {
               `${hi}\n\n` +
               (intro ? `${intro}\n\n` : "") +
               `${blocks}\n\n` +
-              `Thanks for helping make Cobblr better.\n— The Cobblr team`,
-            html: `<!DOCTYPE html><html><body style="margin:0;background:#f3f4f6;padding:24px 12px;"><div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px;"><p style="margin:0 0 16px;">${escHtml(hi)}</p>${intro ? `<p style="margin:0 0 16px;">${escHtml(intro).replace(/\n/g, "<br>")}</p>` : ""}${htmlBlocks}<p style="margin:14px 0 0;"><a href="${escHtml(absoluteAppUrl("/me/feedback"))}" style="display:inline-block;background:#8a6f47;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;">View your feedback</a></p><p style="margin:18px 0 0;color:#9ca3af;font-size:12px;">— The Cobblr team</p></div></body></html>`,
+              `Thanks for helping make Cobblr better.\nThe Cobblr team`,
+            html: `<!DOCTYPE html><html><body style="margin:0;background:#f3f4f6;padding:24px 12px;"><div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px;"><p style="margin:0 0 16px;">${escHtml(hi)}</p>${intro ? `<p style="margin:0 0 16px;">${escHtml(intro).replace(/\n/g, "<br>")}</p>` : ""}${htmlBlocks}<p style="margin:14px 0 0;"><a href="${escHtml(absoluteAppUrl("/me/feedback"))}" style="display:inline-block;background:#8a6f47;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;">View your feedback</a></p><p style="margin:18px 0 0;color:#9ca3af;font-size:12px;">The Cobblr team</p></div></body></html>`,
             replyTo: replyAddr ?? undefined,
           };
         }
