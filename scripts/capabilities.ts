@@ -115,6 +115,33 @@ export const CAPABILITIES: Capability[] = [
   },
   {
     kind: "owns",
+    id: "entities:list-text-search",
+    what: "the where clause a list resolver builds for `q`: case-insensitive substring over every text column the kind carries",
+    why:
+      "every module hand-rolled it and each chose its own columns - machines matched the name only, sales the name only, " +
+      "tags the name, purchase lines the description. To a person 'the Bambu one' is a manufacturer and 'my deltas' a type, " +
+      "and to the assistant q is a text search, so a name-only resolver answered 'you have no Bambu' about a workspace with " +
+      "one (2026-08-27). The clause is identical everywhere; only the column list belongs to the module",
+    owner: "packages/platform-contract/src/index.ts",
+    scope: [
+      "modules/purchases/src/api/resolvers.ts",
+      "modules/projects/src/api/handlers.ts",
+      "modules/core-tags/src/api/resolvers.ts",
+      "modules/sales/src/api/resolvers.ts",
+      "modules/core-locations/src/api/resolvers.ts",
+      "modules/core-catalogs/src/api/resolvers.ts",
+      "modules/inventory/src/api/resolvers.ts",
+      "modules/machines/src/api/resolvers.ts",
+      "modules/assets/src/api/resolvers.ts",
+      "modules/lists/src/api/resolvers.ts",
+      "modules/knowledge/src/api/resolvers.ts",
+    ],
+    // A hand-rolled like: lower(<col>) like <needle>, in either the builder or raw-sql spelling.
+    detect: /eb\.fn\(\s*["']lower["'][^\n]*["']like["']|lower\([a-z_.>'"-]+\)\s+like/i,
+    use: "textSearchWhere(eb, query.q, { text: [...], json: [...] }) from @cobblr/platform-contract",
+  },
+  {
+    kind: "owns",
     id: "scan:committed-image-path",
     what: "resolving the image_path to stamp on a record when a scan is committed",
     why:

@@ -349,6 +349,7 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
                       key={i}
                       className="relative w-16 h-16 rounded-md overflow-hidden border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800"
                     >
+                      {/* EXTERNAL-IMAGE-OK: an object URL for a File the user just picked. */}
                       <img src={p.url} alt={p.file.name} className="w-full h-full object-cover" />
                       <button
                         type="button"

@@ -140,6 +140,7 @@ import { api, getToken } from "./lib/api";
 import { useNavMode, useNavTopBar } from "./lib/nav-mode";
 import { useQuery } from "@tanstack/react-query";
 import { InstancePage } from "./pages/InstancePage";
+import { inManagedAppSurface } from "./lib/managed-apps";
 import { hydrateNavPref } from "./lib/nav-mode";
 
 // First-party flow registry: id → overlay the shell can open from anywhere
@@ -457,11 +458,7 @@ function ActiveOrgScopedRoutes() {
   const navMode = useNavMode();
   const navTopBar = useNavTopBar();
   const fullSide = navMode === "side" && !navTopBar && !appMode;
-  const APP_ALLOWED = ["/instances", "/scan", "/me"];
-  const inAppSurface = APP_ALLOWED.some(
-    (p) => location.pathname === p || location.pathname.startsWith(p + "/"),
-  );
-  const shouldRedirectToAppHome = !!appMode && !inAppSurface;
+  const shouldRedirectToAppHome = !!appMode && !inManagedAppSurface(location.pathname);
 
   return (
     <PlatformWebProvider

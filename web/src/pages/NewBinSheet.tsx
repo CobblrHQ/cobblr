@@ -175,6 +175,7 @@ export function NewBinSheet({
                 className="block w-full rounded-lg overflow-hidden border border-line dark:border-slate-700"
                 title="Take it again"
               >
+                {/* EXTERNAL-IMAGE-OK: a local object URL from the camera capture. */}
                 <img src={photo.preview} alt="the bin" className="w-full max-h-56 object-cover" />
               </button>
             )}

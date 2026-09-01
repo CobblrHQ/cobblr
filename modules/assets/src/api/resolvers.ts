@@ -1,4 +1,4 @@
-import { platform, parseSort, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
+import { platform, parseSort, textSearchWhere, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { AssetsDB } from "../db.js";
 
@@ -70,10 +70,7 @@ export function registerAssetsResolvers(): void {
     const offset = query.offset ?? 0;
     let q = db.selectFrom("assets_assets").selectAll();
     if (instance) q = q.where("instance", "=", instance as never);
-    if (query.q) {
-      const needle = `%${query.q.toLowerCase()}%`;
-      q = q.where((eb) => eb(eb.fn("lower", ["name"]), "like", needle));
-    }
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "short_name", "manufacturer", "model", "serial_number", "type", "notes", "state"], json: ["metadata"] })!);
     if (query.filter) {
       const NATIVE = new Set(["state", "location_id", "type", "manufacturer"]);
       for (const [key, val] of Object.entries(query.filter)) {

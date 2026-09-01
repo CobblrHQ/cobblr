@@ -1,7 +1,7 @@
 // Entity-kind resolver + list resolver for core-tags:tag.
 
 import type { Kysely } from "kysely";
-import { platform, type ResolvedEntity } from "@cobblr/platform-contract";
+import { platform, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import type { CoreTagsDB } from "../db.js";
 
 let registered = false;
@@ -26,10 +26,7 @@ export function registerTagResolvers(): void {
     const limit = Math.min(query.limit ?? 100, 500);
     const offset = query.offset ?? 0;
     let q = db.selectFrom("core_tags_tags").selectAll();
-    if (query.q && query.q.length > 0) {
-      const needle = `%${query.q.toLowerCase()}%`;
-      q = q.where((eb) => eb(eb.fn("lower", ["name"]), "like", needle));
-    }
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "color"] })!);
     const sortable = new Set(["name", "created_at", "updated_at"]);
     const specs = (query.sort ?? ["name"]).filter((s) => sortable.has(s.replace(/^-/, "")));
     let sortedQ = q;

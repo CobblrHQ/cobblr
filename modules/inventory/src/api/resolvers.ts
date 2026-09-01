@@ -4,7 +4,7 @@
 // "inventory:part", id) and the platform routes here.
 
 import { sql, type Kysely } from "kysely";
-import { platform, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
+import { platform, type EntityListQuery, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import { PART_CI_FILTER_COLS, PART_FILTER_COLS, type InventoryDB } from "../db.js";
 import { filterValues, isMulti } from "./filter-values.js";
 
@@ -47,15 +47,7 @@ export function registerInventoryResolvers(): void {
     const NATIVE_FILTER_COLS = PART_FILTER_COLS;
     let q = db.selectFrom("inventory_parts").selectAll();
     if (instance) q = q.where("instance", "=", instance as never);
-    if (query.q && query.q.length > 0) {
-      const needle = `%${query.q.toLowerCase()}%`;
-      q = q.where((eb) =>
-        eb.or([
-          eb(eb.fn("lower", ["name"]), "like", needle),
-          eb(eb.fn("lower", ["description"]), "like", needle),
-        ]),
-      );
-    }
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "description", "manufacturer", "notes", "state", "unit"], json: ["metadata"] })!);
     if (query.filter) {
       const f = query.filter;
       for (const [key, val] of Object.entries(f)) {

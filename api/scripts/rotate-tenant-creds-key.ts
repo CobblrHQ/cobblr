@@ -30,6 +30,7 @@
 
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import { Pool } from "pg";
+import { guardPoolClients } from "../src/db/client-error-guard.js";
 
 const SALT = "cobblr-tenant-creds-v1"; // must match api/src/db/crypto.ts
 
@@ -77,6 +78,7 @@ async function main() {
   // operation where knowing exactly where it stopped is the whole ballgame.
   // (Phase 1 verifies every row before any write, so a failure here is safe —
   // but it must be READABLE.)
+  guardPoolClients(pool, "rotate-creds-key");
   pool.on("error", (err) => {
     console.error("[rotate-key] database connection error:", (err as Error).message);
   });

@@ -2,7 +2,7 @@
 // customers / orders / line items via platform().entities without our tables.
 
 import { type Kysely } from "kysely";
-import { platform, type ResolvedEntity } from "@cobblr/platform-contract";
+import { platform, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import type { SalesDB } from "../db.js";
 
 let registered = false;
@@ -22,7 +22,7 @@ export function registerSalesResolvers(): void {
   platform().entities.registerListResolver("sales:customer", async (orgId, query) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<SalesDB>;
     let q = db.selectFrom("sales_customers").selectAll();
-    if (query.q) q = q.where((eb) => eb(eb.fn("lower", ["name"]), "like", `%${query.q!.toLowerCase()}%`));
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "email", "phone", "address", "notes"], json: ["metadata"] })!);
     const rows = await q.orderBy("name").limit(Math.min(query.limit ?? 50, 200)).offset(query.offset ?? 0).execute();
     return { items: rows.map((row) => ({ kind: "sales:customer", id: row.id, title: row.name, detailUrl: `/sales/customers/${row.id}`, fields: { ...row } as Record<string, unknown> })) };
   });

@@ -166,11 +166,10 @@ export async function runMigrations(opts: MigrationRunOptions): Promise<Migratio
   // teardown DROPping this very tenant mid-enable) emits 'error' on the CLIENT
   // with no query to reject into. Unlistened, that event killed the whole api
   // (CI, 2026-08-31: "Emitted 'error' event on Client instance" straight out of
-  // this loop's log lines). With the listener, the death becomes a log line and
-  // the next query rejects into the ordinary error path below.
-  const onClientError = (err: Error) =>
-    console.error(`[migrate:${scope}] connection error mid-run:`, err.message);
-  client.on("error", onClientError);
+  // this loop's log lines). The listener now rides on EVERY client the pool
+  // hands out, attached in guardPoolClients at the pool, so this loop no longer
+  // guards its own: the death becomes a log line and the next query rejects
+  // into the ordinary error path below, here and everywhere else.
   try {
     await acquireScopeLock(client, scope);
     try {
@@ -209,7 +208,6 @@ export async function runMigrations(opts: MigrationRunOptions): Promise<Migratio
   } finally {
     // Detach before release: a pooled client keeps its listeners, and every
     // checkout re-attaching would stack one more copy per migration run.
-    client.off("error", onClientError);
     client.release();
   }
 }

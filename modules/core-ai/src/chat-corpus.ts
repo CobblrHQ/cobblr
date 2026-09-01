@@ -11,12 +11,25 @@
 //           honest fall-through to the generic reply, or "never-offer" for a
 //           sentence the pre-send OFFER must not intercept (Enter still asks
 //           the model; an offer over an instruction steals real work).
-//   ai      the resolution class a connected model should reach: informative
-//           today (the tool benches sample it), enforced as those benches grow.
+//   ai      the resolution class a connected model should reach. Scored by
+//           scripts/bench-action-rail.ts against a live workspace's real
+//           actions and the real tool definitions: `action:<id>` expects
+//           invoke_action with that id, `create:record` / `update` / `delete`
+//           expect that write tool, `read:<tool>` expects that read tool
+//           before a prose answer, and `answer` / `clarify` / `escort:*`
+//           expect no write; "read:a|b" accepts either read; "action:<id>{k=v}"
+//           also judges the ARGUMENTS (text: case-insensitive substring,
+//           number: equal, "*": present) - the id is where a model is usually
+//           right, the arguments are where it can still be wrong. A claim the
+//           workspace cannot host (an action it lacks, a kind with no records)
+//           is reported SKIPPED, never counted.
 //
 // When real history exists, harvested utterances join here with the same
 // annotations — the "Asked, but not answered" queue is the intake, this file
-// is the archive. An utterance is a CLAIM about product behaviour: the
+// is the archive, and scripts/corpus-intake.ts is the door between them: it
+// prints each miss as a draft line with a guessed bucket and claims for a
+// person to accept or fix. It never writes here itself; a wrong claim pasted
+// unread would be enforced as truth. An utterance is a CLAIM about product behaviour: the
 // chat-corpus test runs every no_ai claim on every change to the catalog.
 
 export type NoAiExpect =
@@ -70,11 +83,29 @@ export const CHAT_CORPUS: CorpusCase[] = [
     "undo", "undo that", "put it back", "revert what you just did",
   ]),
   // ── questions about MY data (the everyday spellings) ─────────────────────
-  ...ph("my-data", answer("my-data"), "read:list_records", [
-    "how many parts do I have", "how many locations are there", "how much filament is there",
-    "do I have any M3 screws", "is there any PLA left", "how much do I have of the black yarn",
-    "what do I have in the garage", "which bin did the drill end up in", "where did the multimeter go",
-    "where is my soldering iron", "where are my drill bits", "show me my printers",
+  // A count is arithmetic: the model's right move is count_records, never a
+  // page it then counts by eye (that is how "how many Bambus" became "None").
+  ...ph("my-data", answer("my-data"), "read:count_records", [
+    "how many parts do I have", "how many locations are there",
+    "do I have any M3 screws", "is there any PLA left",
+  ]),
+  // "How much" reads a quantity off the record; a page or a count both get
+  // there (measured: the model reads the record and says the number).
+  ...ph("my-data", answer("my-data"), "read:list_records|count_records|search_records", [
+    "how much filament is there", "how much do I have of the black yarn",
+  ]),
+  ...ph("my-data", answer("my-data"), "read:list_records|search_records", [
+    "what do I have in the garage", "show me my printers",
+  ]),
+  ...ph("my-data", answer("my-data"), "read:search_records", [
+    "which bin did the drill end up in", "where did the multimeter go",
+    "where is my soldering iron", "where are my drill bits",
+  ]),
+  // The three from the phone (2026-08-27): counts of a VALUE inside a kind.
+  // Answered before enter by count-answers.ts; a model gets count_records.
+  ...ph("my-data", answer("my-data"), "read:count_records", [
+    "how many Bambus?", "how many bambu printers do I have", "do I have any delta printers?",
+    "any deltas?", "which model do I have the most of?", "what manufacturer is most common",
   ]),
   ...ph("my-data", answer("my-data"), "read:get_attention", [
     "what's low", "what is running low", "what needs my attention", "anything overdue?",
@@ -152,6 +183,128 @@ export const CHAT_CORPUS: CorpusCase[] = [
   ...ph("workspace", neverOffer, "action:labels:print", [
     "print a label for the new rack", "queue labels for everything in Bin 7",
   ]),
+  // ── a workshop of machines (the action bench's cases; records exist for
+  //    these on the dev rig, so the AI half can be scored; bucket "workshop") ──────────────────
+  ...ph("workshop", neverOffer, "action:core-maintenance:log{name=*}", [
+    "log that I serviced the Kossel Mini today", "changed the nozzle on the Rostock Max",
+  ]),
+  ...ph("workshop", neverOffer, "action:machines:record-usage{hours=4}", [
+    "the Rostock Max ran four hours yesterday",
+  ]),
+  ...ph("workshop", neverOffer, "action:machines:record-usage{prints=12}", [
+    "log 12 prints on the X1 Carbon",
+  ]),
+  ...ph("workshop", neverOffer, "action:labels:print", [
+    "print a label for the X1 Carbon", "sticker the Kossel Mini",
+  ]),
+  ...ph("workshop", neverOffer, "action:core-tags:tag-record{tag_name=fragile}", [
+    "tag the Kossel Mini as fragile",
+  ]),
+  ...ph("workshop", neverOffer, "action:core-tags:tag-record{tag_name=urgent}", [
+    "label the X1 Carbon urgent",
+  ]),
+  ...ph("workshop", neverOffer, "action:core-tags:untag-record{tag_name=fragile}", [
+    "take the fragile tag off the Kossel Mini",
+  ]),
+  ...ph("workshop", neverOffer, "action:core-discussion:post-comment{body=nozzle}", [
+    "leave a note on the X1 Carbon that it needs a new nozzle",
+  ]),
+  ...ph("workshop", neverOffer, "action:core-discussion:post-comment{body=belt}", [
+    "comment on the Kossel Mini: belt is loose",
+  ]),
+  ...ph("workshop", neverOffer, "action:core-placement:place{container_id=*}", [
+    "put the Kossel Mini in the Garage", "the X1 Carbon lives on Shelf B now",
+  ]),
+  ...ph("workshop", neverOffer, "action:core-placement:remove", [
+    "take the CubePro out of the Garage",
+  ]),
+  ...ph("workshop", neverOffer, "action:core-catalogs:match-to-catalog", [
+    "match the X1 Carbon to the catalog",
+  ]),
+  // A question in shape ("where is my…"), an action in intent: basic mode
+  // answers where-is from the workspace, a model runs the tracking action.
+  ...ph("workshop", answer("my-data"), "action:core-shipments:track", [
+    "where is my parcel, tracking 1Z999AA10123456784",
+  ]),
+  ...ph("workshop", neverOffer, "action:core-units:add-unit{name=spool}", [
+    "we measure filament in spools",
+  ]),
+  ...ph("workshop", neverOffer, "action:platform:rename-workspace{name=garage}", [
+    "call this workspace The Garage",
+  ]),
+  ...ph("workshop", neverOffer, "action:platform:remove-field{field=colour}", [
+    "remove the Colour field from machines",
+  ]),
+  ...ph("workshop", neverOffer, "action:platform:disable-module{module=shipments}", [
+    "turn off shipments",
+  ]),
+  ...ph("workshop", neverOffer, "action:platform:set-simple-mode", [
+    "this is too cluttered, simplify it",
+  ]),
+  ...ph("workshop", neverOffer, "action:core-views:save-view", [
+    "save this as a board",
+  ]),
+  ...ph("workshop", answer("my-data"), "read:count_records", [
+    "which printer do I have the most of?", "how many machines do I have?",
+  ]),
+  // No basics rule reads a record's field; an honest fall-through, and the
+  // model looks it up.
+  ...ph("workshop", none, "read:list_records|search_records|get_record", [
+    "what state is the Kossel Mini in?", "who makes the X1 Carbon?",
+  ]),
+
+  // ── a kitchen (second domain: the matcher and the model must not be
+  //    workshop-shaped; seeded by the bench: Pantry, spices, a Shopping list) ─
+  ...ph("kitchen", answer("my-data"), "read:count_records", [
+    "how many spices do I have", "any cumin left?", "do I have any paprika",
+  ]),
+  ...ph("kitchen", answer("my-data"), "read:search_records|list_records", [
+    "where is the paprika", "where's the rice",
+  ]),
+  ...ph("kitchen", neverOffer, "action:lists:add-item{title=cumin}", [
+    "add cumin to the shopping list", "put cumin on the list",
+  ]),
+  ...ph("kitchen", neverOffer, "action:core-tags:tag-record{tag_name=running low}", [
+    "tag the olive oil as running low",
+  ]),
+  ...ph("kitchen", neverOffer, "action:labels:print", [
+    "print a label for the paprika",
+  ]),
+  ...ph("kitchen", neverOffer, "action:core-placement:place{container_id=*}", [
+    "the rice lives in the pantry now",
+  ]),
+  ...ph("kitchen", neverOffer, "create:record", [
+    "add a jar of turmeric", "new spice: garam masala",
+  ]),
+  ...ph("kitchen", neverOffer, "action:inventory:adjust-stock", [
+    "used up one bag of rice", "I used half the cumin",
+  ]),
+  // ── adversarial phrasings: the same intents in words the examples never
+  //    used, so the bench measures understanding, not echo ─────────────────
+  ...ph("workshop", neverOffer, "action:core-tags:untag-record{tag_name=fragile}", [
+    "kill the fragile tag on the Kossel",
+  ]),
+  ...ph("workshop", neverOffer, "action:labels:print", [
+    "sticker the Rostock", "I need a label on the CubePro",
+  ]),
+  ...ph("workshop", neverOffer, "action:core-discussion:post-comment{body=nozzle}", [
+    "the X1 needs a new nozzle, note that on it",
+  ]),
+  ...ph("workshop", neverOffer, "action:platform:remove-field{field=colour}", [
+    "bin the Colour field on machines",
+  ]),
+  ...ph("workshop", neverOffer, "action:machines:record-usage{hours=2}", [
+    "two hours on the Rostock this morning",
+  ]),
+  ...ph("workshop", answer("my-data"), "read:count_records", [
+    "got any deltas",
+  ]),
+  // A bare "<thing> count?" matches no rule: an honest fall-through, and the
+  // model counts. Teaching the matcher "count" would intercept instructions.
+  ...ph("workshop", none, "read:count_records", [
+    "bambu count?",
+  ]),
+
   // ── computed commands (no AI needed, run on Tab/Do-it) ───────────────────
   ...ph("command", command, "action:computed", [
     "delete duplicates", "remove duplicate locations", "fix broken links", "delete empty places",

@@ -8,7 +8,7 @@
 // icon left of the wordmark flips top↔side; the pin in the sidebar
 // footer flips pinned↔auto-hide.
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useDragClickGuard } from "./useDragClickGuard";
 import { NavLink, useLocation } from "react-router-dom";
 import {
@@ -22,15 +22,17 @@ import {
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { writeNavOrder } from "../lib/nav-order";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ChevronDown } from "lucide-react";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { isConfigurationPath } from "../lib/configuration-nav";
+import { inManagedAppSurface } from "../lib/managed-apps";
 import { ConfigSidebarBody } from "./ConfigurationLayout";
 import {
   useNavModules,
   HEADING_PREFIX,
   NAVGROUP_PREFIX,
   INSTANCE_PREFIX,
+  navTargetFor,
   stripNavStem,
 } from "./useNavModules";
 
@@ -62,12 +64,13 @@ export function SidebarNav({
   const { activeSlug, activeOrg } = useActiveOrg();
   const appMode = !!activeOrg?.app_mode;
   const { pathname } = useLocation();
-  const { tops, childrenByParent: children, instanceGroups } = useNavModules(activeSlug);
+  const { tops, childrenByParent: children, instanceGroups, utilities } = useNavModules(activeSlug);
   // HOOKS STAY ABOVE the config-fold early return — a hook below it renders
   // in one branch but not the other, and React throws "Rendered more hooks
   // than during the previous render" the moment you navigate between them.
   // Drag-to-reorder sensors: 8px activation so plain clicks still navigate.
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { delay: 250, tolerance: 5 } }));
+  const [moreOpen, setMoreOpen] = useMoreFold(activeSlug);
 
   // Configuration fold (the author, 2026-07-03): on a configuration-family route the
   // sidebar BECOMES the configuration panel — two sidebars never stack. A
@@ -165,17 +168,10 @@ export function SidebarNav({
     writeNavOrder(activeSlug, arrayMove(names, from, to));
   };
 
-  // Calendar slots in right after Locations/Lists (the quiet stock cluster) —
-  // not dead-last, not up top with the headline modules.
-  const calIdx = (() => {
-    let idx = -1;
-    tops.forEach((m, i) => {
-      if (m.displayName === "Lists" || m.displayName === "Locations") idx = i;
-    });
-    return idx;
-  })();
-  const topsHead = calIdx >= 0 ? tops.slice(0, calIdx + 1) : tops;
-  const topsTail = calIdx >= 0 ? tops.slice(calIdx + 1) : [];
+  // The doors (Files, Locations, Calendar, the Scan Inbox…) fold under one
+  // "more" row so the column above it is only what this workspace keeps. A
+  // locked app shows only the doors inside its surface.
+  const doors = appMode ? utilities.filter((u) => inManagedAppSurface(navTargetFor(u.name, true))) : utilities;
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -184,35 +180,66 @@ export function SidebarNav({
       <nav data-tour="nav" className="flex-1 min-h-0 overflow-y-auto px-2 py-3 space-y-0.5">
         {!appMode && (
           <NavLink to="/" end className={linkCls}>
-            Dashboard
+            Home
           </NavLink>
         )}
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
           <SortableContext items={tops.map((t) => t.name)} strategy={verticalListSortingStrategy}>
-            {topsHead.map((m) => (
-              <SortableTop key={m.name} id={m.name}>
-                {renderTop(m)}
-              </SortableTop>
-            ))}
-            {/* Calendar rides with the quieter stock surfaces (Lists, Locations…)
-                — not draggable itself yet (it joins the customize registry when
-                this ships); it follows the Lists/Locations rows wherever they go. */}
-            {!appMode && (
-              <NavLink to="/calendar" className={linkCls}>
-                Calendar
-              </NavLink>
-            )}
-            {topsTail.map((m) => (
+            {tops.map((m) => (
               <SortableTop key={m.name} id={m.name}>
                 {renderTop(m)}
               </SortableTop>
             ))}
           </SortableContext>
         </DndContext>
+        {doors.length > 0 && (
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={() => setMoreOpen(!moreOpen)}
+              aria-expanded={moreOpen}
+              className="w-full flex items-center gap-1 px-3 py-1 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 hover:text-accent transition select-none"
+            >
+              more
+              <ChevronDown size={11} className={moreOpen ? "rotate-180 transition-transform" : "transition-transform"} />
+            </button>
+            {moreOpen &&
+              doors.map((u) => (
+                <NavLink key={u.name} to={navTargetFor(u.name, appMode)} className={childCls}>
+                  {u.displayName}
+                </NavLink>
+              ))}
+          </div>
+        )}
       </nav>
         {foot}
     </div>
   );
+}
+
+/** Whether the "more" fold is open, remembered per device and workspace. It
+ *  starts closed: the fold exists so the column reads as the person's own
+ *  collections, and a door they open often is one tap away either way. */
+function useMoreFold(slug: string): [boolean, (v: boolean) => void] {
+  const key = `cobblr.nav.more:${slug}`;
+  const [open, setOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(key) === "1";
+    } catch {
+      return false;
+    }
+  });
+  return [
+    open,
+    (v) => {
+      setOpen(v);
+      try {
+        localStorage.setItem(key, v ? "1" : "0");
+      } catch {
+        /* a private window forgets; fine */
+      }
+    },
+  ];
 }
 
 /** Whole-row drag (Notion-style) with an 8px activation distance so plain

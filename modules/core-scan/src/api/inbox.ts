@@ -18,6 +18,7 @@
 // obtained from a separate multipart endpoint — keeps the JSON
 // body limits sane.
 
+import { rememberPickedImage } from "../services/picked-images.js";
 import { isMachineReadCode } from "../services/barcode-source.js";
 import { randomUUID } from "node:crypto";
 import { buildCadenceEvents } from "../cadence-events.js";
@@ -55,6 +56,7 @@ import {
 import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { resolveNativeIdentity } from "../native-identity.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { noteScanCaptured } from "../services/activation.js";
 import { downloadCatalogImage, enrichBarcodeItem, isJunkName } from "../services/enrich.js";
 import { committedImagePath, commitThumbPath } from "../services/committed-image.js";
 import { clampEntityName } from "../services/item-name.js";
@@ -428,6 +430,7 @@ inboxRouter.post(
       }
     }
 
+    noteScanCaptured(ctx.org.id, session.id, body.source_kind);
     const inserted = await db
       .insertInto("core_scan_inbox_items")
       .values({
@@ -613,6 +616,7 @@ inboxRouter.post(
       }
     }
 
+    noteScanCaptured(ctx.org.id, session.id, "note");
     const inserted = await db
       .insertInto("core_scan_inbox_items")
       .values({
@@ -887,6 +891,7 @@ inboxRouter.post(
       return;
     }
     const { receipt, method } = result;
+    noteScanCaptured(ctx.org.id, session.id, "receipt");
     const orderRef = cleanOrderRef(receipt.order_ref);
 
     // Already imported? A store's order number is unique per vendor, so the same
@@ -1680,6 +1685,58 @@ inboxRouter.get(
   }),
 );
 
+// Registered ABOVE /inbox/:id on purpose. Express matches in registration
+// order, so a literal path declared after the parameter route is never
+// reached: "session-theme" was read as an id, failed the identifier check,
+// and every inbox load got a 400 for it - the session theme had been dead in
+// production without a single test noticing (found by the e2e walk,
+// 2026-09-01). lint:route-shadowing keeps the order true.
+inboxRouter.get(
+  "/inbox/session-theme",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const items = await pendingThemeItems(db);
+    if (items.length < 2) {
+      res.json({ tag: null, tag_item_ids: [], category: null });
+      return;
+    }
+    const list = items.map((i, n) => `${n + 1}. ${i.name ?? "(unnamed)"}${i.category ? ` [${i.category}]` : ""}${i.is_titled_media ? " (titled media)" : ""}`).join("\n");
+    const system =
+      "You spot the common theme in a batch of just-scanned inventory items and propose a shared tag + an optional category. " +
+      "Output ONLY one JSON object, no prose: " +
+      '{"tag": "<a short 1-2 word tag that fits ALL items, Title Case, or null if they have no clear shared theme>", ' +
+      '"category": "<a short product-category value for the NON-titled-media items only, or null>", ' +
+      '"category_item_numbers": [<the 1-based numbers of the items the category applies to — the generic products, NEVER titled media>]}. ' +
+      "Rules: the tag must genuinely fit every item or be null (don't force it). The category groups the non-media products; titled media (books) get the tag but not the category. Derive both from what you see — invent nothing generic like \"Miscellaneous\".";
+    let parsed: { tag?: unknown; category?: unknown; category_item_numbers?: unknown } | null = null;
+    try {
+      const r = await platform().ai.invoke({
+        orgId: ctx.org.id,
+        capability: "chat",
+        input: { messages: [{ role: "system", content: system }, { role: "user", content: `The ${items.length} pending items:\n${list}` }] },
+        source: { kind: "core-scan:session-theme", id: ctx.org.id },
+        userId: sessionUser(req).id,
+      });
+      const raw = (r.result as { content?: string; text?: string }).content ?? (r.result as { text?: string }).text ?? "";
+      const m = raw.match(/\{[\s\S]*\}/);
+      if (m) parsed = JSON.parse(m[0]);
+    } catch {
+      /* AI off / errored → no suggestion */
+    }
+    const tag = parsed && typeof parsed.tag === "string" && parsed.tag.trim() ? parsed.tag.trim().slice(0, 60) : null;
+    const catValue = parsed && typeof parsed.category === "string" && parsed.category.trim() ? parsed.category.trim().slice(0, 80) : null;
+    const catNums = Array.isArray(parsed?.category_item_numbers) ? parsed!.category_item_numbers.map((n) => Number(n)) : [];
+    const catIds = catNums.map((n) => items[n - 1]?.id).filter((x): x is string => !!x);
+    res.json({
+      tag,
+      tag_item_ids: tag ? items.map((i) => i.id) : [],
+      category: catValue && catIds.length ? { value: catValue, item_ids: catIds } : null,
+    });
+  }),
+);
+
 inboxRouter.get(
   "/inbox/:id",
   asyncHandler(async (req, res) => {
@@ -2460,6 +2517,28 @@ inboxRouter.post(
       .where("id", "=", id)
       .returningAll()
       .executeTakeFirstOrThrow();
+
+    // The picture the user settled on, kept at the moment they commit to the
+    // item. The pick route already remembers a choice made THERE, but a choice
+    // made before that shipped - or made on a row that was picked once and
+    // filed later - would otherwise die with the row ("I concretely chose
+    // these pics ... and I would like these pics to persist", 2026-09-01).
+    // Confirm is the strongest possible signal: they kept the picture AND the
+    // item. Only a web address travels; see picked-images.ts.
+    {
+      const meta = (resolvedRow.suggested_metadata ?? {}) as {
+        receipt_vendor?: string;
+        catalog_image_user_set?: boolean;
+      };
+      if (meta.catalog_image_user_set) {
+        void rememberPickedImage(
+          ctx.org.id,
+          meta.receipt_vendor ?? null,
+          resolvedRow.suggested_name,
+          resolvedRow.catalog_image_url,
+        ).catch((e) => console.warn("[core-scan] picked-image remember on confirm failed:", (e as Error).message));
+      }
+    }
 
     void platform().events.emit("core-scan.scan.confirmed", {
       orgId: ctx.org.id,
@@ -3867,6 +3946,9 @@ inboxRouter.post(
         "catalog_image_file_id",
         "image_file_id",
         "suggested_metadata",
+        // Half of a receipt line's identity, for remembering the picture the
+        // user chose (the other half, the shop, is in the metadata).
+        "suggested_name",
       ])
       .where("id", "=", id ?? "")
       .executeTakeFirst();
@@ -4137,6 +4219,16 @@ inboxRouter.post(
         now: url,
         userId: sessionUser(req).id,
       });
+    } else if (!isAiPick) {
+      // No barcode - a receipt line. The shop and the line's name are the
+      // identity it does have, and a person choosing the picture is the same
+      // truth the UPC path feeds back. Not an AI pick: the machine's own guess
+      // must not become everyone's answer, which is the whole difference
+      // between this and the search it is correcting.
+      const meta = (row.suggested_metadata ?? {}) as { receipt_vendor?: string };
+      void rememberPickedImage(ctx.org.id, meta.receipt_vendor ?? null, row.suggested_name, url).catch(
+        (e) => console.warn("[core-scan] picked-image remember failed:", (e as Error).message),
+      );
     }
     res.json(withTitle(await fresh()));
   }),
@@ -5644,52 +5736,6 @@ async function pendingThemeItems(db: ReturnType<typeof tenantDb>): Promise<Theme
     return { id: r.id, name: r.suggested_name, category: cat, is_titled_media: isMedia };
   });
 }
-
-inboxRouter.get(
-  "/inbox/session-theme",
-  asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
-    const db = tenantDb(req);
-    const ctx = tenantContext(req);
-    const items = await pendingThemeItems(db);
-    if (items.length < 2) {
-      res.json({ tag: null, tag_item_ids: [], category: null });
-      return;
-    }
-    const list = items.map((i, n) => `${n + 1}. ${i.name ?? "(unnamed)"}${i.category ? ` [${i.category}]` : ""}${i.is_titled_media ? " (titled media)" : ""}`).join("\n");
-    const system =
-      "You spot the common theme in a batch of just-scanned inventory items and propose a shared tag + an optional category. " +
-      "Output ONLY one JSON object, no prose: " +
-      '{"tag": "<a short 1-2 word tag that fits ALL items, Title Case, or null if they have no clear shared theme>", ' +
-      '"category": "<a short product-category value for the NON-titled-media items only, or null>", ' +
-      '"category_item_numbers": [<the 1-based numbers of the items the category applies to — the generic products, NEVER titled media>]}. ' +
-      "Rules: the tag must genuinely fit every item or be null (don't force it). The category groups the non-media products; titled media (books) get the tag but not the category. Derive both from what you see — invent nothing generic like \"Miscellaneous\".";
-    let parsed: { tag?: unknown; category?: unknown; category_item_numbers?: unknown } | null = null;
-    try {
-      const r = await platform().ai.invoke({
-        orgId: ctx.org.id,
-        capability: "chat",
-        input: { messages: [{ role: "system", content: system }, { role: "user", content: `The ${items.length} pending items:\n${list}` }] },
-        source: { kind: "core-scan:session-theme", id: ctx.org.id },
-        userId: sessionUser(req).id,
-      });
-      const raw = (r.result as { content?: string; text?: string }).content ?? (r.result as { text?: string }).text ?? "";
-      const m = raw.match(/\{[\s\S]*\}/);
-      if (m) parsed = JSON.parse(m[0]);
-    } catch {
-      /* AI off / errored → no suggestion */
-    }
-    const tag = parsed && typeof parsed.tag === "string" && parsed.tag.trim() ? parsed.tag.trim().slice(0, 60) : null;
-    const catValue = parsed && typeof parsed.category === "string" && parsed.category.trim() ? parsed.category.trim().slice(0, 80) : null;
-    const catNums = Array.isArray(parsed?.category_item_numbers) ? parsed!.category_item_numbers.map((n) => Number(n)) : [];
-    const catIds = catNums.map((n) => items[n - 1]?.id).filter((x): x is string => !!x);
-    res.json({
-      tag,
-      tag_item_ids: tag ? items.map((i) => i.id) : [],
-      category: catValue && catIds.length ? { value: catValue, item_ids: catIds } : null,
-    });
-  }),
-);
 
 // POST /inbox/apply-theme — stash the accepted theme onto the pending items:
 // pending_tags (attached to the entity at confirm) + a category hint the

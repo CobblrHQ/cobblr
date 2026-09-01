@@ -19,7 +19,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-catalogs",
-  version: "0.2.2",
+  version: "0.2.3",
   displayName: "Catalogs",
   description:
     "Import reference datasets (parts catalogs, ingredient databases, etc.) and MATCH your own entities to entries inside them. v0.1 supports CSV upload; live-API pullers + auto-match deferred.",

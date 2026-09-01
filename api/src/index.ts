@@ -41,6 +41,7 @@ import * as devices from "./platform/devices.js";
 import * as entities from "./platform/entities.js";
 import * as files from "./platform/files.js";
 import * as hostedSeams from "./platform/hosted-seams.js";
+import { trackProductEvent, trackDailyProductEvent } from "./platform/product-events.js";
 import { registerConfiguredAuthEmailSender } from "./platform/auth-email-config.js";
 import * as events from "./platform/events.js";
 import * as connectionsImpl from "./platform/connections.js";
@@ -180,6 +181,16 @@ async function boot() {
       getDb: (orgId) => getTenantDb(orgId),
       releaseIdleDb: (orgId) => releaseIdleTenantPool(orgId),
       withDb: (orgId, fn) => withTenantDbForSweep(orgId, fn),
+    },
+    orgs: {
+      get: async (orgId) => {
+        const row = await meta
+          .selectFrom("orgs")
+          .select(["id", "slug", "app_mode"])
+          .where("id", "=", orgId)
+          .executeTakeFirst();
+        return row ? { id: row.id, slug: row.slug, app_mode: row.app_mode ?? null } : null;
+      },
     },
     resolvables: {
       register: registerResolvable,
@@ -446,6 +457,10 @@ async function boot() {
     metering: {
       registerSink: hostedSeams.registerMeterSink,
       record: hostedSeams.meter,
+    },
+    telemetry: {
+      track: trackProductEvent,
+      trackDaily: trackDailyProductEvent,
     },
     accounts: {
       registerLifecycleHooks: hostedSeams.registerLifecycleHooks,

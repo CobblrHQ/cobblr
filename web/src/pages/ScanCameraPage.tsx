@@ -30,7 +30,7 @@
 // ZXing (tuned, ~110ms cadence) is the fallback. Both run on the SAME
 // lens-locked stream.
 
-import { afterArmedShot, ignoresCodes, type ArmOrigin } from "../lib/scanArmedLanding";
+import { afterArmedShot, ignoresCodes, isEchoOfHandled, type ArmOrigin, type HandledCode } from "../lib/scanArmedLanding";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
@@ -1024,6 +1024,8 @@ export function ScanCameraPage() {
   // saved" toast used to RESTART the camera (the flicker/reset the author saw). The
   // ref lets that effect depend only on `running`.
   const onDetectRef = useRef<(raw: string) => void>(() => {});
+  /** The code the last armed shot landed on - see isEchoOfHandled. */
+  const handledCodeRef = useRef<HandledCode | null>(null);
   const onDetect = useCallback(
     (rawIn: string) => {
       if (phaseRef.current !== "scanning") return;
@@ -1045,6 +1047,15 @@ export function ScanCameraPage() {
         return;
       const raw = rawIn.trim();
       if (!raw) return;
+      if (isEchoOfHandled(raw, handledCodeRef.current, Date.now())) {
+        // SLIDES. The decoder reads a label in view about ten times a second;
+        // a fixed window expired with the can still in front of the lens and
+        // the repeat gap then let a re-scan through every 1.3s - quantity
+        // reached 11 in one fake-feed run. The code stops being an echo only
+        // once it has been OUT of the frame for the window.
+        handledCodeRef.current = { raw: handledCodeRef.current!.raw, at: Date.now() };
+        return;
+      }
       // HOLD a generic web link (a product's marketing QR — NOT a Cobblr label,
       // those parse via qrTokenFromUrl and route to a bin/entity). pickDetection
       // already ranks a link below every barcode WITHIN a frame, but the native
@@ -1775,7 +1786,17 @@ export function ScanCameraPage() {
             targetId,
           });
           if (landing.showDrawer) setDrawerItem(updated);
-          if (landing.reopenReview) setReviewItem(updated);
+          // The decoder reads reviewItemRef between renders, and setReviewItem
+          // reaches it one render late. In that gap the label still in front
+          // of the lens was read again as a NEW scan, and a "Looking up…" for
+          // the same code replaced the review sheet (fake-feed e2e, 2026-09-01).
+          // So the ref is set NOW, and the code is remembered as handled so a
+          // re-read a moment later is an echo. Both, deliberately.
+          if (landing.reopenReview) {
+            reviewItemRef.current = updated;
+            setReviewItem(updated);
+          }
+          if (updated.barcode_text) handledCodeRef.current = { raw: updated.barcode_text, at: Date.now() };
           setLastFrame((prev) => (prev ? { ...prev, itemId: targetId } : prev));
           void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
           // The drawer reads its item from this key too. Without invalidating

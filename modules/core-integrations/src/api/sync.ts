@@ -14,7 +14,7 @@ import { platform, type SyncConnector } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { loadConnectionRef } from "../sync/connection.js";
-import { runReconcile, planReconcile } from "../sync/engine.js";
+import { ReconcileBusyError, runReconcile, planReconcile } from "../sync/engine.js";
 import { ensureSyncScan } from "../sync/worker.js";
 import { installedSyncConnectors, resolveSyncConnector } from "../sync/resolve.js";
 
@@ -465,6 +465,14 @@ syncRouter.post(
       await ensureSyncScan(ctx.org.id);
       res.json({ ok: true, result });
     } catch (e) {
+      // Somebody (or the poll worker) is already reconciling this sync. That is
+      // not a bad gateway and it is not the user's fault: say so and let them
+      // press it again. Before the lock this surfaced as a raw duplicate-key
+      // 502 from the id-map's unique constraint.
+      if (e instanceof ReconcileBusyError) {
+        res.status(409).json({ ok: false, error: e.message });
+        return;
+      }
       res.status(502).json({ ok: false, error: (e as Error).message });
     }
   }),
@@ -500,6 +508,13 @@ syncRouter.post(
         .execute();
       res.json({ ok: true, result });
     } catch (e) {
+      // A busy sync has not failed, so it must not be written down as failed:
+      // last_status would read "error" until the next successful run and the
+      // connection would look broken on the page.
+      if (e instanceof ReconcileBusyError) {
+        res.status(409).json({ ok: false, error: e.message });
+        return;
+      }
       await db
         .updateTable("core_integrations_sync_state")
         .set({ last_run_at: new Date(), last_status: "error", last_error: (e as Error).message, updated_at: new Date() })

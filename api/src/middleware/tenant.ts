@@ -10,6 +10,8 @@ import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { getTenantDb } from "../db/tenant.js";
 import { verifyImpersonation } from "../auth/jwt.js";
+import { currentActor } from "../lib/request-context.js";
+import { noteActiveDay } from "../platform/product-events.js";
 import type { OrgRole } from "../db/schema.js";
 import type { TenantDB } from "../db/tenant-schema.js";
 
@@ -156,6 +158,10 @@ export async function withTenant(
       role: row.role,
       db,
     };
+    // A person touching their workspace today is the retention fact the
+    // activation funnel is built on. Sessions only: an API token is an
+    // integration or an edge device polling, not someone coming back.
+    if (currentActor()?.authMethod === "session") noteActiveDay(row.org_id, req.session.id);
     next();
   } catch (err) {
     res.status(500).json({

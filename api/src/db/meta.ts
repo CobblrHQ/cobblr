@@ -5,6 +5,7 @@ import { Kysely, PostgresDialect } from "kysely";
 import { Pool } from "pg";
 import { env } from "../env.js";
 import type { MetaDB } from "./schema.js";
+import { guardPoolClients } from "./client-error-guard.js";
 
 export const metaPool = new Pool({
   connectionString: env.DATABASE_URL,
@@ -21,6 +22,7 @@ export const metaPool = new Pool({
 // server killed an idle connection during shutdown, or a network
 // blip) becomes an unhandled 'error' event and Node terminates the
 // process. Per pg-pool docs, register one.
+guardPoolClients(metaPool, "meta-pool");
 metaPool.on("error", (err) => {
   console.error("[meta-pool] idle client error:", (err as Error).message);
 });

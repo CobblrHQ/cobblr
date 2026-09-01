@@ -7,7 +7,7 @@
 // at signup is on inventory.stock.changed).
 
 import { sql, type Kysely } from "kysely";
-import { platform, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
+import { platform, type EntityListQuery, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import type { ProjectsDB } from "../db.js";
 
 let registered = false;
@@ -53,15 +53,7 @@ export function registerProjectsHandlers(): void {
     const offset = query.offset ?? 0;
     let q = db.selectFrom("projects_projects").selectAll();
     if (instance) q = q.where("instance", "=", instance as never);
-    if (query.q) {
-      const needle = `%${query.q.toLowerCase()}%`;
-      q = q.where((eb) =>
-        eb.or([
-          eb(eb.fn("lower", ["name"]), "like", needle),
-          eb(eb.fn("lower", ["description"]), "like", needle),
-        ]),
-      );
-    }
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "title", "description", "status"], json: ["metadata"] })!);
     if (query.filter) {
       const NATIVE = new Set(["status", "priority"]);
       for (const [key, val] of Object.entries(query.filter)) {
@@ -128,15 +120,7 @@ export function registerProjectsHandlers(): void {
     const limit = Math.min(query.limit ?? 50, 200);
     const offset = query.offset ?? 0;
     let q = db.selectFrom("projects_tasks").selectAll();
-    if (query.q) {
-      const needle = `%${query.q.toLowerCase()}%`;
-      q = q.where((eb) =>
-        eb.or([
-          eb(eb.fn("lower", ["title"]), "like", needle),
-          eb(eb.fn("lower", ["description"]), "like", needle),
-        ]),
-      );
-    }
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["title", "description", "status"], json: ["metadata"] })!);
     if (query.filter) {
       const NATIVE = new Set(["status", "project_id", "priority", "energy"]);
       for (const [key, val] of Object.entries(query.filter)) {

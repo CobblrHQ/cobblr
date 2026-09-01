@@ -26,6 +26,7 @@ import {
 import { evictBarcodeCaches, rememberLocalIdentity } from "./barcode-cache.js";
 import { searchImages, rankImageOptions, imageQuery, mediaSearchExtras } from "./ddg-images.js";
 import { curatedImageUrl } from "./curated-images.js";
+import { pickedImageUrl } from "./picked-images.js";
 import { formFactorFromObservation } from "./form-factor.js";
 import { sql } from "kysely";
 import { cropRegion, parseProductRegion } from "./image-ops.js";
@@ -86,15 +87,22 @@ export async function refreshCatalogImageByName(
   // back empty — it comes back with a recipe blog or a joke — so a rule that
   // only fired on nothing would almost never fire at all.
   const curated = await curatedImageUrl(q).catch(() => null);
-  const pool = curated ? [] : await searchImages(q, 24).catch(() => []);
+  // Then the picture a PERSON already chose for this shop + product, from any
+  // workspace. Below the operator's manifest, which is the vetted answer, and
+  // above the search, which is the thing being corrected: a Lidl till slip says
+  // "Baby Carrots" and the search kept coming home with a tin of peas and
+  // carrots, every time, for everyone (2026-08-31). See picked-images.ts.
+  const remembered = curated ? null : await pickedImageUrl(soldBy ?? brand ?? null, name);
+  const chosen = curated ?? remembered;
+  const pool = chosen ? [] : await searchImages(q, 24).catch(() => []);
   // Try to DOWNLOAD the top candidates into core-files, falling through until one
   // stores. Storing just the top RAW url (as this did) left many tiles empty: a
   // product-page image often hotlink-blocks or 404s in the browser, and there was
   // no fallback to the next result (reported 2026-07-24). downloadCatalogImage handles
   // SSRF-guard + retries + size limits and stamps catalog_image_file_id. Dynamic
   // import because enrich.ts imports THIS module — a static import would cycle.
-  const candidates = curated
-    ? [curated]
+  const candidates = chosen
+    ? [chosen]
     : rankImageOptions(pool, brand || soldBy, q)
         .map((r) => r.url)
         .filter((u): u is string => !!u)
@@ -296,7 +304,7 @@ export async function identifyImage({
   // keyed self-host). Null falls through to the tenant path unchanged, so the
   // hosted service being down is never worse than never having had it.
   if (hostedIdentifyEnabled()) {
-    const hosted = await hostedIdentify({ orgId, imageB64, visitorIp });
+    const hosted = await hostedIdentify({ orgId, imageB64, visitorIp, userId });
     if (hosted?.kind === "item" && hosted.item) {
       const mapped = toPhotoIdentity(hosted.item);
       if (mapped) return mapped;
@@ -1040,6 +1048,19 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOu
   // API's orchestration would own two jobs and be testable at neither.
   if (looksLikeReceiptPhoto(identity)) {
     await patchNote(ctx, "That looks like a receipt — reading its line items.");
+    // A FLAG, not just the sentence. Between here and the lines landing, the
+    // row is a photo with no name and a finished enrichment - exactly the shape
+    // the card reads as "couldn't identify this photo" - so a receipt upload
+    // flashed a failure on its way to working ("it showed this not-recognized
+    // for a moment before it morphed into the line items", 2026-08-31). Prose
+    // in ai_notes cannot be branched on without matching a sentence; this can.
+    await ctx.db
+      .updateTable("core_scan_inbox_items")
+      .set({
+        suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({ reading_receipt: true })}::jsonb` as never,
+      })
+      .where("id", "=", ctx.itemId)
+      .execute();
     return "is-receipt";
   }
 

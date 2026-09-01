@@ -350,37 +350,35 @@ export const ESCORT_DESTINATIONS: EscortDestination[] = [
       email: "email address to prefill on the invite form",
       role: "role to preselect: member, editor, admin or guest",
     },
-    why: "who is in the workspace, and as what, is a human decision",
+    why: "membership is a human decision",
   },
   {
     id: "api-tokens",
     path: "/configuration/tokens",
     label: "API tokens",
     prefill: {},
-    why: "credentials are never minted or revoked by the assistant",
+    why: "the assistant never mints or revokes credentials",
   },
   {
     id: "backup",
     path: "/configuration/backup",
     label: "Backup & restore",
     prefill: {},
-    why: "a restore replaces data wholesale; the page shows what a card cannot",
+    why: "a restore replaces data wholesale",
   },
   {
     id: "ai-config",
     path: "/configuration/ai",
     label: "AI providers",
     prefill: {},
-    why: "the assistant does not configure its own reach or keys",
+    why: "the assistant does not configure its own keys",
   },
   {
     id: "wires",
     path: "/wires",
     label: "Automations (wires)",
     prefill: {},
-    why:
-      "the screen is for BUILDING an automation — the trigger, the filter, what it runs — which is " +
-      "consented in the composer, not a card. Switching one on or off is an action",
+    why: "building an automation is consented in the composer, not a card; switching one on or off is an action",
     covered_by: ["platform:set-wire-enabled"],
   },
   {
@@ -388,9 +386,7 @@ export const ESCORT_DESTINATIONS: EscortDestination[] = [
     path: "/fields",
     label: "Fields & forms",
     prefill: {},
-    why:
-      "the screen is for what no action covers — a field's TYPE, and the stored data behind it. " +
-      "Adding, renaming, hiding, removing and grouping fields are actions: run those",
+    why: "only a field's TYPE and the data behind it need the screen; adding, renaming, hiding, removing and grouping are actions",
     covered_by: [
       "platform:add-field",
       "platform:edit-field",
@@ -405,9 +401,14 @@ export const ESCORT_DESTINATIONS: EscortDestination[] = [
 export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "take_user_to",
+    // Why each destination is an escort and not an action lives on the
+    // destination (ESCORT_DESTINATIONS.why); lint:escort-claims keeps the
+    // covered_by list honest. The sentences here are only what a model needs
+    // to choose this tool and to NOT choose it over an action - the longer
+    // rationale that used to sit here cost 900 chars on every turn.
     description:
-      "ESCORT the user to a configuration screen you cannot operate yourself — inviting members, API tokens, backup & restore, AI providers, composing automations. In the Cobblr app this MOVES their screen there (elsewhere, give them the path as a link) and can PREFILL the form (e.g. the invite email), but nothing is submitted: the user presses the page's own button. Use this when they ask for something on those surfaces instead of refusing dry — say why it needs their hand, then take them there. " +
-      "NEVER use this for something an action covers: check list_actions and RUN it. Escorting someone to a screen to do a thing you could have done is the least useful answer you have. Destinations: " +
+      "ESCORT the user to a configuration screen you cannot operate. In the app this MOVES their screen there and can PREFILL the form; nothing is submitted. " +
+      "NEVER escort for something an action covers: check list_actions and RUN it. Destinations: " +
       ESCORT_DESTINATIONS.map(
         (d) =>
           `${d.id} (${d.why}${d.covered_by?.length ? `; but ${d.covered_by.join(", ")} do those — run them, don't escort` : ""})`,
@@ -636,7 +637,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_actions",
     description:
-      "Discover the operations (actions) this workspace can run. Each item has a `scope`: an 'entity' action runs on a record (adjust stock, mark a task done, build one) and its matched_kinds lists which record kinds it applies to; a 'workspace' action is a config/admin operation that runs on the whole workspace (reorder locations, rename a label-code prefix, change a default) and is invoked WITHOUT a record. Each item also carries `args_schema`: the named arguments that action takes, which you pass as invoke_action's `args`, and `undoable`: whether running it by mistake can be put right inside the workspace. On a connection that cannot show a confirmation prompt, only the undoable ones will run; the rest refuse and say so, which is worth telling the user rather than claiming you have no way to act. Optionally filter to one entity kind; workspace actions are always included. Use invoke_action to run one.",
+      "Discover the operations (actions) this workspace can run. scope 'entity': runs on one record, matched_kinds says which kinds. scope 'workspace': a config/admin operation on the whole workspace, invoked WITHOUT a record. Each carries args_schema (pass as invoke_action's args) and undoable; on a connection with no confirmation prompt only undoable ones run, and the rest refuse and say so - tell the user rather than claiming you cannot act. Optionally filter to one kind; workspace actions always included. Run one with invoke_action.",
     mode: "read",
     params: {
       kind: z.string().optional().describe("Only entity actions applicable to this kind id (workspace actions still included)"),

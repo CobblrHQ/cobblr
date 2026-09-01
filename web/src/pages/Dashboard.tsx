@@ -428,7 +428,11 @@ function BundleSuggestionsCard({ slug, role }: { slug: string; role?: string }) 
           four of them turned a two-row nag into a four-row one. Scrolling
           sideways keeps every suggestion reachable while the card stays the same
           height whether there is one or a dozen. */}
-      <div className="flex flex-nowrap gap-2 overflow-x-auto pb-0.5">
+      {/* WRAPS. A nowrap row that scrolls sideways hid the second suggestion
+          behind the card's edge on a phone with nothing to say it was there
+          ("1 loo|" - found by the e2e walk, 2026-09-01). Two buttons stacked
+          is what a phone has room for; a row you cannot see is not a row. */}
+      <div className="flex flex-wrap gap-2 pb-0.5">
         {suggestions.map((s) => {
           const busy = materializeMut.isPending && materializeMut.variables?.bundle_external_id === s.bundle_external_id;
           return (

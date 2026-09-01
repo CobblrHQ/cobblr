@@ -19,6 +19,7 @@
     "record-move.ts POST /",
     "sandbox-install.ts DELETE /install/:x",
     "sandbox-install.ts POST /install",
+    "try.ts POST /try/empty",
     "try.ts POST /try/keep",
     "try.ts POST /try/take"
   ]

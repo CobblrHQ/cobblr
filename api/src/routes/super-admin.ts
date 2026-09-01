@@ -19,6 +19,7 @@ import { inviteExpiresAt } from "../auth/signup-gate.js";
 import { scanResolversRouter } from "./super-admin-scan-resolvers.js";
 import { signImpersonation } from "../auth/jwt.js";
 import { log as activityLog } from "../platform/activity.js";
+import { activationOf, cohortFunnel, countsToward } from "../platform/activation.js";
 import { meta } from "../db/meta.js";
 import { getTenantDb } from "../db/tenant.js";
 import { hardDeleteOrg } from "../platform/delete-org.js";
@@ -614,18 +615,21 @@ superAdminRouter.get("/modules", async (_req, res, next) => {
   }
 });
 
-// GET /super-admin/product-metrics — the thesis dashboard (2026-07 audit F2).
+// GET /super-admin/product-metrics — the thesis dashboard (2026-07 audit F2)
+// plus the activation funnel (2026-09).
 // Per workspace: time-to-first-working-app (org created → first `created`
-// activity row) and walls-hit (product_events: permission_denied,
-// validation_rejected, … + wire failures from activity_log), windowed 7d/30d.
-// Strategy docs: "walls-hit-per-week trending to zero for a genuine non-dev
-// is the proof" — this is where that number lives. HTTP-first by design;
-// an operator-console section can render it later.
+// activity row), walls-hit (product_events: permission_denied,
+// validation_rejected, … + wire failures from activity_log), windowed 7d/30d,
+// and the funnel facts (first scan, active days, week-two return).
+// `activation` sums the funnel for the 30-day, 90-day and all-time cohorts,
+// with founder / sandbox / test-pool workspaces excluded (platform/activation.ts
+// holds the rule). HTTP-first by design; the operator consoles render it.
 superAdminRouter.get("/product-metrics", async (_req, res, next) => {
   try {
+    const now = new Date();
     const orgs = await meta
       .selectFrom("orgs")
-      .select(["id", "name", "slug", "created_at"])
+      .select(["id", "name", "slug", "created_at", "sandbox", "app_mode"])
       .orderBy("created_at", "desc")
       .execute();
 
@@ -640,6 +644,58 @@ superAdminRouter.get("/product-metrics", async (_req, res, next) => {
       .groupBy("org_id")
       .execute();
     const firstByOrg = new Map(firstCreated.map((r) => [r.org_id, r.first_at]));
+
+    // Daily facts (product_events rows with a `day`): first scan, and the
+    // active-day count + latest active day that decide week-two return.
+    // `day` is cast to text in SQL on purpose: a DATE comes back from pg as a
+    // local-midnight Date, which shifts a day west of UTC.
+    const daily = await meta
+      .selectFrom("product_events")
+      .select([
+        "org_id",
+        "event",
+        sql<Date>`min(created_at)`.as("first_at"),
+        sql<string>`max(day)::text`.as("last_day"),
+        sql<number>`count(*)`.as("days"),
+      ])
+      .where("day", "is not", null)
+      .where("event", "in", ["active_day", "scan_captured"])
+      .groupBy(["org_id", "event"])
+      .execute();
+    const firstScanByOrg = new Map<string, Date>();
+    const activeByOrg = new Map<string, { days: number; last: string }>();
+    for (const d of daily) {
+      if (d.event === "scan_captured") firstScanByOrg.set(d.org_id, d.first_at);
+      else activeByOrg.set(d.org_id, { days: Number(d.days), last: d.last_day });
+    }
+
+    // Workspaces that must not count as evidence: a platform admin's own, an
+    // hour-long sandbox, the CI pool.
+    const members = await meta
+      .selectFrom("org_memberships as m")
+      .innerJoin("users as u", "u.id", "m.user_id")
+      .select(["m.org_id", "u.email"])
+      .execute();
+    const founderOrgs = new Set(members.filter((m) => isPlatformAdmin(m.email)).map((m) => m.org_id));
+    const poolOrgs = new Set((await meta.selectFrom("test_org_pool").select("org_id").execute()).map((r) => r.org_id));
+
+    const activations = orgs.map((o) =>
+      activationOf(
+        {
+          org_id: o.id,
+          created_at: new Date(o.created_at),
+          first_item_at: firstByOrg.get(o.id) ?? null,
+          first_scan_at: firstScanByOrg.get(o.id) ?? null,
+          active_day_count: activeByOrg.get(o.id)?.days ?? 0,
+          last_active_day: activeByOrg.get(o.id)?.last ?? null,
+          founder: founderOrgs.has(o.id),
+          sandbox: o.sandbox === true,
+          test_pool: poolOrgs.has(o.id),
+        },
+        now,
+      ),
+    );
+    const activationByOrg = new Map(activations.map((a) => [a.org_id, a]));
 
     // Walls: product_events grouped by org+event, 7d and 30d windows.
     const walls = await meta
@@ -681,18 +737,34 @@ superAdminRouter.get("/product-metrics", async (_req, res, next) => {
     }
 
     res.json({
+      now: now.toISOString(),
+      activation: {
+        d30: cohortFunnel(activations, now, 30),
+        d90: cohortFunnel(activations, now, 90),
+        all: cohortFunnel(activations, now, 0),
+      },
       workspaces: orgs.map((o) => {
         const first = firstByOrg.get(o.id) ?? null;
         const wallList = wallsByOrg.get(o.id) ?? [];
+        const a = activationByOrg.get(o.id)!;
         return {
           org_id: o.id,
           name: o.name,
           slug: o.slug,
           created_at: o.created_at,
+          app_mode: o.app_mode ?? null,
           first_item_at: first,
           ttfw_minutes: first
             ? Math.round((new Date(first).getTime() - new Date(o.created_at).getTime()) / 60_000)
             : null,
+          first_scan_at: a.first_scan_at,
+          active_days: a.active_days,
+          last_active_day: a.last_active_day,
+          returned_week2: a.returned_week2,
+          founder: a.founder,
+          sandbox: a.sandbox,
+          test_pool: a.test_pool,
+          counts: countsToward(a),
           walls: wallList.sort((a, b) => b.d7 - a.d7),
           walls_7d: wallList.reduce((n, w) => n + w.d7, 0),
           walls_30d: wallList.reduce((n, w) => n + w.d30, 0),

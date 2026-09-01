@@ -419,6 +419,9 @@ export interface ProductEventsTable {
   user_id: string | null;
   event: string;
   detail: unknown | null;
+  /** UTC day, set only on DAILY events (one row per org+user+event+day,
+   *  migration 117); occurrence events leave it NULL. */
+  day: Date | string | null;
   created_at: Generated<Date>;
 }
 

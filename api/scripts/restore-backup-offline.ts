@@ -31,6 +31,7 @@ import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import unzipper from "unzipper";
 import { Pool } from "pg";
+import { guardPoolClients } from "../src/db/client-error-guard.js";
 
 async function main() {
   const args = process.argv.slice(2).filter((a) => !a.startsWith("--"));
@@ -84,6 +85,7 @@ async function main() {
   // blip mid-restore would abort with a raw unhandled-event stack rather than
   // saying what happened. This is a RESTORE: the operator needs to know whether
   // it stopped, and where.
+  guardPoolClients(pool, "restore-backup");
   pool.on("error", (err) => {
     console.error("[restore] database connection error:", (err as Error).message);
   });

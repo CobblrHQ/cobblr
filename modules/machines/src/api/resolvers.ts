@@ -1,4 +1,4 @@
-import { platform, parseSort, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
+import { platform, parseSort, type EntityListQuery, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { MachinesDB } from "../db.js";
 
@@ -47,23 +47,7 @@ export function registerMachinesResolvers(): void {
     const offset = query.offset ?? 0;
     let q = db.selectFrom("machines_machines").selectAll();
     if (instance) q = q.where("instance", "=", instance);
-    if (query.q) {
-      // Any text the machine carries, not just its name: "Bambu" is a
-      // manufacturer, "delta" lives in notes or a custom field. A name-only
-      // match answered "you have no Bambu" about a workspace with one.
-      const needle = `%${query.q.toLowerCase()}%`;
-      q = q.where((eb) =>
-        eb.or([
-          eb(eb.fn("lower", ["name"]), "like", needle),
-          eb(eb.fn("lower", [eb.fn.coalesce("short_name", sql.lit(""))]), "like", needle),
-          eb(eb.fn("lower", [eb.fn.coalesce("manufacturer", sql.lit(""))]), "like", needle),
-          eb(eb.fn("lower", [eb.fn.coalesce("type", sql.lit(""))]), "like", needle),
-          eb(eb.fn("lower", [eb.fn.coalesce("family", sql.lit(""))]), "like", needle),
-          eb(eb.fn("lower", [eb.fn.coalesce("notes", sql.lit(""))]), "like", needle),
-          sql<boolean>`lower(metadata::text) like ${needle}`,
-        ]),
-      );
-    }
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "short_name", "manufacturer", "type", "family", "notes", "state"], json: ["metadata"] })!);
     if (query.filter) {
       const NATIVE = new Set(["state", "family", "type", "manufacturer", "serial_number", "location_id"]);
       for (const [key, val] of Object.entries(query.filter)) {

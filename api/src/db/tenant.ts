@@ -13,6 +13,7 @@ import { meta } from "./meta.js";
 import { decryptCreds } from "./crypto.js";
 import type { TenantDB } from "./tenant-schema.js";
 import { mayFastClose } from "./pool-release-rule.js";
+import { guardPoolClients } from "./client-error-guard.js";
 
 interface CachedTenant {
   pool: Pool;
@@ -143,6 +144,7 @@ async function openTenant(orgId: string): Promise<CachedTenant> {
   // and Node terminates the process. Tenants get DROPped during
   // org-delete; this listener is what keeps the api alive across that
   // path.
+  guardPoolClients(pool, `tenant-pool ${orgId}`);
   pool.on("error", (err) => {
     console.error(
       `[tenant-pool ${orgId}] idle client error:`,

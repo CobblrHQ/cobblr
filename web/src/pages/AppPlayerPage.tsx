@@ -156,6 +156,7 @@ export function AppPlayerPage() {
           <div className="flex items-start justify-between gap-4 border-b pb-3" style={{ borderColor: "var(--app-border)" }}>
             <div className="min-w-0 flex items-center gap-3">
               {theme.logo && (
+                // EXTERNAL-IMAGE-OK: an app theme assetRef (data: URL or hosted URL).
                 <img src={theme.logo} alt="" className="w-9 h-9 rounded object-contain shrink-0" />
               )}
               <div className="min-w-0">

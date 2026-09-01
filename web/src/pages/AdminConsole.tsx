@@ -33,6 +33,7 @@ import {
   type SuperAdminAiActivityItem,
   type SuperAdminBarcodeCacheItem,
   type ScanEvalCase,
+  type ActivationFunnel,
 } from "../lib/api";
 import { ADMIN_SECTIONS, isAdminSection, type AdminSectionId } from "../lib/adminSections";
 import { TokenManager } from "../components/TokenManager";
@@ -2149,6 +2150,40 @@ function FeedbackTab() {
 // wire failures) + time-to-first-working-app. The strategy docs' north star:
 // walls/week trending to ZERO for a genuine non-dev workspace is the proof.
 // Founder-owned workspaces should be read with the founder-proxy trap in mind.
+/** The activation funnel for one cohort: four steps, each as count and share of signups. */
+function ActivationFunnelCard({ label, f }: { label: string; f: ActivationFunnel }) {
+  const pct = (n: number, of: number) => (of > 0 ? `${Math.round((n / of) * 100)}%` : "—");
+  const steps: Array<{ name: string; n: number; of: number; hint: string }> = [
+    { name: "signed up", n: f.signups, of: f.signups, hint: "workspaces created in the window, yours excluded" },
+    { name: "added a first thing", n: f.first_item, of: f.signups, hint: `${f.first_item_24h} within 24h` },
+    { name: "scanned something", n: f.first_scan, of: f.signups, hint: "a barcode, photo, note or receipt" },
+    {
+      name: "back in week two",
+      n: f.returned_week2,
+      of: f.week2_eligible,
+      hint: `${f.week2_eligible} old enough to know`,
+    },
+  ];
+  return (
+    <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 min-w-[14rem]">
+      <div className="text-xs uppercase tracking-wide text-muted">{label}</div>
+      <ol className="mt-2 space-y-1.5">
+        {steps.map((s) => (
+          <li key={s.name} className="flex items-baseline justify-between gap-3 text-sm">
+            <span>
+              <span className="text-content dark:text-mortar-100">{s.name}</span>
+              <span className="block text-[11px] text-muted">{s.hint}</span>
+            </span>
+            <span className="tabular-nums whitespace-nowrap">
+              <b>{s.n}</b> <span className="text-muted">{pct(s.n, s.of)}</span>
+            </span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 function ProductMetricsTab() {
   const q = useQuery({
     queryKey: ["super-admin-product-metrics"],
@@ -2158,15 +2193,24 @@ function ProductMetricsTab() {
   const ws = [...(q.data?.workspaces ?? [])].sort((a, b) => b.walls_7d - a.walls_7d);
   const fmtTtfw = (m: number | null) =>
     m === null ? "—" : m < 60 ? `${m}m` : m < 60 * 24 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`;
+  const fmtDay = (d: string | null) => (d ? new Date(`${d}T12:00:00Z`).toLocaleDateString() : "—");
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted">
-        The thesis, measured: <b>walls hit</b> (permission denials, artifacts that failed
-        validation, wires that errored or cycled) per workspace, and <b>time to first working
-        app</b> (signup → first real item). The goal is walls/week trending to zero for
-        genuine non-dev workspaces - your own workspaces don't count as proof.
+        <b>Activation</b>: of the people who signed up, how many added a first thing, scanned
+        something, and came back after day seven. Your own workspaces, sandboxes and the CI
+        pool are listed below but do not count. Then the thesis: <b>walls hit</b> (permission
+        denials, artifacts that failed validation, wires that errored or cycled) per workspace,
+        and <b>time to first working app</b> (signup → first real item).
         Interpretation notes: docs/operations/product-metrics.md.
       </p>
+      {q.data && (
+        <div className="flex flex-wrap gap-3">
+          <ActivationFunnelCard label="Last 30 days" f={q.data.activation.d30} />
+          <ActivationFunnelCard label="Last 90 days" f={q.data.activation.d90} />
+          <ActivationFunnelCard label="All time" f={q.data.activation.all} />
+        </div>
+      )}
       {q.isLoading ? (
         <div className="text-sm text-muted">Loading…</div>
       ) : ws.length === 0 ? (
@@ -2179,6 +2223,9 @@ function ProductMetricsTab() {
                 <Th>Workspace</Th>
                 <Th>Created</Th>
                 <Th>First item (TTFW)</Th>
+                <Th>First scan</Th>
+                <Th>Active days</Th>
+                <Th>Week two</Th>
                 <Th>Walls 7d</Th>
                 <Th>Walls 30d</Th>
                 <Th>What they hit (7d)</Th>
@@ -2189,7 +2236,11 @@ function ProductMetricsTab() {
                 <tr key={w.org_id} className="border-t border-line dark:border-slate-700 align-top">
                   <td className="px-3 py-2">
                     <div className="font-medium text-content dark:text-mortar-100">{w.name}</div>
-                    <div className="text-xs text-muted font-mono">{w.slug}</div>
+                    <div className="text-xs text-muted font-mono">
+                      {w.slug}
+                      {w.app_mode ? ` · ${w.app_mode} app` : ""}
+                      {w.founder ? " · yours" : w.sandbox ? " · sandbox" : w.test_pool ? " · test pool" : ""}
+                    </div>
                   </td>
                   <td className="px-3 py-2">{new Date(w.created_at).toLocaleDateString()}</td>
                   <td className="px-3 py-2">
@@ -2198,6 +2249,28 @@ function ProductMetricsTab() {
                     ) : (
                       <span className="text-muted" title="Never committed an item - the other half of the thesis">
                         never
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    {w.first_scan_at ? (
+                      new Date(w.first_scan_at).toLocaleDateString()
+                    ) : (
+                      <span className="text-muted">never</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    {w.active_days}
+                    <span className="block text-[11px] text-muted">last {fmtDay(w.last_active_day)}</span>
+                  </td>
+                  <td className="px-3 py-2">
+                    {w.returned_week2 === true ? (
+                      <span className="text-green-700 dark:text-green-400">back</span>
+                    ) : w.returned_week2 === false ? (
+                      <span className="text-muted">gone</span>
+                    ) : (
+                      <span className="text-muted" title="Younger than seven days">
+                        too soon
                       </span>
                     )}
                   </td>

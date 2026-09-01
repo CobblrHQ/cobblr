@@ -2,7 +2,7 @@
 // references a location_id resolve it back to a human-displayable
 // chip without knowing the locations table shape.
 
-import { platform, type ResolvedEntity } from "@cobblr/platform-contract";
+import { platform, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { CoreLocationsDB } from "../db.js";
 
@@ -33,15 +33,7 @@ export function registerLocationsResolvers(): void {
       const limit = Math.min(query.limit ?? 50, 200);
       const offset = query.offset ?? 0;
       let q = db.selectFrom("core_locations_locations").selectAll();
-      if (query.q && query.q.length > 0) {
-        const needle = `%${query.q.toLowerCase()}%`;
-        q = q.where((eb) =>
-          eb.or([
-            eb(eb.fn("lower", ["name"]), "like", needle),
-            eb(eb.fn("lower", ["short_name"]), "like", needle),
-          ]),
-        );
-      }
+      if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "short_name", "kind"], json: ["metadata"] })!);
       if (query.filter) {
         for (const [key, val] of Object.entries(query.filter)) {
           if (val === undefined || val === null) continue;

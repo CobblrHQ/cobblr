@@ -57,13 +57,25 @@ export interface PlacementRow {
 
 export const PLACEMENT: PlacementRow[] = [
   {
+    id: "assistant-tool",
+    what: "a tool the assistant (and the MCP server) can call: its name, description and parameters",
+    keywords: ["tool", "workspace tool", "assistant tool", "mcp tool", "tool description", "list_records"],
+    dir: "packages/workspace-tools/src/",
+    exemplar: "packages/workspace-tools/src/tools.ts",
+    why: "Every tool's description is sent to the model on every turn, so a description carries only what a model needs to choose and call it; the why goes in a comment above it.",
+    lints: ["lint:tool-descriptions", "lint:mcp-readme", "lint:escort-claims"],
+    notes: [
+      "One registry serves both in-app Cobb and the MCP server; the README lint keeps the server's table true to it.",
+    ],
+  },
+  {
     id: "generic-web-component",
     what: "a web component that works for ANY module's records",
     keywords: ["component", "shared component", "generic", "reusable ui", "widget"],
     dir: "web/src/components/",
     exemplar: "web/src/components/EntityAttachments.tsx",
     why: "This layer is module-agnostic: it may not name a module's entity kind, because doing so silently excludes every module added later.",
-    lints: ["lint:component-kinds", "lint:hooks-after-return", "lint:no-emdash", "lint:ui-jargon"],
+    lints: ["lint:component-kinds", "lint:hooks-after-return", "lint:no-emdash", "lint:ui-jargon", "lint:authed-image-src"],
     notes: [
       "If it names one module's kind, it is not generic — it belongs beside that module's page (see page-level-module-ui).",
     ],
@@ -75,7 +87,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "web/src/pages/",
     exemplar: "web/src/pages/NewBinSheet.tsx",
     why: "Naming your own module's kind on its own page is fine, so page-level UIs are exempt from the generic-component rule.",
-    lints: ["lint:hooks-after-return", "lint:no-emdash", "lint:ui-jargon", "lint:jsx-comment-text"],
+    lints: ["lint:hooks-after-return", "lint:no-emdash", "lint:ui-jargon", "lint:jsx-comment-text", "lint:authed-image-src"],
   },
   {
     id: "module-ui",
@@ -84,7 +96,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "modules/<name>/src/ui/",
     exemplar: "modules/inventory/src/ui/PartsListPage.tsx",
     why: "A module owns its own UI and exports it through `ui` in the manifest; the web app imports it rather than reimplementing it.",
-    lints: ["lint:isolation", "lint:hooks-after-return", "lint:ui-vocab"],
+    lints: ["lint:isolation", "lint:hooks-after-return", "lint:ui-vocab", "lint:authed-image-src"],
     notes: ["A module UI must never import another module — compose through the platform contract."],
   },
   {
@@ -145,6 +157,29 @@ export const PLACEMENT: PlacementRow[] = [
     why: "An action is the only door that both a person, a wire and the assistant can come through, so capability belongs there rather than in a bespoke route.",
     lints: ["lint:ai-reach", "lint:ai-reach-routes", "lint:ai-coverage", "lint:action-predicates"],
     notes: ["A mutating route with no action must carry `// AI-REACH: <reason>` at the route."],
+  },
+  {
+    id: "api-route",
+    what: "an HTTP route on a module or the kernel",
+    keywords: ["route", "endpoint", "router.get", "router.post", "express", "handler", "url", "path"],
+    dir: "modules/<name>/src/api/ or api/src/routes/",
+    exemplar: "modules/core-scan/src/api/inbox.ts",
+    why: "Express matches in registration order: a literal path declared after a parameter route on the same prefix is never reached, and the client gets a 400 that nothing reports (the session theme was dead this way for weeks).",
+    lints: ["lint:route-shadowing"],
+    notes: ["Register literal paths (/inbox/session-theme) ABOVE parameter paths (/inbox/:id) in the same router."],
+  },
+  {
+    id: "dev-script",
+    what: "a shell script agents run on the dev Mac",
+    keywords: ["shell script", "bash", "worktree script", "merge script", "hook", "pre-push"],
+    dir: "scripts/ (git hooks in scripts/git-hooks/)",
+    exemplar: "scripts/merge-pr.sh",
+    why: "The same file runs on macOS (bash 3.2, BSD sed) and on the Linux CI box; a construct that is fine on one aborts on the other, after part of the work has already printed as done.",
+    lints: ["lint:bash-portable", "lint:portable-sed", "lint:sigpipe"],
+    notes: [
+      "Prose (commit messages, PR bodies) goes through a FILE, never a quoted shell string.",
+      "Linux-only scripts opt out with `# gnu-sed: <reason>`; that one line covers both sed and bash rules.",
+    ],
   },
   {
     id: "lint",
@@ -226,6 +261,52 @@ export const PLACEMENT: PlacementRow[] = [
     notes: [
       "Read changelog.d/README.md first: frontmatter needs `type:` and `date:`, a feature also needs `docs_target:` and a `## docs` section.",
       "A feature PR also bumps the module version and updates docs; bugfixes are exempt from all three.",
+    ],
+  },
+  {
+    id: "selfhost-deploy",
+    what: "a compose file, .env example or helper script that somebody self-hosting downloads and runs",
+    keywords: [
+      "self-host",
+      "selfhost",
+      "compose",
+      "docker-compose",
+      "env example",
+      "watchtower",
+      "autoupdate",
+      "updater",
+      "upgrade",
+      "standalone stack",
+    ],
+    dir: "deploy/selfhost/standalone/",
+    exemplar: "deploy/selfhost/standalone/docker-compose.yml",
+    why: "Self-hosters curl these straight from the public mirror, so a change here lands on machines nobody here can log into or fix.",
+    lints: ["lint:autoupdate-warns-env-drift"],
+    notes: [
+      "The README beside the compose file is the only documentation most self-hosters read. If a change needs explaining, explain it there.",
+      "An updater re-creates a container by cloning the old environment, so it never re-reads .env. Anything shipping one has to say so and point at check-env-drift.sh.",
+    ],
+  },
+  {
+    id: "release-tooling",
+    what: "a script or workflow step that cuts, names, announces or verifies a release",
+    keywords: [
+      "release",
+      "nightly",
+      "cut",
+      "promote",
+      "snapshot tag",
+      "changelog publisher",
+      "announce",
+      "calver",
+    ],
+    dir: "scripts/",
+    exemplar: "scripts/release-daily.sh",
+    why: "One commit becomes several artifacts on several surfaces, so anything naming or timing a release has to agree with the rest of that chain rather than be locally correct.",
+    lints: ["lint:one-release-clock", "lint:ci-sink", "lint:oci-labels"],
+    notes: [
+      "A nightly's date is an EDITORIAL label read from the local day, not UTC. The banner, the changelog post, the image snapshot tag and the coupling census all have to name the same night.",
+      "Two clocks that are each internally consistent will not alert. That is why the rule spans both files instead of living in either.",
     ],
   },
 ];

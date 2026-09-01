@@ -25,9 +25,10 @@ import { UpdateBadge } from "./UpdateBadge";
 import { usePendingAiShares } from "../lib/usePendingAiShares";
 import { useAuth } from "../auth/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
-import { useNavModules, NAVGROUP_PREFIX, INSTANCE_PREFIX } from "./useNavModules";
+import { useNavModules, NAVGROUP_PREFIX, navTargetFor } from "./useNavModules";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { OverlayFlag } from "@cobblr/platform-web";
+import { inManagedAppSurface } from "../lib/managed-apps";
 
 /** The marker on a row that belongs to the group heading above it. It replaced
  *  the word "instance" on those rows: a dot under a heading already says
@@ -39,7 +40,21 @@ function ChildDot() {
 
 export function MobileNav() {
   const { activeOrg, activeSlug } = useActiveOrg();
-  const { tops, childrenByParent, instanceGroups } = useNavModules(activeSlug);
+  const { tops, childrenByParent, instanceGroups, utilities } = useNavModules(activeSlug);
+  // A locked managed app ("Cobblr for Yarn") shows ONLY its own surface. The
+  // desktop nav already hid the platform rows; this menu did not, so a knitter
+  // on a phone saw Dashboard, Calendar and Configuration and every tap bounced
+  // back to the yarn table. Same predicate the route guard uses, so the two
+  // cannot disagree about what is inside the app.
+  const appMode = !!activeOrg?.app_mode;
+  const visibleTops = appMode
+    ? tops.filter((m) =>
+        m.name.startsWith(NAVGROUP_PREFIX) ? true : inManagedAppSurface(navTargetFor(m.name, true)),
+      )
+    : tops;
+  // The doors (Files, Locations, Calendar, the Scan Inbox…) sit under their own
+  // "more" label after the collections, never among them.
+  const doors = appMode ? utilities.filter((u) => inManagedAppSurface(navTargetFor(u.name, true))) : utilities;
   const pendingShares = usePendingAiShares(activeSlug, activeOrg?.role === "owner");
   const { logout } = useAuth();
   const { theme, toggle } = useTheme();
@@ -218,23 +233,23 @@ export function MobileNav() {
                   width to right-align against, and they are five fixed rows
                   rather than the part that grows. */}
               <div className="columns-2 gap-x-0 [&>*]:break-inside-avoid [&_a]:px-3 [&_button]:px-3 [&_.pl-8]:pl-6">
+              {!appMode && (
               <NavLink to="/" end className={linkClass} onClick={() => setOpen(false)}>
-                dashboard
+                home
               </NavLink>
+              )}
 
               {/* Search moved here when the bottom thumb-bar was removed — the
                   header search bar is desktop-only, so this is its only mobile
                   home. (Scan already has a header camera icon + a Scan Inbox nav
                   item, so it isn't duplicated here.) */}
+              {!appMode && (
               <NavLink to="/search" className={linkClass} onClick={() => setOpen(false)}>
                 search
               </NavLink>
+              )}
 
-              <NavLink to="/calendar" className={linkClass} onClick={() => setOpen(false)}>
-                calendar
-              </NavLink>
-
-              {tops.map((m) => {
+              {visibleTops.map((m) => {
                 // Instance nav-group → a stem section label + its members as
                 // indented instance rows (the inline segment treatment doesn't
                 // fit a stacked mobile list).
@@ -256,7 +271,7 @@ export function MobileNav() {
                         <button
                           key={mem.name}
                           type="button"
-                          onClick={() => go(`/${mem.name.slice(INSTANCE_PREFIX.length)}`)}
+                          onClick={() => go(navTargetFor(mem.name, appMode))}
                           className={childClass}
                         >
                           <ChildDot />
@@ -283,11 +298,7 @@ export function MobileNav() {
                       </div>
                     ) : (
                       <NavLink
-                        to={
-                          m.name.startsWith("__instance__")
-                            ? `/${m.name.slice("__instance__".length)}`
-                            : `/${m.name}`
-                        }
+                        to={navTargetFor(m.name, appMode)}
                         className={linkClass}
                         onClick={() => setOpen(false)}
                       >
@@ -297,7 +308,7 @@ export function MobileNav() {
                     {kids.map((k) => {
                       const isInstance = k.name.startsWith("__instance__");
                       const to = isInstance
-                        ? `/${k.name.slice("__instance__".length)}`
+                        ? navTargetFor(k.name, appMode)
                         : isHeading
                           ? `/${k.name}`
                           : `/${m.name}?lens=${k.name}`;
@@ -331,10 +342,30 @@ export function MobileNav() {
 
               </div>
 
+              {/* The doors, one column, under a quiet label: they are reached,
+                  not arranged, so they never mix with the collections above. */}
+              {doors.length > 0 && (
+                <div>
+                  <div className={linkClass + " leading-5 text-faint dark:text-slate-500 uppercase text-[10px] font-mono tracking-widest"}>
+                    more
+                  </div>
+                  {doors.map((u) => (
+                    <NavLink
+                      key={u.name}
+                      to={navTargetFor(u.name, appMode)}
+                      className={childClass}
+                      onClick={() => setOpen(false)}
+                    >
+                      <span className="truncate">{u.displayName}</span>
+                    </NavLink>
+                  ))}
+                </div>
+              )}
+
               {/* Label queue lives here on mobile, as a menu row — the floating
                   bottom-right pill was covering page content + the thumb zone, so
                   it's desktop-only now. Self-hides when nothing is queued. */}
-              {labelsEnabled && (
+              {labelsEnabled && !appMode && (
                 <LabelsBasket
                   orgSlug={activeSlug}
                   getToken={getToken}
@@ -393,6 +424,7 @@ export function MobileNav() {
                   <span className={footLabel}>account</span>
                 </NavLink>
 
+{!appMode && (
                 <NavLink to="/configuration" onClick={() => setOpen(false)} className={footItem}>
                   {/* Signals ride ON the icon here, since a narrow footer cell
                       has no right edge to align them against. */}
@@ -410,6 +442,7 @@ export function MobileNav() {
                   </span>
                   <span className={footLabel}>config</span>
                 </NavLink>
+                )}
 
                 {/* Stays OPEN. Every other control here goes somewhere, so
                     closing after it is what you want; this one changes the menu

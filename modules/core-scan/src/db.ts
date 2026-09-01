@@ -205,6 +205,14 @@ export interface CoreScanPhotoRankConfigTable {
   updated_at: Generated<Date>;
 }
 
+/** Hosted-identification units spent today, one row per UTC day. Durable and
+ *  shared across api processes on purpose: the in-memory counter it replaces
+ *  reset on restart and doubled under two processes (see migration 0025). */
+export interface CoreScanIdentifyUsageTable {
+  day: ColumnType<Date, string, never>;
+  n: ColumnType<number, number | undefined, number>;
+}
+
 export interface CoreScanDB {
   core_scan_photo_rank_config: CoreScanPhotoRankConfigTable;
   core_scan_inbox_items: CoreScanInboxItemsTable;
@@ -216,6 +224,7 @@ export interface CoreScanDB {
   core_scan_eval_cases: CoreScanEvalCasesTable;
   core_scan_qr_rules: CoreScanQrRulesTable;
   core_scan_import_runs: CoreScanImportRunsTable;
+  core_scan_identify_usage: CoreScanIdentifyUsageTable;
 }
 
 /** One bulk import, with everything needed to reverse it. An import can touch

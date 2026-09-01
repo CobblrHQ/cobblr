@@ -148,7 +148,7 @@ async function visionExtract(
   // never learns which engine answered. We send OUR receipt prompt - its
   // recorded fixtures pin the exact text, and the endpoint honors the override.
   if (hostedIdentifyEnabled()) {
-    const hosted = await hostedIdentify({ orgId, imageB64, receiptPrompt: RECEIPT_VISION_PROMPT, visitorIp });
+    const hosted = await hostedIdentify({ orgId, imageB64, receiptPrompt: RECEIPT_VISION_PROMPT, visitorIp, userId });
     if (hosted?.kind === "receipt" && hosted.receipt) return receiptAsModelReply(hosted.receipt);
     // Any other outcome - an item mistaken for a receipt upstream, a hosted
     // outage - falls through to the tenant path this call always had.

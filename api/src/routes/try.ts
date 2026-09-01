@@ -28,6 +28,7 @@ import {
   sandboxEnabled,
 } from "../platform/try-sandbox.js";
 import { seedSandbox } from "../platform/try-sandbox-seed.js";
+import { emptySandboxRecords } from "../platform/try-sandbox-records.js";
 import { takeFromPool } from "../platform/try-sandbox-pool.js";
 import { issueSignInLink } from "../platform/sign-in-link.js";
 import { createSandboxExport, fetchSandboxExport } from "../platform/try-sandbox-export.js";
@@ -488,6 +489,46 @@ tryRouter.get(
 // So the modal shows the SAME destinations the email does, from one place. Two
 // copies of these URLs would drift, and the half that drifts is the one nobody
 // clicks while testing.
+// Empty the sandbox of records, keeping its shape.
+//
+// The entrance stays seamless on purpose: no "stocked or blank?" question at
+// the door, because that asks somebody to choose before either word means
+// anything. They arrive stocked, poke at real data, and clear it when they know
+// what they want their own to look like.
+tryRouter.post(
+  "/try/empty",
+  requireAuth,
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      if (!sandboxEnabled()) {
+        res.status(404).json({ error: { code: "not_found", message: "Not found" } });
+        return;
+      }
+      // Only ever a sandbox this session actually owns. Emptying a workspace is
+      // not something a stray token gets to do to somebody's real records.
+      const membership = await meta
+        .selectFrom("org_memberships")
+        .innerJoin("orgs", "orgs.id", "org_memberships.org_id")
+        .select(["orgs.slug as slug"])
+        .where("org_memberships.user_id", "=", req.session!.id)
+        .where("orgs.sandbox", "=", true)
+        .executeTakeFirst();
+      if (!membership) {
+        res.status(400).json({ error: { code: "not_sandbox", message: "This is not a sandbox workspace." } });
+        return;
+      }
+      const bearer = (req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
+      if (!bearer) {
+        res.status(401).json({ error: { code: "unauthorized", message: "Sign in first." } });
+        return;
+      }
+      res.json(await emptySandboxRecords(membership.slug, bearer));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 tryRouter.get("/try/paths", (_req: Request, res: Response): void => {
   // Empty means "this deployment does not offer that path", and the modal and
   // the email both simply leave it out rather than showing a dead link.

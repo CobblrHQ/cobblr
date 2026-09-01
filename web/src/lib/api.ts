@@ -167,6 +167,16 @@ export interface CommunityLink {
   blurb: string;
 }
 
+/** One cohort of the activation funnel (see docs/operations/product-metrics.md). */
+export interface ActivationFunnel {
+  signups: number;
+  first_item: number;
+  first_item_24h: number;
+  first_scan: number;
+  week2_eligible: number;
+  returned_week2: number;
+}
+
 export interface ChangelogEntry {
   type: "feature" | "improvement" | "fix" | "change";
   scope: string | null;
@@ -3318,6 +3328,9 @@ export const api = {
       { email },
     ),
 
+  /** Clear a sandbox's records, keeping its modules, fields and views. */
+  emptySandbox: () => request<{ deleted: number; failed: number }>("POST", "/try/empty", {}),
+
   keepSandbox: (email: string) =>
     request<{ ok: boolean; expires_at: string; emailed: boolean }>("POST", "/try/keep", { email }),
 
@@ -4302,13 +4315,27 @@ export const api = {
    *  + time-to-first-working-app. Operator only. */
   superAdminProductMetrics: () =>
     request<{
+      now: string;
+      /** The activation funnel per cohort (founder / sandbox / test-pool
+       *  workspaces excluded): signups → first item → first scan → back in
+       *  week two. `week2_eligible` is the denominator for `returned_week2`. */
+      activation: Record<"d30" | "d90" | "all", ActivationFunnel>;
       workspaces: Array<{
         org_id: string;
         name: string;
         slug: string;
         created_at: string;
+        app_mode: string | null;
         first_item_at: string | null;
         ttfw_minutes: number | null;
+        first_scan_at: string | null;
+        active_days: number;
+        last_active_day: string | null;
+        returned_week2: boolean | null;
+        founder: boolean;
+        sandbox: boolean;
+        test_pool: boolean;
+        counts: boolean;
         walls: Array<{ event: string; d7: number; d30: number }>;
         walls_7d: number;
         walls_30d: number;
@@ -4564,6 +4591,10 @@ export interface AiStatus {
   reason: "ok" | "operator_disabled" | "not_entitled" | "no_provider" | "workspace_disabled";
   /** When available, where the call would be served from — drives honest copy. */
   source?: "personal" | "workspace" | "managed";
+  /** A SEPARATE axis: this deployment can identify a photo or barcode through
+   *  the hosted service even with no chat provider connected. Scan surfaces must
+   *  not claim "basic mode" when identification is exactly what does work. */
+  identify_available?: boolean;
 }
 
 /** What the no-AI matcher offers to RUN, when a learned command fits. */

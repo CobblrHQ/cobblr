@@ -10,7 +10,7 @@ import { platform } from "@cobblr/platform-contract";
 import { type Kysely } from "kysely";
 import type { CoreIntegrationsDB } from "../db.js";
 import { loadConnectionRef } from "./connection.js";
-import { runReconcile } from "./engine.js";
+import { ReconcileBusyError, runReconcile } from "./engine.js";
 import { resolveSyncConnector } from "./resolve.js";
 
 const SCAN_QUEUE = "core-integrations.sync-scan";
@@ -47,6 +47,10 @@ export function registerSyncWorker(): void {
         const r = await runReconcile(db, ref, type);
         count = r.total;
       } catch (e) {
+        // Another reconcile of this sync is mid-flight (a person pressed
+        // Import, or a webhook arrived). That is not a failure: leave
+        // next_run_at alone below and this tick simply yields to it.
+        if (e instanceof ReconcileBusyError) continue;
         status = "error";
         error = (e as Error).message;
       }

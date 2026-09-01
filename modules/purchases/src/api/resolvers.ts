@@ -2,7 +2,7 @@
 // the platform's EntityActionsBar look up an order or order_item by
 // (kind, id) without touching the purchases tables directly.
 
-import { platform, parseSort, type EntityListQuery, type ResolvedEntity } from "@cobblr/platform-contract";
+import { platform, parseSort, type EntityListQuery, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { PurchasesDB } from "../db.js";
 
@@ -109,10 +109,7 @@ export function registerPurchasesResolvers(): void {
       // (see the note there): a purchases table's lines must not double up
       // under the module's own kind.
       .where("i.instance", "=", "purchases");
-    if (query.q) {
-      const needle = `%${query.q.toLowerCase()}%`;
-      q = q.where((eb) => eb(eb.fn("lower", ["i.description"]), "like", needle));
-    }
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["i.description"], json: ["i.metadata"] })!);
     if (query.filter) {
       // Qualified refs: every one of these columns exists on BOTH joined
       // tables or would otherwise be ambiguous in SQL.
@@ -172,15 +169,7 @@ export function registerPurchasesResolvers(): void {
     const offset = query.offset ?? 0;
     let q = db.selectFrom("purchases_orders").selectAll();
     if (instance) q = q.where("instance", "=", instance as never);
-    if (query.q) {
-      const needle = `%${query.q.toLowerCase()}%`;
-      q = q.where((eb) =>
-        eb.or([
-          eb(eb.fn("lower", ["vendor"]), "like", needle),
-          eb(eb.fn("lower", ["order_number"]), "like", needle),
-        ]),
-      );
-    }
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["vendor", "order_number", "description", "notes", "tracking_number"], json: ["metadata"] })!);
     if (query.filter) {
       const NATIVE = new Set(["status", "vendor"]);
       for (const [key, val] of Object.entries(query.filter)) {
@@ -297,10 +286,7 @@ export function registerPurchasesResolvers(): void {
   platform().entities.registerListResolver("purchases:vendor", async (orgId, query) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<PurchasesDB>;
     let q = db.selectFrom("purchases_vendors").selectAll();
-    if (query.q) {
-      const needle = `%${query.q.toLowerCase()}%`;
-      q = q.where((eb) => eb(eb.fn("lower", ["name"]), "like", needle));
-    }
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "website", "contact", "account_number", "notes"], json: ["metadata"] })!);
     const order = parseSort(query.sort, VENDOR_SORTABLE);
     for (const { col, dir } of order) q = q.orderBy(col as never, dir);
     if (order.length === 0) q = q.orderBy("name");

@@ -195,3 +195,71 @@ export async function seedSandboxRecords(
 
   return { created, failed, images };
 }
+
+/** Empty a sandbox of its RECORDS, leaving its shape alone.
+ *
+ *  The alternative was asking at the door — "stocked, or blank?" — which makes
+ *  somebody choose before either word means anything to them. A button instead:
+ *  arrive stocked, poke at real data, and clear it out once you know what you
+ *  want your own to look like. That is also the honest order, because the
+ *  seeded kitchen is ours, not theirs.
+ *
+ *  Deliberately records only. The modules, fields and saved views stay, because
+ *  those are the part somebody just spent twenty minutes deciding they like;
+ *  wiping them would be a factory reset wearing the word "clear".
+ *
+ *  Writes through the ordinary instance API over loopback, same as the seed, so
+ *  deletes fire the same events and activity a person's delete would. */
+export async function emptySandboxRecords(
+  slug: string,
+  sessionToken: string,
+): Promise<{ deleted: number; failed: number }> {
+  const auth = { Authorization: `Bearer ${sessionToken}`, "Content-Type": "application/json" };
+  const org = encodeURIComponent(slug);
+  let deleted = 0;
+  let failed = 0;
+
+  let instances: Array<{ instance_name?: string }> = [];
+  try {
+    const res = await fetch(`${base()}/api/v1/orgs/${org}/instances`, { headers: auth });
+    if (!res.ok) return { deleted: 0, failed: 1 };
+    instances = ((await res.json()) as { items?: Array<{ instance_name?: string }> }).items ?? [];
+  } catch {
+    return { deleted: 0, failed: 1 };
+  }
+
+  for (const inst of instances) {
+    const name = inst.instance_name;
+    // Instance names are workspace data that lands in a URL, so they are pinned
+    // to the shape the platform allows rather than trusted.
+    if (!name || !/^[a-z0-9][a-z0-9_-]{0,60}$/i.test(name)) continue;
+    const items = `${base()}/api/v1/orgs/${org}/instances/${encodeURIComponent(name)}/items`;
+    // Page by re-reading rather than by offset: rows are disappearing under us.
+    for (let guard = 0; guard < 200; guard++) {
+      let rows: Array<{ id?: string }> = [];
+      try {
+        const res = await fetch(`${items}?limit=100`, { headers: auth });
+        if (!res.ok) { failed++; break; }
+        rows = ((await res.json()) as { items?: Array<{ id?: string }> }).items ?? [];
+      } catch {
+        failed++;
+        break;
+      }
+      if (rows.length === 0) break;
+      let progressed = false;
+      for (const row of rows) {
+        if (!row.id) continue;
+        try {
+          const res = await fetch(`${items}/${encodeURIComponent(row.id)}`, { method: "DELETE", headers: auth });
+          if (res.ok) { deleted++; progressed = true; } else failed++;
+        } catch {
+          failed++;
+        }
+      }
+      // Nothing in this page could be deleted, so the next read returns the
+      // same page. Stop instead of spinning until the guard runs out.
+      if (!progressed) break;
+    }
+  }
+  return { deleted, failed };
+}

@@ -12,12 +12,16 @@
 // containing block that traps a position:fixed child, so a bar rendered inside
 // the layout tree would be clipped or mispositioned rather than pinned to the
 // viewport.
-import { useEffect, useState } from "react";
+//
+// Because it IS fixed, it sat OVER the page rather than in it, so the last rows
+// of every list were underneath it. Worst on a phone, where the bar wraps to
+// two lines and what it covers is whatever you just scrolled down to reach. So
+// the bar now measures itself and pays for its own space.
+import { useEffect, useLayoutEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { api, ApiError } from "../lib/api";
-import { useToast } from "@cobblr/platform-web";
+import { api } from "../lib/api";
 import { sandboxExpiry, clearSandboxExpiry } from "../lib/sandbox-session";
-import { TakeYourWorkModal } from "./TakeYourWorkModal";
+import { SandboxSaveModal } from "./SandboxSaveModal";
 
 /** Below this, the bar is always visible. Above it, only the small chip is. */
 const URGENT_MS = 15 * 60_000;
@@ -29,15 +33,35 @@ function human(msLeft: number): string {
   return "an hour";
 }
 
+/** Reserve exactly the bar's own height at the foot of the page. Measured
+ *  rather than guessed: it is one line on a desktop and two or three on a
+ *  phone, and any constant would be wrong on most of them. */
+function useReserveSpace(el: HTMLElement | null): void {
+  useLayoutEffect(() => {
+    if (!el) return;
+    const apply = () => {
+      document.body.style.paddingBottom = `${el.getBoundingClientRect().height}px`;
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      document.body.style.paddingBottom = "";
+    };
+  }, [el]);
+}
+
 export function SandboxBar() {
   const [expiry] = useState<number | null>(sandboxExpiry);
   const [now, setNow] = useState(() => Date.now());
-  const [open, setOpen] = useState(false);
-  const [email, setEmail] = useState("");
+  const [saving, setSaving] = useState(false);
   const [kept, setKept] = useState(false);
-  const [taking, setTaking] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const toast = useToast();
+  const [bar, setBar] = useState<HTMLDivElement | null>(null);
+  // The two doors out, for the ended state. Public endpoint: it describes the
+  // deployment, not the (by then dead) session.
+  const [paths, setPaths] = useState<{ cloud_url: string | null; selfhost_url: string | null } | null>(null);
+  useReserveSpace(bar);
 
   useEffect(() => {
     if (expiry == null) return;
@@ -47,16 +71,55 @@ export function SandboxBar() {
     return () => clearInterval(t);
   }, [expiry]);
 
+  const over = expiry != null && !kept && expiry - now <= 0;
+  useEffect(() => {
+    if (!over) return;
+    void api.sandboxPaths().then(setPaths).catch(() => setPaths(null));
+  }, [over]);
+
   if (expiry == null || kept) return null;
   const left = expiry - now;
+
+  // What to say once it is actually over.
+  //
+  // This used to be "This sandbox has ended. Start another", which is the wrong
+  // offer at the only moment it gets made: somebody has just spent an hour
+  // building something and the single thing on offer is to do the demo again.
+  // The work cannot be rescued here — expiry hard-deletes the workspace and
+  // drops its database, so offering recovery would be a lie — but the person is
+  // as decided as they will ever be, and the honest next step is the product.
+  // So the two real doors lead, and another sandbox follows.
   if (left <= 0) {
-    // Expired while they were looking at it. The next request will 401 anyway;
-    // saying so first is kinder than a silent failure.
     return createPortal(
-      <div className="fixed bottom-0 inset-x-0 z-40 bg-ember-600 text-white text-sm px-4 py-2 text-center">
-        This sandbox has ended.{" "}
-        <a href="/api/v1/try" className="underline font-medium">
-          Start another
+      <div
+        ref={setBar}
+        className="fixed bottom-0 inset-x-0 z-40 border-t border-ember-300 dark:border-ember-800 bg-ember-50 dark:bg-ember-950/40 px-4 py-2.5 text-sm flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5"
+      >
+        <span className="text-ember-700 dark:text-ember-300 font-medium">
+          Your hour is up, and this sandbox was deleted.
+        </span>
+        {paths?.cloud_url && (
+          <a
+            href={paths.cloud_url}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-md bg-cobble-600 hover:bg-cobble-700 text-white font-medium px-3 py-1 transition"
+          >
+            Get your own, hosted
+          </a>
+        )}
+        {paths?.selfhost_url && (
+          <a
+            href={paths.selfhost_url}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-md border border-line dark:border-slate-600 px-3 py-1 font-medium hover:bg-subtle transition"
+          >
+            Run it yourself
+          </a>
+        )}
+        <a href="/api/v1/try" className="text-muted underline">
+          or start another sandbox
         </a>
       </div>,
       document.body,
@@ -65,87 +128,48 @@ export function SandboxBar() {
 
   const urgent = left <= URGENT_MS;
 
-  async function keep(e: React.FormEvent) {
-    e.preventDefault();
-    if (!email.trim()) return;
-    setBusy(true);
-    try {
-      const res = await api.keepSandbox(email.trim());
-      setKept(true);
-      clearSandboxExpiry();
-      // Only promise an inbox when something was actually sent to it. If the
-      // link could not go out, the sandbox link is still alive on purpose, so
-      // the honest instruction is to keep the page.
-      toast.success(
-        res.emailed
-          ? "Saved. This workspace is yours now - check your email for the link back in."
-          : "Saved, but we could not send your sign-in link. Keep this tab open and this page's address: it still works.",
-      );
-    } catch (err) {
-      toast.error(
-        err instanceof ApiError && err.status === 409
-          ? "That email already has an account. Sign in with it instead."
-          : "Could not save that. Try again?",
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return createPortal(
-    <div
-      className={
-        "fixed bottom-0 inset-x-0 z-40 border-t px-4 py-2 text-sm flex flex-wrap items-center gap-x-3 gap-y-2 justify-center " +
-        (urgent
-          ? "bg-ember-50 dark:bg-ember-950/40 border-ember-300 dark:border-ember-800"
-          : "bg-surface dark:bg-slate-900 border-line dark:border-slate-700")
-      }
-    >
-      <span className={urgent ? "text-ember-700 dark:text-ember-300 font-medium" : "text-muted"}>
-        {urgent ? "Nearly done: " : "This is a sandbox. "}
-        {human(left)} left.
-      </span>
-      {/* The smaller door, and for most people the likelier one: an address to
-          send one file to, rather than committing to an account. Always offered
-          beside Keep, not hidden behind it. */}
-      <button
-        type="button"
-        onClick={() => setTaking(true)}
-        className="rounded-md border border-line dark:border-slate-600 px-3 py-1 font-medium hover:bg-subtle transition"
+    <>
+      <div
+        ref={setBar}
+        className={
+          "fixed bottom-0 inset-x-0 z-40 border-t px-4 py-2 text-sm flex flex-wrap items-center gap-x-3 gap-y-2 justify-center " +
+          (urgent
+            ? "bg-ember-50 dark:bg-ember-950/40 border-ember-300 dark:border-ember-800"
+            : "bg-surface dark:bg-slate-900 border-line dark:border-slate-700")
+        }
       >
-        Take your work
-      </button>
-      <TakeYourWorkModal open={taking} onClose={() => setTaking(false)} />
-      {open ? (
-        <form onSubmit={keep} className="flex items-center gap-2">
-          <input
-            type="email"
-            required
-            autoFocus
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@example.com"
-            className="input !py-1 !w-56"
-            aria-label="Your email"
-          />
-          <button
-            type="submit"
-            disabled={busy}
-            className="rounded-md bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white font-medium px-3 py-1 transition"
-          >
-            {busy ? "Saving…" : "Keep it"}
-          </button>
-        </form>
-      ) : (
+        <span className={urgent ? "text-ember-700 dark:text-ember-300 font-medium" : "text-muted"}>
+          {urgent ? "Nearly done: " : "This is a sandbox. "}
+          {human(left)} left.
+        </span>
+        {/* One door, not two. These used to open different things and each hid
+            the other, so whichever you pressed first was the only one you knew
+            about. They are two answers to one question, so they share a modal. */}
         <button
           type="button"
-          onClick={() => setOpen(true)}
+          onClick={() => setSaving(true)}
           className="rounded-md bg-cobble-600 hover:bg-cobble-700 text-white font-medium px-3 py-1 transition"
         >
           Keep this workspace
         </button>
-      )}
-    </div>,
+        <button
+          type="button"
+          onClick={() => setSaving(true)}
+          className="rounded-md border border-line dark:border-slate-600 px-3 py-1 font-medium hover:bg-subtle transition"
+        >
+          Take your work
+        </button>
+      </div>
+      <SandboxSaveModal
+        open={saving}
+        onClose={() => setSaving(false)}
+        onKept={() => {
+          clearSandboxExpiry();
+          setKept(true);
+        }}
+      />
+    </>,
     document.body,
   );
 }

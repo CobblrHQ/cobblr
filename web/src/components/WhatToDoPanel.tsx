@@ -32,6 +32,8 @@ import { BundleDetailModal } from "./BundleDetailModal";
 import { PairPhoneButton } from "./PairPhoneButton";
 import { BundleSection, BundleTile, splitCatalog } from "./BundleBrowse";
 import { AiOffNotice, useAiStatus } from "./AiStatusNotice";
+import { FirstScanCard } from "./FirstScanCard";
+import { isSandboxSession } from "../lib/sandbox-session";
 import { useIsTouch } from "../lib/useIsTouch";
 
 function firstSentence(s: string): string {
@@ -130,6 +132,9 @@ function CaptureTile({ slug, it }: { slug: string; it: { catalog_image_file_id: 
       className="flex-1 min-w-14 max-w-24 aspect-square rounded-md border border-line dark:border-slate-700 overflow-hidden bg-surface dark:bg-slate-900 grid place-items-center"
     >
       {src ? (
+        // EXTERNAL-IMAGE-OK: `src` is already resolved by this tile's own effect, which
+        // token-fetches internal paths to a blob: URL. It does not use useImageSrc because it
+        // must WALK to the next candidate when one fails, which the shared hook does not do.
         <img src={src} alt={name} loading="lazy" className="max-w-full max-h-full object-contain" onError={() => { setSrc(null); setIdx((i) => i + 1); }} />
       ) : (
         <span className="text-[11px] font-medium text-faint dark:text-slate-500 uppercase">{name.slice(0, 2)}</span>
@@ -178,7 +183,7 @@ function rankMatch(q: string, name: string, rest: string): number {
 
 // "Try one of these" starter chips — phrases the heuristic matcher genuinely
 // routes (verified against the bundle menu), so the demo never dead-ends.
-const STARTER_CHIPS = ["a spool of black PLA", "my passport", "blue worsted yarn", "a monstera plant"];
+const STARTER_CHIPS = ["a spool of black PLA", "blue worsted yarn", "a monstera plant"];
 
 export function WhatToDoPanel({
   slug,
@@ -203,7 +208,17 @@ export function WhatToDoPanel({
   const openKey = `cobblr.whatToDo.open:${slug}`;
   const [open, setOpen] = useState<boolean>(() => {
     if (!startCollapsed) return true;
-    try { return localStorage.getItem(openKey) === "1"; } catch { return false; }
+    try {
+      const stored = localStorage.getItem(openKey);
+      if (stored != null) return stored === "1";
+      // A sandbox is pre-stocked on purpose, so it never looks like an empty
+      // spreadsheet - but that made the app read a first-time visitor as an
+      // established user and fold this panel away, which is the one thing on
+      // the page telling them what to do. The content is ours, not theirs.
+      return isSandboxSession();
+    } catch {
+      return false;
+    }
   });
   const setOpenPersist = (v: boolean) => {
     setOpen(v);
@@ -578,38 +593,32 @@ export function WhatToDoPanel({
   const showToggle = startCollapsed && !hasPending;
   const showBody = showToggle ? open : true;
 
-  // Two-column guided box (approved mockup): the "just add it" hero fills the
-  // left column; the ready-made chips + Describe card stack in the right, so the
-  // box reads "type it, or pick/describe it" instead of a lone input floating in
-  // empty space. Applies to both the full-width empty-state hero and the collapsed
-  // established-workspace card. Only in the compact, not-expanded state — once
-  // "More ways" opens, the building-blocks/trackers columns take the full row.
-
-  // Extracted so the same blocks serve both the two-column layout and the
-  // original single-column one below it.
+  // One column, one action (2026-09 product review: the first screen offered
+  // about seventeen things to click and no default, and nobody clicked any).
+  // The hero is the whole compact panel: type it, or scan it. Under it, one
+  // quiet line of ready-made setups and the "more ways" fold; the AI builder,
+  // the full catalog and the blank kinds all live behind that fold.
   const readyMadeStrip = (
-    <div data-strip="ready-made">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-2">ready-made:</div>
-      <div className="flex flex-wrap gap-2">
+    <div data-strip="ready-made" className="flex flex-wrap items-center gap-1.5">
+      <span className="text-[11px] text-faint dark:text-slate-500">or start from a ready-made setup:</span>
       {skins
         .filter((b) => (b.manifest.catalog ?? "core") === "core")
-        .slice(0, 8)
+        .slice(0, 4)
         .map((b) => (
         <button
           key={b.manifest.id}
           type="button"
           onClick={() => pickRecipe(b)}
           className={
-            "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs transition " +
+            "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] transition " +
             (selectedRecipe?.manifest.id === b.manifest.id
               ? "border-accent text-accent bg-accent/5"
-              : "border-line dark:border-slate-700 bg-surface dark:bg-slate-900 text-content dark:text-mortar-100 hover:border-accent hover:text-accent")
+              : "border-line dark:border-slate-700 bg-surface dark:bg-slate-900 text-muted dark:text-slate-300 hover:border-accent hover:text-accent")
           }
         >
           <span aria-hidden>{b.glyph}</span> {b.manifest.name}
         </button>
       ))}
-      </div>
     </div>
   );
 
@@ -698,6 +707,8 @@ export function WhatToDoPanel({
           vanished entirely: a workspace with AI switched off said nothing at all on the
           dashboard. Whether AI is on is status, not onboarding, so it does not collapse
           with the guided flow. */}
+      {isSandboxSession() && <FirstScanCard />}
+
       <AiOffNotice status={aiStatus} compact>
         {/* Situation, then the ask. Two earlier versions failed differently: the
             original opened on "AI isn't connected, matching runs in basic mode", which
@@ -705,17 +716,31 @@ export function WhatToDoPanel({
             reassurance nobody finishes. Reassure in the first clause, ask in the second,
             and keep "free" in the sentence because it is the fact most likely to change
             someone's mind. */}
-        <strong>Scanning already works without AI.</strong>{" "}
-        Connect a free model to identify anything from a photo, and to use the builder
-        below.{" "}
+        {aiStatus?.identify_available ? (
+          <>
+            {/* Identification is already wired here, so the old line ("scanning
+                already works without AI") both answered a question nobody asked
+                and undersold what they had just been handed. Say what is
+                missing instead. */}
+            <strong>Scanning and identifying already work here.</strong>{" "}
+            Connect a free model to use the builder below, and to ask Cobb about
+            your workspace.{" "}
+          </>
+        ) : (
+          <>
+            <strong>Scanning already works without AI.</strong>{" "}
+            Connect a free model to identify anything from a photo, and to use the builder
+            below.{" "}
+          </>
+        )}
       </AiOffNotice>
       {showBody && (<>
-      {/* Capture-first: the reactive add/capture surface is the hero, a short
-          tracker strip sits under it, and the two browse columns (building
-          blocks · all trackers) only render once "More ways to start" is
-          opened. Selection state still lives IN the columns; a strip pick or a
-          column pick primes the same hero. */}
-      <div className="grid gap-3 items-stretch md:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+      {/* Capture-first: the reactive add/capture surface is the hero and the
+          whole compact panel. Everything else (ready-made setups, the AI
+          builder, the catalog, blank kinds) only renders once "More ways to
+          start" is opened. Selection state still lives IN the fold; a strip
+          pick or a tile pick primes the same hero. */}
+      <div className="max-w-2xl">
 
         {/* The hero — the captive terminal step. Reacts to the funnel: a chosen
             recipe → "set it up & drop me in"; a chosen kind → "add a blank one";
@@ -837,20 +862,6 @@ export function WhatToDoPanel({
               ? "Scan barcodes or snap photos with your camera — they file themselves."
               : "No camera here? Pair your phone — scan with it and the items land in this workspace."}
           </p>
-          {/* The messy-pile first mission (put-away.md §5): sorting a physical
-              pile IS a great first session — bins get made and named as you go.
-              On a phone this lands in the camera with Sort mode already on. */}
-          <p className="text-[11px] text-faint dark:text-slate-500 mt-1">
-            Got a pile of stuff to put away?{" "}
-            <Link
-              to={isTouch ? "/scan/camera?sort=1" : "/scan?livesort=1"}
-              className="text-accent hover:underline font-medium"
-            >
-              Start a Live Sort
-            </Link>{" "}
-             - scan each thing and get told which bin it goes in; number a few containers with a
-            marker and the bins name themselves as you sort.
-          </p>
 
           {/* Starter chips — a fresh panel demos the magic in one tap. Only when
               there's nothing captured yet and no funnel selection. */}
@@ -882,31 +893,41 @@ export function WhatToDoPanel({
             </div>
           )}
         </div>
-        {/* Right column (two-column layout): pick a ready-made up top, or describe
-            it. The chips take mb-auto so the Describe card anchors to the bottom,
-            lining the column's base up with the taller hero on the left. */}
-        <div className="flex flex-col">
-          {skins.length > 0 && <div className="mb-auto">{readyMadeStrip}</div>}
-          <div className={skins.length > 0 ? "mt-4" : ""}>{describeCard}</div>
-        </div>
       </div>
 
-      {/* More/Fewer ways to start - a full-width toggle right under the two-column
-          top row. Expanding opens the building-blocks/trackers columns BELOW, so
-          the top row keeps its width instead of snapping to full (the operator, 2026-07-31). */}
-      <button
-        type="button"
-        data-tour="more-ways"
-        onClick={() => setMoreOpen((v) => !v)}
-        className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:underline"
-      >
-        {moreOpen
-          ? (<>Fewer ways to start <ChevronUp size={13} /></>)
-          : (<>More ways to start - browse every bundle &amp; module <ChevronDown size={13} /></>)}
-      </button>
+      {/* One quiet line under the hero: a few ready-made setups, and the fold
+          that holds every other way to start. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        {skins.length > 0 && !moreOpen && readyMadeStrip}
+        <button
+          type="button"
+          data-tour="more-ways"
+          onClick={() => setMoreOpen((v) => !v)}
+          className="inline-flex items-center gap-1 text-[11px] font-medium text-accent hover:underline"
+        >
+          {moreOpen
+            ? (<>Fewer ways to start <ChevronUp size={12} /></>)
+            : (<>More ways to start <ChevronDown size={12} /></>)}
+        </button>
+      </div>
 
       {moreOpen && (
         <div className="rounded-xl border border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/40 p-3 space-y-4">
+          {describeCard}
+          {/* The messy-pile first mission (put-away.md §5): sorting a physical
+              pile IS a great first session — bins get made and named as you go.
+              On a phone this lands in the camera with Sort mode already on. */}
+          <p className="text-[11px] text-faint dark:text-slate-500">
+            Got a pile of stuff to put away?{" "}
+            <Link
+              to={isTouch ? "/scan/camera?sort=1" : "/scan?livesort=1"}
+              className="text-accent hover:underline font-medium"
+            >
+              Start a Live Sort
+            </Link>{" "}
+             - scan each thing and get told which bin it goes in; number a few containers with a
+            marker and the bins name themselves as you sort.
+          </p>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex-1 min-w-0 text-[10px] font-mono uppercase tracking-widest text-accent">// every way to start</div>
             <div className="relative w-full sm:w-72">

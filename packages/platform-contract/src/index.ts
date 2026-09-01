@@ -1854,6 +1854,20 @@ export interface PlatformEvents {
  *  returned value is a Kysely instance — typed loosely here so the
  *  platform-contract doesn't need to know about every module's
  *  schema. Callers cast to their own schema type. */
+/** What a module may know about a workspace without touching cobblr_meta
+ *  itself. Added for the hosted identify scope: the allowance had to answer
+ *  "is this workspace the yarn app?" and a module has no other way to ask. */
+export interface PlatformOrgInfo {
+  id: string;
+  slug: string;
+  /** The managed app this workspace is locked into, or null for a platform
+   *  workspace. Mirrors `orgs.app_mode`. */
+  app_mode: { app: string; home_path: string; label?: string } | null;
+}
+export interface PlatformOrgs {
+  get(orgId: string): Promise<PlatformOrgInfo | null>;
+}
+
 export interface PlatformTenants {
   getDb(orgId: string): Promise<unknown>;
   /** Release this tenant's connection pool — but ONLY if it currently has
@@ -4273,6 +4287,29 @@ export interface PlatformMetering {
   record(e: MeterEvent): void;
 }
 
+// ── Product telemetry seam ───────────────────────────────────────────────────
+// Sparse, high-signal product events (a wall somebody hit, an adoption
+// milestone such as the first scan) — the numbers the operator reads to learn
+// whether people are getting anywhere. NOT the activity log (that is the
+// mutation audit and shows in the user's own feed) and NOT metering (that is
+// billing). Rule of thumb: if the event would not change what gets built next
+// week, do not track it.
+export interface TelemetryEvent {
+  orgId: string;
+  userId?: string | null;
+  /** e.g. "scan_captured", "label_printed", "validation_rejected". */
+  event: string;
+  detail?: Record<string, unknown>;
+}
+export interface PlatformTelemetry {
+  /** One row per occurrence. Best-effort, fire-and-forget, never throws. */
+  track(e: TelemetryEvent): void;
+  /** At most one row per workspace + user + event + UTC day, so a burst of
+   *  the same thing (a Live Sort session, a batch print) is one fact: "they
+   *  did this today". The right call for funnel milestones. */
+  trackDaily(e: TelemetryEvent): void;
+}
+
 export interface SignupLifecycleCtx { userId: string; email: string; orgId: string }
 export interface AccountDeleteCtx { userId: string; email: string }
 export interface LifecycleHooks {
@@ -4528,6 +4565,7 @@ export interface Platform {
   activity: PlatformActivity;
   events: PlatformEvents;
   tenants: PlatformTenants;
+  orgs: PlatformOrgs;
   resolvables: PlatformResolvables;
   db: PlatformDb;
   entities: PlatformEntities;
@@ -4561,6 +4599,7 @@ export interface Platform {
   // Hosted-overlay seams (no-op / allow-all in open core):
   entitlements: PlatformEntitlements;
   metering: PlatformMetering;
+  telemetry: PlatformTelemetry;
   accounts: PlatformAccounts;
   http: PlatformHttp;
   hostedPanels: PlatformHostedPanels;
@@ -5042,3 +5081,78 @@ export async function restoreRow(
     )
     .execute();
 }
+
+// ── text search over a list's columns ─────────────────────────────────────
+// Lives here rather than in its own file: the contract is loaded buildless by
+// node at boot (lint:node-resolves), which does not rewrite a "./x.js"
+// re-export the way tsc and tsx do.
+// One meaning for `q` on a list: "any text this record carries contains it".
+//
+// Every module used to hand-roll the where clause, and each one chose its own
+// columns: machines matched the name only, sales matched the name only, tags
+// the name, purchase lines the description. To a person "the Bambu one" is a
+// manufacturer and "my deltas" is a type, and to the assistant `q` is a text
+// search, so a name-only resolver answered "you have no Bambu" about a
+// workspace with one (2026-08-27). The clause is the same in every module;
+// only the column list differs, and that is all a resolver should have to say.
+//
+// Structurally typed on purpose: this package has no kysely dependency, and a
+// resolver hands in its own `eb`. The shape used here (`eb(lhs, op, rhs)`,
+// `eb.fn`, `eb.or`, `eb.cast`) is Kysely's expression builder from 0.26 on.
+
+/** The slice of Kysely's ExpressionBuilder this helper needs.
+ *
+ *  Typed with `any` on purpose: the real builder's parameters are
+ *  ReferenceExpression<DB, TB> for the caller's own tables, which this package
+ *  cannot name without depending on kysely and on every module's schema. The
+ *  caller's `eb` is fully typed at the call site; this interface only has to
+ *  accept it, and the SQL it produces is what the api tests check. */
+export interface LikeFnModule {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (name: "lower", args: any[]): any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  coalesce(...args: any[]): any;
+}
+export interface LikeBuilder {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (lhs: any, op: "like", rhs: any): any;
+  fn: LikeFnModule;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  or(exprs: any[]): any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  cast(expr: any, to: "text"): any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  val(value: any): any;
+}
+
+export interface TextSearchColumns {
+  /** Plain text columns. A NULL never matches and never breaks the OR. */
+  text: string[];
+  /** jsonb columns searched as text (custom fields live in `metadata`). */
+  json?: string[];
+}
+
+/** The needle a person typed, as the like pattern every resolver used. */
+export function likeNeedle(q: string): string {
+  return `%${q.toLowerCase()}%`;
+}
+
+/**
+ * The where-expression for `q` over the listed columns, or null when `q` is
+ * empty (so a resolver can write `const w = textSearchWhere(...); if (w) query =
+ * query.where(w)`). Case-insensitive, substring, every column OR-ed.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function textSearchWhere(eb: LikeBuilder, q: string | undefined, columns: TextSearchColumns): any {
+  const needle = (q ?? "").trim();
+  if (!needle) return null;
+  const like = likeNeedle(needle);
+  const empty = eb.val("");
+  const exprs: any[] = [
+    ...columns.text.map((c) => eb(eb.fn("lower", [eb.fn.coalesce(c, empty)]), "like", like)),
+    ...(columns.json ?? []).map((c) => eb(eb.fn("lower", [eb.cast(c, "text")]), "like", like)),
+  ];
+  if (exprs.length === 0) return null;
+  return eb.or(exprs);
+}
+

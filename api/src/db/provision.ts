@@ -19,6 +19,7 @@ import { Client, Pool } from "pg";
 import { env } from "../env.js";
 import { encryptCreds } from "./crypto.js";
 import { runMigrations } from "./migrate.js";
+import { guardPoolClients } from "./client-error-guard.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // dist/db/provision.js → ../../migrations/tenant-base
@@ -144,6 +145,7 @@ async function provisionOnce(
   // fails, so a single run showed 472 ECONNREFUSED assertions across 34 files.
   // tenant.ts has carried this listener for exactly this reason; provisioning
   // was the copy that never got it.
+  guardPoolClients(provisioningPool, `provisioning-pool ${dbName}`);
   provisioningPool.on("error", (err) => {
     console.error(`[provisioning-pool ${dbName}] idle client error:`, (err as Error).message);
   });

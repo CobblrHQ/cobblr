@@ -8,7 +8,7 @@
 // subtitle_column] for each entry at lookup time.
 
 import { sql, type Kysely } from "kysely";
-import { platform, type ResolvedEntity } from "@cobblr/platform-contract";
+import { platform, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
 import type { CoreCatalogsDB } from "../db.js";
 import {
   catalogResolverConfigured,
@@ -96,15 +96,7 @@ export function registerCatalogsResolvers(): void {
       const limit = Math.min(query.limit ?? 50, 200);
       const offset = query.offset ?? 0;
       let q = db.selectFrom("core_catalogs_catalogs").selectAll();
-      if (query.q && query.q.length > 0) {
-        const needle = `%${query.q.toLowerCase()}%`;
-        q = q.where((eb) =>
-          eb.or([
-            eb(eb.fn("lower", ["name"]), "like", needle),
-            eb(eb.fn("lower", ["description"]), "like", needle),
-          ]),
-        );
-      }
+      if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "description"] })!);
       const rows = await q.orderBy("name").limit(limit).offset(offset).execute();
       return { items: rows.map((r) => toCatalog(r)) };
     },
@@ -191,17 +183,9 @@ export function registerCatalogsResolvers(): void {
       if (typeof filter.catalog_id === "string") {
         q = q.where("e.catalog_id", "=", filter.catalog_id);
       }
-      if (query.q && query.q.length > 0) {
-        const needle = `%${query.q.toLowerCase()}%`;
-        // Searches the conventional `name` payload column. Catalogs
-        // whose title column differs still match if their column
-        // happens to be named `name` in the source — most do; a
-        // catalog with a different title column gets prefix-only
-        // matching via the title_column index at the route layer.
-        q = q.where(
-          sql<boolean>`lower(e.payload->>'name') like ${needle}`,
-        );
-      }
+      // The whole payload as text, so a catalog whose title column is not
+      // `name` still matches on it, and so does any other column.
+      if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: [], json: ["e.payload"] })!);
       const rows = await q.limit(limit).offset(offset).execute();
       return { items: rows.map((r) => toEntry(r)) };
     },

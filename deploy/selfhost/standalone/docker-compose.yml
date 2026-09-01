@@ -197,7 +197,11 @@ services:
   # The selfhost boot test boots this profile and fails if the updater does not
   # reach the point of scheduling its first run.
   watchtower:
-    image: containrrr/watchtower:1.7.1
+    # The maintained fork, pinned. The original containrrr image is unmaintained and
+    # asks the daemon for API 1.25, which every engine since Docker v25 refuses; the
+    # template used to carry a DOCKER_API_VERSION override for that. The fork tracks
+    # current Docker, takes the same WATCHTOWER_* settings, and needs no override.
+    image: ghcr.io/nicholas-fedor/watchtower:1.17.0
     profiles: ["autoupdate"]
     restart: unless-stopped
     volumes:
@@ -219,12 +223,6 @@ services:
       # would rather choose the moment, and WATCHTOWER_TZ to read it in your zone.
       TZ: ${WATCHTOWER_TZ:-UTC}
       WATCHTOWER_SCHEDULE: ${WATCHTOWER_SCHEDULE:-0 0 */4 * * *}
-      # Watchtower 1.7.1 asks the daemon for API 1.25, and every Docker engine
-      # since v25 refuses that outright ("client version 1.25 is too old"), so
-      # without this the updater dies seconds after it starts on any current
-      # install. 1.41 is Docker 20.10 and newer, which is everything still
-      # receiving security updates.
-      DOCKER_API_VERSION: ${DOCKER_API_VERSION:-1.41}
       # Only containers with the enable label above; never another stack.
       WATCHTOWER_LABEL_ENABLE: "true"
       # Drop the superseded image after a successful update.

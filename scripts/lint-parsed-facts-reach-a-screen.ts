@@ -59,26 +59,21 @@ const web = globSync("web/src/**/*.{ts,tsx}")
   .join("\n");
 
 /**
- * Facts that reach no screen TODAY, grandfathered so this can ship without
- * forcing a design decision in the same change.
+ * Facts that reach no screen. EMPTY, and it stays that way.
  *
- * Every one is an answer to "what did this actually cost me", which is the
- * question the receipt work has been circling for a while: a receipt knows the
- * list price, what came off it, the tax, and what was really charged, and an
- * item shows none of it. That is worth designing, not worth quietly rendering
- * six numbers onto a card at the end of an unrelated fix.
+ * It held six on 2026-08-25, all answers to "what did this actually cost me":
+ * a receipt knew the list price, what came off it, the tax and what was really
+ * charged, and no screen said any of it. The note here said that was worth
+ * designing rather than quietly rendering six numbers onto a card at the end of
+ * an unrelated fix. It was designed on 2026-09-01: the money the receipt states
+ * is shown beside the document it was read from, and the marketplace seller -
+ * a per-ITEM fact, not a receipt one - sits on the item's own line.
  *
- * The point of the baseline is that this list may only ever SHRINK. A new field
- * added to the record and shown nowhere fails immediately.
+ * The list may only ever SHRINK, so adding to it is not the way past this lint.
+ * A new field on the record either reaches a screen or is declared PLUMBING
+ * with the reason a person has no use for it.
  */
-const BASELINE = new Set([
-  "seller",
-  "net_price",
-  "list_price",
-  "discounts",
-  "tax",
-  "total_charged",
-]);
+const BASELINE = new Set<string>([]);
 
 const unseen = fields.filter((f) => !PLUMBING[f] && !new RegExp(`\\b${f}\\b`).test(web));
 const fresh = unseen.filter((f) => !BASELINE.has(f));

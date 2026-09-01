@@ -144,6 +144,9 @@ export function PublicAppPlayer({
     <div className="min-h-screen" style={themeWrapperStyle(theme) ?? { background: "#f4f2ee" }}>
       <header className="px-6 py-4 flex items-center gap-3 border-b" style={{ borderColor: "var(--app-border, #e2e8f0)" }}>
         {theme?.logo ? (
+          // EXTERNAL-IMAGE-OK: an app theme assetRef (data: URL or hosted URL, capped at 500KB),
+          // never a core-files path. This page also holds no token, so an authed path could not
+          // be resolved here anyway.
           <img src={theme.logo} alt="" className="h-7 w-7 rounded object-contain" />
         ) : null}
         <span className="font-extrabold text-lg">{app.name}</span>

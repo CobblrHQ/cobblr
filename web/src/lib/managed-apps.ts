@@ -50,3 +50,15 @@ export const MANAGED_APPS: Record<string, ManagedAppMeta> = {
 export function getManagedAppMeta(id: string | undefined): ManagedAppMeta | null {
   return id ? MANAGED_APPS[id] ?? null : null;
 }
+
+/** The routes a LOCKED managed-app workspace may visit. A whitelist, so a new
+ *  platform page is blocked by default. Shared by the layout guard (which
+ *  bounces anything else to the app home) and by the navs (which must not offer
+ *  a destination that would bounce). Those used to be two separate lists, which
+ *  is how the phone menu came to show Dashboard, Calendar and Configuration to
+ *  a knitter and bounce each tap back to the yarn table. */
+export const MANAGED_APP_SURFACE = ["/instances", "/scan", "/me"] as const;
+
+export function inManagedAppSurface(pathname: string): boolean {
+  return MANAGED_APP_SURFACE.some((p) => pathname === p || pathname.startsWith(p + "/"));
+}

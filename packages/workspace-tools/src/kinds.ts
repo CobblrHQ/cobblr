@@ -9,6 +9,8 @@
 import type { WorkspaceApi } from "./api.js";
 
 export interface KindRec {
+  /** The kind's read allowlist; null means everything declared is readable. */
+  exposable_fields?: string[] | null;
   id: string;
   display_name?: string;
   display_name_plural?: string | null;
@@ -91,6 +93,16 @@ function resolveIdPath(kind: string, id: string, kinds: KindRec[], which: "updat
   return `${root}/${tmpl.replace(/^\//, "").replace("{id}", encodeURIComponent(id))}`;
 }
 
+/** Declared fields the read projection strips, as the summary carries them. */
+function hiddenFieldsOf(k: KindRec): { hidden_fields?: string[]; hidden_fields_note?: string } {
+  if (!Array.isArray(k.exposable_fields)) return {};
+  const allowed = new Set([...k.exposable_fields, "id", "name", "instance"]);
+  const hidden = (k.fields ?? []).map((f) => f.name).filter((n) => !allowed.has(n));
+  return hidden.length
+    ? { hidden_fields: hidden, hidden_fields_note: "these exist on the record but are not readable through this tool; say so rather than answering none" }
+    : {};
+}
+
 /** A compact, model-facing summary of one kind. */
 export function summarizeKind(k: KindRec): Record<string, unknown> {
   return {
@@ -121,6 +133,9 @@ export function summarizeKind(k: KindRec): Record<string, unknown> {
           })),
         }
       : {}),
+    // Declared fields the read projection strips: the model must know they
+    // exist and are hidden, or it calls their absence "none".
+    ...hiddenFieldsOf(k),
     can_create: null as boolean | null, // filled by the tool with full kind context
     can_update: !!k.endpoints?.update,
     can_delete: !!k.endpoints?.delete,

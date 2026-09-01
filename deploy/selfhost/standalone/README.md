@@ -61,6 +61,26 @@ timezone. `WATCHTOWER_SCHEDULE` takes a cron expression if you would rather
 pick the moment yourself. Pairs with
 `COBBLR_VERSION=nightly`. Off by default because it mounts the Docker socket.
 
+The one thing the updater cannot do is re-read `.env`. It re-creates a container
+by cloning the running one's environment, and Compose only reads `.env` when a
+container is *created*. So an `.env` you edited can sit unapplied while fresh
+containers keep starting on new images, and nothing anywhere reports it. One box
+ran for weeks with its captcha configured in `.env` and switched off in the
+container that way. **After any `.env` change, run `docker compose up -d`.** A
+`docker restart` will not do it, and neither will the next automatic update.
+
+To find out whether that has already happened to you:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/CobblrHQ/cobblr/main/deploy/selfhost/standalone/check-env-drift.sh
+chmod +x check-env-drift.sh && ./check-env-drift.sh
+```
+
+It compares what your running containers actually hold against `.env` and names
+the keys that differ, never the values, since a drifted one is usually a secret.
+Exit code 0 is clean, 1 is drift, 2 means it could not check (which it also
+reports when it compared nothing, rather than calling that a pass).
+
 That is the whole update story, **including across PostgreSQL major
 versions** — the db image upgrades its own data directory in place, leaving
 the old cluster beside it as the rollback. Pick your lane with

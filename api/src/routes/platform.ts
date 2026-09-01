@@ -16,6 +16,7 @@ import { meta } from "../db/meta.js";
 import { listEntries } from "../modules/registry.js";
 import * as activity from "../platform/activity.js";
 import { checkAvailability as checkAiAvailability } from "../platform/ai.js";
+import { hostedIdentifyEnabled } from "@cobblr/platform-contract/hosted-identify";
 import { AiCapabilities, type AiCapability } from "@cobblr/platform-contract";
 import { clearComputedDefsCache } from "../platform/computed-fields.js";
 import { effectiveAppliesTo, matchAction, getActionScope } from "../platform/actions.js";
@@ -1113,7 +1114,13 @@ platformOrgRouter.get(
         req.session?.id ?? null,
         capability,
       );
-      res.json(status);
+      // Identification is a SEPARATE axis from "is a chat provider connected".
+      // A deployment can identify a photo or a barcode through the hosted
+      // service with no provider configured at all, which is exactly the try
+      // sandbox - and it was telling every visitor that scanning ran in basic
+      // mode while cheerfully naming their groceries from a photo. The UI needs
+      // both facts to say anything true.
+      res.json({ ...status, identify_available: hostedIdentifyEnabled() });
     } catch (err) {
       next(err);
     }

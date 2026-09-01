@@ -20,14 +20,72 @@ type Rendered =
   | { kind: "pdf"; url: string }
   | { kind: "text"; text: string };
 
+/** What a receipt SAID about money, as the parser read it. Every part is
+ *  optional: a till slip with no tax line has no tax, and showing a 0 we
+ *  invented would be a claim the document never made. */
+export interface ReceiptMoney {
+  currency?: string;
+  /** The sum before anything came off - the receipt's own subtotal. */
+  list_price?: number;
+  /** What came off: coupons, member savings, markdowns. */
+  discounts?: number;
+  /** Subtotal minus discounts, when the receipt's numbers agreed. */
+  net_price?: number;
+  tax?: number;
+  shipping?: number;
+  /** What the card was actually charged. */
+  total_charged?: number;
+}
+
+/** The money line, laid out for reading. Exported so it can be tested without
+ *  a viewer, a blob URL or a document renderer. */
+export function receiptMoneyRows(m: ReceiptMoney | null | undefined): Array<{ label: string; value: number }> {
+  if (!m) return [];
+  const rows: Array<{ label: string; value: number }> = [];
+  const add = (label: string, v: number | undefined) => {
+    if (typeof v === "number" && Number.isFinite(v)) rows.push({ label, value: v });
+  };
+  add("Subtotal", m.list_price);
+  // Shown as what it IS - money off - rather than a negative to decode.
+  add("Savings", m.discounts);
+  // Only when it says something the two numbers above do not already.
+  if (
+    typeof m.net_price === "number" &&
+    !(typeof m.list_price === "number" && typeof m.discounts === "number")
+  ) {
+    add("After savings", m.net_price);
+  }
+  add("Tax", m.tax);
+  add("Shipping", m.shipping);
+  add("Total", m.total_charged);
+  return rows;
+}
+
+function money(v: number, currency?: string): string {
+  try {
+    return new Intl.NumberFormat(undefined, { style: "currency", currency: currency || "USD" }).format(v);
+  } catch {
+    return v.toFixed(2);
+  }
+}
+
 export function ReceiptSourceViewer({
   slug,
   fileId,
   onClose,
+  money: receiptMoney,
+  soldBy,
 }: {
   slug: string;
   fileId: string;
   onClose: () => void;
+  /** What the receipt said it cost. The parser has kept these since receipts
+   *  shipped and nothing ever showed them, so "what did this actually cost me"
+   *  had no answer on any screen (2026-08-25 audit). Here, beside the document
+   *  they were read from, is where they can be checked against it. */
+  money?: ReceiptMoney | null;
+  /** The marketplace seller, when the receipt named one distinct from the shop. */
+  soldBy?: string | null;
 }) {
   // Authed fetch → blob: URL (same Bearer path the image lightbox uses).
   const blobUrl = useImageSrc(api.fileRawUrl(slug, fileId, "original"));
@@ -73,6 +131,29 @@ export function ReceiptSourceViewer({
     >
       <OverlayFlag />
       <OverlayCloseButton onClose={onClose} />
+      {(() => {
+        const rows = receiptMoneyRows(receiptMoney);
+        if (rows.length === 0 && !soldBy) return null;
+        return (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="shrink-0 mx-4 sm:mx-6 mt-14 rounded-lg bg-white/10 px-3 py-2 text-[12px] text-white/90"
+          >
+            {soldBy && (
+              <div className="mb-1 text-white/70">
+                sold by <span className="text-white">{soldBy}</span>
+              </div>
+            )}
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
+              {rows.map((r) => (
+                <span key={r.label} className={r.label === "Total" ? "font-medium" : "text-white/70"}>
+                  {r.label} {money(r.value, receiptMoney?.currency)}
+                </span>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
       {/* The dark surround closes; the DOCUMENT does not. This block used to
           swallow the click itself, and it is flex-1 over the full width, so
           "outside the receipt" was inside it and nothing but the X ever closed

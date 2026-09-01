@@ -147,7 +147,19 @@ async function insertTurnEvent(
 export async function finishTurn(
   db: Kysely<CoreAiDB>,
   turnId: string,
-  outcome: { ok: true; result: unknown } | { ok: false; error: string },
+  outcome:
+    | { ok: true; result: unknown }
+    | {
+        ok: false;
+        error: string;
+        /** What KIND of failure, for a caller that must ACT on it rather than
+         *  read it: a widget offering "try again", a bench deciding to wait
+         *  until a subscription's window resets. The prose is for the person;
+         *  this is the same fact in a form code can branch on. */
+        code?: string;
+        retryAfterSec?: number;
+        resetsAt?: string;
+      },
 ): Promise<void> {
   await db
     .updateTable("core_ai_chat_turns")
@@ -158,7 +170,19 @@ export async function finishTurn(
     )
     .where("id", "=", turnId)
     .execute();
-  await emitTurnEvent(db, turnId, outcome.ok ? "done" : "error", outcome.ok ? { result: outcome.result } : { message: outcome.error });
+  await emitTurnEvent(
+    db,
+    turnId,
+    outcome.ok ? "done" : "error",
+    outcome.ok
+      ? { result: outcome.result }
+      : {
+          message: outcome.error,
+          ...(outcome.code ? { code: outcome.code } : {}),
+          ...(outcome.retryAfterSec ? { retry_after_sec: outcome.retryAfterSec } : {}),
+          ...(outcome.resetsAt ? { resets_at: outcome.resetsAt } : {}),
+        },
+  );
 }
 
 /** How long a "running" turn may go untouched before it is certainly dead.

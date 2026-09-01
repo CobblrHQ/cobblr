@@ -302,6 +302,17 @@ async function upsertOne(
           cobblr_entity_id: matched.id,
           source_hash: storedHash,
         })
+        // See the note on the create path below: the mapping may have appeared
+        // between this record's lookup and this insert.
+        .onConflict((oc) =>
+          oc.columns(["connector_row_id", "entity_type", "external_id"]).doUpdateSet({
+            cobblr_entity_id: matched.id,
+            source_hash: storedHash,
+            target_kind: type.targetKind,
+            deleted_at: null,
+            updated_at: new Date(),
+          }),
+        )
         .execute();
       return { action: "linked", tagsFailed: await attachTags(ref.orgId, type.targetKind, matched.id, record.tags) };
     }
@@ -322,6 +333,25 @@ async function upsertOne(
       .where("id", "=", existing.id)
       .execute();
   } else {
+    // The id-map write is an UPSERT, because the row this record looked for a
+    // moment ago can exist by the time we write it.
+    //
+    // A reconcile for one (connection, entity type) can run in more than one
+    // place: the poll worker scans every couple of minutes for due syncs while
+    // the import and live routes can be called at any time. The lookup above is
+    // a fresh SELECT, so a reconcile that starts mid-flight finds nothing,
+    // creates its own mirror, and its INSERT then hits
+    // `unique (connector_row_id, entity_type, external_id)` — the request 502s
+    // with a raw duplicate-key error and the import half-lands.
+    //
+    // Seen in CI on 2026-09-01: a pooled test org carried an enabled sync from
+    // an earlier run, the worker reconciled the same connection during the
+    // test's import, and two partdb tests failed on the constraint.
+    //
+    // runReconcile now takes a lock so the overlap is rare rather than routine,
+    // but the lock cannot make the write safe on its own (it is advisory, and a
+    // holder can die), so the write is idempotent too: last writer wins on the
+    // same external id, which is the same outcome a second pass would produce.
     await db
       .insertInto("core_integrations_synced_records")
       .values({
@@ -332,6 +362,15 @@ async function upsertOne(
         cobblr_entity_id: cobblrId,
         source_hash: storedHash,
       })
+      .onConflict((oc) =>
+        oc.columns(["connector_row_id", "entity_type", "external_id"]).doUpdateSet({
+          cobblr_entity_id: cobblrId,
+          source_hash: storedHash,
+          target_kind: type.targetKind,
+          deleted_at: null,
+          updated_at: new Date(),
+        }),
+      )
       .execute();
   }
   return { action: "created", tagsFailed: await attachTags(ref.orgId, type.targetKind, cobblrId, record.tags) };
@@ -411,6 +450,21 @@ function topoSort(records: SyncRecord[]): SyncRecord[] {
 /** Full reconcile of one entity type: pull everything, upsert (parents first),
  *  tombstone whatever vanished from the source. The poll's job + the safety net
  *  behind the webhook. */
+/** The lock one reconcile of a given sync holds, so two never overlap. */
+export function reconcileLockName(connectorRowId: string, entityTypeKey: string): string {
+  return `core-integrations.reconcile:${connectorRowId}:${entityTypeKey}`;
+}
+
+/** Raised when another reconcile of the same sync is already running. Callers
+ *  decide what that means: the worker skips (its next tick will catch up), a
+ *  person pressing Import is told to wait rather than shown a database error. */
+export class ReconcileBusyError extends Error {
+  constructor(msg = "A sync is already running for this connection. Try again in a moment.") {
+    super(msg);
+    this.name = "ReconcileBusyError";
+  }
+}
+
 export async function runReconcile(
   db: Kysely<CoreIntegrationsDB>,
   ref: SyncConnectionRef,
@@ -418,6 +472,25 @@ export async function runReconcile(
   /** linkOnMatch: merge an unmapped source record into an existing same-name
    *  entity instead of duplicating it. On for the one-time IMPORT; off for the
    *  live poll/webhook (which is strict external-id). */
+  opts: { linkOnMatch?: boolean } = {},
+): Promise<ReconcileResult> {
+  // ONE reconcile of a sync at a time. The poll worker and the import/live
+  // routes reconcile the same (connection, entity type) from different places,
+  // and two at once do the same work twice: duplicate creates raced on the
+  // id-map's unique constraint (CI, 2026-09-01) and the counts returned to the
+  // caller were whatever its own half managed.
+  let out: ReconcileResult | null = null;
+  const ran = await platform().exclusive.run(reconcileLockName(ref.connectorRowId, type.key), async () => {
+    out = await reconcileOnce(db, ref, type, opts);
+  });
+  if (!ran || !out) throw new ReconcileBusyError();
+  return out;
+}
+
+async function reconcileOnce(
+  db: Kysely<CoreIntegrationsDB>,
+  ref: SyncConnectionRef,
+  type: SyncEntityType,
   opts: { linkOnMatch?: boolean } = {},
 ): Promise<ReconcileResult> {
   const records = await type.fetchAll(fetchCtx(ref));

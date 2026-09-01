@@ -25,8 +25,25 @@ export function useAiStatus(): AiStatus | null {
 /** The up-front "runs in basic mode" strip for AI-less workspaces. Body copy is
  *  per-surface via children (what "basic mode" MEANS differs between scanning,
  *  matching, and building); the shell, icon, and connect-link are shared. */
-export function AiOffNotice({ status, compact, children }: { status: AiStatus | null; compact?: boolean; children?: ReactNode }) {
+export function AiOffNotice({
+  status,
+  compact,
+  children,
+  needs = "chat",
+}: {
+  status: AiStatus | null;
+  compact?: boolean;
+  children?: ReactNode;
+  /** What this SURFACE actually needs. A scan surface needs identification,
+   *  which a deployment can provide through the hosted service with no chat
+   *  provider connected at all - so "AI isn't connected" is simply false there,
+   *  and it was being shown in the try sandbox while photo identification was
+   *  working. A surface that needs a MODEL (the builder, the assistant) keeps
+   *  the default and still warns. */
+  needs?: "chat" | "identify";
+}) {
   if (!status || status.available) return null;
+  if (needs === "identify" && status.identify_available) return null;
   // Off BECAUSE SOMEONE TURNED IT OFF is a different sentence from off because nothing
   // is connected, and it wants a different verb on the link. This one caught a real
   // case: AI switched off for a workspace showed "AI isn't connected - Connect AI",

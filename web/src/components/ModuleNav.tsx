@@ -26,7 +26,8 @@ import { ChevronDown, Settings2, Sliders } from "lucide-react";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ModulePickerModal } from "./ModulePickerModal";
 import { isFocused } from "../lib/api";
-import { useNavModules, HEADING_PREFIX, NAVGROUP_PREFIX, stripNavStem } from "./useNavModules";
+import { inManagedAppSurface } from "../lib/managed-apps";
+import { useNavModules, HEADING_PREFIX, NAVGROUP_PREFIX, stripNavStem, navTargetFor } from "./useNavModules";
 
 export function ModuleNav() {
   const { activeSlug, activeOrg } = useActiveOrg();
@@ -36,7 +37,11 @@ export function ModuleNav() {
   // Focused mode: keep the domains, but hide the "manage specialisations" /
   // add-instance affordance (builder chrome).
   const focused = isFocused(activeOrg);
-  const { tops, overflowNames, childrenByParent: children, instanceGroups } = useNavModules(activeSlug);
+  const { tops, overflowNames, childrenByParent: children, instanceGroups, utilities } = useNavModules(activeSlug);
+  // The doors (Files, Locations, Calendar, the Scan Inbox…) live in "more",
+  // never on the row: the row is what this workspace keeps. A locked app
+  // offers only the doors inside its surface.
+  const doors = appMode ? utilities.filter((u) => inManagedAppSurface(navTargetFor(u.name, true))) : utilities;
   // Entries the user pinned to "more" never compete for row space — they're
   // always folded. The rest flow through the responsive measurement below.
   const pinned = tops.filter((t) => overflowNames.has(t.name));
@@ -85,8 +90,9 @@ export function ModuleNav() {
         return n;
       };
       let n = fitWithin(avail);
-      // "more ▾" shows when row items overflow OR anything is pinned to it.
-      if (n < rowEligible.length || pinned.length > 0) n = fitWithin(avail - MORE_W);
+      // "more ▾" shows when row items overflow, anything is pinned to it, or
+      // there are doors to fold (there nearly always are).
+      if (n < rowEligible.length || pinned.length > 0 || doors.length > 0) n = fitWithin(avail - MORE_W);
       setVisibleCount(n);
     };
     recompute();
@@ -95,7 +101,7 @@ export function ModuleNav() {
     return () => ro.disconnect();
     // topsKey (not `tops`, a fresh array each render) keeps this stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topsKey]);
+  }, [topsKey, doors.length > 0]);
 
   const visible = rowEligible.slice(0, visibleCount);
   // Folded = whatever didn't fit, then the pinned entries (always last in More).
@@ -138,11 +144,11 @@ export function ModuleNav() {
                 : "text-muted dark:text-slate-400 hover:text-accent")
             }
           >
-            Dashboard
+            Home
           </NavLink>
         )}
         {visible.map(renderTop)}
-        {overflow.length > 0 && (
+        {(overflow.length > 0 || doors.length > 0) && (
           <MoreMenu
             items={overflow.map((m) => ({
               top: m,
@@ -152,6 +158,7 @@ export function ModuleNav() {
                 ? instanceGroups.get(m.name)?.members ?? []
                 : children.get(m.name) ?? [],
             }))}
+            doors={doors}
           />
         )}
         {/* The nav-customize control was moved out of the navbar into
@@ -170,12 +177,17 @@ export function ModuleNav() {
 
 const INSTANCE_PREFIX = "__instance__";
 
+/** The one route rule, app-mode aware, for every link in this file. Five
+ *  places used to spell `/${name.slice(prefix)}` by hand; in a locked app that
+ *  door is outside the surface and every tap bounced through the guard. */
+function useNavTarget(): (name: string) => string {
+  const { activeOrg } = useActiveOrg();
+  const appMode = !!activeOrg?.app_mode;
+  return (name) => navTargetFor(name, appMode);
+}
+
 function ModuleTopLink({ name, label }: { name: string; label: string }) {
-  // Synthetic instance entries (useNavModules) route to the platform
-  // per-instance page; real modules route to their own top path.
-  const to = name.startsWith(INSTANCE_PREFIX)
-    ? `/${name.slice(INSTANCE_PREFIX.length)}`
-    : `/${name}`;
+  const to = useNavTarget()(name);
   return (
     <NavLink
       to={to}
@@ -203,6 +215,7 @@ function NavGroupSegments({
   name: string;
   group: { label: string; members: { name: string; displayName: string }[] };
 }) {
+  const target = useNavTarget();
   return (
     <div
       data-top={name}
@@ -217,7 +230,7 @@ function NavGroupSegments({
             <span className="text-faint/60 dark:text-slate-600 select-none">│</span>
           )}
           <NavLink
-            to={`/${mem.name.slice(INSTANCE_PREFIX.length)}`}
+            to={target(mem.name)}
             className={({ isActive }) =>
               "px-2 py-1 transition text-sm whitespace-nowrap " +
               (isActive
@@ -240,9 +253,14 @@ function NavGroupSegments({
  *  backdrop-blur traps position:fixed descendants). */
 function MoreMenu({
   items,
+  doors,
 }: {
   items: { top: OrgModule; kids: { name: string; displayName: string }[] }[];
+  /** The folded doors (Files, Locations, Calendar…), listed after whatever
+   *  did not fit on the row, under their own quiet heading. */
+  doors: { name: string; displayName: string }[];
 }) {
+  const target = useNavTarget();
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -302,16 +320,14 @@ function MoreMenu({
 
   const childTo = (parentName: string, k: { name: string }) =>
     k.name.startsWith(INSTANCE_PREFIX)
-      ? `/${k.name.slice(INSTANCE_PREFIX.length)}`
+      ? target(k.name)
       : parentName.startsWith(HEADING_PREFIX)
         ? `/${k.name}`
         : `/${parentName}?lens=${k.name}`;
   const topTo = (m: OrgModule) =>
     m.name.startsWith(HEADING_PREFIX) || m.name.startsWith(NAVGROUP_PREFIX)
       ? null
-      : m.name.startsWith(INSTANCE_PREFIX)
-        ? `/${m.name.slice(INSTANCE_PREFIX.length)}`
-        : `/${m.name}`;
+      : target(m.name);
 
   return (
     <div
@@ -377,6 +393,23 @@ function MoreMenu({
                 </li>
               );
             })}
+            {doors.length > 0 && (
+              <li className={items.length > 0 ? "mt-1 border-t border-line dark:border-slate-700 pt-1" : undefined}>
+                <ul>
+                  {doors.map((d) => (
+                    <li key={d.name}>
+                      <NavLink
+                        to={target(d.name)}
+                        onClick={() => setOpen(false)}
+                        className="block px-3 py-1.5 text-sm text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition"
+                      >
+                        {d.displayName}
+                      </NavLink>
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            )}
           </ul>
         </div>,
         document.body,
@@ -406,6 +439,7 @@ function ModuleGroupChip({
   /** Omitted in focused mode → the "manage specialisations" footer is hidden. */
   onInstallMore?: () => void;
 }) {
+  const target = useNavTarget();
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -549,7 +583,7 @@ function ModuleGroupChip({
               const isInstance = k.name.startsWith(INSTANCE_PREFIX);
               const parentIsHeading = parent.name.startsWith(HEADING_PREFIX);
               const to = isInstance
-                ? `/${k.name.slice(INSTANCE_PREFIX.length)}`
+                ? target(k.name)
                 : parentIsHeading
                   ? `/${k.name}`
                   : `/${parent.name}?lens=${k.name}`;

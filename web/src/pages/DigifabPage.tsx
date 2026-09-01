@@ -1270,6 +1270,7 @@ function PrintHistorySection({ slug }: { slug: string }) {
                         <li key={r.id}>
                         <button type="button" onClick={() => setPrintOpen(r)} className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-left hover:bg-subtle dark:hover:bg-slate-800">
                           {r.cover ? (
+                            // EXTERNAL-IMAGE-OK: the vendor task cover URL from the printer's own API.
                             <img src={r.cover} alt="" loading="lazy" className="w-9 h-9 rounded object-cover bg-subtle shrink-0" />
                           ) : (
                             <span className={"w-9 h-9 rounded shrink-0 flex items-center justify-center " + (r.status === "completed" ? "bg-moss-500/15" : r.status === "failed" ? "bg-ember-500/15" : "bg-subtle")}>

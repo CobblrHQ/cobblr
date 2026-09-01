@@ -16,7 +16,7 @@ import { WEEKDAYS, MONTHS, isoLocal, buildMonthGrid, shiftMonth } from "../lib/m
 import { useMutation } from "@tanstack/react-query";
 import { ApiError, api, type SavedView } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useToast, useConfirm, usePageTitle, BulkActionBar, useFlowHost } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, usePageTitle, BulkActionBar, useFlowHost, useImageSrc } from "@cobblr/platform-web";
 import {
   useKindFields,
   FieldSelect,
@@ -1045,6 +1045,38 @@ function formatCell(col: string, row: ViewRow): string {
 // for the image and cfg.caption_field for an optional caption under the title.
 // Rows without an image show a title-initial tile. This is the signature view
 // for a catalog (films, books, recipes). See one-record-substrate.md.
+// One gallery tile. Its own component because useImageSrc is a hook and the
+// grid maps over rows.
+//
+// image_path is free-form: an external catalog URL, or a relative core-files
+// path under /api/v1/orgs/:slug/modules/core-files/files/:id/raw. The internal
+// form needs the Bearer JWT, which <img src> cannot carry, so it 401s and the
+// tile shows a broken image. That is exactly what happened here: every cover in
+// a bookshelf gallery came back 401 while the LIST view beside it was fine,
+// because the list goes through EntityThumb and this did not. useImageSrc is
+// the one door for both (external passes through, internal is fetched with the
+// token and handed back as a blob: URL).
+function GalleryTile({ src, title, caption }: { src: string | null; title: string; caption: string }) {
+  const resolved = useImageSrc(src);
+  return (
+    <div className="rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
+      <div className="aspect-[2/3] bg-subtle dark:bg-slate-800 flex items-center justify-center overflow-hidden">
+        {resolved ? (
+          <img src={resolved} alt={title} className="w-full h-full object-cover" loading="lazy" />
+        ) : (
+          <span className="font-display text-2xl font-bold text-faint dark:text-slate-600">
+            {title.slice(0, 1).toUpperCase()}
+          </span>
+        )}
+      </div>
+      <div className="p-2">
+        <div className="truncate text-sm font-medium text-content dark:text-mortar-100">{title}</div>
+        {caption && <div className="truncate text-xs text-muted dark:text-slate-400">{caption}</div>}
+      </div>
+    </div>
+  );
+}
+
 function GalleryRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) {
   const imageField = (cfg.image_field as string) || "image_path";
   const captionField = cfg.caption_field as string | undefined;
@@ -1054,26 +1086,7 @@ function GalleryRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) 
         const raw = fieldVal(row.fields, imageField);
         const src = typeof raw === "string" && raw.trim() ? raw : null;
         const caption = captionField ? formatCell(captionField, row) : row.subtitle ?? "";
-        return (
-          <div
-            key={`${row.kind}:${row.id}`}
-            className="rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden"
-          >
-            <div className="aspect-[2/3] bg-subtle dark:bg-slate-800 flex items-center justify-center overflow-hidden">
-              {src ? (
-                <img src={src} alt={row.title} className="w-full h-full object-cover" loading="lazy" />
-              ) : (
-                <span className="font-display text-2xl font-bold text-faint dark:text-slate-600">
-                  {row.title.slice(0, 1).toUpperCase()}
-                </span>
-              )}
-            </div>
-            <div className="p-2">
-              <div className="truncate text-sm font-medium text-content dark:text-mortar-100">{row.title}</div>
-              {caption && <div className="truncate text-xs text-muted dark:text-slate-400">{caption}</div>}
-            </div>
-          </div>
-        );
+        return <GalleryTile key={`${row.kind}:${row.id}`} src={src} title={row.title} caption={caption} />;
       })}
     </div>
   );

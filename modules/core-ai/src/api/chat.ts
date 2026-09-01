@@ -10,6 +10,7 @@
 
 import { Router, type Response } from "express";
 import { humanizeProviderError } from "./provider-error.js";
+import { renderKindLines, anyHiddenFields, HIDDEN_FIELDS_RULE } from "./kind-lines.js";
 import { renderEntityActions, renderWorkspaceActions, RAIL_LOOKUP_NOTE, type RailMode } from "./action-rail.js";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
@@ -264,12 +265,18 @@ export const GROUNDING_RULES = `WHAT YOU CAN SEE, AND WHAT YOU CANNOT. This matt
 - Anything about the user's own records comes from a tool call you just made, never from memory. If you have not looked, look — or say you have not.
 - None of this makes you cagey. Explain, teach, suggest, and talk through anything you actually do know — how to do a thing, how this app works, what you would try. Answer the part you know and name the part you do not.`;
 
+/** The tool-use rules a model is given, verbatim, when tools are available.
+ *  Exported so the action bench sends the SAME sentences the app sends: a bench
+ *  that measured routing without them concluded the model never reached for
+ *  count_records, when the app's prompt says exactly when to. */
+export const TOOL_USE_RULES = `TOOLS: when tools are available to you, PREFER them over the JSON shapes below. Use the read tools (search_records, list_records, count_records, get_record, list_record_kinds, list_actions, get_putaway_plan) to look at the user's ACTUAL data before answering questions about it — never guess what they have. For "how many", "which do I have the most of", "do I have any X": call count_records (group_by a field) — it counts every record in code. A list page marked PARTIAL is never the whole set: do not count, rank, or say "none" from it. get_putaway_plan is the live put-away/organize state — reach for it whenever the user mentions putting things away, bins, or their plan. After creating/renaming locations for them, call replan_putaway ONCE (non-destructive; their open plan refreshes itself) — optionally with a hint distilling the conversation. Use the write tools (create_record, update_record, delete_record, invoke_action) to act; they only PROPOSE — the user confirms every change. You can chain: read first, then write. The JSON shapes below are the fallback for when you cannot call tools.`;
+
 async function buildSystemPrompt(c: Ctx, railMode: RailMode = "full"): Promise<string> {
   // include=custom_fields → the workspace's user-defined fields ride along, so
   // the hints below cover the WHOLE settable shape, not just native fields.
   const kindsRes = await callApi(c, "GET", "/entity-kinds?include=custom_fields");
   const kinds = ((kindsRes.body.items as KindRec[] | undefined) ?? []);
-  const kindLines = kinds.map((k) => `- ${k.id} (${k.display_name ?? k.id})`).join("\n") || "(none)";
+  const kindLines = renderKindLines(kinds);
 
   // Every action, in ONE call, carrying the two things the old per-kind
   // inspect loop dropped: which run on the WORKSPACE rather than a record, and
@@ -364,6 +371,7 @@ After a helpful answer, if it's natural, OFFER to save it (e.g. "want me to add 
 
 ENTITY KINDS in this workspace:
 ${kindLines}
+${anyHiddenFields(kinds) ? HIDDEN_FIELDS_RULE : ""}
 
 You can CREATE new records of these kinds: ${createable.join(", ") || "(none)"}
 
@@ -377,7 +385,7 @@ ACTIONS that run on the WORKSPACE (no record — omit entity_kind/entity_query):
 ${workspaceActionLines.join("\n") || "(none)"}
 ${railMode === "full" ? "" : RAIL_LOOKUP_NOTE}
 
-TOOLS: when tools are available to you, PREFER them over the JSON shapes below. Use the read tools (search_records, list_records, count_records, get_record, list_record_kinds, list_actions, get_putaway_plan) to look at the user's ACTUAL data before answering questions about it — never guess what they have. For "how many", "which do I have the most of", "do I have any X": call count_records (group_by a field) — it counts every record in code. A list page marked PARTIAL is never the whole set: do not count, rank, or say "none" from it. get_putaway_plan is the live put-away/organize state — reach for it whenever the user mentions putting things away, bins, or their plan. After creating/renaming locations for them, call replan_putaway ONCE (non-destructive; their open plan refreshes itself) — optionally with a hint distilling the conversation. Use the write tools (create_record, update_record, delete_record, invoke_action) to act; they only PROPOSE — the user confirms every change. You can chain: read first, then write. The JSON shapes below are the fallback for when you cannot call tools.
+${TOOL_USE_RULES}
 
 Reply with ONE JSON object and nothing else, in ONE of these shapes:
 - Chat/answer/ask:   {"type":"reply","text":"<your full, helpful answer or question>"}
@@ -927,7 +935,20 @@ chatRouter.post(
         const status = err instanceof TurnError ? err.status : 502;
         const msg = err instanceof Error ? err.message : String(err);
         if (status === 502) console.error(`[core-ai] chat failed: ${msg}`);
-        res.status(status).json({ type: "error", error: { code: "no_ai", message: msg } });
+        // The blocking route (older clients, tests, the MCP server) gets the
+        // same one sentence the turn path gives a person, never a provider's
+        // JSON body; the raw text is in the log above and the AI call log.
+        const human = humanizeProviderError(msg);
+        res.status(status).json({
+          type: "error",
+          error: {
+            code: "no_ai",
+            message: human.message,
+            ...(human.code ? { reason: human.code } : {}),
+            ...(human.retryAfterSec ? { retry_after_sec: human.retryAfterSec } : {}),
+            ...(human.resetsAt ? { resets_at: human.resetsAt } : {}),
+          },
+        });
       }
       return;
     }
@@ -969,7 +990,14 @@ chatRouter.post(
         if (!(err instanceof TurnError) || err.status === 502) console.error(`[core-ai] chat failed: ${msg}`);
         // The raw provider text is in the log above and in the AI call log;
         // the person gets one sentence, never a JSON body.
-        await finishTurn(tdb, turnId, { ok: false, error: humanizeProviderError(msg).message }).catch(() => {});
+        const human = humanizeProviderError(msg);
+        await finishTurn(tdb, turnId, {
+          ok: false,
+          error: human.message,
+          ...(human.code ? { code: human.code } : {}),
+          ...(human.retryAfterSec ? { retryAfterSec: human.retryAfterSec } : {}),
+          ...(human.resetsAt ? { resetsAt: human.resetsAt } : {}),
+        }).catch(() => {});
       }
     })();
   }),

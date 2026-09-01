@@ -33,7 +33,7 @@ import { OrganizeWalkSheet } from "../components/OrganizeWalkSheet";
 import { LiveSortSheet } from "../components/LiveSortSheet";
 import { ImageSearchPicker } from "../components/ImageSearchPicker";
 import { ImageLightbox, type LightboxItem } from "../components/ImageLightbox";
-import { ReceiptSourceViewer } from "../components/ReceiptSourceViewer";
+import { ReceiptSourceViewer, type ReceiptMoney } from "../components/ReceiptSourceViewer";
 import { canRerunLookup } from "../lib/scanRerun";
 import { TrackedMatchBanner } from "../components/TrackedMatchBanner";
 import { BinAdjustModal } from "../components/BinAdjustModal";
@@ -70,7 +70,7 @@ import { matchParentType, readField } from "../lib/parent-type-match";
 import { isRerunInFlight, itemEnriching } from "./scan-status";
 import { baseKind, confirmBodyFor, isReadyToFile } from "./scanFileAll";
 import { resolveInstanceForFiling } from "./scanInstall";
-import { arrivalLabel, arrivalOf, arrivalLabelShort } from "./scanArrival";
+import { arrivalLabel, arrivalOf } from "./scanArrival";
 import type { BundleInstallSummary } from "../lib/api";
 import { installToastLine } from "../lib/installSummary";
 import { looksLikeContainer, nextBinName } from "./scanContainer";
@@ -556,16 +556,6 @@ const SHIPMENT_LABEL: Record<string, string> = {
   delivered: "Delivered",
   exception: "Needs attention",
   unknown: "No information yet",
-};
-/** Phone-width wording for the same states. The truck glyph beside them already
- *  says "parcel", so these keep only the part that changes what you do. */
-const SHIPMENT_LABEL_SHORT: Record<string, string> = {
-  pre_transit: "Labelled",
-  in_transit: "In transit",
-  out_for_delivery: "Out today",
-  delivered: "Delivered",
-  exception: "Problem",
-  unknown: "No news",
 };
 
 function CorrectNameInline({
@@ -2036,6 +2026,33 @@ export function ScanPage() {
   // Receipt session: view the original + re-parse it (re-run the parser on the
   // stored source, replacing the still-pending lines).
   const [viewSource, setViewSource] = useState<string | null>(null);
+  /** What the receipt open in the viewer said about money, read off any of its
+   *  lines (the parser stamps the receipt-level totals on every one). */
+  const viewSourceMoney = useMemo(() => {
+    if (!viewSource) return null;
+    // The original belongs to the SESSION (batch meta carries source_file_id);
+    // the lines carry the money. Reading source_file_id off a line found
+    // nothing on any real receipt, so the summary shipped and never rendered
+    // (found by the e2e walk against real rows, 2026-09-01).
+    const g = sessionGroups.find((x) => x.sourceFileId === viewSource);
+    const line = g?.items.find((i) => i.suggested_metadata && typeof i.suggested_metadata === "object");
+    const m = (line?.suggested_metadata ?? null) as
+      | (ReceiptMoney & { receipt_seller?: string; receipt_currency?: string })
+      | null;
+    if (!m) return null;
+    return {
+      money: {
+        currency: m.currency ?? m.receipt_currency,
+        list_price: m.list_price,
+        discounts: m.discounts,
+        net_price: m.net_price,
+        tax: m.tax,
+        shipping: m.shipping,
+        total_charged: m.total_charged,
+      } satisfies ReceiptMoney,
+      soldBy: m.receipt_seller ?? null,
+    };
+  }, [viewSource, sessionGroups]);
   const [reparseBatch, setReparseBatch] = useState<string | null>(null);
   const reparse = useMutation({
     mutationFn: (batchId: string) => {
@@ -3057,7 +3074,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
         </HeaderMenu>
       </div>
 
-      <AiOffNotice status={aiStatus} />
+      <AiOffNotice status={aiStatus} needs="identify" />
 
       <ScanDrivePanel drive={scanDrive} />
 
@@ -4078,6 +4095,15 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       // RECEIPT, so the header is the right area — but the
                       // header is already dense, and a permanent second line
                       // for a fact you check occasionally is a poor trade.
+                      //
+                      // On a PHONE it only appears when there is something to
+                      // say: a number, a carrier state, or a promised date.
+                      // Groceries you carried home have no parcel, and offering
+                      // "+ Tracking #" on that receipt spent a third of the row
+                      // on a question that does not apply ("a receipt does not
+                      // need tracking", the operator, 2026-08-31). The offer
+                      // stays from sm up, where the width is free, and adding a
+                      // number is still possible inside the session.
                       <span
                         // Attached only to the OPEN one. A single ref across
                         // every receipt in the list would end up pointing at
@@ -4088,7 +4114,11 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         // Always present now the menu is gone. With a number its
                         // label IS the delivery status; without one it offers to
                         // follow a parcel.
-                        className="relative shrink-0 inline-flex"
+                        className={`relative shrink-0 ${
+                          g.shipmentState || trackingArrival || g.trackingNumber
+                            ? "inline-flex"
+                            : "hidden sm:inline-flex"
+                        }`}
                       >
                         <button
                           type="button"
@@ -4150,15 +4180,12 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                               wording without the words the truck already says
                               - it is the last 21px the row needed to fit at
                               360px (measured 2026-08-31). */}
-                          <span className="sm:hidden">
-                            {g.shipmentState
-                              ? (SHIPMENT_LABEL_SHORT[g.shipmentState] ?? g.shipmentState)
-                              : trackingArrival
-                                ? arrivalLabelShort(trackingArrival)
-                                : g.trackingNumber
-                                  ? "Tracking #"
-                                  : "+ Tracking #"}
-                          </span>
+                          {/* Icon only below sm. The truck plus its colour still
+                              says a parcel is in play and tapping opens the
+                              panel with the carrier's own words; the label was
+                              the widest thing left on the row, and the location
+                              chip is worth more of that width ("location still
+                              belongs in the session strip", 2026-09-01). */}
                           <span className="hidden sm:inline">
                             {g.shipmentState
                               ? (SHIPMENT_LABEL[g.shipmentState] ?? g.shipmentState)
@@ -4252,7 +4279,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                           ? `${readyIds.length - sessionLoc.missing} of ${readyIds.length} are in ${filingLabel(sessionLocName)}; the other ${sessionLoc.missing} have no location yet - tap to set it`
                           : `None of these ${readyIds.length} have a location yet - tap to set it`
                       }
-                      className={`hidden sm:inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] font-medium ${
+                      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] font-medium ${
                         sessionLocName && sessionLoc.missing === 0
                           ? "border-line/70 dark:border-slate-700/70 text-content dark:text-mortar-100 hover:border-cobble-400"
                           : "border-amber-400 dark:border-amber-700/80 bg-amber-50 dark:bg-amber-900/25 text-amber-700 dark:text-amber-300 hover:border-amber-500"
@@ -4727,7 +4754,13 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
         />
       )}
       {viewSource && (
-        <ReceiptSourceViewer slug={activeSlug} fileId={viewSource} onClose={() => setViewSource(null)} />
+        <ReceiptSourceViewer
+          slug={activeSlug}
+          fileId={viewSource}
+          money={viewSourceMoney?.money ?? null}
+          soldBy={viewSourceMoney?.soldBy ?? null}
+          onClose={() => setViewSource(null)}
+        />
       )}
     </div>
   );
@@ -5109,10 +5142,17 @@ function InboxCard({
   // Stuck-nameless: enrichment finished (ai_suggested_at) but produced no name
   // and no candidates — a bare photo that couldn't be auto-identified. Offer the
   // manual "name it" entry instead of an endless "AI is reading…" pulse.
+  // Reading a receipt is WORK, not failure. Without this the row - a photo,
+  // no name, enrichment finished - reads as "couldn't identify" for the
+  // seconds it takes to become line items (reported 2026-08-31).
+  const readingReceipt =
+    item.status === "pending" &&
+    !!(item.suggested_metadata as { reading_receipt?: boolean } | null)?.reading_receipt;
   const needsName =
     item.status === "pending" &&
     !item.suggested_name &&
     !!item.ai_suggested_at &&
+    !readingReceipt &&
     candidates.length === 0;
   // How long ago enrichment finished — the matchmaker runs detached AFTER that
   // and stamps matched_at when done. If matched_at never lands (the match threw
@@ -5282,6 +5322,8 @@ function InboxCard({
   // the same bar to File all, so the card and the bulk sweep agree.
   const tentativeRoute = dest?.basis === "keywords";
   const cardAiStatus = useAiStatus();
+  /** No identifier reachable at all - so a nameless photo is unread, not misread. */
+  const identifyOff = !!cardAiStatus && !cardAiStatus.identify_available;
   // The matchmaker fell to the keyword floor although this workspace HAS
   // working AI — the model call failed and the code silently downgraded. Say
   // so, with a one-tap retry, instead of letting a lexical guess sit there
@@ -5912,6 +5954,16 @@ function InboxCard({
                 <Loader2 size={13} className="animate-spin shrink-0" />
                 Rate-limited - retrying…
               </span>
+            ) : readingReceipt ? (
+              <span className="text-muted">That’s a receipt - reading its line items…</span>
+            ) : cantIdentify && identifyOff ? (
+              // Not "couldn't": nothing tried. The banner up top says the plan
+              // has no AI, and this card said "couldn't identify" under it, with
+              // an Identify button that would fail the same way (blank
+              // workspace e2e, 2026-09-01). Naming it by hand still works.
+              <span className="text-muted">
+                No AI to read this {idNoun} yet (<Link to={`/w/${activeSlug}/ai`} className="underline hover:text-content" onClick={(e) => e.stopPropagation()}>set it up</Link>) - or name it:
+              </span>
             ) : cantIdentify ? (
               <span className="text-muted">Couldn’t identify this {idNoun}  - name it:</span>
             ) : awaitingFresh ? (
@@ -5997,6 +6049,11 @@ function InboxCard({
               // claim the supermarket made it.
               const boughtFrom = (item.suggested_metadata as { receipt_vendor?: string } | null)?.receipt_vendor;
               if (!brand && boughtFrom?.trim()) segs.push(`from ${boughtFrom.trim()}`);
+              // WHO sold it, when the receipt named someone other than the shop -
+              // a marketplace order has both, and they are different facts. Kept
+              // by the parser since receipts shipped and shown nowhere until now.
+              const soldBy = (item.suggested_metadata as { receipt_seller?: string } | null)?.receipt_seller;
+              if (soldBy?.trim() && soldBy.trim() !== boughtFrom?.trim()) segs.push(`sold by ${soldBy.trim()}`);
               if (item.suggested_sku) segs.push(item.suggested_sku);
               // Where it's being FILED — the bin set by "Set location" (bulk or
               // per-item). This is target_location_id, the authoritative
@@ -6254,7 +6311,13 @@ function InboxCard({
                 // the eye had to hunt for it (reported 2026-08-20). `order-first`
                 // rather than moving the markup: the series stays next to the
                 // name it qualifies for a reader, and only the layout changes.
-                <span className="relative inline-flex max-w-full order-first max-sm:w-full">
+                // On a phone the content column is ~170px and the bundle
+                // suggestion ("Groceries?") used to sit beside the pill INSIDE
+                // this wrapper, so the destination name got 6px and read "I…"
+                // (measured on the live inbox, 2026-09-01). The wrapper wraps
+                // there, the suggestion takes the next line, the verb drops
+                // "& add", and the name keeps a floor. The walk asserts it.
+                <span className="relative inline-flex max-w-full order-first max-sm:w-full max-sm:flex-wrap">
                 <span
                   className={
                     tentativeRoute
@@ -6290,7 +6353,7 @@ function InboxCard({
                       }
                     >
                       <Sparkles size={11} className="shrink-0 max-sm:hidden" />
-                      <span className="truncate">
+                      <span className="truncate max-sm:min-w-[4rem]">
                         {dest.label}
                         {tentativeRoute ? "?" : ""}
                       </span>
@@ -6328,7 +6391,7 @@ function InboxCard({
                           ? "Installing…"
                           : "Adding…"
                         : topBundle
-                          ? "Install & add"
+                          ? <>Install<span className="max-sm:hidden"> &amp; add</span></>
                           : "Add"}
                     </button>
                   ) : (
@@ -6368,7 +6431,7 @@ function InboxCard({
                       e.stopPropagation();
                       setDestKey(entryKey(staleHint.entry.module, staleHint.entry.instance));
                     }}
-                    className="ml-1.5 shrink-0 inline-flex items-center gap-1 rounded-full border border-ember-300 dark:border-ember-700 bg-ember-50 dark:bg-ember-950/30 px-2 py-0.5 text-[11px] text-ember-700 dark:text-ember-300 hover:bg-ember-100 dark:hover:bg-ember-900/40 transition"
+                    className="ml-1.5 max-sm:ml-0 max-sm:mt-1 max-sm:basis-full shrink-0 inline-flex items-center gap-1 rounded-full border border-ember-300 dark:border-ember-700 bg-ember-50 dark:bg-ember-950/30 px-2 py-0.5 text-[11px] text-ember-700 dark:text-ember-300 hover:bg-ember-100 dark:hover:bg-ember-900/40 transition"
                     title={`${staleHint.label} was set up after this scan was routed. Tap to file it there instead.`}
                   >
                     {staleHint.label}?

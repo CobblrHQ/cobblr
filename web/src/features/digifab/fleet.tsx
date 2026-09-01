@@ -1132,6 +1132,8 @@ export function RelaySnapshot({ slug, connId, deviceId, name, live }: { slug: st
     return () => { alive = false; if (id) clearInterval(id); if (current) URL.revokeObjectURL(current); };
   }, [slug, connId, deviceId, live]);
   if (!url) return null;
+  // EXTERNAL-IMAGE-OK: a blob: object URL this component already built from an
+  // authenticated snapshot fetch (and revokes on unmount).
   return <img src={url} alt={`${name} camera`} className="mb-1.5 w-full h-24 object-cover rounded bg-black/30" />;
 }
 
@@ -1152,6 +1154,8 @@ function RelaySnapshotFill({ slug, connId, deviceId, name, live }: { slug: strin
     return () => { alive = false; if (id) clearInterval(id); if (current) URL.revokeObjectURL(current); };
   }, [slug, connId, deviceId, live]);
   if (!url) return <span className="flex flex-col items-center gap-1 text-faint text-[11px]"><Camera size={18} /> waiting for a frame…</span>;
+  // EXTERNAL-IMAGE-OK: a blob: object URL this component already built from an
+  // authenticated snapshot fetch (and revokes on unmount).
   return <img src={url} alt={`${name} camera`} draggable={false} className="w-full h-full object-cover" />;
 }
 
@@ -1217,6 +1221,8 @@ function LanCameraFill({ slug, connId, deviceId, name, live, klass }: { slug: st
       </span>
     );
   }
+  // EXTERNAL-IMAGE-OK: a blob: object URL this component already built from an
+  // authenticated snapshot fetch (and revokes on unmount).
   return <img src={url} alt={`${name} camera`} draggable={false} className="w-full h-full object-cover" />;
 }
 
@@ -1361,6 +1367,7 @@ function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, selecting, 
             ) : d.lan_camera ? (
               <LanCameraFill slug={slug} connId={connId} deviceId={d.id} name={d.name} live={d.klass === "printing" || d.klass === "paused"} klass={d.klass} />
             ) : d.camera_url ? (
+              // EXTERNAL-IMAGE-OK: the printer's own LAN camera URL, not a stored file.
               <img src={d.camera_url} alt={`${d.name} camera`} draggable={false} className="w-full h-full object-cover" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
             ) : d.linked_machine?.image_path ? (
               <MachinePhotoFill src={d.linked_machine.image_path} alt={`${title ?? d.name} photo`} />
@@ -1977,6 +1984,7 @@ function FileRow({
       <div className="flex items-center gap-2">
         <div className="w-10 h-10 shrink-0 rounded border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 overflow-hidden flex items-center justify-center">
           {thumb ? (
+            // EXTERNAL-IMAGE-OK: a gcode-embedded thumbnail (data: URI) or the vendor cover URL.
             <img src={thumb} alt="" loading="lazy" className="w-full h-full object-contain cursor-zoom-in" onClick={() => onZoom?.(thumb)} />
           ) : (
             <span className="text-faint text-[9px]">{visible && fq.isFetching ? "…" : ""}</span>
@@ -2182,6 +2190,7 @@ function FilesPanel({ slug, connId, deviceId, onZoom, history, onOpenPrint, onRe
             {unmatched.map((r) => (
               <li key={r.id} className="px-2 py-1 text-xs flex items-center gap-2">
                 {r.cover ? (
+                  // EXTERNAL-IMAGE-OK: the vendor task cover URL from the printer's own API.
                   <img src={r.cover} alt="" loading="lazy" className="w-10 h-10 rounded object-cover bg-subtle shrink-0 border border-line dark:border-slate-700" />
                 ) : (
                   <span className={"w-10 h-10 rounded shrink-0 flex items-center justify-center border border-line dark:border-slate-700 " + (r.status === "completed" ? "bg-moss-500/10" : "bg-ember-500/10")}>
@@ -2213,6 +2222,7 @@ export function Lightbox({ src, onClose }: { src: string; onClose: () => void })
   useOverlayOpenFlag(); // full-screen: floating chrome must yield (lint:overlay-flag)
   return createPortal(
     <div className="fixed inset-0 z-[120] bg-black/80 flex items-center justify-center p-6 cursor-zoom-out" onClick={onClose}>
+      {/* EXTERNAL-IMAGE-OK: the caller hands this an already-resolved URL. */}
       <img src={src} alt="" className="max-w-full max-h-full object-contain rounded shadow-2xl" />
     </div>,
     document.body,
@@ -2258,6 +2268,8 @@ function LanCameraView({ slug, connId, deviceId, name, onZoom }: { slug: string;
   }, [slug, connId, deviceId]);
   if (failed && !url) return <div className="text-[11px] text-faint italic">Camera not reachable over LAN yet (bridge online + LAN access on the printer?).</div>;
   if (!url) return <div className="text-[11px] text-faint">Connecting to the camera…</div>;
+  // EXTERNAL-IMAGE-OK: a blob: object URL this component already built from an
+  // authenticated snapshot fetch (and revokes on unmount).
   return <img src={url} alt={`${name} camera`} className="w-full max-h-72 object-contain rounded bg-black/30 cursor-zoom-in" onClick={() => onZoom?.(url)} />;
 }
 
@@ -2640,6 +2652,7 @@ export function PrintDetailModal({ item, onClose, onZoom, onReprint }: { item: D
     <Modal open onClose={onClose} title={item.file_ref} size="md">
       <div className="space-y-3">
         {item.cover && (
+          // EXTERNAL-IMAGE-OK: the vendor task cover URL from the printer's own API.
           <img src={item.cover} alt="" className="w-full max-h-72 object-contain rounded bg-subtle dark:bg-slate-800 cursor-zoom-in" onClick={() => onZoom?.(item.cover!)} />
         )}
         <div>

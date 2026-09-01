@@ -17,9 +17,10 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 import { matchBasics, normalize } from "../basics-match.js";
 import { CONTROL_KEYS, actReply, resolveControlAct } from "../control-context.js";
 import { COMPUTED_COMMANDS, computedCommandFor } from "../computed-commands.js";
-import type { WorkspaceApi } from "@cobblr/workspace-tools";
+import { getTool, type WorkspaceApi } from "@cobblr/workspace-tools";
 import { bindCommand, deriveCommand, type LearnedCommand, type Operation } from "../learned-commands.js";
 import { readQuestionOf, MIN_PEEK_LENGTH, type KindWords } from "../live-answers.js";
+import { countQuestionOf, phraseCountText, phraseMostOf, type KindFields, type CountResult } from "../count-answers.js";
 import { performWrite, performWrites } from "./chat-ledger.js";
 import { chatWorkspaceApi, ctxOf } from "./chat.js";
 import {
@@ -934,6 +935,78 @@ basicsRouter.post(
   }),
 );
 
+/** Fields the tool result will carry per kind: native declared fields plus
+ *  this workspace's custom ones. exposableFields is applied by the route the
+ *  tool reads, so a hidden field simply never has a value to group by. */
+function kindFieldsOf(
+  rows: Array<{ id: string; fields?: Array<{ name: string }>; custom_fields?: Array<{ name: string }> }>,
+  words: KindWords[],
+): KindFields[] {
+  return words.map((w) => {
+    const row = rows.find((r) => r.id === w.id);
+    const fields = [...(row?.fields ?? []), ...(row?.custom_fields ?? [])].map((f) => f.name);
+    return { ...w, fields };
+  });
+}
+
+const COUNT_EXACT_MAX = 2000;
+
+async function countAnswer(
+  message: string,
+  wsApi: WorkspaceApi,
+  kindRows: Array<{ id: string; fields?: Array<{ name: string }>; custom_fields?: Array<{ name: string }> }>,
+  words: KindWords[],
+): Promise<{ answer: string; detail: string } | null> {
+  const kinds = kindFieldsOf(kindRows, words);
+  const q = countQuestionOf(message, kinds);
+  if (!q) return null;
+  const tool = getTool("count_records");
+  if (!tool) return null;
+  const run = async (kind: string, args: Record<string, unknown>): Promise<CountResult | null> => {
+    const r = (await tool.execute(wsApi, { kind, ...args })) as { ok: boolean; data?: CountResult & { scanned?: number } };
+    if (!r.ok || !r.data) return null;
+    if ((r.data.scanned ?? 0) > COUNT_EXACT_MAX) return null;
+    return r.data;
+  };
+  if (q.kind === "most-of") {
+    // Several kinds can declare the field; the one with records is the one
+    // meant. Two with records is a genuine ambiguity, so no answer.
+    // A kind counts as an owner only if some record actually carries a value:
+    // parts declare a manufacturer too, and four parts with it blank must not
+    // make "which manufacturer do I have the most of" ambiguous.
+    const answers: Array<{ kind: KindFields; r: CountResult }> = [];
+    for (const id of q.entityKinds) {
+      const kind = kinds.find((k) => k.id === id);
+      if (!kind) continue;
+      const r = await run(id, { group_by: q.field });
+      if (r && r.total > 0 && (r.groups ?? []).some((g) => g.value !== "(blank)")) answers.push({ kind, r });
+    }
+    return answers.length === 1 ? phraseMostOf(q, answers[0]!.kind, answers[0]!.r) : null;
+  }
+  // count-text: one named kind, or every kind that has records.
+  const targets = q.entityKind ? kinds.filter((k) => k.id === q.entityKind) : kinds;
+  const hits: Array<{ kind: KindFields; r: CountResult }> = [];
+  for (const kind of targets) {
+    const r = await run(kind.id, { q: q.needle });
+    if (!r) {
+      if (q.entityKind) return null;
+      continue;
+    }
+    if (r.total > 0 || q.entityKind) hits.push({ kind, r });
+  }
+  if (q.entityKind) return hits[0] ? phraseCountText(q, hits[0].kind, hits[0].r) : null;
+  // Nothing anywhere mentions the word and no kind was named: that is an
+  // unknown noun ("how many sheep"), and an unprompted "none" is a guess. Stay
+  // quiet, as live-answers always has; naming the kind gets a real zero.
+  if (hits.length === 0) return null;
+  if (hits.length === 1) return phraseCountText(q, hits[0]!.kind, hits[0]!.r);
+  const total = hits.reduce((n, h) => n + h.r.total, 0);
+  return {
+    answer: `${total} things mention "${q.needle}"`,
+    detail: hits.map((h) => `${h.r.total} ${h.r.total === 1 ? h.kind.singular : h.kind.plural}`).join(", "),
+  };
+}
+
 // POST /basics/peek — answer a question that is still being typed.
 //
 // A READ is safe to just do: nothing is written, nothing needs confirming, and
@@ -982,6 +1055,15 @@ basicsRouter.post(
 
     const q = readQuestionOf(body.data.message, kinds);
     if (!q) {
+      // A count of a VALUE inside a kind ("how many bambus", "any deltas",
+      // "which model do I have the most of") - the questions a model got wrong
+      // by reading a partial page. Counted by the same tool the model would
+      // call, so there is one implementation and this one never samples.
+      const counted = await countAnswer(body.data.message, wsApi, kindRows, kinds).catch(() => null);
+      if (counted) {
+        res.json({ ...counted, from: "workspace" });
+        return;
+      }
       // Not a question about their records — but it may be one Cobb can answer
       // from the guide ("what can you do?", "where do I scan?"). Those answers
       // are lexical and already written down, so showing one before the message

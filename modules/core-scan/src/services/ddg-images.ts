@@ -279,11 +279,24 @@ export function deriveImageQuery(opts: {
   if (!name || isJunkName(name)) return null;
   const { author, mediaWord } = mediaSearchExtras([{ fields: opts.fields ?? {} }]);
   const color = typeof opts.fields?.color === "string" ? (opts.fields.color as string).trim() : "";
+  // The item's DECLARED category, on the same footing as its colour. A receipt
+  // line is a bare noun with nothing else to go on - "Baby Carrots" - and the
+  // search answers with the most photographed thing of that name, which for
+  // fresh produce is a TIN ("cucumber, tomato, and carrots are not canned by
+  // default", the operator, 2026-08-31). The workspace already said what these
+  // are: Produce, Bakery, Dairy. Saying it to the search too costs nothing and
+  // is the workspace's own vocabulary, not this file's opinion about food -
+  // exactly how `color` and the form factor already work.
+  const category = typeof opts.fields?.category === "string" ? (opts.fields.category as string).trim() : "";
   // Last: the media word separates a book from its film, which matters more
   // than the shape of the packaging, and imageQuery drops terms already in the
   // name — so a title that says "Box" does not get told twice.
   const form = formFactorFromObservation(opts.observation);
-  const extra = [author, mediaWord, color, form].filter(Boolean).join(" ") || null;
+  // Category LAST of the sharpeners: it is the broadest of them, so a stronger
+  // term (a creator, the colour, the observed shape) leads. imageQuery drops
+  // any of these already present in the name, so a line called "Produce Bag"
+  // is not told twice.
+  const extra = [author, mediaWord, color, form, category].filter(Boolean).join(" ") || null;
   return imageQuery(name, opts.brand ?? null, extra);
 }
 
