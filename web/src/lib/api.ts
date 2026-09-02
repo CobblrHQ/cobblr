@@ -643,6 +643,8 @@ export interface OrgModuleListItem {
     /** Presentation-override key, when the rename should follow an entity kind
      *  rather than the module name. */
     overrideKey?: string;
+    /** A row in the nav (Locations, Scan Inbox); absent = search-only. */
+    primary?: boolean;
   };
   /** Release maturity — the UI shows an Experimental/Beta badge for non-stable
    *  modules. Absent → treat as stable. ("hidden" modules never load, so they
@@ -3460,12 +3462,15 @@ export const api = {
       items?: Array<{ id: string; description: string | null; qty: number; unit_cost: number | null; part_id: string | null }>;
     }>("GET", `/orgs/${slug}/modules/purchases/orders/${hit.id}`);
   },
-  confirmReceiptGroup: (slug: string, groupId: string) =>
+  /** File every pending line of a receipt at once. `into` names one instance
+   *  for all of them (the grocery app's "all of this goes in the pantry");
+   *  absent, each line goes to its own best match. */
+  confirmReceiptGroup: (slug: string, groupId: string, into?: { instance?: string; location_id?: string }) =>
     request<{
       order_id: string | null;
       vendor: string | null;
       confirmed: Array<{ itemId: string; partId?: string | null; error?: string }>;
-    }>("POST", `/orgs/${slug}/modules/core-scan/receipt-group/${groupId}/confirm`, {}),
+    }>("POST", `/orgs/${slug}/modules/core-scan/receipt-group/${groupId}/confirm`, into ?? {}),
   // Pending captures grouped by the bundle they fit ("These look like yarn (3)").
   quickstart: (slug: string) =>
     request<QuickstartSuggestions>("GET", `/orgs/${slug}/quickstart`),

@@ -1,6 +1,7 @@
 // Generic actions bar — drop onto any entity-detail page; renders
 // platform-registered + user-bound actions for the kind.
 
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePlatformWeb } from "./context";
 import { useInvokeEntityAction } from "./use-invoke-action";
@@ -51,31 +52,43 @@ export function EntityActionsBar({ entityKind, entityId, entityLabel, className,
   // still a record you might want to ask about, and it is the one place a
   // checkbox cannot say "this one" for you.
   const ask = <AskCobbAbout kind={entityKind} id={entityId} label={entityLabel ?? "this"} />;
-  if (actions.length === 0 && visibleBindings.length === 0) {
+  // Every registered action for a kind lands here, and a kind with a rich
+  // module behind it registers a lot: a ball of yarn showed sixteen shouting
+  // chips ("confirm a parcel is in hand", "draft a purchase order") above its
+  // own fields (2026-09-02). The first few stay in the open; the rest wait
+  // behind one chip that says how many there are. User-bound actions (the
+  // person's own templates) count as the front of the list.
+  const [showAll, setShowAll] = useState(false);
+  const buttons = [
+    ...visibleBindings.map((b) => <BindingButton key={`b:${b.binding_id}`} entityKind={entityKind} entityId={entityId} binding={b} />),
+    ...actions.map((a) => <ActionButton key={a.id} entityKind={entityKind} entityId={entityId} action={a} />),
+  ];
+  if (buttons.length === 0) {
     return <div className={`flex flex-wrap gap-2 ${className ?? ""}`}>{ask}</div>;
   }
+  const folded = !showAll && buttons.length > ACTIONS_IN_THE_OPEN + 1;
+  const shown = folded ? buttons.slice(0, ACTIONS_IN_THE_OPEN) : buttons;
   return (
     <div className={`flex flex-wrap gap-2 ${className ?? ""}`}>
       {ask}
-      {actions.map((a) => (
-        <ActionButton
-          key={a.id}
-          entityKind={entityKind}
-          entityId={entityId}
-          action={a}
-        />
-      ))}
-      {visibleBindings.map((b) => (
-        <BindingButton
-          key={b.binding_id}
-          entityKind={entityKind}
-          entityId={entityId}
-          binding={b}
-        />
-      ))}
+      {shown}
+      {folded && (
+        <button
+          type="button"
+          onClick={() => setShowAll(true)}
+          data-testid="actions-more"
+          className="rounded border border-dashed border-line dark:border-slate-600 px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide text-muted dark:text-slate-400 hover:text-accent hover:border-accent transition"
+        >
+          +{buttons.length - ACTIONS_IN_THE_OPEN} more
+        </button>
+      )}
     </div>
   );
 }
+
+/** How many action chips a record shows before the rest fold. Five reads as a
+ *  toolbar; sixteen reads as a wall. */
+const ACTIONS_IN_THE_OPEN = 5;
 
 function ActionButton({
   entityKind,

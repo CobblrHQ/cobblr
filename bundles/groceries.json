@@ -1,8 +1,19 @@
 {
   "manifest": {
     "id": "cobblr.flagship.groceries",
-    "version": "0.10.0",
+    "version": "0.10.1",
     "scan_keywords": [
+      "chips",
+      "snack",
+      "spread",
+      "condiment",
+      "peanut butter",
+      "olive oil",
+      "frozen",
+      "granola",
+      "diapers",
+      "paper towels",
+      "toilet paper",
       "tomato",
       "tomatoes",
       "carrot",

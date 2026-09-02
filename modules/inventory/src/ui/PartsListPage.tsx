@@ -17,8 +17,7 @@ import {
   ScanLine,
   Search,
   ShieldCheck,
-  Tag as TagIcon,
-} from "lucide-react";
+  Tag as TagIcon, MoreHorizontal } from "lucide-react";
 import {
   BulkActionBar,
   EditableCell,
@@ -133,6 +132,7 @@ export function PartsListPage() {
     staleTime: 60_000,
   });
   const views = savedViews.data?.items ?? [];
+  const chipViews = instance ? views.filter((v) => !v.pinned) : views;
   const activeView = viewId ? views.find((v) => v.id === viewId) ?? null : null;
   const groupBy = activeView?.config?.group_by;
   const viewFields = activeView?.config?.visible_fields;
@@ -278,6 +278,7 @@ export function PartsListPage() {
   // columns that actually hold data somewhere + offer "+N more columns".
   // Established tables (>25 rows) and saved views keep the full/declared grid.
   const [showAllCols, setShowAllCols] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
   const sparse = !viewFields && partItems.length > 0 && partItems.length <= 25 && !showAllCols;
   const filledCols = sparse
     ? customCols.filter((c) =>
@@ -501,6 +502,71 @@ export function PartsListPage() {
         )}
         <div className="ml-auto" />
         <ViewModeToggle mode={viewMode} onChange={setViewMode} />
+        {/* On a skinned table (an app's Yarn, a pantry) the data tools sit
+            behind one button: five bordered buttons stacked above the first
+            row on a phone before any yarn was visible (2026-09-02). The base
+            inventory list keeps them inline; it is a workbench, not an app. */}
+        {instance ? (
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setToolsOpen((o) => !o)}
+              aria-expanded={toolsOpen}
+              data-testid="list-tools"
+              className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
+              title="Import and export"
+            >
+              <MoreHorizontal size={14} /> <span className="hidden sm:inline">Import / export</span>
+            </button>
+            {toolsOpen && (
+              <div
+                className="absolute right-0 z-20 mt-1 flex min-w-[200px] flex-col gap-1 rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-1 shadow-lg"
+                onClick={() => setToolsOpen(false)}
+              >
+            <button
+              onClick={() => void exportCsv()}
+              disabled={exporting}
+              className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
+            >
+              <FileDown size={14} /> {exporting ? "exporting…" : "Export CSV"}
+            </button>
+            <button
+              onClick={() => setImporting(true)}
+              className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
+            >
+              <FileUp size={14} /> Import CSV
+            </button>
+            {/* Spoolman syncs 3D-printing FILAMENT spool weights — irrelevant on a
+                food pantry / medications / generic inventory, where it was just
+                clutter. Gate it to the filament spools instance, the same way the
+                Ravelry import below is gated to the yarn instance. */}
+            {instance === "filament" && (
+              <button
+                onClick={() => setSpoolmanOpen(true)}
+                className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
+                title="Sync remaining weight from Spoolman"
+              >
+                <Download size={14} /> Spoolman
+              </button>
+            )}
+            {/* Import a Ravelry stash straight into the Yarn table (a713b84c). Only
+                the yarn instance — the bundle names it "yarn" — since the importer
+                maps to yarn fields + the Designs table. */}
+            {instance === "yarn" && (
+              <button
+                onClick={() => void importRavelry()}
+                disabled={ravImporting}
+                className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
+                title="Import your Ravelry stash + projects"
+              >
+                <Download size={14} /> {ravImporting ? "importing…" : "Import from Ravelry"}
+              </button>
+            )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
         <button
           onClick={() => void exportCsv()}
           disabled={exporting}
@@ -540,6 +606,8 @@ export function PartsListPage() {
             <Download size={14} /> {ravImporting ? "importing…" : "Import from Ravelry"}
           </button>
         )}
+          </>
+        )}
         {/* Scan into THIS instance — lands the scanned item in the yarn table
             (core-scan is always on). The /scan page reads the target params. */}
         {instance && (
@@ -561,13 +629,17 @@ export function PartsListPage() {
         </button>
       </div>
 
-      {/* Saved-view chips — bundles ship pinned ones; the wizard lands here. */}
-      {views.length > 0 && (
+      {/* Saved-view chips — bundles ship pinned ones; the wizard lands here.
+          On an instance page the PINNED views are already the tabs above the
+          table (InstancePage), so the chips carry only the unpinned ones: a
+          Yarn table showed "By weight" twice, once as a tab and once as a
+          chip (2026-09-02). */}
+      {chipViews.length > 0 && (
         <div className="flex items-center gap-1.5 flex-wrap">
           <ViewChip active={!activeView} onClick={() => selectView(null)}>
             All {itemNounPlural}
           </ViewChip>
-          {views.map((v) => (
+          {chipViews.map((v) => (
             <ViewChip key={v.id} active={activeView?.id === v.id} onClick={() => selectView(v.id)}>
               {v.name}
             </ViewChip>

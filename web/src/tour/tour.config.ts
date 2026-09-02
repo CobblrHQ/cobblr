@@ -34,14 +34,14 @@ export const DASHBOARD_TOUR: TourStep[] = [
   {
     kind: "spotlight",
     target: '[data-tour="nav"]',
-    title: "Your modules",
-    body: "Everything this workspace does. Dashboard is home; the rest are the areas you turned on.",
+    title: "Your places",
+    body: "Home is where you start. Locations is where things live, and the Scan Inbox is what your camera captured. Everything else in this row is a collection you set up.",
   },
   {
     kind: "spotlight",
     target: '[data-tour="do-box"]',
     title: "Start here",
-    body: "Type what you've got and Cobblr finds or builds the right home for it - the fastest way to fill a new workspace. Pick a ready-made bundle on the right, or describe what you have and the AI builder compiles a custom setup. Press ⌘K any time to jump anywhere.",
+    body: "Type what you've got and Cobblr finds or builds the right home for it - the fastest way to fill a new workspace. Or scan it. A few ready-made setups sit under the box; everything else is behind More ways to start. Press ⌘K any time to jump anywhere.",
   },
   {
     kind: "spotlight",
@@ -55,7 +55,7 @@ export const DASHBOARD_TOUR: TourStep[] = [
     // always-present header camera if that card isn't shown.
     target: ['[data-tour="capture-scan"]', 'a[href$="/scan/camera"]'],
     title: "Scan to capture",
-    body: "Rather not type it? Scan a barcode or label with your phone and it files itself. No camera on this computer? Pair your phone in a tap and scan with that.",
+    body: "Rather not type it? Scan a barcode or label with your phone and it files itself. No camera on this computer? Pair your phone in a tap and scan with that. Not now? Try a sample scan and watch one land.",
   },
   {
     kind: "spotlight",

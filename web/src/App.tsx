@@ -79,6 +79,7 @@ const MeNotificationChannelsPage = lazy(() => import("./pages/MeNotificationChan
 const MeProfilePage = lazy(() => import("./pages/MeProfilePage").then((m) => ({ default: m.MeProfilePage })));
 const AccountSectionPage = lazy(() => import("./pages/AccountSectionPage").then((m) => ({ default: m.AccountSectionPage })));
 const MeIdentityPage = lazy(() => import("./pages/MeProfilePage").then((m) => ({ default: m.MeIdentityPage })));
+const PrintPageLazy = lazy(() => import("./pages/PrintPage").then((m) => ({ default: m.PrintPage })));
 const MeAppearancePage = lazy(() => import("./pages/MeProfilePage").then((m) => ({ default: m.MeAppearancePage })));
 const AppSettingsPage = lazy(() => import("./pages/AppSettingsPage").then((m) => ({ default: m.AppSettingsPage })));
 const CommunicationPreferencesPage = lazy(() => import("./pages/CommunicationPreferencesPage").then((m) => ({ default: m.CommunicationPreferencesPage })));
@@ -776,6 +777,10 @@ function ActiveOrgScopedRoutes() {
             <Route path="/me/appearance" element={<MeAppearancePage />} />
             <Route path="/me/connections" element={<ConnectionsPage />} />
             <Route path="/me/connections/new" element={<ConnectionsPage startAdding />} />
+            {/* Inside the managed-app surface on purpose: a locked app prints labels
+                from the camera, and this is the only door where a Bluetooth printer
+                can be paired (Configuration → Devices is outside it). */}
+            <Route path="/me/printer" element={<PrintPageLazy embedded />} />
           </Route>
           {/* /me is canonical; /me/profile redirects so old bookmarks keep
               working. Outside the layout: a redirect renders no content. */}

@@ -69,6 +69,15 @@ async function fetchPendingInbox(baseUrl: string, slug: string, token: string): 
 quickstartRouter.get("/bundle-menu", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
+    // A locked managed app has ONE shape and no marketplace. Offering the
+    // catalog here put an "Install & add" door on a Home app's scan card (a
+    // phone was offered the Groceries bundle, 2026-09-02): every consumer of
+    // this menu inherits the rule by getting nothing to merge.
+    const org = await meta.selectFrom("orgs").select("app_mode").where("id", "=", req.tenant!.org.id).executeTakeFirst();
+    if (org?.app_mode) {
+      res.json({ items: [] });
+      return;
+    }
     const items = flagshipBundleMenu();
     // Merge in the workspace's TRAIT-SCOPED fields ("Acquired from" on everything
     // physical). A not-yet-installed bundle's items don't exist as a kind yet, so

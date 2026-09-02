@@ -14,6 +14,7 @@
 
 import { Kysely, sql } from "kysely";
 import { platform, expiryState, expiryPhrase } from "@cobblr/platform-contract";
+import { expiryStages } from "./expiry-stages.js";
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
@@ -106,30 +107,80 @@ export async function expiryTick(opts: { orgId?: string } = {}): Promise<{ scann
     // re-dated leftover (different expires_on) re-alerts. Was a SQL left join to
     // inventory_parts — now a JS filter against lists' own table.
     let due: ExpiringRow[] = [];
+    let dueToday: ExpiringRow[] = [];
     if (candidates.length > 0) {
       const alreadyAtDate = new Map<string, string>();
+      const todayDoneAt = new Map<string, string>();
       try {
-        const led = sql<{ part_id: string; expires_on: string }>`
-          select part_id::text as part_id, expires_on::text as expires_on
+        const led = sql<{ part_id: string; expires_on: string; today_notified_on: string | null }>`
+          select part_id::text as part_id, expires_on::text as expires_on, today_notified_on::text as today_notified_on
           from lists_expiry_notifications
           where part_id = any(${candidates.map((c) => c.id)})
         `.compile(tdb);
         const r = (await tdb.executeQuery(led)) as {
-          rows: { part_id: string; expires_on: string }[];
+          rows: { part_id: string; expires_on: string; today_notified_on: string | null }[];
         };
-        for (const x of r.rows) alreadyAtDate.set(x.part_id, x.expires_on.slice(0, 10));
+        for (const x of r.rows) {
+          alreadyAtDate.set(x.part_id, x.expires_on.slice(0, 10));
+          if (x.today_notified_on) todayDoneAt.set(x.part_id, x.today_notified_on.slice(0, 10));
+        }
       } catch (err) {
         if (!(err as Error).message.includes("does not exist")) throw err;
       }
+      const todayISO = new Date().toISOString().slice(0, 10);
       due = candidates
         .filter((c) => alreadyAtDate.get(c.id) !== c.value.slice(0, 10))
         .map((c) => ({ id: c.id, name: c.name, expires_on: c.value }));
+      // The DAY-OF notice, for dates the heads-up already covered: each date
+      // earns exactly two lines in somebody's morning list, heads-up and today
+      // (expiry-stages.ts holds the rule). Sent here so it never waits on the
+      // heads-up path, which skips a date it has already announced.
+      dueToday = candidates
+        .filter((c) => {
+          const stages = expiryStages({
+            expiresOn: c.value.slice(0, 10),
+            today: todayISO,
+            headsUpSentFor: alreadyAtDate.get(c.id) ?? null,
+            todaySentFor: todayDoneAt.get(c.id) ?? null,
+          });
+          return stages.today && !stages.headsUp;
+        })
+        .map((c) => ({ id: c.id, name: c.name, expires_on: c.value }));
+    }
+    if (due.length === 0 && dueToday.length === 0) return;
+    const memberIds = await platform().notifications.orgMemberIds(org.id);
+
+    for (const row of dueToday) {
+      for (const userId of memberIds) {
+        try {
+          await platform().notifications.dispatch({
+            orgId: org.id,
+            userId,
+            eventType: "lists.expiring_today",
+            triggeredBy: "schedule",
+            message: `${row.name}: expires today`,
+            module: "lists",
+            entityType: "inventory:part",
+            entityId: row.id,
+            payload: { expiresOn: row.expires_on, daysUntil: 0 },
+          });
+        } catch (err) {
+          console.error("[lists] expiry day-of notify failed:", (err as Error).message);
+        }
+      }
+      try {
+        const up = sql`
+          update lists_expiry_notifications set today_notified_on = ${row.expires_on}::date where part_id = ${row.id}
+        `.compile(tdb);
+        await tdb.executeQuery(up);
+      } catch (err) {
+        console.error("[lists] expiry day-of ledger write failed:", (err as Error).message);
+      }
+      alerted += 1;
     }
 
     scanned += due.length;
     if (due.length === 0) return;
-
-    const memberIds = await platform().notifications.orgMemberIds(org.id);
 
     for (const row of due) {
       const daysUntil = Math.ceil((new Date(row.expires_on).getTime() - Date.now()) / 86_400_000);
@@ -200,11 +251,14 @@ export async function expiryTick(opts: { orgId?: string } = {}): Promise<{ scann
       }
 
       // Stamp the ledger (upsert: re-dated parts overwrite the prior alert).
+      // A heads-up sent ON the day is the day-of notice too, so that date's
+      // second line is spent as well; a re-dated part clears it.
+      const dayOfCovered = daysUntil <= 0;
       try {
         const up = sql`
-          insert into lists_expiry_notifications (part_id, expires_on, notified_at)
-          values (${row.id}, ${row.expires_on}::date, now())
-          on conflict (part_id) do update set expires_on = excluded.expires_on, notified_at = now()
+          insert into lists_expiry_notifications (part_id, expires_on, notified_at, today_notified_on)
+          values (${row.id}, ${row.expires_on}::date, now(), ${dayOfCovered ? row.expires_on : null}::date)
+          on conflict (part_id) do update set expires_on = excluded.expires_on, notified_at = now(), today_notified_on = excluded.today_notified_on
         `.compile(tdb);
         await tdb.executeQuery(up);
       } catch (err) {

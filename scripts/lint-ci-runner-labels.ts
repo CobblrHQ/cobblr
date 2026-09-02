@@ -28,7 +28,7 @@ const DIR = join(ROOT, ".forgejo", "workflows");
  *  pinned for the postgres-backed suite. Adding a label here without adding a
  *  runner that answers to it re-creates exactly the silence above, so treat
  *  this list as a claim about infrastructure, not a formality. */
-const KNOWN = new Set(["ubuntu-latest", "light", "ci-test"]);
+const KNOWN = new Set(["ubuntu-latest", "light", "ci-test", "ci-test-full"]);
 
 const errors: string[] = [];
 const seen = new Map<string, string[]>();

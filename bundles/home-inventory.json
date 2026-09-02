@@ -1,12 +1,12 @@
 {
   "manifest": {
     "id": "cobblr.flagship.home-inventory",
-    "version": "0.4.1",
+    "version": "0.5.5",
     "name": "Home Inventory",
-    "description": "Your belongings as their own room-by-room catalog: make/model + condition, filed by room. Optional insurance valuation.",
+    "description": "Your belongings as their own room-by-room catalog: make/model + condition, filed by room. Scan to add, print labels for boxes, optional insurance valuation.",
     "author": "Cobblr",
-    "released_at": "2026-07-15",
-    "changelog": "Rooms are now real Locations. The separate “Room” field is gone: items file into the workspace’s Location tree (rooms, and bins inside them) like everything else, so a thing has one place, not two. Your existing room values move over automatically on this update: each becomes a Location and its items are filed into it, nothing lost. The pinned “By room” view still groups your catalog by room (now off the real Location), and the claim-ready Insurance view too. Earlier: Home Inventory became its OWN table (an inventory instance) with only the fields a home catalog needs, plain-language hints, and optional Insurance valuation.",
+    "released_at": "2026-09-01",
+    "changelog": "Three optional extras, each a checkbox: Scan to add (point your phone at a thing and it lands in the catalog with a photo and a name), Labels (print a QR label for a thing or a box on a Bluetooth label printer), and Starter rooms (Kitchen, Living room, Bedroom, Bathroom, Garage, Closet, ready on day one). Earlier: Rooms are now real Locations. The separate “Room” field is gone: items file into the workspace’s Location tree (rooms, and bins inside them) like everything else, so a thing has one place, not two. Your existing room values move over automatically on this update: each becomes a Location and its items are filed into it, nothing lost. The pinned “By room” view still groups your catalog by room (now off the real Location), and the claim-ready Insurance view too. Earlier: Home Inventory became its OWN table (an inventory instance) with only the fields a home catalog needs, plain-language hints, and optional Insurance valuation.",
     "requires": [
       {
         "module": "inventory"
@@ -20,8 +20,9 @@
         "glyph": "🏠",
         "item_noun": "item",
         "scan_keywords": [
-          "bedsheet",
           "bed sheet",
+          "sheet set",
+          "sheets",
           "bedding",
           "linen",
           "towel",
@@ -36,22 +37,29 @@
           "dresser",
           "sofa",
           "couch",
-          "recliner",
+          "chair",
+          "bookcase",
           "desk",
           "lamp",
           "mirror",
           "shelf",
+          "cabinet",
           "appliance",
           "vacuum",
           "fan",
           "heater",
+          "microwave",
+          "toaster",
+          "blender",
           "cookware",
-          "skillet",
           "utensil",
           "dishes",
           "monitor",
+          "television",
+          "speaker",
+          "headphones",
           "router",
-          "cabinet"
+          "iphone"
         ],
         "qty_unit": "each",
         "field_defs": [
@@ -134,6 +142,71 @@
       }
     ],
     "features": [
+      {
+        "key": "scan",
+        "name": "Scan to add",
+        "question": "Add things by pointing your phone at them?",
+        "description": "Point your phone at a barcode or just the thing itself: it lands in your catalog with a photo and a name, filed in the room you are standing in.",
+        "default": false,
+        "requires": [
+          {
+            "module": "core-scan"
+          }
+        ],
+        "next_steps": [
+          {
+            "label": "Scan your first thing",
+            "module": "core-scan",
+            "path": "/scan/camera",
+            "hint": "A barcode or a photo. It files itself into the room you pick."
+          }
+        ]
+      },
+      {
+        "key": "print-labels",
+        "name": "Labels",
+        "question": "Print QR labels for things and boxes?",
+        "description": "One tap prints a QR label on a Bluetooth label printer, so a box says what is in it and a scan of the label opens the record.",
+        "default": false,
+        "requires": [
+          {
+            "module": "labels"
+          }
+        ]
+      },
+      {
+        "key": "rooms",
+        "name": "Starter rooms",
+        "question": "Start with the usual rooms?",
+        "description": "Kitchen, Living room, Bedroom, Bathroom, Garage and Closet, ready to file into on day one. Rename or add rooms any time; nothing here is fixed.",
+        "default": true,
+        "provides_locations": [
+          {
+            "name": "Kitchen",
+            "kind": "area"
+          },
+          {
+            "name": "Living room",
+            "kind": "area"
+          },
+          {
+            "name": "Bedroom",
+            "kind": "area"
+          },
+          {
+            "name": "Bathroom",
+            "kind": "area"
+          },
+          {
+            "name": "Garage",
+            "kind": "area"
+          },
+          {
+            "name": "Closet",
+            "kind": "area"
+          }
+        ]
+      },
       {
         "key": "insurance",
         "name": "Insurance valuation",

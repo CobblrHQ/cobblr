@@ -91,6 +91,7 @@ import { enableDefaultModulesForOrg } from "./modules/enable.js";
 import { startDbUpgradeHoldWatch } from "./platform/db-upgrade-status.js";
 import { reconcileOrphanTenantRoles } from "./platform/reconcile-tenant-roles.js";
 import { reconcileScanCategoryFields } from "./platform/reconcile-scan-category.js";
+import { reconcileAppScanFallback } from "./platform/reconcile-app-scan-fallback.js";
 import { backfillBundleClaims } from "./platform/backfill-bundle-claims.js";
 import {
   registerDeclarativeScanResolver,
@@ -1181,6 +1182,11 @@ async function boot() {
   // scattered across four near-synonym tables. Idempotent; a workspace that
   // already has an axis costs one in-memory check and opens no tenant pool.
   await T("reconcileScanCategoryFields", reconcileScanCategoryFields());
+
+  // A managed app's own table is its scan fallback, for app workspaces that
+  // were provisioned before provisioning set it. Two cobblr_meta reads.
+  const appFallback = await T("reconcileAppScanFallback", reconcileAppScanFallback());
+  if (appFallback.orgsHealed > 0) console.log(`[cobblr-api] app scan-fallback reconcile: ${appFallback.orgsHealed} workspace(s) pointed at their app's table`);
 
   // Self-heal the bundle-resource-claims ledger for installs that predate it,
   // so a bundle uninstall can refcount correctly. Once per org, idempotent.

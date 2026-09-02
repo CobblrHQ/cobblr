@@ -22,7 +22,10 @@ function isBuilderRoute(route: string): boolean {
 
 export function HeaderActions() {
   const { activeSlug, activeOrg } = useActiveOrg();
-  const focused = isFocused(activeOrg);
+  // Builder chrome (the AI builder, the marketplace) is the platform. Focused
+  // mode hides it; a locked managed app has no platform at all, so the same
+  // rule holds there ("Build" sat in a Home app's header and bounced, 2026-09-02).
+  const focused = isFocused(activeOrg) || !!activeOrg?.app_mode;
   const modules = useQuery({
     queryKey: ["org-modules", activeSlug],
     queryFn: () => api.orgModules(activeSlug),

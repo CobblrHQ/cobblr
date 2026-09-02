@@ -1,7 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.community.lego",
-    "version": "0.5.1",
+    "version": "0.5.2",
     "name": "Lego",
     "description": "Lego as its own tables. Sets you own (sealed / built / disassembled) with optional Bricks bins, a Rebrickable catalog link, and a one-tap Disassemble that spawns the parts and opens the sorting planner.",
     "author": "Cobblr community",
@@ -19,6 +19,16 @@
         "display_name": "Sets",
         "glyph": "🧱",
         "item_noun": "set",
+        "scan_keywords": [
+          "lego",
+          "legos",
+          "lego set",
+          "building set",
+          "brick set",
+          "minifigure",
+          "minifig",
+          "bricks"
+        ],
         "qty_unit": "each",
         "field_defs": [
           {

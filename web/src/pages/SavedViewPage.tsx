@@ -12,8 +12,12 @@ import { api } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { SavedViewBody } from "./ViewsPage";
 
-export function SavedViewPage() {
-  const { viewId } = useParams<{ viewId: string }>();
+/** A saved view as a page. Also hosted WHOLE by the instance page as a tab
+ *  (`viewId` + `embedded`): the instance owns the heading then, and this
+ *  renders only the view. */
+export function SavedViewPage({ viewId: viewIdProp, embedded = false }: { viewId?: string; embedded?: boolean } = {}) {
+  const params = useParams<{ viewId: string }>();
+  const viewId = viewIdProp ?? params.viewId;
   const { activeSlug } = useActiveOrg();
   const views = useQuery({
     queryKey: ["saved-views", activeSlug],
@@ -40,6 +44,9 @@ export function SavedViewPage() {
         </Link>
       </div>
     );
+  }
+  if (embedded) {
+    return <SavedViewBody view={view} items={data.data?.items ?? []} isLoading={data.isLoading} />;
   }
   return (
     <div className="space-y-4">

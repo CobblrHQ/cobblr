@@ -48,6 +48,11 @@ const COMPOSITES: Record<string, string[]> = {
   "FieldsAndFormsPage.tsx": ["./FieldsPage", "./FormBuilderPage"],
   "PermissionsPage.tsx": ["./UsersPage", "./RolesPage"],
   "QrPage.tsx": ["./QrTokensPage", "./ScanRulesPage"],
+  // The instance page hosts a bundle's PINNED saved view as a tab beside its
+  // table (the Groceries board). The whole SavedViewPage, embedded; the
+  // instance owns the heading. Its module-page imports (Machines, Assets,
+  // Records) predate this and stay in the baseline.
+  "InstancePage.tsx": ["./SavedViewPage"],
 };
 
 interface Finding {

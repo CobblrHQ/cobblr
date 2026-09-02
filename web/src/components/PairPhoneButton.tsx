@@ -5,7 +5,10 @@
 // scan inbox the desktop is showing.
 //
 // Click → POST /auth/pair/start (for the active workspace) → render the code as
-// a QR → poll /auth/pair/status → auto-close when the phone claims it.
+// a QR → poll /auth/pair/status → when the phone claims it, hand the person a
+// barcode to point the phone at. Pairing used to close the modal on a tick
+// mark, which left somebody holding a phone with an open camera and nothing
+// to scan; the first thing they need is a thing.
 //
 // Rendered only on non-touch (desktop) devices; phones already have the direct
 // camera, so the button stands down there.
@@ -17,6 +20,8 @@ import { Modal } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { isTouchPrimary } from "../lib/useIsTouch";
+import { Ean13 } from "./Ean13";
+import { DEMO_BARCODE } from "../lib/demo-barcode";
 
 export function PairPhoneButton({
   className,
@@ -146,7 +151,6 @@ function PairPhoneModal({ onClose }: { onClose: () => void }) {
         if (status.state === "claimed") {
           setPhase("claimed");
           clearInterval(tick);
-          setTimeout(onClose, 1400);
         } else if (status.state === "expired" || remaining === 0) {
           setPhase("expired");
           clearInterval(tick);
@@ -224,9 +228,21 @@ function PairPhoneModal({ onClose }: { onClose: () => void }) {
         )}
 
         {phase === "claimed" && (
-          <div className="py-10 text-center">
-            <div className="text-3xl mb-2">✅</div>
-            <div className="text-sm font-medium text-content dark:text-mortar-100">Phone paired</div>
+          <div className="py-4 text-center space-y-3" data-testid="pair-paired">
+            <div className="text-sm font-medium text-content dark:text-mortar-100">Phone paired. Now point it at this:</div>
+            <div className="mx-auto rounded-md border border-line dark:border-slate-700 bg-white p-3 w-fit">
+              <Ean13 code={DEMO_BARCODE} height={64} />
+            </div>
+            <p className="text-xs text-muted dark:text-slate-400">
+              A real product. It lands in your scan inbox with its name and photo, the way anything you scan from now on will.
+            </p>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-xs font-medium px-3 py-1.5 transition"
+            >
+              Done
+            </button>
           </div>
         )}
 

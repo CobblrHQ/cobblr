@@ -1,0 +1,20 @@
+# The smoke set: api integration tests that run on EVERY affected run, whatever
+# changed. Cheap, broad, and each one a different way the api can be broken as a
+# whole: boot, a workspace's birth, its walls, its roles, its tokens, a module's
+# lifecycle, a wire firing, an install's postcondition, the census tests that
+# read every module. Keep each under ~5s; a slow smoke test is a tax on every PR.
+# Read by scripts/ci-affected.mjs; checked by lint:test-affects.
+core-healthcheck.test.ts
+signup-gate.test.ts
+tenant-isolation.test.ts
+org-roles.test.ts
+token-scopes.test.ts
+require-scope.test.ts
+module-crud.test.ts
+wire-events.test.ts
+install-postcondition.test.ts
+entity-kinds-enabled-only.test.ts
+list-skips-disabled-modules.test.ts
+all-bundles-validate.test.ts
+action-role-parity.test.ts
+migrate-concurrency.test.ts

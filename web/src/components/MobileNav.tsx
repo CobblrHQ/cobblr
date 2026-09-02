@@ -25,10 +25,9 @@ import { UpdateBadge } from "./UpdateBadge";
 import { usePendingAiShares } from "../lib/usePendingAiShares";
 import { useAuth } from "../auth/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
-import { useNavModules, NAVGROUP_PREFIX, navTargetFor } from "./useNavModules";
+import { useNavModules, NAVGROUP_PREFIX, navTargetFor, surfaceTops } from "./useNavModules";
 import { CobblestoneMark } from "../CobblestoneMark";
 import { OverlayFlag } from "@cobblr/platform-web";
-import { inManagedAppSurface } from "../lib/managed-apps";
 
 /** The marker on a row that belongs to the group heading above it. It replaced
  *  the word "instance" on those rows: a dot under a heading already says
@@ -40,21 +39,14 @@ function ChildDot() {
 
 export function MobileNav() {
   const { activeOrg, activeSlug } = useActiveOrg();
-  const { tops, childrenByParent, instanceGroups, utilities } = useNavModules(activeSlug);
+  const { tops, childrenByParent, instanceGroups } = useNavModules(activeSlug);
   // A locked managed app ("Cobblr for Yarn") shows ONLY its own surface. The
   // desktop nav already hid the platform rows; this menu did not, so a knitter
   // on a phone saw Dashboard, Calendar and Configuration and every tap bounced
   // back to the yarn table. Same predicate the route guard uses, so the two
   // cannot disagree about what is inside the app.
   const appMode = !!activeOrg?.app_mode;
-  const visibleTops = appMode
-    ? tops.filter((m) =>
-        m.name.startsWith(NAVGROUP_PREFIX) ? true : inManagedAppSurface(navTargetFor(m.name, true)),
-      )
-    : tops;
-  // The doors (Files, Locations, Calendar, the Scan Inbox…) sit under their own
-  // "more" label after the collections, never among them.
-  const doors = appMode ? utilities.filter((u) => inManagedAppSurface(navTargetFor(u.name, true))) : utilities;
+  const visibleTops = surfaceTops(tops, appMode);
   const pendingShares = usePendingAiShares(activeSlug, activeOrg?.role === "owner");
   const { logout } = useAuth();
   const { theme, toggle } = useTheme();
@@ -341,26 +333,6 @@ export function MobileNav() {
               })}
 
               </div>
-
-              {/* The doors, one column, under a quiet label: they are reached,
-                  not arranged, so they never mix with the collections above. */}
-              {doors.length > 0 && (
-                <div>
-                  <div className={linkClass + " leading-5 text-faint dark:text-slate-500 uppercase text-[10px] font-mono tracking-widest"}>
-                    more
-                  </div>
-                  {doors.map((u) => (
-                    <NavLink
-                      key={u.name}
-                      to={navTargetFor(u.name, appMode)}
-                      className={childClass}
-                      onClick={() => setOpen(false)}
-                    >
-                      <span className="truncate">{u.displayName}</span>
-                    </NavLink>
-                  ))}
-                </div>
-              )}
 
               {/* Label queue lives here on mobile, as a menu row — the floating
                   bottom-right pill was covering page content + the thumb zone, so

@@ -30,6 +30,7 @@ import {
   type TrackedCandidate,
 } from "../services/autofile.js";
 import { storageRequirementFor } from "../services/storage-requirement.js";
+import { expiryDefaults } from "../services/shelf-life.js";
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
@@ -2187,6 +2188,30 @@ inboxRouter.post(
     const derivedStorage = storageRequirementFor(
       (meta as { category?: unknown } | null)?.category as string | undefined,
     );
+    // WHEN it stops being good, from what it is - so a grocery never asks for
+    // a date. Only for a target that declares a `field_role: "expiry"` field
+    // (the Groceries table does; a parts bin does not), counted from the
+    // receipt date when there is one, and NULL for anything the shelf-life
+    // table does not recognise, so a light bulb never gets a best-before.
+    // A default like the storage requirement: the matchmaker's fields and the
+    // person's own answers both win below.
+    let expiryPatch: Record<string, string | number> = {};
+    try {
+      const roledForExpiry = await platform().entities.roledFieldsFor(ctx.org.id, effectiveKindId);
+      const expiryField = roledForExpiry.find((f) => f.field_role === "expiry")?.name;
+      if (expiryField) {
+        expiryPatch =
+          expiryDefaults({
+            category: (meta as { category?: unknown }).category as string | undefined,
+            name: row.suggested_name,
+            acquiredOn: typeof (meta as { receipt_date?: unknown }).receipt_date === "string" ? ((meta as { receipt_date: string }).receipt_date) : null,
+            today: new Date().toISOString().slice(0, 10),
+            expiryField,
+          }) ?? {};
+      }
+    } catch {
+      /* advisory - a confirm must never fail over a shelf-life guess */
+    }
     // The triage form posts EVERY input — an untouched one arrives as "".
     // Empty means "no answer", not "blank the suggestion": drop them so a
     // placeholder the user never typed over can't clobber the candidate.
@@ -2252,6 +2277,7 @@ inboxRouter.post(
         ...((meta as { fields?: Record<string, unknown> }).fields ?? {}),
         // Ahead of candidateFields and typedMetadata so both still win.
         ...(derivedStorage ? { storage_requirement: derivedStorage } : {}),
+        ...expiryPatch,
         ...candidateFields,
         ...typedMetadata,
       },

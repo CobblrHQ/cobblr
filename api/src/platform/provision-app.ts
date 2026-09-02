@@ -11,7 +11,7 @@ import { meta } from "../db/meta.js";
 import { validateBundle, applyValidatedBundle, cmpVersion } from "../routes/bundles.js";
 import { getOfficialBundleManifest } from "../routes/registry.js";
 import { getManagedApp, type ManagedApp } from "./managed-apps.js";
-import { listInstances } from "./instances.js";
+import { listInstances, setScanFallback } from "./instances.js";
 import { upsertOverride } from "./entity-kind-overrides.js";
 
 /** Write the app's curated `nav_order` onto each nav entry's override, so the
@@ -93,6 +93,11 @@ export async function provisionAppWorkspace(
   //     instances/overrides above; this stamps each one's nav_order.
   await applyManagedAppNavOrder(orgId, app);
 
+  // 2c. The app's table is where an unmatched scan lands. Without this the
+  //     module's default "Inventory" is the catch-all: a table the locked app
+  //     never shows, offered as a door on every scan it could not place.
+  await pointScanFallbackAtApp(orgId, app);
+
   // 3. Flip the workspace into the managed app (the web then hides the platform
   //    and lands the user in app.homePath).
   const appMode = { app: app.id, home_path: app.homePath, label: app.label };
@@ -103,6 +108,16 @@ export async function provisionAppWorkspace(
     .execute();
 
   return { orgId, slug, app: appMode };
+}
+
+/** Make the app's own instance the scan fallback for its module, when the
+ *  instance exists (a workspace flipped into app mode by hand may not have the
+ *  bundle yet; the boot reconcile catches it once it does). Idempotent. */
+export async function pointScanFallbackAtApp(orgId: string, app: ManagedApp): Promise<boolean> {
+  const inst = (await listInstances(orgId)).find((i) => i.instance_name === app.instanceName);
+  if (!inst) return false;
+  if (!inst.is_scan_fallback) await setScanFallback(orgId, app.instanceName);
+  return true;
 }
 
 /** Auto-update: re-apply the latest published version of a managed app's bundle

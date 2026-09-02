@@ -1402,6 +1402,46 @@ bundlesRouter.post(
 // workspace: enable modules, create instances, insert field defs / wires /
 // overrides / views / catalogs / apps, and run upgrade data-migrations. Extracted
 // from POST /install so provisioning (managed apps) + the route share ONE apply.
+/** ONE row shape for a bundle-declared field def, whether it is scoped to a
+ *  module kind or to an instance's `<name>:item`. The two install loops used
+ *  to build this literal separately, and the instance copy lost `field_role`:
+ *  a groceries app filed eight items and dated none, because the expiry stamp
+ *  reads the role and the role never arrived (2026-09-02). Roles ride here. */
+function fieldDefRow(orgId: string, entityKind: string, f: z.infer<typeof FieldDefEntry>, bundleId: string) {
+  return {
+    org_id: orgId,
+    entity_kind: entityKind,
+    name: f.name,
+    display_label: f.display_label,
+    type: f.type,
+    required: f.required ?? false,
+    position: f.position ?? 0,
+    bundle_id: bundleId,
+    // Dropdown choices when the bundle supplies them (specialisation bundles
+    // use this for hotend / firmware / spindle etc.).
+    choices: f.choices ? (sql`${JSON.stringify(f.choices)}::jsonb` as unknown as string[]) : null,
+    renderer: (f as { renderer?: string | null }).renderer ?? null,
+    template: f.type === "computed" ? f.template ?? null : null,
+    help: f.help ?? null,
+    unit: f.type === "number" ? f.unit ?? null : null,
+    decode_role: (f as { decode_role?: string | null }).decode_role ?? null,
+    field_role: (f as { field_role?: string | null }).field_role ?? null,
+  };
+}
+
+/** The `overrides` jsonb for a native-field override: a decode role (P3) and
+ *  a record role, the native twins of module_field_defs.decode_role /
+ *  .field_role. Merged, so a co-located `choices` on a bundle row survives;
+ *  null when the override carries neither, so the default '{}' stands. */
+function roleOverridesBlob(fo: { decode_role?: string; field_role?: string }) {
+  return fo.decode_role || fo.field_role
+    ? sql`(
+        coalesce(${fo.decode_role ? sql`jsonb_build_object('decode_role', ${fo.decode_role}::text)` : sql`'{}'::jsonb`}, '{}'::jsonb)
+        || coalesce(${fo.field_role ? sql`jsonb_build_object('field_role', ${fo.field_role}::text)` : sql`'{}'::jsonb`}, '{}'::jsonb)
+      )`
+    : null;
+}
+
 export async function applyValidatedBundle(
   orgId: string,
   sess: { id: string; display_name?: string | null; auth_method: "session" | "api_token" | "system"; api_token_id?: string | null },
@@ -1642,31 +1682,7 @@ export async function applyValidatedBundle(
       // Plain insert; the unique constraint will surface any
       // unexpected races as a 500 (and the transaction rolls
       // back).
-      await trx
-        .insertInto("module_field_defs")
-        .values({
-          org_id: orgId,
-          entity_kind: f.entity_kind,
-          name: f.name,
-          display_label: f.display_label,
-          type: f.type,
-          required: f.required ?? false,
-          position: f.position ?? 0,
-          bundle_id: bundle.id,
-          // Propagate dropdown choices when the bundle supplies
-          // them — Pillar-E specialisation bundles use this for
-          // hotend / firmware / spindle etc.
-          choices: f.choices
-            ? (sql`${JSON.stringify(f.choices)}::jsonb` as unknown as string[])
-            : null,
-          renderer: (f as { renderer?: string | null }).renderer ?? null,
-          template: f.type === "computed" ? f.template ?? null : null,
-          help: f.help ?? null,
-          unit: f.type === "number" ? f.unit ?? null : null,
-          decode_role: (f as { decode_role?: string | null }).decode_role ?? null,
-          field_role: (f as { field_role?: string | null }).field_role ?? null,
-        })
-        .execute();
+      await trx.insertInto("module_field_defs").values(fieldDefRow(orgId, f.entity_kind, f, bundle.id)).execute();
     }
     // Native-field overrides (relabel / show-hide). Upsert so a bundle can
     // reshape a field another bundle already touched (last writer wins);
@@ -1676,14 +1692,7 @@ export async function applyValidatedBundle(
       // jsonb blob (the native twins of module_field_defs.decode_role /
       // .field_role) — merged, so a co-located `choices` on a bundle row
       // survives. Absent → the default '{}' stands.
-      const roles = fo as { decode_role?: string; field_role?: string };
-      const foBlob =
-        roles.decode_role || roles.field_role
-          ? sql`(
-              coalesce(${roles.decode_role ? sql`jsonb_build_object('decode_role', ${roles.decode_role}::text)` : sql`'{}'::jsonb`}, '{}'::jsonb)
-              || coalesce(${roles.field_role ? sql`jsonb_build_object('field_role', ${roles.field_role}::text)` : sql`'{}'::jsonb`}, '{}'::jsonb)
-            )`
-          : null;
+      const foBlob = roleOverridesBlob(fo);
       await trx
         .insertInto("native_field_overrides")
         .values({
@@ -1741,32 +1750,10 @@ export async function applyValidatedBundle(
           .execute();
       }
       for (const f of inst.field_defs) {
-        await trx
-          .insertInto("module_field_defs")
-          .values({
-            org_id: orgId,
-            entity_kind: kind,
-            name: f.name,
-            display_label: f.display_label,
-            type: f.type,
-            required: f.required ?? false,
-            position: f.position ?? 0,
-            bundle_id: bundle.id,
-            choices: f.choices
-              ? (sql`${JSON.stringify(f.choices)}::jsonb` as unknown as string[])
-              : null,
-            renderer: (f as { renderer?: string | null }).renderer ?? null,
-            template: f.type === "computed" ? f.template ?? null : null,
-            help: f.help ?? null,
-            unit: f.type === "number" ? f.unit ?? null : null,
-            decode_role: (f as { decode_role?: string | null }).decode_role ?? null,
-          })
-          .execute();
+        await trx.insertInto("module_field_defs").values(fieldDefRow(orgId, kind, f, bundle.id)).execute();
       }
       for (const fo of inst.field_overrides) {
-        const foBlob = (fo as { decode_role?: string }).decode_role
-          ? sql`jsonb_build_object('decode_role', ${(fo as { decode_role?: string }).decode_role}::text)`
-          : null;
+        const foBlob = roleOverridesBlob(fo);
         await trx
           .insertInto("native_field_overrides")
           .values({

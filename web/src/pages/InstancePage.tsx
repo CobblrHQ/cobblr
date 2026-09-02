@@ -21,6 +21,7 @@ import { RecordsPage } from "./RecordsPage";
 import { BundleFeaturesStrip } from "../components/BundleFeaturesStrip";
 import { api, getToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { SavedViewPage } from "./SavedViewPage";
 
 export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
   const { activeSlug } = useActiveOrg();
@@ -39,6 +40,26 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
     queryFn: () => api.listOverrides(activeSlug),
     enabled: !!activeSlug,
   });
+  // A bundle can PIN a saved view to its instance (Groceries pins the "What's
+  // on hand" board). Those used to be reachable only from /views, which a
+  // locked app cannot open, so a grocery app had a board and no door to it.
+  // Pinned views render HERE as tabs beside the table, and `?view=board`
+  // (or a view's id) opens one directly: that is a managed app's home path.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const wantView = searchParams.get("view");
+  const early = (instancesQ.data?.items ?? []).find((i) => i.instance_name === name);
+  const kindId = early ? `${early.instance_name}:item` : null;
+  const viewsQ = useQuery({
+    queryKey: ["saved-views", activeSlug, kindId],
+    queryFn: () => api.listSavedViews(activeSlug, kindId!),
+    enabled: !!activeSlug && !!kindId,
+    staleTime: 60_000,
+  });
+  const pinnedViews = (viewsQ.data?.items ?? []).filter((v) => v.pinned);
+  const activeView = wantView
+    ? (pinnedViews.find((v) => v.id === wantView) ??
+      (wantView === "board" ? (pinnedViews.find((v) => v.view_type !== "table") ?? pinnedViews[0] ?? null) : null))
+    : null;
 
   if (instancesQ.isLoading) {
     return <div className="text-sm text-muted p-4">Loading…</div>;
@@ -164,6 +185,18 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
   );
   })();
 
+  const pickView = (id: string | null) => {
+    const next = new URLSearchParams(searchParams);
+    if (id) next.set("view", id);
+    else next.delete("view");
+    setSearchParams(next, { replace: true });
+  };
+  const tabCls = (on: boolean) =>
+    "rounded-full px-3 py-1 text-sm transition " +
+    (on
+      ? "bg-accent text-white"
+      : "border border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:text-accent hover:border-accent");
+
   return (
     <div className="space-y-3">
       <CreatedSuccessStrip />
@@ -171,7 +204,28 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
           not-yet-enabled features (maintenance, connected-car…) + opens the
           bundle modal to enable them. Renders nothing when there's nothing more. */}
       <BundleFeaturesStrip slug={activeSlug} instance={inst.instance_name} />
-      {body}
+      {pinnedViews.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2" data-testid="instance-view-tabs">
+          <button type="button" className={tabCls(!activeView)} onClick={() => pickView(null)}>
+            Table
+          </button>
+          {pinnedViews.map((v) => (
+            <button key={v.id} type="button" className={tabCls(activeView?.id === v.id)} onClick={() => pickView(v.id)}>
+              {v.name}
+            </button>
+          ))}
+        </div>
+      )}
+      {activeView ? (
+        <div className="space-y-3">
+          <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
+            {displayName}
+          </h1>
+          <SavedViewPage viewId={activeView.id} embedded />
+        </div>
+      ) : (
+        body
+      )}
     </div>
   );
 }

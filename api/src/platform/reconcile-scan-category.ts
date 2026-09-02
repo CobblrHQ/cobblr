@@ -10,7 +10,7 @@
 // workspace was created, so a change every workspace needs must reconcile at
 // boot. A user must never have to run anything.
 //
-// Scoped deliberately to the FALLBACK instance only. A specialised table (Yarn,
+// Scoped deliberately to the module's DEFAULT instance when it is the fallback. A specialised table (Yarn,
 // Vehicles) is already one kind of thing — a category axis there is noise. The
 // catch-all is the one table that holds many kinds and therefore needs to tell
 // them apart. Categories hang off the fallback; a category that outgrows it gets
@@ -20,6 +20,7 @@ import { sql } from "kysely";
 import { TRAIT_PRESETS, type PresetName } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import { listEntries } from "../modules/registry.js";
+import { planScanCategoryAxes } from "./scan-category-plan.js";
 
 const CATEGORY_FIELD = "category";
 
@@ -67,76 +68,82 @@ export async function reconcileScanCategoryFields(): Promise<void> {
 
   const existing = await meta
     .selectFrom("module_field_defs")
-    .select(["org_id", "entity_kind", "name", "field_role"])
+    .select(["org_id", "entity_kind", "name", "field_role", "source_module"])
     .where((eb) => eb.or([eb("field_role", "=", "category"), eb("name", "=", CATEGORY_FIELD)]))
     .execute();
-  const hasRole = new Set(
-    existing.filter((f) => f.field_role === "category").map((f) => `${f.org_id}::${f.entity_kind}`),
-  );
-  const hasNamedField = new Map(
-    existing.filter((f) => f.name === CATEGORY_FIELD).map((f) => [`${f.org_id}::${f.entity_kind}`, f]),
-  );
 
-  // The fallback per (org, module): the user's pick, else the module's default.
-  const fallback = new Map<string, (typeof instances)[number]>();
-  for (const inst of instances) {
-    const key = `${inst.org_id}::${inst.module_name}`;
-    const cur = fallback.get(key);
-    if (inst.is_scan_fallback) fallback.set(key, inst);
-    else if (!cur && inst.is_default) fallback.set(key, inst);
-  }
+  const plan = planScanCategoryAxes(instances, existing, scanByModule, CATEGORY_FIELD, SCAN_CATEGORY_SOURCE);
 
   let healed = 0;
-  for (const [key, inst] of fallback) {
-    const moduleKind = scanByModule.get(inst.module_name);
-    if (!moduleKind) continue;
-    const kind = inst.is_default ? moduleKind : `${inst.instance_name}:item`;
-    const kindKey = `${inst.org_id}::${kind}`;
-    if (hasRole.has(kindKey)) continue; // already has an axis
-
+  for (const { org_id, kind } of plan.adopt) {
     try {
-      const named = hasNamedField.get(kindKey);
-      if (named) {
-        // A `category` field already exists (a bundle made one) — adopt it as the
-        // axis rather than creating a second, competing one. Two grouping fields
-        // would be worse than none: the matchmaker would have to guess.
-        await meta
-          .updateTable("module_field_defs")
-          .set({ field_role: "category" })
-          .where("org_id", "=", inst.org_id)
-          .where("entity_kind", "=", kind)
-          .where("name", "=", CATEGORY_FIELD)
-          .execute();
-      } else {
-        await meta
-          .insertInto("module_field_defs")
-          .values({
-            org_id: inst.org_id,
-            entity_kind: kind,
-            name: CATEGORY_FIELD,
-            display_label: "Category",
-            // Text + choices: the choices ARE the taxonomy, and they grow from the
-            // user's own data. The kernel never ships a list of categories.
-            type: "text",
-            choices: sql`'[]'::jsonb` as never,
-            field_role: "category",
-            // PLATFORM-MANAGED, not the user's own field. `source_module` tags it
-            // as contributed-by-core-scan, which (a) EXCLUDES it from a workspace
-            // export — otherwise the export captured it and re-importing onto an
-            // org that also auto-created it collided (the bundle-export test) — and
-            // (b) lets it be reconciled/cleaned as platform state, not user data.
-            source_module: SCAN_CATEGORY_SOURCE,
-            help: "What KIND of thing this is. Scans group by it, and a category that outgrows this table can be promoted into its own.",
-          })
-          .onConflict((oc) => oc.doNothing())
-          .execute();
-      }
+      // A `category` field already exists (a bundle made one): adopt it as the
+      // axis rather than creating a second, competing one. Two grouping fields
+      // would be worse than none: the matchmaker would have to guess.
+      await meta
+        .updateTable("module_field_defs")
+        .set({ field_role: "category" })
+        .where("org_id", "=", org_id)
+        .where("entity_kind", "=", kind)
+        .where("name", "=", CATEGORY_FIELD)
+        .execute();
       healed++;
-      console.log(`[reconcile] scan category axis: org ${inst.org_id} kind ${kind}`);
+      console.log(`[reconcile] scan category axis: org ${org_id} kind ${kind} (adopted)`);
     } catch (err) {
-      // One workspace's failure must never block the rest.
-      console.error(`[reconcile] scan category axis failed for ${key}:`, (err as Error)?.message ?? err);
+      console.error(`[reconcile] scan category axis failed for ${org_id}::${kind}:`, (err as Error)?.message ?? err);
     }
   }
+  for (const { org_id, kind } of plan.add) {
+    try {
+      await meta
+        .insertInto("module_field_defs")
+        .values({
+          org_id,
+          entity_kind: kind,
+          name: CATEGORY_FIELD,
+          display_label: "Category",
+          // Text + choices: the choices ARE the taxonomy, and they grow from the
+          // user's own data. The kernel never ships a list of categories.
+          type: "text",
+          choices: sql`'[]'::jsonb` as never,
+          field_role: "category",
+          // PLATFORM-MANAGED, not the user's own field. `source_module` tags it
+          // as contributed-by-core-scan, which (a) EXCLUDES it from a workspace
+          // export (otherwise the export captured it and re-importing onto an
+          // org that also auto-created it collided) and (b) lets it be
+          // reconciled/cleaned as platform state, not user data.
+          source_module: SCAN_CATEGORY_SOURCE,
+          help: "What KIND of thing this is. Scans group by it, and a category that outgrows this table can be promoted into its own.",
+        })
+        .onConflict((oc) => oc.doNothing())
+        .execute();
+      healed++;
+      console.log(`[reconcile] scan category axis: org ${org_id} kind ${kind}`);
+    } catch (err) {
+      // One workspace's failure must never block the rest.
+      console.error(`[reconcile] scan category axis failed for ${org_id}::${kind}:`, (err as Error)?.message ?? err);
+    }
+  }
+  // A placeholder that landed on a specialised table (a Yarn made the app's
+  // fallback) is withdrawn: that table is one kind of thing, and the axis
+  // only filled it with catalog paths. The def goes; a value an item may
+  // carry in its metadata is inert without the def.
+  let withdrawn = 0;
+  for (const { org_id, kind } of plan.remove) {
+    try {
+      await meta
+        .deleteFrom("module_field_defs")
+        .where("org_id", "=", org_id)
+        .where("entity_kind", "=", kind)
+        .where("name", "=", CATEGORY_FIELD)
+        .where("source_module", "=", SCAN_CATEGORY_SOURCE)
+        .execute();
+      withdrawn++;
+      console.log(`[reconcile] scan category axis withdrawn: org ${org_id} kind ${kind} (specialised table)`);
+    } catch (err) {
+      console.error(`[reconcile] scan category axis withdraw failed for ${org_id}::${kind}:`, (err as Error)?.message ?? err);
+    }
+  }
+  if (withdrawn) console.log(`[reconcile] scan category axis: withdrawn from ${withdrawn} specialised table(s)`);
   if (healed) console.log(`[reconcile] scan category axis: added to ${healed} table(s)`);
 }

@@ -35,6 +35,9 @@ export default defineModule({
     route: "/locations",
     icon: "map-pin",
     overrideKey: "entity_kind:core-locations:location",
+    // A place you go: rooms, bins, what is where. One of the two rows every
+    // workspace has beside its collections.
+    primary: true,
   },
 
   schema: {

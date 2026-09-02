@@ -1316,6 +1316,13 @@ const ModuleManifest = z.object({
       /** Presentation-override key, when the module's rename should follow an
        *  entity kind rather than the module name. */
       overrideKey: z.string().optional(),
+      /** A ROW in the navigation, beside the workspace's collections. Only for
+       *  a page people go to as a place (Locations, the Scan Inbox). Everything
+       *  else declared here is search-only: routable, listed in the feature
+       *  index, reached from inside records, never a row. A fresh workspace's
+       *  nav is Home, its collections, and the primary doors; nothing else
+       *  (docs/design-decisions/nav-collapse.md). */
+      primary: z.boolean().optional(),
     })
     .optional(),
 

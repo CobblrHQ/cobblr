@@ -9,6 +9,7 @@ import { useParams } from "react-router-dom";
 import { ApiError } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { getManagedAppMeta } from "../lib/managed-apps";
+import { isTouchPrimary } from "../lib/useIsTouch";
 
 export function StartAppPage() {
   const { app } = useParams<{ app: string }>();
@@ -54,7 +55,11 @@ export function StartAppPage() {
         return;
       }
       const slug = res.orgs[0]?.slug;
-      window.location.assign(slug ? `/w/${slug}/` : "/");
+      // An app whose promise is "point your phone at it" opens ON the camera
+      // when there is one; a desktop lands on the app home and pairs a phone
+      // from there.
+      const first = meta!.firstRunPath && isTouchPrimary() ? meta!.firstRunPath.replace(/^\//, "") : "";
+      window.location.assign(slug ? `/w/${slug}/${first}` : "/");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn’t create your account. Try again.");
       setBusy(false);

@@ -776,7 +776,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Track the fridge/pantry with expiry + storage, and auto-build a shopping list when something runs low or is about to expire. Check an item off → it restocks.",
     manifest: {
       id: "cobblr.flagship.groceries",
-      version: "0.10.0",
+      version: "0.10.1",
       // What its items are actually CALLED. A bundle's suggestion has to be
       // corroborated by the capture's own text before it is trusted, and a
       // category whose members never share its name can never corroborate:
@@ -789,6 +789,17 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       // soap, water, salt, stock, mix, spread, wrap. A keyword scores as
       // routing evidence, so a false hit files a non-grocery in here.
       scan_keywords: [
+        "chips",
+        "snack",
+        "spread",
+        "condiment",
+        "peanut butter",
+        "olive oil",
+        "frozen",
+        "granola",
+        "diapers",
+        "paper towels",
+        "toilet paper",
         "tomato",
         "tomatoes",
         "carrot",
@@ -1415,7 +1426,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.community.lego",
-      version: "0.5.1",
+      version: "0.5.2",
       name: "Lego",
       description:
         "Lego as its own tables. Sets you own (sealed / built / disassembled) with optional Bricks bins, a Rebrickable catalog link, and a one-tap Disassemble that spawns the parts and opens the sorting planner.",
@@ -1434,6 +1445,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           display_name: "Sets",
           glyph: "🧱",
           item_noun: "set",
+          // "set" is a generic noun, so the table routes by these (a sheet set is not a Lego set).
+          scan_keywords: ["lego", "legos", "lego set", "building set", "brick set", "minifigure", "minifig", "bricks"],
           qty_unit: "each",
           field_defs: [
             { entity_kind: "inventory:part", name: "lifecycle", display_label: "State", type: "text", position: 1, choices: ["sealed", "built", "disassembled"], help: "Where this set is: still sealed in the box, built, or taken apart into bricks." },
@@ -2521,13 +2534,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     ],
     manifest: {
       id: "cobblr.flagship.home-inventory",
-      version: "0.4.1",
+      version: "0.5.1",
       name: "Home Inventory",
-      description: "Your belongings as their own room-by-room catalog: make/model + condition, filed by room. Optional insurance valuation.",
+      description: "Your belongings as their own room-by-room catalog: make/model + condition, filed by room. Scan to add, print labels for boxes, optional insurance valuation.",
       author: "Cobblr",
-      released_at: "2026-07-15",
+      released_at: "2026-09-01",
       changelog:
-        "Rooms are now real Locations. The separate “Room” field is gone: items file into the workspace’s Location tree (rooms, and bins inside them) like everything else, so a thing has one place, not two. Your existing room values move over automatically on this update: each becomes a Location and its items are filed into it, nothing lost. The pinned “By room” view still groups your catalog by room (now off the real Location), and the claim-ready Insurance view too. Earlier: Home Inventory became its OWN table (an inventory instance) with only the fields a home catalog needs, plain-language hints, and optional Insurance valuation.",
+        "Three optional extras, each a checkbox: Scan to add (point your phone at a thing and it lands in the catalog with a photo and a name), Labels (print a QR label for a thing or a box on a Bluetooth label printer), and Starter rooms (Kitchen, Living room, Bedroom, Bathroom, Garage, Closet, ready on day one). Earlier: Rooms are now real Locations. The separate “Room” field is gone: items file into the workspace’s Location tree (rooms, and bins inside them) like everything else, so a thing has one place, not two. Your existing room values move over automatically on this update: each becomes a Location and its items are filed into it, nothing lost. The pinned “By room” view still groups your catalog by room (now off the real Location), and the claim-ready Insurance view too. Earlier: Home Inventory became its OWN table (an inventory instance) with only the fields a home catalog needs, plain-language hints, and optional Insurance valuation.",
       requires: [{ module: "inventory" }],
       // Always-on base: a "Home Inventory" instance of inventory.
       provides_instances: [
@@ -2537,7 +2550,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           display_name: "Home Inventory",
           glyph: "🏠",
           item_noun: "item",
-          scan_keywords: ["bedsheet", "bed sheet", "bedding", "linen", "towel", "pillow", "blanket", "comforter", "duvet", "curtain", "rug", "mattress", "furniture", "dresser", "sofa", "couch", "recliner", "desk", "lamp", "mirror", "shelf", "appliance", "vacuum", "fan", "heater", "cookware", "skillet", "utensil", "dishes", "monitor", "router", "cabinet"],
+          scan_keywords: ["bed sheet", "sheet set", "sheets", "bedding", "linen", "towel", "pillow", "blanket", "comforter", "duvet", "curtain", "rug", "mattress", "furniture", "dresser", "sofa", "couch", "chair", "bookcase", "desk", "lamp", "mirror", "shelf", "cabinet", "appliance", "vacuum", "fan", "heater", "microwave", "toaster", "blender", "cookware", "utensil", "dishes", "monitor", "television", "speaker", "headphones", "router", "iphone"],
           qty_unit: "each",
           field_defs: [
             // "Room" is deliberately NOT a field here — a home item's room is its
@@ -2565,6 +2578,43 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         },
       ],
       features: [
+      // The three that make "Cobblr for Home" an app rather than a table. The
+      // managed app ships all three ON (api/src/platform/managed-apps.ts); a
+      // plain install answers each question.
+      {
+        key: "scan",
+        name: "Scan to add",
+        question: "Add things by pointing your phone at them?",
+        description: "Point your phone at a barcode or just the thing itself: it lands in your catalog with a photo and a name, filed in the room you are standing in.",
+        default: false,
+        requires: [{ module: "core-scan" }],
+        next_steps: [
+          { label: "Scan your first thing", module: "core-scan", path: "/scan/camera", hint: "A barcode or a photo. It files itself into the room you pick." },
+        ],
+      },
+      {
+        key: "print-labels",
+        name: "Labels",
+        question: "Print QR labels for things and boxes?",
+        description: "One tap prints a QR label on a Bluetooth label printer, so a box says what is in it and a scan of the label opens the record.",
+        default: false,
+        requires: [{ module: "labels" }],
+      },
+      {
+        key: "rooms",
+        name: "Starter rooms",
+        question: "Start with the usual rooms?",
+        description: "Kitchen, Living room, Bedroom, Bathroom, Garage and Closet, ready to file into on day one. Rename or add rooms any time; nothing here is fixed.",
+        default: true,
+        provides_locations: [
+          { name: "Kitchen", kind: "area" },
+          { name: "Living room", kind: "area" },
+          { name: "Bedroom", kind: "area" },
+          { name: "Bathroom", kind: "area" },
+          { name: "Garage", kind: "area" },
+          { name: "Closet", kind: "area" },
+        ],
+      },
       {
         key: "insurance",
         name: "Insurance valuation",

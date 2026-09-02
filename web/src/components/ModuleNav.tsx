@@ -26,8 +26,7 @@ import { ChevronDown, Settings2, Sliders } from "lucide-react";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ModulePickerModal } from "./ModulePickerModal";
 import { isFocused } from "../lib/api";
-import { inManagedAppSurface } from "../lib/managed-apps";
-import { useNavModules, HEADING_PREFIX, NAVGROUP_PREFIX, stripNavStem, navTargetFor } from "./useNavModules";
+import { useNavModules, HEADING_PREFIX, NAVGROUP_PREFIX, stripNavStem, navTargetFor, surfaceTops } from "./useNavModules";
 
 export function ModuleNav() {
   const { activeSlug, activeOrg } = useActiveOrg();
@@ -37,11 +36,8 @@ export function ModuleNav() {
   // Focused mode: keep the domains, but hide the "manage specialisations" /
   // add-instance affordance (builder chrome).
   const focused = isFocused(activeOrg);
-  const { tops, overflowNames, childrenByParent: children, instanceGroups, utilities } = useNavModules(activeSlug);
-  // The doors (Files, Locations, Calendar, the Scan Inbox…) live in "more",
-  // never on the row: the row is what this workspace keeps. A locked app
-  // offers only the doors inside its surface.
-  const doors = appMode ? utilities.filter((u) => inManagedAppSurface(navTargetFor(u.name, true))) : utilities;
+  const { tops: allVisibleTops, overflowNames, childrenByParent: children, instanceGroups } = useNavModules(activeSlug);
+  const tops = surfaceTops(allVisibleTops, appMode);
   // Entries the user pinned to "more" never compete for row space — they're
   // always folded. The rest flow through the responsive measurement below.
   const pinned = tops.filter((t) => overflowNames.has(t.name));
@@ -90,9 +86,8 @@ export function ModuleNav() {
         return n;
       };
       let n = fitWithin(avail);
-      // "more ▾" shows when row items overflow, anything is pinned to it, or
-      // there are doors to fold (there nearly always are).
-      if (n < rowEligible.length || pinned.length > 0 || doors.length > 0) n = fitWithin(avail - MORE_W);
+      // "more ▾" shows when row items overflow OR anything is pinned to it.
+      if (n < rowEligible.length || pinned.length > 0) n = fitWithin(avail - MORE_W);
       setVisibleCount(n);
     };
     recompute();
@@ -101,7 +96,7 @@ export function ModuleNav() {
     return () => ro.disconnect();
     // topsKey (not `tops`, a fresh array each render) keeps this stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topsKey, doors.length > 0]);
+  }, [topsKey]);
 
   const visible = rowEligible.slice(0, visibleCount);
   // Folded = whatever didn't fit, then the pinned entries (always last in More).
@@ -148,7 +143,7 @@ export function ModuleNav() {
           </NavLink>
         )}
         {visible.map(renderTop)}
-        {(overflow.length > 0 || doors.length > 0) && (
+        {overflow.length > 0 && (
           <MoreMenu
             items={overflow.map((m) => ({
               top: m,
@@ -158,7 +153,6 @@ export function ModuleNav() {
                 ? instanceGroups.get(m.name)?.members ?? []
                 : children.get(m.name) ?? [],
             }))}
-            doors={doors}
           />
         )}
         {/* The nav-customize control was moved out of the navbar into
@@ -253,12 +247,8 @@ function NavGroupSegments({
  *  backdrop-blur traps position:fixed descendants). */
 function MoreMenu({
   items,
-  doors,
 }: {
   items: { top: OrgModule; kids: { name: string; displayName: string }[] }[];
-  /** The folded doors (Files, Locations, Calendar…), listed after whatever
-   *  did not fit on the row, under their own quiet heading. */
-  doors: { name: string; displayName: string }[];
 }) {
   const target = useNavTarget();
   const [open, setOpen] = useState(false);
@@ -393,23 +383,6 @@ function MoreMenu({
                 </li>
               );
             })}
-            {doors.length > 0 && (
-              <li className={items.length > 0 ? "mt-1 border-t border-line dark:border-slate-700 pt-1" : undefined}>
-                <ul>
-                  {doors.map((d) => (
-                    <li key={d.name}>
-                      <NavLink
-                        to={target(d.name)}
-                        onClick={() => setOpen(false)}
-                        className="block px-3 py-1.5 text-sm text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 transition"
-                      >
-                        {d.displayName}
-                      </NavLink>
-                    </li>
-                  ))}
-                </ul>
-              </li>
-            )}
           </ul>
         </div>,
         document.body,

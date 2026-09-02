@@ -13,9 +13,11 @@ import { useQuery } from "@tanstack/react-query";
 import { Sparkles } from "lucide-react";
 import { api } from "../lib/api";
 import { BundleDetailModal } from "./BundleDetailModal";
+import { useActiveOrg } from "../auth/ActiveOrgContext";
 
 export function BundleFeaturesStrip({ slug, instance }: { slug: string; instance: string }) {
   const [open, setOpen] = useState(false);
+  const { activeOrg } = useActiveOrg();
   const bundlesQ = useQuery({
     queryKey: ["bundles", slug],
     queryFn: () => api.listBundles(slug),
@@ -29,6 +31,10 @@ export function BundleFeaturesStrip({ slug, instance }: { slug: string; instance
     (b.manifest?.provides_instances ?? []).some((pi) => pi.instance_name === instance),
   );
   if (!bundle) return null;
+  // A locked app curates its features at provisioning; "Enable features" here
+  // opens the bundle modal, which is the platform. The strip is builder chrome
+  // and a locked app shows none (found on the Home app's own table, 2026-09-02).
+  if (activeOrg?.app_mode) return null;
   const enabled = new Set(bundle.enabled_features ?? []);
   const off = (bundle.manifest?.features ?? []).filter((f) => !enabled.has(f.key));
   if (off.length === 0) return null; // everything's already on

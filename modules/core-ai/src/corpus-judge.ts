@@ -12,6 +12,8 @@
 //   answer | clarify              answer in words, propose nothing
 //   escort:<x>                    take_user_to that screen (or at least no write)
 //   action:computed | action:undo the no-AI paths: never judged here (null)
+//   <claim>|<claim>               either is right (between classes; a read's own
+//                                 "read:a|b" is one claim naming two reads)
 //
 // Judging the ARGUMENTS is the point. "Tag the Kossel Mini as fragile" passed
 // on the action id alone even with tag_name "Kossel"; the id is where the
@@ -60,6 +62,36 @@ export type Judgement = { ok: boolean; why: string } | null;
  * workspace lacks, or a no-AI path. Otherwise ok + one line saying why.
  */
 export function judge(ai: string, v: Verdict, knownActions: Set<string>): Judgement {
+  // "escort:members|answer", "action:lists:add-item|create:record": either is
+  // right. Judged left to right; the first that passes wins, else the first
+  // hostable verdict is reported. A read claim's own "a|b" stays inside
+  // "read:" (split on "|" only between classes, never inside one).
+  const alternatives = splitClaims(ai);
+  if (alternatives.length > 1) {
+    let first: Judgement = null;
+    for (const alt of alternatives) {
+      const j = judgeOne(alt, v, knownActions);
+      if (j?.ok) return { ok: true, why: `${j.why} (accepted: ${alt})` };
+      first ??= j;
+    }
+    return first;
+  }
+  return judgeOne(ai, v, knownActions);
+}
+
+/** Split "a|b|c" between CLASSES only: "read:x|y" is one claim with two reads. */
+export function splitClaims(ai: string): string[] {
+  const parts = ai.split("|").map((p) => p.trim()).filter(Boolean);
+  const out: string[] = [];
+  for (const part of parts) {
+    if (/^[a-z]+(?::|$)/.test(part) && !(out.length && out[out.length - 1]!.startsWith("read:") && !/^(action|create|update|delete|read|answer|clarify|escort):?/.test(part))) out.push(part);
+    else if (out.length) out[out.length - 1] += `|${part}`;
+    else out.push(part);
+  }
+  return out;
+}
+
+function judgeOne(ai: string, v: Verdict, knownActions: Set<string>): Judgement {
   const c = parseClaim(ai);
   switch (c.cls) {
     case "action": {

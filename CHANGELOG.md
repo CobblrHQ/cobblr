@@ -2,6 +2,26 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-09-02
+
+### Features
+- Cobblr for Groceries at /start/groceries: photograph the receipt and the whole trip is in, every food item gets a use-by date on its own (from what it is, counted from the receipt date), a board shows what is on hand, and the morning something expires you hear about it. The same three pieces reach every workspace: a scanned grocery is dated without asking, a bundle's pinned view opens as a tab on its table, and expiring items now get a day-of notice as well as the heads-up.
+
+### Improvements
+- Scans in a Groceries or Home app now land in that app's own table when nothing matches in particular, instead of offering a hidden "Inventory" door. Items filed into a Groceries app get their expiry date from the shelf-life table (the field's role was lost on install). The scan inbox shows a "Photograph a receipt" button when it is empty, the desktop navigation in a locked app only offers the app's own pages, and a jar of chocolate spread is no longer dated like fresh hummus. A sheet set is never offered a home in a Lego "Sets" table: a table whose noun is a generic word routes by its keywords only.
+- The navigation is your collections plus the two places every workspace has, Locations and the Scan Inbox. Yesterday's "more" fold is gone: Files, Tags, Views, Discussion, Maintenance and the Calendar are reached from inside a record, from a list, or by name through the search, never from the nav. After you pair your phone, the pairing window now hands you a barcode to point it at, so the first scan happens right there.
+- A new workspace can show you a scan without a camera. "Try a sample scan" on the first screen runs a real product barcode through the scanner, and the item lands in your scan inbox with its name and photo, exactly as your own scan would. For a desktop when the phone stays in the pocket, and for a phone with nothing to hand.
+- A table inside an app puts its import and export tools behind one button, so on a phone the first ball of yarn is the first thing on the screen instead of five buttons. A pinned view no longer shows twice (once as a tab, once as a chip). A record shows its first five actions and folds the rest behind a "+N more" chip, instead of sixteen shouting labels above its own fields.
+
+### Fixes
+- Connecting your own AI key and choosing which workspaces it serves now actually switches it on in a workspace that has no AI yet. Until now those workspaces were marked as allowed to use the key but never started using it, so a workspace could sit with no AI at all after you swapped providers, with nothing to say so: scans quietly fell back to the no-AI path and filed things into the wrong tables. Workspaces already in that state switch themselves on when the server next starts. A workspace that already has an AI keeps the one you picked, and an offer from somebody else still waits for you to accept it. And in Configuration, every connection that is approved but standing by now has a Use here button: the way to switch one on used to appear only when a workspace had two or more to choose between, so a workspace with exactly one idle connection had no control at all.
+- Inside a Groceries or Home app, a scan is never offered a bundle to install, and the Build button is gone from the header: the app shows only its own tables. A brand name that is also a food word no longer files a phone into the pantry, and a jar of pasta sauce with no catalog category gets its use-by date.
+- Without AI, a scanned grocery's category now comes only from its name and the catalog's own category, never from a word in its marketing text. A jar of pasta sauce and a bag of tortilla chips were both filed as Meat, and dated like it.
+- Without AI, a scanned item's pick-list fields (a food category, a fiber, a hook size) now fill only from short catalog attributes, never from the name of a data slot or from a paragraph of marketing or ingredients. Tortilla chips and pasta sauce stop arriving as "Meat", and a chocolate spread stops arriving as "Dairy".
+- A Yarn, Groceries, or Home table inside an app no longer grows a "Category" column filled with catalog paths, and the "File all as ..." button no longer offers them. The platform's category axis stays on a workspace's generic catch-all table, and a specialised table that received one is healed on the next start.
+- A food catalog's taxonomy tags no longer fill a scanned item's pick-lists: a tube of crisps tagged under "plant-based foods and beverages" is not a beverage, and a spread whose ingredient tree mentions dairy is not dairy. Real attributes, like a yarn's material, still fill in.
+- Scanning a book with a Bookshelf table installed now files it into the Bookshelf instead of the general catch-all. Routing used to take its strongest signal from the item's title alone, and a title is the one place a book never says it is a book: an ISBN scan came back categorised "Books" and still landed in Inventory. When the identified category names a table (a "Books" category and a table of books), that table is now the answer. A category that names no table still lands in the catch-all and is told apart by its category, as before.
+
 ## 2026-09-01
 
 ### Features

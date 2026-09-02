@@ -15,7 +15,7 @@
 // happened the first time.
 
 import type { LucideIcon } from "lucide-react";
-import { Bell, History, LayoutList, MessageSquare, Monitor, Moon, Plug, UserCog } from "lucide-react";
+import { Bell, History, LayoutList, MessageSquare, Monitor, Moon, Plug, Printer, UserCog } from "lucide-react";
 
 /** The reading column. Same measure as Configuration, so moving between
  *  "your account" and "this workspace" does not move the text. */
@@ -45,6 +45,7 @@ export const ACCOUNT_PAGES: AccountPage[] = [
   { to: "/me/appearance" },
   { to: "/me/app-settings" },
   { to: "/me/connections" },
+  { to: "/me/printer" },
   { to: "/me/communication" },
   {
     to: "/me/notification-channels",
@@ -144,6 +145,10 @@ export const ACCOUNT_DESTINATIONS: AccountDestination[] = [
   { label: "Notification channels", description: "Per-workspace Discord, Slack, email, SMS and webhook routes.", to: "/me/notification-channels", platformOnly: true, section: "notifications", icon: Bell },
   { label: "Your notifications", description: "Everything Cobblr has sent you.", to: "/me/notifications", platformOnly: true, section: "notifications", icon: Bell },
   { label: "Connections", description: "Your own AI keys and edge bridge, shared with the workspaces you choose.", to: "/me/connections", platformOnly: true, section: "connections", icon: Plug },
+  // NOT platformOnly: a locked home app prints labels from the camera, and this
+  // is the only door inside its surface where a Bluetooth printer can be paired
+  // (Configuration → Devices is outside it).
+  { label: "Label printer", description: "Pair a Bluetooth label printer with this phone or computer, and test it.", to: "/me/printer", section: "connections", icon: Printer },
   { label: "Browser driving", description: "Let the assistant drive the app you have open. Per workspace, off by default.", to: "/me/drive", platformOnly: true, section: "connections", icon: Monitor },
   { label: "Your activity", description: "What you have done, across every workspace you belong to.", to: "/me/activity", platformOnly: true, section: "history", icon: History },
   { label: "Your feedback", description: "What you have reported, and where it got to.", to: "/me/feedback", platformOnly: true, section: "history", icon: MessageSquare },

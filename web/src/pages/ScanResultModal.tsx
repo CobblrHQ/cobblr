@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Camera, Check, CheckCircle, Loader2, MapPin, Plus, ScanLine, Trash2 } from "lucide-react";
+import { Camera, Check, CheckCircle, Loader2, MapPin, Plus, Printer, ScanLine, Trash2 } from "lucide-react";
 import { useImageSrc, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type ScanInboxItem, type TrackedMatch } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -16,6 +16,7 @@ import { useScanQuantity } from "../lib/scanQuantity";
 import { leadPhoto } from "../lib/scanPhoto";
 import { CaptureSheetShell, QtyStepper } from "./ScanCaptureDrawer";
 import { TrackedMatchBanner } from "../components/TrackedMatchBanner";
+import { EntityActionChip } from "../components/EntityActionChip";
 import { AiOffMissHint, useAiStatus } from "./ScanPage";
 
 export interface CameraScanTarget {
@@ -192,13 +193,30 @@ export function ScanResultModal({
       const dest = r.item.target_module
         ? `/w/${activeSlug}/${r.item.target_module === "inventory" ? "inventory/parts" : r.item.target_module + "s"}/${r.created.id}`
         : null;
+      // The label offer rides on the toast: the thing just got a record and an
+      // id, and "print a label for the box" is the next tap in a home. It never
+      // prints on its own (a print is paper, not a toast), and it shows only
+      // when the workspace can print one (labels on, a printer set up).
+      const kind = r.item.target_module && r.item.target_kind ? `${r.item.target_module}:${r.item.target_kind}` : null;
       toast.success(
         (dest ? (
-          <span>
-            Added - open{" "}
-            <a href={dest} className="underline">
-              {r.item.suggested_name ?? "the new entity"}
-            </a>
+          <span className="inline-flex flex-wrap items-center gap-2">
+            <span>
+              Added - open{" "}
+              <a href={dest} className="underline">
+                {r.item.suggested_name ?? "the new entity"}
+              </a>
+            </span>
+            {kind && (
+              <EntityActionChip
+                entityKind={kind}
+                entityId={r.created.id}
+                actionId="labels:print"
+                label="Print label"
+                doneLabel="label queued"
+                icon={<Printer size={12} />}
+              />
+            )}
           </span>
         ) : (
           `Added ${r.item.suggested_name ?? barcode}`

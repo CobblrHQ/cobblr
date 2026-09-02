@@ -24,7 +24,7 @@ import * as activity from "../platform/activity.js";
 import * as notifications from "../platform/notifications.js";
 import { provisionOrgForUser } from "./auth.js";
 import { applyBlueprint, BlueprintManifest } from "./blueprint.js";
-import { provisionAppWorkspace, ProvisionAppError, refreshManagedApp, importAppData } from "../platform/provision-app.js";
+import { provisionAppWorkspace, ProvisionAppError, refreshManagedApp, importAppData, pointScanFallbackAtApp } from "../platform/provision-app.js";
 import { checkEntitlement } from "../platform/hosted-seams.js";
 import { disableModuleForOrg, enableModuleForOrg } from "../modules/enable.js";
 import { recordClaim, USER_SOURCE } from "../platform/bundle-claims.js";
@@ -304,6 +304,7 @@ orgsRouter.patch("/:slug/app-mode", requireAuth, withTenant, async (req, res, ne
         return;
       }
       appMode = { app: app.id, home_path: app.homePath, label: app.label };
+      await pointScanFallbackAtApp(req.tenant!.org.id, app);
     }
     await meta
       .updateTable("orgs")

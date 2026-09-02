@@ -22,6 +22,11 @@ export interface ManagedAppMeta {
    *  via the same `--c-*` token override the admin-shell `admin_theme` uses).
    *  Author-defined here; the consumer can't reach platform theming. */
   theme?: AppTheme;
+  /** Where a PHONE lands right after signup, when the app's first screen is
+   *  not its table (the camera, for an app whose promise is "point your phone
+   *  at it"). Must be inside MANAGED_APP_SURFACE. A desktop lands on the
+   *  server's home_path regardless: there is no camera to open. */
+  firstRunPath?: string;
 }
 
 export const MANAGED_APPS: Record<string, ManagedAppMeta> = {
@@ -31,7 +36,7 @@ export const MANAGED_APPS: Record<string, ManagedAppMeta> = {
     label: "Cobblr for Yarn",
     navSuffix: "for Yarn",
     headline: "Your yarn stash, sorted.",
-    blurb: "Scan a ball-band, never double-buy. Track every skein (colorway, fiber, weight class, dye lot) in one place.",
+    blurb: "Scan a ball-band, never double-buy. Track every ball of yarn (colorway, fiber, weight class, dye lot) in one place.",
     // A warm wool/craft palette — parchment page, espresso text, a dusty-rose
     // accent — so Cobblr for Yarn reads as a yarn app, not blueprint Cobblr.
     theme: {
@@ -41,6 +46,49 @@ export const MANAGED_APPS: Record<string, ManagedAppMeta> = {
       muted: "#8C7B6C",       // taupe
       border: "#E6DACA",      // soft warm tan
       accent: "#A84C6B",      // dusty raspberry
+      accent_text: "#FFFFFF",
+      radius: 14,
+    },
+  },
+  home: {
+    id: "home",
+    bundleId: "cobblr.flagship.home-inventory",
+    label: "Cobblr for Home",
+    navSuffix: "for Home",
+    headline: "Everything you own, room by room.",
+    blurb: "Point your phone at a thing: it gets a name, a photo and a room. Print a label for the box. Find anything again.",
+    firstRunPath: "/scan/camera",
+    // A calm household palette — cool off-white, slate text, a moss accent — so
+    // Cobblr for Home reads as a tidy house, not as a workshop tool.
+    theme: {
+      bg: "#F1F3F0",          // cool off-white
+      surface: "#FFFFFF",
+      text: "#2A3330",        // deep slate-green
+      muted: "#6F7A76",
+      border: "#DCE2DE",
+      accent: "#4E7D5B",      // moss
+      accent_text: "#FFFFFF",
+      radius: 14,
+    },
+  },
+  groceries: {
+    id: "groceries",
+    bundleId: "cobblr.flagship.groceries",
+    label: "Cobblr for Groceries",
+    navSuffix: "for Groceries",
+    headline: "What is in the fridge, without opening it.",
+    blurb: "Photograph the receipt and the whole trip is in. Every item gets a use-by date on its own. A board shows what you have, and the morning something expires, you hear about it.",
+    // The receipt is the front door: the scan inbox's upload button opens the
+    // camera on a phone, and one tap files every line.
+    firstRunPath: "/scan",
+    // Fresh-produce palette: cream, deep green text, a leaf accent.
+    theme: {
+      bg: "#F4F6EF",
+      surface: "#FFFFFF",
+      text: "#2B3A2E",
+      muted: "#6E7A70",
+      border: "#DDE3D5",
+      accent: "#5B8C3A",      // leaf
       accent_text: "#FFFFFF",
       radius: 14,
     },

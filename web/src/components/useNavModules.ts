@@ -21,6 +21,7 @@ import {
   type OrgModuleListItem,
 } from "../lib/api";
 import { readNavHidden, readNavOrder, readNavOverflow } from "../lib/nav-order";
+import { inManagedAppSurface } from "../lib/managed-apps";
 
 /** Synthetic top-level name prefix for a user-defined heading group. */
 export const HEADING_PREFIX = "__heading__";
@@ -34,6 +35,16 @@ export const NAVGROUP_PREFIX = "__navgroup__";
 /** Synthetic instance-entry prefix (an instance rendered as a top-level nav
  *  item). The slug after the prefix is the instance_name. */
 export const INSTANCE_PREFIX = "__instance__";
+
+/** The tops a nav may OFFER. In a locked managed app, only entries whose door
+ *  is inside the app's surface: the phone menu applied this from the start,
+ *  the desktop navs did not, so a home app showed "Labels" on the top bar and
+ *  every tap bounced back to the table (2026-09-02). One predicate, three navs.
+ *  A nav-group's members are instance doors, always inside. */
+export function surfaceTops<T extends { name: string }>(tops: readonly T[], appMode: boolean): T[] {
+  if (!appMode) return [...tops];
+  return tops.filter((t) => t.name.startsWith(NAVGROUP_PREFIX) || inManagedAppSurface(navTargetFor(t.name, true)));
+}
 
 /** Where a nav item goes.
  *
@@ -76,12 +87,6 @@ export interface NavModules {
    *  hardcoded affordances like the scan link on their module being on
    *  — a blank slate shows only what the user has turned on. */
   enabledNames: Set<string>;
-  /** The DOORS: pages a module declares through its manifest `nav` (Files,
-   *  Locations, Tags, Views, the Scan Inbox, Discussion, Maintenance) plus the
-   *  kernel's Calendar. Never peers of a collection: every nav renders them
-   *  folded under one "more" row, so a workspace's navigation is what the
-   *  person keeps, not what the platform can do. See navDoorsOf. */
-  utilities: OrgModuleListItem[];
   isLoading: boolean;
 }
 
@@ -95,34 +100,31 @@ export interface NavDoor {
   fromModule: string;
 }
 
-/** The rule that keeps a fresh workspace's nav empty of empty rooms.
+/** The rule that keeps a fresh workspace's nav to the places people go.
  *
- *  A module that declares `nav` is offering a DOOR (a browse page: files,
- *  locations, tags, saved views, the scan inbox), not a collection the person
- *  chose to keep. Before 2026-09 those doors rendered as top-level peers of
- *  Inventory and Yarn, so a brand-new workspace with no collection at all
- *  showed seven rows leading to seven empty pages (Files, Locations, Tags,
- *  Views, Scan Inbox, Discussion, Maintenance), and a knitter who had asked
- *  for a yarn app was handed a platform. Every declared door is a utility
- *  now, whatever module declares it, and utilities fold under one "more" row
- *  in every nav. Pure, so the consequence can be tested without a navbar. */
+ *  A module that declares `nav` is offering a DOOR (a browse page), not a
+ *  collection the person chose to keep. Before 2026-09 every door rendered as
+ *  a top-level peer of Inventory and Yarn, so a brand-new workspace showed
+ *  seven rows leading to seven empty pages. For a day they folded under one
+ *  "more" row; then the owner looked at the eight and named the two he opens:
+ *  Locations and the Scan Inbox. So a door is a ROW only when its module says
+ *  `primary: true`; every other declared door is search-only (routable,
+ *  in the feature index, reached from inside records). The nav of a fresh
+ *  workspace is Home, its collections, and those two. Pure, so the
+ *  consequence can be tested without a navbar. */
 export function navDoorsOf(
-  enabled: ReadonlyArray<{ name: string; nav?: { label: string; route: string; icon?: string | null; overrideKey?: string | null } | null }>,
+  enabled: ReadonlyArray<{ name: string; nav?: { label: string; route: string; icon?: string | null; overrideKey?: string | null; primary?: boolean | null } | null }>,
 ): NavDoor[] {
   const doors: NavDoor[] = [];
   for (const m of enabled) {
     const nav = m.nav;
-    if (!nav) continue;
+    if (!nav?.primary) continue;
     const key = nav.route.replace(/^\//, "").split("/")[0] || m.name;
     if (doors.some((d) => d.key === key)) continue;
     doors.push({ key, label: nav.label, icon: nav.icon ?? null, overrideKey: nav.overrideKey ?? null, fromModule: m.name });
   }
   return doors;
 }
-
-/** The Calendar is the kernel's own door: it has no module to declare it, so
- *  it joins the fold here rather than as a hardcoded row in each nav. */
-export const CALENDAR_DOOR: NavDoor = { key: "calendar", label: "Calendar", icon: null, overrideKey: null, fromModule: "" };
 
 /** A multi-instance module's auto-created default instance is the module's own
  *  top-level nav entry. Once the workspace has NAMED instances, an EMPTY default
@@ -406,15 +408,14 @@ export function useNavModules(activeSlug: string): NavModules {
   // It is a manifest field now: a module declares its own nav noun and route.
   // See docs/design-decisions/configuration-revamp.md.
   //
-  // They are UTILITIES, not tops (navDoorsOf): folded under "more" in every
-  // nav, never peers of a collection. docs/design-decisions/nav-collapse.md.
+  // Only a PRIMARY door becomes a row (navDoorsOf); the rest are search-only.
+  // docs/design-decisions/nav-collapse.md.
   //
   // displayName honours the ORG-WIDE Presentation rename when the manifest names
   // an `overrideKey`, so a workspace calling locations "Rooms" gets that on every
   // device rather than as a per-browser tweak.
-  const rawUtilities: OrgModuleListItem[] = [];
   const displayNameOf = new Map(enabled.map((m) => [m.name, m.displayName] as const));
-  for (const door of [...navDoorsOf(enabled), CALENDAR_DOOR]) {
+  for (const door of navDoorsOf(enabled)) {
     const key = door.key;
     if (rawTops.some((t) => t.name === key)) continue;
     const o = overridesByKey.get(`instance:${key}:${key}`);
@@ -422,7 +423,7 @@ export function useNavModules(activeSlug: string): NavModules {
     const renamed = door.overrideKey
       ? overridesByKey.get(door.overrideKey)?.display_label
       : undefined;
-    rawUtilities.push({
+    rawTops.push({
       name: key,
       version: "0.1.0",
       displayName: renamed ?? o?.display_label ?? door.label,
@@ -621,10 +622,6 @@ export function useNavModules(activeSlug: string): NavModules {
   const hiddenNames = new Set(navHidden);
   const overflowNames = new Set(navOverflow);
   const tops = allTops.filter((t) => !hiddenNames.has(t.name));
-  // Doors keep a fixed, alphabetical order: they are reached, not arranged.
-  const utilities = rawUtilities
-    .filter((u) => !hiddenNames.has(u.name))
-    .sort((a, b) => a.displayName.localeCompare(b.displayName));
 
   return {
     tops,
@@ -634,7 +631,6 @@ export function useNavModules(activeSlug: string): NavModules {
     childrenByParent,
     instanceGroups,
     enabledNames,
-    utilities,
     isLoading: modules.isLoading || bundles.isLoading,
   };
 }

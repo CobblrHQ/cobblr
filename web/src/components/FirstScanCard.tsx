@@ -25,11 +25,8 @@ import { Link } from "react-router-dom";
 import { Ean13 } from "./Ean13";
 import { PairPhoneButton } from "./PairPhoneButton";
 import { isTouchPrimary } from "../lib/useIsTouch";
+import { DEMO_BARCODE } from "../lib/demo-barcode";
 
-/** A real, in-catalog product. Checked against the deployment's identify
- *  service rather than picked for looking plausible: an unresolvable code turns
- *  the one guided moment into a dead end. */
-const DEMO_BARCODE = "5000112637922";
 
 export function FirstScanCard() {
   const [touch] = useState(isTouchPrimary);

@@ -9,6 +9,7 @@ export {
   type FlowRegistry,
 } from "./context";
 export { EntityActionsBar } from "./EntityActionsBar";
+export { useInvokeEntityAction } from "./use-invoke-action";
 export { summariseParts, summaryLine, type TileSummary } from "./tileSummary";
 export { EntityChip } from "./EntityChip";
 export { EntityThumb } from "./EntityThumb";

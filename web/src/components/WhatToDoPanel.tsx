@@ -24,7 +24,7 @@ import { photoOrder } from "../lib/scanPhoto";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@cobblr/platform-web";
-import { Search, Camera, Sparkles, ArrowRight, Loader2, Boxes, Wand2, Plus, ChevronDown, ChevronUp, X } from "lucide-react";
+import { Search, Camera, Sparkles, ArrowRight, Loader2, Boxes, Wand2, Plus, ChevronDown, ChevronUp, ScanLine, X } from "lucide-react";
 import { api } from "../lib/api";
 import { useBundleCatalog, type CatalogBundle } from "../lib/useBundleCatalog";
 import { fuzzyMatch } from "../lib/fuzzy";
@@ -34,6 +34,7 @@ import { BundleSection, BundleTile, splitCatalog } from "./BundleBrowse";
 import { AiOffNotice, useAiStatus } from "./AiStatusNotice";
 import { FirstScanCard } from "./FirstScanCard";
 import { isSandboxSession } from "../lib/sandbox-session";
+import { DEMO_BARCODE } from "../lib/demo-barcode";
 import { useIsTouch } from "../lib/useIsTouch";
 
 function firstSentence(s: string): string {
@@ -358,6 +359,20 @@ export function WhatToDoPanel({
       navigate(`/${name}`);
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't add that"),
+  });
+  // "Show me": the sample barcode through the REAL scan pipeline, no camera.
+  // For the person on a desktop who will not take a phone out right now, and
+  // the person on a phone with nothing to hand. The row that lands below is
+  // exactly what a scan of their own would produce (a name, a photo, a home
+  // offered), which is the one thing the product has to show before anything
+  // else is worth explaining. It is a real inbox row; discarding it is a tap.
+  const sampleScanMut = useMutation({
+    mutationFn: () => api.scanBarcode(slug, { barcode: DEMO_BARCODE, source_kind: "barcode" }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["capture-inbox", slug] });
+      toast.success("Scanned a sample for you. Watch it land below.");
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't run the sample scan"),
   });
   const noteMut = useMutation({
     mutationFn: (t: string) => api.scanNote(slug, t),
@@ -687,7 +702,15 @@ export function WhatToDoPanel({
 
   return (
     <>
-    <section data-tour="do-box" className="rounded-xl border-2 border-dashed border-cobble-300 dark:border-cobble-700 bg-cobble-50/30 dark:bg-cobble-900/10 p-5 space-y-4">
+    <section
+      data-tour="do-box"
+      // The box spans the dashboard column, like the activity row under it,
+      // and the hero spans the box. Two earlier shapes both read wrong: a
+      // full-width box around a half-width hero was a page with a hole in it,
+      // and a reading-width box centred over a full-width activity row sat
+      // off-centre in the sidebar layout (the operator, 2026-09-02, twice).
+      className="rounded-xl border-2 border-dashed border-cobble-300 dark:border-cobble-700 bg-cobble-50/30 dark:bg-cobble-900/10 p-5 space-y-4"
+    >
       <div className="flex items-center gap-2">
         <Sparkles size={16} className="text-accent" />
         <h2 className="font-semibold text-content dark:text-mortar-100 flex-1">What do you want to do?</h2>
@@ -740,7 +763,7 @@ export function WhatToDoPanel({
           builder, the catalog, blank kinds) only renders once "More ways to
           start" is opened. Selection state still lives IN the fold; a strip
           pick or a tile pick primes the same hero. */}
-      <div className="max-w-2xl">
+      <div>
 
         {/* The hero — the captive terminal step. Reacts to the funnel: a chosen
             recipe → "set it up & drop me in"; a chosen kind → "add a blank one";
@@ -859,8 +882,20 @@ export function WhatToDoPanel({
           </div>
           <p className="text-[11px] text-faint dark:text-slate-500 mt-2">
             {isTouch
-              ? "Scan barcodes or snap photos with your camera — they file themselves."
-              : "No camera here? Pair your phone — scan with it and the items land in this workspace."}
+              ? "Scan barcodes or snap photos with your camera — they file themselves. Nothing to hand? "
+              : "No camera here? Pair your phone — scan with it and the items land in this workspace. Or "}
+            <button
+              type="button"
+              data-tour="sample-scan"
+              data-testid="sample-scan"
+              disabled={sampleScanMut.isPending}
+              onClick={() => sampleScanMut.mutate()}
+              className="inline-flex items-center gap-1 text-accent hover:underline font-medium disabled:opacity-50"
+            >
+              {sampleScanMut.isPending ? <Loader2 size={11} className="animate-spin" /> : <ScanLine size={11} />}
+              {isTouch ? "try a sample scan" : "try a sample scan without one"}
+            </button>
+            {isTouch ? " and watch it land." : "."}
           </p>
 
           {/* Starter chips — a fresh panel demos the magic in one tap. Only when
@@ -1008,10 +1043,6 @@ export function WhatToDoPanel({
         </div>
       )}
 
-
-      <Link to="/bundles" className="inline-block text-xs text-faint dark:text-slate-400 hover:text-accent transition">
-        browse all bundles →
-      </Link>
 
       {picked && (
         <BundleDetailModal key={picked.manifest.id} open onClose={() => setPicked(null)} slug={slug} mode="featured" manifest={picked.manifest} glyph={picked.glyph} blurb={picked.blurb} nextSteps={picked.next_steps} autoLand />

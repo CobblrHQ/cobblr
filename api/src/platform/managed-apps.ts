@@ -54,6 +54,37 @@ export const MANAGED_APPS: Record<string, ManagedApp> = {
     // file from hardcoding module names (the isolation lint).
     navOrder: ["yarn", "hooks", "designs"],
   },
+  home: {
+    id: "home",
+    label: "Cobblr for Home",
+    bundleId: "cobblr.flagship.home-inventory",
+    // The catalog is the home; the CAMERA is the first screen on a phone (the
+    // web's StartAppPage sends a touch device straight to /scan/camera after
+    // signup, and the table's empty state points there). A desktop signup lands
+    // here and pairs a phone from it.
+    homePath: "/instances/home-inventory",
+    instanceName: "home-inventory",
+    // The whole point of the app: scan a thing, it files into a room, a label
+    // prints. All three are bundle features a locked consumer could never turn
+    // on later, so the app ships them ON. Insurance stays off (a checkbox on the
+    // full platform, noise on a first day).
+    enabledFeatures: ["scan", "print-labels", "rooms"],
+    navOrder: ["home-inventory"],
+  },
+  groceries: {
+    id: "groceries",
+    label: "Cobblr for Groceries",
+    bundleId: "cobblr.flagship.groceries",
+    // The board ("What's on hand", the bundle's pinned vending view) is the
+    // app: the instance page opens on its pinned board when asked to, and the
+    // receipt door is one tap away in the scan inbox.
+    homePath: "/instances/groceries?view=board",
+    instanceName: "groceries",
+    // Kitchen, with Fridge / Freezer / Pantry inside it, so a receipt's lines
+    // have somewhere to go on day one.
+    enabledFeatures: ["kitchen-places"],
+    navOrder: ["groceries"],
+  },
 };
 
 export function getManagedApp(id: string): ManagedApp | null {

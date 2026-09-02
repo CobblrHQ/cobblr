@@ -121,12 +121,17 @@ export const CHAT_CORPUS: CorpusCase[] = [
     "how do i edit a part", "how do I rename something?", "how do i change a field on an item",
   ]),
   ...ph("how-to", answer("enable-module"), "answer", [
-    "how do i add a module", "where do i turn on purchases", "what features can I enable",
+    "how do i add a module", "what features can I enable",
+  ]),
+  // A "where do I" that names the thing: a model may just do it.
+  ...ph("how-to", answer("enable-module"), "action:platform:enable-module{module=purchases}|answer", [
+    "where do i turn on purchases",
   ]),
   ...ph("how-to", answer("scan"), "answer", [
     "how do i scan", "where do I scan a barcode", "how does the qr scanning work",
   ]),
-  ...ph("how-to", answer("invite-people"), "answer", [
+  // Members is an escort-only surface: taking the person there IS the answer.
+  ...ph("how-to", answer("invite-people"), "escort:members|answer", [
     "how do i invite someone", "how do I add a user", "who can see this workspace",
   ]),
   // ── instructions: entity writes (never intercepted; AI acts) ─────────────
@@ -134,16 +139,28 @@ export const CHAT_CORPUS: CorpusCase[] = [
     "add a part called Brass Widget, quantity 4",
     "create a location called Shelf 9 in the garage",
     "add a task to reorder filament",
-    "new project: birdhouse for mom",
-    "add 3 spools of black PLA",
+    "new project: garden bench for dad",
     "log a maintenance entry for the CNC: changed the spindle belt",
   ]),
+  // A module's own create action counts as creating the record.
+  // Three spools of a filament the workspace already stocks is a stock
+  // adjustment as much as a create; both are right.
+  ...ph("write", neverOffer, "action:inventory:create-item|action:inventory:adjust-stock|create:record", [
+    "add 3 spools of black PLA",
+  ]),
   ...ph("write", neverOffer, "update", [
-    "rename the Colour field to Shade",
-    "set the drill's location to Bin 4",
-    "change the quantity of M3 screws to 40",
     "mark the birdhouse task done",
+  ]),
+  // Moving a thing is the placement action or a field update; both put it there.
+  ...ph("write", neverOffer, "action:core-placement:place|update", [
+    "set the drill's location to Bin 4",
     "move the multimeter to the electronics bin",
+  ]),
+  ...ph("write", neverOffer, "action:platform:edit-field|update", [
+    "rename the Colour field to Shade",
+  ]),
+  ...ph("write", neverOffer, "action:inventory:set-stock|update", [
+    "change the quantity of M3 screws to 40",
   ]),
   ...ph("write", neverOffer, "delete", [
     "delete the duplicate rack",
@@ -261,7 +278,8 @@ export const CHAT_CORPUS: CorpusCase[] = [
   ...ph("kitchen", answer("my-data"), "read:search_records|list_records", [
     "where is the paprika", "where's the rice",
   ]),
-  ...ph("kitchen", neverOffer, "action:lists:add-item{title=cumin}", [
+  // An item created straight onto the list is the same outcome as the action.
+  ...ph("kitchen", neverOffer, "action:lists:add-item{title=cumin}|create:record", [
     "add cumin to the shopping list", "put cumin on the list",
   ]),
   ...ph("kitchen", neverOffer, "action:core-tags:tag-record{tag_name=running low}", [
@@ -270,14 +288,18 @@ export const CHAT_CORPUS: CorpusCase[] = [
   ...ph("kitchen", neverOffer, "action:labels:print", [
     "print a label for the paprika",
   ]),
-  ...ph("kitchen", neverOffer, "action:core-placement:place{container_id=*}", [
+  ...ph("kitchen", neverOffer, "action:core-placement:place{container_id=*}|update", [
     "the rice lives in the pantry now",
   ]),
   ...ph("kitchen", neverOffer, "create:record", [
     "add a jar of turmeric", "new spice: garam masala",
   ]),
   ...ph("kitchen", neverOffer, "action:inventory:adjust-stock", [
-    "used up one bag of rice", "I used half the cumin",
+    "used up one bag of rice",
+  ]),
+  // "half" is not a quantity the record can take; asking is as right as guessing.
+  ...ph("kitchen", neverOffer, "action:inventory:adjust-stock|action:inventory:use-one|clarify", [
+    "I used half the cumin",
   ]),
   // ── adversarial phrasings: the same intents in words the examples never
   //    used, so the bench measures understanding, not echo ─────────────────
@@ -287,7 +309,8 @@ export const CHAT_CORPUS: CorpusCase[] = [
   ...ph("workshop", neverOffer, "action:labels:print", [
     "sticker the Rostock", "I need a label on the CubePro",
   ]),
-  ...ph("workshop", neverOffer, "action:core-discussion:post-comment{body=nozzle}", [
+  // "note that on it" is a comment or a maintenance note; both are notes on it.
+  ...ph("workshop", neverOffer, "action:core-discussion:post-comment{body=nozzle}|action:core-maintenance:log{name=nozzle}", [
     "the X1 needs a new nozzle, note that on it",
   ]),
   ...ph("workshop", neverOffer, "action:platform:remove-field{field=colour}", [
