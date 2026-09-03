@@ -271,6 +271,23 @@ export const GROUNDING_RULES = `WHAT YOU CAN SEE, AND WHAT YOU CANNOT. This matt
  *  count_records, when the app's prompt says exactly when to. */
 export const TOOL_USE_RULES = `TOOLS: when tools are available to you, PREFER them over the JSON shapes below. Use the read tools (search_records, list_records, count_records, get_record, list_record_kinds, list_actions, get_putaway_plan) to look at the user's ACTUAL data before answering questions about it — never guess what they have. For "how many", "which do I have the most of", "do I have any X": call count_records (group_by a field) — it counts every record in code. A list page marked PARTIAL is never the whole set: do not count, rank, or say "none" from it. get_putaway_plan is the live put-away/organize state — reach for it whenever the user mentions putting things away, bins, or their plan. After creating/renaming locations for them, call replan_putaway ONCE (non-destructive; their open plan refreshes itself) — optionally with a hint distilling the conversation. Use the write tools (create_record, update_record, delete_record, invoke_action) to act; they only PROPOSE — the user confirms every change. You can chain: read first, then write. The JSON shapes below are the fallback for when you cannot call tools.`;
 
+/** An action's declared arguments, from the registry, memoised per workspace
+ *  for a minute: the guard above asks once per invoke, not once per turn. */
+const argsSchemaCache = new Map<string, { at: number; byId: Map<string, Record<string, { label?: string; type?: string }>> }>();
+async function actionArgsSchema(c: Ctx, actionId: string): Promise<Record<string, { label?: string; type?: string }> | null> {
+  const hit = argsSchemaCache.get(c.slug);
+  if (!hit || Date.now() - hit.at > 60_000) {
+    try {
+      const reg = await callApi(c, "GET", "/registered-actions");
+      const items = (reg.body.items as Array<{ id: string; args_schema?: Record<string, { label?: string; type?: string }> | null }> | undefined) ?? [];
+      argsSchemaCache.set(c.slug, { at: Date.now(), byId: new Map(items.map((a) => [a.id, a.args_schema ?? {}])) });
+    } catch {
+      return null;
+    }
+  }
+  return argsSchemaCache.get(c.slug)?.byId.get(actionId) ?? null;
+}
+
 async function buildSystemPrompt(c: Ctx, railMode: RailMode = "full"): Promise<string> {
   // include=custom_fields → the workspace's user-defined fields ride along, so
   // the hints below cover the WHOLE settable shape, not just native fields.
@@ -662,6 +679,19 @@ async function runTurn(
         return result;
       },
       isWrite: (name) => WRITE_NAMES.has(name),
+      validateWrite: async (call) => {
+        if (call.name !== "invoke_action") return null;
+        const a = call.args ?? {};
+        const actionId = String(a.action_id ?? "");
+        if (!actionId) return null;
+        const schema = (await actionArgsSchema(c, actionId)) ?? {};
+        const names = Object.keys(schema);
+        const given = a.args && typeof a.args === "object" ? Object.keys(a.args as Record<string, unknown>) : [];
+        if (names.length === 0 || given.length > 0) return null;
+        // The action takes arguments and none were passed: the id is right and
+        // the call would run on nothing. Say which, and let the model try again.
+        return `${actionId} takes arguments and none were given: ${names.map((n) => `${n}${schema[n]?.label ? ` (${schema[n]!.label})` : ""}`).join(", ")}. Call invoke_action again with args filled from what the user said, or ask the user for the value you are missing.`;
+      },
       ...(onEvent ? { onEvent } : {}),
       ...(prefs.write_mode === "auto"
         ? {

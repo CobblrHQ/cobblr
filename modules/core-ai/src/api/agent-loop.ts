@@ -47,6 +47,14 @@ export interface AgentLoopDeps {
   maxRounds?: number;
   /** Per-result clamp, chars of JSON. */
   maxResultChars?: number;
+  /** A write call that cannot be proposed as written - an action invoked
+   *  without the arguments it takes - is bounced back to the model as a tool
+   *  error and the loop continues, instead of ending the turn with a
+   *  proposal that would run on nothing. Return the message to bounce with,
+   *  or null to let the call through. The nightly bench found the model
+   *  picking the right action and dropping its arguments four times in one
+   *  run (2026-09-03); this is the platform's answer, not a longer prompt. */
+  validateWrite?(call: ToolCall): Promise<string | null> | string | null;
   /** Progress, as it happens. Optional so every existing caller and test is
    *  unchanged; the chat route passes one to feed the persisted turn log, which
    *  is what lets a widget show "reading your locations…" instead of nothing
@@ -220,6 +228,20 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
         }
         continue;
       }
+      // Write - first, is it a call that could ever be carried out as written?
+      if (deps.validateWrite) {
+        let bounce: string | null = null;
+        try {
+          bounce = await deps.validateWrite(call);
+        } catch {
+          bounce = null;
+        }
+        if (bounce) {
+          emit({ kind: "tool-result", name: call.name, ok: false, summary: bounce.slice(0, 160) });
+          turnResults.push({ call, text: clampJson({ ok: false, error: bounce }, maxChars) });
+          continue;
+        }
+      }
       // Write — auto-apply when allowed, else queue as a proposal.
       if (deps.executeWrite) {
         emit({ kind: "tool", name: call.name, args: call.args, write: true });
@@ -248,7 +270,8 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
 
     if (pendingProposals.length > 0) {
       // Some write(s) still need the confirm gate — stop here. Anything already
-      // applied this turn is reported alongside.
+      // applied this turn is reported alongside. A bounced write in the same
+      // round rides along as a tool result the model sees next time.
       return { kind: "writes", calls: pendingProposals, text: r.content, applied };
     }
 

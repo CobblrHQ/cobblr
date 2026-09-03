@@ -135,11 +135,14 @@ export const CHAT_CORPUS: CorpusCase[] = [
     "how do i invite someone", "how do I add a user", "who can see this workspace",
   ]),
   // ── instructions: entity writes (never intercepted; AI acts) ─────────────
-  ...ph("write", neverOffer, "create:record", [
+  // A module's own create action is a create.
+  ...ph("write", neverOffer, "create:record|action:inventory:create-item", [
     "add a part called Brass Widget, quantity 4",
     "create a location called Shelf 9 in the garage",
     "add a task to reorder filament",
     "new project: garden bench for dad",
+  ]),
+  ...ph("write", neverOffer, "action:core-maintenance:log|create:record", [
     "log a maintenance entry for the CNC: changed the spindle belt",
   ]),
   // A module's own create action counts as creating the record.
@@ -294,7 +297,8 @@ export const CHAT_CORPUS: CorpusCase[] = [
   ...ph("kitchen", neverOffer, "create:record", [
     "add a jar of turmeric", "new spice: garam masala",
   ]),
-  ...ph("kitchen", neverOffer, "action:inventory:adjust-stock", [
+  // "Used up one" is exactly what use-one does.
+  ...ph("kitchen", neverOffer, "action:inventory:adjust-stock|action:inventory:use-one", [
     "used up one bag of rice",
   ]),
   // "half" is not a quantity the record can take; asking is as right as guessing.
