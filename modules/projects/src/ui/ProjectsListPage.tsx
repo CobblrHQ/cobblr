@@ -15,6 +15,7 @@ import {
 } from "@cobblr/platform-web";
 import { useProjects } from "./context";
 import type { Project } from "./api";
+import { pluralise } from "@cobblr/platform-contract";
 
 type SavedViewLite = {
   id: string;
@@ -42,7 +43,7 @@ export function ProjectsListPage() {
   // "projects" / "New project". Falls back to the plain module wording.
   const heading = displayName ?? "projects";
   const noun = itemNoun ?? "project";
-  const nounPlural = `${noun}s`;
+  const nounPlural = pluralise(noun);
   usePageTitle(displayName ?? "Projects");
   const qc = useQueryClient();
   // entityKind (`<instance>:item`, or `projects:project` for the default) MUST

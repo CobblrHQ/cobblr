@@ -31,6 +31,7 @@ import { useNavigate } from "react-router-dom";
 import { ChevronDown, Bot } from "lucide-react";
 import { api } from "../lib/api";
 import { HIDE_WHEN_SIDE_PANEL_OPEN } from "./SidePanel";
+import { YIELDING_CLASS, useYieldToContent } from "@cobblr/platform-web";
 import {
   useToast, usePrintProgress, useBridgeLive, BridgePrinterCard, allowLocalAccess,
   isLocalBridgePrinter, readLocalBridgeStatus, setPrinterStatus,
@@ -171,6 +172,10 @@ function OfferPrompt({
   onAccept: () => void;
   onDecline: () => void;
 }) {
+  // Get out of the way of anything pressable underneath (yield-to-content.ts):
+  // fixed chrome does not move, and the page under it does.
+  const floatRef = useRef<HTMLDivElement>(null);
+  const coveringContent = useYieldToContent(floatRef);
   const card = (
     <div className="w-[236px] rounded-xl border border-cobble-300 dark:border-cobble-700 bg-surface dark:bg-slate-900 shadow-xl p-3 space-y-2.5">
       <div className="flex items-start gap-2">
@@ -197,7 +202,7 @@ function OfferPrompt({
       </div>
     </div>
   );
-  if (mode === "floating") return <div data-testid="live-floating" className={`fixed bottom-4 right-4 ${LIVE_Z} ` + HIDE_WHEN_SIDE_PANEL_OPEN}>{card}</div>;
+  if (mode === "floating") return <div ref={floatRef} data-testid="live-floating" className={`fixed bottom-4 right-4 ${LIVE_Z} ` + HIDE_WHEN_SIDE_PANEL_OPEN + (coveringContent ? " " + YIELDING_CLASS : "")}>{card}</div>;
   return (
     <div className="relative">
       <div className="absolute left-full bottom-1 ml-1.5 z-[60]">{card}</div>

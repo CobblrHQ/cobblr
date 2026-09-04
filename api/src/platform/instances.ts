@@ -9,7 +9,8 @@ import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { getEntry } from "../modules/registry.js";
 import { getTenantDb } from "../db/tenant.js";
-import { deleteOverride, upsertOverride } from "./entity-kind-overrides.js";
+import { deleteOverride, getOverrideConfig, upsertOverride } from "./entity-kind-overrides.js";
+import { fillItemNounIfAbsent } from "./override-config-merge.js";
 import { removeNavMember } from "./nav-headings.js";
 import { singularize, pluralize } from "../lib/inflect.js";
 
@@ -370,14 +371,30 @@ export async function provisionInstance(args: {
   // skinnable module's UI never has to fall back to its hardcoded word
   // ("part"). It's a default the user can fix in the instance settings —
   // see docs/design-decisions/one-record-substrate.md.
+  const targetId = `${args.moduleName}:${args.instanceName}`;
   const itemNoun = singularize(args.displayName);
+  // insertOnly protects a user's own rename, but it used to skip the whole row
+  // when one already existed - so an instance whose override was created by
+  // anything else (an icon, a nav position) never got a noun at all, and its
+  // pages read the module's internal word forever. Fill the gap without
+  // touching a word somebody already chose.
+  const existing = await getOverrideConfig(args.orgId, "instance", targetId);
+  const config = fillItemNounIfAbsent(existing, {
+    itemNoun,
+    itemNounPlural: pluralize(itemNoun),
+  });
   await upsertOverride({
     orgId: args.orgId,
     targetKind: "instance",
-    targetId: `${args.moduleName}:${args.instanceName}`,
+    targetId,
     displayLabel: args.displayName,
-    config: { item_noun: itemNoun, item_noun_plural: pluralize(itemNoun) },
+    config,
     insertOnly: true,
   });
+  // insertOnly leaves an EXISTING row alone entirely, so if the noun was the
+  // thing missing, write it on its own.
+  if (config !== existing) {
+    await upsertOverride({ orgId: args.orgId, targetKind: "instance", targetId, config });
+  }
   return { ok: true, instance: created };
 }

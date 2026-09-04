@@ -40,6 +40,15 @@ export interface PickInput<C extends CandidateCredential> {
   callerUserId: string | null;
   /** Route facts for a candidate in THIS workspace. */
   routeOf: (credentialId: string) => RouteFacts;
+  /**
+   * The workspace's own per-job choice, when it named a personal connection.
+   *
+   * This beats "the caller's own key first", and that is the point of it: the
+   * owner picking which connection answers a job is the same authority that
+   * installs a workspace provider, and a per-job choice nothing honours is not
+   * a choice. Absent (the default) leaves every existing rule exactly as it was.
+   */
+  preferCredentialId?: string | null;
 }
 
 const byRecency = (a: CandidateCredential, b: CandidateCredential): number =>
@@ -59,12 +68,8 @@ function inPickOrder<C extends CandidateCredential>(
  * while a Share offer is still waiting on the owner. Then the workspace's
  * shared AI. Within each group, the workspace's order for this capability.
  */
-export function pickCredential<C extends CandidateCredential>({
-  candidates,
-  callerUserId,
-  routeOf,
-}: PickInput<C>): C | null {
-  return orderCredentials({ candidates, callerUserId, routeOf })[0] ?? null;
+export function pickCredential<C extends CandidateCredential>(input: PickInput<C>): C | null {
+  return orderCredentials(input)[0] ?? null;
 }
 
 /**
@@ -80,9 +85,14 @@ export function orderCredentials<C extends CandidateCredential>({
   candidates,
   callerUserId,
   routeOf,
+  preferCredentialId,
 }: PickInput<C>): C[] {
-  const own = callerUserId ? candidates.filter((c) => c.user_id === callerUserId) : [];
+  const chosen = preferCredentialId
+    ? candidates.filter((c) => c.id === preferCredentialId)
+    : [];
+  const rest = candidates.filter((c) => !chosen.includes(c));
+  const own = callerUserId ? rest.filter((c) => c.user_id === callerUserId) : [];
   const ownIds = new Set(own.map((c) => c.id));
-  const shared = candidates.filter((c) => routeOf(c.id).shared && !ownIds.has(c.id));
-  return [...inPickOrder(own, routeOf), ...inPickOrder(shared, routeOf)];
+  const shared = rest.filter((c) => routeOf(c.id).shared && !ownIds.has(c.id));
+  return [...chosen, ...inPickOrder(own, routeOf), ...inPickOrder(shared, routeOf)];
 }

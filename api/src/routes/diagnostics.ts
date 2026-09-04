@@ -14,9 +14,16 @@
 // versions and the enabled-module list for THIS workspace, which is what
 // actually narrows a bug down.
 //
-// The reporter sees the whole payload before sending it — it is rendered into a
-// text box they copy by hand. That visibility is the point, and the reason to
-// keep the field list short enough to read.
+// The reporter sees the whole payload before sending it: the feedback widget
+// renders it under "What this says about your setup", one paragraph tall and
+// scrollable. That visibility is the point, and the reason to keep the field
+// list short enough to read.
+//
+// It said all that for a while before any of it was true — the widget had a
+// Copy button and nothing to read, so the rule was documented here and enforced
+// by nobody. `bug-report.test.ts` now reads the report's OWN Environment
+// section and fails if a field reaches it without reaching the screen, so
+// adding one below cannot quietly skip the review this comment promises.
 
 import { Router } from "express";
 import { sql } from "kysely";

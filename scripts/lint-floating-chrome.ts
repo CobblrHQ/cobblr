@@ -40,6 +40,13 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 const violations: Array<{ file: string; line: number; text: string }> = [];
+// Rule 2: yielding to OVERLAYS is not enough. Fixed chrome also sits on the
+// page's own content, which an overlay flag knows nothing about — the feedback
+// bubble covered the scan card's Confirm button, and somebody pressed the wrong
+// control twice and reported it (2026-07-15). Whether a pill covers a button is
+// a fact about layout at runtime, so the chrome has to look for itself.
+const noYield: Array<{ file: string; line: number; text: string }> = [];
+const YIELD = /useYieldToContent/;
 
 for (const r of ROOTS) {
   for (const file of walk(join(ROOT, r))) {
@@ -74,9 +81,14 @@ for (const r of ROOTS) {
           for (let i = 0; i < 4 && p; i++, p = p.parent) {
             if (HIDE.test(p.getText(sf))) { ok = true; break; }
           }
+          const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
           if (!ok) {
-            const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
             violations.push({ file: relative(ROOT, file), line: line + 1, text: t.trim().slice(0, 100) });
+          }
+          // The hook is called once per component and the class mixed in at the
+          // literal, so the FILE referencing it is the honest granularity here.
+          if (!YIELD.test(src)) {
+            noYield.push({ file: relative(ROOT, file), line: line + 1, text: t.trim().slice(0, 100) });
           }
         }
       }
@@ -84,6 +96,20 @@ for (const r of ROOTS) {
     };
     visit(sf);
   }
+}
+
+if (noYield.length > 0) {
+  console.error("lint:floating-chrome - fixed bottom chrome can cover the page's own buttons:\n");
+  for (const v of noYield) console.error(`  ${v.file}:${v.line}\n    ${v.text}\n`);
+  console.error(
+    "An overlay flag does not cover this: the page underneath is not an overlay.\n" +
+      "The feedback bubble sat on the scan card's Confirm button - the control that\n" +
+      "actually files your item - while a louder secondary action sat above it, and\n" +
+      "somebody pressed the wrong one twice (2026-07-15).\n\n" +
+      "Call useYieldToContent(ref) from @cobblr/platform-web, put the ref on the\n" +
+      "chrome, and mix in YIELDING_CLASS while it returns true.\n",
+  );
+  process.exit(1);
 }
 
 if (violations.length > 0) {
@@ -98,4 +124,4 @@ if (violations.length > 0) {
   process.exit(1);
 }
 
-console.log("lint:floating-chrome - all high-z floating chrome yields to overlays.");
+console.log("lint:floating-chrome - all high-z floating chrome yields to overlays AND to the content beneath it.");

@@ -27,6 +27,8 @@ export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; default
   summarise: { models: ["default"], defaultModel: "default" },
   "classify-image": { models: ["default"], defaultModel: "default" },
   "identify-image": { models: ["default"], defaultModel: "default" },
+  "identify-glance": { models: ["default"], defaultModel: "default" },
+  "split-image": { models: ["default"], defaultModel: "default" },
   "rank-images": { models: ["default"], defaultModel: "default" },
   "extract-text": { models: ["default"], defaultModel: "default" },
   "match-to-catalog": { models: ["default"], defaultModel: "default" },
@@ -191,6 +193,8 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
         case "chat":
         case "summarise":
         case "classify-image":
+        case "split-image":
+        case "identify-glance":
         case "identify-image":
         case "rank-images":
         case "extract-text":

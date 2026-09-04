@@ -3,7 +3,7 @@
 // static price table (rough, updated on doc-PR cadence).
 
 import { platform, type AiCapability } from "@cobblr/platform-contract";
-import { identifyPromptFor } from "./identify-prompt.js";
+import { visionPromptFor } from "./identify-prompt.js";
 import { rankImagesPromptFor } from "./rank-images-prompt.js";
 import { toolsOf, turnsOf, openAiToolsOf, openAiMessagesOf, parseOpenAiToolCalls } from "./tool-wire.js";
 import { promptFingerprint } from "./prompt-fingerprint.js";
@@ -13,6 +13,8 @@ export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; default
   summarise: { models: ["gpt-4o", "gpt-4o-mini"], defaultModel: "gpt-4o-mini" },
   "classify-image": { models: ["gpt-4o", "gpt-4o-mini"], defaultModel: "gpt-4o-mini" },
   "identify-image": { models: ["gpt-4o", "gpt-4o-mini"], defaultModel: "gpt-4o-mini" },
+  "identify-glance": { models: ["gpt-4o", "gpt-4o-mini"], defaultModel: "gpt-4o-mini" },
+  "split-image": { models: ["gpt-4o", "gpt-4o-mini"], defaultModel: "gpt-4o-mini" },
   "rank-images": { models: ["gpt-4o", "gpt-4o-mini"], defaultModel: "gpt-4o-mini" },
   "extract-text": { models: ["gpt-4o", "gpt-4o-mini"], defaultModel: "gpt-4o-mini" },
   "embed-text": {
@@ -82,6 +84,8 @@ export function register(): void {
         case "chat":
         case "summarise":
         case "classify-image":
+        case "split-image":
+        case "identify-glance":
         case "identify-image":
         case "rank-images":
         case "extract-text":
@@ -99,7 +103,7 @@ export function register(): void {
           if (toolDefs) body.tools = openAiToolsOf(toolDefs);
           if (
             ctx.capability === "classify-image" ||
-            ctx.capability === "identify-image" ||
+            (ctx.capability === "identify-image" || ctx.capability === "split-image" || ctx.capability === "identify-glance") ||
             ctx.capability === "rank-images" ||
             ctx.capability === "match-to-catalog"
           ) {
@@ -193,6 +197,8 @@ export function buildMessages(
       }
       return [{ role: "user", content }];
     }
+    case "split-image":
+    case "identify-glance":
     case "identify-image": {
       const mediaType = String(input.image_media_type ?? "image/jpeg");
       const imageUrl = typeof input.image_url === "string" ? input.image_url : null;
@@ -201,7 +207,7 @@ export function buildMessages(
       // "find and box each distinct thing"), which this branch used to IGNORE — so
       // that call asked the identify question, got no `items` back, and was wasted
       // on every single split. The edge-bridge adapter always honoured it.
-      const content: Array<Record<string, unknown>> = [{ type: "text", text: identifyPromptFor(input) }];
+      const content: Array<Record<string, unknown>> = [{ type: "text", text: visionPromptFor(capability, input) }];
       if (imageUrl) content.push({ type: "image_url", image_url: { url: imageUrl } });
       else if (imageB64) {
         content.push({ type: "image_url", image_url: { url: `data:${mediaType};base64,${imageB64}` } });

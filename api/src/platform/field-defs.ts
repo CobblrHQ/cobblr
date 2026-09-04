@@ -31,6 +31,8 @@ import { sql } from "kysely";
 import { z } from "zod";
 import {
   FieldRoleSchema,
+  fieldRoleOwner,
+  fieldRoleOwnedMessage,
   FieldTypeSchema,
   TRAIT_NAMES,
   fieldScopeLabel,
@@ -255,7 +257,7 @@ export type FieldDefCreateInput = z.infer<typeof FieldDefCreate>;
 
 export type CreateFieldDefResult =
   | { ok: true; def: FieldDefRow; warning?: string }
-  | { ok: false; code: "missing_ref_kind" | "unknown_scope" | "duplicate_name"; message: string };
+  | { ok: false; code: "missing_ref_kind" | "unknown_scope" | "duplicate_name" | "role_owned_by_platform"; message: string };
 
 /** Create one custom field def — the shared body of POST /field-defs and the
  *  platform:add-field action. Input is already FieldDefCreate-parsed; the
@@ -282,6 +284,16 @@ export async function createFieldDef(
   // the same canonical trait list. The sentinel is then DERIVED from that list,
   // never taken from the client, so it can't disagree with the predicate it
   // encodes — and the same scope always lands on the same row.
+  // A role another capability already answers may not be claimed by a field.
+  // The vocabulary itself says which those are (FIELD_ROLE_LABELS.ownedBy), so
+  // this is one check for every such role rather than a rule about "location".
+  if (input.field_role && fieldRoleOwner(input.field_role)) {
+    return {
+      ok: false,
+      code: "role_owned_by_platform",
+      message: fieldRoleOwnedMessage(input.field_role),
+    };
+  }
   const scopeTraits = input.applies_to?.traits ?? parseFieldScope(input.entity_kind);
   if (isFieldScope(input.entity_kind) && scopeTraits.length === 0) {
     return {
@@ -393,7 +405,7 @@ export type FieldDefPatchInput = z.infer<typeof FieldDefPatch>;
 
 export type UpdateFieldDefResult =
   | { ok: true; def: FieldDefRow; effectiveChoices?: string[] | null }
-  | { ok: false; code: "not_found" | "unit_not_number" | "no_changes"; message: string };
+  | { ok: false; code: "not_found" | "unit_not_number" | "no_changes" | "role_owned_by_platform"; message: string };
 
 /** Change one field def — the shared body of PATCH /field-defs/:id and the
  *  platform:edit-field action. */
@@ -402,6 +414,11 @@ export async function updateFieldDef(
   id: string,
   patch: FieldDefPatchInput,
 ): Promise<UpdateFieldDefResult> {
+  // The same refusal as create: a field may not be EDITED into claiming a role
+  // another capability owns either, or the guard is one route deep.
+  if (patch.field_role && fieldRoleOwner(patch.field_role)) {
+    return { ok: false, code: "role_owned_by_platform", message: fieldRoleOwnedMessage(patch.field_role) };
+  }
   const updates: Record<string, unknown> = {};
   if (patch.display_label !== undefined) updates.display_label = patch.display_label;
   if (patch.required !== undefined) updates.required = patch.required;

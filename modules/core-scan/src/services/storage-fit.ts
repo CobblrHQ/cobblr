@@ -23,16 +23,65 @@
 // unmoved jar every hour.
 
 import { platform } from "@cobblr/platform-contract";
+import { StorageWarnBatcher } from "./storage-warn-batch.js";
 import { storageMismatch, type StorageRequirement } from "./storage-requirement.js";
 
 let registered = false;
 
 /** Kinds whose containment says nothing about temperature. A part moved inside
  *  another part (a spare into a toolbox) is not a storage decision. */
+/** One batcher for the process. The flush is the only thing that talks to
+ *  notifications, so "how we say it" lives in storage-warn-batch and "who we
+ *  tell" lives here. */
+const warnBatcher = new StorageWarnBatcher(async (orgId, batch) => {
+  const members = await platform().notifications.orgMemberIds(orgId);
+  for (const userId of members) {
+    try {
+      await platform().notifications.dispatch({
+        orgId,
+        userId,
+        eventType: "core-scan.storage.mismatch",
+        message: batch.message,
+        module: "core-scan",
+        priority: batch.priority,
+        payload: { count: batch.count },
+      });
+    } catch (err) {
+      console.warn("[core-scan] storage-fit notify failed:", (err as Error).message);
+    }
+  }
+});
+
 const LOCATION_KIND = "core-locations:location";
 
 /** Names of the container and everything it is inside, innermost first.
  *  Capped: a malformed chain must not spin, and nothing real is nested deeply. */
+/** Does this place CONTAIN somewhere that satisfies the requirement?
+ *
+ *  One level only, deliberately: "the fridge is in the kitchen" is the relation
+ *  worth forgiving, while a suitable box three rooms deep says nothing about
+ *  where the item actually is. */
+async function hasSuitableChild(
+  orgId: string,
+  containerId: string,
+  requirement: StorageRequirement,
+): Promise<boolean> {
+  try {
+    const kids = await platform().placement.contents({
+      orgId,
+      container: { kind: LOCATION_KIND, id: containerId },
+    });
+    for (const kid of kids.slice(0, 40)) {
+      const resolved = await platform().entities.lookup(orgId, kid.kind, kid.id);
+      if (resolved?.title && storageMismatch(requirement, resolved.title) === null) return true;
+    }
+  } catch {
+    // Unreadable contents must not invent a warning OR silence a real one:
+    // falling through to `false` keeps the pre-existing behaviour.
+  }
+  return false;
+}
+
 async function ancestorNames(orgId: string, containerId: string): Promise<string[]> {
   const names: string[] = [];
   let ref: { kind: string; id: string } | null = { kind: LOCATION_KIND, id: containerId };
@@ -85,6 +134,17 @@ export function registerStorageFitCheck(): void {
       // fridge because there is a shelf in the way.
       const satisfied = chain.some((name) => storageMismatch(requirement, name) === null);
       if (satisfied) return;
+
+      // UNSPECIFIED IS NOT WRONG. A Kitchen that CONTAINS a Fridge is where a
+      // person naturally files a shop - "put the groceries in the kitchen" - and
+      // it is not a claim that the milk is sitting on the floor. Warning there
+      // fires on the single most common way food is filed, which is how a
+      // warning becomes noise and then gets muted.
+      //
+      // So: if the place has a suitable child, this is imprecision, not a
+      // mistake, and the app says nothing. A tomato in the Garage still warns,
+      // because a garage contains no fridge.
+      if (await hasSuitableChild(p.orgId, p.containerId, requirement)) return;
       const mismatch = storageMismatch(requirement, chain[0]!);
       if (!mismatch) return;
 
@@ -95,7 +155,7 @@ export function registerStorageFitCheck(): void {
       const warnedFor = md.storage_warned_for;
       if (typeof warnedFor === "string" && warnedFor === p.containerId) return;
       try {
-        await platform().entities.getWriter(p.containeeKind)?.update(p.orgId, p.containeeId, {
+        (await platform().entities.getWriter(p.orgId, p.containeeKind))?.update(p.orgId, p.containeeId, {
           metadata: { ...md, storage_warned_for: p.containerId },
         });
       } catch {
@@ -112,30 +172,25 @@ export function registerStorageFitCheck(): void {
         location: mismatch.location,
       });
 
-      // And tell somebody. Priority `high` on purpose: the delivery-window work
-      // batches anything at or below `normal` into a digest, and "your ice cream
-      // is in a cupboard" read tomorrow morning is a message about a puddle.
-      // This is the rare case in this area that has earned an interruption -
-      // a fact about food spoiling now, not a prediction about shopping later.
-      const phrase =
-        mismatch.requirement === "frozen" ? "kept frozen" : "kept refrigerated";
-      const members = await platform().notifications.orgMemberIds(p.orgId);
-      for (const userId of members) {
-        try {
-          await platform().notifications.dispatch({
-            orgId: p.orgId,
-            userId,
-            eventType: "core-scan.storage.mismatch",
-            message: `${record.title} needs ${phrase} - it just went into ${mismatch.location}`,
-            module: "core-scan",
-            entityType: p.containeeKind,
-            entityId: p.containeeId,
-            priority: "high",
-            payload: { requirement: mismatch.requirement, location: mismatch.location },
-          });
-        } catch (err) {
-          console.warn("[core-scan] storage-fit notify failed:", (err as Error).message);
-        }
+      // And tell somebody - ONCE for the whole shop.
+      //
+      // This used to dispatch here, per placement, at `high` so it skipped the
+      // digest. The urgency reasoning was about one item ("your ice cream is in
+      // a cupboard, read tomorrow, is a message about a puddle") and never about
+      // how food actually arrives: filing a shop sent one DM per line.
+      //
+      // The batcher holds a workspace's warnings for a beat and sends one
+      // message; `frozen` still earns the interruption, `refrigerated` joins the
+      // person's own delivery window. See storage-warn-batch.ts.
+      // storageMismatch never returns `ambient` (it answers null for it), but
+      // the type cannot say so - narrow here rather than widening the batcher,
+      // which would make "ambient food is in the wrong place" expressible.
+      if (mismatch.requirement !== "ambient") {
+        warnBatcher.add(p.orgId, {
+          name: record.title,
+          requirement: mismatch.requirement,
+          location: mismatch.location,
+        });
       }
     } catch (err) {
       // A check that cannot run must never break the move that triggered it.

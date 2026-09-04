@@ -21,7 +21,7 @@
 // Claude tier), so override it via capability defaults to match your device.
 
 import { platform, type AiCapability, type EdgeRequest, type EdgeResponse } from "@cobblr/platform-contract";
-import { IDENTIFY_PROMPT, measurementContext } from "./identify-prompt.js";
+import { IDENTIFY_PROMPT, measurementContext, visionPromptFor } from "./identify-prompt.js";
 import { rankImagesPromptFor } from "./rank-images-prompt.js";
 import { toolsOf, turnsOf, openAiToolsOf, ollamaMessagesOf, parseOllamaToolCalls, bridgeUsage } from "./tool-wire.js";
 import { promptFingerprint } from "./prompt-fingerprint.js";
@@ -37,6 +37,8 @@ export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; default
   "classify-image": { models: ["sonnet", "llava", "llama3.2-vision"], defaultModel: "sonnet" },
   "extract-text": { models: ["sonnet", "llava", "llama3.2-vision"], defaultModel: "sonnet" },
   "identify-image": { models: ["sonnet", "llava", "llama3.2-vision"], defaultModel: "sonnet" },
+  "identify-glance": { models: ["sonnet", "llava", "llama3.2-vision"], defaultModel: "sonnet" },
+  "split-image": { models: ["sonnet", "llava", "llama3.2-vision"], defaultModel: "sonnet" },
   "rank-images": { models: ["sonnet", "llava", "llama3.2-vision"], defaultModel: "sonnet" },
   "match-to-catalog": { models: ["sonnet", "llama3.2", "qwen2.5"], defaultModel: "sonnet" },
   "embed-text": { models: ["nomic-embed-text", "mxbai-embed-large"], defaultModel: "nomic-embed-text" },
@@ -264,6 +266,8 @@ export function register(): void {
         }
         case "classify-image":
         case "extract-text":
+        case "split-image":
+        case "identify-glance":
         case "identify-image":
         case "rank-images":
         case "match-to-catalog": {
@@ -275,8 +279,8 @@ export function register(): void {
           const prompt =
             typeof ctx.input.prompt === "string" && ctx.input.prompt.trim()
               ? ctx.input.prompt
-              : ctx.capability === "identify-image"
-                ? IDENTIFY_PROMPT + measurementContext(ctx.input)
+              : (ctx.capability === "identify-image" || ctx.capability === "split-image" || ctx.capability === "identify-glance")
+                ? visionPromptFor(ctx.capability, ctx.input)
                 : ctx.capability === "rank-images"
                   ? rankImagesPromptFor(ctx.input)
                 : ctx.capability === "extract-text"

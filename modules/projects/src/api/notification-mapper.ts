@@ -7,13 +7,90 @@
 // know about specific modules — so the mapper lives here now and
 // registers itself when the projects module loads.
 
-import { platform } from "@cobblr/platform-contract";
+import { NotificationBatcher, platform, type ComposedBurst } from "@cobblr/platform-contract";
 
 interface TaskUnblockedPayload {
   orgId: string;
   taskId: string;
   via?: { kind: string; id: string };
 }
+
+/** One unblocked task, held back to be said together with the rest of its burst. */
+export interface Unblocked {
+  title: string;
+  taskId: string;
+  projectId: string;
+  causeText: string;
+}
+
+/**
+ * How several unblocked tasks become one sentence.
+ *
+ * Exported so a test can ask what somebody actually reads without standing up
+ * the platform.
+ */
+export function composeUnblocked(items: readonly Unblocked[]): ComposedBurst | null {
+  if (items.length === 0) return null;
+  if (items.length === 1) {
+    const u = items[0]!;
+    return {
+      message: `Task "${u.title}" is unblocked (${u.causeText} is now satisfied)`,
+      count: 1,
+      link_url: `/projects/${u.projectId}`,
+      entityType: "task",
+      entityId: u.taskId,
+    };
+  }
+  // Three names then a count: this exists to get somebody to go and look, and a
+  // phone notification truncates a longer list anyway.
+  const shown = items.slice(0, 3).map((u) => `"${u.title}"`).join(", ");
+  const rest = items.length > 3 ? ` and ${items.length - 3} more` : "";
+  const projects = new Set(items.map((u) => u.projectId));
+  return {
+    message: `${items.length} tasks are unblocked: ${shown}${rest}`,
+    count: items.length,
+    // All in one project is still somewhere honest to point.
+    link_url: projects.size === 1 ? `/projects/${items[0]!.projectId}` : undefined,
+  };
+}
+
+/**
+ * Finishing ONE task can unblock eight of them, and the handler below fires
+ * once per task. Read on its own each message is good; eight arriving together
+ * is a stream, and a handler cannot see the burst it is part of - it only ever
+ * gets its own event. So something has to hold the beat, and that is the
+ * platform's batcher. What stays in this module is the part only projects can
+ * answer: the sentence, and where it points.
+ */
+export const unblockedBatcher = new NotificationBatcher<Unblocked>(
+  composeUnblocked,
+  async (orgId, burst) => {
+    const userIds = await platform().notifications.orgMemberIds(orgId);
+    for (const userId of userIds) {
+      try {
+        await platform().notifications.dispatch({
+          orgId,
+          userId,
+          eventType: "projects.task.unblocked",
+          message: burst.message,
+          link_url: burst.link_url,
+          module: "projects",
+          entityType: burst.entityType,
+          entityId: burst.entityId,
+          payload: { count: burst.count },
+        });
+      } catch (err) {
+        console.error("[projects.notify] dispatch failed:", err);
+      }
+    }
+  },
+  // Much shorter than the default. A dependency cascade is a MACHINE fan-out:
+  // finishing one task unblocks the rest within the same request, so a beat
+  // this short still collects the whole burst, and the notification still
+  // arrives while the person is looking at the screen they caused it from.
+  // The 20s default is sized for a HUMAN burst - a shop filed item by item.
+  1_500,
+);
 
 export function registerProjectsNotificationMappers(): void {
   platform().events.on(
@@ -32,26 +109,12 @@ export function registerProjectsNotificationMappers(): void {
         const causeText = p.via
           ? await viaText(p.orgId, p.via)
           : "a dependency";
-        const message = `Task "${task.title}" is unblocked (${causeText} is now satisfied)`;
-        const userIds = await platform().notifications.orgMemberIds(p.orgId);
-        for (const userId of userIds) {
-          try {
-            await platform().notifications.dispatch({
-              orgId: p.orgId,
-              userId,
-              eventType: "projects.task.unblocked",
-              message,
-              link_url: `/projects/${
-                (task.fields as Record<string, unknown>).project_id ?? ""
-              }`,
-              module: "projects",
-              entityType: "task",
-              entityId: p.taskId,
-            });
-          } catch (err) {
-            console.error("[projects.notify] dispatch failed:", err);
-          }
-        }
+        unblockedBatcher.add(p.orgId, {
+          title: task.title ?? "Untitled",
+          taskId: p.taskId,
+          projectId: String((task.fields as Record<string, unknown>).project_id ?? ""),
+          causeText,
+        });
       } catch (err) {
         console.error("[projects.notify] task.unblocked handler failed:", err);
       }

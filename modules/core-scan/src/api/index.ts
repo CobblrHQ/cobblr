@@ -11,6 +11,7 @@ import { exportRouter } from "./export.js";
 import { entityImageRouter } from "./entity-image.js";
 import { qrRulesRouter } from "./qr-rules.js";
 import { decodeRouter } from "./decode.js";
+import { duplicatesRouter } from "./duplicates.js";
 import { registerScanHandlers } from "./handlers.js";
 import { registerEmailInbound } from "../services/email-inbound.js";
 
@@ -24,6 +25,7 @@ startReceiptTrackingSweeper();
 const router = Router({ mergeParams: true });
 router.use("/", inboxRouter);
 router.use("/", organizeRouter); // Guided Organize: batch put-away plan + apply
+router.use("/", duplicatesRouter); // find + merge records that are the same thing twice
 router.use("/", putawayRouter); // put-away sessions: the shared execution engine (walk + Live Sort)
 router.use("/", importRouter); // bulk import (inbox-export interop + generic CSV)
 router.use("/", exportRouter); // bulk export (interop v1 envelope: JSON + CSV)

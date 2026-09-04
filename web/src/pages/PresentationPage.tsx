@@ -15,6 +15,7 @@ import {
   api,
   type EntityKindOverride,
 } from "../lib/api";
+import { pluralise } from "@cobblr/platform-contract";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { BASE_NATIVE_FIELDS } from "../lib/native-field-policy";
 import { HeadingsBuilder } from "../components/HeadingsBuilder";
@@ -326,16 +327,25 @@ function PresentationCreateModal({
   const [navOrder, setNavOrder] = useState<string>("");
   const [groupLabel, setGroupLabel] = useState("");
   const [nestUnderModule, setNestUnderModule] = useState(false);
+  const [itemNoun, setItemNoun] = useState("");
+  const [itemNounPlural, setItemNounPlural] = useState("");
   const showGroupLabel = isModuleDefaultInstance(target.target_kind, target.target_id);
   const showNestToggle = target.target_kind === "instance" && !showGroupLabel;
+  // Only a collection HAS things inside it. An entity kind or a bundle does not.
+  const showItemNoun = target.target_kind === "instance";
   const moduleName = target.target_id.split(":")[0];
   const toast = useToast();
 
   const save = useMutation({
     mutationFn: () => {
-      const config: Record<string, unknown> = {};
-      if (groupLabel.trim()) config.group_label = groupLabel.trim();
-      if (nestUnderModule) config.presents_as_top_level = false;
+      // Only the keys this form owns. The server merges, and null clears, so a
+      // rename can no longer drop the bundle's item_noun the way it once did.
+      const config: Record<string, unknown> = {
+        group_label: groupLabel.trim() || null,
+        presents_as_top_level: nestUnderModule ? false : null,
+        item_noun: itemNoun.trim() || null,
+        item_noun_plural: itemNounPlural.trim() || null,
+      };
       return api.upsertOverride(activeSlug, {
         target_kind: target.target_kind,
         target_id: target.target_id,
@@ -377,6 +387,11 @@ function PresentationCreateModal({
           groupLabel={groupLabel}
           setGroupLabel={setGroupLabel}
           showGroupLabel={showGroupLabel}
+          itemNoun={itemNoun}
+          setItemNoun={setItemNoun}
+          itemNounPlural={itemNounPlural}
+          setItemNounPlural={setItemNounPlural}
+          showItemNoun={showItemNoun}
           nestUnderModule={nestUnderModule}
           setNestUnderModule={setNestUnderModule}
           showNestToggle={showNestToggle}
@@ -426,20 +441,27 @@ function PresentationEditModal({
   const [nestUnderModule, setNestUnderModule] = useState(
     override.config?.presents_as_top_level === false,
   );
+  const [itemNoun, setItemNoun] = useState(
+    typeof override.config?.item_noun === "string" ? override.config.item_noun : "",
+  );
+  const [itemNounPlural, setItemNounPlural] = useState(
+    typeof override.config?.item_noun_plural === "string" ? override.config.item_noun_plural : "",
+  );
   const showGroupLabel = isModuleDefaultInstance(override.target_kind, override.target_id);
   const showNestToggle = override.target_kind === "instance" && !showGroupLabel;
+  const showItemNoun = override.target_kind === "instance";
   const moduleName = override.target_id.split(":")[0];
   const toast = useToast();
 
   const save = useMutation({
     mutationFn: () => {
-      // Preserve any other config keys; only touch the ones this form owns.
-      const config: Record<string, unknown> = { ...(override.config ?? {}) };
-      const gl = groupLabel.trim();
-      if (gl) config.group_label = gl;
-      else delete config.group_label;
-      if (nestUnderModule) config.presents_as_top_level = false;
-      else delete config.presents_as_top_level;
+      // Only the keys this form owns; the server merges the rest. A null clears.
+      const config: Record<string, unknown> = {
+        group_label: groupLabel.trim() || null,
+        presents_as_top_level: nestUnderModule ? false : null,
+        item_noun: itemNoun.trim() || null,
+        item_noun_plural: itemNounPlural.trim() || null,
+      };
       return api.upsertOverride(activeSlug, {
         target_kind: override.target_kind,
         target_id: override.target_id,
@@ -481,6 +503,11 @@ function PresentationEditModal({
           groupLabel={groupLabel}
           setGroupLabel={setGroupLabel}
           showGroupLabel={showGroupLabel}
+          itemNoun={itemNoun}
+          setItemNoun={setItemNoun}
+          itemNounPlural={itemNounPlural}
+          setItemNounPlural={setItemNounPlural}
+          showItemNoun={showItemNoun}
           nestUnderModule={nestUnderModule}
           setNestUnderModule={setNestUnderModule}
           showNestToggle={showNestToggle}
@@ -533,6 +560,11 @@ function PresentationFields({
   nestUnderModule,
   setNestUnderModule,
   showNestToggle,
+  itemNoun,
+  setItemNoun,
+  itemNounPlural,
+  setItemNounPlural,
+  showItemNoun,
   moduleName,
 }: {
   label: string;
@@ -551,6 +583,11 @@ function PresentationFields({
   nestUnderModule?: boolean;
   setNestUnderModule?: (v: boolean) => void;
   showNestToggle?: boolean;
+  itemNoun?: string;
+  setItemNoun?: (v: string) => void;
+  itemNounPlural?: string;
+  setItemNounPlural?: (v: string) => void;
+  showItemNoun?: boolean;
   moduleName?: string;
 }) {
   return (
@@ -579,6 +616,41 @@ function PresentationFields({
           className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
         />
       </label>
+      {showItemNoun && setItemNoun && setItemNounPlural && (
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+              One of them is called
+            </span>
+            <input
+              type="text"
+              value={itemNoun ?? ""}
+              onChange={(e) => setItemNoun(e.target.value)}
+              // vocab-lint-ok: this IS the field that sets the workspace's word; the
+              // placeholder shows the generic default it replaces.
+              placeholder="item"
+              className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+            />
+          </label>
+          <label className="block">
+            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+              More than one
+            </span>
+            <input
+              type="text"
+              value={itemNounPlural ?? ""}
+              onChange={(e) => setItemNounPlural(e.target.value)}
+              placeholder={itemNoun?.trim() ? pluralise(itemNoun.trim()) : "items"}
+              className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+            />
+          </label>
+          <span className="col-span-2 -mt-1 block text-[11px] text-faint dark:text-slate-500">
+            The word for ONE thing inside, which is not the name of the collection:
+            a Bookshelf holds books. It names the New button, the empty state and
+            the counts. Leave the plural blank and it is worked out from the singular.
+          </span>
+        </div>
+      )}
       {showGroupLabel && setGroupLabel && (
         <label className="block">
           <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">

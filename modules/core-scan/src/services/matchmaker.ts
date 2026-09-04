@@ -12,6 +12,7 @@
 
 import { platform, extractJsonObject, repairJson, parseJsonReply } from "@cobblr/platform-contract";
 import { routingNoteBare, routingNoteWithCategory } from "./routing-note.js";
+import { stripPlaceFields } from "./place-fields.js";
 import { normaliseCategory, isJunkCategory } from "@cobblr/platform-contract/category-reconcile";
 
 // A HANG GUARD, not a latency knob: the matchmaker
@@ -120,6 +121,11 @@ export interface MatchCandidate {
   /** Field values keyed by the table's field-def `name`. Only fields the model
    *  was confident about; everything else omitted. */
   fields: Record<string, string | number | boolean>;
+  /** Fields the model filled that turned out to be a PLACE - a value naming a
+   *  Location this workspace has. Location is core-locations' job, so these are
+   *  taken out of `fields` and kept here: the answer to "where does this go" is
+   *  recorded rather than silently dropped. See place-fields.ts. */
+  place_fields?: Record<string, string | number | boolean>;
   /** TOP candidate only: 2–4 terse sentences reconciling ALL the item data
    *  (title vs attributes vs barcode DB vs photo hints) — what matched, what
    *  was inferred, pack-size reasoning. No filler. */
@@ -840,6 +846,20 @@ export function makeLexicalScorer(item: PerceivedItem): {
   // virtually every retail payload; hay-wide matches still SCORE (and count as
   // keyword corroboration), but only name evidence makes a table strong.
   const nameStems = new Set(nameCore.split(/[^a-z0-9]+/).filter((w) => w.length >= 3).map(stem));
+  // The CATEGORY on its own. It is not part of the metadata blob and must not be
+  // graded like it: the blob is marketing text and catalog attributes, while the
+  // category is a structured statement of what KIND of thing this is, from the
+  // lookup that identified it. A title is often silent about its kind — a book's
+  // title is the one place the word "book" never appears — so a table whose noun
+  // IS the category is the strongest signal there is for that item.
+  const catStems = new Set(
+    (item.category ?? "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3).map(stem),
+  );
+  const categoryIs = (phrase: string): boolean => {
+    const p = phrase.toLowerCase();
+    if (/\s/.test(p.trim())) return (item.category ?? "").toLowerCase().includes(p);
+    return p.split(/[^a-z0-9]+/).some((w) => w.length >= 3 && catStems.has(stem(w)));
+  };
   const nameHas = (phrase: string): boolean => {
     const p = phrase.toLowerCase();
     if (/\s/.test(p.trim())) return nameCore.includes(p);
@@ -881,7 +901,16 @@ export function makeLexicalScorer(item: PerceivedItem): {
     // scores nothing and is never strong; such a table routes by its keywords.
     if (entry.noun && hasWord(entry.noun) && !GENERIC_NOUNS.has(stem(entry.noun.toLowerCase()))) {
       score += 2;
-      if (nameHas(entry.noun)) strong = true;
+      // The NAME saying the noun is the classic signal. The CATEGORY saying it
+      // is just as strong a statement and covers the case the name cannot: an
+      // ISBN-identified textbook is categorised "Books" while its title is
+      // about refrigeration, and it filed into the catch-all next to a
+      // Bookshelf table sitting right there (reported 2026-09-02).
+      //
+      // Still gated by GENERIC_NOUNS above, so a category of "Items" cannot
+      // route to a table whose noun is "item" — a generic noun says nothing
+      // about what a thing IS, whichever field it matched.
+      if (nameHas(entry.noun) || categoryIs(entry.noun)) strong = true;
     }
     // Multi-word keywords match as FULL PHRASES only — "paper towel" must
     // not claim every "towel" via its words (bath towels are linens, not
@@ -1154,6 +1183,26 @@ export const MATCHMAKER_SYSTEM =
     "with single quotes ('medium weight') — or the JSON will not parse. " +
     "Order candidates best-first. confidence is how well the table fits the item.";
 
+/** The workspace's Location names, for the place-field strip. One read per
+ *  match; a workspace with no locations reads empty and strips nothing. */
+async function locationNamesFor(orgId: string): Promise<string[]> {
+  try {
+    const locs = await platform().entities.list(orgId, "core-locations:location", { limit: 1000 });
+    const out: string[] = [];
+    for (const l of locs.items) {
+      const name = l.title ?? String((l.fields as Record<string, unknown> | undefined)?.name ?? "");
+      if (name) out.push(name);
+      const short = l.subtitle ?? ((l.fields as Record<string, unknown> | undefined)?.short_name as string | null | undefined);
+      if (short) out.push(String(short));
+    }
+    return out;
+  } catch {
+    // Locations unavailable (module off, read failed) - prove nothing, strip
+    // nothing. The extraction is kept exactly as it was.
+    return [];
+  }
+}
+
 export async function runMatchmaker(
   orgId: string,
   item: PerceivedItem,
@@ -1321,6 +1370,9 @@ export async function runMatchmaker(
   // table we actually offered, and we resolve module/kind/label from the menu
   // (never trust the model for the entity kind we'll write to).
   const byKey = new Map(menu.map((m) => [`${m.module}::${m.instance ?? ""}`, m] as const));
+  // Read once for the whole reply: the strip below needs to know which words
+  // name a real place in THIS workspace.
+  const locationNames = await locationNamesFor(orgId);
   const out: MatchCandidate[] = [];
   // Dedupe by target table: the model sometimes emits the SAME menu entry twice
   // (e.g. Bookshelf with 4 fields AND Bookshelf with 2), which surfaced as two
@@ -1336,13 +1388,19 @@ export async function runMatchmaker(
     if (!entry) continue;
     // Keep only fields that exist on the table, coerced to a primitive.
     const allowed = new Set(entry.fields.map((f) => f.name));
-    const fields: Record<string, string | number | boolean> = {};
+    const rawFields: Record<string, string | number | boolean> = {};
     if (cand.fields && typeof cand.fields === "object") {
       for (const [k, v] of Object.entries(cand.fields as Record<string, unknown>)) {
         if (!allowed.has(k)) continue;
-        if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") fields[k] = v;
+        if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") rawFields[k] = v;
       }
     }
+    // A PLACE is a Location, never a field value - see place-fields.ts. Done in
+    // code rather than asked of the prompt, because a model filling
+    // room="Living room" beside the item's real location is not a wording
+    // problem. What comes out is carried on the candidate, so the answer to
+    // "where does this go" survives the strip.
+    const { fields, stripped: placeFields } = stripPlaceFields(rawFields, locationNames);
     // PACK COUNT — filled from the OBSERVED package, overriding any model guess
     // (see seedPackSize). A `pack`-role field records what you're holding.
     seedPackSize(entry, item, fields);
@@ -1375,6 +1433,7 @@ export async function runMatchmaker(
       // Carry the bundle pointer through from the chosen menu entry so a
       // capture against a not-yet-installed bundle remembers what to install.
       ...(entry.bundle_external_id ? { bundle_external_id: entry.bundle_external_id } : {}),
+      ...(Object.keys(placeFields).length ? { place_fields: placeFields } : {}),
     };
     const dedupeKey = `${entry.module}::${entry.instance ?? ""}`;
     const prevIdx = emitted.get(dedupeKey);

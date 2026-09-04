@@ -19,6 +19,7 @@
 
 import { platform } from "@cobblr/platform-contract";
 import { significantTokens } from "./suggest-location.js";
+import { resolveRequirement, satisfiesRequirement } from "./storage-requirement.js";
 
 // ── Declared interior size (size veto — declared-only, never guessed) ───────
 
@@ -222,6 +223,11 @@ export interface RoutableItem {
   /** Longest DECLARED dimension in mm — enables the size veto; absent = no
    *  size logic (declared-only, never guessed from names). */
   longest_mm?: number | null;
+  /** What the ITEM says about how it must be kept, when it carries the field.
+   *  Beats the category table, which says nothing about fresh produce on
+   *  purpose - a bag of carrots knows it wants a fridge and a sack of potatoes
+   *  does not, and only the item can tell them apart. */
+  storage_requirement?: unknown;
 }
 
 export interface RouteHit {
@@ -263,6 +269,30 @@ export function routeItem(
   ]);
   if (want.size === 0) return null;
 
+  // TEMPERATURE VETO, alongside the size one below and for the same reason: a
+  // bin an item cannot go in is not a candidate, however much evidence points
+  // at it. Routing chilled food to the shelf its siblings are wrongly on files
+  // a mistake and then sends a notification about it.
+  //
+  // Derived HERE from the item's own category rather than taken as an argument,
+  // so a caller cannot forget to pass it - there are two call sites today and
+  // the next one would be written without knowing this rule exists.
+  //
+  // The PATH is tested, not the bin name: "Kitchen > Fridge > Shelf 2" is
+  // refrigerated, and reading only the leaf would reject the shelf and route
+  // the milk to a cupboard. Same reasoning as the ancestor walk in
+  // storage-fit.ts, and the same vocabulary, so the router and the warning
+  // cannot disagree.
+  const requirement = resolveRequirement(item.storage_requirement, item.category);
+  const mustBeCold = requirement === "frozen" || requirement === "refrigerated";
+  const coldOk = (place: { name: string; path: string } | null | undefined): boolean => {
+    if (!mustBeCold) return true;
+    // Nothing known about the place: for ordinary items that is harmless, but a
+    // frozen thing must never be routed somewhere we cannot vouch for.
+    if (!place) return false;
+    return satisfiesRequirement(requirement, place.path || place.name);
+  };
+
   // ── Session tier (live only): the pile in front of you is better evidence
   // than a stale sweep. A sticky same-as-last match routes instantly; things
   // this session filed count as siblings even though the census can't see
@@ -271,7 +301,7 @@ export function routeItem(
     const sticky = session.sticky_location_id;
     if (sticky && (session.sticky_tokens ?? []).some((t) => want.has(t))) {
       const loc = census.all.get(sticky);
-      if (!loc || fitsBin(item, loc.interior_mm)) {
+      if (coldOk(loc) && (!loc || fitsBin(item, loc.interior_mm))) {
         return {
           item_id: item.id,
           location_id: sticky,
@@ -285,6 +315,7 @@ export function routeItem(
     let bestStrength = 0;
     for (const [locId, titles] of session.filed) {
       const loc = census.all.get(locId);
+      if (!coldOk(loc)) continue;
       if (loc && !fitsBin(item, loc.interior_mm)) continue;
       const scored = scoreTitles(titles, want);
       if (!scored) continue;
@@ -315,7 +346,7 @@ export function routeItem(
     let bestBin: CensusBin | null = null;
     let bestCount = 0;
     for (const bin of census.bins) {
-      if (!fitsBin(item, bin.interior_mm)) continue;
+      if (!fitsBin(item, bin.interior_mm) || !coldOk(bin)) continue;
       const n =
         bin.category_counts?.[wantCat] ??
         (bin.sample_categories.some((c) => c.toLowerCase() === wantCat) ? 1 : 0);
@@ -341,7 +372,7 @@ export function routeItem(
   for (const bin of census.bins) {
     // Size veto (declared-only): a bin whose max interior axis is smaller
     // than the item's longest declared dimension is never a candidate.
-    if (!fitsBin(item, bin.interior_mm)) continue;
+    if (!fitsBin(item, bin.interior_mm) || !coldOk(bin)) continue;
     const scored = scoreTitles(bin.sample_titles, want);
     if (!scored) continue;
     if (scored.strength > bestStrength) {

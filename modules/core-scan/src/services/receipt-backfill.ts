@@ -203,7 +203,7 @@ export async function runReceiptBackfill(
     if (plan.patches.length === 0) continue;
 
     if (!opts.dryRun) {
-      const writer = platform().entities.getWriter(kindId);
+      const writer = await platform().entities.getWriter(orgId, kindId);
       if (!writer) continue;
       for (const patch of plan.patches) {
         // Merged into metadata, never replacing it: everything else on the item

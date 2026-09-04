@@ -72,7 +72,7 @@ async function buildLinkMap(
   ref: SyncConnectionRef,
   type: SyncEntityType,
 ): Promise<Map<string, { id: string; name: string }>> {
-  const writer = platform().entities.getWriter(type.targetKind);
+  const writer = await platform().entities.getWriter(ref.orgId, type.targetKind);
   if (!writer?.listForMatch) return new Map();
   const existing = await writer.listForMatch(ref.orgId);
   const mapped = await db
@@ -239,7 +239,7 @@ async function upsertOne(
    *  on use so two source rows can't both claim the same target. */
   linkByName?: Map<string, { id: string; name: string }>,
 ): Promise<{ action: "created" | "updated" | "linked" | "noop"; tagsFailed: number }> {
-  const writer = platform().entities.getWriter(type.targetKind);
+  const writer = await platform().entities.getWriter(ref.orgId, type.targetKind);
   if (!writer) throw new Error(`sync: no entity writer registered for ${type.targetKind}`);
 
   const parentCobblrId = await resolveParent(db, ref, type.key, record.parentExternalId);
@@ -409,7 +409,7 @@ async function tombstoneOne(
     .where("deleted_at", "is", null)
     .executeTakeFirst();
   if (!row) return false;
-  const writer = platform().entities.getWriter(type.targetKind);
+  const writer = await platform().entities.getWriter(ref.orgId, type.targetKind);
   if (writer) {
     try {
       await writer.delete(ref.orgId, row.cobblr_entity_id);
@@ -547,7 +547,7 @@ export async function planReconcile(
     .execute();
   const byExternal = new Map(mapRows.map((m) => [m.external_id, m]));
 
-  const writer = platform().entities.getWriter(type.targetKind);
+  const writer = await platform().entities.getWriter(ref.orgId, type.targetKind);
   // Read an existing entity's CURRENT fields so the preview shows the match
   // both-sides (what's there now vs what the source would write). Best-effort —
   // a writer without `read` just yields the id + name.

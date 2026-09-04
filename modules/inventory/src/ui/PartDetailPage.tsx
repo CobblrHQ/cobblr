@@ -20,6 +20,7 @@ import { useFieldPresentation } from "./useFieldPresentation";
 import { useDisclosure } from "./useDisclosure";
 import { adoptUnitsAdjustment } from "../reconcile";
 import type { Part } from "./api";
+import { pluralise } from "@cobblr/platform-contract";
 import {
   PER_UNIT_TRACKING_KEY,
   isPerUnitTracking,
@@ -1956,7 +1957,7 @@ function CountAssortmentModal({
   const valid = Number.isFinite(n) && n >= 0;
 
   return (
-    <Modal open={open} onClose={onClose} title={`Count the ${noun}s`} size="sm">
+    <Modal open={open} onClose={onClose} title={`Count the ${pluralise(noun)}`} size="sm">
       <div className="space-y-4">
         <p className="text-sm text-muted">
           How many are actually there? This stops being an estimate and becomes a count.

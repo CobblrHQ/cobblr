@@ -27,9 +27,18 @@ const WINDOW = 12;
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
-    if (name === "node_modules" || name === "dist") continue;
+    // `.git` is the one directory that changes under a walk: a concurrent
+    // fetch writes `refs/.../<branch>.lock` and removes it milliseconds later,
+    // so an entry read here can be gone by the stat below. It holds no source.
+    if (name === "node_modules" || name === "dist" || name === ".git") continue;
     const full = join(dir, name);
-    if (statSync(full).isDirectory()) walk(full, out);
+    let isDir: boolean;
+    try {
+      isDir = statSync(full).isDirectory();
+    } catch {
+      continue; // vanished between readdir and stat
+    }
+    if (isDir) walk(full, out);
     else if (full.endsWith(".ts") && !full.endsWith(".d.ts") && !full.includes(".test.")) out.push(full);
   }
   return out;

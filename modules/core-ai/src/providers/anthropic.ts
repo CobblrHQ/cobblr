@@ -1,7 +1,7 @@
 // anthropic — Claude provider. Messages API.
 
 import { platform, type AiCapability } from "@cobblr/platform-contract";
-import { identifyPromptFor } from "./identify-prompt.js";
+import { identifyPromptFor, visionPromptFor } from "./identify-prompt.js";
 import { rankImagesPromptFor } from "./rank-images-prompt.js";
 import { toolsOf, turnsOf, anthropicToolsOf, anthropicMessagesOf, parseAnthropicContent } from "./tool-wire.js";
 import { promptFingerprint } from "./prompt-fingerprint.js";
@@ -20,6 +20,14 @@ export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; default
     defaultModel: "claude-haiku-4-5",
   },
   "identify-image": {
+    models: ["claude-sonnet-4-5", "claude-haiku-4-5"],
+    defaultModel: "claude-haiku-4-5",
+  },
+  "identify-glance": {
+    models: ["claude-sonnet-4-5", "claude-haiku-4-5"],
+    defaultModel: "claude-haiku-4-5",
+  },
+  "split-image": {
     models: ["claude-sonnet-4-5", "claude-haiku-4-5"],
     defaultModel: "claude-haiku-4-5",
   },
@@ -182,6 +190,8 @@ function buildMessages(
       });
       return { messages: [{ role: "user", content }] };
     }
+    case "split-image":
+    case "identify-glance":
     case "identify-image": {
       const imageB64 = typeof input.image_b64 === "string" ? input.image_b64 : null;
       const mediaType = String(input.image_media_type ?? "image/jpeg");
@@ -193,7 +203,7 @@ function buildMessages(
       // "find and box each distinct thing"), which this branch used to IGNORE — so
       // that call asked the identify question, got no `items` back, and was wasted
       // on every single split. The edge-bridge adapter always honoured it.
-      content.push({ type: "text", text: identifyPromptFor(input) });
+      content.push({ type: "text", text: visionPromptFor(capability, input) });
       return { messages: [{ role: "user", content }] };
     }
     case "rank-images": {

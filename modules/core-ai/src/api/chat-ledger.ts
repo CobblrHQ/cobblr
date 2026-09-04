@@ -28,7 +28,7 @@ import { createHash } from "node:crypto";
 import type { Kysely } from "kysely";
 import { actionSaid } from "./action-summary.js";
 import { getTool, fetchKinds, resolveUpdatePath, resolveDeletePath, type WorkspaceApi } from "@cobblr/workspace-tools";
-import { platform, imageId } from "@cobblr/platform-contract";
+import { imageId, platform, pluralise } from "@cobblr/platform-contract";
 import type { CoreAiDB } from "../db.js";
 
 export interface WriteRequest {
@@ -92,7 +92,7 @@ async function stateOf(
 ): Promise<Record<string, unknown> | null> {
   if (orgId) {
     const row = await platform()
-      .entities.snapshot(kind, orgId, id)
+      .entities.snapshot(orgId, kind, id)
       .catch(() => null);
     if (row) return row;
   }
@@ -168,7 +168,7 @@ export async function performWrites(
   // parts), and "Removed 2 locations" is wrong when one of them was a part.
   const kinds = new Set(reqs.map((r) => r.entity_kind));
   const noun = kinds.size === 1 ? (reqs[0]?.entity_kind?.split(":").pop() ?? "record") : "thing";
-  const plural = done.length === 1 ? noun : `${noun}s`;
+  const plural = done.length === 1 ? noun : pluralise(noun);
   // "Added 2 locations" is a lie when the two were deleted. One instruction is
   // one KIND of change, so the verb comes from what it did.
   const verb =
@@ -393,7 +393,7 @@ async function restoreState(
 ): Promise<boolean> {
   if (!imageId(image)) return false;
   try {
-    return await platform().entities.restore(kind, orgId, image);
+    return await platform().entities.restore(orgId, kind, image);
   } catch {
     // A seam that exists and threw is a real failure; report it as "no restore"
     // so the caller falls back rather than telling the user it worked.
@@ -486,7 +486,7 @@ export async function undoWrite(
       // shelf anyway — one step later, and with nothing said. Whatever still
       // lives in it is checked before, not after.
       const wouldTake = await platform()
-        .entities.dependents(row.entity_kind, orgId, row.entity_id)
+        .entities.dependents(orgId, row.entity_kind, row.entity_id)
         .catch(() => null);
       if (wouldTake && wouldTake.length > 0 && !force) {
         const names = wouldTake.slice(0, 3).join(", ");

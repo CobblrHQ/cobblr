@@ -19,9 +19,10 @@ import {
   useSensors,
   type DragEndEvent,
 } from "@dnd-kit/core";
-import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { writeNavOrder } from "../lib/nav-order";
+import { reorderNav } from "./navReorder";
 import { ArrowLeft } from "lucide-react";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { isConfigurationPath } from "../lib/configuration-nav";
@@ -101,22 +102,31 @@ export function SidebarNav({
         ? `/${k.name}`
         : `/${parentName}?lens=${k.name}`;
 
-  const renderTop = (m: (typeof tops)[number]) => {
+  const renderTop = (m: (typeof tops)[number], handle: Record<string, unknown>) => {
           // Instance nav-group: quiet stem label, members indented.
           if (m.name.startsWith(NAVGROUP_PREFIX)) {
             const g = instanceGroups.get(m.name);
             if (!g) return null;
             return (
               <div key={m.name}>
-                <div className="px-3 pt-2 pb-0.5 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 select-none">
+                {/* The LABEL is the group's drag handle. It used to be the whole
+                    block, which is why grabbing a member moved the group. */}
+                <div
+                  {...handle}
+                  className="px-3 pt-2 pb-0.5 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 select-none"
+                >
                   {g.label}
                 </div>
-                {g.members.map((mem) => (
-                  <NavLink key={mem.name} to={`/${mem.name.slice(INSTANCE_PREFIX.length)}`} className={childCls}>
-                    <span className="w-1.5 h-1.5 rounded-full bg-cobble-500 shrink-0" />
-                    {stripNavStem(mem.displayName, g.label)}
-                  </NavLink>
-                ))}
+                <SortableContext items={g.members.map((mem) => mem.name)} strategy={verticalListSortingStrategy}>
+                  {g.members.map((mem) => (
+                    <SortableChild key={mem.name} id={mem.name}>
+                      <NavLink to={`/${mem.name.slice(INSTANCE_PREFIX.length)}`} className={childCls}>
+                        <span className="w-1.5 h-1.5 rounded-full bg-cobble-500 shrink-0" />
+                        {stripNavStem(mem.displayName, g.label)}
+                      </NavLink>
+                    </SortableChild>
+                  ))}
+                </SortableContext>
               </div>
             );
           }
@@ -125,46 +135,64 @@ export function SidebarNav({
           if (m.name.startsWith(HEADING_PREFIX)) {
             return (
               <div key={m.name}>
-                <div className="px-3 pt-2 pb-0.5 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 select-none">
+                <div
+                  {...handle}
+                  className="px-3 pt-2 pb-0.5 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 select-none"
+                >
                   {m.displayName}
                 </div>
-                {kids.map((k) => (
-                  <NavLink key={k.name} to={childTo(m.name, k)} className={childCls}>
-                    <span className="w-1.5 h-1.5 rounded-full bg-moss-500 shrink-0" />
-                    {k.displayName}
-                  </NavLink>
-                ))}
+                <SortableContext items={kids.map((k) => k.name)} strategy={verticalListSortingStrategy}>
+                  {kids.map((k) => (
+                    <SortableChild key={k.name} id={k.name}>
+                      <NavLink to={childTo(m.name, k)} className={childCls}>
+                        <span className="w-1.5 h-1.5 rounded-full bg-moss-500 shrink-0" />
+                        {k.displayName}
+                      </NavLink>
+                    </SortableChild>
+                  ))}
+                </SortableContext>
               </div>
             );
           }
           const to = m.name.startsWith(INSTANCE_PREFIX) ? `/${m.name.slice(INSTANCE_PREFIX.length)}` : `/${m.name}`;
           return (
             <div key={m.name}>
-              <NavLink to={to} className={linkCls}>
+              <NavLink {...handle} to={to} className={linkCls}>
                 {m.displayName}
               </NavLink>
-              {kids.map((k) => (
-                <NavLink key={k.name} to={childTo(m.name, k)} className={childCls}>
-                  <span
-                    className={
-                      "w-1.5 h-1.5 rounded-full shrink-0 " +
-                      (k.name.startsWith(INSTANCE_PREFIX) ? "bg-cobble-500" : "bg-moss-500")
-                    }
-                  />
-                  {k.displayName}
-                </NavLink>
-              ))}
+              <SortableContext items={kids.map((k) => k.name)} strategy={verticalListSortingStrategy}>
+                {kids.map((k) => (
+                  <SortableChild key={k.name} id={k.name}>
+                    <NavLink to={childTo(m.name, k)} className={childCls}>
+                      <span
+                        className={
+                          "w-1.5 h-1.5 rounded-full shrink-0 " +
+                          (k.name.startsWith(INSTANCE_PREFIX) ? "bg-cobble-500" : "bg-moss-500")
+                        }
+                      />
+                      {k.displayName}
+                    </NavLink>
+                  </SortableChild>
+                ))}
+              </SortableContext>
             </div>
           );
   };
+  /** The tree as it reads right now: each top, then the children under it.
+   *  Both levels are written back together, so the saved order can never say
+   *  one thing about a heading and another about its members. */
+  const branches = tops.map((t) => ({
+    name: t.name,
+    children: t.name.startsWith(NAVGROUP_PREFIX)
+      ? (instanceGroups.get(t.name)?.members ?? []).map((mem) => mem.name)
+      : (children.get(t.name) ?? []).map((k) => k.name),
+  }));
+
   const onDragEnd = (e: DragEndEvent) => {
     const over = e.over?.id;
-    if (!over || e.active.id === over) return;
-    const names = tops.map((t) => t.name);
-    const from = names.indexOf(String(e.active.id));
-    const to = names.indexOf(String(over));
-    if (from < 0 || to < 0) return;
-    writeNavOrder(activeSlug, arrayMove(names, from, to));
+    if (!over) return;
+    const next = reorderNav(branches, String(e.active.id), String(over));
+    if (next) writeNavOrder(activeSlug, next);
   };
 
   return (
@@ -181,7 +209,7 @@ export function SidebarNav({
           <SortableContext items={tops.map((t) => t.name)} strategy={verticalListSortingStrategy}>
             {tops.map((m) => (
               <SortableTop key={m.name} id={m.name}>
-                {renderTop(m)}
+                {(handle) => renderTop(m, handle)}
               </SortableTop>
             ))}
           </SortableContext>
@@ -196,11 +224,40 @@ export function SidebarNav({
  *  clicks still navigate. Persists through the SAME per-device nav order the
  *  top bar + Customize-navigation use (writeNavOrder → event → useNavModules
  *  re-reads), so the two nav modes never disagree. */
-function SortableTop({ id, children }: { id: string; children: ReactNode }) {
+function SortableTop({
+  id,
+  children,
+}: {
+  id: string;
+  /** Given the drag handle's props, so the caller can put them on the ROW that
+   *  drags rather than on everything inside it. */
+  children: (handle: Record<string, unknown>) => ReactNode;
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
   // A drag that reorders nothing still ends in a click. See useDragClickGuard.
   useDragClickGuard(isDragging);
 
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={isDragging ? "opacity-60 cursor-grabbing" : undefined}
+    >
+      {children({ ...attributes, ...listeners })}
+    </div>
+  );
+}
+
+/** One child row inside a group, draggable among its own siblings.
+ *
+ *  Children used to sit INSIDE the group's drag listeners, which is what a
+ *  `{...listeners}` spread on a wrapper means: grabbing a child started a drag
+ *  of the whole block, because the listener it reached first belonged to the
+ *  parent. So a child could not be moved within its parent, and trying moved
+ *  the parent instead (reported 2026-09-04). Each child now carries its own. */
+function SortableChild({ id, children }: { id: string; children: ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  useDragClickGuard(isDragging);
   return (
     <div
       ref={setNodeRef}

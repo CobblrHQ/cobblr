@@ -55,14 +55,21 @@ export function reportTitle(input: ReportInput): string {
   return `${TITLES[input.type]}: ${trimmed || "(no description)"}`;
 }
 
-/** The issue body. Markdown, because that is what GitHub renders. */
-export function reportBody(input: ReportInput): string {
+/** Everything the report says about the reporter's SETUP, which is everything
+ *  they did not type themselves.
+ *
+ *  Split out so the widget can SHOW it. This list is only safe to publish
+ *  because the reporter reads it before sending, and for a long time nothing
+ *  rendered it — so the rule "keep the field list short enough to read" was
+ *  documented in api/src/routes/diagnostics.ts and enforced by nobody. One
+ *  source, so what is displayed cannot drift from what is copied. */
+export function environmentLines(input: ReportInput): Array<[string, string]> {
   const s = input.server;
   // A route can name the workspace: /w/<handle>/... IS a name, and the report's
   // whole promise is that nothing in it identifies anyone. Keep the shape, drop
   // the handle.
   const route = input.route.replace(/^\/(w|portal)\/[^/]+/, "/$1/:workspace");
-  const env: Array<[string, string]> = [
+  return [
     ["Version", s?.build_sha ? s.build_sha.slice(0, 12) : "unknown (no build sha)"],
     ["Deployment", s ? (s.hosted ? "hosted" : "self-hosted") : "self-hosted"],
     ["Node", s?.node ?? "unknown"],
@@ -73,6 +80,20 @@ export function reportBody(input: ReportInput): string {
     ["Viewport", `${input.viewport.w}x${input.viewport.h}`],
     ["Browser", input.userAgent],
   ];
+}
+
+/** The same setup block as text, for showing in the widget. */
+export function environmentBlock(input: ReportInput): string {
+  const s = input.server;
+  const lines = environmentLines(input).map(([k, v]) => `${k}: ${v}`);
+  if (s?.modules.length) lines.push("", `Enabled modules (${s.modules.length}):`, ...s.modules.map((m) => `  ${m}`));
+  return lines.join("\n");
+}
+
+/** The issue body. Markdown, because that is what GitHub renders. */
+export function reportBody(input: ReportInput): string {
+  const s = input.server;
+  const env = environmentLines(input);
 
   const lines = [
     "### What happened",

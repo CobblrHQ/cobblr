@@ -409,7 +409,7 @@ putawayRouter.post(
       res.status(422).json({ error: { code: "wrong_mode", message: "setup-bins is a live-mode call" } });
       return;
     }
-    const writer = platform().entities.getWriter("core-locations:location");
+    const writer = await platform().entities.getWriter(ctx.org.id, "core-locations:location");
     if (!writer) {
       res.status(422).json({ error: { code: "no_locations", message: "locations module unavailable" } });
       return;
@@ -559,7 +559,10 @@ putawayRouter.post(
       census = deserializeCensus(state.census);
     }
 
-    const meta = (item.suggested_metadata ?? {}) as { category?: unknown };
+    const meta = (item.suggested_metadata ?? {}) as {
+      category?: unknown;
+      storage_requirement?: unknown;
+    };
     const dims = await inboxLongestMm(
       item.suggested_metadata as Record<string, unknown> | null,
       new LengthUnitResolver(ctx.org.id),
@@ -571,6 +574,9 @@ putawayRouter.post(
             name: item.suggested_name,
             category: typeof meta.category === "string" ? meta.category : null,
             longest_mm: dims?.longest_mm ?? null,
+            // The item's own answer about how it must be kept, so the router
+            // and the storage warning read one fact.
+            storage_requirement: meta.storage_requirement,
           },
           census,
           routeContext(state),
@@ -707,7 +713,7 @@ putawayRouter.post(
       !parsed.data.location_id &&
       locationId === entry.directive.location_id
     ) {
-      const writer = platform().entities.getWriter("core-locations:location");
+      const writer = await platform().entities.getWriter(ctx.org.id, "core-locations:location");
       const bound = `${entry.directive.location_name} · ${entry.directive.proposed_name}`;
       if (writer) {
         try {
@@ -789,7 +795,7 @@ putawayRouter.post(
     if (entry.bind) {
       // The confirm named this bin — restore the marker name and put it back
       // at the FRONT of the pool (it's still the freshest bin). Best-effort.
-      const writer = platform().entities.getWriter("core-locations:location");
+      const writer = await platform().entities.getWriter(ctx.org.id, "core-locations:location");
       if (writer) {
         await writer.update(ctx.org.id, locId, { name: entry.bind.prior_name }).catch(() => {});
       }

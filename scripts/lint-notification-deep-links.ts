@@ -35,8 +35,21 @@ function walk(dir: string, out: string[] = []): string[] {
   }
   for (const e of es) {
     const rel = `${dir}/${e}`;
-    if (e === "node_modules" || e === "dist") continue;
-    if (statSync(join(ROOT, rel)).isDirectory()) walk(rel, out);
+    // `.git` holds no source and is the one directory that CHANGES UNDER YOU:
+    // a concurrent fetch on a shared runner writes `refs/…/<branch>.lock` and
+    // removes it milliseconds later, so an entry read here is gone by the stat
+    // below. That crashed this lint and failed a PR that had touched nothing
+    // near it (2026-09-04).
+    if (e === "node_modules" || e === "dist" || e === ".git") continue;
+    let isDir: boolean;
+    try {
+      isDir = statSync(join(ROOT, rel)).isDirectory();
+    } catch {
+      // Vanished between readdir and stat. Nothing a source lint needs is that
+      // short-lived, so skipping is right and crashing never is.
+      continue;
+    }
+    if (isDir) walk(rel, out);
     else if (rel.endsWith(".ts") && !rel.endsWith(".d.ts") && !rel.includes(".test.")) out.push(rel);
   }
   return out;

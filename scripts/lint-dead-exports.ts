@@ -37,7 +37,12 @@ function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     if (IGNORE_DIRS.has(name)) continue;
     const p = join(dir, name);
-    const st = statSync(p);
+    let st: ReturnType<typeof statSync>;
+    try {
+      st = statSync(p);
+    } catch {
+      continue; // vanished between readdir and stat (a concurrent git op)
+    }
     if (st.isDirectory()) walk(p, out);
     else if (/\.(ts|tsx)$/.test(name) && !name.endsWith(".d.ts")) out.push(p);
   }

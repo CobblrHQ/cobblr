@@ -20,7 +20,7 @@ import {
   contextWindowFor,
 } from "./tool-wire.js";
 import { promptFingerprint } from "./prompt-fingerprint.js";
-import { identifyPromptFor } from "./identify-prompt.js";
+import { visionPromptFor } from "./identify-prompt.js";
 import { rankImagesPromptFor } from "./rank-images-prompt.js";
 import { pickInstalledModel } from "./ollama-models.js";
 
@@ -58,6 +58,8 @@ export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; default
   // models. Ollama-over-the-edge-bridge worked only because that adapter declares
   // it. Same vision models as classify-image; same /api/chat + images call below.
   "identify-image": { models: ["qwen2.5vl", "minicpm-v", "granite3.2-vision"], defaultModel: "qwen2.5vl" },
+  "identify-glance": { models: ["qwen2.5vl", "minicpm-v", "granite3.2-vision"], defaultModel: "qwen2.5vl" },
+  "split-image": { models: ["qwen2.5vl", "minicpm-v", "granite3.2-vision"], defaultModel: "qwen2.5vl" },
   "rank-images": { models: ["qwen2.5vl", "minicpm-v"], defaultModel: "qwen2.5vl" },
   // Reading text off a photo: minicpm-v is built for it and scores level with
   // qwen on the label cases, so it leads here and follows elsewhere.
@@ -284,6 +286,8 @@ export function register(): void {
           const body = (await res.json()) as { message: { content: string } };
           return { result: { text: body.message.content }, cost_cents: 0 };
         }
+        case "split-image":
+        case "identify-glance":
         case "identify-image":
         case "rank-images":
         case "classify-image":
@@ -298,8 +302,8 @@ export function register(): void {
           // through the SAME shared function the OpenAI/Anthropic adapters use, so
           // all three send byte-identical text and the cache fingerprint agrees.
           const prompt =
-            ctx.capability === "identify-image"
-              ? identifyPromptFor(ctx.input)
+            (ctx.capability === "identify-image" || ctx.capability === "split-image" || ctx.capability === "identify-glance")
+              ? visionPromptFor(ctx.capability, ctx.input)
               : ctx.capability === "rank-images"
                 ? rankImagesPromptFor(ctx.input)
                 : String(ctx.input.prompt ?? "");

@@ -215,6 +215,7 @@ export interface CoreScanIdentifyUsageTable {
 
 export interface CoreScanDB {
   core_scan_photo_rank_config: CoreScanPhotoRankConfigTable;
+  core_scan_glance_config: CoreScanPhotoRankConfigTable;
   core_scan_inbox_items: CoreScanInboxItemsTable;
   core_scan_batches: CoreScanBatchesTable;
   core_scan_organize_plans: CoreScanOrganizePlansTable;

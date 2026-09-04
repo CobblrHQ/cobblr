@@ -41,6 +41,8 @@ const GENERAL = new Set([
   "lint:no-emdash",
   "lint:secret-paths",
   "lint:node-resolves",
+  "lint:root-walk-skips-git",
+  "lint:typecheck-not-skippable",
   "lint:dead-exports",
 ]);
 

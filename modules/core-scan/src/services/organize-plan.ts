@@ -48,6 +48,11 @@ export interface OrganizeInputItem {
   longest_mm?: number | null;
   /** Human line for the warning ("Overall length 180 mm"). */
   dims_detail?: string | null;
+  /** How this thing must be KEPT, when the record says so. Carried so the
+   *  router's temperature veto can fire here too: organising a kitchen must
+   *  not propose moving the yoghurt into a cupboard and leave the storage
+   *  check to complain about a move the system itself suggested. */
+  storage_requirement?: unknown;
 }
 
 export type OrganizeDestination =
@@ -465,6 +470,14 @@ export function splitEntityRef(ref: string): { kind: string; id: string } | null
   return { kind: ref.slice(0, at), id: ref.slice(at + 2) };
 }
 
+/** The record's own storage answer, wherever the kind keeps it. Entities carry
+ *  custom values under `metadata`; some kinds surface them flat. Reading both
+ *  is cheaper than caring which. */
+function storageOf(fields: Record<string, unknown>): unknown {
+  const meta = fields.metadata as Record<string, unknown> | undefined;
+  return fields.storage_requirement ?? meta?.storage_requirement;
+}
+
 export async function gatherUnplacedEntities(orgId: string): Promise<UnplacedGather> {
   const kinds = platform().entities.listScannable();
   const sweeps = await Promise.all(
@@ -506,6 +519,7 @@ export async function gatherUnplacedEntities(orgId: string): Promise<UnplacedGat
           ? e.fields.category.trim()
           : null,
         quantity: 1,
+        storage_requirement: storageOf(e.fields),
         ...(dims ? { longest_mm: dims.longest_mm, dims_detail: dims.detail } : {}),
       });
       names[ref] = e.title;
@@ -561,6 +575,7 @@ export async function gatherEntitiesByRefs(
           ? e.fields.category.trim()
           : null,
       quantity: 1,
+      storage_requirement: storageOf(e.fields),
       ...(dims ? { longest_mm: dims.longest_mm, dims_detail: dims.detail } : {}),
     });
     names[ref] = e.title;

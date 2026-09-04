@@ -65,6 +65,13 @@ export function AiPage() {
     queryFn: () => api.listAiCapabilityDefaults(activeSlug),
     enabled: !!activeSlug,
   });
+  // Connections routed into this workspace, so a job can be pinned to one.
+  // Same key as the section below, so they share one fetch.
+  const sharesQ = useQuery({
+    queryKey: ["ai-shares", activeSlug],
+    queryFn: () => api.listAiShares(activeSlug),
+    enabled: !!activeSlug,
+  });
   const summaryQ = useQuery({
     queryKey: ["ai-usage-summary", activeSlug],
     queryFn: () => api.getAiUsageSummary(activeSlug),
@@ -267,6 +274,7 @@ export function AiPage() {
           capability={editingCapability}
           providers={providersQ.data?.items ?? []}
           catalogue={catalogueQ.data?.items ?? []}
+          connections={sharesQ.data?.items ?? []}
           existing={capDefaultsByCapability.get(editingCapability) ?? null}
           onClose={() => setEditingCapability(null)}
         />
@@ -631,12 +639,17 @@ function CapabilityDefaultModal({
   capability,
   providers,
   catalogue,
+  connections,
   existing,
   onClose,
 }: {
   capability: string;
   providers: AiProvider[];
   catalogue: AiProviderDef[];
+  /** Personal connections routed into this workspace. A key somebody attached
+   *  here is the workspace's to spend on a job, the same as a provider it
+   *  installed - it used to serve EVERY job with no say from this page. */
+  connections: WorkspaceAiOffer[];
   existing: AiCapabilityDefault | null;
   onClose: () => void;
 }) {
@@ -648,7 +661,22 @@ function CapabilityDefaultModal({
     const def = catalogue.find((d) => d.id === p.provider_id);
     return def && def.capabilities[capability as never] !== undefined && p.enabled;
   });
-  const [providerId, setProviderId] = useState(existing?.provider_id ?? eligible[0]?.provider_id ?? "");
+  // A routed connection this workspace has accepted. Its provider is only
+  // visible for your own connections (somebody else's setup is not this
+  // workspace's business), so when we cannot see it we let the server derive
+  // the provider and its default model from the connection itself.
+  const usable = connections.filter((c) => c.status === "approved");
+  // One value for both sources, so the select is one list and the save knows
+  // which it is: "connection:<id>" or "provider:<id>".
+  const [choice, setChoice] = useState(
+    existing?.credential_id
+      ? `connection:${existing.credential_id}`
+      : `provider:${existing?.provider_id ?? eligible[0]?.provider_id ?? ""}`,
+  );
+  const chosenCredentialId = choice.startsWith("connection:") ? choice.slice("connection:".length) : null;
+  const providerId = chosenCredentialId
+    ? (usable.find((c) => c.credential_id === chosenCredentialId)?.provider_id ?? "")
+    : choice.slice("provider:".length);
   const def = catalogue.find((d) => d.id === providerId);
   const supportedModels = (def?.capabilities[capability as never] as { models: string[] } | undefined)?.models ?? [];
   const [model, setModel] = useState(existing?.model ?? supportedModels[0] ?? "");
@@ -657,8 +685,12 @@ function CapabilityDefaultModal({
     mutationFn: () =>
       api.upsertAiCapabilityDefault(activeSlug, {
         capability,
-        provider_id: providerId,
-        model,
+        ...(chosenCredentialId
+          ? { credential_id: chosenCredentialId }
+          : { provider_id: providerId }),
+        // Blank when the connection's provider is not visible here; the server
+        // then uses that provider's own default model for the job.
+        ...(model ? { model } : {}),
       }),
     onSuccess: () => {
       toast.success("Default saved.");
@@ -681,7 +713,7 @@ function CapabilityDefaultModal({
   const planProvided = aiStatus?.available && aiStatus.source === "managed";
   return (
     <Modal open onClose={onClose} title={`Default for ${capability}`} size="md">
-      {eligible.length === 0 ? (
+      {eligible.length === 0 && usable.length === 0 ? (
         <div className="space-y-3">
           {existing ? (
             // Reachable only as a STALE pin: the provider this was pinned to is
@@ -737,20 +769,38 @@ function CapabilityDefaultModal({
           <div>
             <label className="block text-sm font-medium mb-1">Provider</label>
             <select
-              value={providerId}
+              value={choice}
               onChange={(e) => {
-                setProviderId(e.target.value);
-                const nextDef = catalogue.find((d) => d.id === e.target.value);
+                const v = e.target.value;
+                setChoice(v);
+                const credId = v.startsWith("connection:") ? v.slice("connection:".length) : null;
+                const pid = credId
+                  ? (usable.find((c) => c.credential_id === credId)?.provider_id ?? "")
+                  : v.slice("provider:".length);
+                const nextDef = catalogue.find((d) => d.id === pid);
                 const next = (nextDef?.capabilities[capability as never] as { models: string[] } | undefined)?.models ?? [];
                 setModel(next[0] ?? "");
               }}
               className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
             >
-              {eligible.map((p) => (
-                <option key={p.id} value={p.provider_id}>
-                  {p.label}
-                </option>
-              ))}
+              {eligible.length > 0 && (
+                <optgroup label="This workspace's providers">
+                  {eligible.map((p) => (
+                    <option key={p.id} value={`provider:${p.provider_id}`}>
+                      {p.label}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {usable.length > 0 && (
+                <optgroup label="Connections routed here">
+                  {usable.map((c) => (
+                    <option key={c.credential_id} value={`connection:${c.credential_id}`}>
+                      {c.is_own ? c.label || c.provider_id : `${c.offered_by_name}'s AI`}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </select>
           </div>
           <div>
@@ -1140,23 +1190,10 @@ function SharedAiRows({ slug, items }: { slug: string; items: WorkspaceAiOffer[]
           as one list. The only difference is the source line and, when there is
           more than one to choose from, the radio. */}
       {approved.map((o) => (
-        <label
+        <div
           key={o.credential_id}
-          className={
-            "flex items-center gap-2.5 rounded-lg border border-line dark:border-slate-700 px-3 py-2.5 " +
-            (isOwner && approved.length > 1 ? "cursor-pointer" : "")
-          }
+          className="flex items-center gap-2.5 rounded-lg border border-line dark:border-slate-700 px-3 py-2.5"
         >
-          {isOwner && approved.length > 1 && (
-            <input
-              type="radio"
-              name={`active-ai-${slug}`}
-              checked={o.active}
-              onChange={() => activate.mutate(o.credential_id)}
-              className="accent-cobble-600 shrink-0"
-              aria-label={`Use ${o.is_own ? o.label || o.provider_id : `${o.offered_by_name}'s AI`} for this workspace`}
-            />
-          )}
           <div className="min-w-0 flex-1">
             <div className="text-sm text-content dark:text-mortar-100 truncate">
               {o.is_own ? o.label || o.provider_id : `${o.offered_by_name}'s AI`}
@@ -1171,10 +1208,25 @@ function SharedAiRows({ slug, items }: { slug: string; items: WorkspaceAiOffer[]
               <span className="w-1.5 h-1.5 rounded-full bg-moss-500" />
               in use
             </span>
+          ) : isOwner ? (
+            // Every standing-by row an owner sees carries its own way to start
+            // using it. This used to be a radio that only rendered when there
+            // were TWO or more approved, so a workspace with exactly one
+            // approved-but-idle connection showed "standing by" and offered no
+            // control at all - the state a person is in when they ask why their
+            // AI is not connected.
+            <button
+              type="button"
+              disabled={activate.isPending}
+              onClick={() => activate.mutate(o.credential_id)}
+              className="shrink-0 rounded border border-line dark:border-slate-600 text-xs font-medium px-2.5 py-1 text-muted hover:text-cobble-600 hover:border-cobble-500 disabled:opacity-50"
+            >
+              Use here
+            </button>
           ) : (
             <span className="shrink-0 text-xs text-faint">standing by</span>
           )}
-        </label>
+        </div>
       ))}
 
       {isOwner && approved.some((o) => o.active) && (

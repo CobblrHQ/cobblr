@@ -128,7 +128,7 @@ export async function detectSplitItems(
   try {
     const r = await platform().ai.invoke({
       orgId,
-      capability: "identify-image",
+      capability: "split-image",
       input: {
         image_b64: src.buf.toString("base64"),
         image_media_type: src.mime,

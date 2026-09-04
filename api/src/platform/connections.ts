@@ -14,7 +14,7 @@
 
 import type { ConnectionProviderDef, ResolvedConnection } from "@cobblr/platform-contract";
 import * as aiImpl from "./ai.js";
-import { resolvePersonalProvider } from "./user-credentials.js";
+import { listRoutedConnections, resolvePersonalProvider } from "./user-credentials.js";
 
 /** The kind AI credentials have carried since migration 053. Existing rows say
  *  this, so it stays the wire value rather than being tidied to "ai". */
@@ -99,4 +99,9 @@ export async function resolve(
     label: found.label,
     ownerUserId: found.ownerUserId,
   };
+}
+
+/** The connections of one kind routed into a workspace — the choosable set. */
+export async function routedTo(kind: string, orgId: string) {
+  return await listRoutedConnections(orgId, kind);
 }

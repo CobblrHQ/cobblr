@@ -27,6 +27,7 @@ import { Camera, Check, ChevronDown, Loader2, MapPin, Minus, Plus, RefreshCw, Tr
 import { useImageSrc } from "@cobblr/platform-web";
 import { api, type ScanInboxItem } from "../lib/api";
 import { useScanQuantity } from "../lib/scanQuantity";
+import { GlanceQuestion, pendingGlance } from "../components/GlanceQuestion";
 import { leadPhoto } from "../lib/scanPhoto";
 import { useAnimatedHeight } from "../lib/useAnimatedHeight";
 
@@ -200,6 +201,17 @@ export function ScanCaptureDrawer({
     enabled: wantsPoll,
     refetchInterval: (q) => (q.state.data?.suggested_name || q.state.data?.ai_suggested_at ? false : 2500),
   });
+  const answerGlance = useMutation({
+    // See ScanPage: a barcode's "no" is the wrong-flag re-run.
+    mutationFn: (b: { answer: "yes" | "no"; hint?: string }) =>
+      item!.barcode_text && b.answer === "no"
+        ? api.rerunScanAi(slug, item!.id, { wrong: true, ...(b.hint ? { hint: b.hint } : {}) })
+        : api.answerScanGlance(slug, item!.id, { answer: b.answer, ...(b.hint ? { hint: b.hint } : {}) }),
+    onSuccess: (row) => {
+      qc.setQueryData(["scan-item-live", slug, row.id], row);
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
+    },
+  });
   // Prefer whichever copy is newer: the poll can hold a snapshot from before an
   // append/retake, and the prop carries the server's response to that very call.
   const it =
@@ -296,6 +308,8 @@ export function ScanCaptureDrawer({
   // ── the normal row: thumbnail · identity · quantity ───────────────────────
   const isPhoto = it!.source_kind === "photo";
   const name = it!.suggested_candidates?.[0]?.name || it!.suggested_name;
+  // The first look, if the workspace asked for one and nobody has answered.
+  const glance = pendingGlance(it!);
   const identifying =
     isPhoto && !name && !it!.ai_suggested_at &&
     Date.now() - new Date(it!.created_at).getTime() < IDENTIFY_WINDOW_MS;
@@ -392,8 +406,16 @@ export function ScanCaptureDrawer({
         <Thumb url={thumbUrl} name={name ?? "item"} />
         <div className="flex-1 min-w-0 pt-0.5">
           <div className="text-white text-[13.5px] font-semibold leading-tight line-clamp-2">
-            {name ?? (identifying ? "Photo saved" : identifyFailed ? "Couldn't identify" : "Captured item")}
+            {name ?? (glance ? `${glance.name}?` : identifying ? "Photo saved" : identifyFailed ? "Couldn't identify" : "Captured item")}
           </div>
+          {glance && (
+            <GlanceQuestion
+              dark
+              glance={glance}
+              busy={answerGlance.isPending}
+              onAnswer={(answer, hint) => answerGlance.mutate({ answer, hint })}
+            />
+          )}
           <div className="text-white/60 text-[11px] truncate mt-0.5">
             {armed ? (
               <span className="text-cobble-300 font-medium">

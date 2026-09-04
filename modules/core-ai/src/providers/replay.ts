@@ -66,6 +66,8 @@ const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?:
   "classify-image": { models: ["replay"], defaultModel: "replay" },
   "extract-text": { models: ["replay"], defaultModel: "replay" },
   "identify-image": { models: ["replay"], defaultModel: "replay" },
+  "identify-glance": { models: ["replay"], defaultModel: "replay" },
+  "split-image": { models: ["replay"], defaultModel: "replay" },
   "match-to-catalog": { models: ["replay"], defaultModel: "replay" },
 };
 

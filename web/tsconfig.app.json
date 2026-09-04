@@ -2,7 +2,7 @@
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
     "composite": true,
-    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "tsBuildInfoFile": "./dist/.tsbuildinfo/tsconfig.app.tsbuildinfo",
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "jsx": "react-jsx",

@@ -88,6 +88,34 @@ export function storageRequirementFor(category: string | null | undefined): Stor
   return null;
 }
 
+/** The three values, for validating one that arrived as loose text. */
+const VALUES = new Set<StorageRequirement>(["frozen", "refrigerated", "ambient"]);
+
+/**
+ * How this PARTICULAR thing must be kept: what the item itself says, and only
+ * then what its category implies.
+ *
+ * The category table is a fallback, not the source of truth, and reading it
+ * alone left the two halves disagreeing about the same item. Groceries declares
+ * a `storage_requirement` field, so a scan can arrive already knowing a bag of
+ * carrots needs to be cold - and "Fresh vegetables" matches no rule in the
+ * table, deliberately, because potatoes and onions do not want a fridge.
+ *
+ * So the warning fired on the item's own value while the suggestion, reading
+ * only the category, stayed silent: it declined to say where the carrots go and
+ * then complained about where they went. Both now start here.
+ */
+export function resolveRequirement(
+  explicit: unknown,
+  category: string | null | undefined,
+): StorageRequirement | null {
+  if (typeof explicit === "string") {
+    const v = explicit.trim().toLowerCase() as StorageRequirement;
+    if (VALUES.has(v)) return v;
+  }
+  return storageRequirementFor(category);
+}
+
 /**
  * Does where it IS contradict how it must be KEPT?
  *
@@ -101,12 +129,30 @@ export function storageMismatch(
   locationName: string | null | undefined,
 ): { requirement: StorageRequirement; location: string } | null {
   if (!requirement || requirement === "ambient" || !locationName) return null;
+  if (satisfiesRequirement(requirement, locationName)) return null;
+  return { requirement, location: locationName };
+}
+
+/**
+ * Does this place SATISFY the requirement? The positive question, and it is not
+ * the negation of the one above.
+ *
+ * `storageMismatch` returns null for three different reasons - satisfied,
+ * ambient, or nothing known - so "no mismatch" can never be read as "this is
+ * the right spot". Suggesting somewhere to put a thing needs the positive
+ * answer, and it must come from the SAME vocabulary the warning uses. Two
+ * copies would drift into the worst bug available here: the system suggests a
+ * place and then complains about the item being in it.
+ */
+export function satisfiesRequirement(
+  requirement: StorageRequirement | null | undefined,
+  locationName: string | null | undefined,
+): boolean {
+  if (!requirement || requirement === "ambient" || !locationName) return false;
   const place = locationName.toLowerCase();
   const isFreezer = /freezer|deep ?freeze/.test(place);
   // A freezer satisfies a refrigeration requirement; a fridge does not satisfy
   // a frozen one.
   const isCold = isFreezer || /fridge|refrigerat|chiller|cool ?box/.test(place);
-  if (requirement === "frozen" && isFreezer) return null;
-  if (requirement === "refrigerated" && isCold) return null;
-  return { requirement, location: locationName };
+  return requirement === "frozen" ? isFreezer : isCold;
 }

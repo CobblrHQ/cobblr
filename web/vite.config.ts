@@ -20,6 +20,21 @@ export default defineConfig({
       },
     },
   },
+  // `vite preview` serves the BUILT app, and it does not inherit server.proxy,
+  // so without this every /api call from a previewed build 404s. It matters for
+  // the nightly tour: a recording should be made against the same built assets
+  // the product ships (the rig serves the built web image), not against a dev
+  // server that transpiles on demand and is a different thing on camera.
+  preview: {
+    host: "0.0.0.0",
+    port: 5173,
+    proxy: {
+      "/api": {
+        target: process.env.VITE_API_PROXY ?? "http://api:4000",
+        changeOrigin: true,
+      },
+    },
+  },
   build: {
     outDir: "dist",
     sourcemap: true,

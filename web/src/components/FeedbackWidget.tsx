@@ -8,14 +8,15 @@
 // which a Cobblr bug found on a self-hosted instance reaches the project.
 
 import { useState, useRef, useEffect } from "react";
-import { HIDE_WHEN_OVERLAY_OPEN } from "@cobblr/platform-web";
+import { HIDE_WHEN_OVERLAY_OPEN, YIELDING_CLASS, useYieldToContent } from "@cobblr/platform-web";
 import { createPortal } from "react-dom";
 import { Modal, useToast } from "@cobblr/platform-web";
-import { BookOpen, Copy, ExternalLink, Github, ImagePlus, MessageCircle, MessageSquare, Users, X } from "lucide-react";
+import { BookOpen, Copy, ExternalLink, Github, ImagePlus, MessageCircle, MessageSquare, Users, X, ChevronRight } from "lucide-react";
 import { api, type CommunityLink } from "../lib/api";
-import { newIssueUrl, reportBody, type ReportInput, type ServerDiagnostics } from "../lib/bug-report";
+import { environmentBlock, newIssueUrl, reportBody, type ReportInput, type ServerDiagnostics } from "../lib/bug-report";
 import { useAuth } from "../auth/AuthContext";
 import { resolveHandle } from "../auth/ActiveOrgContext";
+import { clipboardImageFiles } from "./pastedImage";
 
 const TYPES = [
   { id: "bug", label: "🐛 Bug" },
@@ -37,6 +38,11 @@ interface Pick {
 // row (full-sidebar mode), matching NotificationsBell/ChatWidget — the pill has
 // no home there and everything else already lives in the foot.
 export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
+  // Get out of the way of anything pressable underneath (yield-to-content.ts):
+  // fixed chrome does not move, and the page under it does.
+  const bubbleRef = useRef<HTMLButtonElement>(null);
+  const coveringContent = useYieldToContent(bubbleRef);
+
   const [open, setOpen] = useState(false);
   const [type, setType] = useState<FType>("bug");
   const [message, setMessage] = useState("");
@@ -159,10 +165,7 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
   useEffect(() => {
     if (!open || !slug) return;
     function onPaste(e: ClipboardEvent) {
-      const files = Array.from(e.clipboardData?.items ?? [])
-        .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
-        .map((it) => it.getAsFile())
-        .filter((f): f is File => !!f);
+      const files = clipboardImageFiles(e.clipboardData);
       if (!files.length) return;
       e.preventDefault(); // image paste is ours; text paste falls through
       const dt = new DataTransfer();
@@ -302,7 +305,8 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
             onClick={() => setOpen(true)}
             title="Send feedback"
             aria-label="Send feedback"
-            className={"fixed bottom-4 right-4 z-[55] " + HIDE_WHEN_OVERLAY_OPEN + " flex items-center gap-1.5 rounded-full bg-cobble-600 hover:bg-cobble-700 text-white shadow-lg px-3 py-2.5 text-xs font-medium transition"}
+            ref={bubbleRef}
+            className={"fixed bottom-4 right-4 z-[55] " + HIDE_WHEN_OVERLAY_OPEN + (coveringContent ? " " + YIELDING_CLASS : "") + " flex items-center gap-1.5 rounded-full bg-cobble-600 hover:bg-cobble-700 text-white shadow-lg px-3 py-2.5 text-xs font-medium transition"}
           >
             <MessageSquare size={15} />
             <span className="hidden sm:inline">Feedback</span>
@@ -398,7 +402,7 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
           <div className="text-[10px] text-faint dark:text-slate-500">
             {hosted === false
               ? diag
-                ? "This stays on your own instance. To report it to the Cobblr project, copy the report below - it includes your version, browser and enabled modules."
+                ? "This stays on your own instance. To report it to the Cobblr project, copy the report below - it includes your version, browser and enabled modules, and you can read the whole of it first."
                 : "This stays on your own instance. To report it to the Cobblr project, copy the report below - it carries your browser and page, but no server details until you're in a workspace."
               : "We attach the page you're on + your browser so we can track it down."}
           </div>
@@ -411,6 +415,33 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
           >
             {busy ? (stage ?? "Sending…") : hosted === false ? "Save to this instance" : "Send feedback"}
           </button>
+          {/* What you are about to hand over, where you can actually read it.
+              This endpoint's whole field list is justified by the reporter
+              seeing it first (api/src/routes/diagnostics.ts), and for a long
+              time nothing showed it: "copy the report below" pointed at a
+              button and the text went to the clipboard unseen. Nothing was
+              leaking, but the discipline was on trust rather than enforced,
+              and a field added later would have reached a public issue with
+              nobody having looked.
+              One paragraph tall and scrollable: readable if you care, out of
+              the way if you don't. */}
+          {hosted === false && (
+            <details className="group">
+              <summary className="cursor-pointer select-none text-[10px] text-faint dark:text-slate-500 hover:text-muted dark:hover:text-slate-300 inline-flex items-center gap-1">
+                <ChevronRight size={10} className="transition-transform group-open:rotate-90" />
+                What this says about your setup
+              </summary>
+              <pre
+                aria-label="What the report says about your setup"
+                className="mt-1 max-h-24 overflow-auto rounded border border-line dark:border-slate-700 bg-subtle dark:bg-slate-900/60 p-2 text-[10px] leading-relaxed font-mono text-muted dark:text-slate-400 whitespace-pre-wrap break-words"
+              >
+                {environmentBlock(currentReport())}
+              </pre>
+              <div className="mt-1 text-[10px] text-faint dark:text-slate-500">
+                Your own words go with it, exactly as written above. Nothing else does.
+              </div>
+            </details>
+          )}
           {hosted === false && (
             <div className="flex gap-2">
               <button

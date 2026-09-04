@@ -19,6 +19,9 @@ export interface CoreAiProvidersTable {
 export interface CoreAiCapabilityDefaultsTable {
   capability: string;
   provider_id: string;
+  /** A PERSONAL connection chosen for this job; null = the workspace's own
+   *  provider named by provider_id. */
+  credential_id: string | null;
   model: string;
   config: Generated<Record<string, unknown>>;
   created_at: Generated<Date>;

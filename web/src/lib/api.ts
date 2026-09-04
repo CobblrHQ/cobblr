@@ -3550,6 +3550,29 @@ export const api = {
       `/orgs/${slug}/modules/core-scan/bin/${locationId}/adjust`,
       body,
     ),
+  /** Records that look like the same thing twice - the pairs prevention cannot
+   *  remove, because they were created before it existed. */
+  scanDuplicates: (slug: string) =>
+    request<{
+      pairs: Array<{
+        kind: string;
+        noun: string;
+        a: { id: string; title: string; qty: number | null; location_id: string | null };
+        b: { id: string; title: string; qty: number | null; location_id: string | null };
+        shared: string[];
+      }>;
+      truncated: boolean;
+    }>("GET", `/orgs/${slug}/modules/core-scan/duplicates`),
+  /** Make two records one. `keep_id` survives with its id, links and history;
+   *  `drop_id` is absorbed and removed. */
+  scanMergeDuplicate: (slug: string, body: { kind: string; keep_id: string; drop_id: string }) =>
+    request<{
+      kept: { id: string; title: string };
+      dropped: { id: string; title: string };
+      new_qty: number | null;
+      prior_qty: number | null;
+      filled: string[];
+    }>("POST", `/orgs/${slug}/modules/core-scan/duplicates/merge`, body),
   scanAttach: (
     slug: string,
     id: string,
@@ -3605,12 +3628,13 @@ export const api = {
       ...(keepId ? { keep_id: keepId } : {}),
     }),
   /** Session theme: derive a shared tag + category across the pending inbox. */
-  scanSessionTheme: (slug: string) =>
+  /** A theme is a question about ONE session, asked when somebody asks it. */
+  scanSessionTheme: (slug: string, batchId: string) =>
     request<{
       tag: string | null;
       tag_item_ids: string[];
       category: { value: string; item_ids: string[] } | null;
-    }>("GET", `/orgs/${slug}/modules/core-scan/inbox/session-theme`),
+    }>("GET", `/orgs/${slug}/modules/core-scan/inbox/session-theme?batch_id=${encodeURIComponent(batchId)}`),
   /** Stash the accepted theme onto the pending items (tag + category hint). */
   applyScanTheme: (
     slug: string,
@@ -3672,6 +3696,14 @@ export const api = {
     request<{ enabled: boolean }>("GET", `/orgs/${slug}/modules/core-scan/photo-rank-config`),
   setScanPhotoRankConfig: (slug: string, enabled: boolean) =>
     request<{ enabled: boolean }>("PUT", `/orgs/${slug}/modules/core-scan/photo-rank-config`, { enabled }),
+  /** The first-look question on the camera (see services/glance.ts). */
+  getScanGlanceConfig: (slug: string) =>
+    request<{ enabled: boolean }>("GET", `/orgs/${slug}/modules/core-scan/glance-config`),
+  setScanGlanceConfig: (slug: string, enabled: boolean) =>
+    request<{ enabled: boolean }>("PUT", `/orgs/${slug}/modules/core-scan/glance-config`, { enabled }),
+  /** Answer "we think it's X" on a card. `hint` rides with a "no". */
+  answerScanGlance: (slug: string, id: string, body: { answer: "yes" | "no"; hint?: string }) =>
+    request<ScanInboxItem>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/glance-answer`, body),
   /** Revert the catalog image to the original, or use the user's own scan photo. */
   scanCatalogAction: (slug: string, id: string, action: "revert" | "use_own_photo" | "use_screenshot_crop") =>
     request<ScanInboxItem>(
@@ -3897,8 +3929,14 @@ export const api = {
     slug: string,
     body: {
       capability: string;
-      provider_id: string;
-      model: string;
+      /** One of the workspace's own installed providers. */
+      provider_id?: string;
+      /** OR a personal connection routed into this workspace. The server
+       *  derives the provider from it, and its default model when none is
+       *  given - a connection whose owner's setup is private to them still
+       *  has to be choosable here. */
+      credential_id?: string;
+      model?: string;
       config?: Record<string, unknown>;
     },
   ) =>
@@ -4822,6 +4860,9 @@ export interface WorkspaceAiOffer {
 export interface AiCapabilityDefault {
   capability: string;
   provider_id: string;
+  /** Set when this job is pinned to a personal connection routed here rather
+   *  than to one of the workspace's own providers. */
+  credential_id: string | null;
   model: string;
   config: Record<string, unknown>;
 }

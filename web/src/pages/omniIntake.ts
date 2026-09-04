@@ -12,6 +12,7 @@
 // stays a SEARCH, because filtering is harmless and a wrong add is not.
 
 export type OmniKind = "upc" | "url" | "urls" | "text";
+import { clipboardImageFiles } from "../components/pastedImage";
 
 export interface OmniIntent {
   kind: OmniKind;
@@ -100,7 +101,7 @@ export function classifyFiles(files: File[]): FileIntent {
  *  swallowing a text paste would break the box's main job to serve its rarer
  *  one. */
 export function clipboardImages(data: DataTransfer | null | undefined): File[] {
-  return Array.from(data?.files ?? []).filter((f) => f.type.startsWith("image/"));
+  return clipboardImageFiles(data);
 }
 
 /** Placeholder copy - a phone cannot show the full sentence. */

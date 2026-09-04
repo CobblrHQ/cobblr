@@ -16,6 +16,7 @@ export { expiryState, expiryPhrase, EXPIRING_WITHIN_DAYS, type ExpiryState, type
 export { keepMembers, isMember, parcelAudience } from "@cobblr/platform-contract/membership";
 export { splitEntityKind, entityKindOf, type EntityKindParts } from "@cobblr/platform-contract/entity-kind";
 export { destinationLabel, normaliseTargetKind, betterDestination, type DestinationTable } from "@cobblr/platform-contract/destination-label";
+export { NotificationBatcher, type ComposedBurst } from "@cobblr/platform-contract/notification-batcher";
 import type {
   ResolvableProvider,
   ResolveContext,
@@ -188,6 +189,7 @@ export const FIELD_ROLE_VALUES = [
   "acquired-on",
   "acquired-for",
   "seller",
+  "location",
 ] as const;
 export type FieldRole = (typeof FIELD_ROLE_VALUES)[number];
 
@@ -201,8 +203,20 @@ export type FieldRole = (typeof FIELD_ROLE_VALUES)[number];
  * `pickable: false` is for a role the platform assigns from structure rather
  * than intent: a table has exactly one grouping axis, and letting someone tag a
  * second field "category" would make that ambiguous.
+ *
+ * `ownedBy` names a capability that ALREADY answers this question for every
+ * record in the workspace. A custom field claiming such a role is refused: two
+ * places to write the same fact means two answers to one question, and the one
+ * in the custom field is the one nothing else can read. Home Inventory learned
+ * this the hard way - it shipped a Room text field, retired it into real
+ * Locations at v0.4.0, and a scan matched a day before that upgrade still
+ * showed "room: Living room" beside the item's actual location eleven days
+ * later (reported 2026-09-03).
  */
-export const FIELD_ROLE_LABELS: Record<FieldRole, { label: string; pickable: boolean }> = {
+export const FIELD_ROLE_LABELS: Record<
+  FieldRole,
+  { label: string; pickable: boolean; ownedBy?: string }
+> = {
   category: { label: "Its grouping axis", pickable: false },
   pack: { label: "How many in a pack", pickable: true },
   identifier: { label: "Its identifier (serial, VIN)", pickable: true },
@@ -212,7 +226,27 @@ export const FIELD_ROLE_LABELS: Record<FieldRole, { label: string; pickable: boo
   "acquired-on": { label: "When it became yours", pickable: true },
   "acquired-for": { label: "What it cost", pickable: true },
   seller: { label: "Who sold it", pickable: true },
+  location: { label: "Where it is kept", pickable: false, ownedBy: "core-locations" },
 };
+
+/** The capability that already owns this role's question, or null when the
+ *  role is a field's to claim. A role with an owner may not be declared on a
+ *  custom field - see FIELD_ROLE_LABELS. */
+export function fieldRoleOwner(role: FieldRole | null | undefined): string | null {
+  if (!role) return null;
+  return FIELD_ROLE_LABELS[role]?.ownedBy ?? null;
+}
+
+/** What to tell someone who tried to declare a role the platform owns. Kept
+ *  beside the vocabulary so the API, the lint and the UI say the same thing. */
+export function fieldRoleOwnedMessage(role: FieldRole): string {
+  const owner = fieldRoleOwner(role);
+  if (!owner) return "";
+  if (role === "location") {
+    return "Where a thing is kept is already the item's Location, so a field cannot also claim it - two places to write one fact end up disagreeing. Set the item's location instead. To retire a place field you already have, the inventory:field-to-location migration moves each value into a real Location and clears the field.";
+  }
+  return `That meaning is already ${owner}'s, so a field cannot also claim it.`;
+}
 export const FieldRoleSchema = z.enum(FIELD_ROLE_VALUES);
 
 const EntityField = z.object({
@@ -2228,18 +2262,24 @@ export interface PlatformEntities {
    *  Lets cross-module writers (the sync engine) mutate this kind without
    *  an HTTP loopback or user token. */
   registerWriter(kind: string, writer: EntityWriter): void;
-  /** Resolve a registered writer for a kind, or null. */
-  getWriter(kind: string): EntityWriter | null;
+  /** Resolve the writer for a kind, or null.
+   *
+   *  Org-scoped because an INSTANCE kind (`<instance>:item` — a Bookshelf, a
+   *  Wardrobe) exists only per-workspace and is never registered: only the
+   *  owning module's real kind is. A by-kind-alone lookup misses on every one
+   *  of them and the miss looks exactly like "this kind is not writable", so
+   *  the caller quietly skips the write. Pass the org and instances resolve. */
+  getWriter(orgId: string, kind: string): Promise<EntityWriter | null>;
   /** Put a row back exactly as it was, id and all. True when the kind's writer
    *  can do it; false when nothing here can, so the caller can fall back and
    *  say what it actually did instead of claiming a restore. */
-  restore(kind: string, orgId: string, image: Record<string, unknown>): Promise<boolean>;
+  restore(orgId: string, kind: string, image: Record<string, unknown>): Promise<boolean>;
   /** The whole row for a record, when its kind can produce one — what a change
    *  ledger stores so an undo has real state to put back. */
-  snapshot(kind: string, orgId: string, id: string): Promise<Record<string, unknown> | null>;
+  snapshot(orgId: string, kind: string, id: string): Promise<Record<string, unknown> | null>;
   /** What would be deleted along with this record. Empty when nothing would be;
    *  null when the kind cannot say (and a caller must not read that as "safe"). */
-  dependents(kind: string, orgId: string, id: string): Promise<string[] | null>;
+  dependents(orgId: string, kind: string, id: string): Promise<string[] | null>;
   /** Register a list-resolver for a kind. Optional — without one,
    *  list() returns an empty result. Modules opt in when they want
    *  their kind to appear in core-views, search results, etc. */
@@ -2338,6 +2378,17 @@ export interface PlatformEntities {
   /** Look up one entity by (kind, id). Returns null if the kind
    *  has no resolver (module not enabled) or the entity doesn't
    *  exist. Projects through the kind's exposableFields whitelist.
+   *
+   *  `fields` IS A SUBSET, NEVER THE WHOLE RECORD. exposableFields is curated
+   *  by the owning module - inventory withholds notes, cost, manufacturer and
+   *  supplier_url from cross-module readers on purpose. So this is the right
+   *  way to READ ABOUT an entity and the wrong way to COPY one: anything that
+   *  reads a record here and then destroys the original (a merge, a move
+   *  between kinds, an export-and-delete) silently loses every field the module
+   *  chose not to expose. Read the whole row through the module's OWN CRUD
+   *  route under the caller's bearer instead, the way core-scan's attach and
+   *  duplicates/merge do. Caught in review 2026-09-04, in a merge that would
+   *  have deleted the duplicate's notes along with it.
    *
    *  `viewer.userId` is used by the M1 v0.5 per-link role gate:
    *  cross-workspace fall-through respects `min_target_role` on
@@ -3269,6 +3320,22 @@ export const AiCapabilities = [
   // shot (product-only, correct colour, no people). The only capability that
   // sends more than one image in a call. See rank-images-prompt.ts.
   "rank-images",
+  // One photo of SEVERAL things: list each distinct item with a bounding box,
+  // so the scan inbox can split a group shot into children. It rode
+  // identify-image with a caller-supplied prompt for a long time, and that cost
+  // two separate bugs (adapters ignoring the prompt; a cache collision with the
+  // identify call on the same photo) before it was given its own id. Its own
+  // id is also what lets a workspace put splitting on a cheaper model than
+  // identification and see its cost apart. The prompt itself is owned by the
+  // caller (core-scan), which owns the output shape it parses.
+  "split-image",
+  // The FIRST LOOK at a photo: name + category + confidence, nothing else, so
+  // it can come back in a second or two on a small model and be put to the
+  // person as a question ("we think it's X - yes / no?") while the full
+  // identify-image read runs, or is skipped because they answered. Its own id
+  // because it asks a smaller question with a smaller answer, which is what
+  // makes it fast; it is not identify-image with less context.
+  "identify-glance",
 ] as const;
 
 export type AiCapability = (typeof AiCapabilities)[number];
@@ -3688,6 +3755,20 @@ export interface PlatformConnections {
    *  Precedence is the caller's OWN connection first, then one shared into the
    *  workspace and approved by its owner. */
   resolve(kind: string, orgId: string, callerUserId: string | null): Promise<ResolvedConnection | null>;
+  /** The connections of this kind routed INTO the workspace, so a workspace
+   *  surface can CHOOSE between them. Distinct from resolve(), which answers
+   *  "which one serves this call" - this answers "which ones may it name". */
+  routedTo(kind: string, orgId: string): Promise<RoutedConnectionSummary[]>;
+}
+
+/** One connection a workspace may name, from PlatformConnections.routedTo. */
+export interface RoutedConnectionSummary {
+  credentialId: string;
+  providerId: string;
+  label: string;
+  ownerUserId: string;
+  approved: boolean;
+  active: boolean;
 }
 
 /** The single per-tenant egress policy every external-HTTP path routes through —

@@ -150,6 +150,16 @@ export async function tick(opts: { orgId?: string } = {}): Promise<{
 
     const memberIds = await platform().notifications.orgMemberIds(org.id);
 
+    // One message for the whole sweep, not one per entry. A workspace with a
+    // dozen machines has a dozen things due on the same morning, and twelve
+    // separate notifications saying the same kind of thing is a stream nobody
+    // reads to the end. The per-entry EVENT above stays per-entry - a wire
+    // wants each one - but a person gets the list.
+    const lines: string[] = [];
+    /** The single entry, when there is exactly one, so the notification can
+     *  still deep-link to it. A list of twelve has nowhere to point. */
+    let only: (typeof due)[number] | null = null;
+
     for (const row of due) {
       const daysUntil = Math.ceil(
         (new Date(row.scheduled_at).getTime() - Date.now()) / 86_400_000,
@@ -173,32 +183,8 @@ export async function tick(opts: { orgId?: string } = {}): Promise<{
         daysUntil,
       });
 
-      // In-app notification to every workspace member.
-      for (const userId of memberIds) {
-        try {
-          await platform().notifications.dispatch({
-            orgId: org.id,
-            userId,
-            eventType: "maintenance.due-soon",
-            // Due on a date, knowable in advance: the morning brief, not a ping.
-            triggeredBy: "schedule",
-            message,
-            module: "core-maintenance",
-            entityType: row.entity_type,
-            entityId: row.entity_id,
-            payload: {
-              entryId: row.id,
-              daysUntil,
-              scheduledAt: row.scheduled_at,
-            },
-          });
-        } catch (err) {
-          console.error(
-            "[core-maintenance] notify dispatch failed:",
-            (err as Error).message,
-          );
-        }
-      }
+      lines.push(message);
+      only = lines.length === 1 ? row : null;
 
       // Mark notified so we don't re-fire next tick.
       try {
@@ -215,6 +201,36 @@ export async function tick(opts: { orgId?: string } = {}): Promise<{
         );
       }
       notified += 1;
+    }
+
+    if (lines.length > 0) {
+      const message =
+        lines.length === 1
+          ? lines[0]!
+          : `${lines.length} things need maintenance:\n${lines.join("\n")}`;
+      for (const userId of memberIds) {
+        try {
+          await platform().notifications.dispatch({
+            orgId: org.id,
+            userId,
+            eventType: "maintenance.due-soon",
+            // Due on a date, knowable in advance: the morning brief, not a ping.
+            triggeredBy: "schedule",
+            message,
+            module: "core-maintenance",
+            entityType: only?.entity_type,
+            entityId: only?.entity_id,
+            payload: only
+              ? { entryId: only.id, count: 1, scheduledAt: only.scheduled_at }
+              : { count: lines.length },
+          });
+        } catch (err) {
+          console.error(
+            "[core-maintenance] notify dispatch failed:",
+            (err as Error).message,
+          );
+        }
+      }
     }
       });
     } catch (err) {

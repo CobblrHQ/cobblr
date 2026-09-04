@@ -9,7 +9,7 @@
 // services require ("Purchase Date" → purchase_date, "dropdown" → text with
 // choices), and refusing with a sentence instead of a zod issue list.
 
-import { isFieldScope, type ActionInvokeContext } from "@cobblr/platform-contract";
+import { isFieldScope, pluralise, type ActionInvokeContext } from "@cobblr/platform-contract";
 import { matchByLabel, splitNames } from "@cobblr/platform-contract/said-names";
 import { disableModuleForOrg, enableModuleForOrg } from "../modules/enable.js";
 import { listEntries } from "../modules/registry.js";
@@ -491,7 +491,7 @@ export function registerPlatformActionHandlers(): void {
       candidates.push({ label, targetKind: "entity_kind", targetId: k.id });
       // The plural is what people usually say ("call my parts spools"), so it is
       // matched as well as the singular rather than instead of it.
-      const plural = k.display_name_plural ?? `${label}s`;
+      const plural = k.display_name_plural ?? pluralise(label);
       if (plural !== label) candidates.push({ label: plural, targetKind: "entity_kind", targetId: k.id });
     }
     for (const i of instances) {
@@ -537,7 +537,7 @@ export function registerPlatformActionHandlers(): void {
     if (!said || !name) return { ok: false, error: "target and name are required" };
     const found = await findThing(ctx.orgId, said);
     if ("error" in found) return { ok: false, error: found.error };
-    const plural = str(args.plural) || `${name}s`;
+    const plural = str(args.plural) || pluralise(name);
     await upsertOverride({
       orgId: ctx.orgId,
       targetKind: found.targetKind,

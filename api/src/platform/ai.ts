@@ -201,6 +201,53 @@ interface CacheRow {
  *   3. First installed provider that declares this capability +
  *      whatever defaultModel it ships with.
  *   4. Throw — capability unconfigured. */
+
+/**
+ * The workspace's per-job choice, if it made one.
+ *
+ * `credential_id` names a PERSONAL connection routed here; `provider_id` alone
+ * names one of the workspace's own installed providers. Either way the row is
+ * an explicit instruction from an owner, and until now nothing read it when a
+ * personal connection was in play: a personal key short-circuited resolution
+ * entirely, so the per-job settings on the AI page silently did nothing and the
+ * key's model could not be chosen at all (reported 2026-09-04, "it should be
+ * usable and configurable within that workspace completely, just like a
+ * workspace key").
+ *
+ * Fail-safe: any error reads as "no choice made", which is the old behaviour.
+ */
+async function workspaceJobChoice(
+  orgId: string,
+  capability: AiCapability,
+): Promise<{ credentialId: string | null; providerId: string | null; model: string | null } | null> {
+  try {
+    const tdb = (await getTenantDb(orgId)) as unknown as {
+      selectFrom: (t: string) => {
+        select: (c: string[]) => {
+          where: (a: string, b: string, c: unknown) => {
+            executeTakeFirst: () => Promise<
+              { credential_id?: string | null; provider_id?: string | null; model?: string | null } | undefined
+            >;
+          };
+        };
+      };
+    };
+    const row = await tdb
+      .selectFrom("core_ai_capability_defaults")
+      .select(["credential_id", "provider_id", "model"])
+      .where("capability", "=", capability)
+      .executeTakeFirst();
+    if (!row) return null;
+    return {
+      credentialId: row.credential_id ?? null,
+      providerId: row.provider_id ?? null,
+      model: row.model ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function resolveProviderAndModel(
   orgId: string,
   capability: AiCapability,
@@ -430,18 +477,33 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
   // provider override (e.g. the eval harness) always wins over a personal cred.
   let personalCredentials: Record<string, unknown> | undefined;
   let resolved: { row: ProviderRow; model: string } | null = null;
-  if (!req.provider_id) {
+  // What did this workspace SAY should do this job? An explicit choice decides,
+  // and only when there is none does a personal connection win by default.
+  const choice = req.provider_id ? null : await workspaceJobChoice(req.orgId, req.capability);
+  // A choice naming one of the workspace's OWN providers means the personal
+  // path is skipped entirely: picking a provider for a job and being served by
+  // somebody's routed key anyway is the bug this fixes.
+  const choseWorkspaceProvider = !!choice && !choice.credentialId && !!choice.providerId;
+  if (!req.provider_id && !choseWorkspaceProvider) {
     const personal = await resolvePersonalProvider(
       req.orgId,
       req.userId ?? null,
       (pid) => !!providers.get(pid)?.capabilities[req.capability],
       "ai-provider",
       req.capability,
+      choice?.credentialId ?? null,
     );
     if (personal) {
       const pdef = providers.get(personal.providerId);
+      // The workspace's chosen model for this job applies to a personal
+      // connection as much as to its own provider - that is what "configurable
+      // like a workspace key" means. Only honoured when the choice actually
+      // named THIS connection.
+      const chosenModel =
+        choice?.credentialId && choice.credentialId === personal.credentialId ? choice.model : null;
       const pmodel =
         req.model ??
+        chosenModel ??
         pdef?.capabilities[req.capability]?.defaultModel ??
         pdef?.capabilities[req.capability]?.models[0];
       if (pdef && pmodel) {

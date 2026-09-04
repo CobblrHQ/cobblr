@@ -67,6 +67,7 @@ import {
 } from "@cobblr/platform-web";
 import { EntityAttachments } from "../components/EntityAttachments";
 import { LocationTreePicker } from "../components/LocationTreePicker";
+import { itemNounFor, pluralise } from "@cobblr/platform-contract";
 
 const ENTITY_KIND = "machines:machine";
 
@@ -88,7 +89,10 @@ export function MachinesPage({
   const { id } = useParams<{ id?: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const lensName = instance ? null : searchParams.get("lens");
-  const noun = itemNoun?.trim() || "machine";
+  // See AssetsPage: the module's own word is the wrong fallback for a named
+  // collection. Machines has no per-instance kind here, so the base kind is
+  // what itemNounFor reads when no noun was set.
+  const noun = itemNounFor({ itemNoun, entityKind: instance ? `${instance}:item` : ENTITY_KIND });
 
   const [localSel, setLocalSel] = useState<string | null>(null);
   const selectedId = instance ? localSel : id ?? null;
@@ -466,7 +470,7 @@ export function MachinesPage({
         {showContributedTabs && (
           <div className="inline-flex rounded-md border border-line dark:border-slate-600 overflow-hidden text-xs">
             <button type="button" onClick={() => setPageTab("items")} className={"px-2.5 py-1 " + (pageTab === "items" ? "bg-cobble-600 text-white" : "text-muted hover:bg-subtle dark:hover:bg-slate-800")}>
-              {noun}s
+              {pluralise(noun)}
             </button>
             {contributedTabs.map((p) => (
               <button key={p.id} type="button" onClick={() => setPageTab(p.id)} className={"px-2.5 py-1 " + (pageTab === p.id ? "bg-cobble-600 text-white" : "text-muted hover:bg-subtle dark:hover:bg-slate-800")}>
@@ -517,7 +521,7 @@ export function MachinesPage({
       {(instance || lensName) && pageTab !== "fleet" && (
         <div className="flex items-center gap-1.5 flex-wrap">
           <MachineViewChip active={!activeView} onClick={() => selectView(null)}>
-            All {noun}s
+            All {pluralise(noun)}
           </MachineViewChip>
           {views.map((v) => (
             <MachineViewChip key={v.id} active={activeView?.id === v.id} onClick={() => selectView(v.id)}>
@@ -547,7 +551,7 @@ export function MachinesPage({
         ) : (
           <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-10 text-center text-xs text-faint italic">
             {allRows.length === 0
-              ? `No ${noun}s yet. Click + new to add one.`
+              ? `No ${pluralise(noun)} yet. Click + new to add one.`
               : "No matches with the current filters."}
           </div>
         )
@@ -862,7 +866,7 @@ function SaveViewModal({
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder={`e.g. Active ${noun}s, By state`}
+            placeholder={`e.g. Active ${pluralise(noun)}, By state`}
             autoFocus
             className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />

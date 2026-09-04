@@ -10,8 +10,9 @@
 
 import { Router, type Response } from "express";
 import { humanizeProviderError } from "./provider-error.js";
-import { renderKindLines, anyHiddenFields, HIDDEN_FIELDS_RULE } from "./kind-lines.js";
-import { renderEntityActions, renderWorkspaceActions, RAIL_LOOKUP_NOTE, type RailMode } from "./action-rail.js";
+import { missingActionArgs } from "./action-args-guard.js";
+import { buildSystemPrompt, type PromptWorkspace } from "./system-prompt.js";
+import { GROUNDING_RULES, PLAIN_ANSWER_RULES, TOOL_USE_RULES } from "./prompt-rules.js";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { matchCommand } from "./basics.js";
@@ -37,7 +38,6 @@ import { recordRound } from "../providers/replay.js";
 import { performWrite, performWrites, undoWrite, undoableOf, type WriteRequest, type WriteOutcome } from "./chat-ledger.js";
 import type { ToolCall, ChatTurn } from "../providers/tool-wire.js";
 import { summariseAction, type ActionCopy } from "./action-summary.js";
-import { appSurfacePrompt } from "./app-surface.js";
 import { inferMoveFromToolShape, jsonBlockIn } from "./tool-shaped-move.js";
 
 /** ToolCall → the ledgered write request shape (null = not a known write). */
@@ -204,6 +204,11 @@ export function ctxOf(req: Parameters<typeof tenantContext>[0]): Ctx {
   };
 }
 
+/** The prompt builder reads the workspace through the caller's own client. */
+function promptWorkspace(c: Ctx): PromptWorkspace {
+  return { orgName: c.orgName, userName: c.userName, get: (path) => callApi(c, "GET", path) };
+}
+
 async function callApi(
   c: Ctx,
   method: string,
@@ -241,35 +246,8 @@ interface Move {
  *  has nothing to do with it, three invented a company. Six of six WITH them
  *  said they do not know. A weaker model does not need a lighter prompt; it
  *  needs a firmer one. */
-/** How an answer READS.
- *
- *  Asked "tell me about these" for two racks, Cobb replied with their storage
- *  classification, that they sit under the same parent, the parent's uuid, and
- *  three offers of help. Everything true; almost nothing wanted. A person
- *  asking about two shelves wants to know what is on them.
- *
- *  Kept beside the grounding rules because they are the same job from two
- *  sides: that one is about not saying what you do not know, this one is about
- *  not saying what nobody asked. */
-export const PLAIN_ANSWER_RULES = `HOW TO ANSWER:
-- Lead with the answer. One or two sentences for a simple question, and stop. A person scanning a shelf does not read a report.
-- Never show an id, a uuid, or an internal field name. Say what the thing is CALLED. If you only have an id, say "its parent" rather than printing it.
-- Do not narrate the shape of the data: not "a container location configured as a top-level storage unit", just "a rack". Its kind, its parent and its settings are worth mentioning only when they answer what was asked.
-- Empty is a fine answer. "Both are empty." beats a paragraph explaining that nothing is placed inside them.
-- Offer ONE next step, if an obvious one exists. Not three.`;
 
-export const GROUNDING_RULES = `WHAT YOU CAN SEE, AND WHAT YOU CANNOT. This matters more than sounding helpful:
-- You can see three things: this conversation, whatever a tool call has just returned, and the list of app features you are given below. Being inside this app does not tell you how the rest of it works — the list is what you know about the product, and there is nothing behind it. Everything else — the outside world, real people, companies, products, prices, dates — you have only general knowledge of, which is not the same as knowing.
-- So never state a SPECIFIC you cannot check: a person's name, who made or owns something, a date, a price, a figure, a URL, a quote. This holds for the makers of this app exactly as it holds for anyone else — being inside their software tells you how it works, not who they are.
-- "I don't know" is a complete answer. A confident wrong one costs you the user's trust in every other answer you give, including the ones about their own data.
-- Anything about the user's own records comes from a tool call you just made, never from memory. If you have not looked, look — or say you have not.
-- None of this makes you cagey. Explain, teach, suggest, and talk through anything you actually do know — how to do a thing, how this app works, what you would try. Answer the part you know and name the part you do not.`;
 
-/** The tool-use rules a model is given, verbatim, when tools are available.
- *  Exported so the action bench sends the SAME sentences the app sends: a bench
- *  that measured routing without them concluded the model never reached for
- *  count_records, when the app's prompt says exactly when to. */
-export const TOOL_USE_RULES = `TOOLS: when tools are available to you, PREFER them over the JSON shapes below. Use the read tools (search_records, list_records, count_records, get_record, list_record_kinds, list_actions, get_putaway_plan) to look at the user's ACTUAL data before answering questions about it — never guess what they have. For "how many", "which do I have the most of", "do I have any X": call count_records (group_by a field) — it counts every record in code. A list page marked PARTIAL is never the whole set: do not count, rank, or say "none" from it. get_putaway_plan is the live put-away/organize state — reach for it whenever the user mentions putting things away, bins, or their plan. After creating/renaming locations for them, call replan_putaway ONCE (non-destructive; their open plan refreshes itself) — optionally with a hint distilling the conversation. Use the write tools (create_record, update_record, delete_record, invoke_action) to act; they only PROPOSE — the user confirms every change. You can chain: read first, then write. The JSON shapes below are the fallback for when you cannot call tools.`;
 
 /** An action's declared arguments, from the registry, memoised per workspace
  *  for a minute: the guard above asks once per invoke, not once per turn. */
@@ -288,138 +266,6 @@ async function actionArgsSchema(c: Ctx, actionId: string): Promise<Record<string
   return argsSchemaCache.get(c.slug)?.byId.get(actionId) ?? null;
 }
 
-async function buildSystemPrompt(c: Ctx, railMode: RailMode = "full"): Promise<string> {
-  // include=custom_fields → the workspace's user-defined fields ride along, so
-  // the hints below cover the WHOLE settable shape, not just native fields.
-  const kindsRes = await callApi(c, "GET", "/entity-kinds?include=custom_fields");
-  const kinds = ((kindsRes.body.items as KindRec[] | undefined) ?? []);
-  const kindLines = renderKindLines(kinds);
-
-  // Every action, in ONE call, carrying the two things the old per-kind
-  // inspect loop dropped: which run on the WORKSPACE rather than a record, and
-  // what ARGUMENTS each takes.
-  //
-  // Without those, a tool-less provider cannot express "reorder these ids".
-  // Asked to order twelve racks, the model was given a shape with no `args`
-  // field and an action list that pretended core-locations:reorder ran on a
-  // record, so it proposed the action against the parent location with no ids —
-  // uninvokable, and the user was told it could not be done (2026-08-19).
-  // Which modules this workspace actually runs. A screen belonging to one it
-  // does not have is not somewhere it can go, and naming it would be the
-  // original bug wearing a badge.
-  let enabledModules: Set<string> | undefined;
-  try {
-    const mods = await callApi(c, "GET", "/modules");
-    const items = (mods.body.items as Array<{ name?: string; module_name?: string; enabled?: boolean }> | undefined) ?? [];
-    const names = items
-      .filter((m) => m.enabled !== false)
-      .map((m) => m.module_name ?? m.name)
-      .filter((n): n is string => !!n);
-    if (names.length) enabledModules = new Set(names);
-  } catch {
-    // Unknown: show the whole list rather than hiding features that exist.
-  }
-
-  const reg = await callApi(c, "GET", "/registered-actions");
-  const allActions =
-    (reg.body.items as
-      | Array<{
-          id: string;
-          label: string;
-          description?: string;
-          scope?: string;
-          matched_kinds?: string[];
-          args_schema?: Record<string, { label?: string; type?: string }> | null;
-          examples?: string[];
-        }>
-      | undefined) ?? [];
-  // With tools, the model can call list_actions for an action's description,
-  // arguments and phrasings, so the prompt carries an INDEX (id + label) and
-  // spends its tokens elsewhere. Without tools there is nothing to call, so
-  // the full rail is the only description it will ever see. See action-rail.ts
-  // for what this costs.
-  const actionLines = renderEntityActions(allActions, railMode);
-  const workspaceActionLines = renderWorkspaceActions(allActions, railMode);
-  // Createable = exactly what resolveCreatePath will accept at execute time —
-  // the prompt never advertises a create that would 404 on confirm.
-  const createableKinds = kinds.filter((k) => resolveCreatePath(k.id, kinds) !== null);
-  const createable = createableKinds.map((k) => k.id);
-  // Field hints so the model uses the kind's REAL field names (knowledge wants
-  // "title", inventory wants "name", …) instead of guessing and 400ing at
-  // confirm. Native fields only, capped to keep the prompt lean.
-  const createFieldLines = createableKinds
-    .map((k) => {
-      const fs = (k.fields ?? []).slice(0, 8).map((f) => {
-        const req = f.required || f.role === "title" ? " (required)" : "";
-        return `${f.name}${f.type && f.type !== "text" ? `:${f.type}` : ""}${req}`;
-      });
-      // The workspace's own custom fields are just as settable (values land in
-      // the record's metadata) — hint them too, marked so the model can tell.
-      const cfs = (k.custom_fields ?? []).slice(0, 8).map((f) => {
-        const choices = f.choices?.length ? ` [${f.choices.slice(0, 6).join("|")}]` : "";
-        return `${f.name}${f.type && f.type !== "text" ? `:${f.type}` : ""}${choices} (custom)`;
-      });
-      const all = [...fs, ...cfs];
-      return all.length ? `- ${k.id}: ${all.join(", ")}` : null;
-    })
-    .filter(Boolean) as string[];
-
-  const whoLine = c.userName
-    ? `You are talking to ${c.userName}.`
-    : `You do not know the user's name — greet them without one, and do not guess.`;
-
-  return `You are Cobb, the helpful assistant inside the "${c.orgName}" Cobblr workspace. Be genuinely useful and warm — you are NOT limited to workspace chores.
-
-${whoLine}
-
-Your name is Cobb. When the user asks who or what you are, introduce yourself as "Cobb, your assistant" — never as a generic "Cobblr workspace assistant" or "AI assistant". Cobb is who you are; Cobblr is the app you live in.
-
-TWO THINGS YOU DO:
-1. Answer questions and help with whatever the user asks — including general knowledge, how-to, crafts, ideas, explanations. Answer directly and fully; do not deflect a real question by saying you "only manage records". If you happen to know what's in their workspace that's relevant, weave it in.
-2. Take actions in THIS workspace when the user wants to save, create, or change something — you PROPOSE the write and the user confirms before anything runs.
-
-${GROUNDING_RULES}
-
-${PLAIN_ANSWER_RULES}
-
-${appSurfacePrompt(enabledModules)}
-
-After a helpful answer, if it's natural, OFFER to save it (e.g. "want me to add this to your list / save it as a knowledge entry?") — but never force it, and never refuse the answer itself.
-
-ENTITY KINDS in this workspace:
-${kindLines}
-${anyHiddenFields(kinds) ? HIDDEN_FIELDS_RULE : ""}
-
-You can CREATE new records of these kinds: ${createable.join(", ") || "(none)"}
-
-Each createable kind's fields (use these EXACT field names in "fields"):
-${createFieldLines.join("\n") || "(none)"}
-
-ACTIONS you can run on existing records:
-${actionLines.join("\n") || "(none)"}
-
-ACTIONS that run on the WORKSPACE (no record — omit entity_kind/entity_query):
-${workspaceActionLines.join("\n") || "(none)"}
-${railMode === "full" ? "" : RAIL_LOOKUP_NOTE}
-
-${TOOL_USE_RULES}
-
-Reply with ONE JSON object and nothing else, in ONE of these shapes:
-- Chat/answer/ask:   {"type":"reply","text":"<your full, helpful answer or question>"}
-- Create a record:   {"type":"create","entity_kind":"<id>","fields":{"name":"<...>", ...},"summary":"<one line, e.g. Create a part called Widget>"}
-- Run an action:     {"type":"action","action_id":"<id>","entity_kind":"<id>","entity_query":"<the record's name to find it>","args":{...},"summary":"<one line>"}
-- Workspace action:  {"type":"action","action_id":"<id>","args":{...},"summary":"<one line>"}
-- Build a whole app:  {"type":"build","intent":"<the user's FULL description of the workspace/app to set up>","summary":"<one line, e.g. Set up a yarn & crochet tracker>"}
-
-Rules:
-- Default to "reply" for questions, explanations, and anything conversational — put your ACTUAL answer in "text", not a deflection.
-- Only use create/action when the user clearly wants to save or change something in the workspace.
-- Use entity_kind / action_id values EXACTLY from the lists above. Never invent ids. If a needed kind/action isn't listed, use "reply" to answer and say what you can't save yet.
-- create: use the kind's field names from the list above (its required/title field at minimum); add other obvious fields the user gave.
-- action: entity_query is the name/text to find the existing record — the system looks it up. For an action in the WORKSPACE list, omit entity_kind and entity_query entirely.
-- action args: pass every argument the action lists, under "args", by name. A "list" arg is a JSON array in the order you mean, e.g. {"ids":["<id-a>","<id-b>"]} — read the ids first and pass the real ones, never a name. An action whose args you cannot fill is one to ASK about, not to guess at.
-- Use "build" only when the user wants to SET UP or DESIGN a whole new app/workspace (several kinds/modules at once). Put their full description in "intent". Never use "build" for a single record.`;
-}
 
 /** The action's own words: its label and what its arguments are called. The
  *  registry has carried these all along; the confirm card simply never asked. */
@@ -684,13 +530,7 @@ async function runTurn(
         const a = call.args ?? {};
         const actionId = String(a.action_id ?? "");
         if (!actionId) return null;
-        const schema = (await actionArgsSchema(c, actionId)) ?? {};
-        const names = Object.keys(schema);
-        const given = a.args && typeof a.args === "object" ? Object.keys(a.args as Record<string, unknown>) : [];
-        if (names.length === 0 || given.length > 0) return null;
-        // The action takes arguments and none were passed: the id is right and
-        // the call would run on nothing. Say which, and let the model try again.
-        return `${actionId} takes arguments and none were given: ${names.map((n) => `${n}${schema[n]?.label ? ` (${schema[n]!.label})` : ""}`).join(", ")}. Call invoke_action again with args filled from what the user said, or ask the user for the value you are missing.`;
+        return missingActionArgs(actionId, await actionArgsSchema(c, actionId), a.args);
       },
       ...(onEvent ? { onEvent } : {}),
       ...(prefs.write_mode === "auto"
@@ -920,7 +760,7 @@ chatRouter.post(
     const promptPrefs = await chatPrefsOf(req).catch(() => DEFAULT_PREFS);
     let system: string;
     try {
-      system = await buildSystemPrompt(c, promptPrefs.read_tools ? "brief" : "full");
+      system = await buildSystemPrompt(promptWorkspace(c), promptPrefs.read_tools ? "brief" : "full");
     } catch {
       system = `You are Cobb, the helpful assistant inside the "${c.orgName}" Cobblr workspace. Introduce yourself as Cobb if asked.${c.userName ? ` You are talking to ${c.userName}.` : ""} Chat helpfully; reply with {"type":"reply","text":"..."}.`;
     }
@@ -1601,3 +1441,6 @@ chatRouter.post(
     sendOutcome(res, out);
   }),
 );
+
+// Re-exported so existing callers (benches, tests) keep one import path.
+export { GROUNDING_RULES, PLAIN_ANSWER_RULES, TOOL_USE_RULES };

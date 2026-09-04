@@ -11,7 +11,8 @@
 import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { CoreScanDB } from "../db.js";
-import { enrichPhotoItem } from "../services/enrich-photo.js";
+import { enrichPhotoItem, knownCategories } from "../services/enrich-photo.js";
+import { answerWindow, claimGlanceAnswer, glanceItem, readContextFor, readGlanceEnabled, shouldGlance } from "../services/glance.js";
 import { routeScannedReceiptPhoto } from "../services/receipt-photo.js";
 import { autoRankCatalogPhoto, readPhotoRankEnabled } from "../services/auto-rank.js";
 import { runReceiptBackfill } from "../services/receipt-backfill.js";
@@ -56,7 +57,7 @@ export function registerScanHandlers(): void {
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreScanDB>;
     const row = await db
       .selectFrom("core_scan_inbox_items")
-      .select(["barcode_text", "image_file_id", "ai_suggested_at"])
+      .select(["barcode_text", "image_file_id", "ai_suggested_at", "suggested_metadata"])
       .where("id", "=", itemId)
       .executeTakeFirst();
     if (!row) return { ok: true, skipped: "no such row" };
@@ -68,13 +69,50 @@ export function registerScanHandlers(): void {
     // The emit put the visitor on the payload (the wire runs with no request),
     // so the hosted identify's per-person tier still knows who is scanning.
     const payloadIp = (ctx.event?.payload as { visitor_ip?: unknown } | undefined)?.visitor_ip;
+
+    // THE FIRST LOOK, when the workspace asked for it. A fast small answer is
+    // written as a hypothesis and the card asks the person; the considered read
+    // below waits for the window, then CLAIMS the row. If the person answered
+    // first, their answer endpoint holds the claim and has already started the
+    // read the way they chose, so this run stands down. See services/glance.ts.
+    let readCtx: { confirmedName?: string; rejectedNames?: string[]; hint?: string } = {};
+    const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
+    if (
+      shouldGlance({
+        enabled: await readGlanceEnabled(db),
+        barcodeText: row.barcode_text,
+        imageFileId: row.image_file_id,
+        aiSuggestedAt: row.ai_suggested_at,
+        meta,
+      })
+    ) {
+      const glance = await glanceItem({
+        db,
+        orgId: ctx.orgId,
+        itemId,
+        imageFileId: row.image_file_id,
+        userId: ctx.userId,
+        knownCategories: await knownCategories(db),
+      });
+      if (glance) {
+        await answerWindow();
+        const fresh = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreScanDB>;
+        if (!(await claimGlanceAnswer(fresh, itemId, "timeout"))) {
+          return { ok: true, skipped: "the person answered the first look; their answer runs the read" };
+        }
+        // Silence: today's read, unchanged.
+      }
+    } else {
+      readCtx = readContextFor(meta);
+    }
     const outcome = await enrichPhotoItem({
-      db,
+      db: (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreScanDB>,
       orgId: ctx.orgId,
       itemId,
       imageFileId: row.image_file_id,
       userId: ctx.userId,
       visitorIp: typeof payloadIp === "string" ? payloadIp : null,
+      ...readCtx,
     });
     // You photographed a receipt. Hand it to the receipt parser instead of
     // filing the paper as a thing you own — the same route an uploaded receipt

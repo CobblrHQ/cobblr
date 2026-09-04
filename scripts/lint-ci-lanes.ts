@@ -17,9 +17,13 @@
 import { readFileSync } from "node:fs";
 
 const ROOT = new URL("..", import.meta.url).pathname;
-const src = readFileSync(`${ROOT}/.forgejo/workflows/ci.yml`, "utf8");
+// Two files since 2026-09-04: the tracker moved out of ci.yml so it stops
+// sitting in main's serialising concurrency group. The two jobs must still be
+// identical, which is now a cross-FILE invariant.
+const gateSrc = readFileSync(`${ROOT}/.forgejo/workflows/ci.yml`, "utf8");
+const trackerSrc = readFileSync(`${ROOT}/.forgejo/workflows/ci-tracker.yml`, "utf8");
 
-function job(id: string): string | null {
+function job(src: string, id: string): string | null {
   // Lazy up to the next top-level job, a top-level comment, or the end of the
   // file (`(?![\\s\\S])`, NOT `$`: with the m flag `$` is every line end).
   const m = new RegExp(`^  ${id}:\\n([\\s\\S]*?)(?=^  [a-z][a-z0-9-]*:\\n|^  #|(?![\\s\\S]))`, "m").exec(src);
@@ -32,9 +36,9 @@ function body(text: string): string {
 }
 
 const problems: string[] = [];
-const gate = job("test");
-const trk = job("test-full");
-if (!gate || !trk) problems.push("ci.yml must have both a `test` job and a `test-full` job");
+const gate = job(gateSrc, "test");
+const trk = job(trackerSrc, "test-full");
+if (!gate || !trk) problems.push("ci.yml must have a `test` job and ci-tracker.yml a `test-full` job");
 else {
   if (!/^    runs-on: ci-test\n/m.test(gate)) problems.push("`test` must run on ci-test");
   if (!/^    runs-on: ci-test-full\n/m.test(trk)) problems.push("`test-full` must run on ci-test-full");
@@ -42,6 +46,16 @@ else {
   // a second full suite per push would double the queue for nothing. It DOES
   // run on a dispatch and on the nightly heartbeat, where a full check is the
   // point. So the rule is "not on a pull_request", not "only on a push".
+  // The tracker must stay OUT of ci.yml's concurrency group: that group
+  // serialises main, and a job that gates nothing must never sit on the
+  // critical path of the next commit (2026-09-04: main runs went from about
+  // three minutes to eight-to-twenty because it did).
+  if (!/^concurrency:\n\s+group: ci-tracker-/m.test(trackerSrc)) {
+    problems.push("ci-tracker.yml needs its OWN concurrency group (`ci-tracker-...`), or the tracker blocks every following commit on main");
+  }
+  if (/^\s{2}test-full:/m.test(gateSrc)) {
+    problems.push("`test-full` is back in ci.yml — it belongs in ci-tracker.yml, outside main's serialising group");
+  }
   if (!/^    if: github\.event_name != 'pull_request'\n/m.test(trk)) {
     problems.push("`test-full` must carry `if: github.event_name != 'pull_request'` (never on a PR; push, dispatch and schedule are all fine)");
   }

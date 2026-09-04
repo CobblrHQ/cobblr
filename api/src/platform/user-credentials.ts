@@ -14,6 +14,7 @@
 //         'explicit'           → the workspaces in user_credential_orgs
 
 import { meta } from "../db/meta.js";
+import { planRouteRows } from "./credential-routing.js";
 import { pickCredential } from "./pick-ai-credential.js";
 import { encryptCreds, decryptCreds } from "../db/crypto.js";
 
@@ -129,16 +130,33 @@ async function setExplicitRoutes(
   const ownsOrg = new Set(ownerRows.map((o) => o.org_id));
   const now = new Date();
 
-  const values = routes.map((r) => {
-    if (r.mode === "my-calls") {
-      return { credential_id: credentialId, org_id: r.org_id, mode: r.mode, approved_at: null, approved_by: null, active: false };
-    }
-    const prev = prevByOrg.get(r.org_id);
-    if (prev?.mode === "workspace-default" && prev.approved_at) {
-      return { credential_id: credentialId, org_id: r.org_id, mode: r.mode, approved_at: prev.approved_at, approved_by: prev.approved_by, active: prev.active };
-    }
-    const isOwner = ownsOrg.has(r.org_id);
-    return { credential_id: credentialId, org_id: r.org_id, mode: r.mode, approved_at: isOwner ? now : null, approved_by: isOwner ? credOwnerId : null, active: false };
+  // Which of these workspaces already have a LIVE AI, from some other
+  // credential? Its owner picked it, and attaching a second key must never
+  // quietly take that over.
+  const liveElsewhere = new Set(
+    (
+      await meta
+        .selectFrom("user_credential_orgs")
+        .select("org_id")
+        .where("org_id", "in", routes.map((r) => r.org_id))
+        .where("mode", "=", "workspace-default")
+        .where("active", "=", true)
+        .where("credential_id", "!=", credentialId)
+        // Same kind only: a workspace with a live parcel bridge and no AI has
+        // a vacancy for an AI, and used to look occupied.
+        .where("credential_id", "in", credentialIdsOfKind(await kindOfCredential(credentialId)))
+        .execute()
+    ).map((r) => r.org_id),
+  );
+
+  const values = planRouteRows({
+    credentialId,
+    credOwnerId,
+    routes,
+    prev: prevByOrg,
+    ownsOrg,
+    liveElsewhere,
+    now,
   });
   await meta.insertInto("user_credential_orgs").values(values).execute();
 }
@@ -348,6 +366,55 @@ async function isOrgOwner(orgId: string, userId: string): Promise<boolean> {
 
 /** Every AI-share offer routed to a workspace (pending + approved), for the
  *  owner's review. */
+
+export interface RoutedConnection {
+  credentialId: string;
+  providerId: string;
+  label: string;
+  ownerUserId: string;
+  /** The workspace owner has accepted it (or it is the owner's own). */
+  approved: boolean;
+  /** It is the workspace's current default of this kind. */
+  active: boolean;
+}
+
+/**
+ * The connections of one kind routed INTO a workspace.
+ *
+ * Exists so a workspace surface can CHOOSE between them - the per-job AI picker
+ * needs to offer a personal connection next to the workspace's own providers,
+ * and "which connections can this workspace name?" had no seam at all. Distinct
+ * from resolve(), which answers "which one serves this call".
+ */
+export async function listRoutedConnections(
+  orgId: string,
+  kind = "ai-provider",
+): Promise<RoutedConnection[]> {
+  const rows = await meta
+    .selectFrom("user_credential_orgs as uco")
+    .innerJoin("user_credentials as uc", "uc.id", "uco.credential_id")
+    .select([
+      "uco.credential_id",
+      "uco.approved_at",
+      "uco.active",
+      "uc.provider_id",
+      "uc.label",
+      "uc.user_id",
+    ])
+    .where("uco.org_id", "=", orgId)
+    .where("uco.mode", "=", "workspace-default")
+    .where("uc.kind", "=", kind)
+    .execute();
+  return rows.map((r) => ({
+    credentialId: r.credential_id,
+    providerId: r.provider_id,
+    label: r.label,
+    ownerUserId: r.user_id,
+    approved: r.approved_at != null,
+    active: r.active === true,
+  }));
+}
+
 export async function listWorkspaceAiOffers(orgId: string): Promise<WorkspaceAiOffer[]> {
   const rows = await meta
     .selectFrom("user_credential_orgs as uco")
@@ -364,6 +431,10 @@ export async function listWorkspaceAiOffers(orgId: string): Promise<WorkspaceAiO
     ])
     .where("uco.org_id", "=", orgId)
     .where("uco.mode", "=", "workspace-default")
+    // AI only. This table carries every kind of connection, so without it a
+    // parcel-tracking bridge routed to the workspace was listed on the AI page
+    // as somebody's shared AI.
+    .where("uc.kind", "=", "ai-provider")
     .execute();
   const owners = await meta
     .selectFrom("org_memberships")
@@ -479,6 +550,40 @@ export async function setMyConnectionOrder(
   return true;
 }
 
+
+/**
+ * THE ACTIVE DEFAULT IS PER KIND, not one slot per workspace.
+ *
+ * `user_credential_orgs` carries every kind of connection a person can attach
+ * (an AI provider, a parcel-tracking bridge, whatever a module registers), and
+ * `mode: workspace-default` + `active` means "this is the one this workspace
+ * uses" - of ITS OWN KIND. Nothing said so, so four separate places asked
+ * "does this workspace already have an active one?" across all kinds at once.
+ *
+ * Found on the hosted deployment 2026-09-04, by the person it happened to:
+ * their workspace held a Gemini key (approved, idle) and a parcel-tracking
+ * bridge (active). The bridge answered every "is there already one?" question,
+ * so the AI never went live and the workspace reported no AI connected. The
+ * same conflation runs the other way too: choosing an AI ran an UPDATE that
+ * cleared `active` on every workspace-default row, which switched the parcel
+ * bridge off as a side effect of picking a model.
+ *
+ * So every query about the active default is scoped to one kind.
+ */
+function credentialIdsOfKind(kind: string) {
+  return meta.selectFrom("user_credentials").select("id").where("kind", "=", kind);
+}
+
+/** The kind of one credential, for scoping the queries above. */
+async function kindOfCredential(credentialId: string): Promise<string> {
+  const row = await meta
+    .selectFrom("user_credentials")
+    .select("kind")
+    .where("id", "=", credentialId)
+    .executeTakeFirst();
+  return row?.kind ?? "ai-provider";
+}
+
 /** Owner sets which approved AI is THE active workspace default (or none). */
 export async function setActiveWorkspaceAi(
   ownerUserId: string,
@@ -486,11 +591,15 @@ export async function setActiveWorkspaceAi(
   credentialId: string | null,
 ): Promise<boolean> {
   if (!(await isOrgOwner(orgId, ownerUserId))) return false;
+  // Only this kind's rows. Clearing every workspace-default row would switch
+  // off the workspace's parcel bridge because somebody picked a model.
+  const kind = credentialId ? await kindOfCredential(credentialId) : "ai-provider";
   await meta
     .updateTable("user_credential_orgs")
     .set({ active: false })
     .where("org_id", "=", orgId)
     .where("mode", "=", "workspace-default")
+    .where("credential_id", "in", credentialIdsOfKind(kind))
     .execute();
   if (credentialId) {
     await meta
@@ -522,12 +631,14 @@ export async function approveWorkspaceAiOffer(
     .where("credential_id", "=", credentialId)
     .where("mode", "=", "workspace-default")
     .execute();
+  // Of the SAME kind. A parcel bridge is not an AI, and used to answer this.
   const activeExists = await meta
     .selectFrom("user_credential_orgs")
     .select("credential_id")
     .where("org_id", "=", orgId)
     .where("mode", "=", "workspace-default")
     .where("active", "=", true)
+    .where("credential_id", "in", credentialIdsOfKind(await kindOfCredential(credentialId)))
     .executeTakeFirst();
   if (makeActive || !activeExists) {
     await setActiveWorkspaceAi(ownerUserId, orgId, credentialId);
@@ -597,6 +708,8 @@ export async function resolvePersonalProvider(
    *  connections per capability — a fast model for the live camera, a better
    *  one for inbox identification — and this is what selects that ranking. */
   capability?: string,
+  /** The workspace's per-job choice, when it named one of these connections. */
+  preferCredentialId?: string | null,
 ): Promise<ResolvedPersonalProvider | null> {
   // FAIL-SAFE: this layer is opt-in + default-off, so if its tables are missing
   // (e.g. a meta DB without migration 053) or any query throws, it must NEVER
@@ -604,7 +717,7 @@ export async function resolvePersonalProvider(
   // workspace provider. (Regression guard: a thrown query here surfaced as a
   // generic ai_error instead of the clean no_ai_provider the degrade path wants.)
   try {
-    return await resolvePersonalProviderUnsafe(orgId, callerUserId, supportsCapability, kind, capability);
+    return await resolvePersonalProviderUnsafe(orgId, callerUserId, supportsCapability, kind, capability, preferCredentialId);
   } catch {
     return null;
   }
@@ -616,6 +729,7 @@ async function resolvePersonalProviderUnsafe(
   supportsCapability: (providerId: string) => boolean,
   kind: string,
   capability?: string,
+  preferCredentialId?: string | null,
 ): Promise<ResolvedPersonalProvider | null> {
   const members = await meta
     .selectFrom("org_memberships")
@@ -715,6 +829,7 @@ async function resolvePersonalProviderUnsafe(
   const pick = pickCredential({
     candidates: eligible,
     callerUserId,
+    preferCredentialId,
     routeOf: (id: string) => {
       const c = byId.get(id);
       // A Share the owner activated is that workspace's first choice; an

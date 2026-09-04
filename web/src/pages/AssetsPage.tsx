@@ -32,6 +32,7 @@ import {
 import { EntityAttachments } from "../components/EntityAttachments";
 import { LocationTreePicker } from "../components/LocationTreePicker";
 import { ContentsPanel } from "../components/ContentsPanel";
+import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract";
 
 const ENTITY_KIND = "assets:asset";
 
@@ -54,10 +55,14 @@ export function AssetsPage({
   const [searchParams, setSearchParams] = useSearchParams();
   const lensName = instance ? null : searchParams.get("lens");
   const viewId = searchParams.get("view");
-  const noun = itemNoun?.trim() || "asset";
+
   // On an instance page, fields/views are keyed to the instance ("vehicles:item")
   // rather than the base assets:asset. Mirrors MachinesPage's viewKind.
   const entityKind = instance ? `${instance}:item` : ENTITY_KIND;
+  // Not the module's own word: a named collection that never had a noun set
+  // read "New asset" regardless of what it holds. itemNounFor asks the noun
+  // somebody set, then the kind, and stops at the neutral "item".
+  const noun = itemNounFor({ itemNoun, entityKind });
 
   // Detail selection: URL param on /assets, local state (+ deep-link ?asset=id)
   // on an instance page.
@@ -292,7 +297,7 @@ export function AssetsPage({
         ) : (
           <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-12 text-center text-xs text-faint dark:text-slate-500 italic">
             {allRows.length === 0
-              ? `No ${noun}s yet. Click + New ${noun} to add one.`
+              ? `No ${pluralise(noun)} yet. Click + New ${noun} to add one.`
               : activeView
                 ? `Nothing in “${activeView.name}” yet — add your first with New asset.`
                 : "No matches with the current filters."}
@@ -355,7 +360,7 @@ export function AssetsPage({
         ids={Array.from(selected)}
         noun={noun}
         onMoved={(n, where) => {
-          toast.success(`Moved ${n} ${n === 1 ? noun : `${noun}s`} to ${where}`);
+          toast.success(`Moved ${countOf(n, noun)} to ${where}`);
           setSelected(new Set());
           void qc.invalidateQueries({ queryKey: ["assets"] });
         }}

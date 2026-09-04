@@ -160,6 +160,11 @@ interface PhotoEnrichContext {
   /** Every correction the user has given this item, oldest first (standingHints).
    *  The prompt weighs later over earlier; `hint` is the newest. */
   hints?: string[];
+  /** The person answered YES to the first look: identification is settled and
+   *  the read elaborates on this name (see services/glance.ts). */
+  confirmedName?: string;
+  /** The person answered NO: these guesses are off the table. */
+  rejectedNames?: string[];
 }
 
 function clamp01(n: number): number {
@@ -279,6 +284,11 @@ export interface IdentifyImageOpts {
    *  shows them all and weighs later over earlier; `hint` stays the newest for
    *  callers that only carry one. */
   hints?: string[];
+  /** The person answered YES to the first look: identification is settled and
+   *  the read elaborates on this name (see services/glance.ts). */
+  confirmedName?: string;
+  /** The person answered NO: these guesses are off the table. */
+  rejectedNames?: string[];
   /** The workspace's existing category vocabulary, so the identify reuses a
    *  label instead of inventing a synonym of one. */
   knownCategories?: string[];
@@ -297,6 +307,8 @@ export async function identifyImage({
   bypassCache,
   hint,
   hints,
+  confirmedName,
+  rejectedNames,
   knownCategories,
   visitorIp,
 }: IdentifyImageOpts): Promise<PhotoIdentity | null> {
@@ -322,6 +334,8 @@ export async function identifyImage({
         image_media_type: mediaType,
         ...(hint ? { user_hint: hint } : {}),
         ...(hints && hints.length > 1 ? { user_hints: hints } : {}),
+        ...(confirmedName ? { confirmed_name: confirmedName } : {}),
+        ...(rejectedNames && rejectedNames.length ? { rejected_names: rejectedNames } : {}),
         ...(knownCategories && knownCategories.length ? { known_categories: knownCategories } : {}),
       },
       source: { kind: "core-scan:photo", id: sourceId ?? "eval" },
@@ -1020,9 +1034,13 @@ export async function enrichPhotoItem(ctx: PhotoEnrichContext): Promise<EnrichOu
     mediaType: file.mimeType,
     sourceId: ctx.itemId,
     userId: ctx.userId,
-    bypassCache: ctx.force || !!ctx.hint,
+    // An answered first look changes the question, so the cached reply to the
+    // unanswered one must not be served.
+    bypassCache: ctx.force || !!ctx.hint || !!ctx.confirmedName || !!ctx.rejectedNames?.length,
     hint: ctx.hint,
     hints: ctx.hints,
+    confirmedName: ctx.confirmedName,
+    rejectedNames: ctx.rejectedNames,
     knownCategories: knownCats,
     visitorIp: ctx.visitorIp,
   });

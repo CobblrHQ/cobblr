@@ -140,10 +140,16 @@ export function sessionFilingReadiness(
   const category = sessionCategory(readyItems).suggestion;
   const missingLocation = readyItems.filter((i) => !i.target_location_id).map((i) => i.id);
   const fallbackLocation = missingLocation.length > 0 ? opts.activeBin ?? null : null;
+  // A suggested spot IS an answer to "where does this go" - the item has one,
+  // it is just not confirmed yet, and `confirmBodyFor` files into it. So an
+  // item carrying a suggestion is not what makes the batch stop and ask.
+  // Without this the shop that finally knew where its cold things belonged
+  // would still interrupt to demand a location for all of them.
+  const homeless = readyItems.filter((i) => !i.target_location_id && !i.suggested_location_id);
   // Location first: an item with no category is still findable in its table,
   // an item with no location is loose in the house. We only need to ASK when
-  // something is missing and no standing bin can answer for it.
-  const mustAsk = missingLocation.length > 0 && !fallbackLocation;
+  // something has no answer at all and no standing bin can answer for it.
+  const mustAsk = homeless.length > 0 && !fallbackLocation;
   const reason = mustAsk ? "location" : !category ? "category" : null;
   return { category, missingLocation, fallbackLocation, needsInput: reason !== null, reason };
 }

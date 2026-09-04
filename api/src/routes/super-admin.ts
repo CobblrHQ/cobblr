@@ -1813,7 +1813,10 @@ superAdminRouter.post("/feedback/append", async (req, res, next) => {
     }
     const fb = await meta
       .selectFrom("feedback")
-      .select(["id", "status", "message"])
+      // origin_ref carries the guild this ticket came FROM. Without it the
+      // reopen notice below lands in the operator's own ops server instead of
+      // the support server the reporter is in — see the announce call.
+      .select(["id", "status", "message", "origin_ref"])
       .where(sql`origin_ref ->> 'thread_id'`, "=", parsed.data.thread_id)
       .executeTakeFirst();
     if (!fb) {
@@ -1843,6 +1846,11 @@ superAdminRouter.post("/feedback/append", async (req, res, next) => {
         title: "🔄 Ticket reopened (Discord follow-up)",
         body: (parsed.data.text || "(image / attachment)").slice(0, 1500),
         color: 0xfaa61a,
+        // Back to the server the ticket came from. Ingest has always routed
+        // this way and the reopen did not, so a follow-up on a self-hoster's
+        // ticket announced itself in the operator's ops server — the one place
+        // the people in that conversation cannot see it (reported 2026-09-04).
+        originGuildId: ((fb.origin_ref ?? {}) as { guild_id?: string }).guild_id ?? null,
       });
     }
     res.json({ id: fb.id, reopened });
@@ -2012,6 +2020,8 @@ superAdminRouter.post("/feedback/append-dm", async (req, res, next) => {
       pokeTriage(row.id);
       const oid = attachOrgId;
       void announce("feedback.new", {
+        // no-origin-guild: a DM has no server. There is nowhere to route it
+        // back to, so the operator's own sink is the right and only audience.
         title: "💬 New feedback (Discord DM)",
         body: (parsed.data.text || "(screenshot attached)").slice(0, 1500),
         color: 0x5865f2,

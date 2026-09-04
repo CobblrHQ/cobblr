@@ -65,6 +65,29 @@ export interface VocabularyCapability extends Base {
 export const CAPABILITIES: Capability[] = [
   {
     kind: "owns",
+    id: "clipboard:image-reader",
+    what: "reading the image files off a pasted clipboard",
+    why:
+      "there were four hand-rolled copies and three different answers. Two read only clipboardData.items, one read " +
+      "only .files, and which list a browser fills depends on the browser and on whether the picture was copied from " +
+      "a page or from a file manager - so on the wrong pairing the paste was dropped with no error, no toast and " +
+      "nothing in the console, which is indistinguishable from the feature not existing (2026-09-03). A paste that " +
+      "silently does nothing is the one bug a person cannot report usefully, so the reading of it has one owner that " +
+      "checks both lists and is tested against both",
+    owner: "web/src/components/pastedImage.ts",
+    scope: [
+      "web/src/components/EntityAttachments.tsx",
+      "web/src/components/FeedbackWidget.tsx",
+      "web/src/components/ImageLightbox.tsx",
+      "web/src/components/ImageSearchPicker.tsx",
+      "web/src/pages/omniIntake.ts",
+      "web/src/pages/ScanPage.tsx",
+    ],
+    detect: /clipboardData\s*[?.]*\.\s*(items|files)\b/,
+    use: "clipboardImageFiles(e.clipboardData) from pastedImage.ts, or readPastedImage(payloadFromClipboard(...)) when an address counts too",
+  },
+  {
+    kind: "owns",
     id: "browser:local-network-door",
     what: "reaching an address on the visitor's own machine from the browser",
     why:

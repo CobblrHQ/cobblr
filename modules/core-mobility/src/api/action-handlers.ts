@@ -84,7 +84,7 @@ export function registerActionHandlers(): void {
     if ((meta.away_since ?? null) === nextVal) return { ok: true, changed: false };
 
     meta.away_since = nextVal;
-    const writer = platform().entities.getWriter(kind);
+    const writer = await platform().entities.getWriter(ctx.orgId, kind);
     if (!writer) return { ok: false, reason: "no_writer" };
     await writer.update(ctx.orgId, id, { metadata: meta });
     return { ok: true, changed: true, away_since: nextVal };
@@ -103,7 +103,7 @@ export function registerActionHandlers(): void {
     if (!home) return { ok: false, reason: "no_home" };
 
     meta.away_since = null;
-    const writer = platform().entities.getWriter(kind);
+    const writer = await platform().entities.getWriter(ctx.orgId, kind);
     if (!writer) return { ok: false, reason: "no_writer" };
     await writer.update(ctx.orgId, id, { metadata: meta });
     // The move itself goes through the placement seam (placement-cutover-plan

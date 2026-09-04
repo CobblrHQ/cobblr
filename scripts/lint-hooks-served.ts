@@ -63,8 +63,18 @@ function registeredIds(files: string[]): Set<string> {
 
 function walk(dir: string, acc: string[] = []): string[] {
   for (const e of readdirSync(dir)) {
+    // `.git` is the one directory that changes under a walk: a concurrent
+    // fetch writes `refs/.../<branch>.lock` and removes it milliseconds later,
+    // so an entry read here can be gone by the stat below. It holds no source.
+    if (e === "node_modules" || e === "dist" || e === ".git") continue;
     const p = join(dir, e);
-    if (statSync(p).isDirectory()) walk(p, acc);
+    let isDir: boolean;
+    try {
+      isDir = statSync(p).isDirectory();
+    } catch {
+      continue; // vanished between readdir and stat
+    }
+    if (isDir) walk(p, acc);
     else if (p.endsWith(".ts") && !p.endsWith(".d.ts")) acc.push(p);
   }
   return acc;

@@ -24,6 +24,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api, type ImageOption } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { nextTerm } from "./imageSearchTerm";
+import { imageUrlFrom, payloadFromClipboard, readPastedImage } from "./pastedImage";
 import { ImageLightbox } from "./ImageLightbox";
 
 export function ImageSearchPicker({
@@ -47,6 +48,7 @@ export function ImageSearchPicker({
   compact = false,
   leading,
   leadingLabel,
+  onPasteImage,
 }: {
   /** STRIP layout: one legible header line (label + search + Pick best) and
    *  then the tiles, instead of a stacked form / caption / grid. Used where the
@@ -101,6 +103,11 @@ export function ImageSearchPicker({
   bestUrl?: string | null;
   /** One short sentence on WHY, shown under the grid. */
   bestReason?: string | null;
+  /** An image pasted straight into the search box. The CALLER uploads it and
+   *  applies it, because only the caller knows what the picture is FOR (a scan
+   *  item's catalog photo, a machine's picture). Without this the box quietly
+   *  drops the paste, which is what it did before (reported 2026-09-03). */
+  onPasteImage?: (file: File) => void;
 }) {
   const { activeSlug } = useActiveOrg();
   const usesProp = itemsProp !== undefined;
@@ -164,9 +171,38 @@ export function ImageSearchPicker({
   function submit(e: FormEvent) {
     e.preventDefault();
     const t = term.trim();
+    // An ADDRESS is not a phrase to search for, it is the picture itself. This
+    // box used to run it as a query, so the one case where you already have the
+    // exact image you want was the case it could not serve.
+    const url = imageUrlFrom(t);
+    if (url) {
+      onPick(url);
+      return;
+    }
     setApplied(t);
     if (usesProp) onSearch?.(t); // the caller owns fetching in pre-fetched mode
   }
+
+  /** Cmd+V in the box. A picture goes to the caller to upload; an address is
+   *  applied straight away, so pasting never needs a second keystroke. */
+  function paste(e: React.ClipboardEvent<HTMLInputElement>) {
+    const p = readPastedImage(payloadFromClipboard(e.clipboardData));
+    if (!p) return; // ordinary text: let it land in the box and be searched
+    if (p.kind === "file") {
+      if (!onPasteImage) return; // this caller cannot take a file - keep the text
+      e.preventDefault();
+      onPasteImage(p.file);
+      return;
+    }
+    e.preventDefault();
+    setTouched(true);
+    setTerm(p.url);
+    onPick(p.url);
+  }
+
+  /** The button says what pressing it will DO. Typing an address and being
+   *  offered "Search" is the whole misunderstanding, in one word. */
+  const submitLabel = imageUrlFrom(term) ? "Use" : "Search";
 
   function tileClick(o: ImageOption) {
     if (onPreview) onPreview(o.url);
@@ -313,7 +349,8 @@ export function ImageSearchPicker({
                     setTouched(true);
                     setTerm(e.target.value);
                   }}
-                  placeholder="search images…"
+                  onPaste={paste}
+                  placeholder="search or paste a link…"
                   className="w-full min-w-0 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-0.5 text-xs"
                 />
                 <button
@@ -321,7 +358,7 @@ export function ImageSearchPicker({
                   disabled={busy}
                   className="shrink-0 rounded border border-line dark:border-slate-600 px-2 py-0.5 text-[11px] font-medium text-muted hover:text-content hover:border-faint disabled:opacity-50"
                 >
-                  Search
+                  {submitLabel}
                 </button>
               </form>
             )}
@@ -374,7 +411,8 @@ export function ImageSearchPicker({
               setTouched(true);
               setTerm(e.target.value);
             }}
-            placeholder="search images…"
+            onPaste={paste}
+            placeholder="search or paste an image link…"
             className="flex-1 min-w-0 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1 text-xs"
           />
           <button
@@ -382,7 +420,7 @@ export function ImageSearchPicker({
             disabled={busy}
             className="shrink-0 rounded border border-line dark:border-slate-600 px-2 py-1 text-[11px] font-medium text-muted hover:text-content hover:border-faint disabled:opacity-50"
           >
-            Search
+            {submitLabel}
           </button>
           {touched && (
             <button

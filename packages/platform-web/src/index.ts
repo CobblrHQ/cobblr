@@ -223,6 +223,7 @@ export { MoveToInstanceModal, type MoveToInstanceModalProps } from "./MoveToInst
 export { AssortmentCard, type AssortmentCardProps, type AssortmentKind } from "./AssortmentCard";
 export { scrimAlpha, scrimAlphaFor, percentileLuma } from "./photo-scrim";
 export { HIDE_WHEN_OVERLAY_OPEN, OverlayFlag, useOverlayOpenFlag } from "./overlay-open";
+export { YIELDING_CLASS, useYieldToContent, pressableBeneath, samplePoints } from "./yield-to-content";
 export { LiveSurfaceProvider, useOverLiveSurface } from "./live-surface";
 export { describeUnreadableBody } from "./unreadableBody";
 

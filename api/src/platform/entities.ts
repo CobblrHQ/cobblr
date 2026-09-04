@@ -369,8 +369,31 @@ export function registerEntityWriter(kind: string, writer: EntityWriter): void {
   entityWriters.set(kind, writer);
 }
 
-export function getEntityWriter(kind: string): EntityWriter | undefined {
-  return entityWriters.get(kind);
+/** The writer for a kind — INCLUDING an instance kind.
+ *
+ *  Takes an org because `<instance>:item` kinds are synthesized per-org and
+ *  are never registered by anyone: only the owning module's real kind is in
+ *  the map. A plain `entityWriters.get("bookshelf:item")` therefore misses,
+ *  and every caller reads that miss as "this kind cannot be written" — no
+ *  error, just a thing that quietly does not happen. Sending a book back to
+ *  the scan inbox said "the created entry couldn't be removed automatically";
+ *  the same miss silently disarmed undo (snapshot/restore), take/return, and
+ *  containment for every instance item in the workspace.
+ *
+ *  Async and org-scoped ON PURPOSE: there is deliberately no synchronous
+ *  by-kind door left, because a caller holding one cannot be instance-aware
+ *  and the failure it produces is invisible.
+ *
+ *  Exact hits cost nothing — the registry lookup runs first and only a miss
+ *  pays for the instance resolution. */
+export async function getEntityWriterFor(
+  orgId: string,
+  kind: string,
+): Promise<EntityWriter | undefined> {
+  const exact = entityWriters.get(kind);
+  if (exact) return exact;
+  const base = await baseKindOf(orgId, kind);
+  return base === kind ? undefined : entityWriters.get(base);
 }
 
 export function registerListResolver(

@@ -15,6 +15,7 @@
 import type { Operation } from "./learned-commands.js";
 import type { WorkspaceApi } from "@cobblr/workspace-tools";
 import { getTool, fetchKinds } from "@cobblr/workspace-tools";
+import { pluralise } from "@cobblr/platform-contract";
 
 export interface ComputedPlan {
   /** What the confirm card says, in a sentence a person can check. */
@@ -92,7 +93,7 @@ export function describeDuplicates(
   const n = groups.reduce((t, g) => t + g.remove.length, 0);
   const names = [...new Set(groups.map((g) => g.keep.title))].slice(0, 4).join(", ");
   const more = groups.length > 4 ? ` and ${groups.length - 4} more` : "";
-  return `Delete ${n} duplicate ${n === 1 ? noun : `${noun}s`} (${names}${more}), keeping the original of each.`;
+  return `Delete ${n} duplicate ${n === 1 ? noun : pluralise(noun)} (${names}${more}), keeping the original of each.`;
 }
 
 /** Can this kind hold one of ITSELF? A place inside a place.

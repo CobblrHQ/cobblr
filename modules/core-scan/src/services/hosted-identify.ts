@@ -107,6 +107,15 @@ export function inMemoryIdentifyUsageStore(): IdentifyUsageStore & { count(orgId
  *  (the try box: every sandbox). A comma list of managed-app ids (`yarn`, or
  *  `yarn,lego`) = only workspaces locked into one of those apps; a platform
  *  workspace on the same box gets nothing and degrades to its own AI path.
+ *
+ *  An entry may also name ONE workspace by slug, written `@slug`
+ *  (`@e2e-scan-walk`, or `yarn,@e2e-scan-walk`). Managed apps are a closed
+ *  registry, so an app id alone cannot admit a workspace that is not one of
+ *  them - and "turn this on for that workspace and nothing else" is a real
+ *  need: a deployment with one workspace doing the exercising, and a mirror of
+ *  somebody's real scans sitting beside it that must not spend the key
+ *  (2026-09-03). One knob still answers one question, and it still fails
+ *  closed.
  *  That is what lets the hosted product hand a free daily allowance to the
  *  yarn app without handing it to everyone who signs up for anything.
  *
@@ -116,10 +125,17 @@ export function inMemoryIdentifyUsageStore(): IdentifyUsageStore & { count(orgId
 export function identifyAppsAllowed(): "*" | Set<string> {
   const raw = (process.env.COBBLR_IDENTIFY_APPS ?? "*").trim();
   if (!raw || raw === "*") return "*";
-  return new Set(raw.split(",").map((s) => s.trim()).filter(Boolean));
+  // `@slug` entries are lowercased so the comparison above can be too.
+  return new Set(
+    raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((s) => (s.startsWith("@") ? s.toLowerCase() : s)),
+  );
 }
 
-type OrgLookup = (orgId: string) => Promise<{ app_mode: { app: string } | null } | null>;
+type OrgLookup = (orgId: string) => Promise<{ slug?: string; app_mode: { app: string } | null } | null>;
 const platformOrgLookup: OrgLookup = (orgId) => platform().orgs.get(orgId);
 let orgLookup: OrgLookup = platformOrgLookup;
 /** Swap the workspace lookup (tests). `null` restores the platform one. */
@@ -137,7 +153,11 @@ export async function workspaceInIdentifyScope(orgId: string): Promise<boolean> 
   try {
     const org = await orgLookup(orgId);
     const app = org?.app_mode?.app;
-    return !!app && allowed.has(app);
+    if (app && allowed.has(app)) return true;
+    // Named outright, by slug. Kept case-insensitive because a slug is a URL
+    // word and an operator writing one into an env file is not typing it twice.
+    const slug = org?.slug?.trim().toLowerCase();
+    return !!slug && allowed.has(`@${slug}`);
   } catch (err) {
     console.error(`[hosted-identify] could not place workspace ${orgId} - refusing:`, (err as Error).message);
     return false;

@@ -149,25 +149,22 @@ export async function expiryTick(opts: { orgId?: string } = {}): Promise<{ scann
     }
     if (due.length === 0 && dueToday.length === 0) return;
     const memberIds = await platform().notifications.orgMemberIds(org.id);
-
+    // ONE MESSAGE PER SWEEP, not one per row. This dispatched inside the row
+    // loop, so a fridge with six dated things sent six DMs in a row:
+    //
+    //   Croissant — expired 12d ago
+    //   Roma Tomatoes — expired 10d ago
+    //   Cucumbers Long — expired 3d ago
+    //   ...
+    //
+    // The delivery-window digest would have combined them, but only for a
+    // person who has configured a window - so the DEFAULT experience of a
+    // stocked fridge was a stream. A sweep already holds every row it is about;
+    // composing one message is not a preference, it is what a batch job owes
+    // the person it is writing to.
+    const lines: string[] = [];
     for (const row of dueToday) {
-      for (const userId of memberIds) {
-        try {
-          await platform().notifications.dispatch({
-            orgId: org.id,
-            userId,
-            eventType: "lists.expiring_today",
-            triggeredBy: "schedule",
-            message: `${row.name}: expires today`,
-            module: "lists",
-            entityType: "inventory:part",
-            entityId: row.id,
-            payload: { expiresOn: row.expires_on, daysUntil: 0 },
-          });
-        } catch (err) {
-          console.error("[lists] expiry day-of notify failed:", (err as Error).message);
-        }
-      }
+      lines.push(`${row.name}: expires today`);
       try {
         const up = sql`
           update lists_expiry_notifications set today_notified_on = ${row.expires_on}::date where part_id = ${row.id}
@@ -230,25 +227,7 @@ export async function expiryTick(opts: { orgId?: string } = {}): Promise<{ scann
       // the grace-period ask the comment above anticipated.)
       if (reading?.state === "spoiled") void platform().events.emit("lists.item.expired", payload);
 
-      for (const userId of memberIds) {
-        try {
-          await platform().notifications.dispatch({
-            orgId: org.id,
-            userId,
-            eventType: "lists.expiring",
-            // A date arrived. Better as one line in somebody's morning list
-            // than as an interruption at whatever hour the sweep ran.
-            triggeredBy: "schedule",
-            message: `${row.name} — ${tone}`,
-            module: "lists",
-            entityType: "inventory:part",
-            entityId: row.id,
-            payload: { expiresOn: row.expires_on, daysUntil },
-          });
-        } catch (err) {
-          console.error("[lists] expiry notify failed:", (err as Error).message);
-        }
-      }
+      lines.push(`${row.name} — ${tone}`);
 
       // Stamp the ledger (upsert: re-dated parts overwrite the prior alert).
       // A heads-up sent ON the day is the day-of notice too, so that date's
@@ -265,6 +244,31 @@ export async function expiryTick(opts: { orgId?: string } = {}): Promise<{ scann
         console.error("[lists] expiry ledger write failed:", (err as Error).message);
       }
       alerted += 1;
+    }
+
+    // The one message. A date arriving is a line in somebody's list, never an
+    // interruption at whatever hour the sweep ran, so this stays at the default
+    // priority and joins a configured delivery window like anything else.
+    if (lines.length > 0) {
+      const summary =
+        lines.length === 1
+          ? lines[0]!
+          : `${lines.length} things to use up:\n${lines.join("\n")}`;
+      for (const userId of memberIds) {
+        try {
+          await platform().notifications.dispatch({
+            orgId: org.id,
+            userId,
+            eventType: "lists.expiring",
+            triggeredBy: "schedule",
+            message: summary,
+            module: "lists",
+            payload: { count: lines.length },
+          });
+        } catch (err) {
+          console.error("[lists] expiry notify failed:", (err as Error).message);
+        }
+      }
     }
       });
     } catch (err) {

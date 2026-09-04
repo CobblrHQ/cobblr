@@ -29,7 +29,7 @@ import {
   type AutofilePlan,
   type TrackedCandidate,
 } from "../services/autofile.js";
-import { storageRequirementFor } from "../services/storage-requirement.js";
+import { resolveRequirement, storageRequirementFor } from "../services/storage-requirement.js";
 import { expiryDefaults } from "../services/shelf-life.js";
 import { Router } from "express";
 import { sql } from "kysely";
@@ -59,7 +59,7 @@ import { resolveNativeIdentity } from "../native-identity.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { noteScanCaptured } from "../services/activation.js";
 import { downloadCatalogImage, enrichBarcodeItem, isJunkName } from "../services/enrich.js";
-import { committedImagePath, commitThumbPath } from "../services/committed-image.js";
+import { committedImagePath, commitThumbPath, itemPhotos } from "../services/committed-image.js";
 import { clampEntityName } from "../services/item-name.js";
 import { addedPhotoIntent } from "../services/crosscheck-policy.js";
 import {
@@ -109,6 +109,7 @@ import { looksLikeReceiptPhoto, routeScannedReceiptPhoto } from "../services/rec
 import { cleanOrderRef, receiptDedupKey,
   receiptContentKey, receiptSessionLabel, vendorFromLabel, type ParsedReceipt, type ParseMethod } from "../services/receipt-shared.js";
 import { reportBarcodeCorrection, meaningfullyChanged } from "../services/barcode-corrections.js";
+import { claimGlanceAnswer, readContextFor, readGlanceEnabled, writeGlanceEnabled } from "../services/glance.js";
 import { normalizeBarcode, barcodeFromHint } from "../services/barcode-correction.js";
 import { findBinContents, findTracked } from "../services/entity-match.js";
 import { cropRegion, detectSplitItems, rotateImage } from "../services/image-ops.js";
@@ -1698,7 +1699,17 @@ inboxRouter.get(
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const db = tenantDb(req);
     const ctx = tenantContext(req);
-    const items = await pendingThemeItems(db);
+    // ONE SESSION, named by the caller. This used to read the 50 most recent
+    // pending items in the whole workspace and render inside whatever the
+    // person was looking at, so a filtered view of two humidifiers was offered
+    // a grocery category "to 50 of them" - two populations in one sentence,
+    // and an Apply that would have stamped 50 rows off screen (2026-09-03).
+    const batchId = typeof req.query.batch_id === "string" ? req.query.batch_id : "";
+    if (!batchId) {
+      res.status(400).json({ error: { code: "missing_batch", message: "batch_id required: a theme is a question about one session." } });
+      return;
+    }
+    const items = await pendingThemeItems(db, batchId);
     if (items.length < 2) {
       res.json({ tag: null, tag_item_ids: [], category: null });
       return;
@@ -2416,14 +2427,23 @@ inboxRouter.post(
     // captured photos silently vanished at commit (reported 2026-07-24).
     const siblingPhotos = await db
       .selectFrom("core_scan_inbox_items")
-      .select("image_file_id")
+      .select(["image_file_id", "barcode_text"])
       .where(sql<string>`suggested_metadata ->> 'combined_into'`, "=", row.id)
       .where("image_file_id", "is not", null)
       .execute()
-      .catch(() => [] as { image_file_id: string | null }[]);
+      .catch(() => [] as { image_file_id: string | null; barcode_text: string | null }[]);
     const userPhotos = [row.image_file_id, ...siblingPhotos.map((s) => s.image_file_id)].filter(
       (fid): fid is string => !!fid,
     );
+    // A capture that READ A BARCODE pictures the barcode, not the item, so it
+    // never becomes the thumbnail (see itemPhotos) — it stays in the gallery as
+    // scan evidence. A row identified by barcode has its OWN capture as that
+    // frame; in a combined scan the barcode pic can sit on an absorbed sibling,
+    // so each row is judged by its own barcode_text.
+    const barcodeFrames = [
+      row.barcode_text ? row.image_file_id : null,
+      ...siblingPhotos.map((s) => (s.barcode_text ? s.image_file_id : null)),
+    ].filter((fid): fid is string => !!fid);
     const galleryFiles = [...userPhotos, ...(row.catalog_image_file_id ? [row.catalog_image_file_id] : [])];
     // A scan whose catalog image is still a raw URL (not downloaded yet, or
     // committed mid-enrich) has NO file to attach, so the block below used to be
@@ -2452,12 +2472,15 @@ inboxRouter.post(
           ((body.metadata as Record<string, unknown> | undefined)?.color ?? "") as string,
         ).trim();
         const hasColorSwatch = /^#[0-9a-fA-F]{3,8}$/.test(committedColor);
-        const thumb = userPhotos[0] ?? (hasColorSwatch ? null : (row.catalog_image_file_id ?? null));
+        const thumb =
+          itemPhotos(userPhotos, barcodeFrames)[0] ??
+          (hasColorSwatch ? null : (row.catalog_image_file_id ?? null));
         // One decision, in the file that owns it. Set instantly - no network in
         // the commit path, because downloading inline made a bulk "Confirm all"
         // hang (~25s per line, reported 2026-07-25).
         const thumbPath = commitThumbPath(ctx.org.slug, {
           userPhotoFileIds: userPhotos,
+          barcodeFrameFileIds: barcodeFrames,
           catalogImageFileId: row.catalog_image_file_id,
           catalogImageUrl: row.catalog_image_url,
           colorHex: committedColor,
@@ -2767,7 +2790,7 @@ inboxRouter.post(
     // (the same sanctioned seam the sync engine uses) — module validation +
     // events fire; core-scan never touches another module's table or URL.
     const locationKind = "core-locations:location";
-    const writer = platform().entities.getWriter(locationKind);
+    const writer = await platform().entities.getWriter(ctx.org.id, locationKind);
     if (!writer?.read) {
       res.status(501).json({
         error: { code: "no_location_writer", message: "Locations module is not available." },
@@ -3134,7 +3157,7 @@ async function appendScanHistory(
   db: ReturnType<typeof tenantDb>,
   id: string,
   entry: {
-    action: "rerun" | "replay" | "rerun-hint" | "wrong" | "enrich" | "confirm" | "combine" | "attached" | "split" | "unconfirm" | "undo-rerun" | "barcode";
+    action: "rerun" | "replay" | "rerun-hint" | "wrong" | "enrich" | "confirm" | "combine" | "attached" | "split" | "unconfirm" | "undo-rerun" | "barcode" | "confirm-guess" | "reject-guess";
     note?: string | null;
   },
 ): Promise<void> {
@@ -3729,6 +3752,151 @@ inboxRouter.put(
     if (!parsed.success) return badBody(res, parsed.error);
     await writePhotoRankEnabled(tenantDb(req), parsed.data.enabled);
     res.json({ enabled: parsed.data.enabled });
+  }),
+);
+
+// The workspace switch for the FIRST LOOK: a fast, cheap read on every photo
+// scan that lets the camera ask "we think it's X, is that right?" while the
+// full read runs. OFF unless turned on: no row means off, so a workspace that
+// never opts in never spends the extra call. Reading is member-level; flipping
+// it commits the workspace to per-photo AI spend, so it is owner/admin.
+
+// AI-REACH: exempt — a workspace SPEND setting, human-only (see photo-rank-config).
+inboxRouter.get(
+  "/glance-config",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    res.json({ enabled: await readGlanceEnabled(tenantDb(req)) });
+  }),
+);
+
+const GlanceConfigBody = z.object({ enabled: z.boolean() });
+
+// AI-REACH: exempt — see the GET above.
+inboxRouter.put(
+  "/glance-config",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const parsed = GlanceConfigBody.safeParse(req.body ?? {});
+    if (!parsed.success) return badBody(res, parsed.error);
+    await writeGlanceEnabled(tenantDb(req), parsed.data.enabled);
+    res.json({ enabled: parsed.data.enabled });
+  }),
+);
+
+// ─────────────────── POST /inbox/:id/glance-answer ─────────────────
+// The person answered the first look. "yes" settles the name at once and runs
+// the full read as an ELABORATION of it; "no" runs the full read with the
+// guess as a hard negative plus whatever they typed. Whoever claims the answer
+// runs the read - this endpoint, or the detached handler on timeout - so a
+// tap and a timeout can never both spend a read (services/glance.ts).
+//
+// On a BARCODE card the guess is the catalog entry itself: "yes" is recorded
+// and nothing re-runs; "no" is the existing wrong-flag path, which re-resolves
+// across every source and writes the correction back to the barcode database.
+const GlanceAnswerBody = z.object({
+  answer: z.enum(["yes", "no"]),
+  hint: z.string().trim().max(500).optional(),
+});
+
+// AI-REACH: exempt — a yes/no a person taps with the item in their hand, about a photo only they can see; the assistant reaches the inbox through list_scan_inbox and corrects a name through rerun-ai
+inboxRouter.post(
+  "/inbox/:id/glance-answer",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const id = req.params.id;
+    if (!id) {
+      res.status(400).json({ error: { code: "missing_id", message: "id required" } });
+      return;
+    }
+    const parsed = GlanceAnswerBody.safeParse(req.body ?? {});
+    if (!parsed.success) return badBody(res, parsed.error);
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const row = await db
+      .selectFrom("core_scan_inbox_items")
+      .selectAll()
+      .where("id", "=", id)
+      .executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
+      return;
+    }
+    const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
+    const { answer, hint } = parsed.data;
+    if (!(row.barcode_text && answer === "no")) {
+      await appendScanHistory(db, id, {
+        action: answer === "yes" ? "confirm-guess" : "reject-guess",
+        note: hint ?? null,
+      });
+    }
+
+    // A barcode card: the guess IS the catalog entry. "No" is the existing
+    // wrong-flag path (POST rerun-ai {wrong:true}), which the client calls
+    // directly so there is exactly one code path that re-resolves and reports
+    // a correction; this endpoint only knows how to say so.
+    if (row.barcode_text) {
+      if (answer === "no") {
+        res.status(400).json({
+          error: { code: "use_rerun_wrong", message: "A barcode's guess is corrected through rerun-ai with wrong: true." },
+        });
+        return;
+      }
+      await db
+        .updateTable("core_scan_inbox_items")
+        .set({ suggested_metadata: mergeMeta({ guess_confirmed: true }) as never, updated_at: new Date() })
+        .where("id", "=", id)
+        .execute();
+      const fresh = await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", id).executeTakeFirstOrThrow();
+      res.json(withTitle(fresh));
+      return;
+    }
+
+    const glance = meta.glance as { name: string; category: string | null } | undefined;
+    if (!glance) {
+      res.status(409).json({ error: { code: "no_glance", message: "This item has no first look to answer." } });
+      return;
+    }
+    if (!(await claimGlanceAnswer(db, id, answer, hint ?? null))) {
+      // Already answered, or the window closed and the read is running.
+      const fresh = await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", id).executeTakeFirstOrThrow();
+      res.json(withTitle(fresh));
+      return;
+    }
+    if (answer === "yes") {
+      // The name is settled NOW - the card should not wait on the elaboration
+      // to show what the person just agreed to.
+      await db
+        .updateTable("core_scan_inbox_items")
+        .set({
+          suggested_name: glance.name,
+          ...(glance.category ? { suggested_metadata: mergeMeta({ category: glance.category }) as never } : {}),
+          updated_at: new Date(),
+        })
+        .where("id", "=", id)
+        .execute();
+    }
+    const readCtx = readContextFor({ ...meta, glance_answer: answer, ...(hint ? { glance_hint: hint } : {}) });
+    // Detached, like the wire's own read: the response is the row with the
+    // answer on it, and the elaboration lands when it lands.
+    void (async () => {
+      try {
+        const outcome = await enrichPhotoItem({
+          db: (await platform().tenants.getDb(ctx.org.id)) as unknown as ReturnType<typeof tenantDb>,
+          orgId: ctx.org.id,
+          itemId: id,
+          imageFileId: row.image_file_id!,
+          userId: sessionUser(req)?.id ?? null,
+          force: true,
+          ...readCtx,
+        });
+        if (outcome !== "is-receipt") void platform().events.emit("core-scan.scan.enriched", { orgId: ctx.org.id, itemId: id });
+      } catch (err) {
+        console.error("[core-scan] read after first-look answer failed:", (err as Error).message);
+      }
+    })();
+    const fresh = await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", id).executeTakeFirstOrThrow();
+    res.json(withTitle(fresh));
   }),
 );
 
@@ -4462,7 +4630,7 @@ inboxRouter.post(
       if (!existing) {
         note = "The created entry was already deleted.";
       } else {
-        const writer = platform().entities.getWriter(kindKey);
+        const writer = await platform().entities.getWriter(ctx.org.id, kindKey);
         if (!writer?.delete) {
           note = `The created entry couldn't be removed automatically — delete it from its own page (${existing.title}).`;
         } else {
@@ -5745,11 +5913,15 @@ interface ThemeItemLite {
   is_titled_media: boolean;
 }
 
-async function pendingThemeItems(db: ReturnType<typeof tenantDb>): Promise<ThemeItemLite[]> {
+async function pendingThemeItems(
+  db: ReturnType<typeof tenantDb>,
+  batchId: string,
+): Promise<ThemeItemLite[]> {
   const rows = await db
     .selectFrom("core_scan_inbox_items")
     .select(["id", "suggested_name", "suggested_metadata", "suggested_candidates"])
     .where("status", "=", "pending")
+    .where("scan_batch_id", "=", batchId)
     .orderBy("created_at", "desc")
     .limit(50)
     .execute();
@@ -6469,6 +6641,22 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
           name: identified,
           category: meta.category ?? null,
           excludeId: opts.itemId,
+          // The item's OWN answer first, its category second. Groceries
+          // declares a storage_requirement field the scan fills, and the
+          // category table deliberately says nothing about "Fresh vegetables"
+          // (potatoes do not want a fridge) - so reading only the table left
+          // the suggestion silent on the very items whose own field said cold,
+          // and the warning then fired on the placement it had declined to
+          // suggest. One resolver now answers for both.
+          // Where the rest of this kind lives, when routing has decided what
+          // this is. A shop is thirty things never scanned before and one
+          // obvious home; the per-name sibling signal cannot see that.
+          kind: candidates[0]?.kind ?? null,
+          requirement: resolveRequirement(
+            (meta as { storage_requirement?: unknown }).storage_requirement ??
+              (candidates[0]?.fields as Record<string, unknown> | undefined)?.storage_requirement,
+            meta.category ?? null,
+          ),
         });
         if (sug) {
           const dbSug = (await platform().tenants.getDb(opts.orgId)) as unknown as ReturnType<typeof tenantDb>;

@@ -28,7 +28,9 @@ const DIR = join(ROOT, ".forgejo", "workflows");
  *  pinned for the postgres-backed suite. Adding a label here without adding a
  *  runner that answers to it re-creates exactly the silence above, so treat
  *  this list as a claim about infrastructure, not a formality. */
-const KNOWN = new Set(["ubuntu-latest", "light", "ci-test", "ci-test-full"]);
+// bake-<box> is one label per PHYSICAL machine: the pool image is baked and
+// committed locally, so the nightly bake has to land on each box by name.
+const KNOWN = new Set(["ubuntu-latest", "light", "ci-test", "ci-test-full", "bake-a6", "bake-aurora"]);
 
 const errors: string[] = [];
 const seen = new Map<string, string[]>();
@@ -39,7 +41,36 @@ for (const f of readdirSync(DIR).filter((n) => n.endsWith(".yml") || n.endsWith(
     const m = /^\s*runs-on:\s*(.+?)\s*$/.exec(line);
     if (!m) return;
     const label = m[1]!.replace(/^["']|["']$/g, "");
-    if (label.startsWith("$")) return; // an expression; not ours to judge
+    // `runs-on: ${{ matrix.box }}` USED to be waved through as "an expression,
+    // not ours to judge" — but a matrix is where the typo hides best: the job
+    // is never scheduled and nothing fails, which is the exact silence this
+    // lint exists for. Expand it: find that matrix key's values in the file and
+    // judge each one.
+    const mx = /^\$\{\{\s*matrix\.([A-Za-z_][\w-]*)\s*\}\}$/.exec(label);
+    if (mx) {
+      const key = mx[1]!;
+      const vals = new RegExp(`^\\s*${key}:\\s*\\[([^\\]]*)\\]`, "m").exec(src);
+      if (!vals) {
+        errors.push(
+          `.forgejo/workflows/${f}:${i + 1} runs-on is \`${label}\` but no \`${key}: [ … ]\` matrix was found in the file — ` +
+            `a job whose label never resolves is never scheduled, and never fails.`,
+        );
+        return;
+      }
+      for (const raw of vals[1]!.split(",")) {
+        const v = raw.trim().replace(/^["']|["']$/g, "");
+        if (!v) continue;
+        seen.set(v, [...(seen.get(v) ?? []), `${f}:${i + 1}`]);
+        if (!KNOWN.has(v)) {
+          errors.push(
+            `.forgejo/workflows/${f}:${i + 1} matrix ${key} includes runner label "${v}", which no runner carries. ` +
+              `That leg is never scheduled, so it fails SILENTLY — known labels: ${[...KNOWN].join(", ")}`,
+          );
+        }
+      }
+      return;
+    }
+    if (label.startsWith("$")) return; // some other expression; not ours to judge
     seen.set(label, [...(seen.get(label) ?? []), `${f}:${i + 1}`]);
     if (!KNOWN.has(label)) {
       errors.push(

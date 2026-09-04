@@ -18,6 +18,7 @@
 import type { PlatformBundleManifest, PlatformBundleFeature } from "./api";
 import { OUTFIT_PLANNER_HTML } from "./outfit-planner-app";
 import { CATALOGING_BENCH_HTML } from "./bench-app";
+import { pluralise } from "@cobblr/platform-contract";
 
 /** A post-install guided step — the "you can now add some yarn" prompt
  *  that shows after a bundle installs, so the user isn't left staring at
@@ -136,8 +137,8 @@ export function deriveNextSteps(
 function connectMachinesFeature(noun: string): BundleFeature {
   return {
     key: "digifab",
-    name: `Connect to your ${noun}s`,
-    question: `Want to send files to your ${noun}s and track the job?`,
+    name: `Connect to your ${pluralise(noun)}`,
+    question: `Want to send files to your ${pluralise(noun)} and track the job?`,
     description:
       "Adds the Print Manager: map each machine to the software that runs it (FDM Monster, OctoPrint, …), send a file to be made, and track the job to completion. Talks to the manager's API; it never drives the hardware. You can link a machine to its manager right from the machine's page.",
     default: true,
@@ -149,7 +150,7 @@ function connectMachinesFeature(noun: string): BundleFeature {
  *  one-click inline update still lets you review what changed. DRY across the
  *  three machine bundles; varies only by noun, tab name, and field examples. */
 function machineBundleChangelog(noun: string, tab: string, fields: string): string {
-  return `Your ${noun}s now open the full machine page — set every field (${fields}), edit in place, attach files, and link the machine straight to its print manager (FDM Monster / OctoPrint) right from its own page, instead of a name-only stub. Installing now offers a checked-by-default “Connect to your ${noun}s” option that brings the Print Manager along — send a file to be made and track the job — which you can uncheck for catalog-only use. Existing installs auto-upgrade: your ${noun}s move into the ${tab} tab automatically, no reinstall.`;
+  return `Your ${pluralise(noun)} now open the full machine page — set every field (${fields}), edit in place, attach files, and link the machine straight to its print manager (FDM Monster / OctoPrint) right from its own page, instead of a name-only stub. Installing now offers a checked-by-default “Connect to your ${pluralise(noun)}” option that brings the Print Manager along — send a file to be made and track the job — which you can uncheck for catalog-only use. Existing installs auto-upgrade: your ${pluralise(noun)} move into the ${tab} tab automatically, no reinstall.`;
 }
 
 export const FEATURED_BUNDLES: FeaturedBundle[] = [

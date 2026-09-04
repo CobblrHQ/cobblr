@@ -46,6 +46,7 @@ import { NewPartDialog } from "./NewPartDialog";
 import { ImportDialog } from "./ImportDialog";
 import { PartDetailModal } from "./PartDetailPage";
 import type { PartListItem, InvFieldDef } from "./api";
+import { countOf } from "@cobblr/platform-contract";
 
 type StateFilter = "active" | "draft" | "needs_review" | "all";
 
@@ -845,7 +846,7 @@ export function PartsListPage() {
         ids={Array.from(selected)}
         noun={itemNoun}
         onMoved={(n, where) => {
-          toast.success(`Moved ${n} ${n === 1 ? itemNoun : `${itemNoun}s`} to ${where}`);
+          toast.success(`Moved ${countOf(n, itemNoun)} to ${where}`);
           setSelected(new Set());
           void qc.invalidateQueries();
         }}

@@ -309,7 +309,6 @@ for (const file of [...TOURS, ...CLIPS]) {
 // something the next person sees rather than something they discover.
 const CAPTION_BANNED: Array<{ re: RegExp; why: string }> = [
   { re: /\bskeins?\b/i, why: 'the product says "ball of yarn", not "skein" - this exact word cost a re-render, twice' },
-  { re: /[\u2014\u2013]/, why: "an em/en dash in prose (house style), and this one is burned into pixels - recast with a period, a colon or a comma" },
   { re: /\bfavourite\b/i, why: 'British spelling - write "favorite"' },
   { re: /\bcolour/i, why: 'British spelling - write "color"' },
   { re: /\bbehaviour/i, why: 'British spelling - write "behavior"' },
@@ -376,6 +375,93 @@ for (const file of [...TOURS, ...CLIPS]) {
         failures.push(`${file}:${line}: caption - ${why}.\n    "${text.slice(0, 110)}"`);
       }
     }
+  }
+}
+
+// ── no em/en dash ANYWHERE a tour can render it ──
+//
+// The caption rule above was too narrow, and the miss proves it: the lego tour
+// injects its own Build Tracker markup, and two of those strings carried an em
+// dash - "All caught up - nice building!" and "Read-only - ask an officer for
+// build access." Neither is a caption, both are authored prose that becomes
+// pixels, and the first sits in the poster region of a published cut. A staged
+// fixture title ("Red Heart Super Saver - Country Blue") is the same story: it
+// renders in the photo strip.
+//
+// So the dash rule is checked over the whole file rather than over say() calls.
+// A dash cannot appear in JavaScript syntax outside a string or a comment, so
+// line-level matching is exact here, not a heuristic.
+//
+// Two exclusions, both "this can never reach a screen":
+//   - console.* - developer log lines, read in a terminal, never rendered;
+//   - throw new Error(...) - same, it ends the run rather than filming.
+// And one loud opt-out for a string that must keep its dash because the PRODUCT
+// spells it that way: `// caption-lint: allow <reason>`, printed on every run.
+// bundles/yarn.json defines the weight choice as "4 – Worsted" with an en dash,
+// so the demo data has to match it exactly or the field stops agreeing with the
+// bundle.
+for (const file of [...TOURS, ...CLIPS]) {
+  let src: string;
+  try {
+    src = read(file);
+  } catch {
+    continue;
+  }
+  src.split("\n").forEach((line, i) => {
+    const code = line.trim();
+    if (code.startsWith("//") || code.startsWith("*") || code.startsWith("/*")) return;
+    if (!/[\u2014\u2013]/.test(line)) return;
+    if (/console\.(error|log|warn|info)\(/.test(line)) return;
+    if (/throw new Error\(/.test(line)) return;
+    const allow = /\/\/\s*caption-lint:\s*allow\s+(.+)$/.exec(line);
+    if (allow) {
+      console.error(`[lint:kiosk-golden] dash exception honoured at ${file}:${i + 1} - ${allow[1]!.trim()}`);
+      return;
+    }
+    failures.push(
+      `${file}:${i + 1}: an em/en dash in a string a tour can render - it becomes pixels and cannot be edited afterwards. ` +
+        `Recast with a period, a colon or a comma.\n    ${code.slice(0, 110)}`,
+    );
+  });
+}
+
+// ── a tour never clicks a saved view it does not seed ──
+//
+// The lego tour clicks a chip called "By build status" and narrates the table
+// regrouping. The view that creates that chip lives in the demo's views.json,
+// and for a while it did not: the half of a change that added the view was
+// never merged with the half that clicks it. Same shape as the lib.mjs import
+// hole above, and the same silence - the click just times out inside softly(),
+// which costs four seconds of frozen table while the caption confidently says
+// "Grouped by build status".
+//
+// A caption describing something that is not happening is the expensive kind of
+// wrong, so the names are checked against the file that seeds them.
+const DEMO_VIEWS = "demo-sites/lego-collector/views.json";
+/** Chips the table renders by itself, which no views.json needs to define. */
+const BUILTIN_CHIPS = new Set(["All parts"]);
+for (const file of TOURS) {
+  let src: string;
+  try {
+    src = read(file);
+  } catch {
+    continue;
+  }
+  const clicked = [...src.matchAll(/\bchip\(\s*"((?:[^"\\]|\\.)*)"\s*\)/g)].map((m) => m[1]!);
+  if (!clicked.length) continue;
+  let seeded: Set<string>;
+  try {
+    seeded = new Set((JSON.parse(read(DEMO_VIEWS)).views ?? []).map((v: { name: string }) => v.name));
+  } catch {
+    failures.push(`${file}: clicks saved-view chips but ${DEMO_VIEWS} could not be read.`);
+    continue;
+  }
+  for (const name of clicked) {
+    if (BUILTIN_CHIPS.has(name) || seeded.has(name)) continue;
+    failures.push(
+      `${file}: clicks a "${name}" chip, but ${DEMO_VIEWS} seeds no view by that name ` +
+        `(it has ${[...seeded].join(", ")}) - the click times out on camera while the caption says it worked.`,
+    );
   }
 }
 

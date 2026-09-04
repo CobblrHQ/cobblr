@@ -20,7 +20,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type React
 import { RepurchaseControls } from "../components/RepurchaseControls";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Camera, CheckCircle, ChevronDown, Download, ExternalLink, FileText, Flag, Image as ImageIcon, ImagePlus, LayoutGrid, Library, List, Loader2, MapPin, MonitorSmartphone, MoreHorizontal, Pencil, ReceiptText, RefreshCw, RotateCcw, ScanLine, Scissors, Search, Sparkles, Tag, Trash2, Truck, Upload, Wand2, X, Zap } from "lucide-react";
+import { Camera, CheckCircle, ChevronDown, Copy, Download, ExternalLink, FileText, Flag, Image as ImageIcon, ImagePlus, LayoutGrid, Library, List, Loader2, MapPin, MonitorSmartphone, MoreHorizontal, Pencil, ReceiptText, RefreshCw, RotateCcw, ScanLine, Scissors, Search, Sparkles, Tag, Trash2, Truck, Upload, Wand2, X, Zap, Database } from "lucide-react";
 import { Modal, useImageSrc, useOverlayOpenFlag, useToast, usePageTitle, colorSwatch, wantsSwatch } from "@cobblr/platform-web";
 import { ScanImportModal } from "../components/ScanImportModal";
 import { ExportInboxModal } from "../components/ExportInboxModal";
@@ -32,13 +32,17 @@ import { OrganizePlanSheet, SortingPlanView } from "../components/OrganizePlanSh
 import { OrganizeWalkSheet } from "../components/OrganizeWalkSheet";
 import { LiveSortSheet } from "../components/LiveSortSheet";
 import { ImageSearchPicker } from "../components/ImageSearchPicker";
+import { GlanceQuestion, pendingGlance } from "../components/GlanceQuestion";
+import { imageUrlFrom } from "../components/pastedImage";
 import { ImageLightbox, type LightboxItem } from "../components/ImageLightbox";
 import { ReceiptSourceViewer, type ReceiptMoney } from "../components/ReceiptSourceViewer";
+import { fieldsStillOnTable, fieldsNoLongerOnTable } from "../lib/scanCandidateFields";
 import { canRerunLookup } from "../lib/scanRerun";
 import { TrackedMatchBanner } from "../components/TrackedMatchBanner";
 import { BinAdjustModal } from "../components/BinAdjustModal";
 import { PairPhoneButton } from "../components/PairPhoneButton";
 import { HeaderMenu, MenuFilterLine, MenuHead, MenuItem, MenuNote, MenuSep } from "../components/HeaderMenu";
+import { DuplicateRecordsSheet } from "./DuplicateRecordsSheet";
 import { ReceiptAddressChip, ReceiptAddressMenuBlock } from "../components/ReceiptAddressChip";
 import { classifyFiles, classifyOmni, clipboardImages, omniPlaceholder } from "./omniIntake";
 import { catalogUndoHistory, catalogUndoLabel, catalogUndoTitle } from "./scanCatalogUndo";
@@ -68,7 +72,7 @@ import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
 import { isScanStale, needsScanReview } from "@cobblr/platform-contract/scan-triage";
 import { matchParentType, readField } from "../lib/parent-type-match";
 import { isRerunInFlight, itemEnriching } from "./scan-status";
-import { baseKind, confirmBodyFor, isReadyToFile } from "./scanFileAll";
+import { attachBodyFor, baseKind, confirmBodyFor, duplicateSummary, isReadyToFile, placementPreview } from "./scanFileAll";
 import { resolveInstanceForFiling } from "./scanInstall";
 import { arrivalLabel, arrivalOf } from "./scanArrival";
 import type { BundleInstallSummary } from "../lib/api";
@@ -686,6 +690,21 @@ export function ScanPage() {
       void qc.invalidateQueries({ queryKey: ["scan-photo-rank-config", activeSlug] });
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+  // "Same thing twice" - the pairs that already exist. Filing stops NEW ones;
+  // nothing but a review removes the ones created before it could.
+  const [showDuplicates, setShowDuplicates] = useState(false);
+  const glanceCfg = useQuery({
+    queryKey: ["scan-glance-config", activeSlug],
+    queryFn: () => api.getScanGlanceConfig(activeSlug),
+    enabled: !!activeSlug && canSetPhotoRank,
+  });
+  const setGlanceCfg = useMutation({
+    mutationFn: (enabled: boolean) => api.setScanGlanceConfig(activeSlug, enabled),
+    onSuccess: (r) => {
+      qc.setQueryData(["scan-glance-config", activeSlug], r);
+      void qc.invalidateQueries({ queryKey: ["scan-glance-config", activeSlug] });
+    },
   });
 
   const into = params.get("into");
@@ -2339,6 +2358,7 @@ export function ScanPage() {
       installed.set(bundleId, { instance: instance ?? null });
     }
     let ok = 0;
+    let merged = 0;
     let skipped = 0;
     let failed = 0;
     let lastErr: string | null = null;
@@ -2349,6 +2369,26 @@ export function ScanPage() {
       // users reloaded the tab mid-batch. The label is the progress bar.
       if (idList.length > 5) setBulkProgress(`Filing ${n} of ${idList.length}…`);
       const it = byId.get(id);
+      // ALREADY HAVE ONE? Then this is "+N, more of the same", not a new
+      // record. The closed card already refuses one-tap Add for exactly this
+      // reason; the bulk sweep used to create the duplicate anyway, and two
+      // rows of one product differing only in word order ("Roma Tomatoes" /
+      // "Tomatoes Roma") is not something anybody should have to spot.
+      const attach = it ? attachBodyFor(it) : null;
+      let mergedThis = false;
+      if (attach) {
+        try {
+          await api.scanAttach(activeSlug, id, attach);
+          merged++;
+          mergedThis = true;
+        } catch (e) {
+          // The match is stamped at scan time and the entity can be gone by
+          // now. A stale match must not cost the item its filing: fall through
+          // and create it, which is what would have happened anyway.
+          console.warn("[scan] merge into existing failed, filing as new:", e);
+        }
+      }
+      if (mergedThis) continue;
       const bundleId = (it?.suggested_candidates?.[0] as { bundle_external_id?: string } | undefined)
         ?.bundle_external_id;
       const body = it
@@ -2380,12 +2420,13 @@ export function ScanPage() {
     setBulkProgress(null);
     void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
     const parts = [`${ok} confirmed`];
+    if (merged) parts.push(`${merged} added to what you already had`);
     if (skipped) parts.push(`${skipped} need a manual look`);
     if (failed) parts.push(`${failed} failed${lastErr ? ` - ${lastErr}` : ""}`);
     if (ok === 0 && failed > 0) toast.error(parts.join(" · "));
     else if (failed > 0) toast.info(parts.join(" · "));
     else toast.success(parts.join(" · "));
-    return { ok, skipped, failed };
+    return { ok, merged, skipped, failed };
   };
   const bulkConfirm = async () => {
     setBulkBusy(true);
@@ -3068,6 +3109,25 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                   onClick={() => setPhotoRank.mutate(!photoRank.data.enabled)}
                 />
               )}
+              {canSetPhotoRank && glanceCfg.data && (
+                <MenuItem
+                  icon={<Sparkles size={14} />}
+                  label="First-look question"
+                  hint="a fast first read on every photo, asked as yes/no while the full read runs"
+                  state={glanceCfg.data.enabled ? "on" : "off"}
+                  disabled={setGlanceCfg.isPending}
+                  onClick={() => setGlanceCfg.mutate(!glanceCfg.data.enabled)}
+                />
+              )}
+              <MenuItem
+                icon={<Copy size={14} />}
+                label="Same thing twice"
+                hint="records that look like one thing under two names, and a way to put them back together"
+                onClick={() => {
+                  setShowDuplicates(true);
+                  close();
+                }}
+              />
               <PairPhoneButton asMenuItem onPaired={close} />
             </>
           )}
@@ -3393,6 +3453,16 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
         />
       )}
 
+      {showDuplicates && (
+        <DuplicateRecordsSheet
+          slug={activeSlug}
+          locationName={(id) =>
+            id ? ((locsQ.data?.items ?? []).find((l) => l.id === id)?.name ?? null) : null
+          }
+          onClose={() => setShowDuplicates(false)}
+        />
+      )}
+
       {liveSortOpen && (
         <LiveSortSheet
           slug={activeSlug}
@@ -3610,7 +3680,6 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
           </div>
         ))}
         <SeriesBanner slug={activeSlug} items={visibleItems.filter((i) => i.status === "pending")} />
-        <SessionThemeBanner slug={activeSlug} pendingCount={visibleItems.filter((i) => i.status === "pending").length} />
         {(() => {
           // Each card, with the combine offer injected just above the first item
           // of any cluster it belongs to (so the offer sits with its items).
@@ -3696,6 +3765,25 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                   filing.fallbackLocation && filing.missingLocation.length > 0
                     ? `; the ${filing.missingLocation.length} without a location go to ${fallbackLoc ? filingLabel(fallbackLoc) : "the set location"}`
                     : "";
+                // Say where the suggested ones are about to go. Filing into a
+                // spot the system worked out is right; doing it without saying
+                // so is not - the person has to be able to see "6 into the
+                // Fridge" BEFORE it happens, the same way the batch location is
+                // named rather than applied quietly.
+                // Merging is a write on somebody's behalf, so the button says
+                // so before it is pressed rather than reporting it afterwards.
+                const dupes = duplicateSummary(readyItems);
+                const dupeClause = dupes.count
+                  ? `; ${dupes.count} join what you already have (${dupes.names.slice(0, 3).join(", ")}${
+                      dupes.names.length > 3 ? ", …" : ""
+                    })`
+                  : "";
+                const placing = placementPreview(readyItems, filing.fallbackLocation);
+                const placingClause = placing.placed.length
+                  ? `; ${placing.placed
+                      .map((p) => `${p.count} into ${p.name}`)
+                      .join(", ")}${placing.unplaced > 0 ? `, ${placing.unplaced} with no spot yet` : ""}`
+                  : "";
                 const sessionLoc = sessionLocation(readyItems);
                 const sessionLocName = sessionLoc.id
                   ? (locsQ.data?.items ?? []).find((l) => l.id === sessionLoc.id)
@@ -4367,10 +4455,10 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                               sessionCat.unanimous
                                 ? ""
                                 : ` (the items suggested ${sessionCat.seen.join(", ")} - this files them as one)`
-                            }${fallbackClause}`
+                            }${dupeClause}${placingClause}${fallbackClause}`
                           : `Each goes where the AI matched it${
                               willInstallLabels.length ? `, installing ${willInstallLabels.join(" and ")} on the way` : ""
-                            }${fallbackClause}`
+                            }${dupeClause}${placingClause}${fallbackClause}`
                       }
                       className="shrink-0 inline-flex items-center gap-1 rounded-md bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 px-2 py-1 text-[11px] font-medium text-white"
                     >
@@ -4469,6 +4557,13 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         not on the collapsed header where its old ↓ was mistaken
                         for the accordion and folded sessions by accident. It's a
                         rare re-unify action; every merge is Undo-able via toast. */}
+                    {g.batchId && (
+                      <SessionTheme
+                        slug={activeSlug}
+                        batchId={g.batchId}
+                        itemCount={g.items.filter((i) => i.status === "pending").length}
+                      />
+                    )}
                     {mergeInto && g.batchId && (
                       <div className="pt-0.5">
                         <button
@@ -5408,6 +5503,26 @@ function InboxCard({
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
       toast.success(it.suggested_name ? `Back to “${it.suggested_name}”` : "Previous lookup restored");
     },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+  const answerGlance = useMutation({
+    // A barcode card's "no" is the wrong-flag re-run: one code path corrects a
+    // catalog entry and reports it back, and this is it.
+    mutationFn: (b: { answer: "yes" | "no"; hint?: string }) =>
+      item.barcode_text && b.answer === "no"
+        ? api.rerunScanAi(activeSlug, item.id, { wrong: true, ...(b.hint ? { hint: b.hint } : {}) })
+        : api.answerScanGlance(activeSlug, item.id, { answer: b.answer, ...(b.hint ? { hint: b.hint } : {}) }),
+    onSuccess: () => {
+      toast.success(
+        "Thanks - filling in the details…",
+      );
+      invalidateInbox();
+    },
+    // Spelled out rather than the shared `onErr`, which is declared further
+    // down with the image ops: referencing it here reads the binding while the
+    // options object is being built, not later inside a callback, so it is a
+    // genuine use-before-declaration. The neighbouring mutations spell it out
+    // the same way.
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
   const rerun = useMutation({
@@ -6529,7 +6644,14 @@ function InboxCard({
                 (() => {
                   const brand = (item.suggested_manufacturer ?? "").trim().toLowerCase();
                   const creator = (creatorOf(item) ?? "").trim().toLowerCase();
-                  const entries = Object.entries(topCand.fields).filter(([k, v]) => {
+                  // Against the destination's CURRENT fields. A match is a
+                  // snapshot, and a scan can sit here across a bundle upgrade
+                  // that retires a field - see scanCandidateFields.ts.
+                  const liveFields = fieldsStillOnTable(
+                    (menu ?? []).find((m) => m.module === topCand.module && (m.instance ?? null) === (topCand.instance ?? null)),
+                    topCand.fields,
+                  );
+                  const entries = Object.entries(liveFields).filter(([k, v]) => {
                     if (/^isbn$/i.test(k)) return false; // shown in the subtitle now
                     const val = String(v).trim().toLowerCase();
                     return val && val !== brand && val !== creator;
@@ -6552,10 +6674,19 @@ function InboxCard({
                   // Both are "more fields live in here", so they count as one
                   // affordance rather than two competing "+N" chips.
                   const unfilled = unfilledFieldLabels(menu, topCand);
-                  const more = extra + unfilled.length;
+                  // What the scan read that this table no longer has. Counted
+                  // with the rest rather than vanished: the value is still on
+                  // the row, and saying so is the difference between "we
+                  // dropped it" and "it disappeared".
+                  const retired = fieldsNoLongerOnTable(
+                    (menu ?? []).find((m) => m.module === topCand.module && (m.instance ?? null) === (topCand.instance ?? null)),
+                    topCand.fields,
+                  );
+                  const more = extra + unfilled.length + retired.length;
                   const moreTitle = [
                     ...entries.slice(shown.length).map(([k, v]) => `${menuFieldLabel(menu, topCand, k)}: ${v}`),
                     ...unfilled.map((l) => `${l}: empty`),
+                    ...retired.map((k) => `${k}: read by the scan, but this table no longer has that field`),
                   ].join(", ");
                   return (
                     <>
@@ -7039,6 +7170,13 @@ function InboxCard({
                 <form
                   onSubmit={(e) => {
                     e.preventDefault();
+                    // An address is the picture, not a phrase to look it up by.
+                    const url = imageUrlFrom(zoomTerm);
+                    if (url) {
+                      pickCatalogImage.mutate(url);
+                      setZoomIdx(null);
+                      return;
+                    }
                     setPhotoTerm(zoomTerm.trim());
                   }}
                   className="flex items-center gap-1.5"
@@ -7049,14 +7187,14 @@ function InboxCard({
                       zoomTermTouched.current = true;
                       setZoomTerm(e.target.value);
                     }}
-                    placeholder="search images…"
+                    placeholder="search, or paste an image link…"
                     className="flex-1 min-w-0 rounded border border-white/20 bg-white/10 px-2 py-1 text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-white/40"
                   />
                   <button
                     type="submit"
                     className="shrink-0 rounded border border-white/20 px-2 py-1 text-[11px] font-medium text-white/80 hover:text-white hover:border-white/40"
                   >
-                    Search
+                    {imageUrlFrom(zoomTerm) ? "Use" : "Search"}
                   </button>
                   {(photoTerm || zoomTermTouched.current) && (
                     <button
@@ -7077,6 +7215,16 @@ function InboxCard({
               index={zoomIdx}
               onIndex={setZoomIdx}
               onClose={() => setZoomIdx(null)}
+              // Cmd+V with the viewer open. You are looking at the picture you
+              // want to replace, so this is where the gesture means something:
+              // a picture from the clipboard becomes the catalog photo, an
+              // address is fetched into one. Both land where a picked web
+              // candidate lands.
+              onPasteImage={(pasted) => {
+                if (pasted.kind === "file") retakeCatalog.mutate(pasted.file);
+                else pickCatalogImage.mutate(pasted.url);
+                setZoomIdx(null);
+              }}
               action={{
                 // Zooming YOUR photo is exactly when you decide it beats the
                 // catalog shot, so the adopt action belongs here too — the card's
@@ -7105,6 +7253,19 @@ function InboxCard({
           {/* The AI's read — collapsed to its one-line header by default
               tap to reveal the reconciliation paragraph + per-field
               chips. The working pulse lives in the always-visible header. */}
+          {(() => {
+            const glance = pendingGlance(item);
+            if (!glance) return null;
+            return (
+              <div className="rounded-md border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-950/30 px-3 py-2">
+                <GlanceQuestion
+                  glance={glance}
+                  busy={answerGlance.isPending}
+                  onAnswer={(answer, hint) => answerGlance.mutate({ answer, hint })}
+                />
+              </div>
+            );
+          })()}
           {(item.ai_notes || item.ai_confidence || topCand || aiWorking) && (
             <div className="rounded-md border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-3 py-2">
               <button
@@ -7197,6 +7358,8 @@ function InboxCard({
                   rerun: "Re-ran the lookup with AI",
                   replay: "Replayed: the latest processing, same identification",
                   "rerun-hint": "Re-ran with a hint",
+                  "confirm-guess": "Confirmed the first look",
+                  "reject-guess": "Said the first look was wrong",
                   barcode: "Corrected the barcode",
                   wrong: "Flagged wrong — re-checked everything",
                   enrich: "Asked for more detail",
@@ -7786,6 +7949,22 @@ function PhotoOptions({
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
+  // A picture pasted into the search box. Uploaded and made the catalog image,
+  // the same destination a picked web result reaches - a screenshot on your
+  // clipboard is a perfectly good catalog photo and used to have no door at all
+  // (reported 2026-09-03). An ADDRESS pasted here goes through `pick`, because
+  // that is what a picked web result already is.
+  const pasteCatalog = useMutation({
+    mutationFn: (file: File) =>
+      api
+        .uploadFile(activeSlug, file)
+        .then((up) => api.setScanCatalogFile(activeSlug, item.id, up.id)),
+    onSuccess: () => {
+      toast.success("Catalog photo set from your clipboard");
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
   // "✨ Pick best (AI)": a vision model ranks the options for the product-only,
   // correct-colour, no-people shot; on a pick we highlight its tile, show the
   // reason, and APPLY it as the catalog image in one press (the user can still
@@ -7834,7 +8013,7 @@ function PhotoOptions({
     <ImageSearchPicker
       items={options.data?.items ?? []}
       loading={options.isLoading}
-      busy={pick.isPending}
+      busy={pick.isPending || pasteCatalog.isPending}
       searchedTerm={options.data?.query ?? null}
       onSearch={(t) => {
         // A new search replaces the pool — a badge/reason about the OLD pool
@@ -7853,6 +8032,7 @@ function PhotoOptions({
       compact={compact}
       leading={leading}
       leadingLabel={leadingLabel}
+      onPasteImage={(file) => pasteCatalog.mutate(file)}
     />
   );
 }
@@ -7892,6 +8072,13 @@ function HintBox({
   rowTrailing?: ReactNode;
 }) {
   const [hint, setHint] = useState("");
+  // Folded away by default. These act on the SHARED catalog, not on the item in
+  // front of you, and left open they were the loudest thing on the form: the
+  // affirmative ran the full width at 350px while Confirm — the control that
+  // actually files your item — was 95px and further down. Someone read the green
+  // one as the confirm, pressed it, saw nothing arrive, and pressed it again
+  // (reported 2026-07-15). A secondary action must not out-shout the primary one.
+  const [curateOpen, setCurateOpen] = useState(false);
   // The three correction buttons below all write to the SHARED, cross-workspace
   // Barcode Intelligence DB (a wrong/enrich correction, or a green verify) — so a
   // scan in one workspace teaches every other workspace's future scans of that
@@ -7977,9 +8164,28 @@ function HintBox({
             the identity, dig every source + the web for the full name/spec/photo.
           • This is good — verify the current listing into the shared barcode DB.
           The two corrections share a half-width row; the affirmative sits below. */}
-      {canCurateBarcodeDb && (
+      {canCurateBarcodeDb && !curateOpen && (
+        <button
+          type="button"
+          onClick={() => setCurateOpen(true)}
+          className="mt-2 w-full rounded border border-dashed border-line dark:border-slate-700 px-2 py-1 text-xs text-muted dark:text-slate-400 hover:bg-mortar-50 dark:hover:bg-slate-800 inline-flex items-center justify-center gap-1.5"
+        >
+          <Database size={11} /> Shared barcode listing
+        </button>
+      )}
+      {canCurateBarcodeDb && curateOpen && (
         <>
-          <div className="mt-2 flex gap-2">
+          <div className="mt-2 flex items-center justify-between">
+            <span className="text-[10px] uppercase tracking-wide text-faint">Shared barcode listing</span>
+            <button
+              type="button"
+              onClick={() => setCurateOpen(false)}
+              className="text-xs text-muted dark:text-slate-400 hover:underline"
+            >
+              Hide
+            </button>
+          </div>
+          <div className="mt-1 flex gap-2">
             <button
               type="button"
               disabled={busy || aiOff}
@@ -8004,10 +8210,10 @@ function HintBox({
               type="button"
               disabled={busy || confirming}
               onClick={onConfirm}
-              title="Lock the current name, brand & photo into the shared barcode database as verified"
+              title="Publish the current name, brand & photo to the SHARED barcode database as verified. This does not file your own item - use Confirm for that."
               className="mt-2 w-full rounded border border-emerald-300 dark:border-emerald-700/70 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 px-3 py-1.5 text-sm font-medium disabled:opacity-50 inline-flex items-center justify-center gap-1.5"
             >
-              <CheckCircle size={13} className={confirming ? "animate-pulse" : ""} /> This is good - lock it in
+              <CheckCircle size={13} className={confirming ? "animate-pulse" : ""} /> Listing is correct - publish it
             </button>
           )}
         </>
@@ -8373,15 +8579,33 @@ function SeriesBanner({ slug, items }: { slug: string; items: ScanInboxItem[] })
 // theme + suggest a CATEGORY for the non-media subset — e.g. "these 6 things →
 // tag 'Camping', category 'Camp Cookware' on the 2 pots, leaving the 4 books
 // tagged but uncategorized." Nothing hardcoded; derived server-side, degrades to nothing.
-function SessionThemeBanner({ slug, pendingCount }: { slug: string; pendingCount: number }) {
+/**
+ * "Do these belong together?" - asked about ONE session, and only when asked.
+ *
+ * This used to run on every inbox load: a chat call per load, keyed on the
+ * pending count so every scan re-fired it, reading the 50 most recent pending
+ * items in the WHOLE workspace and rendering inside whatever the person had
+ * filtered to. A view of two humidifiers was offered a grocery category "to 50
+ * of them" - two populations in one sentence - and Apply would have stamped 50
+ * rows that were not on screen (2026-09-03).
+ *
+ * Now it is a link inside the expanded session, beside Merge: nothing runs
+ * until someone presses it, it asks only about that session, and both numbers
+ * in the sentence come from the same set of items.
+ */
+function SessionTheme({ slug, batchId, itemCount }: { slug: string; batchId: string; itemCount: number }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const [asked, setAsked] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const theme = useQuery({
-    queryKey: ["scan-session-theme", slug, pendingCount],
-    queryFn: () => api.scanSessionTheme(slug),
-    enabled: !!slug && pendingCount >= 2 && !dismissed,
-    staleTime: 60_000,
+    queryKey: ["scan-session-theme", slug, batchId],
+    queryFn: () => api.scanSessionTheme(slug, batchId),
+    // ASKED, never assumed. `enabled` stays false until the press, so opening
+    // the inbox costs nothing.
+    enabled: asked && !dismissed,
+    staleTime: Infinity,
+    gcTime: 5 * 60_000,
   });
   const apply = useMutation({
     mutationFn: () =>
@@ -8391,23 +8615,64 @@ function SessionThemeBanner({ slug, pendingCount }: { slug: string; pendingCount
       }),
     onSuccess: (r) => {
       toast.success(
-        `Tagged ${r.tagged}${r.categorized ? ` · categorised ${r.categorized}` : ""} — applied when you confirm each.`,
+        `Tagged ${r.tagged}${r.categorized ? ` · categorised ${r.categorized}` : ""} - applied when you confirm each.`,
       );
       void qc.invalidateQueries({ queryKey: ["scan-inbox", slug] });
       setDismissed(true);
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't apply that."),
   });
+  if (dismissed || itemCount < 2) return null;
+  if (!asked) {
+    return (
+      <div className="pt-0.5">
+        <button
+          type="button"
+          onClick={() => setAsked(true)}
+          title="Ask whether these scans share a tag or a category. Nothing runs until you press this."
+          className="text-xs text-faint hover:text-accent"
+        >
+          Do these {itemCount} belong together?
+        </button>
+      </div>
+    );
+  }
+  if (theme.isFetching) return <div className="pt-0.5 text-xs text-faint">Reading the {itemCount}…</div>;
   const t = theme.data;
-  if (dismissed || !t || (!t.tag && !t.category)) return null;
+  if (!t || (!t.tag && !t.category)) {
+    return (
+      <div className="pt-0.5 text-xs text-faint">
+        Nothing these {itemCount} obviously share.{" "}
+        <button type="button" onClick={() => setDismissed(true)} className="underline hover:text-content">
+          Dismiss
+        </button>
+      </div>
+    );
+  }
   return (
-    <div className="rounded-lg border border-cobble-300 dark:border-cobble-700/60 bg-cobble-50/70 dark:bg-cobble-950/20 px-3 py-2.5 flex items-center gap-3">
+    <div className="pt-0.5 rounded-lg border border-cobble-300 dark:border-cobble-700/60 bg-cobble-50/70 dark:bg-cobble-950/20 px-3 py-2.5 flex items-center gap-3">
       <Sparkles size={15} className="text-accent shrink-0" />
       <div className="min-w-0 flex-1 text-sm text-content dark:text-mortar-100">
-        These {t.tag_item_ids.length || pendingCount} look related.
-        {t.tag ? <> Tag them all <strong>"{t.tag}"</strong>.</> : null}
-        {t.category ? (
-          <span className="text-muted"> {t.tag ? "Also add" : "Add"} category <strong>"{t.category.value}"</strong> to {t.category.item_ids.length} of them.</span>
+        {/* Both counts come from THIS session now, so they cannot disagree - and
+            "these look related" is only said when a tag was actually found to
+            relate them. With a category alone, nothing was: some of them merely
+            share a kind, which is a smaller claim and the one worth making. */}
+        {t.tag ? (
+          <>
+            These {itemCount} look related. Tag them all <strong>"{t.tag}"</strong>.
+            {t.category ? (
+              <span className="text-muted">
+                {" "}
+                Also add category <strong>"{t.category.value}"</strong>
+                {t.category.item_ids.length === itemCount ? " to all of them" : ` to ${t.category.item_ids.length} of them`}.
+              </span>
+            ) : null}
+          </>
+        ) : t.category ? (
+          <>
+            {t.category.item_ids.length === itemCount ? `All ${itemCount}` : `${t.category.item_ids.length} of these ${itemCount}`} look like{" "}
+            <strong>"{t.category.value}"</strong>. Add that category?
+          </>
         ) : null}
       </div>
       <button
@@ -8716,8 +8981,13 @@ function ConfirmForm({
       // `extras.metadata` (the table's fields the user filled — colorway,
       // fibre, …) is deep-merged server-side (keeps the scan's barcode/sku);
       // manufacturer overrides the lookup's.
+      // Only keys the destination DECLARES. A stale extraction (a field
+      // retired by a bundle upgrade while this sat in the inbox) would
+      // otherwise land as an orphan key in the record's metadata: invisible in
+      // every field UI afterwards, and in the reported case contradicting the
+      // item's real location for good.
       const cleanMeta = Object.fromEntries(
-        Object.entries(customValues).filter(([, v]) => v != null && v !== ""),
+        Object.entries(fieldsStillOnTable(entry, customValues)).filter(([, v]) => v != null && v !== ""),
       );
       const extras = {
         ...(manufacturer.trim() ? { manufacturer: manufacturer.trim() } : {}),
@@ -8897,7 +9167,9 @@ function ConfirmForm({
           // the user edited a key the candidate also fills).
           const cand = candidates.find((c) => entryKey(c.module, c.instance) === k);
           if (cand && Object.keys(cand.fields).length) {
-            setCustomValues((prev) => ({ ...cand.fields, ...prev }));
+            // Only what the table it is being filed into actually has.
+            const live = fieldsStillOnTable((menu ?? []).find((m) => entryKey(m.module, m.instance ?? null) === k), cand.fields);
+            setCustomValues((prev) => ({ ...live, ...prev }));
           }
         }}
         // Full width is a phone constraint, not a desktop one. A destination

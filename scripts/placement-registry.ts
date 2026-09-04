@@ -75,7 +75,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "web/src/components/",
     exemplar: "web/src/components/EntityAttachments.tsx",
     why: "This layer is module-agnostic: it may not name a module's entity kind, because doing so silently excludes every module added later.",
-    lints: ["lint:component-kinds", "lint:hooks-after-return", "lint:no-emdash", "lint:ui-jargon", "lint:authed-image-src"],
+    lints: ["lint:component-kinds", "lint:hooks-after-return", "lint:no-emdash", "lint:ui-jargon", "lint:authed-image-src", "lint:noun-pluralisation"],
     notes: [
       "If it names one module's kind, it is not generic — it belongs beside that module's page (see page-level-module-ui).",
     ],
@@ -87,7 +87,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "web/src/pages/",
     exemplar: "web/src/pages/NewBinSheet.tsx",
     why: "Naming your own module's kind on its own page is fine, so page-level UIs are exempt from the generic-component rule.",
-    lints: ["lint:hooks-after-return", "lint:no-emdash", "lint:ui-jargon", "lint:jsx-comment-text", "lint:authed-image-src"],
+    lints: ["lint:hooks-after-return", "lint:no-emdash", "lint:ui-jargon", "lint:jsx-comment-text", "lint:authed-image-src", "lint:noun-pluralisation"],
   },
   {
     id: "module-ui",
@@ -96,7 +96,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "modules/<name>/src/ui/",
     exemplar: "modules/inventory/src/ui/PartsListPage.tsx",
     why: "A module owns its own UI and exports it through `ui` in the manifest; the web app imports it rather than reimplementing it.",
-    lints: ["lint:isolation", "lint:hooks-after-return", "lint:ui-vocab", "lint:authed-image-src"],
+    lints: ["lint:isolation", "lint:hooks-after-return", "lint:ui-vocab", "lint:authed-image-src", "lint:noun-pluralisation"],
     notes: ["A module UI must never import another module — compose through the platform contract."],
   },
   {
@@ -116,10 +116,25 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "api/src/platform/",
     exemplar: "api/src/platform/exclusive.ts",
     why: "A capability two modules would otherwise each hand-roll belongs in the kernel, declared on the platform contract so modules reach it without importing each other.",
-    lints: ["lint:isolation", "lint:background-loops"],
+    lints: ["lint:isolation", "lint:background-loops", "lint:credential-slot-kind"],
     notes: [
       "Declare it on `packages/platform-contract/src/index.ts` and wire it in `api/src/index.ts`; both halves or modules cannot see it.",
       "Import the db handle lazily inside the function — an eager import drags cobblr_meta into every unit test that imports an adopting file.",
+    ],
+  },
+  {
+    id: "boot-reconcile",
+    what: "a self-heal that repairs workspaces created before your change",
+    keywords: ["self heal", "selfheal", "reconcile", "backfill", "heal shim", "boot", "existing workspaces", "older workspaces", "one-shot"],
+    dir: "api/src/platform/",
+    exemplar: "api/src/platform/heal-approved-ai.ts",
+    why: "Signup only enables and migrates what existed the day a workspace was made, so anything an OLDER workspace also needs is silently missing there and the platform, not the user, has to close that gap.",
+    lints: ["lint:heal-shims"],
+    notes: [
+      "Wire it into `boot()` in api/src/index.ts, in the existing reconcile chain.",
+      "Head the file with `DONE WHEN: <the checkable condition>` for a one-shot, or `PERMANENT RECONCILE`. Delete a one-shot once its condition reads true on prod, staging and dev.",
+      "Cheap on the happy path (one pre-loaded cobblr_meta read, no tenant pool for a workspace that is already fine), per-row try/catch so one workspace never blocks the rest, and `evictTenantPool` in a finally if you did open one.",
+      "Put the DECISION in a pure exported function and call it from the sweep, so a test can assert the rule without a database.",
     ],
   },
   {
@@ -129,10 +144,11 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "modules/<name>/src/ or api/src/platform/",
     exemplar: "api/src/platform/delivery-sweeper.ts",
     why: "Every api process starts these and more than one api runs against a single database, so an unguarded loop does its work twice on real data.",
-    lints: ["lint:background-loops", "lint:hook-timeouts"],
+    lints: ["lint:background-loops", "lint:hook-timeouts", "lint:dispatch-not-per-row"],
     notes: [
       "Take `platform().exclusive.run(name, work)` (modules) or `runExclusive` (kernel), claim what you act on, or annotate `// SINGLE-PROCESS-SAFE: <why>`.",
       "Prefer the queue (`platform().queue`) when the work is per-item: it claims rows with `for update skip locked` and is safe by construction.",
+      "Collect lines in the loop and notify ONCE after it. A stocked workspace turns one dispatch per row into a stream of DMs; the per-row EVENT is what keeps the detail.",
     ],
   },
   {
@@ -165,8 +181,11 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "modules/<name>/src/api/ or api/src/routes/",
     exemplar: "modules/core-scan/src/api/inbox.ts",
     why: "Express matches in registration order: a literal path declared after a parameter route on the same prefix is never reached, and the client gets a 400 that nothing reports (the session theme was dead this way for weeks).",
-    lints: ["lint:route-shadowing"],
-    notes: ["Register literal paths (/inbox/session-theme) ABOVE parameter paths (/inbox/:id) in the same router."],
+    lints: ["lint:route-shadowing", "lint:announce-routes-home"],
+    notes: [
+      "Register literal paths (/inbox/session-theme) ABOVE parameter paths (/inbox/:id) in the same router.",
+      "A route that announce()s about somebody's ticket passes `originGuildId` from the ticket's origin_ref, or the notice lands in the operator's own server where the people in that conversation cannot see it. A DM has no guild: say so with `// no-origin-guild: <reason>`.",
+    ],
   },
   {
     id: "dev-script",
@@ -175,10 +194,13 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "scripts/ (git hooks in scripts/git-hooks/)",
     exemplar: "scripts/merge-pr.sh",
     why: "The same file runs on macOS (bash 3.2, BSD sed) and on the Linux CI box; a construct that is fine on one aborts on the other, after part of the work has already printed as done.",
-    lints: ["lint:bash-portable", "lint:portable-sed", "lint:sigpipe"],
+    lints: ["lint:bash-portable", "lint:portable-sed", "lint:sigpipe", "lint:deploy-state-in-flow", "lint:shell-lib-git-cwd", "lint:tsbuildinfo-not-shared"],
     notes: [
       "Prose (commit messages, PR bodies) goes through a FILE, never a quoted shell string.",
       "Linux-only scripts opt out with `# gnu-sed: <reason>`; that one line covers both sed and bash rules.",
+      "merge-pr.sh and new-worktree.sh must PRINT where the channels are (lib/deploy-state.sh): everyone here works from a stale idea of what the nightly is, and a detour to check it is one nobody takes mid-task.",
+      "Worktrees SHARE node_modules, so nothing worktree-specific belongs there: a tsBuildInfoFile under it makes tsc -b trust another worktree timestamps and pass on a broken tree.",
+      "A lib in scripts/lib/ is sourced by callers it does not control, so it must not read git from $PWD: scope with `git -C \"$repo\"` resolved from BASH_SOURCE, or say why not with `# cwd-repo: <reason>`.",
     ],
   },
   {
@@ -188,7 +210,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: ".forgejo/workflows/",
     exemplar: ".forgejo/workflows/ci.yml",
     why: "Forgejo keeps no job logs and parses each job on its own: a step that ships no log is unreadable after the fact, a label nobody carries never runs, and a YAML anchor across jobs invalidates the whole file.",
-    lints: ["lint:ci-sink", "lint:ci-runner-labels", "lint:ci-lanes", "lint:forgejo-pagination"],
+    lints: ["lint:ci-sink", "lint:ci-runner-labels", "lint:ci-lanes", "lint:workflow-yaml", "lint:ci-pr-any-base", "lint:forgejo-pagination"],
     notes: [
       "The `test` and `test-full` jobs are one job in two places; edit the gate, copy its env+steps over the tracker.",
       "No YAML anchors or merge keys across jobs: Forgejo's job parser splits first and resolves second.",
@@ -269,7 +291,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "web/src/lib/featured-bundles.ts",
     exemplar: "bundles/computers.json",
     why: "featured-bundles.ts is the ONE source; bundles/*.json is GENERATED from it. Editing the json directly is the drift this pair already suffered once, and lint:bundles-synced now catches it.",
-    lints: ["lint:bundles-synced", "lint:bundle-schema", "lint:bundle-content", "lint:bundle-quality", "lint:bundle-id-noun", "lint:bundle-keyword-collisions", "lint:versions"],
+    lints: ["lint:bundles-synced", "lint:bundle-schema", "lint:bundle-content", "lint:bundle-quality", "lint:bundle-id-noun", "lint:bundle-keyword-collisions", "lint:versions", "lint:platform-owned-roles"],
     notes: [
       "Author the entry in web/src/lib/featured-bundles.ts, then run `npx tsx scripts/sync-bundles.ts` to regenerate bundles/<slug>.json. Never hand-edit the json.",
       "Then `npx tsx scripts/lint-bundle-content.ts --write` to record it in bundles/bundle-versions.lock.json, or lint:bundle-content fails on a new bundle.",

@@ -21,10 +21,12 @@ import {
 import { promoteCategory, demoteInstance } from "../platform/instance-promote.js";
 import {
   deleteOverride,
+  getOverrideConfig,
   listOverrides,
   upsertOverride,
   type OverrideTarget,
 } from "../platform/entity-kind-overrides.js";
+import { mergeOverrideConfig } from "../platform/override-config-merge.js";
 
 export const instancesRouter = Router({ mergeParams: true });
 export const overridesRouter = Router({ mergeParams: true });
@@ -305,10 +307,12 @@ const UpsertOverrideBody = z.object({
   icon: z.string().max(80).nullable().optional(),
   hidden: z.boolean().optional(),
   nav_order: z.number().int().nullable().optional(),
-  // Free-form presentation config. Today carries `group_label` — the
-  // custom heading for this module's specialisations/instances dropdown
-  // (overrides the default "<module> specialisations"). Stored wholesale
-  // on the override's JSONB column, so callers read-modify-write it.
+  // Free-form config, MERGED into whatever is stored rather than replacing it.
+  // Send only the keys you own; a key set to null is removed. It used to be
+  // written wholesale with a comment asking callers to read-modify-write, and a
+  // form that rebuilt the blob from scratch silently dropped the bundle's
+  // `item_noun` - a Bookshelf whose button went back to saying "New record".
+  // See platform/override-config-merge.ts.
   config: z.record(z.unknown()).optional(),
 });
 
@@ -345,16 +349,26 @@ overridesRouter.put(
         });
         return;
       }
+      const orgId = req.tenant!.org.id;
+      const targetKind = parsed.data.target_kind as OverrideTarget;
+      // Merge, so a form can only change the keys it sent.
+      const config =
+        parsed.data.config === undefined
+          ? undefined
+          : mergeOverrideConfig(
+              await getOverrideConfig(orgId, targetKind, parsed.data.target_id),
+              parsed.data.config,
+            );
       const row = await upsertOverride({
-        orgId: req.tenant!.org.id,
-        targetKind: parsed.data.target_kind as OverrideTarget,
+        orgId,
+        targetKind,
         targetId: parsed.data.target_id,
         displayLabel: parsed.data.display_label,
         displayLabelPlural: parsed.data.display_label_plural,
         icon: parsed.data.icon,
         hidden: parsed.data.hidden,
         navOrder: parsed.data.nav_order,
-        config: parsed.data.config,
+        config,
       });
       res.json(row);
     } catch (err) {

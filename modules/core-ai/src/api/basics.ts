@@ -11,7 +11,7 @@ import { Router } from "express";
 import { groupWritesByRequest } from "./group-writes.js";
 import { z } from "zod";
 import { sql } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, pluralise } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext, sessionUserId } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { matchBasics, normalize } from "../basics-match.js";
@@ -1050,7 +1050,7 @@ basicsRouter.post(
       [];
     const kinds: KindWords[] = kindRows.map((k) => {
       const singular = (k.display_name ?? k.id.split(":")[1] ?? k.id).toLowerCase();
-      return { id: k.id, singular, plural: (k.display_name_plural ?? `${singular}s`).toLowerCase() };
+      return { id: k.id, singular, plural: (k.display_name_plural ?? pluralise(singular)).toLowerCase() };
     });
 
     const q = readQuestionOf(body.data.message, kinds);

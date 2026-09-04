@@ -56,7 +56,7 @@ const RECEIPT_NOUN =
 /** ...and the same word used as a MODIFIER for a thing you own. A receipt
  *  printer is a printer; a roll of receipt paper is stationery. */
 const RECEIPT_AS_MODIFIER =
-  /\b(?:receipts?|invoices?)\s+(?:printers?|papers?|rolls?|scanners?|holders?|books?|spikes?|trays?|pads?)\b/i;
+  /\b(?:receipts?|invoices?)\s+(?:printers?|papers?|rolls?|scanners?|holders?|books?|spikes?|trays?|pads?|organi[sz]ers?|envelopes?|folders?|binders?|box(?:es)?)\b/i;
 
 /** A category that IS a receipt, rather than one naming another kind of thing. */
 const RECEIPTY_CATEGORY = /^\s*(?:receipts?|invoices?)\s*$/i;
@@ -68,16 +68,23 @@ const RECEIPTY_CATEGORY = /^\s*(?:receipts?|invoices?)\s*$/i;
  * the pass filed under some other kind of thing is that thing.
  */
 export function looksLikeReceiptPhoto(id: ReceiptPhotoSignals): boolean {
-  // Gate one: the description is ABOUT a receipt, not about a device for
-  // printing them.
   const obs = id.observations ?? "";
   const name = id.name ?? "";
   // The pass's NAME is its primary verdict on what the thing IS - "Lidl grocery
   // store receipt" is not a hedge - so a name that says receipt settles it, and
   // only the modifier check can take it back ("receipt printer").
-  const namesOne = RECEIPT_NOUN.test(name) && !RECEIPT_AS_MODIFIER.test(name);
+  //
+  // FIRST. This paragraph was already here, and the code under it disagreed
+  // with it: the observations gate below ran before the name was read, so a
+  // photo the pass had NAMED "Walmart printed receipt, White" was filed as a
+  // product whenever its prose happened not to say the word - and on the
+  // hosted path the prose can be empty, which made the name the only signal
+  // there was and the one thing this never looked at (reported 2026-09-04,
+  // "this failed to morph. Again.").
+  if (RECEIPT_NOUN.test(name) && !RECEIPT_AS_MODIFIER.test(name)) return true;
+  // Gate one, for a name that did not settle it: the description is ABOUT a
+  // receipt, not about a device for printing them.
   if (!RECEIPT_NOUN.test(obs) || RECEIPT_AS_MODIFIER.test(obs)) return false;
-  if (namesOne) return true;
   // Gate two: the pass did not land on some other kind of thing. A category is
   // its own verdict on what this IS, so "cooking oil" outranks anything the
   // prose happens to mention; "receipt", or no category at all, does not.

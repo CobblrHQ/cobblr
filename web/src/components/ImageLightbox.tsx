@@ -21,6 +21,7 @@ import { createPortal } from "react-dom";
 
 import { useImageSrc, OverlayFlag } from "@cobblr/platform-web";
 import { api } from "../lib/api";
+import { payloadFromClipboard, readPastedImage, type PastedImage } from "./pastedImage";
 
 export interface LightboxItem {
   key: string;
@@ -114,6 +115,7 @@ export function ImageLightbox({
   searchSlot,
   action,
   onItemError,
+  onPasteImage,
 }: {
   items: LightboxItem[];
   /** Index into `items` of the image on screen. */
@@ -137,6 +139,12 @@ export function ImageLightbox({
   };
   /** Called when an item's full-size fails to load (caller can drop it). */
   onItemError?: (item: LightboxItem) => void;
+  /** Cmd+V while the viewer is open: a picture from the clipboard, or the
+   *  address of one. The viewer is modal, so a paste here is unambiguously
+   *  about the image on screen; the CALLER decides what to do with it (upload
+   *  it, make it the catalog photo) because only it knows what the image is
+   *  for. Without this, paste did nothing at all here. */
+  onPasteImage?: (pasted: PastedImage) => void;
 }) {
   const many = items.length > 1;
   const current = items[index];
@@ -153,6 +161,21 @@ export function ImageLightbox({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [index, items.length, many, onIndex, onClose]);
+
+  // Paste, at the window, because the viewer covers the screen and nothing else
+  // can reasonably claim the gesture while it is up. A paste that carries no
+  // image is left alone: the search box in the footer still gets its text.
+  useEffect(() => {
+    if (!onPasteImage) return;
+    function onPaste(e: ClipboardEvent) {
+      const pasted = readPastedImage(payloadFromClipboard(e.clipboardData));
+      if (!pasted) return;
+      e.preventDefault();
+      onPasteImage!(pasted);
+    }
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [onPasteImage]);
 
   if (!current) return null;
   const stop = (e: React.MouseEvent) => e.stopPropagation();

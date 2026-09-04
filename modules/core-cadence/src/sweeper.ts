@@ -108,6 +108,12 @@ export async function cadenceTick(
           .distinct()
           .execute();
 
+        // "About 40% of this keeps going bad" was sent once per record, and
+        // said `this` without ever naming the thing - so several of them in a
+        // row were not just a stream, they were indistinguishable. Collected
+        // here and sent as one named list after the sweep.
+        const buyLess: Array<{ name: string; pct: number }> = [];
+
         const now = Date.now();
         for (const t of tracked) {
           scanned++;
@@ -137,11 +143,15 @@ export async function cadenceTick(
           // Checked only when a signal WOULD fire, so the happy path (nothing
           // due) still costs no lookups.
           const wants: Array<"reorder_due" | "buy_less"> = [];
+          // Kept from the liveness lookup so advice can name what it is about
+          // without paying for a second resolve.
+          let title: string | null = null;
           if (reorderSuggested(state) || buyLessSuggested(state)) {
             let live = true;
             try {
               const resolved = await platform().entities.lookup(org.id, t.entity_kind, t.entity_id);
               live = !!resolved && resolved.retired !== true;
+              title = resolved?.title ?? null;
             } catch {
               // A resolver that throws must not silence a real signal.
               live = true;
@@ -218,29 +228,39 @@ export async function cadenceTick(
             // so it goes to the people, through the same subscription-respecting
             // dispatcher the other sweepers use.
             if (signal === "buy_less") {
-              const pct = Math.round(state.waste_ratio * 100);
-              for (const userId of memberIds) {
-                try {
-                  await platform().notifications.dispatch({
-                    orgId: org.id,
-                    userId,
-                    eventType: "core-cadence.buy-less",
-                    // Nothing just happened: a sweep noticed a pattern. That is
-                    // the clock talking, so it belongs with the rest of the
-                    // day's standing advice rather than as an interruption.
-                    triggeredBy: "schedule",
-                    message: `About ${pct}% of this keeps going bad — worth buying less of it.`,
-                    module: "core-cadence",
-                    entityType: t.entity_kind,
-                    entityId: t.entity_id,
-                    payload: { wasteRatio: state.waste_ratio, onHand: state.on_hand_estimate },
-                  });
-                } catch (err) {
-                  console.error("[core-cadence] buy-less notify failed:", (err as Error).message);
-                }
-              }
+              buyLess.push({
+                name: title ?? "One of your items",
+                pct: Math.round(state.waste_ratio * 100),
+              });
             }
             emitted++;
+          }
+        }
+
+        if (buyLess.length > 0) {
+          const message =
+            buyLess.length === 1
+              ? `About ${buyLess[0]!.pct}% of ${buyLess[0]!.name} keeps going bad — worth buying less of it.`
+              : `Worth buying less of these: ${buyLess
+                  .map((b) => `${b.name} (${b.pct}% wasted)`)
+                  .join(", ")}`;
+          for (const userId of memberIds) {
+            try {
+              await platform().notifications.dispatch({
+                orgId: org.id,
+                userId,
+                eventType: "core-cadence.buy-less",
+                // Nothing just happened: a sweep noticed a pattern. That is the
+                // clock talking, so it belongs with the rest of the day's
+                // standing advice rather than as an interruption.
+                triggeredBy: "schedule",
+                message,
+                module: "core-cadence",
+                payload: { count: buyLess.length },
+              });
+            } catch (err) {
+              console.error("[core-cadence] buy-less notify failed:", (err as Error).message);
+            }
           }
         }
       });

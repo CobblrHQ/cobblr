@@ -6,6 +6,7 @@
 // (no React re-render plumbing): a page just publishes while mounted.
 
 import { useEffect, useState } from "react";
+import { countOf } from "@cobblr/platform-contract";
 
 export interface ChatPageContext {
   /** Human page name, e.g. "Scan Inbox". */
@@ -193,7 +194,7 @@ export function useAskCobbAboutSelection(
   if (ids.length === 0) return null;
   return () => {
     publishRowSelection({
-      label: ids.length === 1 ? (names[0] || `1 ${noun}`) : `${ids.length} ${noun}s`,
+      label: ids.length === 1 ? (names[0] || `1 ${noun}`) : countOf(ids.length, noun),
       kind,
       ids,
       ...(names.some(Boolean) ? { text: names.filter(Boolean).slice(0, 40).join(", ") } : {}),

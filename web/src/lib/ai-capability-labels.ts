@@ -19,6 +19,8 @@ export const CAPABILITY_LABELS: Record<AiCapability, string> = {
   "identify-image": "Identify a scanned item",
   "classify-image": "Sort a photo into categories",
   "rank-images": "Pick the best product photo",
+  "split-image": "Split a photo into items",
+  "identify-glance": "First look at a photo",
   "extract-text": "Read text in an image",
   "match-to-catalog": "Match to a catalog",
   "embed-text": "Build search embeddings",

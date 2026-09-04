@@ -6,7 +6,7 @@
 // renderers swap in here as they ship.
 
 import { useState, useMemo, useEffect } from "react";
-import { expiryState, expiryPhrase } from "@cobblr/platform-contract";
+import { expiryPhrase, expiryState, pluralise } from "@cobblr/platform-contract";
 import { tallyCadence, CADENCE_PRESETS } from "../lib/cadence";
 import { Link, useSearchParams } from "react-router-dom";
 import { useDetailRoute } from "../lib/useDetailRoute";
@@ -245,7 +245,7 @@ export function SavedViewBody({
   const cfg = (view.config ?? {}) as ViewConfig;
   // Count reads in the entity's own noun ("5 machines"), not DB-speak "5 rows".
   const noun = (view.entity_kind || "").split(":")[1] ?? "";
-  const plural = noun ? `${noun}s` : "items";
+  const plural = noun ? pluralise(noun) : "items";
   // Bulk select (table view): pick rows → open the organize planner over them.
   // Generic — the planner files whatever the kind's writer accepts a location on;
   // a non-locatable kind just yields nothing to file.

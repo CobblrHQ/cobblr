@@ -20,6 +20,7 @@ import { usePageTitle, useToast } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, ApiError, type BundleValidation } from "../lib/api";
 import { Cobb } from "../components/Cobb";
+import { pluralise, itemNounFor } from "@cobblr/platform-contract";
 
 // Tolerant: pull the first {…} block out of a paste (handles "Here's your
 // bundle: { … }" prose around the JSON).
@@ -849,7 +850,7 @@ export function BuildPage() {
                 <div key={inst.instance_name}>
                   <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
                     New section · <span className="text-emerald-600 dark:text-emerald-400">{inst.display_name}</span>
-                    <span className="normal-case text-faint"> (a table of {inst.item_noun ?? "record"}s)</span>
+                    <span className="normal-case text-faint"> (a table of {pluralise(itemNounFor({ itemNoun: inst.item_noun }))})</span>
                   </div>
                   <ul className="text-sm text-content dark:text-mortar-100 space-y-0.5">
                     {inst.fields.length === 0 ? (

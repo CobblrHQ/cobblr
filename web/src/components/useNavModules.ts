@@ -20,7 +20,7 @@ import {
   type ModuleInstance,
   type OrgModuleListItem,
 } from "../lib/api";
-import { readNavHidden, readNavOrder, readNavOverflow } from "../lib/nav-order";
+import { applyNavOrder, readNavHidden, readNavOrder, readNavOverflow } from "../lib/nav-order";
 import { inManagedAppSurface } from "../lib/managed-apps";
 
 /** Synthetic top-level name prefix for a user-defined heading group. */
@@ -598,6 +598,22 @@ export function useNavModules(activeSlug: string): NavModules {
         enabled_at: "",
       });
     }
+  }
+
+  // A GROUP'S CHILDREN ARE ORDERED TOO, by the same saved per-device order the
+  // tops use. They were pushed in discovery order and never sorted, so dragging
+  // one within its parent had nothing to write to: the order was not a fact the
+  // nav read (reported 2026-09-04, "I just wanted to rearrange Groceries within
+  // the parent block"). applyNavOrder leaves anything unnamed where it was, so a
+  // workspace that never dragged sees exactly what it saw before.
+  //
+  // THIS MUST RUN LAST, after the heading pass above. A heading's children are
+  // not assembled until then - they are moved OUT of rawTops and their module's
+  // children into `childrenByParent[__heading__…]` - so sorting any earlier
+  // sorts the lists a heading is about to replace and leaves the heading's own
+  // in discovery order. Which is precisely the case that was reported.
+  for (const [parent, arr] of childrenByParent) {
+    childrenByParent.set(parent, applyNavOrder(arr, navOrder));
   }
 
   // The memo key must include the override-mutable presentation fields —

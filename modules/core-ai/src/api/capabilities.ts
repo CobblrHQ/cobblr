@@ -11,10 +11,15 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 
 export const capabilitiesRouter = Router({ mergeParams: true });
 
+// Either the workspace's OWN provider (provider_id + model) or a PERSONAL
+// connection routed into this workspace (credential_id). The second is what
+// makes a routed key configurable here rather than only on the owner's account
+// page - it used to bypass this table entirely and serve every job.
 const Upsert = z.object({
   capability: z.enum(AiCapabilities),
-  provider_id: z.string().min(1),
-  model: z.string().min(1),
+  provider_id: z.string().min(1).optional(),
+  credential_id: z.string().min(1).optional(),
+  model: z.string().min(1).optional(),
   config: z.record(z.unknown()).optional(),
 });
 
@@ -37,21 +42,59 @@ capabilitiesRouter.put(
     if (!requireRole(req, res, "owner", "admin")) return;
     const parsed = Upsert.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    const def = platform().ai.getProvider(parsed.data.provider_id);
+    const orgId = (req as { tenant?: { org: { id: string } } }).tenant!.org.id;
+    let providerId = parsed.data.provider_id;
+    const credentialId = parsed.data.credential_id ?? null;
+    if (credentialId) {
+      // A connection this workspace may actually name: routed here, of the AI
+      // kind, and accepted. Anything else is not the workspace's to spend.
+      const routed = await platform().connections.routedTo("ai-provider", orgId);
+      const hit = routed.find((r) => r.credentialId === credentialId && r.approved);
+      if (!hit) {
+        res.status(400).json({
+          error: {
+            code: "unknown_connection",
+            message: "That connection is not routed to this workspace, or has not been accepted yet.",
+          },
+        });
+        return;
+      }
+      providerId = hit.providerId;
+    }
+    if (!providerId) {
+      res.status(400).json({
+        error: { code: "missing_provider", message: "provider_id or credential_id is required" },
+      });
+      return;
+    }
+    const def = platform().ai.getProvider(providerId);
     if (!def) {
       res.status(400).json({
         error: {
           code: "unknown_provider",
-          message: `No provider with id ${parsed.data.provider_id}`,
+          message: `No provider with id ${providerId}`,
         },
       });
       return;
     }
-    if (!def.capabilities[parsed.data.capability]?.models.includes(parsed.data.model)) {
+    const cap = def.capabilities[parsed.data.capability];
+    if (!cap) {
+      res.status(400).json({
+        error: {
+          code: "unsupported_capability",
+          message: `${providerId} doesn't do ${parsed.data.capability}`,
+        },
+      });
+      return;
+    }
+    // A connection may be saved without naming a model: the provider's own
+    // default for the job is a better answer than making somebody pick one.
+    const model = parsed.data.model ?? cap.defaultModel ?? cap.models[0];
+    if (!model || !cap.models.includes(model)) {
       res.status(400).json({
         error: {
           code: "unsupported_model",
-          message: `${parsed.data.provider_id} doesn't support ${parsed.data.capability} on ${parsed.data.model}`,
+          message: `${providerId} doesn't support ${parsed.data.capability} on ${model ?? "(no model)"}`,
         },
       });
       return;
@@ -61,14 +104,16 @@ capabilitiesRouter.put(
       .insertInto("core_ai_capability_defaults")
       .values({
         capability: parsed.data.capability,
-        provider_id: parsed.data.provider_id,
-        model: parsed.data.model,
+        provider_id: providerId,
+        credential_id: credentialId,
+        model,
         config: sql`${JSON.stringify(parsed.data.config ?? {})}::jsonb` as never,
       })
       .onConflict((c) =>
         c.column("capability").doUpdateSet({
-          provider_id: parsed.data.provider_id,
-          model: parsed.data.model,
+          provider_id: providerId,
+          credential_id: credentialId,
+          model,
           config: sql`${JSON.stringify(parsed.data.config ?? {})}::jsonb` as never,
           updated_at: new Date(),
         }),

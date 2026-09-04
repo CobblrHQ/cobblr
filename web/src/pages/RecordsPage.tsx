@@ -4,7 +4,7 @@
 // location, custom-field bag), so the interesting columns all come from
 // each collection's declared field-defs.
 
-import { countOf } from "@cobblr/platform-contract";
+import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract";
 import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -49,10 +49,16 @@ export function RecordsPage({
   const navigate = useNavigate();
   const { id } = useParams<{ id?: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const noun = itemNoun?.trim() || "record";
   // On an instance page, fields/views are keyed to the instance
   // ("bookshelf:item") rather than the base records:record.
   const entityKind = instance ? `${instance}:item` : ENTITY_KIND;
+  // "record" is this MODULE's internal word, and falling back to it put "New
+  // record" under a shelf of books (reported 2026-09-03). itemNounFor asks the
+  // sources that actually know - the noun somebody set, then the entity kind -
+  // and lands on the neutral "item" rather than a word from the plumbing. It
+  // deliberately never guesses from the collection's own name: a Bookshelf
+  // holds books, not bookshelves. Set the real word in instance settings.
+  const noun = itemNounFor({ itemNoun, entityKind });
 
   // Detail selection: URL param on /records, local state (+ deep-link
   // ?record=id) on an instance page.
@@ -129,7 +135,7 @@ export function RecordsPage({
             `Couldn't read ${countOf(r.unresolved, noun)} — that's a bug on our side, not your data.`,
           );
         else if (r.unnamed > 0)
-          toast.error(`Nothing to look up — these ${noun}s need a name first.`);
+          toast.error(`Nothing to look up: these ${pluralise(noun)} need a name first.`);
         else toast.success(`Every ${noun} already has an image.`);
         return;
       }
@@ -193,7 +199,7 @@ export function RecordsPage({
         ) : (
           <div className="border-2 border-dashed border-line dark:border-slate-700 rounded-xl p-12 text-center text-xs text-faint dark:text-slate-500 italic">
             {allRows.length === 0
-              ? `No ${noun}s yet. Click + New ${noun} to add one.`
+              ? `No ${pluralise(noun)} yet. Click + New ${noun} to add one.`
               : "No matches with the current filters."}
           </div>
         )

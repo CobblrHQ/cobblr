@@ -42,6 +42,35 @@ export function identifyPromptFor(input: Record<string, unknown>): string {
   return IDENTIFY_PROMPT + measurementContext(input);
 }
 
+/**
+ * The first look. A smaller question with a smaller answer - that is what lets
+ * it come back in a second or two on a small model and be put to the person as
+ * a yes/no while the full read runs. It borrows only the workspace's category
+ * vocabulary from the full prompt's context (so the category it names is one
+ * the matchmaker can route on); hints and corrections belong to the full read.
+ */
+export const GLANCE_PROMPT =
+  "In ONE short line, what is the main physical item in this photo? Give a " +
+  "concise name (brand + what it is when visible) and a coarse category (one " +
+  "or two words). Do not describe it. Do not list details.\n\n" +
+  'Reply with ONLY a JSON object: {"name": <string>, "category": <string|null>, ' +
+  '"confidence": <0..1, how sure you are>}. If the photo is unclear, empty, or ' +
+  'not an identifiable object, reply name "" and confidence 0.';
+
+export function glancePromptFor(input: Record<string, unknown>): string {
+  return GLANCE_PROMPT + knownCategoriesContext(input);
+}
+
+/**
+ * THE resolver for every image capability that injects its prompt server-side.
+ * Adapters and the cache fingerprint both go through here, for the reason
+ * identifyPromptFor's comment gives: two resolvers drift, and a call gets
+ * cached under the hash of a prompt it never sent.
+ */
+export function visionPromptFor(capability: string, input: Record<string, unknown>): string {
+  return capability === "identify-glance" ? glancePromptFor(input) : identifyPromptFor(input);
+}
+
 export const IDENTIFY_PROMPT =
   "Identify the main physical item in this photo as if cataloguing it " +
   "for a workshop/maker inventory. Give a concise descriptive name (brand + " +
@@ -129,19 +158,39 @@ export function measurementContext(input: Record<string, unknown>): string {
   // apart by construction - three shirts scanned together came back "apparel",
   // "apparel" and "clothing" (reported 2026-07-30). Showing the vocabulary is the
   // cheapest fix: reuse beats reconciliation.
-  const known = Array.isArray(input.known_categories)
-    ? (input.known_categories as unknown[])
-        .filter((c): c is string => typeof c === "string" && !!c.trim())
-        .map((c) => c.trim())
-        .slice(0, 24)
-    : [];
   const hints = Array.isArray(input.user_hints)
     ? (input.user_hints as unknown[]).filter((h): h is string => typeof h === "string" && !!h.trim()).map((h) => h.trim())
     : [];
   const single = typeof input.user_hint === "string" ? input.user_hint.trim() : "";
   if (single && !hints.some((h) => h.toLowerCase() === single.toLowerCase())) hints.push(single);
   const hint = hints.length === 1 ? hints[0]! : "";
+  const confirmed = typeof input.confirmed_name === "string" ? input.confirmed_name.trim() : "";
+  const rejected = Array.isArray(input.rejected_names)
+    ? (input.rejected_names as unknown[]).filter((r): r is string => typeof r === "string" && !!r.trim()).map((r) => r.trim())
+    : [];
   let out = "";
+  if (confirmed) {
+    // The person answered "yes" to the first look. Identification is settled;
+    // what is wanted now is everything ELSE about that item. Saying so turns
+    // the full read from a guess into an elaboration.
+    out +=
+      `\n\nThe user has CONFIRMED that this item is: "${confirmed}". Do not ` +
+      "re-identify it and do not second-guess the name. Return that name, and " +
+      "use the photo to fill in the rest as accurately as you can: brand, " +
+      "category, asset-or-part, colour, a legible serial number, and the " +
+      "observations. Where the photo cannot tell you something, leave it null " +
+      "rather than guessing.";
+  }
+  if (rejected.length) {
+    // The person answered "no". A hard negative is worth more than a fresh
+    // guess: the previous answer is off the table, and so is anything that is
+    // merely a rewording of it.
+    out +=
+      "\n\nThe user has said this item is NOT " +
+      rejected.map((r) => `"${r}"`).join(", nor ") +
+      ". Do not return that answer or a variant of it. Look again for what " +
+      "else it could be; if their hint below names it, prefer that.";
+  }
   if (parts.length) {
     out +=
       "\n\nThese precise measurements + observations were captured at a measuring " +
@@ -170,14 +219,27 @@ export function measurementContext(input: Record<string, unknown>): string {
       "override your own read of the photo; do NOT keep the previously-identified " +
       "item if it conflicts with this.";
   }
-  if (known.length) {
-    out +=
-      "\n\nThis workspace already files things under these categories: " +
-      known.join(", ") +
-      ". If the item belongs in one of them, answer with that EXACT wording - " +
-      "reusing an existing category is always better than a synonym of it " +
-      "(\"apparel\" when the workspace says \"Clothing\" splits one shelf in two). " +
-      "Only propose a new category when none of these genuinely fit.";
-  }
+  out += knownCategoriesContext(input);
   return out;
+}
+
+/** The workspace's category vocabulary, as prompt context. Shared by the full
+ *  read and the glance, so the category either names is one the matchmaker
+ *  routes on rather than a synonym of it. */
+export function knownCategoriesContext(input: Record<string, unknown>): string {
+  const known = Array.isArray(input.known_categories)
+    ? (input.known_categories as unknown[])
+        .filter((c): c is string => typeof c === "string" && !!c.trim())
+        .map((c) => c.trim())
+        .slice(0, 24)
+    : [];
+  if (!known.length) return "";
+  return (
+    "\n\nThis workspace already files things under these categories: " +
+    known.join(", ") +
+    ". If the item belongs in one of them, answer with that EXACT wording - " +
+    "reusing an existing category is always better than a synonym of it " +
+    "(\"apparel\" when the workspace says \"Clothing\" splits one shelf in two). " +
+    "Only propose a new category when none of these genuinely fit."
+  );
 }

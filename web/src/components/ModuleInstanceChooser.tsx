@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { ChevronRight, type LucideIcon } from "lucide-react";
 import type { ModuleInstance } from "../lib/api";
+import { pluralise } from "@cobblr/platform-contract";
 
 /** An honest aggregate destination for an instanceability:multi module whose
  *  base list is empty. Instead of the tile diving into ONE instance (dropping
@@ -22,7 +23,7 @@ export function ModuleInstanceChooser({
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted dark:text-slate-400">
-        No unfiled {noun}s here - everything lives under a type below. Pick one to
+        No unfiled {pluralise(noun)} here - everything lives under a type below. Pick one to
         drill in.
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">

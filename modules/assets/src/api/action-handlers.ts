@@ -76,7 +76,7 @@ export function registerActionHandlers(): void {
     const instance = typeof a.instance === "string" ? a.instance : "";
     if (!field || !instance) return { ok: false, error: "missing field / instance" };
 
-    const writer = platform().entities.getWriter("core-locations:location");
+    const writer = await platform().entities.getWriter(ctx.orgId, "core-locations:location");
     if (!writer) return { ok: false, error: "core-locations not available" };
 
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<AssetsDB>;

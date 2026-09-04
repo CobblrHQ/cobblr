@@ -15,7 +15,7 @@
 
 import { createHash } from "node:crypto";
 import type { AiCapability } from "@cobblr/platform-contract";
-import { identifyPromptFor } from "./identify-prompt.js";
+import { visionPromptFor } from "./identify-prompt.js";
 import { rankImagesPromptFor } from "./rank-images-prompt.js";
 
 /** The literal prompts the adapters inject for the non-`input` capabilities.
@@ -45,12 +45,14 @@ export function serverPromptFor(
   input: Record<string, unknown>,
 ): string | null {
   switch (capability) {
+    case "identify-glance":
+    case "split-image":
     case "identify-image":
       // THE SAME resolver the adapters send through — including a caller's own
       // prompt (detectSplitItems'). If this re-derived the prompt independently the
       // two would drift, and a split call would be cached under the hash of a
       // prompt it never sent: precisely the bug the fingerprint exists to prevent.
-      return identifyPromptFor(input);
+      return visionPromptFor(capability, input);
     case "rank-images":
       // Same resolver the adapters inject. Its text varies with the item name /
       // colour / reference flag AND the candidate count, so a re-rank of a

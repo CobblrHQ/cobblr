@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { InventoryApi } from "./api";
+import { pluralise } from "@cobblr/platform-contract";
 
 interface InventoryCtx {
   orgSlug: string;
@@ -77,7 +78,7 @@ export function InventoryProvider({
   // Prefer the stored plural; else a light fallback for legacy instances that
   // predate it ("part" → "parts", otherwise "<noun>s"). New instances carry a
   // properly-inflected plural from creation.
-  const nounPlural = itemNounPlural ?? (noun === "part" ? "parts" : `${noun}s`);
+  const nounPlural = itemNounPlural ?? pluralise(noun);
   return (
     <Ctx.Provider
       value={{ orgSlug, getToken, api, instance, entityKind, itemNoun: noun, itemNounPlural: nounPlural, qtyUnit, parent, basePath }}

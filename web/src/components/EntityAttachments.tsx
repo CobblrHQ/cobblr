@@ -18,6 +18,7 @@ import { ImageLightbox } from "./ImageLightbox";
 import { Link as RouterLink } from "react-router-dom";
 import { useDetailRoute } from "../lib/useDetailRoute";
 import { DiscussionPreview } from "./DiscussionTab";
+import { clipboardImageFiles } from "./pastedImage";
 
 interface Props {
   /** Entity kind id, e.g. "inventory:part". */
@@ -466,13 +467,7 @@ function FilesSection({
     function onPaste(e: ClipboardEvent) {
       const ae = document.activeElement as HTMLElement | null;
       if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable)) return;
-      const imgs: File[] = [];
-      for (const it of Array.from(e.clipboardData?.items ?? [])) {
-        if (it.kind === "file" && it.type.startsWith("image/")) {
-          const f = it.getAsFile();
-          if (f) imgs.push(f);
-        }
-      }
+      const imgs = clipboardImageFiles(e.clipboardData);
       if (imgs.length === 0) return;
       e.preventDefault();
       pasteUploadRef.current(imgs);

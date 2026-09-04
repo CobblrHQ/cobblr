@@ -77,6 +77,7 @@ import { migrateBookshelfToInstance } from "./platform/migrate-bookshelf-to-inst
 import { mergeLabelsQr } from "./platform/merge-labels-qr.js";
 import { backfillPlacements } from "./platform/migrate-location-to-placement.js";
 import { backfillDefaultBindings } from "./platform/seed-bindings.js";
+import { healApprovedButInactiveAi } from "./platform/heal-approved-ai.js";
 import { healMentionEntityRef } from "./platform/heal-mention-entity-ref.js";
 import { repairReplayTruncatedNames } from "./platform/repair-replay-truncated-names.js";
 import { backfillIdentityLinks } from "./platform/backfill-identity.js";
@@ -201,17 +202,17 @@ async function boot() {
     entities: {
       registerResolver: entities.registerResolver,
       registerWriter: entities.registerEntityWriter,
-      getWriter: (kind) => entities.getEntityWriter(kind) ?? null,
-      dependents: async (kind, orgId, id) => {
-        const w = entities.getEntityWriter(kind);
+      getWriter: async (orgId, kind) => (await entities.getEntityWriterFor(orgId, kind)) ?? null,
+      dependents: async (orgId, kind, id) => {
+        const w = await entities.getEntityWriterFor(orgId, kind);
         return w?.dependents ? await w.dependents(orgId, id) : null;
       },
-      snapshot: async (kind, orgId, id) => {
-        const w = entities.getEntityWriter(kind);
+      snapshot: async (orgId, kind, id) => {
+        const w = await entities.getEntityWriterFor(orgId, kind);
         return w?.snapshot ? await w.snapshot(orgId, id) : null;
       },
-      restore: async (kind, orgId, image) => {
-        const w = entities.getEntityWriter(kind);
+      restore: async (orgId, kind, image) => {
+        const w = await entities.getEntityWriterFor(orgId, kind);
         if (!w?.restore) return false;
         await w.restore(orgId, image);
         return true;
@@ -406,6 +407,7 @@ async function boot() {
       listProviders: connectionsImpl.listProviders,
       getProvider: connectionsImpl.getProvider,
       resolve: connectionsImpl.resolve,
+      routedTo: connectionsImpl.routedTo,
     },
     egress: {
       guardedFetch: egressImpl.guardedFetch,
@@ -767,7 +769,7 @@ async function boot() {
         //     inside a container — two disagreeing answers)
         // Best-effort: kinds without a writer (custom kinds) skip the sync.
         try {
-          const writer = entities.getEntityWriter(containee.kind);
+          const writer = await entities.getEntityWriterFor(orgId, containee.kind);
           if (writer) {
             const loc = container.kind === "core-locations:location" ? container.id : null;
             await writer.update(orgId, containee.id, { location_id: loc });
@@ -814,7 +816,7 @@ async function boot() {
           .execute();
         if (prev?.container_kind === "core-locations:location") {
           try {
-            const writer = entities.getEntityWriter(containee.kind);
+            const writer = await entities.getEntityWriterFor(orgId, containee.kind);
             if (writer) await writer.update(orgId, containee.id, { location_id: null });
           } catch (err) {
             console.warn(
@@ -1139,6 +1141,12 @@ async function boot() {
   // trigger_event), so repeated boots are safe.
   const seeded = await T("backfillDefaultBindings", backfillDefaultBindings());
   console.log(`[cobblr-api] default bindings backfilled: ${seeded} added`);
+
+  // A workspace that approved an AI and never switched it on has been running
+  // with none. See heal-approved-ai.ts for how that state was reachable; it
+  // fills a vacuum only, so a live pick is never overridden.
+  const aiHealed = await T("healApprovedButInactiveAi", healApprovedButInactiveAi());
+  if (aiHealed.length) console.log(`[cobblr-api] approved-but-idle AI switched on in ${aiHealed.length} workspace(s)`);
 
   // Correct the entity ref on discussion-mention notifications dispatched
   // before it was fixed at the source. A DM already sitting in somebody's

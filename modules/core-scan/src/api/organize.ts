@@ -558,7 +558,7 @@ organizeRouter.post(
     const applied = new Set((row.applied_group_ids as unknown[]).filter((x) => typeof x === "string") as string[]);
     const overrides = new Map((body.overrides ?? []).map((o) => [o.group_id, o] as const));
 
-    const writer = platform().entities.getWriter("core-locations:location");
+    const writer = await platform().entities.getWriter(ctx.org.id, "core-locations:location");
     const createdLocations: Array<{ id: string; name: string; group_id: string }> = [];
     const filedItemIds: string[] = [];
     const appliedGroupIds: string[] = [];
@@ -646,7 +646,7 @@ organizeRouter.post(
         for (const ref of keptIds) {
           const split = splitEntityRef(ref);
           if (!split) continue;
-          const w = platform().entities.getWriter(split.kind);
+          const w = await platform().entities.getWriter(ctx.org.id, split.kind);
           if (!w) continue;
           const cur = await platform()
             .entities.lookup(ctx.org.id, split.kind, split.id)

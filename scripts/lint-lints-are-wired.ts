@@ -103,7 +103,17 @@ if (unrun.length) {
       unrun.map((f) => `    - scripts/${f}`).join("\n") +
       `\n    Discovery is by package.json, so a file alone never runs. Add a` +
       `\n    "lint:<name>": "tsx scripts/${unrun[0]}" entry — or, if it is` +
-      `\n    deliberately out of the suite, put a ${OPT_OUT} <reason> comment in it.`,
+      `\n    deliberately out of the suite, put a ${OPT_OUT} <reason> comment in it.` +
+      // A NEW lint needs more than this one thing, and finding that out one
+      // failure at a time costs a push per requirement. Say the whole list
+      // here, at the first red, so it can be finished in one pass.
+      `\n` +
+      `\n    A new lint needs all of these — \`pnpm run where "a new repo rule"\`` +
+      `\n    prints them before you write it:` +
+      `\n      1. the script                scripts/lint-<name>.ts` +
+      `\n      2. this package.json entry   so something actually runs it` +
+      `\n      3. a placement-registry row  saying which work it governs (lint:placement)` +
+      `\n      4. proof it goes RED         on the real violation, before you fix it`,
   );
 }
 

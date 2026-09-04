@@ -15,6 +15,7 @@
 import { useEffect, useState } from "react";
 import { Modal } from "./Modal";
 import { carryFieldNames, moveDestinations, type InstanceOption } from "./move-destinations";
+import { countOf } from "@cobblr/platform-contract";
 
 type CarryField = { name: string; display_label: string; type: string; count: number };
 
@@ -79,7 +80,7 @@ export function MoveToInstanceModal({
 
   const base = `/api/v1/orgs/${slug}`;
   const count = ids.length;
-  const things = count === 1 ? noun : `${count} ${noun}s`;
+  const things = count === 1 ? noun : countOf(count, noun);
 
   useEffect(() => {
     if (!open) return;

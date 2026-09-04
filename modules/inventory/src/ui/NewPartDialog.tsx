@@ -54,7 +54,7 @@ interface NewPartDialogProps {
 // (a datalist — still free text, so nothing is constrained). Covers everyday
 // inventory + medication units, since "each" alone was too thin (feedback).
 const UNIT_SUGGESTIONS = [
-  "each", "pcs", "pack", "box", "set", "pair",
+  "each", "pcs", "pack", "box", "set", "pair",  // VOCAB-ENUMERATION OK: a coincidence of spelling, not a field role
   "tablet", "capsule", "pill", "mL", "L", "drop", "puff", "spray", "patch", "dose", "sachet",
   "mg", "mcg", "g", "kg", "IU", "unit",
   "m", "cm", "ft", "roll", "sheet",
@@ -396,6 +396,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
               />
             </Field>
           )}
+          {/* VOCAB-ENUMERATION OK: a coincidence of spelling, not a field role */}
           {!fp.hidden("category") && (
             <Field label={fp.label("category", "Category")}>
               <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="input">
@@ -408,6 +409,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
               </select>
             </Field>
           )}
+          {/* VOCAB-ENUMERATION OK: a coincidence of spelling, not a field role */}
           {!fp.hidden("location") && (
             <Field label={fp.label("location", "Location")}>
               <select value={locationId} onChange={(e) => setLocationId(e.target.value)} className="input">

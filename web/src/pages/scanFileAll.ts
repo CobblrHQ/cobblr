@@ -33,6 +33,69 @@ export interface ScanItemLike {
   suggested_candidates?: ScanCandidateLike[] | null;
   quantity?: number | null;
   target_location_id?: string | null;
+  /** Where the system thinks it goes - from where siblings live, or from how
+   *  the thing has to be kept. A suggestion, not a decision: it is the LAST
+   *  fallback below, under anything a person said. */
+  suggested_location_id?: string | null;
+  suggested_location_note?: string | null;
+  /** Stamped server-side at match time. `tracked_match` is the entity this
+   *  workspace ALREADY has that this scan is another of. */
+  suggested_metadata?: Record<string, unknown> | null;
+}
+
+/** The entity a scan turned out to be another of. */
+export interface TrackedMatchLike {
+  kind: string;
+  id: string;
+  title: string;
+  instance?: string | null;
+}
+
+/**
+ * The thing this workspace already has, when the scan is another of it.
+ *
+ * Resolved server-side and stamped on the row, so the closed card and the bulk
+ * sweep read the same answer rather than each deciding for themselves.
+ */
+export function trackedMatchOf(it: ScanItemLike): TrackedMatchLike | null {
+  const m = it.suggested_metadata?.tracked_match as TrackedMatchLike | null | undefined;
+  return m && m.kind && m.id && m.title ? m : null;
+}
+
+/**
+ * "+N, more of the same" for an item the workspace already tracks.
+ *
+ * A second scan of a thing you already have is a re-purchase, not a new
+ * record. Filing it as new is how one product becomes two rows that differ
+ * only in word order - "Roma Tomatoes" and "Tomatoes Roma" - which nobody
+ * should have to notice, least of all after the fact.
+ *
+ * Only for an item that is otherwise ready: this decides HOW to file, never
+ * WHETHER.
+ */
+export function attachBodyFor(
+  it: ScanItemLike,
+): { kind: string; entity_id: string; instance?: string; mode: "add-qty" } | null {
+  if (!isReadyToFile(it)) return null;
+  const m = trackedMatchOf(it);
+  if (!m) return null;
+  return {
+    kind: m.kind,
+    entity_id: m.id,
+    ...(m.instance ? { instance: m.instance } : {}),
+    mode: "add-qty",
+  };
+}
+
+/** What "File all" is about to merge rather than create, for the label that
+ *  has to say so before it happens. Names are the EXISTING entities', because
+ *  that is what the count will join. */
+export function duplicateSummary(items: readonly ScanItemLike[]): { count: number; names: string[] } {
+  const names = items
+    .filter((it) => isReadyToFile(it))
+    .map((it) => trackedMatchOf(it)?.title)
+    .filter((t): t is string => !!t);
+  return { count: names.length, names: [...new Set(names)] };
 }
 
 /** The confirm endpoint's target_kind is the module's BASE kind (the instance,
@@ -130,6 +193,55 @@ export function confirmBodyFor(
     extras: fields,
     // The confirm endpoint never defaults to target_location_id — carry a
     // pre-set home (active-bin filing, an organize apply) or it's dropped.
-    location_id: it.target_location_id ?? agreedLocationId ?? undefined,
+    //
+    // Without the suggestion a shop of groceries filed with NO home at all: the
+    // suggestion existed, the chip offered "Put here", and nobody presses that
+    // thirty times, so every item landed nowhere and the storage check then
+    // complained about spots it could have filled.
+    //
+    // ORDER, and the middle one is deliberate. A location set on the ITEM is a
+    // decision about that item and wins outright. The batch location is a
+    // default for the rest - "put these away in the kitchen" - so it must NOT
+    // override a spot worked out for one item, or picking Kitchen for a shop
+    // would send the frozen peas to the kitchen and then warn about them,
+    // which is the whole complaint. What the batch answers for is everything
+    // with no better idea.
+    location_id: it.target_location_id ?? it.suggested_location_id ?? agreedLocationId ?? undefined,
+  };
+}
+
+/** What "File all" is about to do with locations, for the confirm that asks.
+ *
+ *  A batch that silently placed things would be the same mistake as a batch
+ *  that silently placed nothing: the person has to be able to SEE that six are
+ *  going in the Fridge before it happens. Names are grouped and counted rather
+ *  than listed per item - the point is the shape of the answer, not an
+ *  inventory. */
+export function placementPreview(
+  items: readonly ScanItemLike[],
+  agreedLocationId?: string | null,
+): { placed: Array<{ name: string; count: number }>; unplaced: number } {
+  const byName = new Map<string, number>();
+  let unplaced = 0;
+  for (const it of items) {
+    if (!isReadyToFile(it)) continue;
+    // Only the SUGGESTED spots are described. A location the person set on the
+    // item is not news, and reporting it back as though the system had decided
+    // it would be misleading.
+    if (it.target_location_id) continue;
+    const name = it.suggested_location_id ? (it.suggested_location_note?.split(" — ")[0] ?? "a suggested spot") : null;
+    if (!name) {
+      // Covered by the batch location, if one was picked; genuinely homeless
+      // otherwise. Either way the system decided nothing, so it says nothing.
+      if (!agreedLocationId) unplaced++;
+      continue;
+    }
+    byName.set(name, (byName.get(name) ?? 0) + 1);
+  }
+  return {
+    placed: [...byName.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)),
+    unplaced,
   };
 }
