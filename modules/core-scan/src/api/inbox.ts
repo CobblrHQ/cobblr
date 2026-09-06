@@ -30,12 +30,14 @@ import {
   type TrackedCandidate,
 } from "../services/autofile.js";
 import { resolveRequirement, storageRequirementFor } from "../services/storage-requirement.js";
+import { applyReceiptFacts } from "../services/receipt-candidate-facts.js";
+import { lineQuantity } from "../services/receipt-shared.js";
 import { expiryDefaults } from "../services/shelf-life.js";
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
 import { fileReceiptAs, type KnownShipment } from "../services/receipt-arrival.js";
-import { addOrderLine, cancelReceiptOrder, createReceiptOrder, lineUnitCost } from "../services/receipt-order.js";
+import { addOrderLine, claimOrderLine, orderLines, deleteReceiptOrder, createReceiptOrder, lineUnitCost } from "../services/receipt-order.js";
 import {
   mapRoledFacts,
   planDecodeFill,
@@ -135,6 +137,19 @@ export const inboxRouter = Router({ mergeParams: true });
  *  copy. A second spelling of a base url does not fail loudly - the caller still
  *  runs, just against nothing. */
 export const INTERNAL_API = `http://127.0.0.1:${process.env.API_PORT ?? 4000}`;
+
+/** Run tasks at most `width` at a time, in order. For work that talks to an
+ *  outside service with opinions about bursts. */
+export async function runBounded(tasks: Array<() => Promise<void>>, width: number): Promise<void> {
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < tasks.length) {
+      const t = tasks[next++]!;
+      await t();
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(width, tasks.length) }, worker));
+}
 
 // ─────────────────────────── GET /inbox/stats ──────────────────────
 // Cheap counts for the put-away front door (dashboard card + scan-page
@@ -737,12 +752,17 @@ async function materializeReceiptLines(opts: {
         // till's abbreviation. Marked AI-read below, since it was OCR'd off
         // paper and deserves the lower trust that carries.
         ...(line.code ? { barcode_text: line.code } : {}),
-        quantity: Math.max(1, Math.round(line.qty || 1)),
+        // A line sold BY WEIGHT is one thing, not four: "4.14 lb @ 1.99/lb"
+        // was rounded into a quantity of 4 chicken breasts (2026-09-06).
+        quantity: lineQuantity(line),
         suggested_metadata: JSON.stringify({
           ...baseMeta,
           description: line.description,
           unit_price: line.unit_price,
           line_total: line.line_total,
+          ...(line.weight !== null && line.weight !== undefined
+            ? { weight: line.weight, weight_unit: line.weight_unit }
+            : {}),
           // Marked as READ rather than scanned, so nothing treats it as a
           // hardware scan.
           // "receipt", not "ai-photo": this came off the receipt DOCUMENT,
@@ -779,15 +799,11 @@ async function materializeReceiptLines(opts: {
     // says "Croissant" and never who made it, and searching "Lidl Croissant"
     // drags the pool into that shop's packaged own-brand catalogue, which
     // fetched a tin of cherry tomatoes for a line of fresh Roma tomatoes.
-    void refreshCatalogImageByName(
-      opts.orgId,
-      inserted.id,
-      line.description,
-      null,
-      opts.receipt.vendor,
-    ).catch((err) =>
-      console.error("[core-scan] receipt line catalog photo failed:", (err as Error).message),
-    );
+    // No picture at insert. A receipt line has no category until it is
+    // matched, and searching a bare noun plus the shop's name answers with the
+    // shop's packaged catalogue - a tin of cherry tomatoes for fresh Roma
+    // tomatoes (2026-09-06). matchItem fetches the picture once routing has
+    // said what the thing is; the tile fills a few seconds later and right.
   }
   // Route each line against the menu, detached — no enrichment to wait for.
   if (opts.token) {
@@ -1064,8 +1080,14 @@ inboxRouter.post(
           .set({ purchases_order_id: orderId })
           .where("id", "=", batchId)
           .execute();
+        // One order line per receipt line, in receipt order - the same order
+        // materializeReceiptLines made the inbox rows in, so rows[i] and
+        // lineIds[i] are one line of the receipt. Each row remembers its line,
+        // which is what lets a later confirm CLAIM it rather than add a second
+        // one (order-at-parse.md, phase 2).
+        const lineIds: Array<string | null> = [];
         for (const line of receipt.items) {
-          await addOrderLine({
+          lineIds.push(await addOrderLine({
             baseUrl: receiptBaseUrl,
             slug: ctx.org.slug,
             headers,
@@ -1082,7 +1104,18 @@ inboxRouter.post(
               line.qty,
             ),
             lineAmount: lineNet(line),
-          });
+          }));
+        }
+        if (!targetItemId) {
+          for (let i = 0; i < rows.length; i++) {
+            const lineId = lineIds[i] ?? null;
+            if (!lineId) continue;
+            await db
+              .updateTable("core_scan_inbox_items")
+              .set({ suggested_metadata: mergeMeta({ receipt_order_id: orderId, receipt_order_item_id: lineId }) as never })
+              .where("id", "=", rows[i]!.id)
+              .execute();
+          }
         }
         // The item this paperwork was attached to now knows its purchase. A
         // user-owned key, deliberately outside IDENTIFY_OWNED_KEYS: an AI
@@ -1319,213 +1352,6 @@ inboxRouter.patch(
   }),
 );
 
-// ─────────────── POST /receipt-group/:groupId/confirm ───────────────
-// Collapse a parsed receipt's pending lines into ONE purchases order: create the
-// order (vendor + date + total from the group), then confirm EACH line through
-// the normal per-item /confirm (which creates/matches the part) and attach the
-// new part to the order as a line item. So a receipt becomes one purchase order
-// with N line items, not N orphan parts. The receipt_group_id stamped at parse
-// time is the join key. Lines already confirmed/discarded individually are
-// simply not pending, so they're skipped — you can still triage line-by-line
-// first, then roll up whatever remains.
-//
-// Degrades gracefully: if the purchases module isn't enabled (the order create
-// fails), the lines are still confirmed into parts — just without an order.
-
-const ReceiptGroupConfirm = z.object({
-  target_module: z.string().min(1).max(80).optional(),
-  target_kind: z.string().min(1).max(80).optional(),
-  instance: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).max(80).optional(),
-  location_id: z.string().uuid().optional(),
-});
-
-// AI-REACH: confirms a receipt group from the scanner review screen; a scan-flow step
-inboxRouter.post(
-  "/receipt-group/:groupId/confirm",
-  asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
-    const groupId = req.params.groupId;
-    if (!groupId) {
-      res.status(400).json({ error: { code: "missing_id", message: "groupId required" } });
-      return;
-    }
-    const parsed = ReceiptGroupConfirm.safeParse(req.body ?? {});
-    if (!parsed.success) return badBody(res, parsed.error);
-    const db = tenantDb(req);
-    const ctx = tenantContext(req);
-    const token = bearer(req);
-    if (!token) {
-      res.status(401).json({ error: { code: "no_auth", message: "Bearer token required" } });
-      return;
-    }
-    const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
-
-    // The group's still-pending lines, oldest first (preserves receipt order).
-    const rows = await db
-      .selectFrom("core_scan_inbox_items")
-      .selectAll()
-      .where(sql<boolean>`suggested_metadata->>'receipt_group_id' = ${groupId}`)
-      .where("status", "in", ["pending", "enriching"])
-      .where("source_kind", "=", "receipt")
-      .orderBy("created_at", "asc")
-      .execute();
-    if (rows.length === 0) {
-      res.status(404).json({ error: { code: "empty_group", message: "No pending receipt lines in this group." } });
-      return;
-    }
-
-    const meta0 = (rows[0]!.suggested_metadata ?? {}) as Record<string, unknown>;
-    const vendor = typeof meta0.receipt_vendor === "string" ? meta0.receipt_vendor : null;
-    const orderedAt = typeof meta0.receipt_date === "string" ? meta0.receipt_date : null;
-    // Order total = sum of line totals (fall back to unit_price × qty per line).
-    let total = 0;
-    let sawAmount = false;
-    for (const row of rows) {
-      const m = (row.suggested_metadata ?? {}) as Record<string, unknown>;
-      const lt = typeof m.line_total === "number" ? m.line_total : null;
-      const up = typeof m.unit_price === "number" ? m.unit_price : null;
-      const qty = Number(row.quantity ?? 1);
-      const amount = lt ?? (up != null ? up * qty : null);
-      if (amount != null) {
-        total += amount;
-        sawAmount = true;
-      }
-    }
-
-    const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
-
-    // The batch carries the stored receipt file + the parsed order ref, so the
-    // order can show the actual receipt and its number — not a bare note.
-    const batchId = rows[0]!.scan_batch_id;
-    const batchIdForOrder = batchId;
-    let sourceFileId: string | null = null;
-    let orderRef: string | null = typeof meta0.receipt_order_ref === "string" ? meta0.receipt_order_ref : null;
-    let trackingNumber: string | null = null;
-    let knownShipment: KnownShipment | null = null;
-    // Set when the receipt was parsed by a version that creates the order up
-    // front. Null means "parsed before that shipped" and is what selects the
-    // legacy create path below.
-    let existingOrderId: string | null = null;
-    if (batchId) {
-      const batch = await db
-        .selectFrom("core_scan_batches")
-        .select(["source_file_id", "order_ref", "tracking_number", "shipment_state", "shipment_checked_at", "shipment_next_poll_at", "shipment_location", "purchases_order_id"])
-        .where("id", "=", batchId)
-        .executeTakeFirst();
-      existingOrderId = batch?.purchases_order_id ?? null;
-      sourceFileId = batch?.source_file_id ?? null;
-      if (!orderRef && batch?.order_ref) orderRef = batch.order_ref;
-      trackingNumber = batch?.tracking_number ?? null;
-      // What the inbox already learned while this receipt sat here, so the
-      // order continues the watch instead of opening at "no information".
-      if (batch?.shipment_state) {
-        knownShipment = {
-          state: batch.shipment_state,
-          checkedAt: batch.shipment_checked_at ?? null,
-          nextPollAt: batch.shipment_next_poll_at ?? null,
-          location: batch.shipment_location ?? null,
-        };
-      }
-    }
-
-    // ATTACH, don't create — the order was born when the receipt was parsed.
-    //
-    // PHASE 1 (docs/design-decisions/order-at-parse.md §Migration): the create
-    // path below is kept for batches parsed BEFORE that moved, whose column is
-    // null. That is the whole tolerance: nothing breaks for a receipt already
-    // sitting in the inbox, and a canary on the previous api only ever takes
-    // the create branch. It retires in phase 2, once no un-confirmed
-    // pre-migration batches remain.
-    let orderId: string | null = existingOrderId;
-    if (!orderId) {
-      orderId = await createReceiptOrder({
-        baseUrl,
-        slug: ctx.org.slug,
-        headers,
-        vendor,
-        orderRef,
-        orderedAt,
-        trackingNumber,
-        knownShipment,
-        total: sawAmount ? Number(total.toFixed(2)) : null,
-        groupId,
-        sourceFileId,
-      });
-      if (orderId && batchIdForOrder) {
-        await db
-          .updateTable("core_scan_batches")
-          .set({ purchases_order_id: orderId })
-          .where("id", "=", batchIdForOrder)
-          .execute();
-      }
-    }
-
-    // Confirm each line into a part (reusing the per-item confirm), then attach
-    // the new part to the order.
-    const confirmed: Array<Record<string, unknown>> = [];
-    for (const row of rows) {
-      const confirmBody: Record<string, unknown> = {};
-      if (parsed.data.target_module && parsed.data.target_kind) {
-        confirmBody.target_module = parsed.data.target_module;
-        confirmBody.target_kind = parsed.data.target_kind;
-      }
-      if (parsed.data.instance) confirmBody.instance = parsed.data.instance;
-      if (parsed.data.location_id) confirmBody.location_id = parsed.data.location_id;
-
-      const cRes = await fetch(
-        `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-scan/inbox/${row.id}/confirm`,
-        { method: "POST", headers, body: JSON.stringify(confirmBody) },
-      );
-      if (!cRes.ok) {
-        confirmed.push({ itemId: row.id, error: `confirm_${cRes.status}` });
-        continue;
-      }
-      const created = ((await cRes.json()) as { created?: { id?: string } }).created;
-      const partId = created?.id ?? null;
-      if (orderId && partId) {
-        const m = (row.suggested_metadata ?? {}) as Record<string, unknown>;
-        try {
-          const itemRes = await fetch(
-            `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/purchases/orders/${orderId}/items`,
-            {
-              method: "POST",
-              headers,
-              body: JSON.stringify({
-                part_id: partId,
-                description: row.suggested_name ?? undefined,
-                qty: Number(row.quantity ?? 1),
-                unit_cost: typeof m.unit_price === "number" ? m.unit_price : undefined,
-              }),
-            },
-          );
-          // Stamp the order + line-item ids onto the scan item so a later
-          // unconfirm can remove BOTH the part and its order line (and drop the
-          // order if it empties) — without this the undo left an orphan order
-          // pointing at a deleted part (reported 2026-07-25).
-          if (itemRes.ok) {
-            const lineItem = (await itemRes.json()) as { id?: string };
-            await db
-              .updateTable("core_scan_inbox_items")
-              .set({
-                suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({
-                  receipt_order_id: orderId,
-                  receipt_order_item_id: lineItem.id ?? null,
-                })}::jsonb` as never,
-                updated_at: new Date(),
-              })
-              .where("id", "=", row.id)
-              .execute();
-          }
-        } catch (err) {
-          console.warn("[core-scan] receipt PO add-item threw:", (err as Error).message);
-        }
-      }
-      confirmed.push({ itemId: row.id, partId });
-    }
-
-    res.json({ order_id: orderId, vendor, confirmed });
-  }),
-);
 
 // ─────────────────────────── GET /inbox ────────────────────────────
 
@@ -2371,6 +2197,26 @@ inboxRouter.post(
       return;
     }
     const created = (await createRes.json()) as { id: string };
+    // A receipt line's order line already exists (born at parse). Filing is
+    // what CLAIMS it: the part now stands for that line. Best-effort, like
+    // every other purchases touch from here - a workspace without purchases
+    // files its receipts all the same.
+    {
+      const rm = (row.suggested_metadata ?? {}) as { receipt_order_id?: unknown; receipt_order_item_id?: unknown };
+      const oid = typeof rm.receipt_order_id === "string" ? rm.receipt_order_id : null;
+      const lid = typeof rm.receipt_order_item_id === "string" ? rm.receipt_order_item_id : null;
+      const tok = bearer(req);
+      if (oid && lid && tok) {
+        void claimOrderLine({
+          baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
+          slug: ctx.org.slug,
+          headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
+          orderId: oid,
+          itemId: lid,
+          partId: created.id,
+        });
+      }
+    }
 
     // Scan-into-container: if the item was scanned into a CONTAINER bin (a
     // server/asset or machine — not a location), place the created entity inside
@@ -2940,8 +2786,12 @@ inboxRouter.post(
     // parse (order-at-parse.md), so without this an abandoned receipt leaves a
     // purchase behind — a cost that did not exist while orders were born at
     // confirm, and the reason cancelling is part of that change rather than a
-    // follow-up. Cancelled, not deleted: the status exists, and a cancelled
-    // order is a truer record of "uploaded then discarded" than a gap.
+    // follow-up. DELETED when no line was ever claimed: the order was made by
+    // a parse nobody kept, and a session is deleted because the read went wrong
+    // and a better picture is coming, which will make its own order - a
+    // cancelled ghost beside it is clutter (the operator, 2026-09-06). A line
+    // somebody DID claim means the order is real, and this path is never
+    // reached for it: a filed line is resolved, not discarded, so it is live.
     if (row.scan_batch_id) {
       void (async () => {
         try {
@@ -2958,12 +2808,16 @@ inboxRouter.post(
             .where("id", "=", row.scan_batch_id!)
             .executeTakeFirst();
           if (!batch?.purchases_order_id) return;
-          await cancelReceiptOrder({
+          const oargs = {
             baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
             slug: ctx.org.slug,
             headers: { Authorization: `Bearer ${bearer(req)}`, "Content-Type": "application/json" },
             orderId: batch.purchases_order_id,
-          });
+          };
+          // Belt and braces on "nobody claimed a line": read the order itself.
+          const lines = await orderLines(oargs);
+          if (lines === null || lines.some((l) => l.part_id)) return;
+          await deleteReceiptOrder(oargs);
         } catch (err) {
           console.warn("[core-scan] discard order cancel threw:", (err as Error).message);
         }
@@ -4644,46 +4498,28 @@ inboxRouter.post(
       }
     }
 
-    // If this line was committed into a receipt purchase order, remove its order
-    // line item too — part_id has no FK cascade, so deleting the part alone left
-    // the order pointing at a ghost. Drop the order entirely once its last line
-    // is gone, so an undone "Confirm all" leaves no empty order behind (reported 2026-07-25).
+    // If this line came off a receipt, its order line was born at parse and
+    // stays: sending the item back only RELEASES the claim (part_id back to
+    // NULL). This used to delete the line and then the order when it emptied,
+    // which was right when confirm had created both; now the receipt is the
+    // order's reason to exist, and undoing a filing is not un-reading it.
     const receiptOrderId = typeof meta.receipt_order_id === "string" ? meta.receipt_order_id : null;
     const receiptOrderItemId =
       typeof meta.receipt_order_item_id === "string" ? meta.receipt_order_item_id : null;
-    if (receiptOrderId) {
+    if (receiptOrderId && receiptOrderItemId) {
       const token = bearer(req);
-      const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
       if (token) {
-        const oHeaders = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
-        const ordersBase = `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/purchases/orders`;
-        try {
-          let itemsRemaining: number | null = null;
-          if (receiptOrderItemId) {
-            const delRes = await fetch(`${ordersBase}/${receiptOrderId}/items/${receiptOrderItemId}`, {
-              method: "DELETE",
-              headers: oHeaders,
-            });
-            if (delRes.ok) {
-              itemsRemaining = ((await delRes.json()) as { items_remaining?: number }).items_remaining ?? null;
-            }
-          }
-          if (itemsRemaining === null) {
-            // Older commit with no stamped line id, or the item delete missed —
-            // fall back to counting the order's live items.
-            const listRes = await fetch(`${ordersBase}/${receiptOrderId}/items`, { headers: oHeaders });
-            if (listRes.ok) itemsRemaining = ((await listRes.json()) as { items?: unknown[] }).items?.length ?? null;
-          }
-          if (itemsRemaining === 0) {
-            await fetch(`${ordersBase}/${receiptOrderId}`, { method: "DELETE", headers: oHeaders });
-            note = note ? `${note} The now-empty purchase order was removed.` : "The now-empty purchase order was removed.";
-          }
-        } catch (err) {
-          console.warn("[core-scan] receipt PO cleanup on unconfirm threw:", (err as Error).message);
-        }
+        const released = await claimOrderLine({
+          baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
+          slug: ctx.org.slug,
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          orderId: receiptOrderId,
+          itemId: receiptOrderItemId,
+          partId: null,
+        });
+        if (released) note = note ? `${note} Its line on the purchase order is unclaimed again.` : "Its line on the purchase order is unclaimed again.";
       }
     }
-
     // Reopen: back to pending, resolution cleared, RESTORED to its original
     // spot — un-confirm is an UNDO, not a re-scan. created_at stays (it's when
     // the item was scanned, immutable history); rewriting it to now() dragged
@@ -4701,11 +4537,10 @@ inboxRouter.post(
         // Unconfirm clears the attach link + the receipt-order linkage (the order
         // line is gone now) — DB-side delete of just those keys, leaving every
         // other pass's keys intact (this used to full-replace).
-        suggested_metadata: mergeMeta({}, [
-          "attached_to",
-          "receipt_order_id",
-          "receipt_order_item_id",
-        ]) as never,
+        // The receipt-order linkage STAYS: the order line is a fact about the
+        // receipt, born at parse, and filing this row again must claim that
+        // same line. Only the attach link is cleared.
+        suggested_metadata: mergeMeta({}, ["attached_to"]) as never,
         updated_at: new Date(),
       })
       .where("id", "=", id)
@@ -6489,6 +6324,9 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     // VIN decoder repairs a mangled scan and writes the fix back), so the VIN field
     // gets the VIN that exists, not the one the scanner hallucinated.
     applyDecoderFill(row.suggested_metadata, candidates, menu, row.barcode_text);
+    // A receipt KNOWS its provenance; the model only guesses at it. Written
+    // after the model so the till's facts win (see receipt-candidate-facts.ts).
+    applyReceiptFacts(row.suggested_metadata as Record<string, unknown> | null, candidates, menu);
 
     // THE REPLAY INVARIANT, checked rather than merely intended: a replay may
     // only add or refine. It re-derives from the row's own stored knowledge, so
@@ -6581,6 +6419,11 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
                 title: bestTracked.title,
                 instance: bestTracked.instance,
                 matched_by: bestTracked.matched_by,
+                // The picture a person already chose for the thing they have.
+                // A re-purchase off a receipt searched the web again and came
+                // home with a tin, over a photo the owner had hand-picked for
+                // that very record (2026-09-06). The card shows this one first.
+                image_path: bestTracked.image_path,
               }
             : null,
           ...(photoObservations ? { photo_observations: photoObservations } : {}),
@@ -6637,9 +6480,15 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     try {
       if (!row.target_location_id) {
         const identified = adoptName ? candName : row.suggested_name;
+        // The candidate's category is the table's OWN axis (food_category on
+        // Groceries); meta.category is the vision pass's word and is null on a
+        // receipt line. Reading only meta.category left the category-table
+        // fallback dead on every receipt (2026-09-06).
+        const suggestCategory =
+          (candidates[0] as { category?: string } | undefined)?.category ?? meta.category ?? null;
         const sug = await suggestLocationForItem(opts.orgId, {
           name: identified,
-          category: meta.category ?? null,
+          category: suggestCategory,
           excludeId: opts.itemId,
           // The item's OWN answer first, its category second. Groceries
           // declares a storage_requirement field the scan fills, and the
@@ -6655,7 +6504,7 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
           requirement: resolveRequirement(
             (meta as { storage_requirement?: unknown }).storage_requirement ??
               (candidates[0]?.fields as Record<string, unknown> | undefined)?.storage_requirement,
-            meta.category ?? null,
+            suggestCategory,
           ),
         });
         if (sug) {
@@ -6680,12 +6529,27 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     // fetched for the OLD name and would pop in a poll or two later — reading as
     // "still working" after the card looked settled. Re-fetch the cover for the
     // final name HERE so it lands inside the finalized window, not after it.
-    if (adoptName) {
-      try {
-        await refreshCatalogImageByName(opts.orgId, opts.itemId, candName, row.suggested_manufacturer ?? null);
-      } catch (e) {
-        console.error(`[core-scan] finalize image refresh for ${opts.itemId} failed:`, (e as Error).message);
-      }
+    // A receipt line fetches its picture HERE, not at insert: now the category
+    // is known, the search can be told "fresh produce" and the ranking can
+    // refuse a tin (see refreshCatalogImageByName). Not awaited - the match is
+    // settled; the tile fills when the search does.
+    const receiptLine = row.source_kind === "receipt" && !row.catalog_image_file_id && !row.catalog_image_url;
+    if (adoptName || receiptLine) {
+      const nameForCover = adoptName ? candName : row.suggested_name ?? "";
+      const category =
+        (candidates[0] as { category?: string } | undefined)?.category ??
+        ((candidates[0] as { fields?: Record<string, unknown> } | undefined)?.fields?.food_category as string | undefined) ??
+        null;
+      const soldBy = (meta as { receipt_vendor?: string } | null)?.receipt_vendor ?? null;
+      const refresh = refreshCatalogImageByName(
+        opts.orgId,
+        opts.itemId,
+        nameForCover,
+        row.suggested_manufacturer ?? null,
+        soldBy,
+        category,
+      ).catch((e) => console.error(`[core-scan] finalize image refresh for ${opts.itemId} failed:`, (e as Error).message));
+      if (adoptName) await refresh;
     }
     // The run has settled - record on ITS history entry whether a model
     // actually answered, so the timeline stops claiming an answer it never got.

@@ -42,6 +42,14 @@ const warnBatcher = new StorageWarnBatcher(async (orgId, batch) => {
         userId,
         eventType: "core-scan.storage.mismatch",
         message: batch.message,
+        // One misplaced thing → open it and move it. A batch spanning several
+        // has nowhere honest to point, and says so rather than picking one.
+        ...(batch.link_url
+          ? { link_url: batch.link_url }
+          : {
+              no_link_reason:
+                "several things in several places; each is named in the message",
+            }),
         module: "core-scan",
         priority: batch.priority,
         payload: { count: batch.count },
@@ -186,10 +194,14 @@ export function registerStorageFitCheck(): void {
       // the type cannot say so - narrow here rather than widening the batcher,
       // which would make "ambient food is in the wrong place" expressible.
       if (mismatch.requirement !== "ambient") {
+        const link = await platform()
+          .entities.detailPathForEntity(p.orgId, p.containeeKind, p.containeeId)
+          .catch(() => undefined);
         warnBatcher.add(p.orgId, {
           name: record.title,
           requirement: mismatch.requirement,
           location: mismatch.location,
+          ...(link ? { link } : {}),
         });
       }
     } catch (err) {

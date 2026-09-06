@@ -40,6 +40,13 @@ const PLACE_NAMES = new Set([
   "storage_location",
   "kept_in",
   "whereabouts",
+  // `storage` with a value like "Fridge" is a place. An older Groceries shipped
+  // a `storage` field with choices Fridge / Freezer / Pantry / Counter, and an
+  // update never removes a field, so workspaces still carry it and the scan
+  // fills it - and then reported no location while the chip said Fridge
+  // (2026-09-06, twelve lines of one receipt). The exact-name rule keeps
+  // `storage_requirement` untouched: that one says HOW, not WHERE.
+  "storage",
 ]);
 
 const norm = (v: string): string => v.trim().toLowerCase().replace(/[\s_-]+/g, " ");

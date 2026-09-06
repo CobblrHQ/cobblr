@@ -53,8 +53,17 @@ const RULES: Array<{ match: RegExp; requirement: StorageRequirement }> = [
   },
   // Then the chilled aisle. `\bcream\b` is deliberately after ice cream above.
   {
-    match: /\bdairy\b|\bmilk\b|yogh?urt|\bcheese\b|\bbutter\b|\bcream\b|creme fraiche|\beggs?\b|fresh meat|\bpoultry\b|\bfish\b|seafood|\bdeli\b|charcuterie|sausage|fresh pasta|\bhummus\b/,
+    match: /\bdairy\b|\bmilk\b|yogh?urt|\bcheese\b|\bbutter\b|\bcream\b|creme fraiche|\beggs?\b|fresh meat|\bmeat\b|\bpoultry\b|\bchicken\b|\bbeef\b|\bpork\b|\bbacon\b|\bham\b|\bturkey\b|\bfish\b|seafood|\bdeli\b|charcuterie|sausage|fresh pasta|\bhummus\b/,
     requirement: "refrigerated",
+  },
+  // The bakery aisle, after the chilled one so a cream cake stays chilled. A
+  // receipt's twelve lines had one bakery item marked ambient and three marked
+  // nothing, because "Bakery" matched no rule and the answer came from the
+  // model per item (2026-09-06). A category this common should not be a coin
+  // toss.
+  {
+    match: /\bbakery\b|\bbread\b|\bbaguette\b|\bpastr(y|ies)\b|\bcroissants?\b|\bbuns?\b|\brolls?\b/,
+    requirement: "ambient",
   },
   // Shelf-stable things worth asserting positively, so the common case is not
   // left unknown and therefore unusable.

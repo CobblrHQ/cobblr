@@ -390,6 +390,57 @@ ordersRouter.get(
   }),
 );
 
+// Claim, or release, one line of an order for a part.
+//
+// A receipt's order is born when the receipt is read, with one line per parsed
+// item and part_id NULL on every one - a line on a receipt is not a thing you
+// own until somebody files it (docs/design-decisions/order-at-parse.md). Filing
+// is what claims a line, by setting part_id; sending the item back releases it.
+// Until this existed the only way to link a part was to ADD a line, which is
+// how every order confirmed through the old inbox panel came to carry each
+// line twice - once from parse with no part, once from confirm with one
+// (measured 2026-09-06: "Croissant qty 2" listed twice on one order).
+//
+// AI-REACH: exempt — internal reconciliation surface for the scan inbox's
+// confirm/unconfirm, not a user or Cobb action (a person edits an order via
+// the order UI, not this endpoint).
+const ItemClaim = z.object({ part_id: z.string().uuid().nullable() });
+ordersRouter.patch(
+  "/:id/items/:itemId",
+  asyncHandler(async (req, res) => {
+    const orderId = req.params.id;
+    const itemId = req.params.itemId;
+    if (!orderId || !itemId) {
+      res.status(400).json({ error: { code: "missing_id", message: "order id and item id required" } });
+      return;
+    }
+    const parsed = ItemClaim.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const session = sessionUser(req);
+    const updated = await db
+      .updateTable("purchases_order_items")
+      .set({ part_id: parsed.data.part_id } as never)
+      .where("id", "=", itemId)
+      .where("order_id", "=", orderId)
+      .returningAll()
+      .executeTakeFirst();
+    if (!updated) {
+      res.status(404).json({ error: { code: "not_found", message: "order line not found" } });
+      return;
+    }
+    await platform().activity.log({
+      orgId: ctx.org.id,
+      userId: session.id,
+      action: parsed.data.part_id ? "order_item_claimed" : "order_item_released",
+      ref: { module: "purchases", entityType: "order_item", entityId: itemId },
+      diff: { order_id: orderId, part_id: parsed.data.part_id },
+    });
+    res.json(updated);
+  }),
+);
+
 // Remove one line item from an order. Used when a receipt-created part is
 // sent back to the scan inbox (unconfirm): its line item must go too, else the
 // order is left with a row pointing at a now-deleted part (part_id has no FK

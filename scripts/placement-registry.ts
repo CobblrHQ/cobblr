@@ -332,7 +332,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "deploy/selfhost/standalone/",
     exemplar: "deploy/selfhost/standalone/docker-compose.yml",
     why: "Self-hosters curl these straight from the public mirror, so a change here lands on machines nobody here can log into or fix.",
-    lints: ["lint:autoupdate-warns-env-drift"],
+    lints: ["lint:autoupdate-warns-env-drift", "lint:backup-guards"],
     notes: [
       "The README beside the compose file is the only documentation most self-hosters read. If a change needs explaining, explain it there.",
       "An updater re-creates a container by cloning the old environment, so it never re-reads .env. Anything shipping one has to say so and point at check-env-drift.sh.",
@@ -354,7 +354,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "scripts/",
     exemplar: "scripts/release-daily.sh",
     why: "One commit becomes several artifacts on several surfaces, so anything naming or timing a release has to agree with the rest of that chain rather than be locally correct.",
-    lints: ["lint:one-release-clock", "lint:ci-sink", "lint:oci-labels"],
+    lints: ["lint:one-release-clock", "lint:ci-sink", "lint:oci-labels", "lint:node-resolves", "lint:test-imports-script"],
     notes: [
       "A nightly's date is an EDITORIAL label read from the local day, not UTC. The banner, the changelog post, the image snapshot tag and the coupling census all have to name the same night.",
       "Two clocks that are each internally consistent will not alert. That is why the rule spans both files instead of living in either.",

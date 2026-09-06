@@ -5,6 +5,7 @@
 // core-views 'trend' renderer).
 
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ContributedDetailPanels, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import { TrendingUp, Plus, Trash2 } from "lucide-react";
@@ -23,7 +24,11 @@ export function TrackingUI({ orgSlug, getToken }: Props) {
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
-  const [open, setOpen] = useState<string | null>(null);
+  // `?metric=<id>` opens that metric. The goal-reached notification points
+  // here, and landing on a grid of cards after being told a specific number
+  // makes you do the finding twice.
+  const [params] = useSearchParams();
+  const [open, setOpen] = useState<string | null>(() => params.get("metric"));
   const [creating, setCreating] = useState(false);
 
   const metrics = useQuery({ queryKey: ["tracking", orgSlug], queryFn: () => api.listMetrics() });

@@ -84,7 +84,7 @@ function mapWithHeader(rows: string[][], headerIdx: number, map: Partial<Record<
     const unit = map.unit !== undefined ? num(cells[map.unit]) : null;
     const amount = map.amount !== undefined ? num(cells[map.amount]) : null;
     const qty = map.qty !== undefined ? num(cells[map.qty]) : null;
-    items.push({ description, qty: qty ?? 1, unit_price: unit, line_total: amount ?? null });
+    items.push({ description, qty: qty ?? 1, unit_price: unit, line_total: amount ?? null, weight: null, weight_unit: null });
   }
   return buildReceipt({ items });
 }

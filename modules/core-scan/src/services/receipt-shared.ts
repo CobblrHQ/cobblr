@@ -38,6 +38,28 @@ export interface ReceiptLine {
    *  A discount is never its own line. Nobody owns a coupon, and an inbox row
    *  called "Lidl Points Coupon" is not a thing to put on a shelf. */
   discount: number | null;
+  /** For a line sold BY WEIGHT: the weight printed on the line ("4.14 lb"),
+   *  and its unit. `qty` is then 1 - it is one package - and `unit_price` is
+   *  the per-unit price ($/lb). Null for anything sold by count. Kept because
+   *  "$1.99/lb" is the number worth knowing next time, and a weight rounded
+   *  into a count of four is simply wrong (2026-09-06). */
+  weight: number | null;
+  weight_unit: "lb" | "kg" | "oz" | "g" | null;
+}
+
+/** How many of the thing a line is. One, when it was sold by weight: 4.14 lb of
+ *  chicken is one package, and rounding it to four was recording four. */
+export function lineQuantity(line: Pick<ReceiptLine, "qty" | "weight">): number {
+  if (line.weight !== null && line.weight !== undefined && line.weight > 0) return 1;
+  return Math.max(1, Math.round(line.qty || 1));
+}
+
+const WEIGHT_UNITS = new Set(["lb", "kg", "oz", "g"]);
+/** A unit the model wrote, normalised to the four this understands, or null. */
+export function weightUnit(v: unknown): ReceiptLine["weight_unit"] {
+  const u = typeof v === "string" ? v.trim().toLowerCase().replace(/s$|\.$/, "") : "";
+  const norm = u === "lbs" || u === "pound" ? "lb" : u === "kilo" || u === "kilogram" ? "kg" : u === "ounce" ? "oz" : u === "gram" ? "g" : u;
+  return WEIGHT_UNITS.has(norm) ? (norm as ReceiptLine["weight_unit"]) : null;
 }
 
 /** What a line actually cost: rung-up price less anything taken off it. */
@@ -236,6 +258,8 @@ export function buildReceipt(parts: {
     discount?: unknown;
     code?: unknown;
     model?: unknown;
+    weight?: unknown;
+    weight_unit?: unknown;
   }>;
 }): ParsedReceipt | null {
   const items: ReceiptLine[] = [];
@@ -260,6 +284,9 @@ export function buildReceipt(parts: {
       // often hyphenated, and stripping it would leave a meaningless run of
       // digits that resolves to nothing.
       model: str(it.model)?.slice(0, 60) ?? null,
+      // Only with a unit: a bare number called "weight" is a guess.
+      weight: weightUnit(it.weight_unit) && (num(it.weight) ?? 0) > 0 ? num(it.weight)! : null,
+      weight_unit: (num(it.weight) ?? 0) > 0 ? weightUnit(it.weight_unit) : null,
     });
   }
   if (items.length === 0) return null;

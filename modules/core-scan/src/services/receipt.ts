@@ -43,7 +43,9 @@ const SCHEMA_INSTRUCTION =
   '{"vendor":<string|null>,"order_ref":<string|null>,"date":<"YYYY-MM-DD"|null>,"currency":<ISO-4217 code|null>,' +
   '"total":<number|null grand total>,"items":[{"description":<string>,"qty":<number>,' +
   '"unit_price":<number|null>,"line_total":<number|null>,"discount":<number|null>,' +
-  '"code":<string|null>,"model":<string|null>}]}\n' +
+  '"code":<string|null>,"model":<string|null>,"weight":<number|null>,"weight_unit":<"lb"|"kg"|"oz"|"g"|null>}]}\n' +
+  "An item sold BY WEIGHT (a printed weight and a per-lb or per-kg price, e.g. 4.14 lb at 1.99/lb) " +
+  "gets weight + weight_unit, qty 1, and unit_price = the per-unit price. Never round a weight into qty.\n" +
   "One entry per PURCHASED line item. Skip subtotal / tax / shipping / total rows — " +
   "capture the grand total in \"total\" instead. qty defaults to 1 when " +
   "no count is shown. Prices are numbers only (strip currency symbols and thousands " +

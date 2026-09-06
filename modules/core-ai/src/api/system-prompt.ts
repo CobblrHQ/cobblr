@@ -29,13 +29,14 @@ import { GROUNDING_RULES, PLAIN_ANSWER_RULES, TOOL_USE_RULES } from "./prompt-ru
  *  parses that back into a move, so it works, but the turn then skips the
  *  loop, the argument guard and read-then-act chaining.
  *
- *  MEASURED (2026-09-04, 69 action cases, gemini-3.5-flash-lite): with this
- *  block 37/69; without it 59/69. Thirty-two points, and a shorter prompt.
- *  It is NOT yet removed by default, because it is the only way a provider
- *  that cannot call tools expresses a move and nothing tells us which
- *  providers those are. The option exists so the fix can be measured and
- *  then shipped; see docs/design-decisions/ai-chat-tool-calling.md. */
-const JSON_MOVE_SHAPES = `Reply with ONE JSON object and nothing else, in ONE of these shapes:
+ *  MEASURED (69 action cases, gemini-3.5-flash-lite): as it read before,
+ *  37/69; deleted outright, 59/69; SUBORDINATED as it reads now, 57/69. The
+ *  subordinate wording recovers twenty of the twenty-two points and keeps the
+ *  only path a provider that cannot call tools has, which is why it is what
+ *  ships. Do not soften the first sentence without re-running the bench; the
+ *  block earns its place only while it is unmistakably the fallback.
+ *  See docs/design-decisions/ai-chat-tool-calling.md. */
+const JSON_MOVE_SHAPES = `IF YOU CANNOT CALL TOOLS — and only then — reply with ONE JSON object and nothing else, in ONE of these shapes. If you CAN call tools, ignore this section entirely and call one: a tool call is always better than a JSON reply, and only a tool call gets your arguments checked before the user sees the change.
 - Chat/answer/ask:   {"type":"reply","text":"<your full, helpful answer or question>"}
 - Create a record:   {"type":"create","entity_kind":"<id>","fields":{"name":"<...>", ...},"summary":"<one line, e.g. Create a part called Widget>"}
 - Run an action:     {"type":"action","action_id":"<id>","entity_kind":"<id>","entity_query":"<the record's name to find it>","args":{...},"summary":"<one line>"}

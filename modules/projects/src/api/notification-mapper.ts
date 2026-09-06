@@ -50,7 +50,11 @@ export function composeUnblocked(items: readonly Unblocked[]): ComposedBurst | n
     message: `${items.length} tasks are unblocked: ${shown}${rest}`,
     count: items.length,
     // All in one project is still somewhere honest to point.
-    link_url: projects.size === 1 ? `/projects/${items[0]!.projectId}` : undefined,
+    // One project → that project. Several → the list of them, which is where
+    // the unblocked tasks are; `undefined` here used to mean the burst version
+    // of this notification went nowhere at all.
+    // PAGE-LINK: the burst spans several projects; no single one is right.
+    link_url: projects.size === 1 ? `/projects/${items[0]!.projectId}` : "/projects",
   };
 }
 
@@ -73,7 +77,12 @@ export const unblockedBatcher = new NotificationBatcher<Unblocked>(
           userId,
           eventType: "projects.task.unblocked",
           message: burst.message,
-          link_url: burst.link_url,
+          // composeUnblocked always names one (a project, or the list of
+          // them); the burst type allows none, so the absence is spelled out
+          // rather than silently dropped.
+          ...(burst.link_url
+            ? { link_url: burst.link_url }
+            : { no_link_reason: "the burst named no project" }),
           module: "projects",
           entityType: burst.entityType,
           entityId: burst.entityId,

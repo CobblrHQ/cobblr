@@ -112,7 +112,10 @@ export async function cadenceTick(
         // said `this` without ever naming the thing - so several of them in a
         // row were not just a stream, they were indistinguishable. Collected
         // here and sent as one named list after the sweep.
-        const buyLess: Array<{ name: string; pct: number }> = [];
+        // The entity ref rides along so ONE finding can link to the thing it
+        // is about. Without it the advice named an item and gave no way to
+        // reach it.
+        const buyLess: Array<{ name: string; pct: number; kind: string; id: string }> = [];
 
         const now = Date.now();
         for (const t of tracked) {
@@ -231,6 +234,8 @@ export async function cadenceTick(
               buyLess.push({
                 name: title ?? "One of your items",
                 pct: Math.round(state.waste_ratio * 100),
+                kind: t.entity_kind,
+                id: t.entity_id,
               });
             }
             emitted++;
@@ -244,11 +249,27 @@ export async function cadenceTick(
               : `Worth buying less of these: ${buyLess
                   .map((b) => `${b.name} (${b.pct}% wasted)`)
                   .join(", ")}`;
+          // One finding → the item. Several → nowhere to send you: they are
+          // different things in different places, and the message already names
+          // each with its waste percentage, which is the whole of the advice.
+          const only = buyLess.length === 1 ? buyLess[0]! : null;
+          const link = only
+            ? await platform()
+                .entities.detailPathForEntity(org.id, only.kind, only.id)
+                .catch(() => undefined)
+            : undefined;
+          const destination = link
+            ? { link_url: link }
+            : {
+                no_link_reason:
+                  "advice about several items at once; each is named in the message",
+              };
           for (const userId of memberIds) {
             try {
               await platform().notifications.dispatch({
                 orgId: org.id,
                 userId,
+                ...destination,
                 eventType: "core-cadence.buy-less",
                 // Nothing just happened: a sweep noticed a pattern. That is the
                 // clock talking, so it belongs with the rest of the day's

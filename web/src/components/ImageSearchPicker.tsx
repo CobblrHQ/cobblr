@@ -125,6 +125,10 @@ export function ImageSearchPicker({
   });
   const loading = usesProp ? !!loadingProp : fetched.isFetching;
   const source = itemsProp ?? fetched.data?.items ?? [];
+  // The web engine refused US, not the phrase. "nothing found" would be a lie
+  // about the product; say what actually happened and that it passes.
+  const throttled = !usesProp && !!fetched.data?.throttled;
+  const rateLimited = `the web image search is not answering us right now (blocked or rate-limited) · it passes, try again later`;
   // What the server actually searched — shown IN the box, not as a placeholder.
   const searched = applied || (usesProp ? (searchedTerm ?? "") : (fetched.data?.query ?? query ?? ""));
   useEffect(() => {
@@ -382,8 +386,8 @@ export function ImageSearchPicker({
             {loading ? (
               <div className="text-xs text-faint animate-pulse px-2">finding photo options…</div>
             ) : opts.length === 0 ? (
-              <div className="text-xs text-faint italic px-2">
-                {searched ? `nothing found for "${searched}"` : "no web photos yet"}
+              <div className={`text-xs italic px-2 ${throttled ? "text-amber-700 dark:text-amber-300" : "text-faint"}`}>
+                {throttled ? rateLimited : searched ? `nothing found for "${searched}"` : "no web photos yet"}
               </div>
             ) : (
               tiles
@@ -440,8 +444,8 @@ export function ImageSearchPicker({
       {loading ? (
         <div className="text-[11px] text-faint animate-pulse">finding photo options…</div>
       ) : opts.length === 0 ? (
-        <div className="text-[11px] text-faint italic">
-          {searched ? `no images found for "${searched}"` : "no photo options"}
+        <div className={`text-[11px] italic ${throttled ? "text-amber-700 dark:text-amber-300" : "text-faint"}`}>
+          {throttled ? rateLimited : searched ? `no images found for "${searched}"` : "no photo options"}
         </div>
       ) : (
         <div>
@@ -449,7 +453,7 @@ export function ImageSearchPicker({
             <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 min-w-0">
               {label ?? "photo options"}{" "}
               <span className="text-faint normal-case">
-                · DuckDuckGo · tap to use, ⤢ to view full size
+                {throttled ? " · photo library only (web search not answering)" : " · DuckDuckGo + Wikimedia Commons"} · tap to use, ⤢ to view full size
               </span>
             </div>
             {onPickBest && (

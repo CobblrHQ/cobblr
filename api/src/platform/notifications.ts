@@ -24,6 +24,7 @@ import { sendDiscordDm, dmOutcome, dmResultUnverifies } from "./discord-bot-trig
 import { discordConnectionState } from "./discord-connection.js";
 import type { DeliveryOutcomes } from "@cobblr/platform-contract/delivery-outcome";
 import { absoluteAppUrl } from "./public-url.js";
+import type { NotificationDestination } from "@cobblr/platform-contract";
 import { defaultEnabled, tierOf, type PrefChannel } from "./notification-catalog.js";
 import { fallbackChannels } from "./dispatch-fallback.js";
 import {
@@ -63,12 +64,11 @@ function meetsThreshold(
   return PRIORITY_ORDER[notifPriority] >= PRIORITY_ORDER[threshold];
 }
 
-export interface DispatchParams {
+export type DispatchParams = NotificationDestination & {
   orgId: string;
   userId: string;
   eventType: string;
   message: string;
-  link_url?: string;
   module?: string;
   entityType?: string;
   entityId?: string;
@@ -97,7 +97,7 @@ export interface DispatchParams {
   actions?: NotificationAction[];
   /** Substance behind the one-liner, for channels that can render a card. */
   card?: NotificationCard;
-}
+};
 
 export interface DispatchResult {
   notificationId: string;
@@ -584,6 +584,9 @@ export async function listForUser(
       "message",
       "link_url",
       "card",
+      // The pressable things. Not selected here for a long time, which is why
+      // the app could not render a button Discord already showed.
+      "actions",
       "read_at",
       "created_at",
     ])
@@ -658,6 +661,7 @@ export async function listForUserAcrossOrgs(
       "n.message as message",
       "n.link_url as link_url",
       "n.card as card",
+      "n.actions as actions",
       "n.read_at as read_at",
       "n.created_at as created_at",
       "n.org_id as org_id",

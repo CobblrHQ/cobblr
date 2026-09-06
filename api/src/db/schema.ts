@@ -346,6 +346,10 @@ export interface WorkspaceInvitesTable {
   role: OrgRole;
   expires_at: Date | null;
   consumed_at: Date | null;
+  /** When the invited person said NO. Null = unanswered. Distinct from
+   *  consumed_at (accepted) and revoked_at (withdrawn by the inviter). */
+  declined_at: Date | null;
+  declined_by_user: string | null;
   consumed_by_user: string | null;
   revoked_at: Date | null;
   created_at: Generated<Date>;

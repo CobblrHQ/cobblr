@@ -364,7 +364,14 @@ membersRouter.post("/invites", requireAuth, withTenant, async (req, res, next) =
         expiresAt,
       }).catch((e) => console.error("[invites] deliver failed:", (e as Error).message));
     }
-    res.status(201).json(inserted);
+    // SAY whether a mail went out. A workspace with no mail sender configured
+    // (every self-hosted one by default) minted a link, said nothing, and left
+    // the admin believing the person had been emailed. The link is right there
+    // to copy - the only thing missing was being told to.
+    res.status(201).json({
+      ...inserted,
+      emailed: Boolean(parsed.data.email) && hasAuthEmailSender(),
+    });
   } catch (err) {
     next(err);
   }
@@ -517,9 +524,19 @@ invitesRootRouter.post("/invites/:token/accept", requireAuth, async (req, res, n
         })
         .execute();
     }
+    // Clearing declined_at matters: a browser run produced one invite marked
+    // BOTH accepted and declined, which is not a state that should be
+    // describable. Somebody may decline and change their mind (or mis-tap), and
+    // accepting is the later, stronger answer - so it wins and erases the
+    // earlier no rather than sitting beside it.
     await meta
       .updateTable("workspace_invites")
-      .set({ consumed_at: new Date(), consumed_by_user: req.session!.id })
+      .set({
+        consumed_at: new Date(),
+        consumed_by_user: req.session!.id,
+        declined_at: null,
+        declined_by_user: null,
+      })
       .where("id", "=", invite.id)
       .execute();
 
@@ -545,6 +562,70 @@ invitesRootRouter.post("/invites/:token/accept", requireAuth, async (req, res, n
       org: { ...org, role: existing?.role ?? invite.role },
       already_member: !!existing,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /invites/:token/decline — the other half of an invite.
+//
+// Accepting had an endpoint and declining had nothing, so an invite you did not
+// want could only be ignored: it sat unread in the bell forever, and the person
+// who sent it never learned the answer. "No" is an answer, and a notification
+// that can only be dismissed is not actionable (reported 2026-09-06).
+//
+// Deliberately narrow. It marks the invite declined and does NOT create a
+// membership, does not consume the token for anybody else, and does not delete
+// the row - the inviter can see it was declined rather than watching it expire
+// in silence. Anyone signed in may decline an invite addressed to them, which
+// is the same standing `accept` requires; an invite to another address is not
+// theirs to answer.
+invitesRootRouter.post("/invites/:token/decline", requireAuth, async (req, res, next) => {
+  try {
+    const token = req.params.token;
+    if (!token) {
+      res.status(400).json({ error: { code: "missing_token", message: "token required" } });
+      return;
+    }
+    const invite = await meta
+      .selectFrom("workspace_invites")
+      .selectAll()
+      .where("token", "=", token)
+      .executeTakeFirst();
+    if (!invite) {
+      res.status(404).json({ error: { code: "not_found", message: "Invite not found." } });
+      return;
+    }
+    // Already answered, one way or the other. Idempotent rather than an error:
+    // the button may be tapped twice, and a second "no" is still no.
+    if (invite.consumed_at || invite.declined_at) {
+      res.status(200).json({ declined: true, already_answered: true });
+      return;
+    }
+    if (invite.revoked_at) {
+      res.status(410).json({ error: { code: "revoked", message: "Invite was revoked." } });
+      return;
+    }
+    // An invite addressed to somebody else is not this user's to answer. A
+    // token with no email on it is an open link, which anyone holding it may
+    // decline for themselves - it costs nobody else their invite.
+    if (invite.invited_email) {
+      const me = await meta
+        .selectFrom("users")
+        .select("email")
+        .where("id", "=", req.session!.id)
+        .executeTakeFirst();
+      if ((me?.email ?? "").toLowerCase() !== invite.invited_email.toLowerCase()) {
+        res.status(403).json({ error: { code: "not_yours", message: "That invite was sent to someone else." } });
+        return;
+      }
+    }
+    await meta
+      .updateTable("workspace_invites")
+      .set({ declined_at: new Date(), declined_by_user: req.session!.id })
+      .where("id", "=", invite.id)
+      .execute();
+    res.status(200).json({ declined: true, already_answered: false });
   } catch (err) {
     next(err);
   }

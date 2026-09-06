@@ -233,7 +233,7 @@
   },
   {
     "file": "web/src/components/MembersModal.tsx",
-    "text": "Invite sent to — link copied too. Invite link copied — share it however you like."
+    "text": "Invite sent to . The link is copied too. No email was sent from this instance. The link is"
   },
   {
     "file": "web/src/components/MembersModal.tsx",

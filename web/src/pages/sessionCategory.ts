@@ -162,6 +162,8 @@ export interface SessionLocation {
   mixed: boolean;
   /** How many ready items have no location at all. */
   missing: number;
+  /** Of `missing`, how many carry a suggested spot. */
+  suggested: number;
 }
 
 /**
@@ -177,13 +179,20 @@ export interface SessionLocation {
 export function sessionLocation(readyItems: ScanInboxItem[]): SessionLocation {
   const set = new Set<string>();
   let missing = 0;
+  // Of the missing, how many have a suggested spot File all will use. The
+  // header showed amber "Location" over twelve receipt lines that every one
+  // carried a suggestion (2026-09-06); missing-with-a-plan is not missing.
+  let suggested = 0;
   for (const it of readyItems) {
     if (it.target_location_id) set.add(it.target_location_id);
-    else missing++;
+    else {
+      missing++;
+      if (it.suggested_location_id) suggested++;
+    }
   }
-  if (set.size === 0) return { id: null, mixed: false, missing };
-  if (set.size > 1) return { id: null, mixed: true, missing };
-  return { id: [...set][0]!, mixed: false, missing };
+  if (set.size === 0) return { id: null, mixed: false, missing, suggested };
+  if (set.size > 1) return { id: null, mixed: true, missing, suggested };
+  return { id: [...set][0]!, mixed: false, missing, suggested };
 }
 
 /**

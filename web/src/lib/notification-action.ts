@@ -81,3 +81,24 @@ export function notificationAction(
     goesSomewhere: true,
   };
 }
+
+/** The invite token an invite notification is about, or null.
+ *
+ *  An invite notification is the one row that can be ANSWERED where it sits -
+ *  accept or decline, without going anywhere - and answering needs the token.
+ *  The notification stores it in `link_url` (`/invite/<token>`), which is also
+ *  the page the row navigates to, so the two can never disagree about which
+ *  invite is meant.
+ *
+ *  Kept beside the click rule because it is the same question - what can this
+ *  row DO - and a second copy of the parse in a component is how the panel and
+ *  the page drift apart. Absolute urls are handled: rows are immutable, and old
+ *  ones stored a full origin. */
+export function inviteTokenFrom(n: NotificationLike): string | null {
+  if (n.event_type !== "workspace.invited") return null;
+  const raw = (n.link_url ?? "").trim();
+  if (!raw) return null;
+  const path = /^https?:\/\//i.test(raw) ? (() => { try { return new URL(raw).pathname; } catch { return ""; } })() : raw;
+  const m = /^\/invite\/([^/?#]+)/.exec(path);
+  return m?.[1] ? decodeURIComponent(m[1]) : null;
+}

@@ -373,10 +373,10 @@ export function PurchasesPage() {
           <Receipt size={18} className="text-accent shrink-0" />
           <span className="flex-1 min-w-0">
             <span className="block text-sm font-medium text-content dark:text-mortar-100">
-              {pendingReceipts.length} receipt{pendingReceipts.length === 1 ? "" : "s"} pending confirmation
+              {pendingReceipts.length} receipt{pendingReceipts.length === 1 ? "" : "s"} with lines not yet filed
             </span>
             <span className="block text-xs text-muted dark:text-slate-400 truncate">
-              {receiptGroupSummary(pendingReceipts)}  - not yet purchase orders
+              {receiptGroupSummary(pendingReceipts)}  - the orders exist; their lines are waiting in the inbox
             </span>
           </span>
           <span className="text-xs font-medium text-accent whitespace-nowrap shrink-0">Review in scan inbox →</span>

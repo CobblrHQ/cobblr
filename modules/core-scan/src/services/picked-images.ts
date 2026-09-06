@@ -48,7 +48,11 @@ export function pickedImageKey(vendor: string | null | undefined, name: string |
       .trim()
       .replace(/\s+/g, " ");
   const shop = norm(vendor ?? "");
-  const what = norm(name ?? "");
+  // Words SORTED: "Roma Tomatoes" and "Tomatoes Roma" are one product, and a
+  // picture chosen under one spelling was searched for again under the other
+  // and came home with a tin (2026-09-06). The scan matcher already treats
+  // the two as the same thing; the picture key has to agree with it.
+  const what = norm(name ?? "").split(" ").filter(Boolean).sort().join(" ");
   // A one-character name is not an identity, and a name long enough to be a
   // whole product description is unlikely to repeat - both make poor keys.
   if (!shop || what.length < 2 || what.length > 120) return null;

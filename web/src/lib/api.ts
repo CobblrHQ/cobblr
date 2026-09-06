@@ -1025,7 +1025,7 @@ export const api = {
       p.set("entity_kind", opts.entity.kind);
       p.set("entity_id", opts.entity.id);
     }
-    return request<{ items: ImageOption[]; query?: string }>(
+    return request<{ items: ImageOption[]; query?: string; throttled?: boolean }>(
       "GET",
       `/orgs/${slug}/modules/core-scan/image-options?${p.toString()}`,
     );
@@ -1199,7 +1199,14 @@ export const api = {
     slug: string,
     body: { email?: string; role: OrgMembership["role"]; expires_at?: string },
   ) =>
-    request<WorkspaceInvite>("POST", `/orgs/${slug}/members/invites`, body),
+    // `emailed` says whether a mail actually went out — false when the
+    // instance has no mail sender, which is the default for a self-hosted one.
+    // The toast used to claim "sent to <address>" either way.
+    request<WorkspaceInvite & { emailed: boolean }>(
+      "POST",
+      `/orgs/${slug}/members/invites`,
+      body,
+    ),
   revokeInvite: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/members/invites/${id}`),
   previewInvite: (token: string) =>
@@ -1208,6 +1215,21 @@ export const api = {
     request<{ org: OrgMembership; already_member: boolean }>(
       "POST",
       `/invites/${token}/accept`,
+    ),
+  /** Say no. The other half of acceptInvite: it records the answer instead of
+   *  leaving the invite to expire in silence, and creates no membership. */
+  /** Press a button a notification offered. One endpoint for every kind of
+   *  notification: what the button does is declared at dispatch, not here. */
+  pressNotificationAction: (id: string, actionId: string) =>
+    request<{ ok: true; label: string }>(
+      "POST",
+      `/me/notifications/${id}/actions/${encodeURIComponent(actionId)}`,
+    ),
+
+  declineInvite: (token: string) =>
+    request<{ declined: boolean; already_answered: boolean }>(
+      "POST",
+      `/invites/${token}/decline`,
     ),
   // New user (no account) signs up AND joins the inviting workspace.
   acceptInviteAsNewUser: (
@@ -3465,12 +3487,6 @@ export const api = {
   /** File every pending line of a receipt at once. `into` names one instance
    *  for all of them (the grocery app's "all of this goes in the pantry");
    *  absent, each line goes to its own best match. */
-  confirmReceiptGroup: (slug: string, groupId: string, into?: { instance?: string; location_id?: string }) =>
-    request<{
-      order_id: string | null;
-      vendor: string | null;
-      confirmed: Array<{ itemId: string; partId?: string | null; error?: string }>;
-    }>("POST", `/orgs/${slug}/modules/core-scan/receipt-group/${groupId}/confirm`, into ?? {}),
   // Pending captures grouped by the bundle they fit ("These look like yarn (3)").
   quickstart: (slug: string) =>
     request<QuickstartSuggestions>("GET", `/orgs/${slug}/quickstart`),
@@ -6453,6 +6469,10 @@ export interface NotificationEntry {
   /** The substance behind the one-liner, when there is any — the same card a
    *  Discord DM renders as an embed. Absent for most notifications. */
   card?: { heading?: string; body?: string; context?: string } | null;
+  /** Pressable things this notification offers — "Mark done", "Accept", "Move
+   *  it". Declared at dispatch; what a press DOES is a platform action, so the
+   *  bell needs no per-notification code to render one. */
+  actions?: Array<{ id: string; label: string; style?: "primary" | "secondary" | "danger" }> | null;
   read_at: string | null;
   created_at: string;
 }

@@ -24,8 +24,9 @@ import {
   type CheckBasis,
 } from "./crosscheck-policy.js";
 import { evictBarcodeCaches, rememberLocalIdentity } from "./barcode-cache.js";
-import { searchImages, rankImageOptions, imageQuery, mediaSearchExtras } from "./ddg-images.js";
+import { searchImages, rankImageOptions, mediaSearchExtras, isFreshCategory, DdgThrottledError, coverQuery } from "./ddg-images.js";
 import { curatedImageUrl } from "./curated-images.js";
+import { searchCommonsImages } from "./commons-images.js";
 import { pickedImageUrl } from "./picked-images.js";
 import { formFactorFromObservation } from "./form-factor.js";
 import { sql } from "kysely";
@@ -39,6 +40,35 @@ import { hostedIdentify, hostedIdentifyEnabled, toPhotoIdentity, receiptAsIdenti
  *  the OLD product's picture showing; here we set the best new external URL and
  *  clear the stale download so the right image renders. Detached-safe (no bearer:
  *  the external URL renders directly; a later backfill can download it). */
+/** What a picture refresh did, so a caller that loops can stop when the
+ *  engine says no: asking five more times in the same minute is the burst. */
+export type CoverOutcome = "kept" | "stored" | "url" | "none" | "throttled";
+
+/** A tiny gate so image searches leave the process one at a time, with a
+ *  breath between them. Serial alone was not enough: twelve back-to-back
+ *  searches still earned a 403 that lasted over an hour (2026-09-06). */
+const SEARCH_SPACING_MS = 1500;
+const RETRY_AFTER_MS = 6 * 60_000;
+let searchChain: Promise<unknown> = Promise.resolve();
+function withSearchSlot<T>(fn: () => Promise<T>): Promise<T> {
+  const run = searchChain.then(fn, fn);
+  searchChain = run
+    .catch(() => undefined)
+    .then(() => new Promise<void>((r) => setTimeout(r, SEARCH_SPACING_MS)));
+  return run;
+}
+
+async function stampImageStatus(db: Kysely<CoreScanDB>, itemId: string, status: "none" | "throttled"): Promise<void> {
+  await db
+    .updateTable("core_scan_inbox_items")
+    .set({
+      suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({ catalog_image_status: status })}::jsonb`,
+      updated_at: new Date(),
+    })
+    .where("id", "=", itemId)
+    .execute();
+}
+
 export async function refreshCatalogImageByName(
   orgId: string,
   itemId: string,
@@ -50,7 +80,15 @@ export async function refreshCatalogImageByName(
    *  actually bought where "Croissant" comes back with a stock pastry. Verified
    *  on a real receipt's four lines. */
   soldBy?: string | null,
-): Promise<void> {
+  /** The item's DECLARED category, once routing has decided it. Sharpens the
+   *  search the way a colour does, and for a fresh category it keeps the
+   *  ranking from choosing a tin. A receipt line has no category until it is
+   *  matched, which is why the receipt path fetches its picture AFTER the
+   *  match rather than at insert (see materializeReceiptLines). */
+  category?: string | null,
+  /** Set on the one unattended retry after a throttle, so it cannot chain. */
+  retrying = false,
+): Promise<CoverOutcome> {
   const db = (await platform().tenants.getDb(orgId)) as unknown as Kysely<CoreScanDB>;
   // A user who hand-picked a catalog image (photo-options strip / "use my photo")
   // OWNS it — a later re-identify (renamed item, hint correction) must NOT clobber
@@ -62,7 +100,7 @@ export async function refreshCatalogImageByName(
     .select(["suggested_metadata", "suggested_candidates"])
     .where("id", "=", itemId)
     .executeTakeFirst();
-  if ((cur?.suggested_metadata as { catalog_image_user_set?: boolean } | null)?.catalog_image_user_set) return;
+  if ((cur?.suggested_metadata as { catalog_image_user_set?: boolean } | null)?.catalog_image_user_set) return "kept";
   // Sharpen a weak title with author + media word (the same extras the
   // photo-options strip uses) so a book finds its cover, not generic images —
   // and with the observation's FORM FACTOR, so the default auto-fetch knows a
@@ -73,8 +111,15 @@ export async function refreshCatalogImageByName(
   const form = formFactorFromObservation(
     (cur?.suggested_metadata as { photo_observations?: string } | null)?.photo_observations,
   );
-  const extra = [author, mediaWord, form].filter(Boolean).join(" ") || null;
-  const q = imageQuery(name, brand || soldBy, extra);
+  const fresh = isFreshCategory(category);
+  // "fresh" goes into the ASK for a fresh category, because a bare noun plus a
+  // shop name answers with the most photographed thing of that name in that
+  // shop's catalogue, which for tomatoes is a tin. The category itself rides
+  // along too, as the colour and the form factor already do.
+  const extra = [author, mediaWord, form, fresh ? "fresh" : null, (category ?? "").trim() || null]
+    .filter(Boolean)
+    .join(" ") || null;
+  const q = coverQuery(name, brand, soldBy, extra, fresh);
   // A hand-picked image WINS, before any searching. The curated manifest is an
   // operator-configured URL read live, so an entry can be added without a
   // deploy, and it existed only on the commit path (entity-image.ts): the scan
@@ -94,7 +139,67 @@ export async function refreshCatalogImageByName(
   // carrots, every time, for everyone (2026-08-31). See picked-images.ts.
   const remembered = curated ? null : await pickedImageUrl(soldBy ?? brand ?? null, name);
   const chosen = curated ?? remembered;
-  const pool = chosen ? [] : await searchImages(q, 24).catch(() => []);
+  // ONE SEARCH AT A TIME PER PROCESS. The engine answers a burst with empty
+  // result sets rather than errors, so twelve lines fired together lost half
+  // their pictures with nothing in the log (2026-09-06). A queue costs a few
+  // seconds on a long receipt and nothing on a single scan.
+  let pool: Awaited<ReturnType<typeof searchImages>> = [];
+  // The phrase the ranker scores titles against: the engine's ask carries
+  // hints ("fresh", a form factor) that a library file-title never has.
+  let poolQuery = q;
+  if (!chosen) {
+    // A FRESH thing asks the photo library FIRST. It answers "roma tomatoes"
+    // with roma tomatoes and never with a tin, it does not count our asks,
+    // and it costs nothing against the engine's temper. See commons-images.ts.
+    if (fresh) {
+      pool = await searchCommonsImages(name, 12);
+      poolQuery = name;
+      if (pool.length) console.log(`[core-scan] ${pool.length} library pictures for ${JSON.stringify(name)}`);
+    }
+    let refused: DdgThrottledError | null = null;
+    if (pool.length === 0) {
+      try {
+        pool = await withSearchSlot(() => searchImages(q, 24));
+        poolQuery = q;
+      } catch (err) {
+        if (err instanceof DdgThrottledError) refused = err;
+        else {
+          console.warn(`[core-scan] picture search failed for ${JSON.stringify(q)}: ${(err as Error).message}`);
+          pool = [];
+        }
+      }
+    }
+    // The engine refused, and this is packaged goods the library was not
+    // asked for yet: a library picture now beats "busy, come back later".
+    if (refused && pool.length === 0 && !fresh) {
+      pool = await searchCommonsImages(name, 12);
+      poolQuery = name;
+      if (pool.length) console.log(`[core-scan] engine refused; ${pool.length} library pictures for ${JSON.stringify(name)}`);
+    }
+    if (refused && pool.length === 0) {
+      const err = refused;
+      {
+        // The engine said no to US, not to the query. Say "busy" on the row,
+        // not "none" - and try once more later, unattended, because a person
+        // filing a receipt should not have to come back and press retry
+        // twelve times for a wall that lifts on its own.
+        console.warn(
+          `[core-scan] picture search throttled (${err.status}) for ${JSON.stringify(q)}; ${
+            retrying ? "the sweep will try again later" : `retrying in ${RETRY_AFTER_MS / 60000}m`
+          }`,
+        );
+        await stampImageStatus(db, itemId, "throttled");
+        if (!retrying) {
+          const t = setTimeout(() => {
+            void refreshCatalogImageByName(orgId, itemId, name, brand, soldBy, category, true).catch(() => undefined);
+          }, RETRY_AFTER_MS);
+          if (typeof t === "object" && t && "unref" in t) (t as { unref: () => void }).unref();
+        }
+        return "throttled";
+      }
+    }
+    if (pool.length === 0) console.warn(`[core-scan] no pictures found for ${JSON.stringify(q)}`);
+  }
   // Try to DOWNLOAD the top candidates into core-files, falling through until one
   // stores. Storing just the top RAW url (as this did) left many tiles empty: a
   // product-page image often hotlink-blocks or 404s in the browser, and there was
@@ -103,22 +208,34 @@ export async function refreshCatalogImageByName(
   // import because enrich.ts imports THIS module — a static import would cycle.
   const candidates = chosen
     ? [chosen]
-    : rankImageOptions(pool, brand || soldBy, q)
+    : rankImageOptions(pool, brand || soldBy, poolQuery, null, fresh)
         .map((r) => r.url)
         .filter((u): u is string => !!u)
         .slice(0, 4);
-  if (!candidates.length) return;
+  if (!candidates.length) {
+    // Say so on the row. An empty tile used to be indistinguishable from
+    // "still looking". The card reads this to offer a retry instead of nothing.
+    await stampImageStatus(db, itemId, "none");
+    return "none";
+  }
   const { downloadCatalogImage } = await import("./enrich.js");
   for (const url of candidates) {
-    if (await downloadCatalogImage({ db, orgId, itemId }, url)) return; // stored → done
+    if (await downloadCatalogImage({ db, orgId, itemId }, url)) return "stored"; // stored → done
   }
   // None downloaded — keep the best raw url as a last resort (renders if it isn't
-  // hotlink-blocked), never regressing to no image at all.
+  // hotlink-blocked), never regressing to no image at all. A picture, even a
+  // raw one, ends the busy/none story - see the same clearing in enrich.ts.
   await db
     .updateTable("core_scan_inbox_items")
-    .set({ catalog_image_url: candidates[0], catalog_image_file_id: null, updated_at: new Date() })
+    .set({
+      catalog_image_url: candidates[0],
+      catalog_image_file_id: null,
+      suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) - 'catalog_image_status'`,
+      updated_at: new Date(),
+    })
     .where("id", "=", itemId)
     .execute();
+  return "url";
 }
 
 /** Multipack detection (scan-parity Epic D): read "2 Pack" / "12 ct" /

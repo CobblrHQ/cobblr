@@ -514,6 +514,12 @@ authRouter.post("/signup", async (req, res, next) => {
             userId: invite.created_by,
             eventType: "platform.invite.accepted",
             message: `${body.display_name.trim()} (${email}) signed up via your invite.`,
+            // Straight to the member list: the next thing anyone does after
+            // "they joined" is look at who is in the workspace, or set the
+            // new person's role.
+            // PAGE-LINK: the new member has no record of their own to open;
+            // the member list is where you act on them.
+            link_url: "/configuration/members",
           });
         }
       } catch (err) {

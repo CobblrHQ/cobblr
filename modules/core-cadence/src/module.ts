@@ -4,7 +4,7 @@ import type { CoreCadenceDB } from "./db.js";
 
 export default defineModule({
   name: "core-cadence",
-  version: "0.2.2",
+  version: "0.2.3",
   maturity: "beta",
   displayName: "Cadence",
   description:

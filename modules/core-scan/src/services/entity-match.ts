@@ -214,11 +214,46 @@ function toMatch(
   };
 }
 
+/**
+ * Every kind THIS workspace has, instances included, with the module details
+ * a match needs.
+ *
+ * Not listScannable(). That is the process-global registry of BASE kinds, and a
+ * record living in a named instance does not appear in its base kind's list.
+ * Groceries, Tea and Spices are instances, so on a grocery receipt this walked
+ * every kind except the one the food was in: tracked_match was never stamped,
+ * the card never refused Add, File all never merged, and one product became
+ * two rows a week apart (2026-09-06, measured: 14 pending rows, every
+ * tracked_match null, /tracked-matches returning nothing).
+ *
+ * The merge details still come from the owning MODULE, because an instance is
+ * a skin over it.
+ */
+async function kindsForOrg(orgId: string): Promise<Array<{ kind: string; noun: string; qtyField?: string }>> {
+  let recs: Array<{ id: string; module_name: string }>;
+  try {
+    recs = await platform().entities.listKindsForOrg(orgId);
+  } catch {
+    return platform().entities.listScannable();
+  }
+  const out: Array<{ kind: string; noun: string; qtyField?: string }> = [];
+  for (const rec of recs) {
+    // A synthesized instance record already carries its full kind in `id`
+    // ("groceries:item"); a base record carries the bare kind ("part").
+    const kind = rec.id.includes(":") ? rec.id : `${rec.module_name}:${rec.id}`;
+    const info =
+      platform().entities.getScannable(kind) ?? platform().entities.getScannableForModule(rec.module_name);
+    if (!info) continue;
+    out.push({ kind, noun: info.noun, ...(info.qtyField ? { qtyField: info.qtyField } : {}) });
+  }
+  return out;
+}
+
 export async function findTracked(
   orgId: string,
   opts: { barcode?: string | null; name?: string | null },
 ): Promise<{ barcode_matches: TrackedMatch[]; name_matches: TrackedMatch[] }> {
-  const kinds = platform().entities.listScannable();
+  const kinds = await kindsForOrg(orgId);
   const expiryByKind = await expiryFieldsByKind(orgId);
   const barcode = opts.barcode?.trim() || null;
   const name = opts.name && !isJunkName(opts.name) ? opts.name.trim() : null;
@@ -309,7 +344,7 @@ export async function findBinContents(
   orgId: string,
   locationId: string,
 ): Promise<{ items: TrackedMatch[]; single: boolean }> {
-  const kinds = platform().entities.listScannable();
+  const kinds = await kindsForOrg(orgId);
   const expiryByKind = await expiryFieldsByKind(orgId);
   const perKind = await Promise.all(
     kinds.map(async (k) => {

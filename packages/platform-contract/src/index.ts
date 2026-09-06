@@ -2980,16 +2980,45 @@ export interface NotificationAction {
   style?: "primary" | "secondary" | "danger";
 }
 
+/**
+ * WHERE A NOTIFICATION TAKES YOU — required, one way or the other.
+ *
+ * A notification is a thing that happened somewhere. Telling somebody about it
+ * and then leaving them to find it is the failure this type exists to prevent:
+ * five shipped notifications ("you hit your goal", "milk expires today",
+ * "service is due") had no link at all, so the row was a dead sentence and the
+ * only route to the thing was to remember where it lived (audit, 2026-09-06).
+ *
+ * A lint could only ever flag a link that is too SHALLOW, never one that is
+ * absent, because nothing distinguishes "no link" from "not written yet". So
+ * the destination is required by the TYPE, and a notification that genuinely
+ * has nowhere to go says why in one line instead of being silent about it.
+ */
+export type NotificationDestination =
+  | {
+      /** Where the thing IS. Relative to the workspace ("/inventory/parts/123");
+       *  the platform makes it absolute per channel. */
+      link_url: string;
+      no_link_reason?: never;
+    }
+  | {
+      link_url?: never;
+      /** Why this one has nowhere to go — a fact with no page behind it, a
+       *  workspace-wide announcement. Not a TODO: if a destination exists, link
+       *  it. Written down so the next reader knows it was decided, not
+       *  forgotten. */
+      no_link_reason: string;
+    };
+
 export interface PlatformNotifications {
   /** Fan a notification to one user across their enabled channels.
    *  Writes the row, looks up the user's per-event-type channel
    *  preferences, and delivers via every enabled channel. */
-  dispatch(p: {
+  dispatch(p: NotificationDestination & {
     orgId: string;
     userId: string;
     eventType: string;
     message: string;
-    link_url?: string;
     module?: string;
     entityType?: string;
     entityId?: string;

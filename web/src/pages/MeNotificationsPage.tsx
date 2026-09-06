@@ -15,6 +15,7 @@ import { useAuth } from "../auth/AuthContext";
 import { QueryError } from "../components/QueryError";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, type CrossOrgNotificationEntry } from "../lib/api";
+import { NotificationActionButtons } from "../components/NotificationActionButtons";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
 
 export function MeNotificationsPage() {
@@ -147,10 +148,22 @@ export function MeNotificationsPage() {
           <ul className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 divide-y divide-line dark:divide-slate-800">
             {entries.map((n) => (
               <li key={n.id}>
-                <button
+                {/* A DIV that behaves like a button, not a <button>: a
+                    notification can now carry its own action buttons, and a
+                    button inside a button is invalid and swallows the inner
+                    click. Same shape the bell's rows already use. */}
+                <div
+                  role="button"
+                  tabIndex={0}
                   onClick={() => open(n)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      open(n);
+                    }
+                  }}
                   className={
-                    "w-full text-left px-4 py-3 transition flex items-baseline gap-3 " +
+                    "w-full text-left px-4 py-3 transition flex items-baseline gap-3 cursor-pointer " +
                     (n.read_at
                       ? "opacity-60 hover:bg-subtle/50 dark:hover:bg-slate-800/40"
                       : "hover:bg-subtle dark:hover:bg-slate-800/60")
@@ -171,6 +184,7 @@ export function MeNotificationsPage() {
                         {n.card.body}
                       </div>
                     )}
+                    <NotificationActionButtons n={n} />
                     <div className="text-[11px] font-mono text-faint dark:text-slate-500 mt-0.5">
                       {n.event_type} · {new Date(n.created_at).toLocaleTimeString()}
                     </div>
@@ -178,7 +192,7 @@ export function MeNotificationsPage() {
                   {n.read_at && (
                     <Check size={12} className="text-faint shrink-0" />
                   )}
-                </button>
+                </div>
               </li>
             ))}
           </ul>

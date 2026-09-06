@@ -20,7 +20,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type React
 import { RepurchaseControls } from "../components/RepurchaseControls";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Camera, CheckCircle, ChevronDown, Copy, Download, ExternalLink, FileText, Flag, Image as ImageIcon, ImagePlus, LayoutGrid, Library, List, Loader2, MapPin, MonitorSmartphone, MoreHorizontal, Pencil, ReceiptText, RefreshCw, RotateCcw, ScanLine, Scissors, Search, Sparkles, Tag, Trash2, Truck, Upload, Wand2, X, Zap, Database } from "lucide-react";
+import { Camera, CheckCircle, ChevronDown, Copy, Download, ExternalLink, Flag, Image as ImageIcon, ImagePlus, LayoutGrid, Library, List, Loader2, MapPin, MonitorSmartphone, MoreHorizontal, Pencil, ReceiptText, RefreshCw, RotateCcw, ScanLine, Scissors, Search, Sparkles, Tag, Trash2, Truck, Upload, Wand2, X, Zap, Database } from "lucide-react";
 import { Modal, useImageSrc, useOverlayOpenFlag, useToast, usePageTitle, colorSwatch, wantsSwatch } from "@cobblr/platform-web";
 import { ScanImportModal } from "../components/ScanImportModal";
 import { ExportInboxModal } from "../components/ExportInboxModal";
@@ -36,7 +36,8 @@ import { GlanceQuestion, pendingGlance } from "../components/GlanceQuestion";
 import { imageUrlFrom } from "../components/pastedImage";
 import { ImageLightbox, type LightboxItem } from "../components/ImageLightbox";
 import { ReceiptSourceViewer, type ReceiptMoney } from "../components/ReceiptSourceViewer";
-import { fieldsStillOnTable, fieldsNoLongerOnTable } from "../lib/scanCandidateFields";
+import { ReceiptPeek } from "../components/ReceiptPeek";
+import { fieldsStillOnTable, fieldsNoLongerOnTable, isQuietDefault } from "../lib/scanCandidateFields";
 import { canRerunLookup } from "../lib/scanRerun";
 import { TrackedMatchBanner } from "../components/TrackedMatchBanner";
 import { BinAdjustModal } from "../components/BinAdjustModal";
@@ -1441,10 +1442,6 @@ export function ScanPage() {
     }
   };
   // Revert a set of just-committed items (used by the "Undo" on a receipt/PO commit).
-  const undoCommittedIds = async (ids: string[]) => {
-    if (ids.length === 0) return;
-    reportRevert(await revertIds(ids));
-  };
 
   // Hardware barcode scanners (USB/Bluetooth HID, 1D or 2D) "type" the code +
   // Enter. Capture that burst page-wide so a physical scan intakes a barcode
@@ -1608,110 +1605,6 @@ export function ScanPage() {
 
   // Receipt lines share a receipt_group_id; offer to roll a whole receipt up
   // into one purchase order (only when the purchases module is on).
-  const purchasesEnabled = (modulesQ.data?.items ?? []).some(
-    (m) => m.name === "purchases" && m.enabled,
-  );
-  const receiptGroups = useMemo(() => {
-    const groups = new Map<string, { vendor: string | null; count: number }>();
-    for (const it of items) {
-      if (it.status === "resolved" || it.status === "discarded") continue;
-      const meta = it.suggested_metadata as Record<string, unknown> | undefined;
-      const gid = typeof meta?.receipt_group_id === "string" ? meta.receipt_group_id : null;
-      if (!gid) continue;
-      const g = groups.get(gid) ?? {
-        vendor: typeof meta?.receipt_vendor === "string" ? (meta.receipt_vendor as string) : null,
-        count: 0,
-      };
-      g.count += 1;
-      groups.set(gid, g);
-    }
-    return [...groups.entries()].map(([groupId, g]) => ({ groupId, ...g }));
-  }, [items]);
-  const confirmGroup = useMutation({
-    mutationFn: (groupId: string) => api.confirmReceiptGroup(activeSlug, groupId),
-    onSuccess: (r) => {
-      const ids = r.confirmed.filter((c) => !c.error && c.itemId).map((c) => c.itemId);
-      const n = ids.length;
-      // The server reports per-line failures IN the response - "4 lines, 2
-      // failed" must not read as a clean "2 items" (2026-08-25 audit).
-      const failedN = r.confirmed.filter((c) => c.error).length;
-      const trouble = failedN ? ` · ${failedN} line${failedN === 1 ? "" : "s"} failed and stayed in the inbox` : "";
-      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-      void qc.invalidateQueries({ queryKey: ["scan-inbox-resolved", activeSlug] });
-      // Undo inline — a mis-tapped "Confirm as purchase order" sends every line
-      // back to the inbox (and removes the created part), unsorted, in one tap.
-      toast.action(
-        (r.order_id
-          ? `Purchase order created — ${n} item${n === 1 ? "" : "s"}${r.vendor ? ` from ${r.vendor}` : ""}`
-          : `Confirmed ${n} item${n === 1 ? "" : "s"} (enable Purchases to group them into an order)`) + trouble,
-        {
-          actionLabel: "Undo",
-          duration: 8000,
-          onAction: () => void undoCommittedIds(ids),
-        },
-      );
-    },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
-  });
-  // Multiple pending receipts → one collapsible banner instead of a stack of
-  // "Confirm as purchase order" rows (reported 2026-07-24). "Confirm all" turns each
-  // receipt into its OWN purchase order (they're separate orders), with one
-  // summary toast instead of N.
-  const [poExpanded, setPoExpanded] = useState(false);
-  const [confirmingAll, setConfirmingAll] = useState(false);
-  const confirmAllReceipts = async () => {
-    setConfirmingAll(true);
-    let orders = 0;
-    let failedLines = 0;
-    let failedGroups = 0;
-    let lastErr: string | null = null;
-    const committedIds: string[] = [];
-    try {
-      for (const g of receiptGroups) {
-        try {
-          const r = await api.confirmReceiptGroup(activeSlug, g.groupId);
-          if (r.order_id) orders += 1;
-          // The server reports per-line failures IN the response; filtering
-          // them out silently made "4-line receipt, 2 failed" read as a clean
-          // "2 items" success (2026-08-25 audit).
-          for (const c of r.confirmed) {
-            if (!c.error && c.itemId) committedIds.push(c.itemId);
-            else if (c.error) failedLines++;
-          }
-        } catch (e) {
-          failedGroups++;
-          lastErr = e instanceof ApiError ? e.message : String(e);
-        }
-      }
-      await qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-      await qc.invalidateQueries({ queryKey: ["scan-inbox-resolved", activeSlug] });
-      const itemsN = committedIds.length;
-      if (itemsN === 0 && (failedGroups > 0 || failedLines > 0)) {
-        // Nothing landed. The old message here blamed a missing Purchases
-        // module for what was an API failure, over an Undo that undid nothing.
-        toast.error(`Couldn't confirm the receipts${lastErr ? ` - ${lastErr}` : ""}`);
-        return;
-      }
-      const trouble =
-        failedLines || failedGroups
-          ? ` · ${failedLines + failedGroups} ${failedLines ? "line" : "receipt"}${failedLines + failedGroups === 1 ? "" : "s"} failed and stayed in the inbox`
-          : "";
-      // Undo the WHOLE bulk commit — one tap sends every line from every receipt
-      // back to the inbox, unsorted, if "Confirm all" was premature (reported 2026-07-24).
-      toast.action(
-        (orders
-          ? `Created ${orders} purchase order${orders === 1 ? "" : "s"} (${itemsN} item${itemsN === 1 ? "" : "s"})`
-          : `Confirmed ${itemsN} item${itemsN === 1 ? "" : "s"} (enable Purchases to group them into orders)`) + trouble,
-        {
-          actionLabel: "Undo all",
-          duration: 10000,
-          onAction: () => void undoCommittedIds(committedIds),
-        },
-      );
-    } finally {
-      setConfirmingAll(false);
-    }
-  };
 
   /** An icon-sized header control. */
   const headerIcon =
@@ -3189,74 +3082,7 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
         </div>
       )}
 
-      {purchasesEnabled && receiptGroups.length === 1 && receiptGroups[0] && (
-        <div className="flex items-center gap-2 rounded-md border border-cobble-400 dark:border-cobble-600 bg-cobble-50 dark:bg-cobble-900/30 px-3 py-2 text-sm">
-          <FileText size={15} className="text-accent shrink-0" />
-          <span className="text-content dark:text-mortar-100">
-            Receipt{receiptGroups[0].vendor ? ` from ${receiptGroups[0].vendor}` : ""} — {receiptGroups[0].count} item
-            {receiptGroups[0].count === 1 ? "" : "s"} pending
-          </span>
-          <div className="flex-1" />
-          <button
-            type="button"
-            disabled={confirmGroup.isPending}
-            onClick={() => confirmGroup.mutate(receiptGroups[0]!.groupId)}
-            className="inline-flex items-center rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2.5 py-1 text-sm transition disabled:opacity-50 shrink-0"
-          >
-            {confirmGroup.isPending ? "Creating…" : "Confirm as purchase order"}
-          </button>
-        </div>
-      )}
 
-      {/* 2+ pending receipts → ONE collapsible banner, not a stack. "Confirm all"
-          makes each its own purchase order; expand to confirm one at a time. */}
-      {purchasesEnabled && receiptGroups.length > 1 && (
-        <div className="rounded-md border border-cobble-400 dark:border-cobble-600 bg-cobble-50 dark:bg-cobble-900/30 text-sm">
-          <div className="flex items-center gap-2 px-3 py-2">
-            <FileText size={15} className="text-accent shrink-0" />
-            <button
-              type="button"
-              onClick={() => setPoExpanded((v) => !v)}
-              className="flex items-center gap-1.5 min-w-0 text-left text-content dark:text-mortar-100"
-            >
-              <ChevronDown size={13} className={`shrink-0 transition ${poExpanded ? "" : "-rotate-90"}`} />
-              <span>
-                {receiptGroups.length} receipts to confirm as purchase orders
-                <span className="text-faint"> · {receiptGroups.reduce((n, g) => n + g.count, 0)} items</span>
-              </span>
-            </button>
-            <div className="flex-1" />
-            <button
-              type="button"
-              disabled={confirmingAll || confirmGroup.isPending}
-              onClick={() => void confirmAllReceipts()}
-              className="inline-flex items-center rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2.5 py-1 text-sm transition disabled:opacity-50 shrink-0"
-            >
-              {confirmingAll ? "Creating…" : "Confirm all"}
-            </button>
-          </div>
-          {poExpanded && (
-            <div className="border-t border-cobble-300/70 dark:border-cobble-700/70 divide-y divide-cobble-300/50 dark:divide-cobble-700/50">
-              {receiptGroups.map((g) => (
-                <div key={g.groupId} className="flex items-center gap-2 px-3 py-1.5 pl-8">
-                  <span className="text-content dark:text-mortar-100 truncate">
-                    Receipt{g.vendor ? ` from ${g.vendor}` : ""} — {g.count} item{g.count === 1 ? "" : "s"}
-                  </span>
-                  <div className="flex-1" />
-                  <button
-                    type="button"
-                    disabled={confirmGroup.isPending || confirmingAll}
-                    onClick={() => confirmGroup.mutate(g.groupId)}
-                    className="text-accent hover:underline text-xs disabled:opacity-50 shrink-0"
-                  >
-                    Confirm
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* The put-away front door on the page itself: a captured backlog is
           Guided Organize's native situation — ONE verb, preview-first
@@ -3906,18 +3732,18 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       in (2026-08-24). */}
                   {isReceiptSession &&
                     (g.sourceFileId ? (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setViewSource(g.sourceFileId);
-                        }}
+                      // Hover shows the paper, click opens it - the one place on
+                      // the row that stands for the receipt itself (2026-09-06).
+                      <ReceiptPeek
+                        slug={activeSlug}
+                        fileId={g.sourceFileId}
+                        onOpen={setViewSource}
                         title="Receipt - open the photo or file its lines were read from"
                         aria-label="Open the original receipt"
                         className="shrink-0 text-faint hover:text-accent transition"
                       >
                         <ReceiptText size={13} />
-                      </button>
+                      </ReceiptPeek>
                     ) : (
                       <span title="Receipt" aria-label="Receipt" className="shrink-0 text-faint">
                         <ReceiptText size={13} />
@@ -4156,7 +3982,14 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       and clearable, or tightening the gate would strand it on a
                       session that can no longer reach it. */}
                   {/* Computed once: the truck control below reads it. */}
-                  {(isReceiptSession || (!!g.batchId && !!g.trackingNumber)) &&
+                  {/* A parcel is something an ORDER has. A till slip photographed in
+                      the shop has no parcel, no order number and nothing on its
+                      way, and "+ Tracking #" on a grocery receipt is a control
+                      for a thing that cannot happen (2026-09-06). An emailed
+                      order, an order number, a saved number or a known shipment
+                      state each say there is something to follow. */}
+                  {((isReceiptSession && (g.origin === "email" || !!g.orderRef || !!g.shipmentState)) ||
+                    (!!g.batchId && !!g.trackingNumber)) &&
                     (editingTracking === g.batchId ? (
                       <span ref={trackingEditRef} className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                         <input
@@ -4379,7 +4212,8 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                           : `None of these ${readyIds.length} have a location yet - tap to set it`
                       }
                       className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] font-medium ${
-                        sessionLocName && sessionLoc.missing === 0
+                        (sessionLocName && sessionLoc.missing === 0) ||
+                        (sessionLoc.missing > 0 && sessionLoc.suggested === sessionLoc.missing)
                           ? "border-line/70 dark:border-slate-700/70 text-content dark:text-mortar-100 hover:border-cobble-400"
                           : "border-amber-400 dark:border-amber-700/80 bg-amber-50 dark:bg-amber-900/25 text-amber-700 dark:text-amber-300 hover:border-amber-500"
                       }`}
@@ -4388,6 +4222,16 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       {sessionLoc.mixed ? (
                         <>
                           Mixed<span className="hidden sm:inline">&nbsp;locations</span>
+                        </>
+                      ) : sessionLoc.missing > 0 && sessionLoc.suggested === sessionLoc.missing ? (
+                        // Every unplaced item has a suggested spot, and File all
+                        // will use them. Amber "Location" over that read as
+                        // "nothing has a home" (2026-09-06); this says what will
+                        // actually happen.
+                        <>
+                          {sessionLoc.suggested}
+                          <span className="hidden sm:inline">&nbsp;suggested</span>
+                          <span className="sm:hidden">&nbsp;→</span>
                         </>
                       ) : sessionLocName && sessionLoc.missing === 0 ? (
                         filingLabel(sessionLocName)
@@ -4557,7 +4401,9 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                         not on the collapsed header where its old ↓ was mistaken
                         for the accordion and folded sessions by accident. It's a
                         rare re-unify action; every merge is Undo-able via toast. */}
-                    {g.batchId && (
+                    {/* A receipt is already one group; asking whether its
+                        lines belong together is noise (2026-09-06). */}
+                    {g.batchId && !g.items.every((i) => i.source_kind === "receipt") && (
                       <SessionTheme
                         slug={activeSlug}
                         batchId={g.batchId}
@@ -5640,10 +5486,25 @@ function InboxCard({
   const catalogFileUrl = item.catalog_image_file_id
     ? `/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.catalog_image_file_id}/raw?variant=med`
     : null;
+  // The picture already chosen for the thing you HAVE comes first. A
+  // re-purchase off a receipt searched the web again and came home with a tin
+  // of cherry tomatoes, over a photo the owner had picked by hand for that very
+  // record (2026-09-06). The match is stamped server-side with the record's
+  // own image, and nothing found on the web outranks it.
+  const trackedImg =
+    ((item.suggested_metadata as { tracked_match?: { image_path?: string | null } | null } | null)
+      ?.tracked_match?.image_path ?? null) || null;
+  // An entity image_path is already what useImageSrc takes (BinAdjustModal
+  // hands it over as-is), internal or external.
   const catalogUrl =
-    [catalogFileUrl, item.catalog_image_url ?? null].find(
+    [trackedImg, catalogFileUrl, item.catalog_image_url ?? null].find(
       (u): u is string => !!u && !brokenSrcs.has(u),
     ) ?? null;
+  const pictureStatus = (item.suggested_metadata as { catalog_image_status?: string } | null)?.catalog_image_status;
+  const noPictureFound = !catalogUrl && !item.image_file_id && (pictureStatus === "none" || pictureStatus === "throttled");
+  /** The engine refused a burst, not the query: it retries itself, and the
+   *  chip should not read as "nobody has a picture of this". */
+  const pictureBusy = pictureStatus === "throttled";
   const yoursRawUrl = item.image_file_id
     ? `/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.image_file_id}/raw?variant=med`
     : null;
@@ -6098,7 +5959,26 @@ function InboxCard({
               // Settled (matchmaker ran / a tentative table) but still nameless.
               <span className="text-muted">Name this {idNoun}:</span>
             )}
-            {(item.quantity ?? 1) > 1 && (
+            {/* Sold by weight: the weight IS the quantity, and the $/lb is the
+                number worth seeing next time. Not a count control - 4.14 lb of
+                chicken breast is one package, and "x4" was recording four
+                (2026-09-06). */}
+            {typeof (item.suggested_metadata as { weight?: unknown } | null)?.weight === "number" && (
+              <span
+                className="shrink-0 inline-flex items-center rounded-full bg-cobble-600 text-white text-[11px] font-semibold px-2 py-0.5 tabular-nums"
+                title="Sold by weight, as printed on the receipt"
+              >
+                {(item.suggested_metadata as { weight: number }).weight}{" "}
+                {(item.suggested_metadata as { weight_unit?: string }).weight_unit ?? ""}
+                {typeof (item.suggested_metadata as { unit_price?: unknown }).unit_price === "number" && (
+                  <span className="ml-1 font-normal opacity-90">
+                    · {(item.suggested_metadata as { unit_price: number }).unit_price.toFixed(2)}/
+                    {(item.suggested_metadata as { weight_unit?: string }).weight_unit ?? "unit"}
+                  </span>
+                )}
+              </span>
+            )}
+            {(item.quantity ?? 1) > 1 && typeof (item.suggested_metadata as { weight?: unknown } | null)?.weight !== "number" && (
               <span className="shrink-0 inline-flex items-center rounded-full bg-cobble-600 text-white text-[11px] font-semibold overflow-hidden">
                 <button
                   type="button"
@@ -6653,6 +6533,7 @@ function InboxCard({
                   );
                   const entries = Object.entries(liveFields).filter(([k, v]) => {
                     if (/^isbn$/i.test(k)) return false; // shown in the subtitle now
+                    if (isQuietDefault(k, v)) return false; // "kept ambient" is not news
                     const val = String(v).trim().toLowerCase();
                     return val && val !== brand && val !== creator;
                   });
@@ -6698,6 +6579,40 @@ function InboxCard({
                           The chip stays a chip and gains the obvious gesture:
                           tap the value to open the form on this route with the
                           fields pre-filled. */}
+                      {/* WHERE IT IS GOING, on the closed card. The suggestion
+                          was stamped on every line of a receipt and shown on
+                          none of them - it lived in the expanded view, and the
+                          header said "Location" in amber over twelve items that
+                          all had one (2026-09-06). */}
+                      {!formOpen && item.suggested_location_id && !item.target_location_id && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            acceptSuggestedLocation.mutate();
+                          }}
+                          disabled={acceptSuggestedLocation.isPending}
+                          className="inline-flex items-center gap-1 rounded-md bg-moss-500/10 border border-moss-500/30 px-1.5 py-0.5 text-[11px] text-moss-700 dark:text-moss-400 min-w-0 hover:border-moss-500 transition disabled:opacity-50"
+                          title={`${item.suggested_location_note ?? "Suggested spot"} - File all puts it here; tap to set it now`}
+                        >
+                          <MapPin size={11} className="shrink-0" />
+                          <span className="truncate">{item.suggested_location_note?.split(" — ")[0] ?? "Suggested spot"}</span>
+                        </button>
+                      )}
+                      {!formOpen && noPictureFound && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            rerun.mutate({ enrich: true });
+                          }}
+                          disabled={rerun.isPending}
+                          className="inline-flex items-center gap-1 rounded-md border border-dashed border-line/70 dark:border-slate-700/70 px-1.5 py-0.5 text-[11px] text-faint hover:text-accent hover:border-accent transition disabled:opacity-50"
+                          title={pictureBusy ? "The picture search is busy right now - it will try again on its own, or tap to try now." : "The picture search came back empty. Try again."}
+                        >
+                          <ImagePlus size={11} className="shrink-0" /> {pictureBusy ? "Picture search busy · retry" : "No picture found · retry"}
+                        </button>
+                      )}
                       {!formOpen && shown.map(([k, v]) => (
                         <button
                           key={k}

@@ -37,6 +37,8 @@ export interface ReceiptLineMeta {
   total_charged?: unknown;
   net_price?: unknown;
   unit_price?: unknown;
+  weight?: unknown;
+  weight_unit?: unknown;
   line_total?: unknown;
   discount?: unknown;
   code?: unknown;
@@ -63,6 +65,10 @@ export interface ReceiptRecord {
   parse_method?: string;
   expected_arrival?: string;
   unit_price?: number;
+  /** For a line sold by weight: what it weighed, and in what. With unit_price
+   *  that is the $/lb worth knowing next time. */
+  weight?: number;
+  weight_unit?: string;
   line_total?: number;
   /** A coupon or markdown that belonged to THIS line. */
   discount?: number;
@@ -100,6 +106,9 @@ export function receiptRecord(meta: ReceiptLineMeta | null | undefined): Receipt
     ...(str(meta.parse_method) ? { parse_method: str(meta.parse_method)! } : {}),
     ...(str(meta.expected_arrival) ? { expected_arrival: str(meta.expected_arrival)! } : {}),
     ...(num(meta.unit_price) !== undefined ? { unit_price: num(meta.unit_price)! } : {}),
+    ...(num(meta.weight) !== undefined && str(meta.weight_unit)
+      ? { weight: num(meta.weight)!, weight_unit: str(meta.weight_unit)! }
+      : {}),
     ...(num(meta.line_total) !== undefined ? { line_total: num(meta.line_total)! } : {}),
     ...(num(meta.discount ?? meta.line_discount) !== undefined
       ? { discount: num(meta.discount ?? meta.line_discount)! }

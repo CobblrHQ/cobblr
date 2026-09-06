@@ -254,6 +254,22 @@ export async function expiryTick(opts: { orgId?: string } = {}): Promise<{ scann
         lines.length === 1
           ? lines[0]!
           : `${lines.length} things to use up:\n${lines.join("\n")}`;
+      // WHERE IT TAKES YOU. One item → the item, instance-aware (a jar in a
+      // Groceries table is not on the base inventory page). Several → the
+      // calendar on the earliest date, because "everything dated" is exactly
+      // what that surface is. It used to carry no link, so a list of six things
+      // going bad was six names and no way through to any of them.
+      const all = [...dueToday, ...due];
+      const earliest = all
+        .map((r) => r.expires_on.slice(0, 10))
+        .sort()[0];
+      let link = `/calendar?date=${earliest}`;
+      if (all.length === 1) {
+        link =
+          (await platform()
+            .entities.detailPathForEntity(org.id, "inventory:part", all[0]!.id)
+            .catch(() => undefined)) ?? link;
+      }
       for (const userId of memberIds) {
         try {
           await platform().notifications.dispatch({
@@ -262,6 +278,7 @@ export async function expiryTick(opts: { orgId?: string } = {}): Promise<{ scann
             eventType: "lists.expiring",
             triggeredBy: "schedule",
             message: summary,
+            link_url: link,
             module: "lists",
             payload: { count: lines.length },
           });

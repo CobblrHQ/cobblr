@@ -21,12 +21,8 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "../auth/middleware.js";
 import { requireScope } from "../auth/capability.js";
-import { platform } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
-import {
-  assertActingRoleClearsActionFloor,
-  ActionRoleFloorError,
-} from "../platform/platform-actions.js";
+import { pressNotificationAction } from "../platform/notification-press.js";
 import {
   MODAL_SUBMIT,
   readReply,
@@ -38,7 +34,6 @@ import {
   RESPONSE,
   parsePress,
   pressMayAct,
-  resolvePress,
   cardOf,
   originalOf,
   settledMessage,
@@ -214,28 +209,8 @@ async function handlePress(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    const resolved = resolvePress(
-      (notification as StoredNotification | undefined) ?? null,
-      conn?.user_id ?? null,
-      ref,
-    );
-    if (!resolved.ok) {
-      // Deliberately one message for every refusal. Distinguishing "not yours"
-      // from "no such notification" tells a prober which ids exist.
-      res.json(settledMessage(original, "This button is no longer valid."));
-      return;
-    }
-    // Same member gate as the reply-modal branch, for a plain button press (and
-    // the modal submit that follows an opened box). A guest or ex-member reaches
-    // here owning the notification but must not perform the write.
-    if (!mayAct) {
-      res.json(settledMessage(original, "This button is no longer valid."));
-      return;
-    }
-
     // A modal carries what was typed; a button carries only its stored args.
-    // Merging here rather than in resolvePress keeps that function pure and
-    // keeps "what the user typed" out of anything a forged id could reach.
+    // Read it BEFORE pressing, so an empty submit costs nothing.
     const typed = isModalSubmit ? readReply(body.data) : null;
     if (isModalSubmit && !typed) {
       // Submitted empty. Discord already enforces min_length, so this is a
@@ -244,63 +219,43 @@ async function handlePress(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    // The notification already records WHAT it is about, so an entity-scoped
-    // action can be invoked from a card. Without this, `invoke` gets no entity
-    // and requireActionEntity throws — every card action had to be
-    // workspace-scoped, which quietly ruled out the interesting ones
-    // (commenting on the record you were just told about).
-    const row = notification as unknown as {
-      module_name: string | null;
-      entity_type: string | null;
-      entity_id: string | null;
-    };
-    const entity =
-      row.module_name && row.entity_type && row.entity_id
-        ? { kind: `${row.module_name}:${row.entity_type}`, id: row.entity_id, fields: {} }
-        : undefined;
-
-    // Per-action role FLOOR, on top of the pressMayAct member gate above (audit
-    // M-ACTION-PARITY). pressMayAct proves member+, but a floored action — an
-    // owner-only platform:* one — must hold the SAME floor here that the HTTP
-    // /actions/invoke route holds, because a card press reaches invoke()
-    // directly. No such action is card-reachable today (they are workspace-
-    // scoped, not notification actions), so this is defensive; the floor must
-    // not depend on which door was used. Same neutral refusal as the other
-    // gates so a prober learns nothing about roles or ids.
-    try {
-      assertActingRoleClearsActionFloor(resolved.action, pressRole);
-    } catch (err) {
-      if (err instanceof ActionRoleFloorError) {
-        res.json(settledMessage(original, "This button is no longer valid."));
-        return;
-      }
-      throw err;
-    }
-
-    await platform().actions.invoke(resolved.action, {
-      orgId: resolved.orgId,
-      userId: resolved.userId,
-      ...(entity ? { scope: "entity" as const, entity } : {}),
-      event: {
-        name: "platform.notification.action",
-        payload: { notificationId: ref.notificationId, actionId: ref.actionId },
-        // "session" because a PERSON did this, having proved who they are —
-        // the vocabulary has no term for "acting through a linked third-party
-        // identity", and inventing one here would widen a platform enum every
-        // activity-log reader depends on. The provenance is not lost: the
-        // event payload names the notification and the action, so the trail
-        // says Discord even though this field cannot.
-        actor: { user_id: resolved.userId, display_name: conn?.display_name ?? null, auth_method: "session" },
-        timestamp: new Date().toISOString(),
-        trigger_type: "user-invoked",
-      },
-      args: typed ? { ...resolved.args, body: typed } : resolved.args,
+    // Every check that is not about Discord — ownership, current membership,
+    // the action's role floor, the entity the notification names — lives in
+    // pressNotificationAction, which the in-app bell calls too. They used to
+    // live here alone, and then the app grew its own press door; two copies of
+    // "who may press this" is how the two start disagreeing, and the copy that
+    // drifts is the one nobody re-reads.
+    const outcome = await pressNotificationAction({
+      notificationId: ref.notificationId,
+      actionId: ref.actionId,
+      userId: conn?.user_id ?? "",
+      actorName: conn?.display_name ?? null,
+      // "session" because a PERSON did this, having proved who they are — the
+      // vocabulary has no term for "acting through a linked third-party
+      // identity", and inventing one here would widen a platform enum every
+      // activity-log reader depends on. The provenance is not lost: the event
+      // payload names the notification and the action.
+      authMethod: "session",
+      ...(typed ? { extraArgs: { body: typed } } : {}),
     });
+    if (!outcome.ok) {
+      // Deliberately one message for every refusal. Distinguishing "not yours"
+      // from "no such notification" tells a prober which ids exist.
+      res.json(
+        settledMessage(
+          original,
+          outcome.reason === "failed"
+            ? "That did not go through. Open it in Cobblr to finish."
+            : "This button is no longer valid.",
+        ),
+      );
+      return;
+    }
 
     res.json(
       settledMessage(
         original,
-        isModalSubmit ? "✅ Sent." : `✅ ${resolved.label}`,
+        isModalSubmit ? "✅ Sent." : `✅ ${outcome.label}`,
         // Only a reply has anything to echo; a plain action press does not.
         typed,
         // With a card, the reply is written INTO it, under the message it

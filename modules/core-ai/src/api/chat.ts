@@ -11,6 +11,7 @@
 import { Router, type Response } from "express";
 import { humanizeProviderError } from "./provider-error.js";
 import { missingActionArgs } from "./action-args-guard.js";
+import { escortCoveredByAction, resolveActionId, ESCORT_COVERAGE } from "./act-dont-escort.js";
 import { buildSystemPrompt, type PromptWorkspace } from "./system-prompt.js";
 import { GROUNDING_RULES, PLAIN_ANSWER_RULES, TOOL_USE_RULES } from "./prompt-rules.js";
 import { z } from "zod";
@@ -252,6 +253,16 @@ interface Move {
 /** An action's declared arguments, from the registry, memoised per workspace
  *  for a minute: the guard above asks once per invoke, not once per turn. */
 const argsSchemaCache = new Map<string, { at: number; byId: Map<string, Record<string, { label?: string; type?: string }>> }>();
+/** Every action id this workspace has, memoised beside the arg schemas. */
+async function actionIds(c: Ctx): Promise<string[] | null> {
+  const hit = argsSchemaCache.get(c.slug);
+  if (!hit || Date.now() - hit.at > 60_000) {
+    await actionArgsSchema(c, "");
+  }
+  const now = argsSchemaCache.get(c.slug);
+  return now ? [...now.byId.keys()] : null;
+}
+
 async function actionArgsSchema(c: Ctx, actionId: string): Promise<Record<string, { label?: string; type?: string }> | null> {
   const hit = argsSchemaCache.get(c.slug);
   if (!hit || Date.now() - hit.at > 60_000) {
@@ -514,6 +525,16 @@ async function runTurn(
       executeRead: async (name, args) => {
         const tool = getTool(name);
         if (!tool || tool.mode !== "read") return { ok: false, error: `no such read tool: ${name}` };
+        // An escort to a screen whose job an action already does is the least
+        // useful answer available, and saying so in the prompt was not enough:
+        // "hide the manufacturer field on parts" still went to the Fields
+        // screen. The destinations already declare which actions cover them.
+        if (name === "take_user_to") {
+          const dest = String((args as { destination?: unknown }).destination ?? "");
+          const known = new Set((await actionIds(c)) ?? []);
+          const bounce = known.size ? escortCoveredByAction(dest, ESCORT_COVERAGE[dest], known) : null;
+          if (bounce) return { ok: false, error: bounce };
+        }
         const result = await tool.execute(wsApi, args);
         // The escort tool (tier 1.5) rides the read rail — it mutates nothing
         // — but its OUTPUT is for the widget, not only the model: collect the
@@ -528,9 +549,14 @@ async function runTurn(
       validateWrite: async (call) => {
         if (call.name !== "invoke_action") return null;
         const a = call.args ?? {};
-        const actionId = String(a.action_id ?? "");
-        if (!actionId) return null;
-        return missingActionArgs(actionId, await actionArgsSchema(c, actionId), a.args);
+        const typed = String(a.action_id ?? "");
+        if (!typed) return null;
+        // platform:group_fields for platform:group-fields: the model chose the
+        // right action and typed the separator its own way. Correct it in
+        // place rather than refusing the turn.
+        const real = resolveActionId(typed, (await actionIds(c)) ?? []);
+        if (real && real !== typed) a.action_id = real;
+        return missingActionArgs(real ?? typed, await actionArgsSchema(c, real ?? typed), a.args);
       },
       ...(onEvent ? { onEvent } : {}),
       ...(prefs.write_mode === "auto"

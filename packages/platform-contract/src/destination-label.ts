@@ -117,6 +117,17 @@ export function betterDestination(
     if (/[^aeiou]y$/.test(t)) forms.push(`${t.slice(0, -1)}ies`);
     return forms.some((f) => f.length > 1 && words.has(f));
   };
+  // If the table it is IN already claims a word of its name, it is where it
+  // belongs and nothing else gets to argue. "Rosemary Olive Oil Bread" hits
+  // Spices on "rosemary" and Groceries on "bread"; filed in Groceries, the
+  // Spices nudge is wrong, because the bread is the thing and the rosemary is
+  // what is in it (2026-09-06). A nudge is for an item its current table has
+  // no claim on at all - a tea sitting in plain Inventory.
+  const current = tables.find((t) => t.instance_name === head);
+  if (current) {
+    const own = (current.display_name ?? current.instance_name).trim();
+    if ((own && hit(own)) || (current.keywords ?? []).some(hit)) return null;
+  }
   for (const t of tables) {
     if (t.instance_name === head) continue;
     // The table's own name first - it is the strongest signal and the one a

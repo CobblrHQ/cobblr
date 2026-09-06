@@ -151,7 +151,7 @@ export async function addOrderLine(args: {
    *  and 4 x 0.38 comes back as 1.52. The amount is the thing the receipt is
    *  authority on, so it travels rather than being recomputed. */
   lineAmount?: number | null;
-}): Promise<boolean> {
+}): Promise<string | null> {
   try {
     const res = await fetch(
       `${args.baseUrl}/api/v1/orgs/${args.slug}/modules/purchases/orders/${args.orderId}/items`,
@@ -166,11 +166,16 @@ export async function addOrderLine(args: {
         }),
       },
     );
-    if (!res.ok) console.warn(`[core-scan] receipt order line skipped (${res.status})`);
-    return res.ok;
+    if (!res.ok) {
+      console.warn(`[core-scan] receipt order line skipped (${res.status})`);
+      return null;
+    }
+    // The line's id, so the inbox row it was made from can claim it later.
+    const body = (await res.json().catch(() => null)) as { id?: string } | null;
+    return typeof body?.id === "string" ? body.id : null;
   } catch (err) {
     console.warn("[core-scan] receipt order line threw:", (err as Error).message);
-    return false;
+    return null;
   }
 }
 
@@ -180,19 +185,67 @@ export async function addOrderLine(args: {
  *  abandoned receipt never reached Purchases at all. Cancelled rather than
  *  deleted — the status already exists, and a cancelled order is a truer record
  *  of "this was uploaded and discarded" than a gap. */
-export async function cancelReceiptOrder(args: {
+/** Filing claims a line: the part now stands for it. Releasing hands it back. */
+export async function claimOrderLine(args: {
   baseUrl: string;
   slug: string;
   headers: Record<string, string>;
   orderId: string;
-}): Promise<void> {
+  itemId: string;
+  partId: string | null;
+}): Promise<boolean> {
   try {
-    await fetch(`${args.baseUrl}/api/v1/orgs/${args.slug}/modules/purchases/orders/${args.orderId}`, {
-      method: "PATCH",
-      headers: args.headers,
-      body: JSON.stringify({ status: "cancelled" }),
-    });
+    const res = await fetch(
+      `${args.baseUrl}/api/v1/orgs/${args.slug}/modules/purchases/orders/${args.orderId}/items/${args.itemId}`,
+      { method: "PATCH", headers: args.headers, body: JSON.stringify({ part_id: args.partId }) },
+    );
+    if (!res.ok) console.warn(`[core-scan] receipt order line ${args.partId ? "claim" : "release"} skipped (${res.status})`);
+    return res.ok;
   } catch (err) {
-    console.warn("[core-scan] receipt order cancel threw:", (err as Error).message);
+    console.warn(`[core-scan] receipt order line ${args.partId ? "claim" : "release"} threw:`, (err as Error).message);
+    return false;
+  }
+}
+
+/** Every line on the order, as the claim question needs them. */
+export async function orderLines(args: {
+  baseUrl: string;
+  slug: string;
+  headers: Record<string, string>;
+  orderId: string;
+}): Promise<Array<{ id: string; part_id: string | null }> | null> {
+  try {
+    const res = await fetch(`${args.baseUrl}/api/v1/orgs/${args.slug}/modules/purchases/orders/${args.orderId}/items`, { headers: args.headers });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { items?: Array<{ id: string; part_id: string | null }> };
+    return body.items ?? [];
+  } catch {
+    return null;
+  }
+}
+
+/** An order born from a receipt nobody kept goes with the receipt.
+ *
+ *  It was created automatically when the receipt was read, so removing it is
+ *  not losing anyone's work - and in practice a whole session is deleted
+ *  because the read went wrong and a better picture is coming, which will make
+ *  its own order. A cancelled ghost beside that new order was the alternative
+ *  (the operator, 2026-09-06). Only ever called when no line was claimed. */
+export async function deleteReceiptOrder(args: {
+  baseUrl: string;
+  slug: string;
+  headers: Record<string, string>;
+  orderId: string;
+}): Promise<boolean> {
+  try {
+    const res = await fetch(`${args.baseUrl}/api/v1/orgs/${args.slug}/modules/purchases/orders/${args.orderId}`, {
+      method: "DELETE",
+      headers: args.headers,
+    });
+    if (!res.ok) console.warn(`[core-scan] receipt order delete skipped (${res.status})`);
+    return res.ok;
+  } catch (err) {
+    console.warn("[core-scan] receipt order delete threw:", (err as Error).message);
+    return false;
   }
 }

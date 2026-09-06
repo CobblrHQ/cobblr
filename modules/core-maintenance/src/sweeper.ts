@@ -208,6 +208,18 @@ export async function tick(opts: { orgId?: string } = {}): Promise<{
         lines.length === 1
           ? lines[0]!
           : `${lines.length} things need maintenance:\n${lines.join("\n")}`;
+      // WHERE IT TAKES YOU. One entry → the thing that needs servicing, which
+      // is where you would go to deal with it; several → the maintenance page,
+      // which lists exactly what is due. It used to carry no link at all, so
+      // "your mower is due for service" was a sentence you could not act on.
+      // PAGE-LINK: several entries at once; the maintenance list IS the set.
+      let link = "/maintenance";
+      if (only?.entity_type && only.entity_id) {
+        link =
+          (await platform()
+            .entities.detailPathForEntity(org.id, only.entity_type, only.entity_id)
+            .catch(() => undefined)) ?? "/maintenance";
+      }
       for (const userId of memberIds) {
         try {
           await platform().notifications.dispatch({
@@ -217,9 +229,27 @@ export async function tick(opts: { orgId?: string } = {}): Promise<{
             // Due on a date, knowable in advance: the morning brief, not a ping.
             triggeredBy: "schedule",
             message,
+            link_url: link,
             module: "core-maintenance",
             entityType: only?.entity_type,
             entityId: only?.entity_id,
+            // ANSWER IT WHERE YOU READ IT. A single due entry is a yes/no
+            // question - did you do it? - and the action to say yes already
+            // exists. Declaring it here is all a notification needs to become
+            // pressable, in the bell and in a Discord DM alike.
+            ...(only
+              ? {
+                  actions: [
+                    {
+                      id: "done",
+                      label: "Mark done",
+                      action: "core-maintenance:complete",
+                      args: { entry_id: only.id },
+                      style: "primary" as const,
+                    },
+                  ],
+                }
+              : {}),
             payload: only
               ? { entryId: only.id, count: 1, scheduledAt: only.scheduled_at }
               : { count: lines.length },

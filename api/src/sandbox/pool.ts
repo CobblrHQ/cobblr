@@ -795,7 +795,12 @@ async function handleKernelCall(
         userId,
         eventType: `sandbox:${ctx.moduleName}`,
         message,
-        link_url: linkUrl,
+        // A sandboxed module MAY name a destination; it is data from the guest,
+        // so the requirement cannot be met at compile time here. Saying so
+        // beats inventing a link the module never asked for.
+        ...(linkUrl
+          ? { link_url: linkUrl }
+          : { no_link_reason: `sandboxed module ${ctx.moduleName} dispatched without a link` }),
         module: ctx.moduleName,
         entityType: "sandbox",
         entityId: ctx.moduleName,

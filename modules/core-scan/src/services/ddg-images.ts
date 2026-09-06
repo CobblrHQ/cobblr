@@ -41,6 +41,7 @@ const CLEAN_DOMAINS = [
   "kroger.com", "traderjoes.com", "wholefoodsmarket.com", "heb.com", "meijer.com", "wegmans.com",
   "iherb.com", "thrivemarket.com", "ebay.com", "barcodelookup.com", "go-upc.com",
   "openfoodfacts.org", "openproductsfacts.org", "upcitemdb.com", "shopify",
+  "wikimedia.org",
 ];
 const CLUTTERED_DOMAINS = [
   "pinterest.", "instagram.", "facebook.", "twitter.", "x.com", "reddit.", "tiktok.",
@@ -121,13 +122,37 @@ const LIFESTYLE_WORDS = [
  *  wrong-answer signals are both RELATIVE to the request: an aspect ratio that
  *  doesn't match the thing's real shape, and a result that shows a collection
  *  when one item was asked for. */
+/** Titles that say the picture is of something PRESERVED. For an item the
+ *  workspace calls fresh - produce, meat, bakery, dairy - such a result is the
+ *  wrong product, however well its words overlap. */
+const PRESERVED_WORDS = /\b(canned|tinned|jarred|in (tomato )?juice|in brine|in water|in syrup|in oil|pickled|dried|frozen)\b|\b(can|tin|jar)\b/;
+
+/** Categories whose members come fresh unless the name says otherwise. The
+ *  workspace's own vocabulary, read off the item; nothing here decides what
+ *  is food. */
+export function isFreshCategory(category: string | null | undefined): boolean {
+  return /\b(produce|fruit|vegetables?|veg|meat|poultry|fish|seafood|bakery|bread|dairy|deli|fresh)\b/i.test(category ?? "");
+}
+
 export function catalogScore(
   r: DdgImageResult,
   brand?: string | null,
   query?: string | null,
   knownColor?: string | null,
+  /** The item is FRESH: a result that shows it canned, tinned or jarred is
+   *  the wrong product. "Tomatoes Roma" off a Lidl receipt came home with a
+   *  400g tin of cherry tomatoes - the shop's own-brand catalogue is mostly
+   *  packaged goods and the words overlap perfectly (2026-09-06). */
+  fresh?: boolean,
 ): number {
   let s = 0;
+  if (fresh) {
+    const tl0 = (r.title || "").toLowerCase();
+    const ql0 = (query ?? "").toLowerCase();
+    // Only when the ASK did not say tinned itself - "canned tomatoes" is a
+    // real line, and its picture should be a can.
+    if (PRESERVED_WORDS.test(tl0) && !PRESERVED_WORDS.test(ql0)) s -= 14;
+  }
   const host = (r.source || "").toLowerCase();
   if (CLEAN_DOMAINS.some((d) => host.includes(d))) s += 10;
   if (CLUTTERED_DOMAINS.some((d) => host.includes(d))) s -= 10;
@@ -308,9 +333,10 @@ export function rankImageOptions(
   brand?: string | null,
   query?: string | null,
   knownColor?: string | null,
+  fresh?: boolean,
 ): DdgImageResult[] {
   return results
-    .map((r, i) => ({ r, i, s: catalogScore(r, brand, query, knownColor) }))
+    .map((r, i) => ({ r, i, s: catalogScore(r, brand, query, knownColor, fresh) }))
     .sort((a, b) => b.s - a.s || a.i - b.i)
     .map((x) => x.r);
 }
@@ -374,15 +400,49 @@ async function fetchVqd(query: string): Promise<string> {
   // DDG's anti-automation handshake: the search page embeds a `vqd`
   // token that /i.js then requires.
   const url = `https://duckduckgo.com/?q=${encodeURIComponent(query)}&iax=images&ia=images`;
-  const res = await fetch(url, {
-    headers: { "User-Agent": UA, Accept: "text/html" },
-    signal: AbortSignal.timeout(15_000),
-  });
+  const res = await askEngine(() =>
+    fetch(url, {
+      headers: { "User-Agent": UA, Accept: "text/html" },
+      signal: AbortSignal.timeout(15_000),
+    }),
+  );
+  if (refusedByHandshake(res.status)) throw new DdgThrottledError(res.status, "challenge");
   if (!res.ok) throw new Error(`DDG handshake returned ${res.status}`);
   const html = await res.text();
   const m = html.match(/vqd=["']?([\d-]+)["']?/);
-  if (!m || !m[1]) throw new Error("DDG vqd token not found");
+  // A 200 without the token is the challenge page too (it has been served
+  // both ways); either way the engine is not taking the question.
+  if (!m || !m[1]) throw new DdgThrottledError(res.status, "challenge");
   return m[1];
+}
+
+/** 202 is the engine's challenge page on the front door; 403/429 the plain
+ *  refusal. Pure; exported for the test. */
+export function refusedByHandshake(status: number): boolean {
+  return status === 202 || status === 403 || status === 429;
+}
+
+/** Run one engine call and report a wall as a wall. A connection that times
+ *  out or resets is the engine dropping our ADDRESS (the home IP got a TCP
+ *  timeout to the engine for hours, 2026-09-06, after the 403s), and an
+ *  ordinary `fetch failed` for that was read as "no picture of this
+ *  product" - stamped `none` on every row, and never retried. Exported for
+ *  the test. */
+export async function askEngine<T>(call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (err) {
+    if (isNetworkFailure(err)) throw new DdgThrottledError(0, "unreachable");
+    throw err;
+  }
+}
+
+function isNetworkFailure(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  if (err.name === "TimeoutError" || err.name === "AbortError") return true;
+  if (/fetch failed/i.test(err.message)) return true;
+  const code = (err as { cause?: { code?: string } }).cause?.code ?? (err as { code?: string }).code;
+  return !!code && /^(ETIMEDOUT|ECONNRESET|ECONNREFUSED|EHOSTUNREACH|ENETUNREACH|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET)$/.test(code);
 }
 
 async function imageSearchOnce(query: string, limit: number): Promise<DdgImageResult[]> {
@@ -396,14 +456,17 @@ async function imageSearchOnce(query: string, limit: number): Promise<DdgImageRe
     p: "1",
     v7exp: "a",
   });
-  const res = await fetch(`https://duckduckgo.com/i.js?${params}`, {
-    headers: {
-      "User-Agent": UA,
-      Accept: "application/json",
-      Referer: "https://duckduckgo.com/",
-    },
-    signal: AbortSignal.timeout(15_000),
-  });
+  const res = await askEngine(() =>
+    fetch(`https://duckduckgo.com/i.js?${params}`, {
+      headers: {
+        "User-Agent": UA,
+        Accept: "application/json",
+        Referer: "https://duckduckgo.com/",
+      },
+      signal: AbortSignal.timeout(15_000),
+    }),
+  );
+  if (res.status === 403 || res.status === 429) throw new DdgThrottledError(res.status, "refused");
   if (!res.ok) throw new Error(`DDG image search returned ${res.status}`);
   const data = (await res.json()) as {
     results?: Array<{ image?: string; thumbnail?: string; title?: string; url?: string; source?: string; width?: number; height?: number }>;
@@ -430,6 +493,44 @@ async function imageSearchOnce(query: string, limit: number): Promise<DdgImageRe
  * (429 / handshake fail) is a different failure mode → surface it, don't retry
  * here. Returns [] only after every attempt came back genuinely empty.
  */
+/** The engine refused us, not the query. A burst from one address earns a
+ *  403 for a while - the staging host returned 403 to every query for over an
+ *  hour after a twelve-line receipt (2026-09-06). Filed as "no pictures" that
+ *  looked like six products nobody has photographed; it was the same wall
+ *  six times. Callers stamp it as BUSY and try again later.
+ *
+ *  Three shapes of the same wall, and the reason says which: `refused`
+ *  (403/429 on the image endpoint), `challenge` (the front door serves a
+ *  bot-check page instead of the token), `unreachable` (the connection itself
+ *  times out or resets; status 0). */
+export type EngineWall = "refused" | "challenge" | "unreachable";
+export class DdgThrottledError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly reason: EngineWall = "refused",
+  ) {
+    super(reason === "unreachable" ? "DDG image search unreachable" : `DDG image search ${reason} (${status})`);
+    this.name = "DdgThrottledError";
+  }
+}
+
+/** The ask that goes to the engine for a catalog picture.
+ *
+ *  For a FRESH item the shop stays OUT of the ask and is used only to rank:
+ *  "Lidl Baby Carrots" answers with the shop's own-brand catalogue, which is
+ *  packaged goods - a tin of peas and carrots, a tin of cherry tomatoes -
+ *  because that is what a supermarket photographs. "Baby Carrots fresh" is the
+ *  vegetable. Exported so the rule is a test, not a hope. */
+export function coverQuery(
+  name: string,
+  brand: string | null | undefined,
+  soldBy: string | null | undefined,
+  extra: string | null | undefined,
+  fresh: boolean,
+): string {
+  return imageQuery(name, brand || (fresh ? null : soldBy), extra);
+}
+
 export async function searchImages(query: string, limit = 8): Promise<DdgImageResult[]> {
   const ATTEMPTS = 3;
   for (let i = 0; i < ATTEMPTS; i++) {

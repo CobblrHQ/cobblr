@@ -25,6 +25,11 @@ export interface StorageWarning {
   name: string;
   requirement: "refrigerated" | "frozen";
   location: string;
+  /** Where the misplaced thing lives, resolved when the warning was raised —
+   *  moving it is the whole point, and the message named it and then left you
+   *  to find it. Resolved at the call site because that is where the entity
+   *  ref is; composing stays pure and synchronous. */
+  link?: string;
 }
 
 /** What to say about a burst of them. */
@@ -56,6 +61,7 @@ export function describeBatch(warnings: readonly StorageWarning[]): BatchedWarni
   if (warnings.length === 1) {
     const w = warnings[0]!;
     return {
+      ...(w.link ? { link_url: w.link } : {}),
       // "needs to be kept", not "needs kept" - the original read like a telegram.
       message: `${w.name} needs to be ${phraseFor(w.requirement)} - it just went into ${w.location}`,
       priority,
@@ -78,6 +84,8 @@ export function describeBatch(warnings: readonly StorageWarning[]): BatchedWarni
     const rest = g.names.length > 3 ? ` and ${g.names.length - 3} more` : "";
     return `${shown}${rest} ${g.names.length === 1 ? "needs" : "need"} to be ${phraseFor(g.requirement)} - ${g.names.length === 1 ? "it is" : "they are"} in ${g.location}`;
   });
+  // Several: nowhere honest to point. They are different things in different
+  // places, and the message names them.
   return { message: parts.join("; "), priority, count: warnings.length };
 }
 

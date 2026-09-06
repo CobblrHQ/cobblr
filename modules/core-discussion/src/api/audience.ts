@@ -195,7 +195,9 @@ export async function notifyAboutComment(
         userId,
         eventType: "core-discussion.comment.posted",
         message,
-        ...(args.link ? { link_url: args.link } : {}),
+        ...(args.link
+          ? { link_url: args.link }
+          : { no_link_reason: "the commented-on record has no detail page" }),
         // ALL THREE come from the source triple, because together they ARE the
         // entity ref: the interactions endpoint rebuilds
         // `${module_name}:${entity_type}` and posts a Discord reply back into

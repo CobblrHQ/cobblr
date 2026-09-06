@@ -50,3 +50,23 @@ export function fieldsNoLongerOnTable(
   const declared = new Set(entry.fields.map((f) => f.name));
   return Object.keys(fields).filter((k) => !declared.has(k));
 }
+
+/**
+ * A value that is the unremarkable state of its field, and so not worth a chip.
+ *
+ * "Must be kept: ambient" sat on every bakery line of a receipt (2026-09-06).
+ * Ambient is what nearly everything is; the chip exists to catch the eye on
+ * the exceptions - refrigerated, frozen - and a chip that says "nothing to
+ * see" on eight of twelve lines costs the two that matter their contrast. The
+ * value is still STORED (the storage check reads it, and ambient there is a
+ * positive assertion), and the full-fields form still shows it; only the
+ * closed card's glance drops it.
+ *
+ * Matched on the field NAME and the value, exactly, so a field somebody named
+ * `ambient_light` or a note that contains the word is left alone.
+ */
+export function isQuietDefault(name: string, value: unknown): boolean {
+  const n = name.trim().toLowerCase();
+  const v = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return n === "storage_requirement" && v === "ambient";
+}

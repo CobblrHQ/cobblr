@@ -1463,7 +1463,15 @@ export async function downloadCatalogImage(
       if (!written) continue;
       await ctx.db
         .updateTable("core_scan_inbox_items")
-        .set({ catalog_image_file_id: written.fileId, updated_at: new Date() })
+        .set({
+          catalog_image_file_id: written.fileId,
+          // A stored picture ends the "busy"/"none" story. Left in place, the
+          // throttled-pictures sweep kept re-asking six rows that already had
+          // pictures every twenty minutes - and that steady trickle is exactly
+          // what keeps a search engine's block in place (2026-09-06).
+          suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) - 'catalog_image_status'`,
+          updated_at: new Date(),
+        })
         .where("id", "=", ctx.itemId)
         .execute();
       return true;

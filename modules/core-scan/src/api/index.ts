@@ -3,6 +3,7 @@
 
 import { Router } from "express";
 import { startReceiptTrackingSweeper } from "../services/receipt-tracking-sweeper.js";
+import { startThrottledPicturesSweeper } from "../services/throttled-pictures-sweeper.js";
 import { inboxRouter } from "./inbox.js";
 import { organizeRouter } from "./organize.js";
 import { putawayRouter } from "./putaway.js";
@@ -21,6 +22,7 @@ registerEmailInbound();
 // Follow parcels whose receipt is still in the inbox — filing should not
 // be the price of being told your delivery arrived.
 startReceiptTrackingSweeper();
+startThrottledPicturesSweeper();
 
 const router = Router({ mergeParams: true });
 router.use("/", inboxRouter);

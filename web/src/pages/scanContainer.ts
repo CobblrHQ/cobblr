@@ -14,6 +14,13 @@ export function looksLikeContainer(
 ): boolean {
   const hay = `${name ?? ""} ${category ?? ""}`.toLowerCase();
   if (!hay.trim()) return false;
+  // Food is never a bin. "Apples Tote" is a bag of apples on a Lidl receipt,
+  // and the bare word matched below offered to turn it into a storage location
+  // (2026-09-06). The category is the workspace's own word for what this is,
+  // and when it says food, no noun in the name makes it a container.
+  if (/\b(produce|bakery|meat|dairy|deli|seafood|beverages?|drinks?|grocer(y|ies)|food|snacks?|frozen|pantry)\b/.test((category ?? "").toLowerCase())) {
+    return false;
+  }
   return /\b(storage (box|bin|tote|container|drawer|cube|basket)|organizer|organiser|tote|crate|bin|baskets?|storage & organization)\b/.test(
     hay,
   );

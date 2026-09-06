@@ -5,7 +5,7 @@
 // Calendar via "add from URL").
 
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, CalendarDays, Link2, RefreshCw, Copy } from "lucide-react";
 import { api, type CalendarEvent } from "../lib/api";
@@ -28,8 +28,17 @@ export function CalendarPage() {
   usePageTitle("Calendar");
   const { activeSlug: slug } = useActiveOrg();
   const navigate = useNavigate();
+  // `?date=YYYY-MM-DD` opens the month that date is in and rings the day.
+  // A notification about something dated ("three things expire on the 9th")
+  // has to be able to land you ON it; without this the only destination the
+  // calendar could offer was "this month, whatever month you happen to read
+  // the message in".
+  const [params] = useSearchParams();
+  const focusKey = /^\d{4}-\d{2}-\d{2}$/.test(params.get("date") ?? "")
+    ? params.get("date")!
+    : null;
   const [cursor, setCursor] = useState(() => {
-    const d = new Date();
+    const d = focusKey ? new Date(`${focusKey}T12:00:00`) : new Date();
     return { y: d.getFullYear(), m: d.getMonth() };
   });
 
@@ -104,7 +113,8 @@ export function CalendarPage() {
                 key={key}
                 className={
                   "min-h-[5.5rem] border-b border-r border-line dark:border-slate-800 p-1 " +
-                  (inMonth ? "bg-white dark:bg-slate-950" : "bg-mortar-50/40 dark:bg-slate-900/40")
+                  (inMonth ? "bg-white dark:bg-slate-950" : "bg-mortar-50/40 dark:bg-slate-900/40") +
+                  (key === focusKey ? " ring-2 ring-inset ring-accent" : "")
                 }
               >
                 <div className={"text-[11px] font-mono mb-1 px-1 " + (key === todayKey ? "inline-flex items-center justify-center w-5 h-5 rounded-full bg-accent text-white" : inMonth ? "text-content dark:text-mortar-200" : "text-faint dark:text-slate-600")}>

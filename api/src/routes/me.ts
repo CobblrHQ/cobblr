@@ -13,6 +13,7 @@ import { listScopeChoices, sanitizeScopes } from "../auth/scopes.js";
 import { hashPassword, verifyPassword } from "../auth/password.js";
 import { signSession } from "../auth/jwt.js";
 import * as notifications from "../platform/notifications.js";
+import { pressNotificationAction } from "../platform/notification-press.js";
 import * as activity from "../platform/activity.js";
 import { listMembershipsForUser } from "../platform/memberships.js";
 import { hasAuthEmailSender, sendAuthEmail } from "../platform/hosted-seams.js";
@@ -615,6 +616,53 @@ meRouter.post("/me/notifications/:id/read", requireAuth, async (req, res, next) 
   }
 });
 
+// POST /me/notifications/:id/actions/:actionId — press a button on a
+// notification, in the app.
+//
+// The column, dispatch and the Discord renderer have all supported pressable
+// actions for a while; the app was the only place you could not press one, so
+// a notification that Discord showed as "Mark done / Snooze" arrived here as a
+// sentence (audit, 2026-09-06). Every check lives in pressNotificationAction,
+// which the Discord door calls too - two doors, one rule about who may do what.
+//
+// AI-REACH: exempt — pressing a button a notification offered YOU, as yourself; the assistant invokes the same underlying actions through invoke_action.
+meRouter.post("/me/notifications/:id/actions/:actionId", requireAuth, async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    const actionId = req.params.actionId;
+    if (!id || !actionId) {
+      res.status(400).json({ error: { code: "missing_id", message: "id and actionId required" } });
+      return;
+    }
+    const outcome = await pressNotificationAction({
+      notificationId: id,
+      actionId,
+      userId: req.session!.id,
+      actorName: req.session!.display_name ?? null,
+    });
+    if (!outcome.ok) {
+      // One shape for every refusal, so a prober learns nothing about which
+      // ids exist or what roles anybody holds. A genuine failure is separable
+      // because the person WAS allowed and something else broke.
+      const failed = outcome.reason === "failed";
+      res.status(failed ? 500 : 403).json({
+        error: {
+          code: failed ? "action_failed" : "not_allowed",
+          message: failed
+            ? "That did not go through. Open the record to finish it."
+            : "This is no longer available.",
+        },
+      });
+      return;
+    }
+    // Pressing IS reading it: the thing it asked about has been dealt with.
+    await notifications.markRead(id, req.session!.id).catch(() => {});
+    res.json({ ok: true, label: outcome.label });
+  } catch (err) {
+    next(err);
+  }
+});
+
 meRouter.post("/me/notifications/read-all", requireAuth, async (req, res, next) => {
   try {
     const count = await notifications.markAllReadAcrossOrgs(req.session!.id);
@@ -973,6 +1021,9 @@ meRouter.post("/me/notifications/self-test", requireAuth, async (req, res, next)
       eventType: parsed.data.event_type,
       message: parsed.data.message,
       priority: parsed.data.priority,
+      // A diagnostic about the delivery machinery itself. There is no record
+      // behind it to open.
+      no_link_reason: "a self-test of delivery; there is no record behind it",
     });
     res.json(out);
   } catch (err) {

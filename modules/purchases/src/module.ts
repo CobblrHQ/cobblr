@@ -7,7 +7,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "purchases",
-  version: "0.10.7",
+  version: "0.10.8",
   displayName: "Purchases",
   description:
     "Orders, line items, and cost rollup. Each order is a vendor purchase; line items can link to inventory parts and to whatever consumed them: printer mods, projects, anything.",
@@ -22,6 +22,14 @@ export default defineModule({
   // declaring you operate on it, which is what keeps this list honest.
   operatesOn: ["inventory", "core-scan"],
 
+  lifecycle: {
+    // Boot-time heal for orders that list each receipt line twice - see the
+    // DONE WHEN in heal-doubled-receipt-lines.ts for when this call goes.
+    onBoot: async () => {
+      const { healDoubledReceiptLines } = await import("./heal-doubled-receipt-lines.js");
+      void healDoubledReceiptLines().catch((e) => console.error("[purchases] doubled-lines heal threw:", (e as Error).message));
+    },
+  },
   schema: {
     tablePrefix: "purchases_",
     migrationsDir: "./migrations",

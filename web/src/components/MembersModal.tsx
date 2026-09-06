@@ -102,10 +102,16 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
       setInviteEmail("");
       // Auto-copy the new link (silently — we surface one combined toast below).
       void copyInviteLink(inv, true);
+      // Only claim a mail went out when one did. Same rule the "start their
+      // own Cobblr" invite beside this already follows: an instance with no
+      // mail sender must not tell an admin it emailed somebody, because then
+      // nobody sends the link and the invite silently never arrives.
       toast.success(
-        sentTo
-          ? `Invite sent to ${sentTo} — link copied too.`
-          : "Invite link copied — share it however you like.",
+        sentTo && inv.emailed
+          ? `Invite sent to ${sentTo}. The link is copied too.`
+          : sentTo
+            ? `No email was sent from this instance. The link is copied, send it to ${sentTo}.`
+            : "Invite link copied — share it however you like.",
       );
     },
     onError: (e: unknown) => {

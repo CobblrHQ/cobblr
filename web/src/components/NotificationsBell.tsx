@@ -15,9 +15,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, Check, PanelRight, PanelRightClose, X } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { notificationRoute } from "../lib/deep-path";
-import { notificationAction } from "../lib/notification-action";
+import { inviteTokenFrom, notificationAction } from "../lib/notification-action";
+import { NotificationActionButtons } from "./NotificationActionButtons";
 import ReactMarkdown from "react-markdown";
-import { api, type CrossOrgNotificationEntry } from "../lib/api";
+import { api, ApiError, type CrossOrgNotificationEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { SidePanel } from "./SidePanel";
 
@@ -123,6 +124,53 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
    *  Hence: strip our own origin here rather than only fixing it upstream.
    *  A link to some OTHER origin is not ours to route — open it in a new tab. */
 
+
+  /** An invite can be ANSWERED from the row. Accepting joins the workspace and
+   *  takes you there, because the next thing anyone wants after saying yes is
+   *  to be in it; declining records the no and leaves you where you are.
+   *
+   *  Both mark the row read: the question has been answered, so it is not still
+   *  waiting for you. Errors surface as a toast rather than a silent no-op -
+   *  an invite that has expired or been revoked has to SAY so, which is the
+   *  whole complaint this fixes. */
+  const [answerError, setAnswerError] = useState<string | null>(null);
+  /** Invites answered in this session, by notification id.
+   *
+   *  The buttons used to stay after answering, so a second click answered
+   *  AGAIN - and because accept and decline are different endpoints, one invite
+   *  came back from a browser run marked BOTH accepted and declined. A question
+   *  that has been answered stops asking. */
+  const [answered, setAnswered] = useState<Record<string, "joined" | "declined">>({});
+  const answerInvite = useMutation({
+    mutationFn: async (
+      v: { n: CrossOrgNotificationEntry; token: string; accept: boolean },
+    ): Promise<{ joined: { name: string; slug: string } } | { joined: null }> =>
+      v.accept
+        ? { joined: (await api.acceptInvite(v.token)).org }
+        : (await api.declineInvite(v.token), { joined: null }),
+    onSuccess: (r, v) => {
+      setAnswerError(null);
+      setAnswered((a) => ({ ...a, [v.n.id]: r.joined ? "joined" : "declined" }));
+      if (!v.n.read_at) markRead.mutate(v.n.id);
+      void qc.invalidateQueries({ queryKey: ["notifications"] });
+      if (r.joined) {
+        void qc.invalidateQueries({ queryKey: ["orgs"] });
+        setOpen(false);
+        // A FULL navigation, not setActiveSlug: that resolves the slug against
+        // the org list already in hand, and the workspace you just joined is by
+        // definition not in it yet, so it returned false and left you where you
+        // were (seen in a browser run - "joined" with the url unchanged). The
+        // load also gives the new tenant clean state, which is what switching
+        // workspace does anyway.
+        window.location.assign(`/w/${encodeURIComponent(r.joined.slug)}/`);
+      }
+    },
+    onError: (e) => {
+      // An expired or revoked invite has to SAY so. Silence here would be the
+      // same complaint this fixes, one layer down.
+      setAnswerError(e instanceof ApiError ? e.message : String(e));
+    },
+  });
 
   function handleItemClick(n: CrossOrgNotificationEntry) {
     if (!n.read_at) markRead.mutate(n.id);
@@ -257,6 +305,55 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
                       {n.card.body}
                     </div>
                   )}
+                  {/* AN INVITE IS ANSWERED HERE. It used to be a sentence with
+                      nothing on it: the row navigated, but nothing said so, so
+                      the only obvious way in was the emailed link (reported
+                      2026-09-06). Yes and no both live where the question is. */}
+                  {(() => {
+                    const token = inviteTokenFrom(n);
+                    if (!token) return null;
+                    const done = answered[n.id];
+                    if (done) {
+                      return (
+                        <div className="mt-2 text-[11px] text-muted dark:text-slate-400">
+                          {done === "joined" ? "Joined this workspace." : "You declined this invite."}
+                        </div>
+                      );
+                    }
+                    const busy = answerInvite.isPending;
+                    return (
+                      <div className="mt-2 flex items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            answerInvite.mutate({ n, token, accept: true });
+                          }}
+                          className="rounded border border-cobble-500 bg-cobble-600 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-cobble-700 disabled:opacity-50"
+                        >
+                          Accept
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            answerInvite.mutate({ n, token, accept: false });
+                          }}
+                          className="rounded border border-line dark:border-slate-600 px-2.5 py-1 text-[11px] font-medium text-muted hover:text-content disabled:opacity-50"
+                        >
+                          Decline
+                        </button>
+                        {answerError && (
+                          <span className="text-[11px] text-ember-500">{answerError}</span>
+                        )}
+                      </div>
+                    );
+                  })()}
+                  {/* Whatever this notification says it can do — shared with
+                      the full inbox page so the two cannot drift. */}
+                  <NotificationActionButtons n={n} />
                   {/* A no-navigate notification still has somewhere to go for
                       anyone who wants it — just not by hijacking the click. */}
                   {NO_NAVIGATE.has(n.event_type) && n.link_url && (
