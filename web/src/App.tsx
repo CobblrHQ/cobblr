@@ -71,6 +71,7 @@ const BuildPage = lazy(() => import("./pages/BuildPage").then((m) => ({ default:
 const FieldsAndFormsPage = lazy(() => import("./pages/FieldsAndFormsPage").then((m) => ({ default: m.FieldsAndFormsPage })));
 const ConfigSectionPage = lazy(() => import("./pages/ConfigSectionPage").then((m) => ({ default: m.ConfigSectionPage })));
 const GeneralSettingsPage = lazy(() => import("./pages/GeneralSettingsPage").then((m) => ({ default: m.GeneralSettingsPage })));
+const NotificationAudiencesPage = lazy(() => import("./pages/NotificationAudiencesPage").then((m) => ({ default: m.NotificationAudiencesPage })));
 const DevicesPage = lazy(() => import("./pages/DevicesPage").then((m) => ({ default: m.DevicesPage })));
 const ScanRulesPage = lazy(() => import("./pages/ScanRulesPage").then((m) => ({ default: m.ScanRulesPage })));
 const MeActivityPage = lazy(() => import("./pages/MeActivityPage").then((m) => ({ default: m.MeActivityPage })));
@@ -625,6 +626,7 @@ function ActiveOrgScopedRoutes() {
             <Route path="/configuration" element={<ConfigurationPage />} />
             <Route path="/configuration/s/:section" element={<ConfigSectionPage />} />
             <Route path="/configuration/general" element={<GeneralSettingsPage />} />
+            <Route path="/configuration/notification-audiences" element={<NotificationAudiencesPage />} />
             {/* Launcher PAGES (settings-cohesion): the dialogs, in-flow. */}
             <Route path="/configuration/modules" element={<ConfigModulesPage />} />
             <Route path="/configuration/members" element={<ConfigMembersPage />} />

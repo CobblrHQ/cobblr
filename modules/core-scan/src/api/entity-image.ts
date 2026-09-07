@@ -10,8 +10,8 @@ import { platform } from "@cobblr/platform-contract";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { bearer, tenantContext } from "../db.js";
 import { enrichEntityImage } from "../services/entity-image.js";
-import { searchImages, rankImageOptions, deriveImageQuery, DdgThrottledError, type DdgImageResult } from "../services/ddg-images.js";
-import { mergeOptionPools, searchCommonsImages } from "../services/commons-images.js";
+import { deriveImageQuery } from "../services/ddg-images.js";
+import { pictureOptions } from "../services/picture-options.js";
 import { needsImage } from "../services/needs-image.js";
 
 export const entityImageRouter = Router({ mergeParams: true });
@@ -94,18 +94,10 @@ entityImageRouter.get(
       res.json({ items: [] });
       return;
     }
-    // Both sources at once. The engine's refusal is REPORTED, not folded into
-    // "nothing found": there are pictures of a supermarket's cider, the engine
-    // just is not answering us right now, and the strip must say which.
-    let throttled = false;
-    const [engine, library] = await Promise.all([
-      searchImages(query, 24).catch((err: unknown) => {
-        if (err instanceof DdgThrottledError) throttled = true;
-        return [] as DdgImageResult[];
-      }),
-      searchCommonsImages(query, 12),
-    ]);
-    const items = mergeOptionPools(rankImageOptions(engine, rankBrand, query), rankImageOptions(library, rankBrand, query), 12);
+    // The one pool every strip shows (services/picture-options.ts): engine +
+    // library, the shop-less retry, and the engine's refusal REPORTED rather
+    // than folded into "nothing found".
+    const { items, throttled } = await pictureOptions({ query, brand: rankBrand });
     res.json({ items, query, throttled });
   }),
 );

@@ -576,6 +576,20 @@ export interface NotificationSubscriptionsTable {
   config: unknown | null;
 }
 
+export type NotificationAudienceMode = "all" | "owners" | "custom";
+
+/** Per workspace, per notification kind: WHO it is for. Absent = everyone.
+ *  The per-person subscriptions above decide how someone is told; this
+ *  decides whether they are one of the people to tell. */
+export interface NotificationAudiencesTable {
+  org_id: string;
+  event_type: string;
+  mode: NotificationAudienceMode;
+  /** jsonb array of user ids; meaningful for `custom` only. */
+  user_ids: unknown;
+  updated_at: Generated<Date>;
+}
+
 // ─────────────────────── Pillar A/B/C/D tables ────────────────────
 
 export interface EntityKindsTable {
@@ -1115,6 +1129,7 @@ export interface MetaDB {
   bundle_snapshots: BundleSnapshotsTable;
   notifications: NotificationsTable;
   notification_subscriptions: NotificationSubscriptionsTable;
+  notification_audiences: NotificationAudiencesTable;
   notification_account_prefs: NotificationAccountPrefsTable;
   notification_delivery_windows: NotificationDeliveryWindowsTable;
   notification_deferred: NotificationDeferredTable;

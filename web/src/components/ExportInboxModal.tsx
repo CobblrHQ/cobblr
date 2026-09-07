@@ -7,7 +7,7 @@
 // Default photo mode comes from the instance (self-host → baked in; hosted can
 // set link); the user always overrides here. POST /export → blob → download.
 import { useEffect, useMemo, useState } from "react";
-import { Modal, useToast } from "@cobblr/platform-web";
+import { downloadBlob, Modal, useToast } from "@cobblr/platform-web";
 import { getToken } from "../lib/api";
 
 type PhotoMode = "link" | "embed" | "none";
@@ -96,14 +96,7 @@ export function ExportInboxModal({
       });
       if (!res.ok) throw new Error(`export failed: ${res.status}`);
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `cobblr-scan-selection-${new Date().toISOString().slice(0, 10)}.json`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      downloadBlob(blob, `cobblr-scan-selection-${new Date().toISOString().slice(0, 10)}.json`);
       toast.success(`Exported ${selectedIds.length} item${selectedIds.length === 1 ? "" : "s"} — import it via ‘Import’`);
       onClose();
     } catch (e) {

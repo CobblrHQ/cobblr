@@ -15,6 +15,7 @@
 import { Kysely, sql } from "kysely";
 import { platform, expiryState, expiryPhrase } from "@cobblr/platform-contract";
 import { expiryStages } from "./expiry-stages.js";
+import { expiryDigest, type ExpiryLine } from "./expiry-card.js";
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
@@ -148,7 +149,9 @@ export async function expiryTick(opts: { orgId?: string } = {}): Promise<{ scann
         .map((c) => ({ id: c.id, name: c.name, expires_on: c.value }));
     }
     if (due.length === 0 && dueToday.length === 0) return;
-    const memberIds = await platform().notifications.orgMemberIds(org.id);
+    // The people this KIND is for in this workspace (everyone by default;
+    // the owners, or a chosen few, once somebody says so under Configuration).
+    const memberIds = await platform().notifications.audienceFor(org.id, "lists.expiring");
     // ONE MESSAGE PER SWEEP, not one per row. This dispatched inside the row
     // loop, so a fridge with six dated things sent six DMs in a row:
     //
@@ -162,9 +165,9 @@ export async function expiryTick(opts: { orgId?: string } = {}): Promise<{ scann
     // stocked fridge was a stream. A sweep already holds every row it is about;
     // composing one message is not a preference, it is what a batch job owes
     // the person it is writing to.
-    const lines: string[] = [];
+    const lines: ExpiryLine[] = [];
     for (const row of dueToday) {
-      lines.push(`${row.name}: expires today`);
+      lines.push({ id: row.id, name: row.name, tone: "expires today" });
       try {
         const up = sql`
           update lists_expiry_notifications set today_notified_on = ${row.expires_on}::date where part_id = ${row.id}
@@ -227,7 +230,7 @@ export async function expiryTick(opts: { orgId?: string } = {}): Promise<{ scann
       // the grace-period ask the comment above anticipated.)
       if (reading?.state === "spoiled") void platform().events.emit("lists.item.expired", payload);
 
-      lines.push(`${row.name} — ${tone}`);
+      lines.push({ id: row.id, name: row.name, tone });
 
       // Stamp the ledger (upsert: re-dated parts overwrite the prior alert).
       // A heads-up sent ON the day is the day-of notice too, so that date's
@@ -250,10 +253,13 @@ export async function expiryTick(opts: { orgId?: string } = {}): Promise<{ scann
     // interruption at whatever hour the sweep ran, so this stays at the default
     // priority and joins a configured delivery window like anything else.
     if (lines.length > 0) {
-      const summary =
-        lines.length === 1
-          ? lines[0]!
-          : `${lines.length} things to use up:\n${lines.join("\n")}`;
+      // A CARD with the answers on it (expiry-card.ts): one line per item and
+      // a "Used up" / "Threw out" pair each, running the inventory module's
+      // own actions. The plain message still stands alone for a channel that
+      // cannot render either.
+      const digest = expiryDigest(lines, {
+        workspace: await platform().notifications.orgName(org.id).catch(() => null),
+      });
       // WHERE IT TAKES YOU. One item → the item, instance-aware (a jar in a
       // Groceries table is not on the base inventory page). Several → the
       // calendar on the earliest date, because "everything dated" is exactly
@@ -277,7 +283,9 @@ export async function expiryTick(opts: { orgId?: string } = {}): Promise<{ scann
             userId,
             eventType: "lists.expiring",
             triggeredBy: "schedule",
-            message: summary,
+            message: digest.message,
+            card: digest.card,
+            actions: digest.actions,
             link_url: link,
             module: "lists",
             payload: { count: lines.length },

@@ -13,9 +13,41 @@
 import { isJunkName } from "./enrich.js";
 import { formFactorFromObservation } from "./form-factor.js";
 
-const UA =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
-  "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+/** The identities the engine is asked with. The wall is scored per
+ *  ADDRESS + IDENTITY, not per address alone: measured 2026-09-07 from the
+ *  same container in the same minute, the identity that had been asking all
+ *  day got 403 on the image endpoint while a fresh one got 200 with 77
+ *  results, and an hour later the reverse. So a refusal is answered ONCE
+ *  with another identity before it is called a wall (withAnotherIdentity),
+ *  and the one that worked stays current. An honest bot identity is in the
+ *  list on purpose: it worked as well as the browsers did. */
+const AGENTS: readonly string[] = [
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  "Cobblr/1.0 (+https://cobblr.xyz; catalog picture lookup)",
+  "Mozilla/5.0 (X11; Linux x86_64; rv:129.0) Gecko/20100101 Firefox/129.0",
+];
+const identityState = { index: 0 };
+
+/** Ask as the current identity; on a refusal (not an unreachable engine,
+ *  which is the address, not the identity) ask once more as the next one,
+ *  and keep whichever answered. Exported for the test, with the identities
+ *  and the cursor injectable. */
+export async function withAnotherIdentity<T>(
+  attempt: (agent: string) => Promise<T>,
+  agents: readonly string[] = AGENTS,
+  state: { index: number } = identityState,
+): Promise<T> {
+  const first = agents[state.index % agents.length]!;
+  try {
+    return await attempt(first);
+  } catch (err) {
+    if (!(err instanceof DdgThrottledError) || err.reason === "unreachable" || agents.length < 2) throw err;
+    state.index = (state.index + 1) % agents.length;
+    const next = agents[state.index]!;
+    console.warn(`[core-scan] engine ${err.reason} (${err.status}) for one identity; asking again as another`);
+    return await attempt(next);
+  }
+}
 
 export interface DdgImageResult {
   /** Original (upstream) image URL. */
@@ -396,30 +428,33 @@ export function isCleanCatalog(
   return catalogScore(r, brand, query) >= 10;
 }
 
-async function fetchVqd(query: string): Promise<string> {
+async function fetchVqd(query: string, agent: string): Promise<string> {
   // DDG's anti-automation handshake: the search page embeds a `vqd`
   // token that /i.js then requires.
   const url = `https://duckduckgo.com/?q=${encodeURIComponent(query)}&iax=images&ia=images`;
   const res = await askEngine(() =>
     fetch(url, {
-      headers: { "User-Agent": UA, Accept: "text/html" },
+      headers: { "User-Agent": agent, Accept: "text/html" },
       signal: AbortSignal.timeout(15_000),
     }),
   );
-  if (refusedByHandshake(res.status)) throw new DdgThrottledError(res.status, "challenge");
-  if (!res.ok) throw new Error(`DDG handshake returned ${res.status}`);
-  const html = await res.text();
+  if (refusedByHandshake(res.status)) throw new DdgThrottledError(res.status, "refused");
+  const html = res.ok || res.status === 202 ? await res.text() : "";
   const m = html.match(/vqd=["']?([\d-]+)["']?/);
-  // A 200 without the token is the challenge page too (it has been served
-  // both ways); either way the engine is not taking the question.
-  if (!m || !m[1]) throw new DdgThrottledError(res.status, "challenge");
-  return m[1];
+  // The token is the whole question. A 202 that carries it is a page we can
+  // use (measured 2026-09-07: some identities get 202 with the token and
+  // then 200 results); a 200 or 202 WITHOUT it is the challenge page, and
+  // the engine is not taking the question from this identity.
+  if (m?.[1]) return m[1];
+  if (!res.ok && res.status !== 202) throw new Error(`DDG handshake returned ${res.status}`);
+  throw new DdgThrottledError(res.status, "challenge");
 }
 
-/** 202 is the engine's challenge page on the front door; 403/429 the plain
- *  refusal. Pure; exported for the test. */
+/** 403/429 on the front door is the plain refusal. 202 is NOT one by itself:
+ *  it is the challenge only when the token is missing (fetchVqd decides).
+ *  Pure; exported for the test. */
 export function refusedByHandshake(status: number): boolean {
-  return status === 202 || status === 403 || status === 429;
+  return status === 403 || status === 429;
 }
 
 /** Run one engine call and report a wall as a wall. A connection that times
@@ -445,8 +480,12 @@ function isNetworkFailure(err: unknown): boolean {
   return !!code && /^(ETIMEDOUT|ECONNRESET|ECONNREFUSED|EHOSTUNREACH|ENETUNREACH|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET)$/.test(code);
 }
 
-async function imageSearchOnce(query: string, limit: number): Promise<DdgImageResult[]> {
-  const vqd = await fetchVqd(query);
+function imageSearchOnce(query: string, limit: number): Promise<DdgImageResult[]> {
+  return withAnotherIdentity((agent) => imageSearchAs(query, limit, agent));
+}
+
+async function imageSearchAs(query: string, limit: number, agent: string): Promise<DdgImageResult[]> {
+  const vqd = await fetchVqd(query, agent);
   const params = new URLSearchParams({
     l: "us-en",
     o: "json",
@@ -459,7 +498,7 @@ async function imageSearchOnce(query: string, limit: number): Promise<DdgImageRe
   const res = await askEngine(() =>
     fetch(`https://duckduckgo.com/i.js?${params}`, {
       headers: {
-        "User-Agent": UA,
+        "User-Agent": agent,
         Accept: "application/json",
         Referer: "https://duckduckgo.com/",
       },
@@ -531,6 +570,24 @@ export function coverQuery(
   return imageQuery(name, brand || (fresh ? null : soldBy), extra);
 }
 
+/** The phrase with the shop or brand words taken out: "Lidl Chicken Breast"
+ *  -> "Chicken Breast". The library AND-matches every word and no photo there
+ *  is titled with a supermarket; and when the engine has nothing for the
+ *  shop-prefixed phrase, the plain one is the next thing a person would type.
+ *  Pure; exported for the test. */
+export function withoutWords(query: string, words: string | null | undefined): string {
+  const drop = new Set(
+    (words ?? "")
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w.length >= 2),
+  );
+  if (drop.size === 0) return query.trim();
+  const kept = query.split(/\s+/).filter((w) => !drop.has(w.toLowerCase().replace(/[^a-z0-9]/g, "")));
+  const out = kept.join(" ").trim();
+  return out || query.trim();
+}
+
 export async function searchImages(query: string, limit = 8): Promise<DdgImageResult[]> {
   const ATTEMPTS = 3;
   for (let i = 0; i < ATTEMPTS; i++) {
@@ -562,7 +619,7 @@ function decodeEntities(s: string): string {
 
 async function textSearchOnce(query: string, limit: number): Promise<DdgTextResult[]> {
   const res = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
-    headers: { "User-Agent": UA, Accept: "text/html", Referer: "https://duckduckgo.com/" },
+    headers: { "User-Agent": AGENTS[identityState.index % AGENTS.length]!, Accept: "text/html", Referer: "https://duckduckgo.com/" },
     signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) throw new Error(`DDG text search returned ${res.status}`);

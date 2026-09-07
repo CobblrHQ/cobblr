@@ -22,6 +22,7 @@
     "@cobblr/platform-contract": "workspace:*",
     "@cobblr/platform-web": "workspace:*",
     "express": "^4.21.2",
+    "fflate": "^0.8.2",
     "kysely": "^0.27.5",
     "pdf-lib": "^1.17.1",
     "qrcode": "^1.5.4",

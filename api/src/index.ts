@@ -65,6 +65,7 @@ import * as queue from "./platform/queue.js";
 import * as sharedCache from "./platform/shared-cache.js";
 import * as notificationsImpl from "./platform/notifications.js";
 import { orgMemberIds } from "./platform/memberships.js";
+import { audienceFor } from "./platform/notification-audience.js";
 import * as integrationsImpl from "./platform/integrations.js";
 import * as aiImpl from "./platform/ai.js";
 import * as edgeImpl from "./platform/edge.js";
@@ -312,6 +313,7 @@ async function boot() {
     notifications: {
       dispatch: notificationsImpl.dispatch,
       orgMemberIds: async (orgId: string) => [...(await orgMemberIds(orgId))],
+      audienceFor,
       orgName: async (orgId: string) =>
         (
           await meta.selectFrom("orgs").select("name").where("id", "=", orgId).executeTakeFirst()

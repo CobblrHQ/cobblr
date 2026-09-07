@@ -2,6 +2,18 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-09-07
+
+### Features
+- Labels can now be saved as PNG image files, so a label printer the app cannot drive directly (not networked, no Bluetooth) can still print them from wherever it is connected. Each file carries its physical size, so a 2 by 2 inch label opens as 2 by 2 inches.
+- Who gets told. Every workspace notification (things to use up, maintenance due, an order that should have arrived) used to reach every member. Under Configuration → People → Who gets told, an owner or admin now chooses, per kind: everyone, the owners only, or specific people. Everyone stays the default, so nothing changes until you say so.
+
+### Improvements
+- One storage chip per item. A scanned grocery used to wear "Storage: Fridge" and "Must be kept: refrigerated" side by side, while the next line off the same receipt wore "Storage: Counter" and nothing else. Now a cold requirement fills the table's own Fridge or Freezer choice, a Fridge or Freezer choice records the requirement it implies, and the card shows the requirement chip only when it disagrees with the storage chip. Both values are still saved and both still show under All fields.
+- An item with no picture keeps looking for one on its own. A scanned item whose picture search came back empty used to stay blank until you pressed retry, even when the photo strip under it was full of good options. Now any pending item without a picture is asked again in the background: right away once the web search is answering again if it had refused, and otherwise every six hours for a week. A picture you chose by hand is never replaced.
+- A receipt's own date and shop no longer repeat on every line. The session header already says when and where the shopping happened, so a line's "Bought on" and "Acquired from" chips are dropped from the card's glance when they match the receipt. The values are still saved on the item and still show under All fields; only the chip that said the same thing twelve times is gone.
+- "Things to use up" arrives as a card you can answer. The expiry digest used to be three lines of plain text and a link. It is now a proper card, one line per item with how long it has left and your workspace's name in the footer, and under it a pair of buttons per item: Used up and Threw out. Pressing one does the real thing (the item's stock goes to zero, or the waste is recorded and the shelf life learned), the same as the actions on the item's own page, and it can be undone there. In a Discord DM the buttons are right on the message; the in-app bell shows the same card and buttons; a server channel fed by a webhook shows the card with the link, since Discord does not allow buttons on webhook posts.
+
 ## 2026-09-06
 
 ### Features

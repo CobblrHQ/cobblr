@@ -8,6 +8,7 @@
 
 import type { FieldRendererId, FieldType } from "@cobblr/platform-web";
 import { describeUnreadableBody } from "@cobblr/platform-web";
+import { downloadBlob } from "@cobblr/platform-web";
 
 export type AllocationStatus = "reserved" | "consumed" | "released";
 
@@ -478,12 +479,8 @@ export class InventoryApi {
       throw new InventoryApiError(res.status, "csv_export_failed", `HTTP ${res.status}`);
     }
     const blob = await res.blob();
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
     const date = new Date().toISOString().slice(0, 10);
-    a.download = `inventory-${date}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    downloadBlob(blob, `inventory-${date}.csv`);
   };
   getPart = (id: string) => this.partsRequest<Part>("GET", `/${id}`);
   /** A consumable's ledger — what drew it down and how much, newest first. */

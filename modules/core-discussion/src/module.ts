@@ -46,6 +46,11 @@ export default defineModule({
   dependencies: [],
 
   exposes: {
+    // The KINDS of workspace notification this module sends, so the
+    // workspace can say who each kind is for (Configuration > Who gets told).
+    notifications: [
+      { eventType: "core-discussion.comment.posted", label: "Comments and mentions", description: "A comment on something you follow, or a mention of you." },
+    ],
     events: [
       "core-discussion.comment.posted",
       "core-discussion.conversation.resolved",

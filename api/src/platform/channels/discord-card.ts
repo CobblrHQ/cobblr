@@ -29,25 +29,31 @@ export function parseCustomId(raw: string): { notificationId: string; actionId: 
   return m ? { notificationId: m[1]!, actionId: m[2]! } : null;
 }
 
+/** Discord's layout: five buttons per action row, five rows per message. */
+const PER_ROW = 5;
+const MAX_ROWS = 5;
+
 /** Discord message components for a notification's actions, or undefined.
  *
- *  Five per row is Discord's limit; more than that in a notification is a
- *  design problem rather than something to paginate, so the rest are dropped
- *  and the message still carries its link. */
+ *  Laid out five per row, up to five rows, which is Discord's ceiling; a
+ *  digest of a dozen items with a pair of answers each fits. Past twenty-five
+ *  the rest are dropped and the message still carries its link. */
 export function componentsFor(
   notificationId: string,
   actions: NotificationAction[] | null | undefined,
 ): unknown[] | undefined {
   if (!actions?.length) return undefined;
-  return [
-    {
+  const rows: unknown[] = [];
+  for (let i = 0; i < actions.length && rows.length < MAX_ROWS; i += PER_ROW) {
+    rows.push({
       type: 1, // action row
-      components: actions.slice(0, 5).map((a) => ({
+      components: actions.slice(i, i + PER_ROW).map((a) => ({
         type: 2, // button
         style: STYLE[a.style ?? "secondary"] ?? 2,
         label: a.label.slice(0, LABEL_MAX),
         custom_id: customIdFor(notificationId, a.id),
       })),
-    },
-  ];
+    });
+  }
+  return rows;
 }

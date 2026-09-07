@@ -36,6 +36,7 @@ import { edgeRouter } from "./routes/edge.js";
 import { blueprintRouter } from "./routes/blueprint.js";
 import { backupRouter, backupGoogleCallbackRouter } from "./routes/backup.js";
 import { membersRouter, invitesRootRouter } from "./routes/members.js";
+import { notificationAudiencesRouter } from "./routes/notification-audiences.js";
 import { pairingsRouter } from "./routes/pairings.js";
 import { portalRouter } from "./routes/portal.js";
 import { diagnosticsRouter } from "./routes/diagnostics.js";
@@ -300,6 +301,8 @@ export function createApp(): AppHandles {
   // Google Drive OAuth callback (the fixed redirect URI — not org-scoped).
   v1.use(backupGoogleCallbackRouter);
   v1.use("/orgs/:slug/members", membersRouter);
+  // Who each kind of workspace notification is for (owner/admin setting).
+  v1.use("/orgs/:slug/notification-audiences", notificationAudiencesRouter);
   v1.use("/orgs/:slug/pairings", pairingsRouter);
   // Workspace owner: review + approve members' AI-share offers.
   v1.use("/orgs/:slug", workspaceAiSharesRouter);

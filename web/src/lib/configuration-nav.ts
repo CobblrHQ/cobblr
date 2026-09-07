@@ -347,6 +347,15 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
   },
   {
     section: "people",
+    icon: Users,
+    label: "Who gets told",
+    description:
+      "For each kind of workspace notification (things to use up, maintenance due, an order that should have arrived), choose everyone, the owners only, or specific people.",
+    to: "/configuration/notification-audiences",
+    keywords: ["notifications", "audience", "recipients", "digest", "who receives", "owner only"],
+  },
+  {
+    section: "people",
     icon: Shield,
     label: "Permissions",
     description:

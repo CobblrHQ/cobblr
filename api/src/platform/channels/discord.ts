@@ -82,6 +82,20 @@ export const discordChannel: Channel = {
       return postJson({ url: cfg.webhook_url, body: { content, embeds: [embed] }, channelName: "discord" });
     }
 
+    // A notification with a CARD: the same embed the DM channel draws
+    // (heading, body, footer, the link behind the title). Buttons are not
+    // possible here - Discord refuses components on a webhook post - so the
+    // link is what the card offers, and the card is still the card rather
+    // than three lines of text.
+    if (event.card) {
+      const embed: Record<string, unknown> = { color: 0xc98a3f };
+      if (event.card.heading) embed.title = event.card.heading.slice(0, 250);
+      if (event.card.body) embed.description = event.card.body.slice(0, 4000);
+      if (event.card.context) embed.footer = { text: event.card.context.slice(0, 2000) };
+      if (event.link_url) embed.url = event.link_url;
+      return postJson({ url: cfg.webhook_url, body: { content: desc ?? "", embeds: [embed] }, channelName: "discord" });
+    }
+
     // Plain notification — content + a link embed (the original behaviour).
     const body: Record<string, unknown> = { content };
     if (desc) body.embeds = [{ description: desc }];

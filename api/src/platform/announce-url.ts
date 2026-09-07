@@ -24,3 +24,13 @@ export function announceWebhookUrl(
   if (!qs.length) return webhook;
   return `${webhook}${webhook.includes("?") ? "&" : "?"}${qs.join("&")}`;
 }
+
+/** The URL that EDITS a message this webhook posted. A webhook may edit its own
+ *  messages (PATCH /webhooks/{id}/{token}/messages/{message_id}) — which is how
+ *  one feedback card can carry an item through its whole life instead of a new
+ *  card per stage. Any query on the stored webhook is dropped: `?wait=true` and
+ *  `?thread_id=` belong to posting. */
+export function announceEditUrl(webhook: string, messageId: string): string {
+  const base = webhook.split("?")[0]!.replace(/\/+$/, "");
+  return `${base}/messages/${encodeURIComponent(messageId)}`;
+}

@@ -20,12 +20,16 @@
 // that did not ask.
 
 import type { ScanMenuEntry } from "./matchmaker.js";
-
-const DATE_NAMES = /^(acquired|purchased|bought)_(on|at|date)$|^purchase_date$|^date_(acquired|purchased|bought)$/;
-const FROM_NAMES = /^(acquired|purchased|bought|sourced)_from$|^(vendor|store|retailer|shop|supplier|source_store|purchased_at_store)$/;
-const WEIGHT_NAMES = /^(net_)?weight$/;
-const WEIGHT_UNIT_NAMES = /^weight_unit$/;
-const UNIT_PRICE_NAMES = /^(unit_price|price_per_unit|price_per_lb|price_per_kg)$/;
+// The names live in the platform contract because the card in the browser
+// hides the same chips again when the session header already states them,
+// and the field the server fills must be the field the card recognises.
+import {
+  RECEIPT_DATE_NAMES as DATE_NAMES,
+  RECEIPT_FROM_NAMES as FROM_NAMES,
+  RECEIPT_WEIGHT_NAMES as WEIGHT_NAMES,
+  RECEIPT_WEIGHT_UNIT_NAMES as WEIGHT_UNIT_NAMES,
+  RECEIPT_UNIT_PRICE_NAMES as UNIT_PRICE_NAMES,
+} from "@cobblr/platform-contract/receipt-fact-names";
 
 export interface ReceiptFactsMeta {
   source?: unknown;

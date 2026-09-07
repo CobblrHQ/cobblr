@@ -24,9 +24,9 @@ import {
   type CheckBasis,
 } from "./crosscheck-policy.js";
 import { evictBarcodeCaches, rememberLocalIdentity } from "./barcode-cache.js";
-import { searchImages, rankImageOptions, mediaSearchExtras, isFreshCategory, DdgThrottledError, coverQuery } from "./ddg-images.js";
+import { mediaSearchExtras, isFreshCategory, coverQuery } from "./ddg-images.js";
+import { pictureOptions } from "./picture-options.js";
 import { curatedImageUrl } from "./curated-images.js";
-import { searchCommonsImages } from "./commons-images.js";
 import { pickedImageUrl } from "./picked-images.js";
 import { formFactorFromObservation } from "./form-factor.js";
 import { sql } from "kysely";
@@ -44,25 +44,18 @@ import { hostedIdentify, hostedIdentifyEnabled, toPhotoIdentity, receiptAsIdenti
  *  engine says no: asking five more times in the same minute is the burst. */
 export type CoverOutcome = "kept" | "stored" | "url" | "none" | "throttled";
 
-/** A tiny gate so image searches leave the process one at a time, with a
- *  breath between them. Serial alone was not enough: twelve back-to-back
- *  searches still earned a 403 that lasted over an hour (2026-09-06). */
-const SEARCH_SPACING_MS = 1500;
 const RETRY_AFTER_MS = 6 * 60_000;
-let searchChain: Promise<unknown> = Promise.resolve();
-function withSearchSlot<T>(fn: () => Promise<T>): Promise<T> {
-  const run = searchChain.then(fn, fn);
-  searchChain = run
-    .catch(() => undefined)
-    .then(() => new Promise<void>((r) => setTimeout(r, SEARCH_SPACING_MS)));
-  return run;
-}
 
+/** The outcome AND when it was asked: the sweep re-asks an honestly-empty
+ *  row no sooner than six hours after the last ask (pictures-sweeper.ts). */
 async function stampImageStatus(db: Kysely<CoreScanDB>, itemId: string, status: "none" | "throttled"): Promise<void> {
   await db
     .updateTable("core_scan_inbox_items")
     .set({
-      suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({ catalog_image_status: status })}::jsonb`,
+      suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({
+        catalog_image_status: status,
+        catalog_image_asked_at: new Date().toISOString(),
+      })}::jsonb`,
       updated_at: new Date(),
     })
     .where("id", "=", itemId)
@@ -139,66 +132,41 @@ export async function refreshCatalogImageByName(
   // carrots, every time, for everyone (2026-08-31). See picked-images.ts.
   const remembered = curated ? null : await pickedImageUrl(soldBy ?? brand ?? null, name);
   const chosen = curated ?? remembered;
-  // ONE SEARCH AT A TIME PER PROCESS. The engine answers a burst with empty
-  // result sets rather than errors, so twelve lines fired together lost half
-  // their pictures with nothing in the log (2026-09-06). A queue costs a few
-  // seconds on a long receipt and nothing on a single scan.
-  let pool: Awaited<ReturnType<typeof searchImages>> = [];
-  // The phrase the ranker scores titles against: the engine's ask carries
-  // hints ("fresh", a form factor) that a library file-title never has.
-  let poolQuery = q;
+  // The same ladder every strip climbs (services/picture-options.ts): the
+  // library first for a fresh thing, the engine one ask at a time, the plain
+  // phrase when the shop-prefixed one is empty, the library again when the
+  // engine refuses. Ranked on the way out.
+  let ranked: string[] = [];
   if (!chosen) {
-    // A FRESH thing asks the photo library FIRST. It answers "roma tomatoes"
-    // with roma tomatoes and never with a tin, it does not count our asks,
-    // and it costs nothing against the engine's temper. See commons-images.ts.
-    if (fresh) {
-      pool = await searchCommonsImages(name, 12);
-      poolQuery = name;
-      if (pool.length) console.log(`[core-scan] ${pool.length} library pictures for ${JSON.stringify(name)}`);
-    }
-    let refused: DdgThrottledError | null = null;
-    if (pool.length === 0) {
-      try {
-        pool = await withSearchSlot(() => searchImages(q, 24));
-        poolQuery = q;
-      } catch (err) {
-        if (err instanceof DdgThrottledError) refused = err;
-        else {
-          console.warn(`[core-scan] picture search failed for ${JSON.stringify(q)}: ${(err as Error).message}`);
-          pool = [];
-        }
+    const found = await pictureOptions({
+      query: q,
+      plainQuery: coverQuery(name, brand, null, extra, fresh),
+      name,
+      brand: brand || soldBy,
+      fresh,
+      limit: 24,
+    });
+    if (found.items.length === 0 && found.throttled) {
+      // The engine said no to US, not to the query. Say "busy" on the row,
+      // not "none" - and try once more later, unattended, because a person
+      // filing a receipt should not have to come back and press retry
+      // twelve times for a wall that lifts on its own.
+      console.warn(
+        `[core-scan] picture search throttled for ${JSON.stringify(q)}; ${
+          retrying ? "the sweep will try again later" : `retrying in ${RETRY_AFTER_MS / 60000}m`
+        }`,
+      );
+      await stampImageStatus(db, itemId, "throttled");
+      if (!retrying) {
+        const t = setTimeout(() => {
+          void refreshCatalogImageByName(orgId, itemId, name, brand, soldBy, category, true).catch(() => undefined);
+        }, RETRY_AFTER_MS);
+        if (typeof t === "object" && t && "unref" in t) (t as { unref: () => void }).unref();
       }
+      return "throttled";
     }
-    // The engine refused, and this is packaged goods the library was not
-    // asked for yet: a library picture now beats "busy, come back later".
-    if (refused && pool.length === 0 && !fresh) {
-      pool = await searchCommonsImages(name, 12);
-      poolQuery = name;
-      if (pool.length) console.log(`[core-scan] engine refused; ${pool.length} library pictures for ${JSON.stringify(name)}`);
-    }
-    if (refused && pool.length === 0) {
-      const err = refused;
-      {
-        // The engine said no to US, not to the query. Say "busy" on the row,
-        // not "none" - and try once more later, unattended, because a person
-        // filing a receipt should not have to come back and press retry
-        // twelve times for a wall that lifts on its own.
-        console.warn(
-          `[core-scan] picture search throttled (${err.status}) for ${JSON.stringify(q)}; ${
-            retrying ? "the sweep will try again later" : `retrying in ${RETRY_AFTER_MS / 60000}m`
-          }`,
-        );
-        await stampImageStatus(db, itemId, "throttled");
-        if (!retrying) {
-          const t = setTimeout(() => {
-            void refreshCatalogImageByName(orgId, itemId, name, brand, soldBy, category, true).catch(() => undefined);
-          }, RETRY_AFTER_MS);
-          if (typeof t === "object" && t && "unref" in t) (t as { unref: () => void }).unref();
-        }
-        return "throttled";
-      }
-    }
-    if (pool.length === 0) console.warn(`[core-scan] no pictures found for ${JSON.stringify(q)}`);
+    if (found.items.length === 0) console.warn(`[core-scan] no pictures found for ${JSON.stringify(q)}`);
+    ranked = found.items.map((r) => r.url).filter((u): u is string => !!u);
   }
   // Try to DOWNLOAD the top candidates into core-files, falling through until one
   // stores. Storing just the top RAW url (as this did) left many tiles empty: a
@@ -206,12 +174,7 @@ export async function refreshCatalogImageByName(
   // no fallback to the next result (reported 2026-07-24). downloadCatalogImage handles
   // SSRF-guard + retries + size limits and stamps catalog_image_file_id. Dynamic
   // import because enrich.ts imports THIS module — a static import would cycle.
-  const candidates = chosen
-    ? [chosen]
-    : rankImageOptions(pool, brand || soldBy, poolQuery, null, fresh)
-        .map((r) => r.url)
-        .filter((u): u is string => !!u)
-        .slice(0, 4);
+  const candidates = chosen ? [chosen] : ranked.slice(0, 4);
   if (!candidates.length) {
     // Say so on the row. An empty tile used to be indistinguishable from
     // "still looking". The card reads this to offer a retry instead of nothing.

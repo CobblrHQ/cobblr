@@ -131,6 +131,11 @@ export default defineModule({
   dependencies: [],
 
   exposes: {
+    // The KINDS of workspace notification this module sends, so the
+    // workspace can say who each kind is for (Configuration > Who gets told).
+    notifications: [
+      { eventType: "purchases.order.due", label: "An order that should have arrived", description: "A purchase order past its expected arrival, with a Yes it turned up button." },
+    ],
     events: [
       "purchases.order.created",
       "purchases.order.status_changed",

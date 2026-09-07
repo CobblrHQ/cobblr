@@ -49,6 +49,7 @@ export function ImageSearchPicker({
   leading,
   leadingLabel,
   onPasteImage,
+  throttled: throttledProp,
 }: {
   /** STRIP layout: one legible header line (label + search + Pick best) and
    *  then the tiles, instead of a stacked form / caption / grid. Used where the
@@ -72,6 +73,10 @@ export function ImageSearchPicker({
   brand?: string;
   /** Pre-fetched mode: render a caller-supplied ranked list. */
   items?: ImageOption[];
+  /** Pre-fetched mode: the caller's search reported the web engine refusing
+   *  or unreachable. Rendered as "not answering", never as "nothing found",
+   *  which is a claim about the product. */
+  throttled?: boolean;
   loading?: boolean;
   /** Called with the chosen image's full-size url. The caller applies it. */
   onPick: (url: string) => void;
@@ -127,7 +132,7 @@ export function ImageSearchPicker({
   const source = itemsProp ?? fetched.data?.items ?? [];
   // The web engine refused US, not the phrase. "nothing found" would be a lie
   // about the product; say what actually happened and that it passes.
-  const throttled = !usesProp && !!fetched.data?.throttled;
+  const throttled = usesProp ? !!throttledProp : !!fetched.data?.throttled;
   const rateLimited = `the web image search is not answering us right now (blocked or rate-limited) · it passes, try again later`;
   // What the server actually searched — shown IN the box, not as a placeholder.
   const searched = applied || (usesProp ? (searchedTerm ?? "") : (fetched.data?.query ?? query ?? ""));

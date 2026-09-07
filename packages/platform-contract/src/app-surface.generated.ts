@@ -213,6 +213,19 @@ export const GENERATED_SURFACE: Capability[] = [
     ]
   },
   {
+    "feature": "Who gets told",
+    "does": "For each kind of workspace notification (things to use up, maintenance due, an order that should have arrived), choose everyone, the owners only, or specific people.",
+    "where": "/configuration/notification-audiences",
+    "also": [
+      "notifications",
+      "audience",
+      "recipients",
+      "digest",
+      "who receives",
+      "owner only"
+    ]
+  },
+  {
     "feature": "OpenAPI",
     "does": "Auto-generated OpenAPI 3.1 spec: entity-kind schemas + platform paths. Drop into Swagger UI or Insomnia.",
     "where": "/configuration/openapi",

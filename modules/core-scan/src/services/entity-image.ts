@@ -9,7 +9,7 @@
 // manufacturer photos.
 
 import { platform } from "@cobblr/platform-contract";
-import { searchImages } from "./ddg-images.js";
+import { pictureOptions } from "./picture-options.js";
 import { pickImage } from "./barcode-websearch.js";
 import { guardedImageFetch } from "./enrich.js";
 import { curatedImageUrl } from "./curated-images.js";
@@ -69,7 +69,7 @@ export async function enrichEntityImage(opts: {
     if (!imageUrl) {
       imageUrl = await curatedImageUrl(opts.query);
       if (!imageUrl) {
-        const results = await searchImages(opts.query);
+        const results = (await pictureOptions({ query: opts.query })).items;
         imageUrl = pickImage(results, opts.query) ?? results[0]?.url ?? null;
       }
     }

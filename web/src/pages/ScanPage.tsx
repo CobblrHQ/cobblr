@@ -37,7 +37,7 @@ import { imageUrlFrom } from "../components/pastedImage";
 import { ImageLightbox, type LightboxItem } from "../components/ImageLightbox";
 import { ReceiptSourceViewer, type ReceiptMoney } from "../components/ReceiptSourceViewer";
 import { ReceiptPeek } from "../components/ReceiptPeek";
-import { fieldsStillOnTable, fieldsNoLongerOnTable, isQuietDefault } from "../lib/scanCandidateFields";
+import { fieldsStillOnTable, fieldsNoLongerOnTable, isQuietDefault, isImpliedByPeer, isStatedByReceipt } from "../lib/scanCandidateFields";
 import { canRerunLookup } from "../lib/scanRerun";
 import { TrackedMatchBanner } from "../components/TrackedMatchBanner";
 import { BinAdjustModal } from "../components/BinAdjustModal";
@@ -6534,6 +6534,8 @@ function InboxCard({
                   const entries = Object.entries(liveFields).filter(([k, v]) => {
                     if (/^isbn$/i.test(k)) return false; // shown in the subtitle now
                     if (isQuietDefault(k, v)) return false; // "kept ambient" is not news
+                    if (isImpliedByPeer(k, v, liveFields)) return false; // "Storage Fridge" already says it
+                    if (isStatedByReceipt(k, v, item.suggested_metadata as { receipt_date?: unknown; receipt_vendor?: unknown } | null)) return false; // the session header says it
                     const val = String(v).trim().toLowerCase();
                     return val && val !== brand && val !== creator;
                   });
@@ -7927,6 +7929,7 @@ function PhotoOptions({
   return (
     <ImageSearchPicker
       items={options.data?.items ?? []}
+      throttled={!!options.data?.throttled}
       loading={options.isLoading}
       busy={pick.isPending || pasteCatalog.isPending}
       searchedTerm={options.data?.query ?? null}

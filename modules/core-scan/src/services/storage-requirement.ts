@@ -33,7 +33,13 @@
 // differ between them. Frozen and refrigerated earn their place because getting
 // them wrong spoils food.
 
-export type StorageRequirement = "frozen" | "refrigerated" | "ambient";
+import { satisfiesRequirement, type StorageRequirement } from "@cobblr/platform-contract/storage-requirement";
+
+// The place-vs-requirement vocabulary (does a fridge count as cold, what a
+// freezer implies) lives in the platform contract, because the card in the
+// browser and the fill on the server read it too. Re-exported so every
+// existing reader here keeps one import.
+export { satisfiesRequirement, type StorageRequirement };
 
 /** Ordered, specific before general - the first hit wins, same discipline as
  *  category-buckets.ts. */
@@ -140,28 +146,4 @@ export function storageMismatch(
   if (!requirement || requirement === "ambient" || !locationName) return null;
   if (satisfiesRequirement(requirement, locationName)) return null;
   return { requirement, location: locationName };
-}
-
-/**
- * Does this place SATISFY the requirement? The positive question, and it is not
- * the negation of the one above.
- *
- * `storageMismatch` returns null for three different reasons - satisfied,
- * ambient, or nothing known - so "no mismatch" can never be read as "this is
- * the right spot". Suggesting somewhere to put a thing needs the positive
- * answer, and it must come from the SAME vocabulary the warning uses. Two
- * copies would drift into the worst bug available here: the system suggests a
- * place and then complains about the item being in it.
- */
-export function satisfiesRequirement(
-  requirement: StorageRequirement | null | undefined,
-  locationName: string | null | undefined,
-): boolean {
-  if (!requirement || requirement === "ambient" || !locationName) return false;
-  const place = locationName.toLowerCase();
-  const isFreezer = /freezer|deep ?freeze/.test(place);
-  // A freezer satisfies a refrigeration requirement; a fridge does not satisfy
-  // a frozen one.
-  const isCold = isFreezer || /fridge|refrigerat|chiller|cool ?box/.test(place);
-  return requirement === "frozen" ? isFreezer : isCold;
 }

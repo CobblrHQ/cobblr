@@ -7,6 +7,7 @@
 
 import { meta } from "../db/meta.js";
 import { orgMemberIds } from "./memberships.js";
+import { inAudience } from "./notification-audience.js";
 import { isMember } from "@cobblr/platform-contract/membership";
 import { inAppChannel } from "./channels/in-app.js";
 import { browserPushChannel } from "./channels/browser-push.js";
@@ -123,6 +124,14 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
   //    to it.
   const members = await orgMemberIds(p.orgId);
   if (!isMember(p.userId, members)) {
+    return { notificationId: "", deliveredVia: [] };
+  }
+  // 0b. And only people this KIND is for, per the workspace's own setting
+  //     (notification-audience.ts): everyone by default, the owners, or a
+  //     chosen few. Decided here rather than in the emitters, because nine of
+  //     them fan out over the member list and a tenth would too; the one door
+  //     every workspace notification passes through is this one.
+  if (!(await inAudience(p.orgId, p.eventType, p.userId))) {
     return { notificationId: "", deliveredVia: [] };
   }
 

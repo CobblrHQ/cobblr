@@ -26,6 +26,11 @@ export default defineModule({
   dependencies: [],
 
   exposes: {
+    // The KINDS of workspace notification this module sends, so the
+    // workspace can say who each kind is for (Configuration > Who gets told).
+    notifications: [
+      { eventType: "core-cadence.buy-less", label: "Buy less of this", description: "A thing you keep buying faster than you use it." },
+    ],
     // Consumers wire off these rather than importing the module (isolation).
     events: [
       "core-cadence.reorder.due",

@@ -31,6 +31,7 @@ import {
 } from "../services/autofile.js";
 import { resolveRequirement, storageRequirementFor } from "../services/storage-requirement.js";
 import { applyReceiptFacts } from "../services/receipt-candidate-facts.js";
+import { alignStorageFields } from "../services/align-storage-fields.js";
 import { lineQuantity } from "../services/receipt-shared.js";
 import { expiryDefaults } from "../services/shelf-life.js";
 import { Router } from "express";
@@ -80,7 +81,8 @@ import {
   seedHistory,
 } from "../services/catalog-history.js";
 import { pickPrimaryId, unionCandidateFields, traitsHaveUnique, combinedQuantity, type CombineItem, type CombineCandidate } from "../services/combine-merge.js";
-import { searchImages, rankImageOptions, selectTopCandidates, deriveImageQuery } from "../services/ddg-images.js";
+import { selectTopCandidates, deriveImageQuery, isFreshCategory } from "../services/ddg-images.js";
+import { pictureOptions } from "../services/picture-options.js";
 import { rankPhotoWithAi, isRankFailure } from "../services/rank-photo.js";
 import {
   candidateFieldValue,
@@ -3567,12 +3569,18 @@ inboxRouter.get(
       res.json({ items: [] });
       return;
     }
-    // Rank a LARGER pool by catalog quality (retail/brand domain, plausible single-object shape),
-    // then return the best — so the clean studio shot is at the front instead of
-    // the recipe-blog / social photo DDG happened to put first.
-    const pool = await searchImages(rank.query, 24).catch(() => []);
-    const items = rankImageOptions(pool, rank.brand, rank.query, rank.color).slice(0, 12);
-    res.json({ items, query: rank.query, color: rank.color });
+    // The same ladder the catalog tile climbs (services/picture-options.ts):
+    // ranked by catalog quality, the library first for a fresh thing and
+    // beside the engine otherwise, and the engine's refusal reported so the
+    // card can say "not answering" rather than "nothing found".
+    const { items, throttled } = await pictureOptions({
+      query: rank.query,
+      name: rank.name,
+      brand: rank.brand,
+      color: rank.color,
+      fresh: isFreshCategory(rank.category),
+    });
+    res.json({ items, query: rank.query, color: rank.color, throttled });
   }),
 );
 
@@ -3830,7 +3838,10 @@ inboxRouter.post(
       width: c.width,
       height: c.height,
     }));
-    const pool = sent.length > 0 ? sent : await searchImages(q, 24).catch(() => []);
+    const pool =
+      sent.length > 0
+        ? sent
+        : (await pictureOptions({ query: q, name: rank.name, brand: rank.brand, color, fresh: isFreshCategory(rank.category), limit: 24 })).items;
     // Hand the AI the best-of-the-good: dedupe + hard-drop net-negatives (when
     // enough good ones remain), so it selects the best of N good candidates
     // rather than rescuing junk. The heuristic filters as far as titles/domains
@@ -6327,6 +6338,10 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     // A receipt KNOWS its provenance; the model only guesses at it. Written
     // after the model so the till's facts win (see receipt-candidate-facts.ts).
     applyReceiptFacts(row.suggested_metadata as Record<string, unknown> | null, candidates, menu);
+    // One storage story per card: a cold requirement fills the table's own
+    // Fridge / Freezer choice and a cold choice asserts its requirement, so
+    // carrots and tomatoes off one receipt wear the same chip. Empty-only.
+    alignStorageFields(candidates, menu);
 
     // THE REPLAY INVARIANT, checked rather than merely intended: a replay may
     // only add or refine. It re-derives from the row's own stored knowledge, so

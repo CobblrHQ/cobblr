@@ -7,7 +7,7 @@ import { sql } from "kysely";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware.js";
 import { meta } from "../db/meta.js";
-import { announceReturningMessage } from "../platform/announce.js";
+import { postFeedbackCard } from "./feedback-card-post.js";
 import { reporterCardFields } from "../platform/feedback-card.js";
 import { pokeTriage } from "../platform/triage-trigger.js";
 import { notifyOperators } from "../platform/operator-alert.js";
@@ -183,7 +183,7 @@ feedbackRouter.post("/", async (req, res, next) => {
     // lifecycle reactions for this one item.
     void (async () => {
       try {
-        const posted = await announceReturningMessage("feedback.new", {
+        const posted = await postFeedbackCard(row.id, {
           title: `${emoji} New ${parsed.data.type} feedback`,
           body: parsed.data.message.slice(0, 1500),
           color: 0xb5651d,
@@ -193,13 +193,6 @@ feedbackRouter.post("/", async (req, res, next) => {
             ? { images: attachments.map((a) => ({ orgId, fileId: a.file_id, name: a.name })) }
             : {}),
         });
-        if (posted.messageId) {
-          await meta
-            .updateTable("feedback")
-            .set({ announce_message_id: posted.messageId, announce_channel_id: posted.channelId })
-            .where("id", "=", row.id)
-            .execute();
-        }
         // Nothing was posted, so nobody has been told. On a public instance that is
         // deliberate — a stranger's report quotes their own data and must not land in
         // a chat server whose membership is not theirs to see — but the consequence is

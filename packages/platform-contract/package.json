@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/platform-contract",
-  "version": "0.5.8",
+  "version": "0.5.11",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
@@ -30,7 +30,9 @@
     "./destination-label": "./src/destination-label.ts",
     "./membership": "./src/membership.ts",
     "./expiry-grace": "./src/expiry-grace.ts",
-    "./notification-batcher": "./src/notification-batcher.ts"
+    "./notification-batcher": "./src/notification-batcher.ts",
+    "./storage-requirement": "./src/storage-requirement.ts",
+    "./receipt-fact-names": "./src/receipt-fact-names.ts"
   },
   "types": "src/index.ts",
   "scripts": {

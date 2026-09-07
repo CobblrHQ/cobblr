@@ -53,6 +53,11 @@ export default defineModule({
   },
 
   exposes: {
+    // The KINDS of workspace notification this module sends, so the
+    // workspace can say who each kind is for (Configuration > Who gets told).
+    notifications: [
+      { eventType: "maintenance.due-soon", label: "Maintenance due", description: "Scheduled upkeep that is due or overdue, once a day." },
+    ],
     events: [
       "core-maintenance.entry.created",
       "core-maintenance.entry.updated",

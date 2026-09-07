@@ -100,6 +100,11 @@ export default defineModule({
   dependencies: [],
 
   exposes: {
+    // The KINDS of workspace notification this module sends, so the
+    // workspace can say who each kind is for (Configuration > Who gets told).
+    notifications: [
+      { eventType: "projects.task.unblocked", label: "A task became unblocked", description: "A task whose blockers are all done." },
+    ],
     events: [
       "projects.project.created",
       "projects.project.updated",

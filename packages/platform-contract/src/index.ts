@@ -1123,6 +1123,16 @@ export function compileTemplate(template: string): { pattern: string; slots: Com
 
 
 
+/** A KIND of workspace notification a module sends: the eventType it
+ *  dispatches with, and the name a person would recognise it by on the
+ *  "who gets told" settings page. */
+export const NotificationKind = z.object({
+  eventType: z.string().regex(/^[a-z0-9-]+\.[a-z0-9._-]+$/, "eventType is <module>.<what>"),
+  label: z.string().min(1).max(80),
+  description: z.string().max(300).optional(),
+});
+export type NotificationKind = z.infer<typeof NotificationKind>;
+
 const EntityAction = z.object({
   id: z
     .string()
@@ -1431,8 +1441,14 @@ const ModuleManifest = z.object({
       commands: z.array(ModuleCommand).default([]),
       // Live controls — ongoing session modes surfaced in the Live box.
       live: z.array(LiveControl).default([]),
+      // The KINDS of workspace notification this module sends (the eventType
+      // it dispatches with, and a name a person would recognise), so the
+      // workspace can say who each kind is for. A kind not declared here is
+      // still delivered; it just cannot be pointed at fewer people than
+      // everyone until it is.
+      notifications: z.array(NotificationKind).default([]),
     })
-    .default({ events: [], api: [], actions: [], commands: [], live: [] }),
+    .default({ events: [], api: [], actions: [], commands: [], live: [], notifications: [] }),
   // Pillar A — entity kinds the module provides for the rest of
   // the platform to introspect.
   provides: z
@@ -3087,8 +3103,15 @@ export interface PlatformNotifications {
   }): Promise<{ notificationId: string; deliveredVia: string[] }>;
   /** Convenience: every member of an org. Modules that want to
    *  broadcast a notification (e.g. "this task is now unblocked")
-   *  iterate this and dispatch per-user. */
+   *  iterate this and dispatch per-user. Prefer `audienceFor` for a
+   *  workspace-wide kind: the dispatcher drops anyone outside the kind's
+   *  audience anyway, so iterating everyone only composes messages that are
+   *  then thrown away. */
   orgMemberIds(orgId: string): Promise<string[]>;
+  /** The people a KIND of notification is for in this workspace, per the
+   *  workspace's own setting (everyone by default, the owners, or a chosen
+   *  few), intersected with live membership. What a sweep should iterate. */
+  audienceFor(orgId: string, eventType: string): Promise<string[]>;
   /** The workspace's display name. Exists because a module has no other way to
    *  say WHERE something happened: the discussion room's notifications read
    *  "mentioned you in your workspace" from the action door, which is honest

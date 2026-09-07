@@ -6,7 +6,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Copy, Download } from "lucide-react";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { useToast, usePageTitle } from "@cobblr/platform-web";
+import { downloadBlob, useToast, usePageTitle } from "@cobblr/platform-web";
 import { QueryError } from "../components/QueryError";
 import { ConfigHeaderActions } from "../components/ConfigPageHeader";
 import { FEED_SCROLL_PAGE_INNER } from "../lib/feed";
@@ -74,12 +74,7 @@ export function OpenApiPage() {
                 const blob = new Blob([JSON.stringify(spec, null, 2)], {
                   type: "application/json",
                 });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = "cobblr-openapi.json";
-                a.click();
-                URL.revokeObjectURL(url);
+                downloadBlob(blob, "cobblr-openapi.json");
               }}
               className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white"
             >

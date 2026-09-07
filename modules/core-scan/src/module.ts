@@ -76,6 +76,12 @@ export default defineModule({
   },
 
   exposes: {
+    // The KINDS of workspace notification this module sends, so the
+    // workspace can say who each kind is for (Configuration > Who gets told).
+    notifications: [
+      { eventType: "core-scan.parcel.update", label: "Parcel updates", description: "A tracked delivery moved, or arrived." },
+      { eventType: "core-scan.storage.mismatch", label: "Stored in the wrong place", description: "Something that must be kept cold was put somewhere warm." },
+    ],
     events: [
       "core-scan.scan.received",
       // Stock moved: a purchase filed, a quantity added or used. Announced so

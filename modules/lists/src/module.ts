@@ -78,6 +78,11 @@ export default defineModule({
   },
 
   exposes: {
+    // The KINDS of workspace notification this module sends, so the
+    // workspace can say who each kind is for (Configuration > Who gets told).
+    notifications: [
+      { eventType: "lists.expiring", label: "Things to use up", description: "Food and other dated items that are about to expire, once a day, with Used up and Threw out buttons." },
+    ],
     events: [
       "lists.list.created",
       "lists.list.deleted",

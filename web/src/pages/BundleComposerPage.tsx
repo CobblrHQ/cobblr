@@ -23,7 +23,7 @@ import {
   Square,
   SquareCheck,
 } from "lucide-react";
-import { useToast, usePageTitle } from "@cobblr/platform-web";
+import { downloadBlob, useToast, usePageTitle } from "@cobblr/platform-web";
 import {
   ApiError,
   api,
@@ -162,12 +162,7 @@ export function BundleComposerPage() {
   function download() {
     if (!finalManifest) return;
     const blob = new Blob([json], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${finalManifest.id}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(blob, `${finalManifest.id}.json`);
     toast.success("Bundle JSON downloaded.");
   }
 

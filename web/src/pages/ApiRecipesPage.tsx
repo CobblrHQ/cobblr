@@ -9,7 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Copy, Check, KeyRound, Info, Boxes, Terminal, Download } from "lucide-react";
 import { QueryError } from "../components/QueryError";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { useToast, usePageTitle } from "@cobblr/platform-web";
+import { downloadBlob, useToast, usePageTitle } from "@cobblr/platform-web";
 import { api, type PlatformEntityKind } from "../lib/api";
 import { moduleIcon } from "../lib/module-icon";
 
@@ -270,12 +270,7 @@ export function ApiRecipesPage() {
     }));
     const ext = lang === "python" ? "py" : lang === "curl" ? "sh" : lang === "ts" ? "ts" : "mjs";
     const blob = new Blob([buildFile(lang, items)], { type: "text/plain" });
-    const href = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = href;
-    a.download = `cobblr-examples.${ext}`;
-    a.click();
-    URL.revokeObjectURL(href);
+    downloadBlob(blob, `cobblr-examples.${ext}`);
   };
 
   const defaultName = () => {

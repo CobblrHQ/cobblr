@@ -12,7 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, Upload, FileArchive, Layers, Loader2, AlertTriangle, HardDrive, Play, Trash2, Plus, Clock } from "lucide-react";
 import { getToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { useToast, usePageTitle } from "@cobblr/platform-web";
+import { downloadBlob, useToast, usePageTitle } from "@cobblr/platform-web";
 
 interface BlueprintPlan {
   enable_modules: string[];
@@ -80,16 +80,6 @@ function fmtBytes(n: number | null): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function downloadBlob(blob: Blob, name: string): void {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
 
 export function BackupPage() {
   usePageTitle("Backup & Blueprints");

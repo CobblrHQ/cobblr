@@ -12,6 +12,9 @@
 
 import { Router } from "express";
 import { sql } from "kysely";
+import { appendEffects } from "./feedback-append-effects.js";
+import { feedbackCard, resolutionDelivery } from "./feedback-card.js";
+import { postFeedbackCard } from "./feedback-card-post.js";
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
 import { requireAuth, requirePlatformAdmin, isPlatformAdmin } from "../auth/middleware.js";
@@ -36,7 +39,7 @@ import { cobblrEmailHtml } from "../platform/email-html.js";
 import { signupSurfaceLink } from "../platform/signup-surface.js";
 import { feedbackReplyText } from "../platform/feedback-reply-text.js";
 import { feedbackAttachmentOrg } from "../platform/feedback-attachment-org.js";
-import { announce, listAnnounceSettings, setAnnounceSetting, isComposable } from "../platform/announce.js";
+import { announce, listAnnounceSettings, setAnnounceSetting, isComposable, editAnnouncement} from "../platform/announce.js";
 import { reporterCardFields } from "../platform/feedback-card.js";
 import {
   pokeDiscordResolved,
@@ -1562,6 +1565,36 @@ const UpdateFeedback = z.object({
     .optional(),
 });
 
+// Bring the item's ONE Discord card up to date with the row. Fire-and-forget:
+// a card that cannot be edited must never fail the write that moved the item.
+// No-op for an item with no card (never posted, or posted before ids were kept).
+function reflectFeedbackCard(
+  row: {
+    id: string;
+    type: string | null;
+    status: string | null;
+    message: string | null;
+    admin_notes?: string | null;
+    triage_summary?: string | null;
+    origin_ref: unknown;
+    announce_message_id: string | null;
+  },
+  opts: { fixed?: string | null; fields?: Array<{ name: string; value: string; inline?: boolean }> } = {},
+): void {
+  if (!row.announce_message_id) return;
+  const card = feedbackCard(row, { fixed: opts.fixed });
+  const originGuildId = ((row.origin_ref ?? {}) as { guild_id?: string }).guild_id ?? null;
+  void editAnnouncement("feedback.new", { messageId: row.announce_message_id, originGuildId }, {
+    title: card.title,
+    body: card.body,
+    color: card.color,
+    fields: opts.fields,
+    originGuildId,
+  }).then((ok) => {
+    if (!ok) console.warn(`[feedback] card for ${row.id} not updated (status ${row.status})`);
+  });
+}
+
 // Map a feedback row's status + admin_notes to its lifecycle stage, for the
 // Discord reaction trail. Terminal states win; otherwise the autopilot's
 // in-flight markers, most-advanced first (PR up > building > grabbed). Returns
@@ -1773,7 +1806,11 @@ superAdminRouter.post("/feedback/ingest", async (req, res, next) => {
       other: { emoji: "💬", label: "feedback" },
     };
     const t = TICKET_LABEL[parsed.data.type] ?? { emoji: "💬", label: "feedback" };
-    void announce("feedback.new", {
+    // Remember WHICH message this item produced, so the same card can be edited
+    // as the item moves. The in-app path has done this since the reaction
+    // trail was added; this path posted and forgot, so a Discord-origin ticket
+    // got a second, unlinked "resolved" card hours later.
+    void postFeedbackCard(row.id, {
       title: `${t.emoji} New ${t.label}`,
       body: parsed.data.message.slice(0, 1500),
       color: 0x5865f2,
@@ -1794,6 +1831,10 @@ superAdminRouter.post("/feedback/ingest", async (req, res, next) => {
 const AppendFeedback = z.object({
   thread_id: z.string().max(40),
   from: z.string().max(120).optional(),
+  // A team member replying in the thread. Kept on the record like any other
+  // message, but it is not a report: it never reopens, re-triages, or announces.
+  // See feedback-append-effects.ts for why this exists.
+  from_staff: z.boolean().default(false),
   text: z.string().trim().max(5000).default(""),
   images: z
     .array(z.object({ url: z.string().url().max(2000), name: z.string().max(255).optional() }))
@@ -1816,7 +1857,7 @@ superAdminRouter.post("/feedback/append", async (req, res, next) => {
       // origin_ref carries the guild this ticket came FROM. Without it the
       // reopen notice below lands in the operator's own ops server instead of
       // the support server the reporter is in — see the announce call.
-      .select(["id", "status", "message", "origin_ref"])
+      .select(["id", "status", "message", "origin_ref", "type", "admin_notes", "announce_message_id"])
       .where(sql`origin_ref ->> 'thread_id'`, "=", parsed.data.thread_id)
       .executeTakeFirst();
     if (!fb) {
@@ -1825,24 +1866,30 @@ superAdminRouter.post("/feedback/append", async (req, res, next) => {
     }
     const entry = {
       at: new Date().toISOString(),
-      from: parsed.data.from ?? "reporter",
+      from: parsed.data.from ?? (parsed.data.from_staff ? "staff" : "reporter"),
       text: parsed.data.text,
+      ...(parsed.data.from_staff ? { from_staff: true } : {}),
       ...(parsed.data.images.length ? { images: parsed.data.images } : {}),
     };
-    const reopened = fb.status === "resolved" || fb.status === "wontfix";
+    const fx = appendEffects({ status: fb.status, fromStaff: parsed.data.from_staff });
+    const reopened = fx.reopen;
     await meta
       .updateTable("feedback")
       .set({
         followups: sql`coalesce(followups, '[]'::jsonb) || ${JSON.stringify([entry])}::jsonb`,
         ...(reopened ? { status: "in_progress" as never } : {}),
-        triaged_at: null, // re-judge with the new context
+        ...(fx.retriage ? { triaged_at: null } : {}), // re-judge with the new context
         updated_at: new Date(),
       })
       .where("id", "=", fb.id)
       .execute();
-    pokeTriage(fb.id);
-    if (reopened) {
-      void announce("feedback.new", {
+    if (fx.retriage) pokeTriage(fb.id);
+    if (reopened) reflectFeedbackCard({ ...fb, status: "in_progress" });
+    // The card edit above IS the reopen notice. A separate post is the
+    // second-message class the one-card design removed; it survives only for
+    // an item that has no card to edit, and goes out as an event, not a card.
+    if (fx.announceReopen && resolutionDelivery(fb) === "post") {
+      void announce("feedback.resolved", {
         title: "🔄 Ticket reopened (Discord follow-up)",
         body: (parsed.data.text || "(image / attachment)").slice(0, 1500),
         color: 0xfaa61a,
@@ -2019,7 +2066,7 @@ superAdminRouter.post("/feedback/append-dm", async (req, res, next) => {
     if (!parsed.data.skip_triage) {
       pokeTriage(row.id);
       const oid = attachOrgId;
-      void announce("feedback.new", {
+      void postFeedbackCard(row.id, {
         // no-origin-guild: a DM has no server. There is nowhere to route it
         // back to, so the operator's own sink is the right and only audience.
         title: "💬 New feedback (Discord DM)",
@@ -2113,12 +2160,18 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
         "origin_ref",
         "announce_message_id",
         "announce_channel_id",
+        "type",
+        "triage_summary",
       ])
       .executeTakeFirst();
     if (!row) {
       res.status(404).json({ error: { code: "not_found", message: "Feedback not found." } });
       return;
     }
+    // The item's ONE card follows its state. A resolve carries the "what we
+    // did" line and is handled below (it needs the reporter fields); everything
+    // else is reflected here, on every transition through this handler.
+    if (parsed.data.status !== undefined && parsed.data.status !== "resolved") reflectFeedbackCard(row);
 
     // Reflect the item's new lifecycle stage back onto Discord as an emoji
     // reaction — on the public #feedback post (if tracked) and on the private
@@ -2325,7 +2378,12 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
       // use the same webhook the original went to. Route it by the same origin
       // or the thread id names a message that does not exist on this webhook.
       const resolvedGuild = ((row.origin_ref ?? {}) as { guild_id?: string }).guild_id ?? null;
-      void announce("feedback.resolved", {
+      // One item, one card: when the report's own card exists, it BECOMES the
+      // resolved card. A second message was the complaint (2026-09-07). A fresh
+      // post is only for an item that has no card to edit.
+      if (resolutionDelivery(row) === "edit") {
+        reflectFeedbackCard(row, { fixed: fixed ?? null, fields: cardFields });
+      } else void announce("feedback.resolved", {
         title: "✅ Feedback resolved",
         originGuildId: resolvedGuild,
         // When we have a "what we did" line, the post reads as a public changelog
@@ -2403,7 +2461,7 @@ superAdminRouter.post("/feedback/batch-resolve", async (req, res, next) => {
 
     const rows = await meta
       .selectFrom("feedback")
-      .select(["id", "status", "user_id", "org_id", "message", "context", "origin", "origin_ref", "announce_message_id", "announce_channel_id"])
+      .select(["id", "status", "user_id", "org_id", "message", "context", "origin", "origin_ref", "announce_message_id", "announce_channel_id", "type", "admin_notes", "triage_summary"])
       .where("id", "in", order)
       .execute();
     const found = new Set(rows.map((r) => r.id));
@@ -2442,6 +2500,8 @@ superAdminRouter.post("/feedback/batch-resolve", async (req, res, next) => {
         }
       }
       if (freshlyResolved) {
+        const did = (fixNoteById.get(row.id) || summaryById.get(row.id) || reply_message || "").trim();
+        reflectFeedbackCard({ ...row, status: "resolved" }, { fixed: did });
         // ✅ on the report itself. The single-item PATCH has always poked the
         // stage; this path never did, so a BATCH close left every one of its
         // items without the emoji — the exact status trail the operator reads

@@ -1186,6 +1186,19 @@ export const api = {
       "GET",
       `/orgs/${slug}/members`,
     ),
+  /** Who each kind of workspace notification is for (owner/admin). */
+  listNotificationAudiences: (slug: string) =>
+    request<{ items: NotificationAudienceKind[] }>("GET", `/orgs/${slug}/notification-audiences`),
+  setNotificationAudience: (
+    slug: string,
+    eventType: string,
+    body: { mode: NotificationAudienceMode; user_ids?: string[] },
+  ) =>
+    request<{ item: NotificationAudienceKind | null }>(
+      "PUT",
+      `/orgs/${slug}/notification-audiences/${encodeURIComponent(eventType)}`,
+      body,
+    ),
   updateMemberRole: (slug: string, userId: string, role: OrgMembership["role"]) =>
     request<WorkspaceMember>("PATCH", `/orgs/${slug}/members/${userId}`, { role }),
   removeMember: (slug: string, userId: string) =>
@@ -3660,7 +3673,7 @@ export const api = {
   // Alternative catalog photos (DDG image search on the resolved name) +
   // pick-one-as-catalog. The "OTHER PHOTO OPTIONS" strip.
   scanPhotoOptions: (slug: string, id: string, q?: string) =>
-    request<{ items: ImageOption[]; query?: string; color?: string | null }>(
+    request<{ items: ImageOption[]; query?: string; color?: string | null; throttled?: boolean }>(
       "GET",
       `/orgs/${slug}/modules/core-scan/inbox/${id}/photo-options${q && q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ""}`,
     ),
@@ -6586,6 +6599,17 @@ export interface WorkspaceMember {
   display_name: string;
   role: OrgMembership["role"];
   joined_at: string;
+}
+
+export type NotificationAudienceMode = "all" | "owners" | "custom";
+/** One kind of workspace notification and who it is for. */
+export interface NotificationAudienceKind {
+  event_type: string;
+  label: string;
+  description: string | null;
+  module: string;
+  mode: NotificationAudienceMode;
+  user_ids: string[];
 }
 
 export interface WorkspaceInvite {

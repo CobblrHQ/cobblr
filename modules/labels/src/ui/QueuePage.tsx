@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import QRCode from "qrcode";
-import { Bluetooth, Check, ChevronDown, Hash, Minus, Monitor, Pencil, Plus, Printer, RotateCcw, RotateCw, Send, Settings2, Trash2, Wifi, Zap } from "lucide-react";
+import { Bluetooth, Check, ChevronDown, Download, Hash, Minus, Monitor, Pencil, Plus, Printer, RotateCcw, RotateCw, Send, Settings2, Trash2, Wifi, Zap } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { usePageTitle, useToast, Modal } from "@cobblr/platform-web";
 import { useLabels } from "./context";
@@ -53,6 +53,8 @@ import { NewSizeModal } from "./NewSizeModal";
 import { AutoPrintModal } from "./AutoPrintModal";
 import { PrinterConfigModal } from "./PrinterConfigModal";
 import { queueToolbarMode, canRevertToStock, resolvePrintTarget } from "./queue-toolbar";
+import { downloadLabelsAsPng } from "./downloadPng";
+import { planLabelPngs } from "./save-png-plan";
 
 const PAPER_LS = "cobblr:label-paper";
 const SIZE_LS = "cobblr:label-size";
@@ -397,11 +399,16 @@ export function QueuePage() {
   // rotates a size where it doesn't belong (a 2-up 50×30 has portrait 25×30 cells;
   // rotating those overflowed the label). Both the preview and ⌘P read
   // effectiveRotate.
+  // THE face size, derived once. Save PNG and the Bluetooth path used to carry
+  // their own byte-identical copies of this, and a fourth rule (the turn) was
+  // applied to some copies and not others — which is how a saved label came out
+  // laid out differently from its preview.
   const faceWH = pickedCustom
     ? { w: pickedCustom.label_w, h: pickedCustom.label_h }
     : builtin
       ? { w: builtin.label_w, h: builtin.label_h }
       : null;
+  const faceDims = faceWH ? { label_w: faceWH.w, label_h: faceWH.h } : null;
   const canRotate = !!faceWH && labelRotatable(faceWH.w, faceWH.h);
   const effectiveRotate = rotate && canRotate;
   // Default the TURN from the label's shape, unless a person has set it. A row
@@ -671,6 +678,41 @@ export function QueuePage() {
     });
   };
 
+  // Save PNG — the offline-printer path. Renders each queued label to an image
+  // (one .png, or a .zip for several) so an owner whose label printer the app
+  // can't drive can print it from wherever the printer IS connected. Does NOT
+  // snapshot or clear the queue: saving an image isn't printing, so the labels
+  // stay queued until they actually reach paper.
+  const [savingPng, setSavingPng] = useState(false);
+  // The file is permanent, so it must not be built from data that is still on
+  // its way: the preview refuses to render until these have loaded, and so does
+  // this. Clicked early, it baked a missing badge and the raw payload URL into
+  // a file somebody printed onto stock.
+  const pngDataReady = !qrBase.isLoading && !codes.isLoading && !overlayCfg.isLoading;
+  const doSavePng = async () => {
+    if (!faceDims || items.length === 0 || !pngDataReady) return;
+    setSavingPng(true);
+    try {
+      // Same inputs the preview and the server print read: copies from the
+      // stepper, the badge only where the kind allows it, the face turned when
+      // the queue turns it.
+      const plan = planLabelPngs({
+        items,
+        codes: codes.data ?? {},
+        overlay: overlayCfg.data ?? {},
+        dims: faceDims,
+        rotate: effectiveRotate,
+        liveUrl,
+      });
+      const n = await downloadLabelsAsPng(plan);
+      toast.success(n === 1 ? "Label saved as PNG" : `${n} labels saved as a zip`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't save the labels as PNG");
+    } finally {
+      setSavingPng(false);
+    }
+  };
+
   // Direct-to-printer: render the queue to a PDF (labels) → dispatch via the
   // configured printer (core-print). No browser print dialog. core-print uses
   // the proven print path (pdf-lib render + the `ipp` lib to CUPS).
@@ -704,12 +746,7 @@ export function QueuePage() {
         // The media/label you pick in the toolbar drives the print (the fix),
         // keeping the printer's protocol + calibration; fall back to the stored
         // media if no size resolves.
-        const labelDims = pickedCustom
-          ? { label_w: pickedCustom.label_w, label_h: pickedCustom.label_h }
-          : builtin
-            ? { label_w: builtin.label_w, label_h: builtin.label_h }
-            : null;
-        const settings = paper && labelDims ? bleSettingsForSize(stored, paper, labelDims) : stored;
+        const settings = paper && faceDims ? bleSettingsForSize(stored, paper, faceDims) : stored;
         if (!settings.widthDots) {
           throw new Error(`${printer.name} has no media set — pick a label size, or set one in Configuration → Printers.`);
         }
@@ -1010,6 +1047,15 @@ export function QueuePage() {
             {`Print ${total}`}
           </button>
         )}
+        <button
+          onClick={() => void doSavePng()}
+          disabled={items.length === 0 || !faceDims || savingPng || !pngDataReady}
+          className="rounded-md border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
+          title="Save the queued labels as PNG image files, so you can print them from any computer, even an offline label printer"
+        >
+          <Download size={14} />
+          {savingPng ? "…" : "Save PNG"}
+        </button>
         <button
           onClick={() => setCodesOpen(true)}
           className="rounded-md border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"

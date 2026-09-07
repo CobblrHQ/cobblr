@@ -65,6 +65,77 @@ export interface VocabularyCapability extends Base {
 export const CAPABILITIES: Capability[] = [
   {
     kind: "owns",
+    id: "feedback:card-post",
+    what: "posting a feedback item's Discord card AND remembering its message id, so the same card can be edited as the item moves",
+    why:
+      "two places posted the card; one stored the id, one did not, and a Discord-origin ticket got a second, unlinked " +
+      "'resolved' card hours later (2026-09-07). A post that forgets its id cannot be found again, and every later edit " +
+      "silently falls back to a fresh card",
+    owner: "api/src/routes/feedback-card-post.ts",
+    scope: ["api/src/routes/feedback.ts", "api/src/routes/super-admin.ts", "api/src/routes/feedback-card.ts"],
+    detect: /announce(ReturningMessage)?\(\s*["']feedback\.new["']/,
+    use: "postFeedbackCard(feedbackId, payload) from routes/feedback-card-post.ts",
+  },
+  {
+    kind: "owns",
+    id: "web:hand-a-file-to-the-browser",
+    what: "saving a Blob as a download: object URL, anchor, click, and revoking the URL only after the browser has had a chance to open it",
+    why:
+      "hand-rolled nine times, each with its own revoke timing and several revoking synchronously, which Safari can honour " +
+      "before the download starts and quietly save nothing. The labels Save PNG path was the ninth copy (2026-09-07); a fix " +
+      "to any of them had to be found and applied nine times",
+    owner: "packages/platform-web/src/download-blob.ts",
+    scope: [
+      "web/src/components/ExportInboxModal.tsx",
+      "web/src/components/BundleDetailModal.tsx",
+      "web/src/pages/BundleComposerPage.tsx",
+      "web/src/pages/OpenApiPage.tsx",
+      "web/src/pages/BundlesPage.tsx",
+      "web/src/pages/ApiRecipesPage.tsx",
+      "web/src/pages/BackupPage.tsx",
+      "modules/inventory/src/ui/api.ts",
+      "modules/labels/src/ui/downloadPng.ts",
+    ],
+    detect: /\.download\s*=/,
+    use: "downloadBlob(blob, filename) from @cobblr/platform-web",
+  },
+  {
+    kind: "owns",
+    id: "scan:picture-options-pool",
+    what: "the ladder for a web picture: library first for fresh things, the engine one ask at a time, the shop-less retry, the library when the engine refuses, and the refusal reported",
+    why:
+      "three surfaces searched on their own (the catalog tile, the entity picker, the inbox card's strip). The picker " +
+      "got the second source and the honest 'not answering' flag; the inbox card kept calling the engine alone and " +
+      "folding every failure into an empty list, so it said nothing found for \"Apple Cider\" under a catalog tile the " +
+      "library had just filled with two glasses of it (2026-09-07). Any surface that reaches the engine or the library " +
+      "directly is the next one to drift",
+    owner: "modules/core-scan/src/services/picture-options.ts",
+    scope: [
+      "modules/core-scan/src/api/entity-image.ts",
+      "modules/core-scan/src/api/inbox.ts",
+      "modules/core-scan/src/services/enrich-photo.ts",
+      "modules/core-scan/src/services/enrich.ts",
+      "modules/core-scan/src/services/auto-rank.ts",
+      "modules/core-scan/src/services/entity-image.ts",
+      "modules/core-scan/src/services/pictures-sweeper.ts",
+      "modules/core-scan/src/services/barcode-websearch.ts",
+    ],
+    detect: /\b(searchImages|searchCommonsImages)\s*\(/,
+    use: "pictureOptions({ query, name, plainQuery, brand, color, fresh, limit }) from services/picture-options.ts, and pass its throttled flag through to the strip",
+  },
+  {
+    kind: "requires-prop",
+    id: "picture-strip:reports-the-wall",
+    what: "telling a pre-fetched ImageSearchPicker whether the engine refused",
+    why:
+      "a strip not told it can only say 'nothing found', which is a claim about the product; the inbox card said exactly " +
+      "that under a tile the library had just filled (2026-09-07)",
+    component: "ImageSearchPicker",
+    required: ["throttled"],
+    scope: ["web/src/pages/ScanPage.tsx"],
+  },
+  {
+    kind: "owns",
     id: "clipboard:image-reader",
     what: "reading the image files off a pasted clipboard",
     why:

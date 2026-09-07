@@ -1,3 +1,6 @@
+import { requirementImpliedBy, type StorageRequirement } from "@cobblr/platform-contract/storage-requirement";
+import { isReceiptDateField, isReceiptFromField } from "@cobblr/platform-contract/receipt-fact-names";
+
 // A match is a SNAPSHOT. The table can change under it.
 //
 // The matchmaker keeps only the fields the destination declared at the moment
@@ -69,4 +72,46 @@ export function isQuietDefault(name: string, value: unknown): boolean {
   const n = name.trim().toLowerCase();
   const v = typeof value === "string" ? value.trim().toLowerCase() : "";
   return n === "storage_requirement" && v === "ambient";
+}
+
+/**
+ * A value another chip on the same card already says.
+ *
+ * "Storage: Fridge" and "Must be kept: refrigerated" sat side by side on a
+ * receipt's carrots (2026-09-07). Same fact, two spellings, and the pair reads
+ * as two things to check. When the storage choice IMPLIES the requirement the
+ * requirement chip is dropped; when they disagree (Counter beside
+ * refrigerated) both stay, because that is the one case the pair is news. The
+ * vocabulary is the platform's, shared with the server fill that produced the
+ * agreement in the first place.
+ */
+export function isImpliedByPeer(name: string, value: unknown, fields: Record<string, unknown> | null | undefined): boolean {
+  if (name.trim().toLowerCase() !== "storage_requirement" || !fields) return false;
+  const req = typeof value === "string" ? (value.trim().toLowerCase() as StorageRequirement) : null;
+  const storageKey = Object.keys(fields).find((k) => k.trim().toLowerCase() === "storage");
+  return !!req && !!storageKey && requirementImpliedBy(req, fields[storageKey]);
+}
+
+/**
+ * A value the receipt already states for every line.
+ *
+ * "Bought on 2026-09-06" sat on all twelve lines of one receipt (2026-09-07),
+ * under a session header that already said "Receipt · Lidl · Sep 6", beside a
+ * title that already said "from Lidl". The server writes the till's date and
+ * shop into each line's provenance fields on purpose (they are facts, and they
+ * ride to the record); the CHIP is what is redundant. Dropped from the glance
+ * only when the value IS the receipt's; a line somebody re-dated by hand still
+ * shows its date, because then it is news. Still under All fields either way.
+ */
+export function isStatedByReceipt(
+  name: string,
+  value: unknown,
+  meta: { receipt_date?: unknown; receipt_vendor?: unknown } | null | undefined,
+): boolean {
+  if (!meta || typeof value !== "string") return false;
+  const v = value.trim().toLowerCase();
+  if (!v) return false;
+  if (isReceiptDateField(name) && typeof meta.receipt_date === "string") return v === meta.receipt_date.trim().toLowerCase();
+  if (isReceiptFromField(name) && typeof meta.receipt_vendor === "string") return v === meta.receipt_vendor.trim().toLowerCase();
+  return false;
 }

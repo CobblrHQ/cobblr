@@ -29,7 +29,7 @@ import {
 } from "../lib/featured-bundles";
 import { diffManifests, type Manifestish } from "../lib/bundle-diff";
 import { recordSetup } from "../lib/setupCards";
-import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
+import { downloadBlob, Modal, useToast, useConfirm } from "@cobblr/platform-web";
 import { installHeadline, installChanges } from "../lib/installSummary";
 import type { BundleInstallSummary } from "../lib/api";
 
@@ -646,12 +646,7 @@ export function BundleDetailModal(props: Props) {
     const blob = new Blob([JSON.stringify({ manifest: effectiveManifest }, null, 2)], {
       type: "application/json",
     });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${externalId || "bundle"}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(blob, `${externalId || "bundle"}.json`);
     toast.info("Manifest downloaded.");
   }
 

@@ -148,7 +148,7 @@ export type {
 export {
   isWebBluetoothAvailable, NO_WEB_BLUETOOTH,
   connectPrinter, closePrinter, printToSession, printBatchOverBluetooth,
-  printLabelOverBluetooth, renderLabelBitmap, labelLayoutFor, fitCaptionPx, captionBox, encodeForPrinter,
+  printLabelOverBluetooth, renderLabelBitmap, renderLabelPng, labelLayoutFor, fitCaptionPx, captionBox, encodeForPrinter,
   // Walk-up: a session held across prints, so one label at a time costs
   // neither a chooser nor a reconnect.
   heldPrinterSession, printOneOverBluetooth, heldPrinterName, releaseHeldPrinter,
@@ -223,6 +223,8 @@ export { MoveToInstanceModal, type MoveToInstanceModalProps } from "./MoveToInst
 export { AssortmentCard, type AssortmentCardProps, type AssortmentKind } from "./AssortmentCard";
 export { scrimAlpha, scrimAlphaFor, percentileLuma } from "./photo-scrim";
 export { HIDE_WHEN_OVERLAY_OPEN, OverlayFlag, useOverlayOpenFlag } from "./overlay-open";
+export { downloadBlob } from "./download-blob";
+export { withPngDpi, readPngDpi, isPng, crc32, dpiToPixelsPerMetre } from "./png-dpi";
 export { YIELDING_CLASS, useYieldToContent, pressableBeneath, samplePoints } from "./yield-to-content";
 export { LiveSurfaceProvider, useOverLiveSurface } from "./live-surface";
 export { describeUnreadableBody } from "./unreadableBody";

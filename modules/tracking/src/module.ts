@@ -71,6 +71,11 @@ export default defineModule({
   },
 
   exposes: {
+    // The KINDS of workspace notification this module sends, so the
+    // workspace can say who each kind is for (Configuration > Who gets told).
+    notifications: [
+      { eventType: "tracking.goal-reached", label: "A tracked goal reached", description: "When a measurement crosses a goal you set." },
+    ],
     events: [
       "tracking.metric.created",
       "tracking.metric.deleted",

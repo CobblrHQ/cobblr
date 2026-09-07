@@ -17,7 +17,8 @@
 import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { CoreScanDB } from "../db.js";
-import { colorFromText, deriveImageQuery, searchImages, selectTopCandidates } from "./ddg-images.js";
+import { colorFromText, deriveImageQuery, isFreshCategory, selectTopCandidates } from "./ddg-images.js";
+import { pictureOptions } from "./picture-options.js";
 import { downloadCatalogImage } from "./enrich.js";
 import { mergeMeta, standingHints } from "./metadata.js";
 import { nameWithColor, tidyTruncatedName } from "./item-name.js";
@@ -260,7 +261,9 @@ export async function autoRankCatalogPhoto(opts: {
   if (!ctx.query) return { ranked: false, skipped: "nothing searchable" };
   if (!shouldAutoRank(row, ctx.query)) return { ranked: false, skipped: "guard" };
 
-  const pool = await searchImages(ctx.query, 24).catch(() => []);
+  const pool = (
+    await pictureOptions({ query: ctx.query, name: ctx.name, brand: ctx.brand, color: ctx.color, fresh: isFreshCategory(ctx.category), limit: 24 })
+  ).items;
   const candidates = selectTopCandidates(pool, ctx.brand, ctx.query, IMAGE_BUDGET, ctx.color);
   // One candidate is not a choice — applying it would be the plain heuristic
   // pick at the price of a vision call.

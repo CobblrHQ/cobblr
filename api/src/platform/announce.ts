@@ -11,7 +11,7 @@
 
 import { meta } from "../db/meta.js";
 import { read as readFile } from "./files.js";
-import { announceWebhookUrl } from "./announce-url.js";
+import { announceEditUrl, announceWebhookUrl } from "./announce-url.js";
 import { routeForGuild } from "./announce-routes.js";
 
 /** Known announcement categories + their human labels (for the config UI).
@@ -193,7 +193,19 @@ async function deliver(category: string, payload: AnnouncePayload, opts?: { wait
  *  `void announce(...)` and ignore it (non-blocking); the manual composer awaits
  *  it to report a real outcome. Returns false when the category is disabled, no
  *  webhook is configured, or Discord rejected the post. */
+/** Categories whose post is EDITED later, so posting one without keeping its
+ *  message id is a bug, not a choice. announce() refuses them; go through the
+ *  category's owner (feedback.new → routes/feedback-card-post.ts), which posts
+ *  and remembers in one step. */
+export const LIFECYCLE_CATEGORIES: ReadonlySet<string> = new Set(["feedback.new"]);
+
 export async function announce(category: string, payload: AnnouncePayload): Promise<boolean> {
+  if (LIFECYCLE_CATEGORIES.has(category)) {
+    // A fire-and-forget post of a card that must be edited later loses the only
+    // handle to it. This happened once and produced a second, unlinked card.
+    console.error(`[announce] ${category} must be posted through its owner, which keeps the message id — refusing a fire-and-forget post`);
+    return false;
+  }
   return (await deliver(category, payload)).delivered;
 }
 
@@ -298,4 +310,52 @@ export async function setAnnounceSetting(
       })),
     )
     .execute();
+}
+
+/** Rewrite a message this category's webhook already posted, in place.
+ *
+ *  One feedback item is one card. It used to be one card per STAGE — "New
+ *  feedback" at report time, "Feedback resolved" hours later, and reactions in
+ *  between — and the operator asked for a single message edited through its
+ *  life instead (2026-09-07). The comment in the bot that "a webhook message
+ *  can't be edited" was wrong: the webhook that posted it can, and this is the
+ *  API that holds the webhook. Routed by the same origin the post was, so the
+ *  edit goes to the webhook that owns the message. Never throws; false when the
+ *  category is off, no webhook is configured, the message is gone, or Discord
+ *  refused. */
+export async function editAnnouncement(
+  category: string,
+  ref: { messageId: string; originGuildId?: string | null },
+  payload: AnnouncePayload,
+): Promise<boolean> {
+  let cfg: { enabled: boolean; webhook: string };
+  try {
+    cfg = await settingsFor(category, ref.originGuildId);
+  } catch (err) {
+    console.error(`[announce] settings lookup failed for ${category} (edit):`, err);
+    return false;
+  }
+  if (!cfg.enabled || !cfg.webhook) return false;
+  const embed = {
+    title: payload.title.slice(0, 256),
+    description: payload.body ? payload.body.slice(0, 4000) : undefined,
+    color: payload.color,
+    fields: payload.fields?.slice(0, 10),
+  };
+  try {
+    const r = await fetch(announceEditUrl(cfg.webhook, ref.messageId), {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ embeds: [embed] }),
+    });
+    if (!r.ok) {
+      const detail = await r.text().catch(() => "");
+      console.error(`[announce] ${category} webhook EDIT failed: HTTP ${r.status} ${detail.slice(0, 300)}`);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error(`[announce] ${category} webhook EDIT threw (network):`, err);
+    return false;
+  }
 }
