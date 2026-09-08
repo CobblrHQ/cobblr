@@ -91,17 +91,80 @@ export async function listApplicable(
   // allowlist. Traits and fields still come from the instance's own record
   // above, so this widens who's eligible without flattening what they are.
   const matchKind = orgId ? await baseKindOf(orgId, kind) : kind;
-  return allActions
+  // The workspace's OWN field roles join the kind's native ones, so an action
+  // scoped by `hasFieldRole: "expiry"` appears on the table whose bundle marked
+  // a "Best before" field as expiry, and nowhere else. Without this, the
+  // matcher only ever saw the module's native fields, and the whole family of
+  // perishable verbs had to be scoped to the entire inventory kind.
+  const fields = orgId
+    ? withWorkspaceFieldRoles(kindRecord.fields, await workspaceFieldRoles(orgId, [kind, matchKind]))
+    : kindRecord.fields;
+  const applicable = allActions
     .map(rowToActionRecord)
     .filter((a) =>
       belongsOnEntity(
         a,
         overrides.get(a.id) ?? a.applies_to,
-        kindRecord.fields,
+        fields,
         matchKind,
         kindRecord.traits,
       ),
     );
+  return orderForRecord(applicable, matchKind.split(":")[0] ?? "");
+}
+
+/** The roles a workspace gave its own fields on a kind, from module_field_defs.
+ *  Instance kinds store defs under their own id; a bundle for the base kind
+ *  stores them under the base. Both are asked. */
+async function workspaceFieldRoles(orgId: string, kinds: string[]): Promise<string[]> {
+  try {
+    const rows = await meta
+      .selectFrom("module_field_defs")
+      .select("field_role")
+      .where("org_id", "=", orgId)
+      .where("entity_kind", "in", [...new Set(kinds)])
+      .where("field_role", "is not", null)
+      .execute();
+    return rows.map((r) => r.field_role).filter((r): r is string => typeof r === "string");
+  } catch (err) {
+    // A workspace whose defs cannot be read still gets its native actions;
+    // it just does not get the role-scoped ones, which is the safe direction.
+    console.error("[actions] workspace field roles lookup failed:", (err as Error).message);
+    return [];
+  }
+}
+
+/** Native fields plus one `{ role }` entry per workspace role, for the matcher. */
+export function withWorkspaceFieldRoles(
+  native: { role?: string }[],
+  roles: string[],
+): { role?: string }[] {
+  return roles.length === 0 ? native : [...native, ...roles.map((role) => ({ role }))];
+}
+
+/**
+ * The order a person sees on a record.
+ *
+ * The record's own module first, in the order it declared them; then every
+ * other module's, grouped by module, each in its declared order. Ties fall to
+ * the id so the result is stable.
+ *
+ * Until this existed the list was ordered by id, which is alphabetical by
+ * module name first: "core-maintenance:log" and "core-scan:…" led every
+ * inventory item and its own "use one" sat behind the fold (2026-09-08).
+ */
+export function orderForRecord<T extends { id: string; module_name: string; position: number }>(
+  actions: T[],
+  ownModule: string,
+): T[] {
+  return [...actions].sort((x, y) => {
+    const xo = x.module_name === ownModule ? 0 : 1;
+    const yo = y.module_name === ownModule ? 0 : 1;
+    if (xo !== yo) return xo - yo;
+    if (x.module_name !== y.module_name) return x.module_name < y.module_name ? -1 : 1;
+    if (x.position !== y.position) return x.position - y.position;
+    return x.id < y.id ? -1 : x.id > y.id ? 1 : 0;
+  });
 }
 
 /** Read the effective appliesTo for an action in an org's context.
@@ -278,6 +341,7 @@ function rowToActionRecord(row: {
   user_invokable?: boolean;
   args_schema?: unknown;
   version: string;
+  position?: number;
 }): EntityActionRecord {
   return {
     id: row.id,
@@ -287,6 +351,7 @@ function rowToActionRecord(row: {
     icon: row.icon,
     applies_to: (row.applies_to as ActionAppliesToDecl) ?? { any: true },
     scope: row.scope === "workspace" ? "workspace" : "entity",
+    position: row.position ?? 0,
     invoke_route: row.invoke_route,
     invoke_handler: row.invoke_handler,
     user_invokable: row.user_invokable ?? true,

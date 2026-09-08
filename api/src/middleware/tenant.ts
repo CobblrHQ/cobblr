@@ -44,6 +44,22 @@ declare module "express-serve-static-core" {
 
 const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
+/** Does a support ("View as") session refuse this request?
+ *
+ *  Exported so the promise can be tested directly. The guarantee is not "the
+ *  console hides the buttons" - it is that an operator looking at someone
+ *  else's workspace CANNOT change it unless write mode was deliberately armed.
+ *  A regression here is silent: reads keep working, and the first sign is an
+ *  edit nobody made appearing in a stranger's data.
+ *
+ *  Kept as a pure decision rather than an inline condition so the read set can
+ *  be pinned by name. Widening READ_METHODS is the realistic way this breaks -
+ *  PATCH looks harmless in a list of verbs until it is the one deleting rows.
+ */
+export function supportSessionRefuses(method: string, mode: string): boolean {
+  return !READ_METHODS.has(method) && mode !== "write";
+}
+
 /** True when a workspace request must be refused because the user still
  *  carries a temp/admin-set password (audit L-MUSTRESET). Reads (GET/HEAD)
  *  pass so the reset page can still load its data; every mutation is blocked
@@ -238,7 +254,7 @@ async function resolveImpersonatedTenant(
   // Read-only enforcement, server-side, before any handler: a mutating method
   // under a non-write session is refused. Buttons hidden in the UI are courtesy;
   // THIS is the guarantee.
-  if (!READ_METHODS.has(req.method) && sess.mode !== "write") {
+  if (supportSessionRefuses(req.method, sess.mode)) {
     res.status(403).json({ error: { code: "impersonation_read_only", message: "This is a read-only support session. Enable editing to make changes." } });
     return;
   }

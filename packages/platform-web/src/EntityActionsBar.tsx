@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { usePlatformWeb } from "./context";
 import { useInvokeEntityAction } from "./use-invoke-action";
 import { AskCobbAbout } from "./AskCobbAbout";
+import { HEADER_ACTION_IDS } from "./RecordHeaderChips";
 import type { PlatformAction, PlatformActionBinding } from "./types";
 
 interface Props {
@@ -21,9 +22,12 @@ interface Props {
    *  applicability — "disassemble only on a kit, not a plain brick" —
    *  must be decided by the owning page and passed down here. */
   excludeActionIds?: string[];
+  /** The page renders <RecordHeaderChips> beside the title, so the Cobb chip
+   *  and the label action live up there and this strip is verbs only. */
+  headerChips?: boolean;
 }
 
-export function EntityActionsBar({ entityKind, entityId, entityLabel, className, excludeActionIds }: Props) {
+export function EntityActionsBar({ entityKind, entityId, entityLabel, className, excludeActionIds, headerChips }: Props) {
   const { api, orgSlug } = usePlatformWeb();
   const { data } = useQuery({
     queryKey: ["platform-actions", orgSlug, entityKind],
@@ -44,14 +48,17 @@ export function EntityActionsBar({ entityKind, entityId, entityLabel, className,
     (a) =>
       !overriddenActionIds.has(a.id) &&
       a.user_invokable !== false &&
-      !excluded.has(a.id),
+      !excluded.has(a.id) &&
+      // Already beside the title when the page has a header; showing it here
+      // too would be the two-label-buttons problem this replaced.
+      !(headerChips && HEADER_ACTION_IDS.has(a.id)),
   );
   const visibleBindings = bindings.filter((b) => !excluded.has(b.action_id));
   // The Cobb button rides in the SAME cluster as the record's other actions,
   // and rides alone when there are none: a detail page with no actions is
   // still a record you might want to ask about, and it is the one place a
   // checkbox cannot say "this one" for you.
-  const ask = <AskCobbAbout kind={entityKind} id={entityId} label={entityLabel ?? "this"} />;
+  const ask = headerChips ? null : <AskCobbAbout kind={entityKind} id={entityId} label={entityLabel ?? "this"} />;
   // Every registered action for a kind lands here, and a kind with a rich
   // module behind it registers a lot: a ball of yarn showed sixteen shouting
   // chips ("confirm a parcel is in hand", "draft a purchase order") above its
@@ -64,7 +71,7 @@ export function EntityActionsBar({ entityKind, entityId, entityLabel, className,
     ...actions.map((a) => <ActionButton key={a.id} entityKind={entityKind} entityId={entityId} action={a} />),
   ];
   if (buttons.length === 0) {
-    return <div className={`flex flex-wrap gap-2 ${className ?? ""}`}>{ask}</div>;
+    return ask ? <div className={`flex flex-wrap gap-2 ${className ?? ""}`}>{ask}</div> : null;
   }
   const folded = !showAll && buttons.length > ACTIONS_IN_THE_OPEN + 1;
   const shown = folded ? buttons.slice(0, ACTIONS_IN_THE_OPEN) : buttons;

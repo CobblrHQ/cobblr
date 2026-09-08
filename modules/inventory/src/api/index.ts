@@ -68,6 +68,13 @@ platform().instances.registerMover("inventory", {
     `.execute(db);
     return r.rows.map((x) => x.metadata ?? {});
   },
+  async instancesOf(orgId, ids) {
+    const db = (await platform().tenants.getDb(orgId)) as Kysely<unknown>;
+    const r = await sql<{ instance: string }>`
+      select distinct instance from inventory_parts where id::text in (${sql.join(ids.map((i) => sql`${i}`))})
+    `.execute(db);
+    return r.rows.map((x) => x.instance);
+  },
   async move(_orgId, ids, from, to, db) {
     const trx = db as Kysely<unknown>;
     // `in (from, to)` rather than `= from`, so this is IDEMPOTENT. If the

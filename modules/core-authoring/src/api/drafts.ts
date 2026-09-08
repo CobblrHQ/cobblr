@@ -324,7 +324,11 @@ async function runBuild(
       try {
         const r = await platform().ai.invoke({
           orgId,
-          capability: "chat",
+          // Its OWN job, not chat's. A workspace can put building on a bigger
+          // model than it wants answering "how many M3 screws do I have", and
+          // see what it costs apart; the Google preset already defaults this
+          // one to the fuller model. See AiCapabilities in the contract.
+          capability: "design-workspace",
           // NOT constrained to an output schema, deliberately. The adapters can
           // take one (ollama `format`, OpenAI-compatible `response_format`) and
           // the wrapper schema exists (outputSchemaFor), but measured 2026-08-26

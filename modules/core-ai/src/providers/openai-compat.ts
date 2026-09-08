@@ -33,6 +33,7 @@ export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; default
   "extract-text": { models: ["default"], defaultModel: "default" },
   "match-to-catalog": { models: ["default"], defaultModel: "default" },
   "embed-text": { models: ["default"], defaultModel: "default" },
+  "design-workspace": { models: ["default"], defaultModel: "default" },
 };
 
 export function baseOf(credentials: Record<string, unknown>): string {
@@ -113,6 +114,14 @@ export interface CompatPresetOpts {
   /** A model to use when neither the call nor the connection names one. Lets a preset
    *  with a known-good default ship a blank, optional model field. */
   defaultModel?: string;
+  /** Per-JOB overrides of that default, for a preset whose provider prices or
+   *  rations models differently by how often a job runs. A workspace's own
+   *  choice still wins over both, and so does a model typed on the connection:
+   *  this only changes what "leave it blank" means for one job. Google's free
+   *  tier is the case it exists for - the fuller model allows 20 requests a
+   *  day against Lite's 500, which is useless for chat and right for a builder
+   *  someone runs twice. */
+  modelForCapability?: Partial<Record<AiCapability, string>>;
   /** Step-by-step for getting this provider's credentials, shown in the UI. */
   setup?: AiProviderDef["setup"];
   /** Position in the picker; lower first, and first is the default. */
@@ -137,7 +146,11 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
     promptFingerprint,
     invoke: async (ctx) => {
       const base = resolveBase(ctx.credentials);
-      const model = effectiveModel(ctx.model, ctx.credentials, opts.defaultModel);
+      const model = effectiveModel(
+        ctx.model,
+        ctx.credentials,
+        opts.modelForCapability?.[ctx.capability] ?? opts.defaultModel,
+      );
       if (opts.requireModel && (!model || model === "default")) {
         throw new Error(`${id}: set a model on the connection (e.g. anthropic/claude-sonnet-5)`);
       }

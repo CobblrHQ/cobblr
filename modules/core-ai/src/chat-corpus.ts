@@ -40,6 +40,12 @@ export type NoAiExpect =
 
 export interface CorpusCase {
   say: string;
+  /** The screen this is said ON, when the sentence needs one to mean anything.
+   *  "save this as a board" has no "this" without it, and the app always sends
+   *  one (page-context.ts); a bench that did not was asking the model to
+   *  resolve a pronoun with no referent, then scoring the honest answer as a
+   *  miss. Only for sentences that genuinely depend on it. */
+  on?: { label: string; summary?: string };
   /** Broad bucket, for coverage reporting. */
   cat: string;
   no_ai: NoAiExpect;
@@ -56,6 +62,17 @@ const command = { kind: "command" } as const;
 /** Expand one intent into its phrasings. */
 function ph(cat: string, no_ai: NoAiExpect, ai: string, says: string[]): CorpusCase[] {
   return says.map((say) => ({ say, cat, no_ai, ai }));
+}
+
+/** The same, for sentences that only mean something on a particular screen. */
+function onScreen(
+  cat: string,
+  no_ai: NoAiExpect,
+  ai: string,
+  on: { label: string; summary?: string },
+  says: string[],
+): CorpusCase[] {
+  return says.map((say) => ({ say, cat, no_ai, ai, on }));
 }
 
 export const CHAT_CORPUS: CorpusCase[] = [
@@ -226,7 +243,11 @@ export const CHAT_CORPUS: CorpusCase[] = [
   ...ph("workshop", neverOffer, "action:core-tags:untag-record{tag_name=fragile}", [
     "take the fragile tag off the Kossel Mini",
   ]),
-  ...ph("workshop", neverOffer, "action:core-discussion:post-comment{body=nozzle}", [
+  // A note about a machine needing a part is a comment on it or a maintenance
+  // entry about it; the workspace records it either way, and the twin phrasing
+  // below already accepted both. Judging the same intent by two different
+  // claims made the nightly report a good answer as a miss for a week.
+  ...ph("workshop", neverOffer, "action:core-discussion:post-comment{body=nozzle}|action:core-maintenance:log{name=nozzle}", [
     "leave a note on the X1 Carbon that it needs a new nozzle",
   ]),
   ...ph("workshop", neverOffer, "action:core-discussion:post-comment{body=belt}", [
@@ -258,11 +279,25 @@ export const CHAT_CORPUS: CorpusCase[] = [
   ...ph("workshop", neverOffer, "action:platform:disable-module{module=shipments}", [
     "turn off shipments",
   ]),
-  ...ph("workshop", neverOffer, "action:platform:set-simple-mode", [
+  // Both of these are said AT a screen, and mean nothing without one.
+  ...onScreen("workshop", neverOffer, "action:platform:set-simple-mode", { label: "Machines" }, [
     "this is too cluttered, simplify it",
   ]),
-  ...ph("workshop", neverOffer, "action:core-views:save-view", [
-    "save this as a board",
+  ...onScreen(
+    "workshop",
+    neverOffer,
+    "action:core-views:save-view",
+    { label: "Machines", summary: "14 machines, filtered to status = idle, sorted by name" },
+    ["save this as a board"],
+  ),
+  // Reported twice from the product, with screenshots, before there was any
+  // way to do it: once Cobb created a second copy of two items and said it had
+  // moved them, once it proposed deleting them. The no-AI path takes this one
+  // now (computed:move-into-list), and platform:move-records is what either
+  // path runs.
+  ...ph("workshop", command, "action:platform:move-records", [
+    "move all the tea from this page into the Tea section",
+    "move the tea into the Tea list",
   ]),
   ...ph("workshop", answer("my-data"), "read:count_records", [
     "which printer do I have the most of?", "how many machines do I have?",

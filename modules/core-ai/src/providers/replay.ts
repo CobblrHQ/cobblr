@@ -62,6 +62,7 @@ interface Cassette {
 
 const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
   chat: { models: ["replay"], defaultModel: "replay" },
+  "design-workspace": { models: ["replay"], defaultModel: "replay" },
   summarise: { models: ["replay"], defaultModel: "replay" },
   "classify-image": { models: ["replay"], defaultModel: "replay" },
   "extract-text": { models: ["replay"], defaultModel: "replay" },

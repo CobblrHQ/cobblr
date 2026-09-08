@@ -30,8 +30,37 @@ import {
   localToday,
   type Batch,
 } from "../batches.js";
+import { observation, swapFreshObservations, type StockObservation } from "../observations.js";
 
 let registered = false;
+
+/** Tell whoever keeps a consumption ledger what a tap MEANT (observations.ts).
+ *  Announced, not called: emit() never rejects, and a workspace without a
+ *  ledger hears nothing. Only after the stock change actually happened; an
+ *  externally tracked item that skipped the change announces nothing. */
+/**
+ * Does this record go off?
+ *
+ * The one question the merged verbs ask. "Used up" ends a lot on a perishable
+ * and empties a bin otherwise; "Replaced" swaps a fresh lot in or stamps a
+ * spare. Read off the record's own metadata, not the table's configuration,
+ * because that is what the lot bookkeeping itself reads: an expiry date, lots
+ * dated on arrival, or a shelf life it has learned or been given.
+ */
+export function isPerishable(metadata: unknown): boolean {
+  const md = (metadata as Record<string, unknown> | null) ?? {};
+  if (typeof md.expires_on === "string" && md.expires_on) return true;
+  if (Array.isArray(md.batches) && md.batches.length > 0) return true;
+  if (typeof md.shelf_life_days === "number" && md.shelf_life_days > 0) return true;
+  return false;
+}
+
+async function announce(orgId: string, userId: string | null | undefined, applied: Record<string, unknown>, obs: StockObservation[]): Promise<void> {
+  if (applied.ok !== true || applied.skipped) return;
+  for (const o of obs) {
+    await platform().events.emit("inventory.stock.observed", { orgId, userId: userId ?? null, ...o });
+  }
+}
 
 interface AdjustStockPayload {
   partId?: string;
@@ -315,7 +344,7 @@ async function withBatches(
     // Always the OLDEST lot. It is the one the warning named, so taking from
     // anywhere else would leave the warning standing after the user did what it
     // asked - and once that lot empties the deadline moves on by itself.
-    return withBatches(
+    const applied = await withBatches(
       ctx.orgId,
       partId,
       "used one",
@@ -323,6 +352,8 @@ async function withBatches(
       (batches) => consumeOldest(batches, 1).batches,
       { ...(tz ? { timezone: tz } : {}) },
     );
+    await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "consume", -1)]);
+    return applied;
   });
 
   // Restock one: another arrived today, good until its own date. NOT qty + 1 -
@@ -333,7 +364,7 @@ async function withBatches(
     const partId = ctx.entity?.id ?? args.partId;
     if (!partId) return { ok: false, error: "missing_part" };
     const add = Math.max(1, Math.trunc(Number(args.qty ?? 1)));
-    return withBatches(
+    const applied = await withBatches(
       ctx.orgId,
       partId,
       "restocked one",
@@ -350,6 +381,54 @@ async function withBatches(
       },
       { ...(args.timezone ? { timezone: args.timezone } : {}) },
     );
+    await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "purchase", add)]);
+    return applied;
+  });
+
+  // Replaced with a fresh one: the old box is finished and an identical new
+  // one arrived, in one tap. The count does not move (so nothing trips the
+  // running-low wire on the way through), the old lot ends as "used" and
+  // teaches its floor, the new lot is dated today, and the ledger hears one
+  // consumed and one bought - which is exactly how it learns the interval.
+  async function swapFresh(
+    orgId: string,
+    userId: string | null | undefined,
+    partId: string,
+    timezone: string | undefined,
+  ): Promise<Record<string, unknown>> {
+    const args = { timezone };
+    const ctx = { orgId, userId };
+    const applied = await withBatches(
+      ctx.orgId,
+      partId,
+      "replaced with a fresh one",
+      0,
+      (batches, { today, shelfLifeDays }) => {
+        const expires = expiryFor(today, shelfLifeDays);
+        return addBatch(consumeOldest(batches, 1).batches, {
+          received_on: today,
+          expires_on: expires ?? "",
+          qty: 1,
+        });
+      },
+      { ...(args.timezone ? { timezone: args.timezone } : {}) },
+    );
+    if (applied.ok !== true) return applied;
+    // withBatches skipped the stock write (delta 0) and says so; the swap is
+    // still a real event, so the "skipped" is not passed on.
+    const { skipped: _skipped, reason: _reason, ...rest } = applied;
+    await announce(ctx.orgId, ctx.userId, { ok: true }, swapFreshObservations(partId));
+    return { ...rest, ok: true, swapped: 1 };
+  }
+
+  // Wire-only alias now: the button is "Replaced", which comes here for a
+  // perishable. Kept so a wire or the assistant saying "swapped in a new box"
+  // still lands.
+  platform().actions.registerHandler("inventory.swap-fresh", async (ctx) => {
+    const args = (ctx.args as { partId?: string; timezone?: string } | null) ?? {};
+    const partId = ctx.entity?.id ?? args.partId;
+    if (!partId) return { ok: false, error: "missing_part" };
+    return swapFresh(ctx.orgId, ctx.userId, partId, args.timezone);
   });
 
 
@@ -485,7 +564,9 @@ async function withBatches(
     const args = (ctx.args as { partId?: string; timezone?: string } | null) ?? {};
     const partId = ctx.entity?.id ?? args.partId;
     if (!partId) return { ok: false, error: "missing_part" };
-    return endOldestLot(ctx.orgId, partId, "used", args.timezone, "finished it");
+    const applied = await endOldestLot(ctx.orgId, partId, "used", args.timezone, "finished it");
+    await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "consume", -1)]);
+    return applied;
   });
 
   // Threw it out: it went bad. THE measurement, and the only thing that ever
@@ -495,25 +576,39 @@ async function withBatches(
     const args = (ctx.args as { partId?: string; timezone?: string } | null) ?? {};
     const partId = ctx.entity?.id ?? args.partId;
     if (!partId) return { ok: false, error: "missing_part" };
-    return endOldestLot(ctx.orgId, partId, "spoiled", args.timezone, "threw it out");
+    const applied = await endOldestLot(ctx.orgId, partId, "spoiled", args.timezone, "threw it out");
+    await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "discard", -1)]);
+    return applied;
   });
 
   // Used up: it's gone (tossing the empty). Drive on-hand to 0 in one tap —
   // no "how many left?" guess. Reads current qty and deltas it to zero so the
   // ledger + low-stock path stay uniform; a no-op if already 0.
   platform().actions.registerHandler("inventory.use-up", async (ctx) => {
-    const partId = ctx.entity?.id ?? (ctx.args as { partId?: string } | null)?.partId;
+    const args = (ctx.args as { partId?: string; timezone?: string } | null) ?? {};
+    const partId = ctx.entity?.id ?? args.partId;
     if (!partId) return { ok: false, error: "missing_part" };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
     const row = await db
       .selectFrom("inventory_parts")
-      .select(["qty"])
+      .select(["qty", "metadata"])
       .where("id", "=", partId)
       .executeTakeFirst();
     if (!row) return { ok: false, error: "part_not_found" };
+    // ONE button for the end of a thing. "Used up" and "Finished it" were two
+    // chips for one gesture; the difference between them is a property of the
+    // RECORD (does it go off?), so the record decides. A perishable ends its
+    // oldest lot and learns from how long it lasted; plain stock just empties.
+    if (isPerishable(row.metadata)) {
+      const applied = await endOldestLot(ctx.orgId, partId, "used", args.timezone, "used up");
+      await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "consume", -1)]);
+      return applied;
+    }
     const cur = Number(row.qty);
     if (!(cur > 0)) return { ok: true, partId, delta: 0, newQty: cur, note: "already empty" };
-    return applyStockDelta(ctx.orgId, { partId, delta: -cur, reason: "used up" });
+    const applied = await applyStockDelta(ctx.orgId, { partId, delta: -cur, reason: "used up" });
+    await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "consume", -cur)]);
+    return applied;
   });
 
   // ───────── Replaced (P2 — the replace-clock's one tap) ─────────
@@ -524,9 +619,21 @@ async function withBatches(
   // shared decrement) trips stock.low → shopping list if you're now short. So
   // "Replaced" = reset + consume-spare + maybe-reorder, in one tap.
   platform().actions.registerHandler("inventory.replaced", async (ctx) => {
-    const partId = ctx.entity?.id ?? (ctx.args as { partId?: string } | null)?.partId;
+    const args = (ctx.args as { partId?: string; timezone?: string } | null) ?? {};
+    const partId = ctx.entity?.id ?? args.partId;
     if (!partId) return { ok: false, error: "missing_part" };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
+    // Same rule as use-up: one button, the record decides. A perishable swaps
+    // a fresh lot in (what swap-fresh does); a durable stamps the replacement
+    // and consumes a spare.
+    const current = await db
+      .selectFrom("inventory_parts")
+      .select(["metadata"])
+      .where("id", "=", partId)
+      .executeTakeFirst();
+    if (current && isPerishable(current.metadata)) {
+      return swapFresh(ctx.orgId, ctx.userId, partId, args.timezone);
+    }
     // Reset the clock: merge last_replaced_at into metadata (jsonb, wholesale-
     // safe merge so other keys survive).
     const nowIso = new Date().toISOString();

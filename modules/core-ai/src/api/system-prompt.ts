@@ -21,6 +21,9 @@ import { renderKindLines, anyHiddenFields, HIDDEN_FIELDS_RULE } from "./kind-lin
 import { renderEntityActions, renderWorkspaceActions, RAIL_LOOKUP_NOTE, type RailMode } from "./action-rail.js";
 import { appSurfacePrompt } from "./app-surface.js";
 import { GROUNDING_RULES, PLAIN_ANSWER_RULES, TOOL_USE_RULES } from "./prompt-rules.js";
+import { pageContextLine } from "../page-context.js";
+import { selectionLine } from "../selection-line.js";
+import { suggestionLine } from "../suggestion-line.js";
 
 /** The tool-less JSON shapes: how a model with NO tool calling expresses a
  *  move. Handed to a model that HAS tools it is a contradiction - "prefer the
@@ -64,6 +67,41 @@ export interface PromptOptions {
   /** Send the tool-less JSON shapes. Default true; a caller that knows the
    *  model has tools passes false and lets the tools be the only way to act. */
   jsonFallback?: boolean;
+  /** The screen the user is on, and what it is showing. */
+  context?: { label: string; summary?: string };
+  /** What the user has ticked or highlighted on it. */
+  selection?: { label: string; kind?: string; ids?: string[]; text?: string };
+  /** The tool consent this chat is running under, when it is not the default.
+   *  A model told it may read must not be the same prompt as one that may not. */
+  consent?: { read_tools: boolean; write_mode: "off" | "ask" | "auto" };
+  /** What the no-AI path would have done with this sentence, if anything. */
+  suggestion?: { template: string; summary: string; operations: number };
+}
+
+/** The consent the user has set for this chat, as a sentence. */
+export function consentLine(prefs?: { read_tools: boolean; write_mode: "off" | "ask" | "auto" }): string {
+  if (!prefs) return "";
+  if (prefs.write_mode === "auto") {
+    return `\n\nAUTO MODE: your record creates/updates/deletes apply IMMEDIATELY (every change is tracked and the user can undo it) — report what you did plainly. Actions still require the user's confirm.`;
+  }
+  if (prefs.read_tools && prefs.write_mode !== "off") return "";
+  const off =
+    !prefs.read_tools && prefs.write_mode === "off"
+      ? "workspace reading AND change proposals"
+      : !prefs.read_tools
+        ? "workspace reading (do not claim to know their data)"
+        : "change proposals (answer + explain, but do not propose creates/updates/actions)";
+  return `\n\nCONSENT: the user has turned OFF ${off} for this chat. Respect that; if they ask for something it blocks, tell them about the toggles at the top of the chat.`;
+}
+
+/** Where the user is and what they are pointing at. Exported so the degraded
+ *  fallback prompt says the same thing as the real one: two hand-written
+ *  copies of a situational rule is how the bench ended up measuring a prompt
+ *  the app does not send. */
+export function situationalSuffix(opts: PromptOptions): string {
+  return `${pageContextLine(opts.context)}${selectionLine(opts.selection)}${consentLine(opts.consent)}${
+    opts.suggestion ? suggestionLine(opts.suggestion) : ""
+  }`;
 }
 
 export async function buildSystemPrompt(
@@ -187,5 +225,5 @@ ${railMode === "full" ? "" : RAIL_LOOKUP_NOTE}
 
 ${TOOL_USE_RULES}
 
-${jsonShapes}`;
+${jsonShapes}${situationalSuffix(opts)}`;
 }

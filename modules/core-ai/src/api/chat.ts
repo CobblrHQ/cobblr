@@ -10,15 +10,17 @@
 
 import { Router, type Response } from "express";
 import { humanizeProviderError } from "./provider-error.js";
-import { missingActionArgs } from "./action-args-guard.js";
+import { missingActionArgs, reconcileActionArgs } from "./action-args-guard.js";
+import { groundingNudgeFor } from "./groundless-answer.js";
+import { movedNotCreated } from "./move-not-create.js";
+import { misreportedWrites } from "./reported-truthfully.js";
+import { describedInsteadOfActing } from "./act-dont-describe.js";
 import { escortCoveredByAction, resolveActionId, ESCORT_COVERAGE } from "./act-dont-escort.js";
-import { buildSystemPrompt, type PromptWorkspace } from "./system-prompt.js";
+import { buildSystemPrompt, situationalSuffix, type PromptWorkspace, type PromptOptions } from "./system-prompt.js";
 import { GROUNDING_RULES, PLAIN_ANSWER_RULES, TOOL_USE_RULES } from "./prompt-rules.js";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { matchCommand } from "./basics.js";
-import { selectionLine } from "../selection-line.js";
-import { suggestionLine } from "../suggestion-line.js";
 import { tenantContext, sessionUserId, sessionDisplayName, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import {
@@ -250,9 +252,19 @@ interface Move {
 
 
 
+/** Every action's user-facing name, memoised beside the arg schemas. */
+async function actionLabels(c: Ctx): Promise<string[]> {
+  const hit = argsSchemaCache.get(c.slug);
+  if (!hit || Date.now() - hit.at > 60_000) await actionArgsSchema(c, "");
+  return argsSchemaCache.get(c.slug)?.labels ?? [];
+}
+
 /** An action's declared arguments, from the registry, memoised per workspace
  *  for a minute: the guard above asks once per invoke, not once per turn. */
-const argsSchemaCache = new Map<string, { at: number; byId: Map<string, Record<string, { label?: string; type?: string }>> }>();
+const argsSchemaCache = new Map<
+  string,
+  { at: number; byId: Map<string, Record<string, { label?: string; type?: string }>>; labels: string[] }
+>();
 /** Every action id this workspace has, memoised beside the arg schemas. */
 async function actionIds(c: Ctx): Promise<string[] | null> {
   const hit = argsSchemaCache.get(c.slug);
@@ -268,8 +280,17 @@ async function actionArgsSchema(c: Ctx, actionId: string): Promise<Record<string
   if (!hit || Date.now() - hit.at > 60_000) {
     try {
       const reg = await callApi(c, "GET", "/registered-actions");
-      const items = (reg.body.items as Array<{ id: string; args_schema?: Record<string, { label?: string; type?: string }> | null }> | undefined) ?? [];
-      argsSchemaCache.set(c.slug, { at: Date.now(), byId: new Map(items.map((a) => [a.id, a.args_schema ?? {}])) });
+      const items =
+        (reg.body.items as
+          | Array<{ id: string; label?: string; args_schema?: Record<string, { label?: string; type?: string }> | null }>
+          | undefined) ?? [];
+      argsSchemaCache.set(c.slug, {
+        at: Date.now(),
+        byId: new Map(items.map((a) => [a.id, a.args_schema ?? {}])),
+        // The user-facing names, for the act-don't-describe guard: a reply
+        // that names one of these found the action and wrote about it.
+        labels: items.map((a) => a.label ?? "").filter(Boolean),
+      });
     } catch {
       return null;
     }
@@ -430,18 +451,6 @@ const ChatBody = z.object({
     .optional(),
 });
 
-/** The system-prompt line telling Cobb what screen the user is on, for
- *  situational relevance. Empty when no context. Pure — the injection point is
- *  one call, so it can't silently drift. */
-export function pageContextLine(context?: { label: string; summary?: string }): string {
-  if (!context?.label) return "";
-  const showing = context.summary ? ` Currently showing: ${context.summary}.` : "";
-  return (
-    `\n\nCURRENT VIEW: the user is looking at the "${context.label}" screen.${showing} ` +
-    `Use this for situational relevance — you may lead with or reference what they're looking at — ` +
-    `but still answer their ACTUAL question: if they ask about the whole workspace, answer workspace-wide, not just this screen.`
-  );
-}
 
 /** Everything a chat turn does after the request is validated: run the
  *  agent loop, turn the outcome into the response the widget renders.
@@ -472,18 +481,9 @@ async function runTurn(
   // model sees, and (below) whether legacy JSON-move writes may propose.
   const prefs = await chatPrefsOf(req);
   const toolDefs = toolDefsFor(prefs);
-  if (!prefs.read_tools || prefs.write_mode === "off") {
-    system += `\n\nCONSENT: the user has turned OFF ${
-      !prefs.read_tools && prefs.write_mode === "off"
-        ? "workspace reading AND change proposals"
-        : !prefs.read_tools
-          ? "workspace reading (do not claim to know their data)"
-          : "change proposals (answer + explain, but do not propose creates/updates/actions)"
-    } for this chat. Respect that; if they ask for something it blocks, tell them about the toggles at the top of the chat.`;
-  }
-  if (prefs.write_mode === "auto") {
-    system += `\n\nAUTO MODE: your record creates/updates/deletes apply IMMEDIATELY (every change is tracked and the user can undo it) — report what you did plainly. Actions still require the user's confirm.`;
-  }
+  // The consent + auto-mode sentences ride in the prompt the caller built
+  // (system-prompt.ts consentLine): a prompt assembled in two places is one
+  // that differs between callers, and lint:one-system-prompt says so.
   // AUTO mode: record CRUD applies immediately through the ledger (undoable);
   // actions return null → still proposed. Hard cap per turn.
   const AUTO_WRITE_CAP = 10;
@@ -546,7 +546,12 @@ async function runTurn(
         return result;
       },
       isWrite: (name) => WRITE_NAMES.has(name),
-      validateWrite: async (call) => {
+      validateWrite: async (call, seenNames) => {
+        // Asked to MOVE something and about to create a second copy of a
+        // record it has just been shown. Caught here, before the write, so
+        // nothing has to be undone. See move-not-create.ts.
+        const dup = movedNotCreated(askedFor, call, seenNames);
+        if (dup) return dup;
         if (call.name !== "invoke_action") return null;
         const a = call.args ?? {};
         const typed = String(a.action_id ?? "");
@@ -556,8 +561,32 @@ async function runTurn(
         // place rather than refusing the turn.
         const real = resolveActionId(typed, (await actionIds(c)) ?? []);
         if (real && real !== typed) a.action_id = real;
-        return missingActionArgs(real ?? typed, await actionArgsSchema(c, real ?? typed), a.args);
+        const schema = await actionArgsSchema(c, real ?? typed);
+        // Right action, right value, its own name for the argument
+        // ({name: "shipments"} for {module}). Corrected in place, like the id
+        // above - the user still confirms the proposal either way.
+        const fixed = reconcileActionArgs(schema, a.args);
+        if (fixed) a.args = fixed.args;
+        return missingActionArgs(real ?? typed, schema, a.args);
       },
+      // Only where there is something to look WITH. A chat whose owner turned
+      // workspace reading off has no read tools, and telling that model to
+      // call one is telling it to do the thing they just forbade. A provider
+      // with no tool-calling at all is the same story from the other side: it
+      // answers by writing the JSON move the app parses into a proposal, and
+      // there is no tool for it to reach for either.
+      ...(prefs.read_tools && toolDefs.length > 0 ? { groundingNudge: groundingNudgeFor } : {}),
+      // The answer has to match the ledger: a turn that only created things
+      // cannot say it moved them. See reported-truthfully.ts.
+      reportCheck: (_said, reply, appliedTools) => misreportedWrites(reply, appliedTools),
+      // The mirror: an instruction answered by naming the action instead of
+      // running it. Needs a write tool to exist for the answer to be "run it".
+      ...(prefs.write_mode !== "off" && toolDefs.length > 0
+        ? {
+            actNudge: async (said: string, reply: string, reads: string[]) =>
+              describedInsteadOfActing(said, reply, await actionLabels(c), reads.includes("list_actions")),
+          }
+        : {}),
       ...(onEvent ? { onEvent } : {}),
       ...(prefs.write_mode === "auto"
         ? {
@@ -784,39 +813,46 @@ chatRouter.post(
     // same two), 30% smaller. Dropping the DESCRIPTIONS as well is a further
     // 68% smaller and loses 12 points, so descriptions stay.
     const promptPrefs = await chatPrefsOf(req).catch(() => DEFAULT_PREFS);
+    // What the free path would have done with this sentence, if anything.
+    // Asked before the prompt is built, so it can ride INSIDE it: this is the
+    // same match the offer strip uses, and asking the client would use an
+    // offer that may be stale by now. A suggestion is a nicety; a turn must
+    // not fail for want of one.
+    const suggestion = await matchCommand(
+      tenantDb(req),
+      String([...parsed.data.messages].reverse().find((m) => m.role === "user")?.content ?? ""),
+      tenantContext(req).org.id,
+      {
+        wsApi: chatWorkspaceApi(c),
+        ...(parsed.data.selection?.ids?.length ? { selectionIds: parsed.data.selection.ids } : {}),
+      },
+    )
+      .then((hit) =>
+        hit
+          ? {
+              template: hit.template,
+              summary: hit.summary ?? `${hit.operations.length} changes`,
+              operations: hit.operations.length,
+            }
+          : undefined,
+      )
+      .catch(() => undefined);
+    const situational: PromptOptions = {
+      consent: promptPrefs,
+      ...(parsed.data.context ? { context: parsed.data.context } : {}),
+      ...(parsed.data.selection ? { selection: parsed.data.selection } : {}),
+      ...(suggestion ? { suggestion } : {}),
+    };
     let system: string;
     try {
-      system = await buildSystemPrompt(promptWorkspace(c), promptPrefs.read_tools ? "brief" : "full");
+      system = await buildSystemPrompt(promptWorkspace(c), promptPrefs.read_tools ? "brief" : "full", situational);
     } catch {
-      system = `You are Cobb, the helpful assistant inside the "${c.orgName}" Cobblr workspace. Introduce yourself as Cobb if asked.${c.userName ? ` You are talking to ${c.userName}.` : ""} Chat helpfully; reply with {"type":"reply","text":"..."}.`;
+      // The degraded prompt still says where the user is: situationalSuffix is
+      // the one definition of those sentences.
+      system =
+        `You are Cobb, the helpful assistant inside the "${c.orgName}" Cobblr workspace. Introduce yourself as Cobb if asked.${c.userName ? ` You are talking to ${c.userName}.` : ""} Chat helpfully; reply with {"type":"reply","text":"..."}.` +
+        situationalSuffix(situational);
     }
-    // Situational awareness: what screen is the user on right now?
-    system += pageContextLine(parsed.data.context);
-    system += selectionLine(parsed.data.selection);
-    // What the free path would have done, if anything. Asked here rather than
-    // sent by the client: the client's offer may be stale by now, and this is
-    // the same match the offer strip uses.
-    try {
-      const hit = await matchCommand(
-        tenantDb(req),
-        String([...parsed.data.messages].reverse().find((m) => m.role === "user")?.content ?? ""),
-        tenantContext(req).org.id,
-        {
-          wsApi: chatWorkspaceApi(c),
-          ...(parsed.data.selection?.ids?.length ? { selectionIds: parsed.data.selection.ids } : {}),
-        },
-      );
-      if (hit) {
-        system += suggestionLine({
-          template: hit.template,
-          summary: hit.summary ?? `${hit.operations.length} changes`,
-          operations: hit.operations.length,
-        });
-      }
-    } catch {
-      // A suggestion is a nicety; a turn must not fail for want of one.
-    }
-
     // ── The turn ─────────────────────────────────────────────────────────
     // `?mode=turn` (the widget from now on): create a persisted turn, run the
     // loop DETACHED, and return the id at once. The widget subscribes to

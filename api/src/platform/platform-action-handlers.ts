@@ -9,12 +9,13 @@
 // services require ("Purchase Date" → purchase_date, "dropdown" → text with
 // choices), and refusing with a sentence instead of a zod issue list.
 
-import { isFieldScope, pluralise, type ActionInvokeContext } from "@cobblr/platform-contract";
+import { isFieldScope, pluralise, readListArg, type ActionInvokeContext } from "@cobblr/platform-contract";
 import { matchByLabel, splitNames } from "@cobblr/platform-contract/said-names";
 import { disableModuleForOrg, enableModuleForOrg } from "../modules/enable.js";
 import { listEntries } from "../modules/registry.js";
 import { meta } from "../db/meta.js";
 import { registerHandler } from "./actions.js";
+import { getMover, instancesHolding, moveRecords } from "./move-records.js";
 import * as activity from "./activity.js";
 import { upsertNativeFieldOverride } from "./native-field-overrides.js";
 import { USER_SOURCE, recordClaim } from "./bundle-claims.js";
@@ -601,6 +602,62 @@ export function registerPlatformActionHandlers(): void {
       };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : "couldn't promote that category" };
+    }
+  });
+
+  // Moving records between lists.
+  //
+  // The capability was already here and complete - a column flip plus every
+  // reference that stored the old kind beside the id (tags, files, QR tokens,
+  // activity), with a preview - and it was reachable only from the records
+  // screen. The assistant had no way to do it at all, so asked to move the tea
+  // on a page into the Tea list it improvised: one day it created a second
+  // copy of each and said it had moved them, the next it proposed deleting
+  // them (2026-09-08, reported twice with screenshots). Neither is a bug in
+  // its judgement so much as the absence of a right answer to reach for.
+  registerHandler("platform.move-records", async (ctx: ActionInvokeContext) => {
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    // A list arg arrives as a real array from invoke_action and as delimited
+    // text from a wire's text box; readListArg is the one reader for both.
+    const ids = readListArg(args, "ids");
+    const toSaid = str(args.to);
+    if (!toSaid) return { ok: false, error: "to (the list to move them into) is required" };
+    if (ids.length === 0) {
+      return { ok: false, error: "ids are required - read the records first and pass their real ids, never their names" };
+    }
+    const to = await findInstance(ctx.orgId, toSaid);
+    if ("error" in to) return { ok: false, error: to.error };
+    // `from` is a courtesy, not a requirement: a person saying "put these in
+    // Tea" has said everything that matters, and the records themselves know
+    // where they are. Given, it is checked, because a wrong `from` is the one
+    // way this could move something nobody meant.
+    const fromSaid = str(args.from);
+    let from: { name: string; label: string; module: string };
+    if (fromSaid) {
+      const f = await findInstance(ctx.orgId, fromSaid);
+      if ("error" in f) return { ok: false, error: f.error };
+      from = f;
+    } else {
+      const found = await instancesHolding(ctx.orgId, to.module, ids);
+      if ("error" in found) return { ok: false, error: found.error };
+      from = { name: found.instance, label: found.instance, module: to.module };
+    }
+    if (from.name === to.name) {
+      return { ok: true, summary: `Already in ${to.label}.`, data: { moved: 0 } };
+    }
+    if (!getMover(from.module)) {
+      return { ok: false, error: `${from.module} records cannot be moved between lists.` };
+    }
+    try {
+      const result = await moveRecords(ctx.orgId, from.module, ids, from.name, to.name);
+      const n = result.moved.length;
+      return {
+        ok: true,
+        summary: n === 1 ? `Moved 1 record into ${to.label}.` : `Moved ${n} records into ${to.label}.`,
+        data: { moved: n, to: to.name, from: from.name, carried: result.fieldsCarried },
+      };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : "couldn't move those" };
     }
   });
 

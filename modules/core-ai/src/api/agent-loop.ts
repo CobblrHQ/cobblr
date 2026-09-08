@@ -54,7 +54,23 @@ export interface AgentLoopDeps {
    *  or null to let the call through. The nightly bench found the model
    *  picking the right action and dropping its arguments four times in one
    *  run (2026-09-03); this is the platform's answer, not a longer prompt. */
-  validateWrite?(call: ToolCall): Promise<string | null> | string | null;
+  validateWrite?(call: ToolCall, seenNames: ReadonlyMap<string, string>): Promise<string | null> | string | null;
+  /** The turn applied writes and the answer describes them. Return a message
+   *  to hand back when the description does not match what actually ran - a
+   *  turn that only created things cannot say it moved them. Given the tool
+   *  names that were applied, in order. See reported-truthfully.ts. */
+  reportCheck?(userText: string, reply: string, appliedTools: string[]): string | null;
+  /** A plain answer, given without a single read, to a question that named
+   *  something this workspace could hold. Return the message to hand back;
+   *  the model then either looks it up or says what it is basing the answer
+   *  on. Fires at most once a turn, and only while nothing has been read - a
+   *  model that looked and then answered has grounded itself. See
+   *  groundless-answer.ts for why this is a guard and not a prompt line. */
+  groundingNudge?(userText: string, reply: string): string | null;
+  /** The mirror of it: an INSTRUCTION answered in prose after the model went
+   *  looking, naming the very action that would have done it. Handed back once
+   *  so it can run the thing it found. See act-dont-describe.ts. */
+  actNudge?(userText: string, reply: string, reads: string[]): Promise<string | null> | string | null;
   /** Progress, as it happens. Optional so every existing caller and test is
    *  unchanged; the chat route passes one to feed the persisted turn log, which
    *  is what lets a widget show "reading your locations…" instead of nothing
@@ -160,6 +176,19 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
   };
 
   let nudgedForSilence = false;
+  // ONE hand-back per turn between the two reply guards. They cannot both
+  // apply (one wants nothing read, the other wants something read), but a turn
+  // bounced twice for its prose is a turn that argues with the user.
+  let nudgedForReply = false;
+  // Checked once, and separately from the reply guards above: whether the
+  // answer DESCRIBES the writes correctly is a different question from whether
+  // it should have written at all.
+  let nudgedForReport = false;
+  let readsDone = 0;
+  /** Which read tools ran this turn - the act guard treats "asked what it
+   *  could do, then described it" as the same evidence as naming the action. */
+  const readNames: string[] = [];
+  const lastUserSaid = [...turns].reverse().find((t) => t.role === "user")?.content ?? "";
   // Every id the tools handed back, with what it is called. The answer is
   // scrubbed of ids before it reaches a person (scrub-ids.ts); knowing the
   // names is what lets "(67377d87-…)" become "(Den)" instead of vanishing.
@@ -170,7 +199,30 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
     const calls = r.tool_calls ?? [];
 
     if (calls.length === 0) {
-      if (r.content.trim()) return { kind: "reply", text: stripStageDirections(scrubIds(r.content, seenNames)), applied };
+      if (r.content.trim()) {
+        if (!nudgedForReport && applied.length > 0 && deps.reportCheck) {
+          const wrong = deps.reportCheck(lastUserSaid, r.content, applied.map((a) => a.call.name));
+          if (wrong) {
+            nudgedForReport = true;
+            transcript.push({ role: "assistant", content: r.content });
+            transcript.push({ role: "user", content: wrong });
+            continue;
+          }
+        }
+        if (!nudgedForReply) {
+          const nudge =
+            readsDone === 0
+              ? (deps.groundingNudge?.(lastUserSaid, r.content) ?? null)
+              : ((await deps.actNudge?.(lastUserSaid, r.content, readNames)) ?? null);
+          if (nudge) {
+            nudgedForReply = true;
+            transcript.push({ role: "assistant", content: r.content });
+            transcript.push({ role: "user", content: nudge });
+            continue;
+          }
+        }
+        return { kind: "reply", text: stripStageDirections(scrubIds(r.content, seenNames)), applied };
+      }
       // No tool calls AND no words. Two different models arrive here for two
       // opposite reasons, and the nudge has to serve both:
       //
@@ -220,6 +272,8 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
           resultText = clampJson({ ok: false, error: (err as Error)?.message ?? "tool failed" }, maxChars);
         }
         emit({ kind: "tool-result", name: call.name, ok, summary: resultText.slice(0, 160) });
+        readsDone++;
+        readNames.push(call.name);
         turnResults.push({ call, text: resultText });
         try {
           for (const [id, label] of namesFromToolResults([JSON.parse(resultText)])) seenNames.set(id, label);
@@ -232,7 +286,7 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
       if (deps.validateWrite) {
         let bounce: string | null = null;
         try {
-          bounce = await deps.validateWrite(call);
+          bounce = await deps.validateWrite(call, seenNames);
         } catch {
           bounce = null;
         }

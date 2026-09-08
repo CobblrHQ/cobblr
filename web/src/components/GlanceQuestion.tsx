@@ -1,9 +1,12 @@
 // "We think it's X - is that right?" The first look, put to the person.
 //
-// One component for the capture drawer and the inbox card, because the whole
-// point is that the SAME question follows the item from the camera to the
-// inbox: answer it wherever you happen to be looking, or ignore it and the
-// full read runs anyway. It never blocks anything.
+// Mounted by the capture drawer ONLY. The question is for the moment you are
+// still holding the thing: "yes it's this" and you move on. By the time an
+// item is in the inbox the full read has run, and asking again there is too
+// late and beside the point; a wrong read is corrected with the card's own
+// tools (re-run with a hint, a better photo). It used to be mounted on the
+// inbox card as well (2026-09-08: "by the time it's in the scan inbox, it's
+// too late"). It never blocks anything.
 //
 // What the two answers do lives on the server (services/glance.ts); this only
 // asks, and on "no" offers one line to say what it is instead.
@@ -16,6 +19,18 @@ export interface GlanceOnItem {
   name: string;
   category: string | null;
   confidence: number;
+  /** Where the guess came from, because the honest explanation differs: a
+   *  barcode's name is the catalog's answer, a photo's is a one-second look. */
+  source: "barcode" | "photo";
+}
+
+/** What the question is FOR, in a sentence, per source. Shown as the row's
+ *  title so hovering anywhere on it says what Yes and No do. The old row had a
+ *  bare "?" that read as a help icon and explained nothing (2026-09-08). */
+export function glanceExplanation(g: Pick<GlanceOnItem, "source">): string {
+  return g.source === "barcode"
+    ? "This is the catalog's name for the barcode. Yes keeps it and marks it verified; No lets you say what it really is."
+    : "A one-second first look at the photo. Yes settles the name and the full read fills in the rest; No lets you say what it is and rules this guess out. Ignore it and the full read runs anyway.";
 }
 
 /** The pending question on an item, or null when there is none to ask: no
@@ -25,10 +40,10 @@ export function pendingGlance(item: Pick<ScanInboxItem, "suggested_name" | "sugg
   // A barcode card's guess is its catalog entry: ask about the name it has.
   if (item.barcode_text) {
     if (!item.suggested_name || m.guess_confirmed) return null;
-    return { name: item.suggested_name, category: null, confidence: 1 };
+    return { name: item.suggested_name, category: null, confidence: 1, source: "barcode" };
   }
   if (!m.glance || m.glance_answer || item.suggested_name) return null;
-  return m.glance;
+  return { ...m.glance, source: "photo" };
 }
 
 export function GlanceQuestion({
@@ -74,12 +89,21 @@ export function GlanceQuestion({
     );
   }
   return (
-    <div className="flex items-center gap-1.5 mt-1 min-w-0" onClick={(e) => e.stopPropagation()}>
+    <div
+      className="flex items-center gap-1.5 mt-1 min-w-0"
+      onClick={(e) => e.stopPropagation()}
+      title={glanceExplanation(glance)}
+    >
       <span className={`text-[11px] ${faint} shrink-0`}>Is it</span>
-      <span className={`text-[12px] font-medium truncate ${text}`} title={glance.name}>
+      {/* The question mark lives INSIDE the name, so it can never be left
+          standing on its own. As three spans, a long name truncated and the
+          "?" sat beside the buttons looking like a help icon with no help in
+          it - "what is this even for?" (2026-09-08). The full name, with its
+          mark, is the span's title. */}
+      <span className={`text-[12px] font-medium truncate ${text}`} title={`${glance.name}?`}>
         {glance.name}
+        <span className={`text-[11px] font-normal ${faint}`}>?</span>
       </span>
-      <span className={`text-[11px] ${faint} shrink-0`}>?</span>
       <button
         type="button"
         disabled={busy}

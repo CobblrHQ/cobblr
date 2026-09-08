@@ -47,6 +47,15 @@ import { ImportDialog } from "./ImportDialog";
 import { PartDetailModal } from "./PartDetailPage";
 import type { PartListItem, InvFieldDef } from "./api";
 import { countOf } from "@cobblr/platform-contract";
+import { strayRecords } from "@cobblr/platform-contract/instance-for-category";
+
+/** One of this module's lists, as `GET /instances?module=inventory` describes it. */
+interface SiblingList {
+  instance_name: string;
+  display_name: string;
+  is_default?: boolean;
+  movable?: boolean;
+}
 
 type StateFilter = "active" | "draft" | "needs_review" | "all";
 
@@ -260,6 +269,34 @@ export function PartsListPage() {
   }
 
   const partItems = parts.data?.pages.flatMap((p) => p.items) ?? [];
+  // Things filed in the catch-all wearing a category that NAMES one of this
+  // module's own lists ("Teas" on a base-Inventory row, in a workspace with a
+  // Teas list) belong in that list; nobody looks for tea under Inventory. The
+  // scan router now sends new ones there; the ones already here are offered
+  // the same move, in bulk, from the top of the list.
+  const siblingLists = useQuery({
+    queryKey: ["inventory-sibling-lists", orgSlug],
+    enabled: !instance,
+    staleTime: 60_000,
+    queryFn: async (): Promise<{ items: SiblingList[] }> => {
+      const token = getToken();
+      const res = await fetch(`/api/v1/orgs/${orgSlug}/instances?module=inventory`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) return { items: [] };
+      return res.json();
+    },
+  });
+  const strays = useMemo(() => {
+    if (instance) return [];
+    const options = (siblingLists.data?.items ?? [])
+      .filter((s) => !s.is_default && s.movable !== false)
+      .map((s) => ({ instance: s.instance_name, label: s.display_name }));
+    return strayRecords(
+      partItems.map((p) => ({ id: p.id, category: p.category_name })),
+      options,
+    );
+  }, [instance, siblingLists.data, partItems]);
   // What is ticked IS context: with the panel open, "order more of these"
   // means the parts on screen a person pointed at, and Cobb gets their ids
   // rather than a count he has to go and re-find.
@@ -411,6 +448,26 @@ export function PartsListPage() {
 
   return (
     <div className="space-y-4">
+      {strays.length > 0 && (
+        <div className="rounded-xl border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-950/40 px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+          <span className="text-content dark:text-mortar-100">
+            Some of these look like they belong in one of your lists:
+          </span>
+          {strays.map((g) => (
+            <button
+              key={g.to.instance}
+              type="button"
+              onClick={() => {
+                setSelected(new Set(g.ids));
+                setBulkMoveOpen(true);
+              }}
+              className="inline-flex items-center gap-1 rounded-full border border-cobble-400 dark:border-cobble-600 px-3 py-1 text-xs font-medium text-accent hover:bg-cobble-100 dark:hover:bg-cobble-900"
+            >
+              <ArrowRightLeft size={12} /> {countOf(g.ids.length, itemNoun)} → {g.to.label}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 min-w-[200px]">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint dark:text-slate-500" />

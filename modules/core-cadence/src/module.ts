@@ -4,7 +4,7 @@ import type { CoreCadenceDB } from "./db.js";
 
 export default defineModule({
   name: "core-cadence",
-  version: "0.2.3",
+  version: "0.2.4",
   maturity: "beta",
   displayName: "Cadence",
   description:
@@ -68,7 +68,7 @@ export default defineModule({
     ],
   },
 
-  subscribes: ["core-scan.stock.observed"],
+  subscribes: ["core-scan.stock.observed", "inventory.stock.observed"],
 
   lifecycle: {
     onBoot: async () => {
@@ -80,7 +80,13 @@ export default defineModule({
       // indistinguishable from one filed the other two ways.
       const { platform } = await import("@cobblr/platform-contract");
       const { recordCadenceEvent, RecordBody, cadenceEnabledFor } = await import("./record.js");
-      platform().events.on("core-scan.stock.observed", "core-cadence", async (payload) => {
+      // Two announcers, one shape, one subscriber: a scan committing a purchase
+      // (core-scan) and a person's one-tap mark on an item (inventory: Use one,
+      // Used up, Finished it, Threw it out, Restock one, Replaced with a fresh
+      // one). The taps used to change the count and tell the ledger nothing, so
+      // finishing a box of tea and restocking an identical one never taught the
+      // interval (2026-09-08).
+      const observed = async (payload: unknown) => {
         const p = (payload ?? {}) as Record<string, unknown>;
         const orgId = typeof p.orgId === "string" ? p.orgId : null;
         if (!orgId) return;
@@ -107,7 +113,9 @@ export default defineModule({
         } catch (err) {
           console.warn("[core-cadence] stock.observed not recorded:", (err as Error)?.message ?? err);
         }
-      });
+      };
+      platform().events.on("core-scan.stock.observed", "core-cadence", observed);
+      platform().events.on("inventory.stock.observed", "core-cadence", observed);
       // The signals as computed fields. Registered on boot rather than from the
       // api router so a workspace gets them whether or not anything has hit the
       // module's HTTP surface yet.

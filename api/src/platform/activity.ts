@@ -74,8 +74,23 @@ export async function log(p: LogParams): Promise<void> {
   }
 }
 
+/** Actions that record what the OPERATOR did to a workspace, kept for the
+ *  operator's own audit and never shown to the workspace's members. The owner
+ *  decided (2026-09-08) that a member should not see "support looked here" in
+ *  their feed; the record still exists, on the operator side only. Anything
+ *  listed here is filtered out of every member-facing list BY DEFAULT, so a
+ *  new tenant-facing route cannot leak it by forgetting a flag. */
+export const OPERATOR_ONLY_ACTIONS: ReadonlySet<string> = new Set(["impersonation_started"]);
+
+export function isOperatorOnlyAction(action: string): boolean {
+  return OPERATOR_ONLY_ACTIONS.has(action) || action.startsWith("impersonation_");
+}
+
 export interface ListParams {
   orgId: string;
+  /** Operator surfaces only. Member-facing lists leave this unset and never see
+   *  OPERATOR_ONLY_ACTIONS. */
+  includeOperatorOnly?: boolean;
   limit?: number;
   cursorBeforeId?: number;
   /** Restrict to actions matching this list. */
@@ -120,6 +135,9 @@ export async function list(p: ListParams): Promise<ActivityEntry[]> {
     .where("org_id", "=", p.orgId)
     .orderBy("id", "desc")
     .limit(limit);
+  if (!p.includeOperatorOnly) {
+    q = q.where("action", "not in", [...OPERATOR_ONLY_ACTIONS]).where("action", "not like", "impersonation\\_%");
+  }
   if (typeof p.cursorBeforeId === "number") {
     q = q.where("id", "<", p.cursorBeforeId);
   }

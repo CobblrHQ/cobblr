@@ -49,6 +49,7 @@ export async function syncManifestRegistries(): Promise<{
     undoable: boolean;
     examples: string[];
     version: string;
+    position: number;
   }> = [];
 
   for (const entry of listEntries()) {
@@ -83,7 +84,7 @@ export async function syncManifestRegistries(): Promise<{
         field_read_scopes: k.fieldReadScopes ?? null,
       });
     }
-    for (const a of m.exposes.actions ?? []) {
+    for (const [position, a] of (m.exposes.actions ?? []).entries()) {
       // N1 from 2026-05-25-audit.md: warn when a user-invokable action
       // declares appliesTo: { any: true }. Universal is usually wrong
       // for clickable buttons — they end up surfacing on locations,
@@ -120,6 +121,7 @@ export async function syncManifestRegistries(): Promise<{
         undoable: a.undoable ?? false,
         examples: a.examples ?? [],
         version: a.version ?? m.version,
+        position,
       });
     }
   }
@@ -127,7 +129,7 @@ export async function syncManifestRegistries(): Promise<{
   // The KERNEL's own actions ride the SAME array as module actions — same
   // upsert below, and the orphan-cleanup's "not in presentActionIds" naturally
   // keeps them. A side-channel insert here would be deleted on the next boot.
-  for (const a of PLATFORM_ACTIONS) {
+  for (const [position, a] of PLATFORM_ACTIONS.entries()) {
     actionRows.push({
       id: a.id,
       module_name: PLATFORM_ACTION_OWNER,
@@ -145,6 +147,7 @@ export async function syncManifestRegistries(): Promise<{
       undoable: a.undoable ?? false,
       examples: a.examples ?? [],
       version: a.version,
+      position,
     });
   }
 
@@ -268,6 +271,7 @@ export async function syncManifestRegistries(): Promise<{
           undoable: a.undoable,
           examples: sql`${JSON.stringify(a.examples)}::jsonb`,
           version: a.version,
+          position: a.position,
         })
         .onConflict((b) =>
           b.column("id").doUpdateSet({
@@ -283,6 +287,7 @@ export async function syncManifestRegistries(): Promise<{
             args_schema: a.args_schema ? sql`${JSON.stringify(a.args_schema)}::jsonb` : null,
             undoable: a.undoable,
             examples: sql`${JSON.stringify(a.examples)}::jsonb`,
+            position: a.position,
             version: a.version,
           }),
         )

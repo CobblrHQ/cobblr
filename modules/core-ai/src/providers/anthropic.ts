@@ -11,6 +11,12 @@ export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; default
     models: ["claude-sonnet-4-5", "claude-haiku-4-5", "claude-opus-4-5"],
     defaultModel: "claude-haiku-4-5",
   },
+  // Sonnet rather than Haiku by default: this job runs a handful of times per
+  // workspace and its answer is the whole first impression of the product.
+  "design-workspace": {
+    models: ["claude-sonnet-4-5", "claude-haiku-4-5", "claude-opus-4-5"],
+    defaultModel: "claude-sonnet-4-5",
+  },
   summarise: {
     models: ["claude-sonnet-4-5", "claude-haiku-4-5"],
     defaultModel: "claude-haiku-4-5",

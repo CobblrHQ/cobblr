@@ -10,6 +10,9 @@ import { promptFingerprint } from "./prompt-fingerprint.js";
 
 export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
   chat: { models: ["gpt-4o", "gpt-4o-mini", "o1-mini"], defaultModel: "gpt-4o-mini" },
+  // The bigger model by default: rare, heavy, and the answer is either
+  // recognisable as their own things or they give up.
+  "design-workspace": { models: ["gpt-4o", "gpt-4o-mini", "o1-mini"], defaultModel: "gpt-4o" },
   summarise: { models: ["gpt-4o", "gpt-4o-mini"], defaultModel: "gpt-4o-mini" },
   "classify-image": { models: ["gpt-4o", "gpt-4o-mini"], defaultModel: "gpt-4o-mini" },
   "identify-image": { models: ["gpt-4o", "gpt-4o-mini"], defaultModel: "gpt-4o-mini" },

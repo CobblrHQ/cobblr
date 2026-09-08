@@ -33,6 +33,7 @@ export const EDGE_BRIDGE_ID = "edge-bridge";
 
 export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
   chat: { models: ["sonnet", "llama3.2", "qwen2.5"], defaultModel: "sonnet" },
+  "design-workspace": { models: ["sonnet", "llama3.2", "qwen2.5"], defaultModel: "sonnet" },
   summarise: { models: ["sonnet", "llama3.2", "qwen2.5"], defaultModel: "sonnet" },
   "classify-image": { models: ["sonnet", "llava", "llama3.2-vision"], defaultModel: "sonnet" },
   "extract-text": { models: ["sonnet", "llava", "llama3.2-vision"], defaultModel: "sonnet" },

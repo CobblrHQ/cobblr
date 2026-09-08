@@ -50,6 +50,10 @@ export function authHeadersFor(credentials: Record<string, unknown>): Record<str
 // own /api/tags when one of these turns out not to be installed.
 export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
   chat: { models: ["qwen3:14b", "qwen3", "granite3.3", "command-r7b", "llama3.2"], defaultModel: "qwen3:14b" },
+  // Anything that can hold a conversation can be asked to design a workspace;
+  // whether it does it WELL is the workspace's choice of model, which is the
+  // point of the job having its own id.
+  "design-workspace": { models: ["qwen3:14b", "qwen3", "granite3.3", "command-r7b", "llama3.2"], defaultModel: "qwen3:14b" },
   summarise: { models: ["qwen3:14b", "qwen3", "llama3.2"], defaultModel: "qwen3:14b" },
   "classify-image": { models: ["qwen2.5vl", "minicpm-v", "granite3.2-vision"], defaultModel: "qwen2.5vl" },
   // identify-image was MISSING, so a workspace on a direct local Ollama threw

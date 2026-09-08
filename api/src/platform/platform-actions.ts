@@ -66,7 +66,10 @@ export interface PlatformActionDecl {
    * owner-only action whose prose omits "owner only" can no longer slip through.
    */
   min_role: OrgRoleName | "grantable";
-  args_schema: Record<string, { label: string; type: "text" | "boolean" | "number" }>;
+  // "list" is a JSON array of values, the way core-locations:reorder takes its
+  // ids. The kernel's own actions had never needed one, so this local type had
+  // never grown it.
+  args_schema: Record<string, { label: string; type: "text" | "boolean" | "number" | "list" }>;
   version: string;
 }
 
@@ -225,6 +228,38 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     examples: ["turn on purchases", "I want to track maintenance", "add shipments to this workspace"],
     args_schema: {
       module: { label: "The feature, by its name in the app (e.g. Purchases)", type: "text" },
+    },
+    version: "0.1.0",
+  },
+  {
+    id: "platform:move-records",
+    min_role: "grantable",
+    label: "Move records into another list",
+    description:
+      "Move records that already exist from one list into another (the tea in Pantry into the Tea list). The records keep their ids, their photos, their history and their printed labels; only which list they are in changes. This is the ONLY way to move something between lists: creating a record in the new list leaves the original where it was and makes a second copy, and deleting it destroys what was there. Runs on the workspace, not a record. Read the records first and pass their real ids.",
+    icon: "folder-input",
+    scope: "workspace",
+    invoke_handler: "platform.move-records",
+    user_invokable: true,
+    // NOT undoable, in the specific sense that flag carries: an AI may not run
+    // this without a person confirming. It is a bulk change to where someone's
+    // things live, and it is not always exactly reversible - the move preview
+    // exists because a value can land in a list that has no field to show it
+    // under. A card naming what moves, before it moves, is the point.
+    //
+    // It still runs from the app, from a wire, and from any chat that can show
+    // a confirm card. Only a relay with no way to ask refuses, and says which
+    // action it was.
+    undoable: false,
+    examples: [
+      "move all the tea into the Tea list",
+      "file these three in Spices",
+      "put the chamomile in Tea",
+    ],
+    args_schema: {
+      ids: { label: "The records to move, by id (read them first)", type: "list" },
+      to: { label: "The list to move them into (e.g. Tea)", type: "text" },
+      from: { label: "The list they are in now (optional; worked out from the records when left blank)", type: "text" },
     },
     version: "0.1.0",
   },

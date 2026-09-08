@@ -65,6 +65,19 @@ export interface VocabularyCapability extends Base {
 export const CAPABILITIES: Capability[] = [
   {
     kind: "owns",
+    id: "impersonation:start",
+    what: "starting a support ('View as') session: the member/admin/reason checks, the audit row, the activity-feed entry, the signed token",
+    why:
+      "there are two doors into this - the operator console over HTTP and the deploy box (view-as CLI) - and if either " +
+      "re-implements the mint they drift; the copy that drifts is the one that quietly stops writing the activity-feed " +
+      "entry, which is the whole reason impersonation is acceptable, and no test of the other door would catch it (2026-09-08)",
+    owner: "api/src/platform/impersonation.ts",
+    scope: ["api/src/routes/super-admin.ts", "api/src/cli/view-as.ts"],
+    detect: /\.insertInto\(\s*["']impersonation_sessions["']/,
+    use: "startImpersonation(input) from platform/impersonation.ts",
+  },
+  {
+    kind: "owns",
     id: "feedback:card-post",
     what: "posting a feedback item's Discord card AND remembering its message id, so the same card can be edited as the item moves",
     why:

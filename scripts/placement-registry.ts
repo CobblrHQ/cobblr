@@ -57,6 +57,20 @@ export interface PlacementRow {
 
 export const PLACEMENT: PlacementRow[] = [
   {
+    id: "assistant-prompt-sentence",
+    what: "a sentence the assistant is told on every turn: a rule, a situational line, a consent notice",
+    keywords: ["system prompt", "prompt", "prompt rule", "what cobb is told", "grounding", "current view", "consent line"],
+    dir: "modules/core-ai/src/api/",
+    exemplar: "modules/core-ai/src/api/system-prompt.ts",
+    why: "One builder assembles the whole prompt. A caller that appends its own sentence afterwards makes a prompt only that caller sends, and the bench that measures the product is the caller that finds out last.",
+    lints: ["lint:one-system-prompt", "lint:no-emdash", "lint:bench-mirrors-guards"],
+    notes: [
+      "Pass what the sentence needs through PromptOptions and render it inside the builder (see situationalSuffix); a pure sentence-builder gets its own file beside page-context.ts so it is testable without the router.",
+      "Changing a rule changes every answer: re-run scripts/bench-action-rail.ts and put the number in the comment, the way the JSON-fallback block does.",
+      "A GUARD (a pure function the turn applies to a call or a reply) goes in its own file here and must be imported by the bench too, or exempted with a reason: a guard the bench lacks makes it score a path the product no longer takes.",
+    ],
+  },
+  {
     id: "assistant-tool",
     what: "a tool the assistant (and the MCP server) can call: its name, description and parameters",
     keywords: ["tool", "workspace tool", "assistant tool", "mcp tool", "tool description", "list_records"],
@@ -75,7 +89,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "web/src/components/",
     exemplar: "web/src/components/EntityAttachments.tsx",
     why: "This layer is module-agnostic: it may not name a module's entity kind, because doing so silently excludes every module added later.",
-    lints: ["lint:component-kinds", "lint:hooks-after-return", "lint:no-emdash", "lint:ui-jargon", "lint:authed-image-src", "lint:noun-pluralisation"],
+    lints: ["lint:component-kinds", "lint:hooks-after-return", "lint:no-emdash", "lint:ui-jargon", "lint:authed-image-src", "lint:noun-pluralisation", "lint:dark-mode-ember", "lint:dark-mode-tints"],
     notes: [
       "If it names one module's kind, it is not generic — it belongs beside that module's page (see page-level-module-ui).",
     ],
@@ -181,9 +195,10 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "modules/<name>/src/api/ or api/src/routes/",
     exemplar: "modules/core-scan/src/api/inbox.ts",
     why: "Express matches in registration order: a literal path declared after a parameter route on the same prefix is never reached, and the client gets a 400 that nothing reports (the session theme was dead this way for weeks).",
-    lints: ["lint:route-shadowing", "lint:announce-routes-home"],
+    lints: ["lint:route-shadowing", "lint:announce-routes-home", "lint:api-client-reachable"],
     notes: [
       "Register literal paths (/inbox/session-theme) ABOVE parameter paths (/inbox/:id) in the same router.",
+      "A route's client method in web/src/lib/api.ts is not a feature until something on screen calls it: lint:api-client-reachable refuses a method with no caller (the catalog crop sat reachable-by-curl-only for a month).",
       "A route that announce()s about somebody's ticket passes `originGuildId` from the ticket's origin_ref, or the notice lands in the operator's own server where the people in that conversation cannot see it. A DM has no guild: say so with `// no-origin-guild: <reason>`.",
     ],
   },
@@ -194,13 +209,26 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "scripts/ (git hooks in scripts/git-hooks/)",
     exemplar: "scripts/merge-pr.sh",
     why: "The same file runs on macOS (bash 3.2, BSD sed) and on the Linux CI box; a construct that is fine on one aborts on the other, after part of the work has already printed as done.",
-    lints: ["lint:bash-portable", "lint:portable-sed", "lint:sigpipe", "lint:deploy-state-in-flow", "lint:shell-lib-git-cwd", "lint:tsbuildinfo-not-shared"],
+    lints: ["lint:bash-portable", "lint:portable-sed", "lint:sigpipe", "lint:deploy-state-in-flow", "lint:shell-lib-git-cwd", "lint:tsbuildinfo-not-shared", "lint:nightly-cut-clock", "lint:empty-array-under-set-u"],
     notes: [
       "Prose (commit messages, PR bodies) goes through a FILE, never a quoted shell string.",
       "Linux-only scripts opt out with `# gnu-sed: <reason>`; that one line covers both sed and bash rules.",
       "merge-pr.sh and new-worktree.sh must PRINT where the channels are (lib/deploy-state.sh): everyone here works from a stale idea of what the nightly is, and a detour to check it is one nobody takes mid-task.",
       "Worktrees SHARE node_modules, so nothing worktree-specific belongs there: a tsBuildInfoFile under it makes tsc -b trust another worktree timestamps and pass on a broken tree.",
       "A lib in scripts/lib/ is sourced by callers it does not control, so it must not read git from $PWD: scope with `git -C \"$repo\"` resolved from BASH_SOURCE, or say why not with `# cwd-repo: <reason>`.",
+    ],
+  },
+  {
+    id: "api-cli",
+    what: "a command run INSIDE the api container (docker exec node dist/cli/<name>.js) with the api's env and database",
+    keywords: ["cli", "docker exec", "dist/cli", "on the box", "operator command", "view-as"],
+    dir: "api/src/cli/",
+    exemplar: "api/src/cli/view-as.ts",
+    why: "Its stdout and stderr are pipes, and on a pipe a stream write is asynchronous: a process.exit() right after it drops everything past ~64 KiB, and the JSON arrives cut mid-string with no error (view-as list, 2026-09-08). The exit is still needed because the meta pool keeps the process alive.",
+    lints: ["lint:cli-flush-before-exit", "lint:cli-flush-before-exit"],
+    notes: [
+      "Write output with fs.writeSync(1, ...) / writeSync(2, ...), never process.stdout.write / process.stderr.write / console.log, in any file that also calls process.exit.",
+      "Being inside the container IS the authority: a CLI here needs no API token, and must not mint one. Keep it read-only unless the owner has decided otherwise.",
     ],
   },
   {
@@ -226,6 +254,7 @@ export const PLACEMENT: PlacementRow[] = [
     why: "Bespoke scripts enforce invariants a general linter cannot express; there is deliberately no ESLint here.",
     lints: ["lint:placement", "lint:lints-are-wired"],
     notes: [
+      "Start with scripts/new-lint.sh <slug> --row <row> --rule \"<sentence>\": it writes the file from scripts/templates/lint.template.ts, registers lint:<slug> in package.json, claims the row, and runs it once (skill: writing-a-lint).",
       "A 'one implementation only' rule is a ROW in scripts/capabilities.ts, not a new script.",
       "Add a row to scripts/placement-registry.ts saying which kind of work it governs, or lint:placement fails: enforcement may not be added without saying where it bites.",
       "Prove it RED on the real violation before you fix that violation. A lint that has never failed has never been verified.",
@@ -279,7 +308,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "docs/",
     exemplar: "docs/design-decisions/canary-channel.md",
     why: "docs/README.md routes a change to the doc it touches; a design record explains a decision, the runbook owns how the thing actually runs.",
-    lints: ["lint:docs", "lint:doc-owned-facts", "lint:no-emdash"],
+    lints: ["lint:docs", "lint:doc-owned-facts", "lint:no-emdash", "lint:doc-status-honest"],
     notes: [
       "Do not restate a fact another doc owns — link it. Two copies means one of them is quietly wrong.",
     ],

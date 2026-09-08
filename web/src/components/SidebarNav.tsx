@@ -13,7 +13,8 @@ import { useDragClickGuard } from "./useDragClickGuard";
 import { NavLink, useLocation } from "react-router-dom";
 import {
   DndContext,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   closestCenter,
   useSensor,
   useSensors,
@@ -69,8 +70,19 @@ export function SidebarNav({
   // HOOKS STAY ABOVE the config-fold early return — a hook below it renders
   // in one branch but not the other, and React throws "Rendered more hooks
   // than during the previous render" the moment you navigate between them.
-  // Drag-to-reorder sensors: 8px activation so plain clicks still navigate.
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { delay: 250, tolerance: 5 } }));
+  // Drag-to-reorder sensors. Two, because the two input devices need opposite
+  // rules and one sensor cannot serve both:
+  //   mouse  - MOVE 8px to drag. A click that does not travel still navigates.
+  //            A hold-to-start here is the thing that "feels very unnatural":
+  //            nobody presses and waits on a desktop.
+  //   touch  - HOLD 250ms to drag. A finger that moves at once is scrolling
+  //            the sidebar, and stealing that for a drag makes the list
+  //            unscrollable on a phone.
+  // The hold used to apply to both, borrowed from the touch case.
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
+  );
 
   // Configuration fold (the author, 2026-07-03): on a configuration-family route the
   // sidebar BECOMES the configuration panel — two sidebars never stack. A
@@ -240,6 +252,13 @@ function SortableTop({
   return (
     <div
       ref={setNodeRef}
+      // Every row here is an <a>, and a browser drags a link NATIVELY: the
+      // moment the pointer moves, the page starts a link-drag and the sortable
+      // never sees another pointer event. With the hold sensor that read as
+      // "the drag starts, then never lands" - dnd-kit had activated on the
+      // timer and lost the pointer to the native drag on the first move
+      // (2026-09-08). Refusing dragstart keeps the pointer with the sortable.
+      onDragStart={(e) => e.preventDefault()}
       style={{ transform: CSS.Transform.toString(transform), transition }}
       className={isDragging ? "opacity-60 cursor-grabbing" : undefined}
     >
@@ -263,6 +282,9 @@ function SortableChild({ id, children }: { id: string; children: ReactNode }) {
       ref={setNodeRef}
       {...attributes}
       {...listeners}
+      // Same reason as SortableTop: the child is a link, and a link drags
+      // natively unless told not to.
+      onDragStart={(e) => e.preventDefault()}
       style={{ transform: CSS.Transform.toString(transform), transition }}
       className={isDragging ? "opacity-60 cursor-grabbing" : undefined}
     >

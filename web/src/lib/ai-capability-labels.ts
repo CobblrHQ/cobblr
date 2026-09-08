@@ -26,6 +26,7 @@ export const CAPABILITY_LABELS: Record<AiCapability, string> = {
   "embed-text": "Build search embeddings",
   summarise: "Summarise text",
   chat: "Ask Cobb",
+  "design-workspace": "Build a workspace from a description",
 };
 
 /** Older/aliased ids that still appear in stored config rows. Not capabilities

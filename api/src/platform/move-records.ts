@@ -26,6 +26,10 @@ export interface InstanceMover {
   kindFor(instance: string): string;
   /** Each record's custom-field bag, for the preview's carry list. */
   metadataFor(orgId: string, ids: string[]): Promise<Array<Record<string, unknown>>>;
+  /** Which list each of these records is in NOW. Only the module knows where
+   *  its own rows keep that. Optional so an existing mover keeps working; a
+   *  caller that needs it says so (see instancesHolding). */
+  instancesOf?(orgId: string, ids: string[]): Promise<string[]>;
 }
 
 export function registerMover(moduleName: string, mover: InstanceMover): void {
@@ -303,3 +307,31 @@ export async function moveRecords(
 }
 
 export { MoveError };
+
+/**
+ * The one list these records are in, or why that question has no answer.
+ *
+ * Exists so "put these in Tea" needs only the destination: a person saying it
+ * has said everything that matters, and the records themselves know where they
+ * are. Asking them to name the list they are looking at is asking them to do
+ * the computer's arithmetic.
+ *
+ * Records spanning two lists is refused rather than guessed: a move is
+ * from-one-to-one, and picking a majority would quietly leave some behind.
+ */
+export async function instancesHolding(
+  orgId: string,
+  moduleName: string,
+  ids: string[],
+): Promise<{ instance: string } | { error: string }> {
+  const mover = movers.get(moduleName);
+  if (!mover?.instancesOf) {
+    return { error: `${moduleName} cannot say which list those are in - pass "from".` };
+  }
+  const found = [...new Set(await mover.instancesOf(orgId, ids))];
+  if (found.length === 0) return { error: "none of those records exist" };
+  if (found.length > 1) {
+    return { error: `those records are in more than one list (${found.join(", ")}) - move one list at a time` };
+  }
+  return { instance: found[0]! };
+}

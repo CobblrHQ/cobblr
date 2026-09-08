@@ -709,6 +709,8 @@ export interface EntityActionsTable {
   /** How a person asks for this, in their own words. Rides in the assistant's
    *  prompt so a model can map a sentence to an action. */
   examples: Generated<unknown>;
+  /** 0-based index in the module's manifest. The order a person sees. */
+  position: Generated<number>;
 }
 
 export interface EntityActionOrgOverridesTable {

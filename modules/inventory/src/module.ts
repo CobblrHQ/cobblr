@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "inventory",
-  version: "0.21.2",
+  version: "0.21.6",
   displayName: "Inventory",
   description:
     "Parts, locations, categories, stock tracking, polymorphic allocations. The generalised toolkit you'd otherwise Frankenstein from a spreadsheet.",
@@ -143,6 +143,9 @@ export default defineModule({
       "inventory.part.updated",
       "inventory.part.deleted",
       "inventory.stock.changed",
+      // What a one-tap mark MEANT, in a consumption ledger's vocabulary
+      // (purchase / consume / discard). Same shape as core-scan.stock.observed.
+      "inventory.stock.observed",
       "inventory.stock.low",
       // The replace-clock came due (metadata.replace_every_days elapsed) — a
       // bundle wires this to the shopping list / a notification. Fired by the
@@ -159,6 +162,123 @@ export default defineModule({
     ],
     api: ["getPartById", "searchParts", "adjustStock", "allocate", "release"],
     actions: [
+      // DECLARED IN THE ORDER A PERSON WANTS THEM. The record's strip shows the
+      // first few in the open and folds the rest. One button per gesture: the
+      // perishable/durable difference is decided inside the handler from the
+      // record ("Used up" ends a lot or empties a bin; "Replaced" swaps a
+      // fresh lot in or stamps a spare), never by a second button. The
+      // wire-only aliases that used to be buttons sit after the visible set.
+      {
+        id: "inventory:use-one",
+        examples: ["used one", "I just took one out"],
+        undoable: true,
+        label: "Use one",
+        description:
+          "Knock a single unit off a part's on-hand qty: the zero-friction 'I took one out' tap. Binary, no number entry (that's Adjust stock). Decrements through the same path as adjust-stock, so it writes the usage ledger and trips 'running low → shopping list' when it crosses the reorder threshold. partId falls back to the targeted entity.",
+        appliesTo: { kinds: ["inventory:part"] },
+        invokeHandler: "inventory.use-one",
+        userInvokable: true,
+      },
+      {
+        id: "inventory:mark-opened",
+        examples: ["opened it", "cracked open the pesto", "started this one"],
+        undoable: true,
+        label: "Opened",
+        description:
+          "Record that you opened one, today. Starts the shorter opened clock on that one only - the unopened ones keep their own dates - and records WHEN, so how long it lasts after opening can be measured the next time one goes off. Args: { partId?, timezone? }.",
+        // Only where something CAN go off: a table whose bundle marked a field as
+        // the expiry role ("Best before", "Use by"). Scoped to the whole kind,
+        // this offered "Threw it out" on a box of screws (audit, 2026-09-08).
+        appliesTo: { hasFieldRole: "expiry" },
+        invokeHandler: "inventory.mark-opened",
+        userInvokable: true,
+        argsSchema: {
+          partId: { label: "Which item", type: "text" },
+          timezone: { label: "Timezone to date it in", type: "text" },
+        },
+      },
+      {
+        id: "inventory:use-up",
+        examples: ["used it up", "that is all gone", "ate the last one"],
+        undoable: true,
+        label: "Used up",
+        description:
+          "One verb for the end of a thing, whatever kind of thing it is. On something that goes off (a table with an expiry field, lots dated on arrival) it ends the OLDEST lot as used, records how long it lasted as a lower bound on its shelf life, and takes one off the count - the same bookkeeping mark-finished does. On plain stock it empties the count. Args: { partId?, timezone? }.",
+        appliesTo: { kinds: ["inventory:part"] },
+        invokeHandler: "inventory.use-up",
+        argsSchema: {
+          partId: { label: "Which item, defaults to the record this ran on", type: "text" },
+          timezone: { label: "Timezone to date it in", type: "text" },
+        },
+        userInvokable: true,
+      },
+      {
+        id: "inventory:mark-spoiled",
+        examples: ["it went bad", "had to bin it", "this one spoiled before I got to it"],
+        undoable: true,
+        label: "Threw it out",
+        description:
+          "Record that one went bad and was binned. This is the only thing that MEASURES how long something keeps, so it is what teaches the shelf life; it also files a waste event, which is what tells you when you are consistently buying more than you get through. Args: { partId?, timezone? }.",
+        // Only where something CAN go off: a table whose bundle marked a field as
+        // the expiry role ("Best before", "Use by"). Scoped to the whole kind,
+        // this offered "Threw it out" on a box of screws (audit, 2026-09-08).
+        appliesTo: { hasFieldRole: "expiry" },
+        invokeHandler: "inventory.mark-spoiled",
+        userInvokable: true,
+        argsSchema: {
+          partId: { label: "Which item", type: "text" },
+          timezone: { label: "Timezone to date it in", type: "text" },
+        },
+      },
+      {
+        id: "inventory:restock-one",
+        examples: ["another one arrived", "got one more", "add one to the fridge"],
+        undoable: true,
+        label: "Restock one",
+        description:
+          "Record that another one arrived today. NOT the same as adding one to the count: a container arriving today has its own shelf life, so this dates the new arrival from the item's shelf_life_days rather than letting it inherit the previous one's deadline. Several on the same day merge into one lot. Args: { partId?, qty?, timezone? }.",
+        // Only where something CAN go off: a table whose bundle marked a field as
+        // the expiry role ("Best before", "Use by"). Scoped to the whole kind,
+        // this offered "Threw it out" on a box of screws (audit, 2026-09-08).
+        appliesTo: { hasFieldRole: "expiry" },
+        invokeHandler: "inventory.restock-one",
+        userInvokable: true,
+        argsSchema: {
+          partId: { label: "Which item", type: "text" },
+          qty: { label: "How many arrived", type: "number" },
+          timezone: { label: "Timezone to date the arrival in", type: "text" },
+        },
+      },
+      {
+        id: "inventory:replaced",
+        examples: ["replaced the filter", "swapped in a new box", "replaced it with a fresh one"],
+        undoable: true,
+        label: "Replaced",
+        description:
+          "One verb for swapping a thing out. On something that goes off it consumes the oldest lot and adds a fresh one dated today from the item's shelf life - the same bookkeeping swap-fresh does. On plain stock it stamps when it was replaced and consumes a spare if there is one. Args: { partId?, timezone? }.",
+        appliesTo: { kinds: ["inventory:part"] },
+        invokeHandler: "inventory.replaced",
+        argsSchema: {
+          partId: { label: "Which item, defaults to the record this ran on", type: "text" },
+          timezone: { label: "Timezone to date it in", type: "text" },
+        },
+        userInvokable: true,
+      },
+      {
+        id: "inventory:set-status",
+        examples: ["mark it as built", "set that to missing pieces"],
+        undoable: true,
+        label: "Set status",
+        description:
+          "Set a part's `metadata.status` (e.g. a Lego set's Built / Unbuilt / Missing pieces). A member-appropriate, user-invokable action: grant it and a worker can update status from their app: the canonical write a custom (Tier B) app block performs. Args: { partId?, status }; partId falls back to the targeted entity.",
+        appliesTo: { kinds: ["inventory:part"] },
+        invokeHandler: "inventory.set-status",
+        argsSchema: {
+          partId: { label: "Which part, defaults to the record this ran on", type: "text" },
+          status: { label: "The status to set", type: "text" },
+        },
+        userInvokable: true,
+      },
       {
         id: "inventory:reserve-stock",
         examples: ["set aside four for that project", "reserve some of these"],
@@ -177,48 +297,16 @@ export default defineModule({
         },
       },
       {
-        id: "inventory:settle-allocation",
-        examples: ["we used the reserved ones", "release that reservation"],
-        undoable: true,
-        label: "Consume or release a reservation",
+        id: "inventory:split-lot",
+        examples: ["split one off that lot", "I opened one of the pack"],
+        label: "Split one off",
         description:
-          "Finish a reservation. `status: \"consumed\"` means the stock was actually used: on-hand drops by the reserved amount and a withdrawal appears on the part's statement. `status: \"released\"` means it was not used after all: nothing moves, the reservation just goes away. Pass `allocation_id`. Only a still-reserved allocation can be settled.",
-        icon: "check-circle",
-        scope: "workspace" as const,
-        invokeHandler: "inventory.settle-allocation",
-        argsSchema: {
-          allocation_id: { label: "The reservation's id", type: "text" },
-          status: { label: "consumed or released", type: "text" },
-        },
-      },
-      {
-        id: "inventory:add-category",
-        examples: ["add a Fasteners category", "we need a new category"],
-        undoable: true,
-        label: "Add a category",
-        description:
-          "Create an inventory category (the grouping a part belongs to, e.g. \"Fasteners\"). Pass `name`, optionally `color` as a hex code. Asking for one that already exists returns the existing one rather than failing.",
-        icon: "folder-plus",
-        scope: "workspace" as const,
-        invokeHandler: "inventory.add-category",
-        argsSchema: {
-          name: { label: "Category name", type: "text" },
-          color: { label: "Colour (hex, optional)", type: "text" },
-        },
-      },
-      {
-        id: "inventory:mark-opened",
-        examples: ["opened it", "cracked open the pesto", "started this one"],
-        undoable: true,
-        label: "Opened",
-        description:
-          "Record that you opened one, today. Starts the shorter opened clock on that one only - the unopened ones keep their own dates - and records WHEN, so how long it lasts after opening can be measured the next time one goes off. Args: { partId?, timezone? }.",
+          "Split units off a lot's quantity into a NEW separate item (default 1 (the 'I entered 5 spools as one lot and just opened one' move). The new item inherits the lot's instance, fields, manufacturer, location, image, and parent pairing(s) so type rollups still count it; the lot's qty drops by the split amount. Generic) works on any inventory item with a numeric qty, in any instance. The lot must keep ≥1. Args: { quantity?: number (default 1) }.",
         appliesTo: { kinds: ["inventory:part"] },
-        invokeHandler: "inventory.mark-opened",
+        invokeHandler: "inventory.split-lot",
         userInvokable: true,
         argsSchema: {
-          partId: { label: "Which item", type: "text" },
-          timezone: { label: "Timezone to date it in", type: "text" },
+          quantity: { label: "How many to split off", type: "number" },
         },
       },
       {
@@ -228,77 +316,36 @@ export default defineModule({
         label: "Finished it",
         description:
           "Record that you used the last of one up. Counts as a LOWER BOUND on how long it keeps - it lasted at least this long - and never as a measurement, because you ate it rather than testing it. Args: { partId?, timezone? }.",
-        appliesTo: { kinds: ["inventory:part"] },
+        // Only where something CAN go off: a table whose bundle marked a field as
+        // the expiry role ("Best before", "Use by"). Scoped to the whole kind,
+        // this offered "Threw it out" on a box of screws (audit, 2026-09-08).
+        appliesTo: { hasFieldRole: "expiry" },
+        // Kept for wires and the assistant ("ate the last one"). The BUTTON is "Used up", which does this on a perishable and empties plain stock; two buttons for one gesture was the report (2026-09-08).
+        userInvokable: false,
         invokeHandler: "inventory.mark-finished",
-        userInvokable: true,
         argsSchema: {
           partId: { label: "Which item", type: "text" },
           timezone: { label: "Timezone to date it in", type: "text" },
         },
       },
       {
-        id: "inventory:mark-spoiled",
-        examples: ["it went bad", "had to bin it", "this one spoiled before I got to it"],
+        id: "inventory:swap-fresh",
+        examples: ["swapped in a new box", "finished it and opened the new one", "replaced it with a fresh one"],
         undoable: true,
-        label: "Threw it out",
+        label: "Replaced with a fresh one",
         description:
-          "Record that one went bad and was binned. This is the only thing that MEASURES how long something keeps, so it is what teaches the shelf life; it also files a waste event, which is what tells you when you are consistently buying more than you get through. Args: { partId?, timezone? }.",
-        appliesTo: { kinds: ["inventory:part"] },
-        invokeHandler: "inventory.mark-spoiled",
-        userInvokable: true,
+          "The old one is finished and an identical new one arrived, in one tap. The count does not move, the old lot ends as used (a floor on its shelf life), the new lot is dated today, and the consumption ledger hears one consumed and one bought, which is how it learns how often you go through it. Args: { partId?, timezone? }.",
+        // Only where something CAN go off: a table whose bundle marked a field as
+        // the expiry role ("Best before", "Use by"). Scoped to the whole kind,
+        // this offered "Threw it out" on a box of screws (audit, 2026-09-08).
+        appliesTo: { hasFieldRole: "expiry" },
+        // Kept for wires and the assistant. The BUTTON is "Replaced", which does this on a perishable.
+        userInvokable: false,
+        invokeHandler: "inventory.swap-fresh",
         argsSchema: {
           partId: { label: "Which item", type: "text" },
-          timezone: { label: "Timezone to date it in", type: "text" },
+          timezone: { label: "Timezone to date the new one in", type: "text" },
         },
-      },
-      {
-        id: "inventory:restock-one",
-        examples: ["another one arrived", "got one more", "add one to the fridge"],
-        undoable: true,
-        label: "Restock one",
-        description:
-          "Record that another one arrived today. NOT the same as adding one to the count: a container arriving today has its own shelf life, so this dates the new arrival from the item's shelf_life_days rather than letting it inherit the previous one's deadline. Several on the same day merge into one lot. Args: { partId?, qty?, timezone? }.",
-        appliesTo: { kinds: ["inventory:part"] },
-        invokeHandler: "inventory.restock-one",
-        userInvokable: true,
-        argsSchema: {
-          partId: { label: "Which item", type: "text" },
-          qty: { label: "How many arrived", type: "number" },
-          timezone: { label: "Timezone to date the arrival in", type: "text" },
-        },
-      },
-      {
-        id: "inventory:use-one",
-        examples: ["used one", "I just took one out"],
-        undoable: true,
-        label: "Use one",
-        description:
-          "Knock a single unit off a part's on-hand qty: the zero-friction 'I took one out' tap. Binary, no number entry (that's Adjust stock). Decrements through the same path as adjust-stock, so it writes the usage ledger and trips 'running low → shopping list' when it crosses the reorder threshold. partId falls back to the targeted entity.",
-        appliesTo: { kinds: ["inventory:part"] },
-        invokeHandler: "inventory.use-one",
-        userInvokable: true,
-      },
-      {
-        id: "inventory:use-up",
-        examples: ["that is all gone", "finished the last one"],
-        undoable: true,
-        label: "Used up",
-        description:
-          "Mark a part gone: drives on-hand to 0 in one tap (tossing the empty), no 'how many left?' guess. Same ledger + low-stock path as adjust-stock, so it reorders if a threshold is set. No-op if already empty. partId falls back to the targeted entity.",
-        appliesTo: { kinds: ["inventory:part"] },
-        invokeHandler: "inventory.use-up",
-        userInvokable: true,
-      },
-      {
-        id: "inventory:replaced",
-        examples: ["replaced the filter", "swapped that one out"],
-        undoable: true,
-        label: "Replaced",
-        description:
-          "One tap at a scheduled swap (furnace filter, water filter, printer nozzle): resets the replace-clock (stamps metadata.last_replaced_at = now, so it won't nag again until the next interval) AND consumes one spare from on-hand, which reorders if that leaves you short. Set metadata.replace_every_days on the part to arm the clock. partId falls back to the targeted entity.",
-        appliesTo: { kinds: ["inventory:part"] },
-        invokeHandler: "inventory.replaced",
-        userInvokable: true,
       },
       {
         id: "inventory:adjust-stock",
@@ -344,19 +391,34 @@ export default defineModule({
         },
       },
       {
-        id: "inventory:set-status",
-        examples: ["mark it as built", "set that to missing pieces"],
+        id: "inventory:settle-allocation",
+        examples: ["we used the reserved ones", "release that reservation"],
         undoable: true,
-        label: "Set status",
+        label: "Consume or release a reservation",
         description:
-          "Set a part's `metadata.status` (e.g. a Lego set's Built / Unbuilt / Missing pieces). A member-appropriate, user-invokable action: grant it and a worker can update status from their app: the canonical write a custom (Tier B) app block performs. Args: { partId?, status }; partId falls back to the targeted entity.",
-        appliesTo: { kinds: ["inventory:part"] },
-        invokeHandler: "inventory.set-status",
+          "Finish a reservation. `status: \"consumed\"` means the stock was actually used: on-hand drops by the reserved amount and a withdrawal appears on the part's statement. `status: \"released\"` means it was not used after all: nothing moves, the reservation just goes away. Pass `allocation_id`. Only a still-reserved allocation can be settled.",
+        icon: "check-circle",
+        scope: "workspace" as const,
+        invokeHandler: "inventory.settle-allocation",
         argsSchema: {
-          partId: { label: "Which part, defaults to the record this ran on", type: "text" },
-          status: { label: "The status to set", type: "text" },
+          allocation_id: { label: "The reservation's id", type: "text" },
+          status: { label: "consumed or released", type: "text" },
         },
-        userInvokable: true,
+      },
+      {
+        id: "inventory:add-category",
+        examples: ["add a Fasteners category", "we need a new category"],
+        undoable: true,
+        label: "Add a category",
+        description:
+          "Create an inventory category (the grouping a part belongs to, e.g. \"Fasteners\"). Pass `name`, optionally `color` as a hex code. Asking for one that already exists returns the existing one rather than failing.",
+        icon: "folder-plus",
+        scope: "workspace" as const,
+        invokeHandler: "inventory.add-category",
+        argsSchema: {
+          name: { label: "Category name", type: "text" },
+          color: { label: "Colour (hex, optional)", type: "text" },
+        },
       },
       {
         id: "inventory:create-item",
@@ -420,19 +482,6 @@ export default defineModule({
         invokeHandler: "inventory.field-to-location",
         // Migration-only: run by the bundle-upgrade flow, never a detail button.
         userInvokable: false,
-      },
-      {
-        id: "inventory:split-lot",
-        examples: ["split one off that lot", "I opened one of the pack"],
-        label: "Split one off",
-        description:
-          "Split units off a lot's quantity into a NEW separate item (default 1 (the 'I entered 5 spools as one lot and just opened one' move). The new item inherits the lot's instance, fields, manufacturer, location, image, and parent pairing(s) so type rollups still count it; the lot's qty drops by the split amount. Generic) works on any inventory item with a numeric qty, in any instance. The lot must keep ≥1. Args: { quantity?: number (default 1) }.",
-        appliesTo: { kinds: ["inventory:part"] },
-        invokeHandler: "inventory.split-lot",
-        userInvokable: true,
-        argsSchema: {
-          quantity: { label: "How many to split off", type: "number" },
-        },
       },
     ],
   },

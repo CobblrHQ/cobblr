@@ -32,6 +32,7 @@ import {
 import { resolveRequirement, storageRequirementFor } from "../services/storage-requirement.js";
 import { applyReceiptFacts } from "../services/receipt-candidate-facts.js";
 import { alignStorageFields } from "../services/align-storage-fields.js";
+import { retargetByCategory } from "../services/retarget-by-category.js";
 import { lineQuantity } from "../services/receipt-shared.js";
 import { expiryDefaults } from "../services/shelf-life.js";
 import { Router } from "express";
@@ -6342,6 +6343,11 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     // Fridge / Freezer choice and a cold choice asserts its requirement, so
     // carrots and tomatoes off one receipt wear the same chip. Empty-only.
     alignStorageFields(candidates, menu);
+    // A catch-all candidate whose category NAMES one of the module's own lists
+    // goes to that list: "Teas" on a base-Inventory candidate is the model
+    // saying tea and filing it where nobody looks for tea.
+    const retargeted = retargetByCategory(candidates, menu);
+    if (retargeted) console.log(`[core-scan] ${retargeted} candidate(s) re-routed to the list their category named`);
 
     // THE REPLAY INVARIANT, checked rather than merely intended: a replay may
     // only add or refine. It re-derives from the row's own stored knowledge, so

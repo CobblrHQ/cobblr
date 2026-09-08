@@ -2,6 +2,28 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-09-08
+
+### Features
+- Building a workspace from a description is now its own AI job, so you can put it on a stronger model than the one answering everyday questions and see what it costs on its own. On the free Google tier it already defaults to the fuller model, which is capped at 20 requests a day: hopeless for chat, and plenty for a builder you run a handful of times.
+- Crop your own photo into the catalog image. When no web picture is right and your shot is, your photo's caption on the scan card now offers crop for catalog beside use as catalog: drag a box over the part to keep, and that part becomes the display image, cut from the full-resolution original. Revert steps it back like any other pick. And the "Is it X? Yes / No" first-look question now lives on the camera sheet only, where you are still holding the thing; the inbox card no longer asks it, since by then the full read has run.
+- You can now tell the assistant to move things from one list into another: "move all the tea from this page into the Tea section". It works out which records you mean and moves them, keeping their photos, their history and their printed labels. There was no way to do this before, which is why asking used to produce a second copy of everything or an offer to delete it.
+- Every tap on an item now teaches how fast you go through it, and there is a one-tap "Replaced with a fresh one". Use one, Used up, Finished it, Threw it out and Restock one used to change the count and teach nothing about cadence; only a scan or a shopping-list tick did. They all feed the consumption ledger now. And when you run out of something and put an identical new one in its place, Replaced with a fresh one records both facts in one tap: the count stays the same, the old one ends as used, the new one is dated today, and the ledger learns the interval.
+
+### Improvements
+- Ask the assistant to change something and it now makes the change instead of explaining how the change would be made. It used to find the right action, describe it, and leave the workspace exactly as it was, which read as though it had done the work.
+- The assistant now looks something up before answering a question about it. Ask who makes a machine you own and it opens the record instead of answering from what it happens to know about that model. It also stops proposing an action with the wrong thing filled in: asked to turn off a feature, it used to name the feature in a field the action does not read, and the confirmation card came up empty.
+- An item offers one button per thing you did: "Used up" and "Replaced" now do the right bookkeeping for a perishable or a plain part on their own, and "Finished it" and "Replaced with a fresh one" are gone from the row.
+- When the assistant changes several things at once, you now get one card listing what it did and a single Undo for the whole instruction, instead of a separate button on every change, and pressing it tells you what happened right there rather than adding more lines to the conversation. It also stops two ways of being told the wrong thing: asked to move something it already has in front of it, it updates that record rather than quietly creating a second copy, and it can no longer tell you it moved something when what it actually did was create.
+- An item's actions now lead with its own verbs in the order that matters, the label button and Cobb sit by its code, and "Log service" and the perishable actions appear only where they make sense.
+- Tea goes in Teas. A scan that recognised green tea used to file it in the catch-all Inventory table with a category called "Teas", in a workspace that has a Teas list, so the tea was invisible where you would look for it. A scan whose category names one of your own lists now routes into that list. And the Inventory list shows a strip for anything already filed that way ("2 items → Teas", "1 item → Groceries"): one tap selects them and opens Move to…, and the move keeps their history, tags and printed labels.
+- The "Is it X?" question on a scan card no longer leaves a lone question mark floating beside the Yes and No buttons when the name is long, where it looked like a help icon that did nothing. The mark stays with the name, and hovering the row now says what the question is for: for a photo, a one-second first look that Yes settles and No corrects, with the full read running either way; for a barcode, the catalog's name, which Yes marks verified.
+
+### Fixes
+- Panels and inputs that used the app's own colour names no longer come up cream with unreadable text in dark mode; the Move dialog was the one that showed it.
+- Dragging a row inside a sidebar group (Kitchen: Spices, Tea, Groceries) now lands where you drop it, and with a mouse you just move, no hold first.
+- Signing in now opens your workspace in the theme you chose, instead of the device default until you refreshed.
+
 ## 2026-09-07
 
 ### Features

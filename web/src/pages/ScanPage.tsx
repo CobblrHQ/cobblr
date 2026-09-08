@@ -32,7 +32,7 @@ import { OrganizePlanSheet, SortingPlanView } from "../components/OrganizePlanSh
 import { OrganizeWalkSheet } from "../components/OrganizeWalkSheet";
 import { LiveSortSheet } from "../components/LiveSortSheet";
 import { ImageSearchPicker } from "../components/ImageSearchPicker";
-import { GlanceQuestion, pendingGlance } from "../components/GlanceQuestion";
+import { CropPhotoModal } from "../components/CropPhotoModal";
 import { imageUrlFrom } from "../components/pastedImage";
 import { ImageLightbox, type LightboxItem } from "../components/ImageLightbox";
 import { ReceiptSourceViewer, type ReceiptMoney } from "../components/ReceiptSourceViewer";
@@ -5351,26 +5351,6 @@ function InboxCard({
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
-  const answerGlance = useMutation({
-    // A barcode card's "no" is the wrong-flag re-run: one code path corrects a
-    // catalog entry and reports it back, and this is it.
-    mutationFn: (b: { answer: "yes" | "no"; hint?: string }) =>
-      item.barcode_text && b.answer === "no"
-        ? api.rerunScanAi(activeSlug, item.id, { wrong: true, ...(b.hint ? { hint: b.hint } : {}) })
-        : api.answerScanGlance(activeSlug, item.id, { answer: b.answer, ...(b.hint ? { hint: b.hint } : {}) }),
-    onSuccess: () => {
-      toast.success(
-        "Thanks - filling in the details…",
-      );
-      invalidateInbox();
-    },
-    // Spelled out rather than the shared `onErr`, which is declared further
-    // down with the image ops: referencing it here reads the binding while the
-    // options object is being built, not later inside a callback, so it is a
-    // genuine use-before-declaration. The neighbouring mutations spell it out
-    // the same way.
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
-  });
   const rerun = useMutation({
     mutationFn: (vars?: {
       hint?: string;
@@ -5621,6 +5601,20 @@ function InboxCard({
     mutationFn: (action: "revert" | "use_own_photo" | "use_screenshot_crop") =>
       api.scanCatalogAction(activeSlug, item.id, action),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] }),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+
+  // The crop door for "use as catalog": the route has cropped the identify
+  // photo since 2026-08-11; this is the first surface that asks it to.
+  const [cropOpen, setCropOpen] = useState(false);
+  const cropCatalog = useMutation({
+    mutationFn: (box: { x: number; y: number; w: number; h: number }) =>
+      api.cropScanCatalogImage(activeSlug, item.id, box),
+    onSuccess: () => {
+      setCropOpen(false);
+      toast.success("Cropped - that is the catalog image now");
+      void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
+    },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
@@ -7071,10 +7065,32 @@ function InboxCard({
                     >
                       use as catalog
                     </button>
+                    {item.image_file_id && (
+                      <button
+                        type="button"
+                        disabled={cropCatalog.isPending}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCropOpen(true);
+                        }}
+                        title="Crop part of this photo to be the catalog/display image"
+                        className="normal-case tracking-normal font-sans hover:text-content underline decoration-dotted underline-offset-2 transition disabled:opacity-50"
+                      >
+                        crop for catalog
+                      </button>
+                    )}
                   </figcaption>
                 </figure>
               )}
             </div>
+          )}
+          {cropOpen && item.image_file_id && (
+            <CropPhotoModal
+              src={yoursImg ?? null}
+              busy={cropCatalog.isPending}
+              onCrop={(box) => cropCatalog.mutate(box)}
+              onClose={() => setCropOpen(false)}
+            />
           )}
           {/* Extra photos (multi-photo gallery): tap → make primary; × → remove.
               Renders ONLY when there are extras, so the photo-options strip sits
@@ -7170,19 +7186,6 @@ function InboxCard({
           {/* The AI's read — collapsed to its one-line header by default
               tap to reveal the reconciliation paragraph + per-field
               chips. The working pulse lives in the always-visible header. */}
-          {(() => {
-            const glance = pendingGlance(item);
-            if (!glance) return null;
-            return (
-              <div className="rounded-md border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-950/30 px-3 py-2">
-                <GlanceQuestion
-                  glance={glance}
-                  busy={answerGlance.isPending}
-                  onAnswer={(answer, hint) => answerGlance.mutate({ answer, hint })}
-                />
-              </div>
-            );
-          })()}
           {(item.ai_notes || item.ai_confidence || topCand || aiWorking) && (
             <div className="rounded-md border border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20 px-3 py-2">
               <button

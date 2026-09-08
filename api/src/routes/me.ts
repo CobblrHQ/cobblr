@@ -1,6 +1,7 @@
 // /api/v1/me — current session profile + org memberships. Mirrors
 // the shape /auth/login returns so the web can reuse the same hook.
 
+import { OPERATOR_ONLY_ACTIONS } from "../platform/activity.js";
 import { Router } from "express";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
@@ -14,6 +15,7 @@ import { hashPassword, verifyPassword } from "../auth/password.js";
 import { signSession } from "../auth/jwt.js";
 import * as notifications from "../platform/notifications.js";
 import { pressNotificationAction } from "../platform/notification-press.js";
+import { loadSessionUser } from "../auth/session-user.js";
 import * as activity from "../platform/activity.js";
 import { listMembershipsForUser } from "../platform/memberships.js";
 import { hasAuthEmailSender, sendAuthEmail } from "../platform/hosted-seams.js";
@@ -43,19 +45,15 @@ export const meRouter = Router();
 
 meRouter.get("/me", requireAuth, async (req, res) => {
   const userId = req.session!.id;
+  // Shared with buildAuthResponse (login, signup, invite-accept). One list of
+  // columns, so a preference cannot arrive here and be missing there.
   const [user, orgs] = await Promise.all([
-    meta
-      .selectFrom("users")
-      .select(["id", "email", "display_name", "must_reset_password", "email_verified_at", "theme_pref", "nav_pref", "tour_seen_at"])
-      .where("id", "=", userId)
-      .executeTakeFirstOrThrow(),
+    loadSessionUser(userId),
     listMembershipsForUser(userId),
   ]);
-  const { email_verified_at, ...rest } = user;
   return res.json({
     user: {
-      ...rest,
-      email_verified: email_verified_at !== null,
+      ...user,
       auth_method: req.session!.auth_method,
       api_token_id: req.session!.api_token_id,
       is_platform_admin: req.session!.is_platform_admin,
@@ -386,6 +384,9 @@ meRouter.get("/me/activity", requireAuth, async (req, res, next) => {
         "o.slug as org_slug",
       ])
       .where("m.user_id", "=", userId)
+      // Operator-side records (a support "View as") never reach a member's feed.
+      .where("a.action", "not in", [...OPERATOR_ONLY_ACTIONS])
+      .where("a.action", "not like", "impersonation\\_%")
       .orderBy("a.occurred_at", "desc")
       .limit(limit + 1); // +1 to detect "there's more" without a second query
     if (orgFilter) q = q.where("o.slug", "=", orgFilter);

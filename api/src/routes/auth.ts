@@ -33,6 +33,7 @@ function dummyPasswordHash(): Promise<string> {
   return _dummyHash;
 }
 import { signSession } from "../auth/jwt.js";
+import { loadSessionUser } from "../auth/session-user.js";
 import { listMembershipsForUser } from "../platform/memberships.js";
 import {
   identityEnabled,
@@ -139,6 +140,14 @@ interface AuthResponseUser {
    *  on the login/signup response too (not just /me) — else the
    *  super-admin UI shows "access denied" until the next /me refresh. */
   is_platform_admin: boolean;
+  /** The account-level preferences, on the login payload for the same reason
+   *  `is_platform_admin` is: the client acts on them the moment it renders, and
+   *  a response that omits one is read as "no preference", not as "not told".
+   *  Signing in used to come up in the wrong theme for exactly that reason.
+   *  null means "follow this device"; these are never absent here. */
+  theme_pref: "light" | "dark" | null;
+  nav_pref: unknown;
+  tour_seen_at: Date | string | null;
   /** Community Discord invite (DISCORD_INVITE_URL) or null; signed-in chrome only. */
   discord_invite_url: string | null;
   /** Every place this deployment offers for questions, in the order to show
@@ -287,21 +296,18 @@ export async function provisionOrgForUser(
 }
 
 export async function buildAuthResponse(userId: string): Promise<AuthResponse> {
-  const user = await meta
-    .selectFrom("users")
-    .select(["id", "email", "display_name", "must_reset_password", "email_verified_at"])
-    .where("id", "=", userId)
-    .executeTakeFirstOrThrow();
+  // Shared with GET /me. The two used to select their own columns and drifted:
+  // /me carried the account preferences and this did not, so signing in landed
+  // you in the wrong theme until you refreshed.
+  const user = await loadSessionUser(userId);
 
   const orgs = await listMembershipsForUser(userId);
 
   const token = await signSession(userId);
-  const { email_verified_at, ...rest } = user;
   return {
     token,
     user: {
-      ...rest,
-      email_verified: email_verified_at !== null,
+      ...user,
       is_platform_admin: isPlatformAdmin(user.email),
       discord_invite_url: discordInviteUrl() || null,
       community_links: communityLinks(),

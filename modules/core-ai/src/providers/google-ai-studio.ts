@@ -36,6 +36,18 @@ export const GOOGLE_AI_STUDIO_BASE = "https://generativelanguage.googleapis.com/
 // way round, since the cost of the better model is a cap they will hit rather than money.
 export const GOOGLE_AI_STUDIO_DEFAULT_MODEL = "gemini-flash-lite-latest";
 
+// ...and the same measurement says the BUILDER should have the fuller model.
+// The 20-a-day cap is fatal for chat and irrelevant to a job somebody runs
+// twice: describing a workspace is the rarest call the platform makes and the
+// one where a weak answer costs the most, because what comes back is either
+// recognisable as their own things or it is the moment they give up. Three
+// model calls at most per attempt, so twenty a day is several builds and every
+// repair they need.
+//
+// Only the DEFAULT differs. A model typed on the connection still wins, and so
+// does a workspace's own choice for this job on the AI page.
+export const GOOGLE_AI_STUDIO_BUILDER_MODEL = "gemini-flash-latest";
+
 export function register(): void {
   platform().ai.registerProvider(
     buildCompatProvider({
@@ -61,7 +73,8 @@ export function register(): void {
           // this field, and only matters to someone who chooses to change it.
           label:
             `Model (optional. Blank uses ${GOOGLE_AI_STUDIO_DEFAULT_MODEL}, ` +
-            "500 free/day. gemini-flash-latest is stronger, 20 free/day)",
+            `500 free/day, and ${GOOGLE_AI_STUDIO_BUILDER_MODEL} for building a ` +
+            "workspace, which is stronger and capped at 20 free/day. Naming one here uses it for everything)",
           secret: false,
         },
       }),
@@ -88,6 +101,7 @@ export function register(): void {
       // reason.
       requireModel: false,
       defaultModel: GOOGLE_AI_STUDIO_DEFAULT_MODEL,
+      modelForCapability: { "design-workspace": GOOGLE_AI_STUDIO_BUILDER_MODEL },
     }),
   );
 }

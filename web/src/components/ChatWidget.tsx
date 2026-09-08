@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { appliedCards } from "../lib/applied-cards";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X, Send, Check, Eye, PencilLine, Trash2, Wand2 } from "lucide-react";
 import { api, ApiError, type AiChatProposal, type AiChatResponse, type BasicCommandOffer, type BundleValidationPreview } from "../lib/api";
@@ -76,6 +77,11 @@ interface Msg {
   offerForceCount?: number;
   undoable?: boolean;
   undone?: boolean; // this write was undone from the chat
+  /** What the undo DID, shown where its button was. An undo is a reply to a
+   *  press, not a new thing said: appending it as its own bubble pushed the
+   *  card off screen and left the reader matching sentences to buttons. */
+  undoResult?: string;
+  undoOk?: boolean;
   /** The learned command this result message came from, kept so a later
    *  "do that again" can name it (see the prior sent with answerBasic). */
   ranCommand?: { id: string; message: string };
@@ -523,13 +529,9 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
       // model asked for several, the last one wins (one screen at a time).
       const escortTo = (r.escorts ?? []).at(-1);
       if (escortTo?.path?.startsWith("/")) navigate(escortTo.path);
-      const doneCards: Msg[] = (r.applied ?? []).map((a) => ({
-        role: "assistant" as const,
-        content: a.summary,
-        resolved: true,
-        ledgerId: a.ledger_id,
-        undoable: a.undoable,
-      }));
+      // One card per turn when it changed more than one thing, with a single
+      // "Undo all N". See web/src/lib/applied-cards.ts for why.
+      const doneCards: Msg[] = appliedCards(r.applied ?? [], turnIdRef.current);
       if (r.type === "proposal" && r.proposal) {
         setMessages([
           ...next,
@@ -1321,19 +1323,22 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
         setUndoing(null);
         setMessages((prev) => {
           const copy = [...prev];
-          if (copy[idx]) copy[idx] = { ...copy[idx]!, undone: r.ok };
-          return [
-            ...copy,
-            {
-              role: "assistant",
-              content: (r.ok ? "↩ " : "✗ ") + r.message,
-              // The dead end becomes a choice: it names what it left and lets
-              // the person say "those too". Nothing happens until they do.
-              ...(r.can_force && !force
-                ? { offerForceTurnId: m.undoTurnId, offerForceCount: (r.held ?? []).length }
-                : {}),
-            },
-          ];
+          if (copy[idx]) {
+            const patch: Msg = { ...copy[idx]!, undone: r.ok, undoResult: r.message, undoOk: r.ok };
+            // The offer is cleared FIRST, so a second press cannot leave the
+            // button that produced it sitting under its own answer.
+            delete patch.offerForceTurnId;
+            delete patch.offerForceCount;
+            // The dead end becomes a choice: it names what it left and lets the
+            // person say "those too". Nothing happens until they do, and it
+            // sits on the card it is about.
+            if (r.can_force && !force) {
+              patch.offerForceTurnId = m.undoTurnId;
+              patch.offerForceCount = (r.held ?? []).length;
+            }
+            copy[idx] = patch;
+          }
+          return copy;
         });
         return;
       }
@@ -1350,19 +1355,23 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
       const ok = outcomes.filter((o) => o.ok).length;
       const message =
         outcomes.length === 1
-          ? (outcomes[0]!.ok ? "↩ " : "✗ ") + outcomes[0]!.message
+          ? outcomes[0]!.message
           : ok === outcomes.length
-            ? `↩ Put back all ${ok}.`
-            : `↩ Put back ${ok} of ${outcomes.length}. ${outcomes.find((o) => !o.ok)?.message ?? ""}`;
+            ? `Put back all ${ok}.`
+            : `Put back ${ok} of ${outcomes.length}. ${outcomes.find((o) => !o.ok)?.message ?? ""}`;
       setMessages((prev) => {
         const copy = [...prev];
-        if (copy[idx]) copy[idx] = { ...copy[idx]!, undone: ok > 0 };
-        return [...copy, { role: "assistant", content: message }];
+        if (copy[idx]) copy[idx] = { ...copy[idx]!, undone: ok > 0, undoResult: message, undoOk: ok > 0 };
+        return copy;
       });
     } catch (e) {
       setUndoing(null);
       const msg = e instanceof ApiError ? e.message : "Couldn't undo that.";
-      setMessages((prev) => [...prev, { role: "assistant", content: "✗ " + msg }]);
+      setMessages((prev) => {
+        const copy = [...prev];
+        if (copy[idx]) copy[idx] = { ...copy[idx]!, undoResult: msg, undoOk: false };
+        return copy;
+      });
     }
   }
 
@@ -1637,17 +1646,22 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                   {/* An EXECUTED write (confirmed or auto-applied): the change-
                       ledger makes it reversible — Undo restores the before-image
                       (a recreated delete gets a new id, said honestly). */}
+                  {/* What the undo did, where its button was. */}
+                  {m.undoResult && (
+                    <div
+                      className={`mt-1.5 text-[11px] ${m.undoOk ? "text-muted dark:text-slate-400" : "text-ember-600 dark:text-ember-400"}`}
+                    >
+                      {(m.undoOk ? "↩ " : "✗ ") + m.undoResult}
+                    </div>
+                  )}
                   {/* The offer. It appears only after an undo has already told
                       the person what it left and why, and it names the count so
                       the second press is a decision, not a repeat of the first. */}
-                  {m.offerForceTurnId && !m.undone && (
+                  {m.offerForceTurnId && (
                     <div className="mt-1.5">
                       <button
                         type="button"
-                        onClick={() => {
-                          const at = messages.findIndex((x) => x.undoTurnId === m.offerForceTurnId);
-                          if (at >= 0) void undoWrite(at, true);
-                        }}
+                        onClick={() => void undoWrite(i, true)}
                         disabled={undoMut.isPending}
                         className="rounded-md border border-line dark:border-slate-600 text-muted dark:text-slate-400 hover:text-ember-500 hover:border-ember-400 text-[11px] font-medium px-2 py-0.5 transition disabled:opacity-50"
                       >
@@ -1655,7 +1669,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                       </button>
                     </div>
                   )}
-                  {(m.ledgerId || (m.ledgerIds?.length ?? 0) > 0) && m.undoable && !m.undone && (
+                  {(m.ledgerId || (m.ledgerIds?.length ?? 0) > 0) && m.undoable && !m.undone && !m.undoResult && (
                     <div className="mt-1.5">
                       <button
                         type="button"
@@ -1673,7 +1687,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                       </button>
                     </div>
                   )}
-                  {m.undone && <div className="mt-1 text-[11px] text-faint">↩ undone</div>}
+                  {m.undone && !m.undoResult && <div className="mt-1 text-[11px] text-faint">↩ undone</div>}
                 </div>
               );
               return el;

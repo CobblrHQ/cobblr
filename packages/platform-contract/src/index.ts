@@ -1023,7 +1023,13 @@ const ActionAppliesTo = z.union([
     .object({
       kinds: z.array(z.string()).min(1).optional(),
       traits: z.array(z.string()).min(1).optional(),
-      hasFieldRole: EntityFieldRole.optional(),
+      // A native field role ("quantity") OR a workspace field role ("expiry",
+      // "assignee"). The second half is what lets an action follow the
+      // WORKSPACE's own vocabulary: a bundle marks its "Best before" field as
+      // expiry, and every action about perishables appears on that table and
+      // on no other. Before this, the only way to scope "Threw it out" was to
+      // the whole inventory kind, so a box of screws offered it too.
+      hasFieldRole: z.union([EntityFieldRole, FieldRoleSchema]).optional(),
     })
     .refine(
       (d) => d.kinds || d.traits || d.hasFieldRole,
@@ -1133,6 +1139,12 @@ export const NotificationKind = z.object({
 });
 export type NotificationKind = z.infer<typeof NotificationKind>;
 
+// ORDER MATTERS. Declare actions in the order a person wants them: the record's
+// own module leads its strip, and the first few declared stay in the open while
+// the rest fold behind "+N more". The registry stores each action's position
+// in its manifest and lists by it. Until it did, the strip was ordered by
+// action ID, so "core-maintenance:log" and "core-scan:confirm-receipt-arrival"
+// led every inventory item and "use one" sat behind the fold (2026-09-08).
 const EntityAction = z.object({
   id: z
     .string()
@@ -2796,6 +2808,9 @@ export interface EntityActionRecord {
   invoke_handler: string | null;
   /** False = wire-only; don't render as a user button. */
   user_invokable: boolean;
+  /** Where the module declared it, 0-based. The strip lists a record's own
+   *  module's actions first, in this order. */
+  position: number;
   /** Machine-readable arg shape for the wire composer / invoke forms; null if
    *  the action declared none. */
   args_schema: Record<string, { label: string; type: "text" | "number" | "boolean" }> | null;
@@ -3388,9 +3403,46 @@ export const AiCapabilities = [
   // because it asks a smaller question with a smaller answer, which is what
   // makes it fast; it is not identify-image with less context.
   "identify-glance",
+  // Turning a sentence into a workspace: the bundle builder, the refine pass
+  // and the template match. Its own id for the reason split-image has one, and
+  // more so - it is the rarest call the platform makes and the one with the
+  // most riding on it. Somebody describes what they keep, once, and either
+  // recognises what comes back or gives up on the product.
+  //
+  // Rare and heavy is a different shape from chat, and a workspace should be
+  // able to spend differently on it. On the free Google tier the fuller model
+  // allows 20 requests a day against Lite's 500 (measured, see the preset):
+  // hopeless for chat, exactly right for a handful of builds. Sharing chat's
+  // id meant that trade could not be made at all.
+  "design-workspace",
 ] as const;
 
 export type AiCapability = (typeof AiCapabilities)[number];
+
+/** A job an OLDER job can serve when nothing declares the new one.
+ *
+ *  A capability id is a promise to every provider that already exists, and
+ *  they cannot all be updated at once: a third-party or user-installed
+ *  provider written before `design-workspace` declares `chat` and nothing
+ *  else. Without this, splitting a job out of another one takes the feature
+ *  away from those workspaces entirely - a thing disappearing because of a
+ *  refactor nobody asked them about.
+ *
+ *  So splitting a job is ADDITIVE. A provider that declares the new id is used
+ *  for it; one that does not still answers through the job it always answered
+ *  through, and the workspace's own choice comes first either way. It lives in
+ *  the contract rather than in the resolver because it is part of the
+ *  vocabulary: it says what a capability id MEANS to a provider that has never
+ *  heard of it. */
+export const AI_CAPABILITY_FALLBACK: Partial<Record<AiCapability, AiCapability>> = {
+  "design-workspace": "chat",
+};
+
+/** The capabilities to try, in order, for one requested job. */
+export function aiCapabilityChain(capability: AiCapability): AiCapability[] {
+  const next = AI_CAPABILITY_FALLBACK[capability];
+  return next ? [capability, next] : [capability];
+}
 
 /** One credential field an AI provider asks for. `choices` renders as a
  *  select (generic in every credential form) — e.g. the `transit` field on
@@ -4357,6 +4409,16 @@ export interface InstanceMoverContract {
    *  fields through `exposableFields`, which can hide the very custom values
    *  this needs to count. */
   metadataFor(orgId: string, ids: string[]): Promise<Array<Record<string, unknown>>>;
+  /** Which instance each of these records is in NOW.
+   *
+   *  Only the module knows where its own rows keep that, and without it a
+   *  caller has to be TOLD the list a record is already in - which is asking a
+   *  person to do the computer's arithmetic. "Put these in Tea" says
+   *  everything that matters; the records know the rest.
+   *
+   *  Optional so a mover written before this keeps working: the platform then
+   *  says it cannot work the source out and asks for it, rather than guessing. */
+  instancesOf?(orgId: string, ids: string[]): Promise<string[]>;
 }
 
 export interface PlatformInstances {

@@ -574,7 +574,11 @@ export async function matchCommand(
     const computed = computedCommandFor(message);
     if (computed) {
       const plan = await computed
-        .plan({ wsApi: ctx.wsApi, ...(ctx.selectionIds?.length ? { selectionIds: ctx.selectionIds } : {}) })
+        .plan({
+          wsApi: ctx.wsApi,
+          message,
+          ...(ctx.selectionIds?.length ? { selectionIds: ctx.selectionIds } : {}),
+        })
         .catch(() => null);
       // No plan means nothing to do — "delete duplicates" in a workspace with
       // none is not an offer, it is an answer, and the rules below give it.
@@ -851,6 +855,9 @@ basicsRouter.post(
       const wsApiC = chatWorkspaceApi(ctxOf(req));
       const plan = await computed.plan({
         wsApi: wsApiC,
+        // The same sentence the offer was made for, so the re-computation is
+        // of the SAME request rather than of the command in the abstract.
+        message: body.data.message,
         ...(body.data.selection_ids?.length ? { selectionIds: body.data.selection_ids } : {}),
       });
       if (!plan?.operations.length) {

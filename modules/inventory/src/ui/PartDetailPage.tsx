@@ -4,8 +4,8 @@
 
 import { useEffect, useState, type FocusEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, ArrowRightLeft, Copy, Library, Minus, Plus, Printer, ShieldCheck, Trash2 } from "lucide-react";
-import { AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, EntityThumb, Modal, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits } from "@cobblr/platform-web";
+import { Archive, ArrowRightLeft, Copy, Library, Minus, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, EntityThumb, Modal, RecordHeaderChips, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { QtyStepper } from "./QtyStepper";
 import { isAssorted } from "./assorted";
@@ -433,7 +433,10 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
                     matched: {matched.data.title}
                   </span>
                 )}
-                <PrintQrButton partId={p.id} orgSlug={orgSlug} getToken={getToken} />
+                {/* Label + Cobb, up here by the item's identity. Two verbs
+                    that are not about the record left the strip below for
+                    this spot; the platform decides what a header carries. */}
+                <RecordHeaderChips kind="inventory:part" id={p.id} label={p.name} />
                 {p.lifetime_warranty && (
                   <span className="text-[10px] inline-flex items-center gap-1 text-moss-600 border border-moss-200 dark:border-moss-800 rounded px-1.5 py-0.5">
                     lifetime warranty
@@ -459,6 +462,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           entityKind="inventory:part"
           entityId={p.id}
           excludeActionIds={excludeActionIds}
+          headerChips
         />
         <div className="grid grid-cols-2 gap-3">
           {/* Quantity + unit read as ONE control: an inline +/- stepper sits
@@ -855,116 +859,6 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
   );
 }
 
-// PrintQrButton — mints a QR token bound to this part (if one doesn't
-// already exist) then routes the labels module to print a QR label
-// for it. The "moment of magic" parity with HomeBox's per-item label
-// button.
-function PrintQrButton({
-  partId,
-  orgSlug,
-  getToken,
-}: {
-  partId: string;
-  orgSlug: string;
-  getToken: () => string | null;
-}) {
-  const toast = useToast();
-  const [busy, setBusy] = useState(false);
-  const auth = (): Record<string, string> => {
-    const t = getToken();
-    return t ? { Authorization: `Bearer ${t}` } : {};
-  };
-
-  async function printQr() {
-    setBusy(true);
-    try {
-      // 1. Reuse an active navigate-mode token, or mint one.
-      const list = await fetch(
-        `/api/v1/orgs/${orgSlug}/modules/labels/qr/tokens?entity_kind=inventory:part&entity_id=${encodeURIComponent(partId)}`,
-        { headers: auth() },
-      );
-      // scan_url is the full URL to encode, built server-side from the
-      // workspace's effective base (custom label base URL, else the serving
-      // origin) — never guess window.location.origin here.
-      let scanUrl: string | null = null;
-      let entityName = "";
-      if (list.ok) {
-        const data = (await list.json()) as {
-          items: Array<{ id: string; scan_url: string; revoked_at: string | null }>;
-        };
-        const active = data.items.find((t) => !t.revoked_at);
-        if (active) scanUrl = active.scan_url;
-      }
-      if (!scanUrl) {
-        const res = await fetch(
-          `/api/v1/orgs/${orgSlug}/modules/labels/qr/tokens`,
-          {
-            method: "POST",
-            headers: { ...auth(), "Content-Type": "application/json" },
-            body: JSON.stringify({
-              entity_kind: "inventory:part",
-              entity_id: partId,
-              mode: "navigate",
-              auth: "session",
-            }),
-          },
-        );
-        if (!res.ok) throw new Error(`mint token: ${res.status}`);
-        const data = (await res.json()) as { scan_url: string };
-        scanUrl = data.scan_url;
-      }
-      // Fetch the part name for the label description.
-      const partRes = await fetch(
-        `/api/v1/orgs/${orgSlug}/modules/inventory/parts/${partId}`,
-        { headers: auth() },
-      );
-      if (partRes.ok) {
-        const part = (await partRes.json()) as { name?: string; asset_id?: number };
-        entityName =
-          part.asset_id != null
-            ? `#${String(part.asset_id).padStart(3, "0")} ${part.name ?? ""}`.trim()
-            : (part.name ?? "");
-      }
-      // 2. Queue a label-print job. qr_payload is the unauthenticated
-      //    resolver URL — any QR reader pointed at it lands on the
-      //    workspace's part detail.
-      const qrUrl = scanUrl;
-      const q = await fetch(
-        `/api/v1/orgs/${orgSlug}/modules/labels/queue`,
-        {
-          method: "POST",
-          headers: { ...auth(), "Content-Type": "application/json" },
-          body: JSON.stringify({
-            module_name: "inventory",
-            entity_type: "part",
-            entity_id: partId,
-            qr_payload: qrUrl,
-            description: entityName || "Part",
-            qty: 1,
-          }),
-        },
-      );
-      if (!q.ok && q.status !== 409) throw new Error(`queue: ${q.status}`);
-      toast.success("QR label queued - open Labels → Queue to print.");
-    } catch (err) {
-      toast.error((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <button
-      type="button"
-      onClick={() => void printQr()}
-      disabled={busy}
-      className="text-[11px] font-mono uppercase tracking-widest text-accent hover:text-accent inline-flex items-center gap-1 border border-cobble-200 dark:border-cobble-800 rounded px-1.5 py-0.5 disabled:opacity-50"
-      title="Mint a QR token and queue a label print"
-    >
-      <Printer size={11} /> {busy ? "queueing…" : "QR label"}
-    </button>
-  );
-}
 
 function Field({
   label,

@@ -30,6 +30,7 @@ import { InstalledRenderers } from "./components/InstalledRenderers";
 import { PairsWellWith } from "./components/PairsWellWith";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { useTheme } from "./theme/ThemeContext";
+import { themePrefToApply } from "./theme/pref-to-apply";
 import { ActiveOrgProvider, useActiveOrg, pickDefaultOrg, urlHandleFor } from "./auth/ActiveOrgContext";
 import { deepPathAfterWorkspace } from "./lib/deep-path";
 import { AuthPage, MagicConsumePage, IdentityCallbackPage } from "./pages/AuthPage";
@@ -163,13 +164,24 @@ function RouteFallback() {
 /** Applies the signed-in user's server-stored theme preference on login, so a
  *  fresh device follows the user's choice instead of the OS default. Renders
  *  nothing; lives inside AuthProvider (the ThemeProvider is an ancestor from
- *  main.tsx). Only syncs — the user's own toggle owns changes + persistence. */
+ *  main.tsx). Only syncs — the user's own toggle owns changes + persistence.
+ *
+ *  ABSENT IS NOT "NO PREFERENCE". This used to sync `user?.theme_pref ?? null`,
+ *  which fires with null the moment nobody is signed in — and syncFromServer
+ *  clears the cache, so simply landing on the LOGIN PAGE erased the very
+ *  localStorage copy that exists to survive it. Sign in and your workspace came
+ *  up light; a refresh, going through /me, put it back (reported 2026-09-08).
+ *  So: nothing to say while signed out, and nothing to say about a response
+ *  that did not carry the field. An explicit null still applies - that is the
+ *  real "follow this device". */
 function ThemeSync() {
   const { user } = useAuth();
   const { syncFromServer } = useTheme();
+  const pref = themePrefToApply(user);
   useEffect(() => {
-    syncFromServer(user?.theme_pref ?? null);
-  }, [user?.theme_pref, syncFromServer]);
+    if (pref === undefined) return;
+    syncFromServer(pref);
+  }, [pref, syncFromServer]);
   return null;
 }
 
@@ -179,8 +191,13 @@ function ThemeSync() {
 function NavPrefSync() {
   const { user } = useAuth();
   useEffect(() => {
-    hydrateNavPref(user?.nav_pref ?? null);
-  }, [user?.nav_pref]);
+    // Same rule as ThemeSync: only an account that has actually loaded gets to
+    // say anything. (hydrateNavPref already ignores a falsy pref, so this has
+    // never lost a layout — but the two must read the same way, or the next
+    // person fixes one of them.)
+    if (!user) return;
+    hydrateNavPref(user.nav_pref ?? null);
+  }, [user]);
   return null;
 }
 

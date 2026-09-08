@@ -21,6 +21,7 @@ import type {
   AiProviderDef,
   PlatformAi,
 } from "@cobblr/platform-contract";
+import { aiCapabilityChain } from "@cobblr/platform-contract";
 import { getTenantDb } from "../db/tenant.js";
 import { meta } from "../db/meta.js";
 import * as integrationsImpl from "./integrations.js";
@@ -292,13 +293,15 @@ async function resolveProviderAndModel(
       .selectAll()
       .where("enabled", "=", true)
       .execute();
-    for (const candidate of rows) {
-      const def = providers.get(candidate.provider_id);
-      if (def?.capabilities[capability]) {
-        providerId = candidate.provider_id;
-        model = model ?? def.capabilities[capability]?.defaultModel ??
-          def.capabilities[capability]?.models[0];
-        break;
+    outer: for (const served of aiCapabilityChain(capability)) {
+      for (const candidate of rows) {
+        const def = providers.get(candidate.provider_id);
+        if (def?.capabilities[served]) {
+          providerId = candidate.provider_id;
+          model = model ?? def.capabilities[served]?.defaultModel ??
+            def.capabilities[served]?.models[0];
+          break outer;
+        }
       }
     }
   }
@@ -310,17 +313,19 @@ async function resolveProviderAndModel(
     // provider (and no guard), so this is inert there — but on the hosted
     // overlay it makes managed AI AUTO-ON for entitled workspaces: a paying
     // subscriber gets AI with zero setup instead of having to add a provider.
-    for (const [id, def] of providers) {
-      // Skip providers that opt out of zero-config auto-selection — they need
-      // per-user setup before they work (e.g. the edge bridge needs a connected
-      // agent), so auto-picking one turns a "no provider" case into a runtime
-      // error from the unset provider instead of a clean no_ai_provider.
-      if (def.autoSelectable === false) continue;
-      if (def.capabilities[capability] && Object.keys(def.describeCredentials()).length === 0) {
-        providerId = id;
-        model = model ?? def.capabilities[capability]?.defaultModel ??
-          def.capabilities[capability]?.models[0];
-        break;
+    outer: for (const served of aiCapabilityChain(capability)) {
+      for (const [id, def] of providers) {
+        // Skip providers that opt out of zero-config auto-selection — they need
+        // per-user setup before they work (e.g. the edge bridge needs a connected
+        // agent), so auto-picking one turns a "no provider" case into a runtime
+        // error from the unset provider instead of a clean no_ai_provider.
+        if (def.autoSelectable === false) continue;
+        if (def.capabilities[served] && Object.keys(def.describeCredentials()).length === 0) {
+          providerId = id;
+          model = model ?? def.capabilities[served]?.defaultModel ??
+            def.capabilities[served]?.models[0];
+          break outer;
+        }
       }
     }
   }
@@ -351,8 +356,10 @@ async function resolveProviderAndModel(
     row = { id: `virtual:${providerId}`, provider_id: providerId, credentials_enc: "", enabled: true, config: {} };
   }
   if (!model) {
-    model = def.capabilities[capability]?.defaultModel ??
-      def.capabilities[capability]?.models[0];
+    for (const served of aiCapabilityChain(capability)) {
+      model = def.capabilities[served]?.defaultModel ?? def.capabilities[served]?.models[0];
+      if (model) break;
+    }
   }
   if (!model) {
     throw new Error(`provider ${providerId} does not support ${capability}`);

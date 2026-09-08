@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-maintenance",
-  version: "0.1.4",
+  version: "0.1.5",
   displayName: "Maintenance",
   description:
     "Service history + scheduled maintenance for any entity. Oil changes, firmware flashes, warranty renewals: log what's done, get pinged when something's due.",
@@ -76,13 +76,14 @@ export default defineModule({
         description:
           "Record maintenance on this record: what was done and when, or schedule the next one. Pass `name` (what was done, e.g. \"oil change\"), and optionally `performed_at`, `scheduled_at`, `notes`, `cost_cents`, `recurrence_rule`. With neither date it logs as done now. Reading the history is list_maintenance.",
         icon: "wrench",
-        // DELIBERATELY universal: anything a workspace owns can need
-        // servicing. A mower, a printer, a vehicle, a water filter, a lease.
-        // Scoping this to kinds would mean core-maintenance deciding which of
-        // a user's things are allowed to have a service history, which is
-        // exactly the judgement this module refuses to make (it declares no
-        // entity kind for the same reason).
-        appliesTo: { any: true },
+        // Anything a workspace OWNS can need servicing: a mower, a printer, a
+        // vehicle, a water filter, a lease. That is physical + unique. It was
+        // declared universal, which also put "Log service" on every box of
+        // screws and every tea bag - fungible stock is bought, used and
+        // replaced, never serviced (audit, 2026-09-08). The two traits are the
+        // vocabulary for exactly that line, and a workspace can still widen it
+        // per action on /actions.
+        appliesTo: { traits: ["physical", "unique"] },
         invokeHandler: "core-maintenance.log",
         argsSchema: {
           description: { label: "Longer description of the work (optional)", type: "text" },

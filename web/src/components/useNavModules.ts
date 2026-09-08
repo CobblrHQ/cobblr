@@ -615,6 +615,13 @@ export function useNavModules(activeSlug: string): NavModules {
   for (const [parent, arr] of childrenByParent) {
     childrenByParent.set(parent, applyNavOrder(arr, navOrder));
   }
+  // And the THIRD kind of child: a bundle nav-group's members (Kitchen: Spices,
+  // Tea, Groceries). collapseNavGroups gathers them in discovery order and
+  // nothing above touches them, so the sort that fixed headings and module
+  // children left this list exactly as it was. The drop wrote the new order;
+  // the render never read it ("I can hold down to start the drag, but then it
+  // never lands in the new position", 2026-09-08). Same rule, same function.
+  orderGroupMembers(instanceGroups, navOrder);
 
   // The memo key must include the override-mutable presentation fields —
   // display label, icon, and the specialisations group label — not just
@@ -649,4 +656,19 @@ export function useNavModules(activeSlug: string): NavModules {
     enabledNames,
     isLoading: modules.isLoading || bundles.isLoading,
   };
+}
+
+/** A saved nav order reaches a bundle nav-group's members, in place.
+ *
+ *  Exported so the rule is testable without rendering the hook: the class of
+ *  bug here is a sort that exists and is never applied to one of the three
+ *  kinds of child, and a test of applyNavOrder alone cannot see which lists
+ *  it was wired to. */
+export function orderGroupMembers<T extends { name: string }>(
+  groups: Map<string, { label: string; members: T[] }>,
+  navOrder: string[],
+): void {
+  for (const [name, g] of groups) {
+    groups.set(name, { ...g, members: applyNavOrder(g.members, navOrder) });
+  }
 }

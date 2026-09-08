@@ -20,7 +20,7 @@ import { randomBytes } from "node:crypto";
 import { requireAuth, requirePlatformAdmin, isPlatformAdmin } from "../auth/middleware.js";
 import { inviteExpiresAt } from "../auth/signup-gate.js";
 import { scanResolversRouter } from "./super-admin-scan-resolvers.js";
-import { signImpersonation } from "../auth/jwt.js";
+import { ImpersonationRefused, startImpersonation, describeSession } from "../platform/impersonation.js";
 import { log as activityLog } from "../platform/activity.js";
 import { activationOf, cohortFunnel, countsToward } from "../platform/activation.js";
 import { meta } from "../db/meta.js";
@@ -2876,6 +2876,8 @@ const StartImpersonation = z.object({
 });
 
 // POST /super-admin/impersonations — mint a session + token (read-only).
+// The mint rules live in platform/impersonation.ts, shared with the deploy-box
+// door (scripts/view-as.sh → cli/view-as.js), so the two cannot drift.
 superAdminRouter.post("/impersonations", async (req, res, next) => {
   try {
     const parsed = StartImpersonation.safeParse(req.body);
@@ -2884,61 +2886,19 @@ superAdminRouter.post("/impersonations", async (req, res, next) => {
       return;
     }
     const { org_id, target_user_id, reason } = parsed.data;
-    const ttlMin = parsed.data.ttl_min ?? 30;
-    const operatorId = req.session!.id;
-
-    const target = await meta.selectFrom("users").select(["email", "display_name"]).where("id", "=", target_user_id).executeTakeFirst();
-    if (!target) {
-      res.status(404).json({ error: { code: "user_not_found", message: "Target user not found." } });
-      return;
-    }
-    // Platform admins can't be impersonated (no tier-internal impersonation).
-    if (isPlatformAdmin(target.email)) {
-      res.status(403).json({ error: { code: "target_is_admin", message: "Platform admins can't be impersonated." } });
-      return;
-    }
-    const membership = await meta
-      .selectFrom("org_memberships")
-      .select(["role"])
-      .where("user_id", "=", target_user_id)
-      .where("org_id", "=", org_id)
-      .executeTakeFirst();
-    if (!membership) {
-      res.status(404).json({ error: { code: "not_a_member", message: "That user is not a member of that workspace." } });
-      return;
-    }
-    const org = await meta.selectFrom("orgs").select(["slug", "name"]).where("id", "=", org_id).executeTakeFirst();
-    if (!org) {
-      res.status(404).json({ error: { code: "org_not_found", message: "Workspace not found." } });
-      return;
-    }
-
-    const expiresAt = new Date(Date.now() + ttlMin * 60 * 1000);
-    const row = await meta
-      .insertInto("impersonation_sessions")
-      .values({ operator_user_id: operatorId, target_user_id, org_id, reason, expires_at: expiresAt })
-      .returning(["id"])
-      .executeTakeFirstOrThrow();
-    const token = await signImpersonation(operatorId, target_user_id, org_id, row.id, ttlMin * 60);
-
-    // Transparent by default: a workspace-visible trace in the org's activity feed.
-    await activityLog({
+    const started = await startImpersonation({
       orgId: org_id,
-      userId: operatorId,
-      action: "impersonation_started",
-      ref: { module: null, entityType: "org", entityId: org_id },
-      diff: { reason, target: target.display_name || target.email },
+      targetUserId: target_user_id,
+      reason,
+      ...(parsed.data.ttl_min === undefined ? {} : { ttlMin: parsed.data.ttl_min }),
+      operatorUserId: req.session!.id,
     });
-
-    res.status(201).json({
-      session_id: row.id,
-      token,
-      expires_at: expiresAt.toISOString(),
-      mode: "read",
-      target: { id: target_user_id, name: target.display_name || target.email, role: membership.role },
-      workspace: { id: org_id, slug: org.slug, name: org.name },
-    });
+    res.status(201).json(started);
   } catch (err) {
+    if (err instanceof ImpersonationRefused) {
+      res.status(err.status).json({ error: { code: err.code, message: err.message } });
+      return;
+    }
     next(err);
   }
 });
@@ -3022,7 +2982,21 @@ superAdminRouter.get("/impersonations", async (_req, res, next) => {
       .orderBy("s.created_at", "desc")
       .limit(100)
       .execute();
-    res.json({ items });
+    const summarised = items.map((it) => ({
+      ...it,
+      summary: describeSession({
+        reason: it.reason,
+        mode: it.mode,
+        created_at: it.created_at,
+        ended_at: it.ended_at,
+        expires_at: it.expires_at,
+        request_count: it.request_count,
+        operator: it.operator_name || it.operator_email,
+        target: it.target_name || it.target_email,
+        workspace: it.workspace_name || it.workspace_slug,
+      }),
+    }));
+    res.json({ items: summarised });
   } catch (err) {
     next(err);
   }
@@ -3449,7 +3423,10 @@ superAdminRouter.post("/authoring-eval", async (req, res, next) => {
         // workspace user's request — no personal connection to route to.
         const r = await platform().ai.invoke({
           orgId,
-          capability: "chat",
+          // The same JOB the interactive build uses, so the eval measures the
+          // model a workspace has actually chosen for building - scoring chat's
+          // model would be scoring a different product.
+          capability: "design-workspace",
           // Same request the interactive build sends (and, like it, NOT schema-
           // constrained - see drafts.ts for the measured reason).
           input: { messages: [{ role: "user", content: prompt }] },

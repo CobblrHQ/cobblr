@@ -63,7 +63,8 @@ export async function matchTemplateHosted(orgId: string, intent: string, userId?
     const r = await platform().ai.invoke({
       orgId,
       userId: userId ?? undefined,
-      capability: "chat",
+      // Part of building a workspace, so it rides the builder's job.
+      capability: "design-workspace",
       input: { messages: [{ role: "system", content: system }, { role: "user", content: user }] },
       source: { kind: "core-authoring:match-template", id: orgId },
     });
