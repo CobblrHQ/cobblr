@@ -1,23 +1,29 @@
 // Telling the model what the deterministic layer already worked out.
 //
-// The offer strip says "Tab to run this, free"; pressing enter instead sends
-// the sentence to a model that has no idea any of that happened. It then works
-// the problem from scratch — and can arrive somewhere worse than the answer
-// that was sitting right there, or ask a question the offer had already
-// answered.
+// The order of authority here is deliberate, and it is the product's answer to
+// a weak model. The free-tier model hallucinates: asked to move five tea items
+// it created copies of two, then on another day proposed deleting them. The
+// no-AI path had not read that sentence at all, and once it could, the right
+// division of labour was obvious - CODE recognises the request and plans it,
+// exactly and every time; the MODEL confirms that plan, says it in a sentence
+// a person wants to read, and handles whatever else was in the same message.
+// The model is the narrator of a deterministic result, not a second opinion
+// on it (owner, 2026-09-09).
 //
-// So it is told. As INFORMATION, not an instruction: the person chose the
-// model over the offer, and a prompt that turns the offer into an order takes
-// that choice back. The model may use it, ignore it, or say why it is doing
-// something else.
+// So this is not "for information". When the plan matches what was asked, it
+// IS the answer, and the model runs that plan rather than working the problem
+// from scratch and arriving somewhere worse. The escape stays: if the person
+// clearly meant something the plan does not cover, the model says so.
 
 export function suggestionLine(sug?: { template: string; summary: string; operations: number }): string {
   if (!sug?.template) return "";
+  const n = sug.operations;
   return (
-    `\n\nALREADY WORKED OUT: this workspace can do "${sug.template}" without you — ` +
-    `${sug.summary} (${sug.operations} change${sug.operations === 1 ? "" : "s"}). ` +
-    `The user chose to ask you instead, so this is for information: if it is exactly what they asked for, ` +
-    `you can say so and do the same thing rather than inventing a different one, and you already know what ` +
-    `it found. If they meant something else, ignore it.`
+    `\n\nWORKED OUT ALREADY, IN CODE: this workspace read that request as "${sug.template}" and planned it exactly - ` +
+    `${sug.summary} (${n} change${n === 1 ? "" : "s"}). This plan came from looking at the records, not from guessing, ` +
+    `and it is the answer to that part of the message: run THIS plan (the same records, the same action), do not ` +
+    `reinvent it, and do not create, delete or rename anything it did not. Say what it does in plain words, and ` +
+    `handle anything ELSE the person asked for in the same message. Only if they clearly meant something this plan ` +
+    `does not cover, say what the plan would have done and ask.`
   );
 }

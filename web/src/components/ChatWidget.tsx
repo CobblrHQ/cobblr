@@ -4,12 +4,16 @@
 // messages render markdown; the input auto-grows. Portals to <body> so the
 // header's backdrop-blur can't trap its position:fixed (CLAUDE.md modal note).
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { appliedCards } from "../lib/applied-cards";
+import { linkifyMarkdown, mergeRefs, refsOfResponse, refOfProposal, type ChatEntityRef } from "../lib/entity-chips";
+import { ChatRefChip, ChatRefName, PermanentTag } from "./ChatRefChip";
+import { PlanLines } from "./PlanLines";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { X, Send, Check, Eye, PencilLine, Trash2, Wand2 } from "lucide-react";
-import { api, ApiError, type AiChatProposal, type AiChatResponse, type BasicCommandOffer, type BundleValidationPreview } from "../lib/api";
+import { X, Send, Check, Eye, PencilLine, Trash2, Wand2, Cpu, ChevronDown } from "lucide-react";
+import { createPortal } from "react-dom";
+import { api, ApiError, type AiChatProposal, type AiChatResponse, type BasicCommandOffer, type BundleValidationPreview, type ChatModelMenu, type ChatModelOption, type ChatPrefsInput } from "../lib/api";
 import { readSse } from "../lib/sse";
 import { Cobb, CobbBust, CobbHead, COBB_POSES, type CobbPose } from "./Cobb";
 import { useNavigate } from "react-router-dom";
@@ -90,7 +94,10 @@ interface Msg {
   /** A learned command that fits what was typed, offered for confirmation. The
    *  message rides along because the SERVER re-binds it: the browser never
    *  sends the operations, only what the user said. */
-  command?: { id: string; template: string; operations: number; summary: string; message: string };
+  command?: { id: string; template: string; operations: number; summary: string; message: string; lines?: string[] };
+  /** The records this message names. Each name renders as a chip that opens
+   *  the record (web/src/lib/entity-chips.ts). */
+  refs?: ChatEntityRef[];
 }
 
 const kindLabel = (id: string) => id.split(":")[1] ?? id;
@@ -127,6 +134,153 @@ function WriteModeChip({ mode, onCycle }: { mode: "off" | "ask" | "auto"; onCycl
       <PencilLine size={11} />
       {looks.label}
     </button>
+  );
+}
+
+/** The model pill: which AI answers THIS chat, switched from a dropdown.
+ *
+ *  Sits third, after the two consent chips, because it is the same shape of
+ *  decision (mine, for this chat, right where it acts) and because the owner
+ *  asked for exactly this: switch between the models and providers already
+ *  configured, quickly, without a trip to the AI page. The menu is what the
+ *  workspace has plus what has been shared in and approved; each provider's
+ *  own short list, with what a model costs written next to it, since on a free
+ *  tier the choice between Flash and Flash Lite is a quota decision. */
+function ModelChip({
+  menu,
+  onPick,
+  busy,
+}: {
+  menu: ChatModelMenu | undefined;
+  onPick: (choice: ChatModelOption["choice"] | null) => void;
+  busy: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const btn = useRef<HTMLButtonElement>(null);
+  const [at, setAt] = useState<{ top: number; right: number } | null>(null);
+  // The menu is PORTALED to the body and positioned from the button's rect.
+  // Inside the panel it was clipped: the panel sits at the right edge of the
+  // screen and scrolls, so an absolutely-positioned menu opening leftward from
+  // the last chip ran off-screen and under the scroll container. Fixed
+  // position, right edge on the button's right edge, closes on any scroll.
+  useEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const r = btn.current?.getBoundingClientRect();
+      if (r) setAt({ top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) });
+    };
+    place();
+    const close = (e: Event) => {
+      if (e.type === "mousedown" && btn.current?.contains(e.target as Node)) return;
+      if (e.type === "mousedown" && (e.target as HTMLElement | null)?.closest?.("[data-model-menu]")) return;
+      setOpen(false);
+    };
+    const key = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", place);
+    document.addEventListener("keydown", key);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", place);
+      document.removeEventListener("keydown", key);
+    };
+  }, [open]);
+  const options = menu?.groups.flatMap((g) => g.options) ?? [];
+  // Nothing to choose between is not a pill: one model in one place is not a
+  // decision, and a chip that opens on nothing reads as broken.
+  if (!menu || options.length < 2) return null;
+  const current = menu.current;
+  // At rest the pill shows the SHORT form - "Flash Lite", not "Gemini Flash
+  // Lite" - because it shares one row with two other chips and must never
+  // push itself onto a second. The family name is the menu's job.
+  const label = current ? current.short : menu.defaultShort;
+  const title = current
+    ? `This chat is answered by ${current.label}${current.note ? ` (${current.note})` : ""}. Click to switch.`
+    : `This chat uses the workspace default${menu.defaultLabel ? `, ${menu.defaultLabel}` : ""}. Click to switch.`;
+  return (
+    <>
+      <button
+        ref={btn}
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        disabled={busy}
+        title={title}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className={
+          "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] transition disabled:opacity-50 min-w-0 shrink " +
+          (current
+            ? "border-cobble-500 bg-cobble-600 text-white"
+            : "border-line dark:border-slate-600 text-muted dark:text-slate-400 hover:border-cobble-400")
+        }
+      >
+        <Cpu size={11} className="shrink-0" />
+        <span className="truncate max-w-[6.5rem]">{label}</span>
+        <ChevronDown size={11} className="shrink-0" />
+      </button>
+      {open &&
+        at &&
+        createPortal(
+          <div
+            data-model-menu
+            role="menu"
+            style={{ position: "fixed", top: at.top, right: at.right }}
+            className="z-[70] min-w-[15rem] max-w-[min(20rem,calc(100vw-1rem))] rounded-lg border border-line dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg py-1 text-[12px]"
+          >
+            {menu.groups.map((g) => (
+              <div key={g.heading} className="py-1">
+                <div className="px-3 pb-0.5 text-[10px] uppercase tracking-wide text-faint">
+                  {g.heading}
+                  {g.owner === "you" ? " · yours" : g.owner === "shared" ? " · shared with this workspace" : ""}
+                </div>
+                {g.options.map((o) => {
+                  const on = current?.key === o.key;
+                  return (
+                    <button
+                      key={o.key}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={on}
+                      onClick={() => {
+                        setOpen(false);
+                        onPick(o.choice);
+                      }}
+                      className={
+                        "w-full text-left px-3 py-1.5 flex items-center justify-between gap-3 hover:bg-subtle dark:hover:bg-slate-800 " +
+                        (on ? "text-content dark:text-mortar-100 font-medium" : "text-muted dark:text-slate-300")
+                      }
+                    >
+                      <span className="truncate">{o.label}</span>
+                      <span className="shrink-0 text-[10px] text-faint">
+                        {o.note ?? ""}
+                        {on ? " ✓" : ""}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+            {current && (
+              <div className="border-t border-line dark:border-slate-700 mt-1 pt-1">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setOpen(false);
+                    onPick(null);
+                  }}
+                  className="w-full text-left px-3 py-1.5 text-muted dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800"
+                >
+                  Back to the workspace default{menu.defaultLabel ? ` (${menu.defaultLabel})` : ""}
+                </button>
+              </div>
+            )}
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
 
@@ -309,6 +463,23 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
   const { activeSlug } = useActiveOrg();
   const navigate = useNavigate();
   const detailRoute = useDetailRoute(activeSlug ?? "");
+  // The chip a named record renders as. Built once per workspace: a new
+  // components object per render would remount every chip on every keystroke.
+  const mdComponents = useMemo(
+    () => ({
+      a: (props: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
+        <ChatRefChip
+          {...props}
+          slug={activeSlug ?? ""}
+          onGo={(to) => {
+            setOpen(false);
+            navigate(to);
+          }}
+        />
+      ),
+    }),
+    [activeSlug, navigate, setOpen],
+  );
   const aiStatus = useAiStatus();
   const aiOff = !!aiStatus && !aiStatus.available;
   // Tool consent (per-user, per-workspace, enforced server-side): may Cobb read
@@ -322,8 +493,14 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
     staleTime: 60_000,
   });
   const prefs = prefsQ.data ?? { read_tools: true, write_mode: "ask" as const };
+  const modelsQ = useQuery({
+    queryKey: ["ai-chat-models", activeSlug],
+    queryFn: () => api.aiChatModels(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 60_000,
+  });
   const setPrefs = useMutation({
-    mutationFn: (p: { read_tools: boolean; write_mode: "off" | "ask" | "auto" }) => api.aiChatSetPrefs(activeSlug, p),
+    mutationFn: (p: ChatPrefsInput) => api.aiChatSetPrefs(activeSlug, p),
     onMutate: (p) => qc.setQueryData(["ai-chat-prefs", activeSlug], p),
     onError: () => void qc.invalidateQueries({ queryKey: ["ai-chat-prefs", activeSlug] }),
   });
@@ -532,30 +709,37 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
       // One card per turn when it changed more than one thing, with a single
       // "Undo all N". See web/src/lib/applied-cards.ts for why.
       const doneCards: Msg[] = appliedCards(r.applied ?? [], turnIdRef.current);
+      // What the turn named: the records it changed and the ones it proposes
+      // to. Every message of the reply gets the same set, so a name Cobb wrote
+      // in his prose is a chip too, not only the card's.
+      const refs = refsOfResponse(r);
+      const named = (m: Msg): Msg => (refs.length ? { ...m, refs } : m);
       if (r.type === "proposal" && r.proposal) {
         setMessages([
           ...next,
-          ...doneCards,
+          ...doneCards.map(named),
           // The loop may say something useful before proposing ("found 3 skeins
           // that match — want me to add the pattern?"): keep that text.
-          ...(r.text ? [{ role: "assistant" as const, content: r.text }] : []),
-          { role: "assistant", content: r.summary ?? "I can do that — confirm?", proposal: r.proposal },
+          ...(r.text ? [named({ role: "assistant" as const, content: r.text })] : []),
+          named({ role: "assistant", content: r.summary ?? "I can do that — confirm?", proposal: r.proposal }),
         ]);
       } else if (r.type === "proposals" && r.items?.length) {
         // Several writes from one turn — one confirmable card each, so the user
         // approves or skips them individually.
         setMessages([
           ...next,
-          ...doneCards,
-          ...(r.text ? [{ role: "assistant" as const, content: r.text }] : []),
-          ...r.items.map((it) => ({
-            role: "assistant" as const,
-            content: it.summary,
-            proposal: it.proposal,
-          })),
+          ...doneCards.map(named),
+          ...(r.text ? [named({ role: "assistant" as const, content: r.text })] : []),
+          ...r.items.map((it) =>
+            named({
+              role: "assistant" as const,
+              content: it.summary,
+              proposal: it.proposal,
+            }),
+          ),
         ]);
       } else {
-        setMessages([...next, ...doneCards, { role: "assistant", content: r.text ?? "(no response)" }]);
+        setMessages([...next, ...doneCards.map(named), named({ role: "assistant", content: r.text ?? "(no response)" })]);
       }
     }
   }
@@ -973,10 +1157,14 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
           if (bulkIds.length > 1) {
             const key = bulkIds.join(",");
             if (!relayApplied.current.some((m) => (m.ledgerIds ?? []).join(",") === key)) {
+              const relayRefs = refsOfResponse({
+                applied: [data as { entity?: { kind: string; id?: string; label?: string }; touched?: ChatEntityRef[] }],
+              });
               relayApplied.current.push({
                 role: "assistant",
                 content: String(data.summary ?? `Made ${bulkIds.length} changes.`),
                 resolved: true,
+                ...(relayRefs.length ? { refs: relayRefs } : {}),
                 ledgerIds: bulkIds,
                 ...(turnIdRef.current ? { undoTurnId: turnIdRef.current } : {}),
                 undoable: data.undoable === true,
@@ -1423,7 +1611,10 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
               transits another member's connection) — so both capabilities are
               user-switchable right where they act. Enforced server-side. */}
           {!aiOff && (
-            <div className="px-4 pt-2 pb-1 shrink-0 flex items-center gap-2 flex-wrap">
+            <div className="px-4 pt-2 pb-1 shrink-0 flex items-center gap-2 flex-nowrap min-w-0">
+              {/* ONE ROW, always. Wrapping let a long model name push the third
+                  chip onto a second line; now the row cannot wrap and the model
+                  chip truncates instead (it is the one with a variable label). */}
               <ConsentToggle
                 on={prefs.read_tools}
                 onToggle={() => setPrefs.mutate({ ...prefs, read_tools: !prefs.read_tools })}
@@ -1441,6 +1632,18 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                     ...prefs,
                     write_mode: prefs.write_mode === "ask" ? "auto" : prefs.write_mode === "auto" ? "off" : "ask",
                   })
+                }
+              />
+              <ModelChip
+                menu={modelsQ.data}
+                busy={setPrefs.isPending}
+                onPick={(choice) =>
+                  setPrefs.mutate(
+                    choice
+                      ? { read_tools: prefs.read_tools, write_mode: prefs.write_mode, ...choice }
+                      : { read_tools: prefs.read_tools, write_mode: prefs.write_mode, provider_id: null, model: null, credential_id: null },
+                    { onSuccess: () => void modelsQ.refetch() },
+                  )
                 }
               />
             </div>
@@ -1526,7 +1729,37 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
               ) : (
                 <div key={i} className="text-left">
                   <div className="prose prose-sm dark:prose-invert max-w-none text-content dark:text-mortar-100 prose-p:my-1.5 prose-headings:my-2 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5 prose-pre:my-2 break-words">
-                    <ReactMarkdown>{m.content}</ReactMarkdown>
+                    {/* Every record the turn named is a link to its page here,
+                        in the card AND in Cobb's own sentences, and the renderer
+                        draws a record link as a chip (entity-chips.ts). A delete
+                        card is built rather than parsed: its one record, and
+                        the word that says it will not come back. */}
+                    {m.proposal?.kind === "delete" && !m.resolved && m.proposal.entity_label ? (
+                      <p>
+                        Delete{" "}
+                        {detailRoute(m.proposal.entity_kind, m.proposal.entity_id) ? (
+                          <ChatRefChip
+                            slug={activeSlug ?? ""}
+                            href={detailRoute(m.proposal.entity_kind, m.proposal.entity_id) ?? undefined}
+                            onGo={(to) => {
+                              setOpen(false);
+                              navigate(to);
+                            }}
+                          >
+                            {m.proposal.entity_label}
+                          </ChatRefChip>
+                        ) : (
+                          <ChatRefName slug={activeSlug ?? ""} kind={m.proposal.entity_kind}>
+                            {m.proposal.entity_label}
+                          </ChatRefName>
+                        )}{" "}
+                        <PermanentTag />
+                      </p>
+                    ) : (
+                      <ReactMarkdown components={mdComponents}>
+                        {linkifyMarkdown(m.content, mergeRefs(m.refs, [refOfProposal(m.proposal)]), detailRoute)}
+                      </ReactMarkdown>
+                    )}
                   </div>
                   {/* A workspace build running in the background — the longest
                       wait in the product, and the most literal `working`. */}
@@ -1574,6 +1807,10 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                   {/* He's proposing a change and waiting on your call — the
                       suggestion moment the `idea` pose was drawn for. Only while
                       it's unresolved: once you decide, he stops asking. */}
+                  {/* Everything the change will touch, listed under the sentence
+                      that names it. A card that said only "Move records into
+                      another list" asked for trust; this offers a check. */}
+                  {m.proposal?.kind === "action" && m.proposal.plan && !m.resolved && <PlanLines lines={m.proposal.plan.lines} />}
                   {m.proposal && !m.resolved && (
                     <div className="mt-2 flex items-center gap-2">
                       <Cobb pose="idea" size={44} title="Cobb suggests" className="cobb-lift shrink-0" />
@@ -1603,6 +1840,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                       <div className="text-[11px] text-muted dark:text-slate-400">
                         {m.command.summary} · learned from “{m.command.template}”
                       </div>
+                      {m.command.lines && <PlanLines lines={m.command.lines} />}
                       <div className="mt-1.5 flex items-center gap-2">
                         <button
                           type="button"
@@ -1704,6 +1942,45 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                 the workspace itself, costs nothing, and is already true, so a
                 reader should never have to wonder which kind of answer they are
                 looking at. */}
+            {/* Something this workspace already knows how to do fits what is
+                being typed. It is Cobb saying so, in his own green bubble where
+                his other no-AI answers appear, and it says the WHOLE plan:
+                which five, into what. It used to sit in a strip of its own
+                between the conversation and the composer, one truncated line
+                behind a divider, which read as chrome and hid the part that
+                mattered. Offered, not taken: enter still sends to the AI, tab
+                or the button takes the cheaper door. */}
+            {suggestion && !busy && (
+              <div className="flex items-end gap-3">
+                <Cobb pose="idea" size={46} title="Cobb already knows how" className="cobb-lift shrink-0" />
+                <div className="cobb-bubble cobb-bubble-sm relative rounded-lg px-3 py-2 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900 min-w-0">
+                  <div className="text-sm font-medium text-emerald-800 dark:text-emerald-300 break-words">
+                    {suggestion.summary.replace(/\.\s*$/, "")}
+                  </div>
+                  {suggestion.lines && <PlanLines lines={suggestion.lines} tone="green" />}
+                  {/* The rule's generic name ("move things into another list") is
+                      not a sentence about THIS plan, and the plan above already
+                      says everything. A command the workspace was TAUGHT still
+                      says where it learned it, the way the command card does. */}
+                  {!suggestion.id.startsWith("computed:") && (
+                    <div className="text-[11px] text-emerald-700/80 dark:text-emerald-400/70 break-words">taught from “{suggestion.template}”</div>
+                  )}
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void acceptSuggestion()}
+                      className="inline-flex items-center gap-1 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium px-2.5 py-1 transition"
+                    >
+                      <Wand2 size={13} /> Do it
+                    </button>
+                    <kbd className="text-[10px] font-mono text-emerald-700/70 dark:text-emerald-400/60 border border-emerald-300 dark:border-emerald-800 rounded px-1">
+                      tab
+                    </kbd>
+                    <span className="text-[10px] text-emerald-700/60 dark:text-emerald-400/50">no AI used</span>
+                  </div>
+                </div>
+              </div>
+            )}
             {peek && !busy && (
               <div className="flex items-end gap-3">
                 <Cobb pose="idea" size={46} title="Cobb already knows" className="cobb-lift shrink-0" />
@@ -1793,37 +2070,6 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
               <div className="text-xs text-ember-500 bg-ember-50 dark:bg-ember-900/20 rounded px-3 py-2">{error}</div>
             )}
           </div>
-
-          {/* Something this workspace already knows how to do fits what is
-              being typed. Offered, not taken: enter still sends to the AI, and
-              this is the cheaper door standing open beside it. */}
-          {suggestion && !busy && (
-            <div className="border-t border-line dark:border-slate-700 px-3 pt-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => void acceptSuggestion()}
-                className="w-full text-left rounded-md border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-2.5 py-1.5 hover:bg-cobble-100 dark:hover:bg-cobble-900/50 transition"
-              >
-                <span className="flex items-center gap-2">
-                  <Wand2 size={13} className="text-accent shrink-0" />
-                  <span className="flex-1 min-w-0">
-                    <span className="block text-xs text-content dark:text-mortar-200 truncate">
-                      {/* A computed command's summary is a sentence and ends
-                          like one; a bound one is a fragment. Either way this
-                          reads as one line, not "…of each., no AI needed". */}
-                      {suggestion.summary.replace(/\.\s*$/, "")}, no AI needed
-                    </span>
-                    <span className="block text-[10px] font-mono text-faint dark:text-slate-500 truncate">
-                      {suggestion.template}
-                    </span>
-                  </span>
-                  <kbd className="shrink-0 text-[10px] font-mono text-faint dark:text-slate-500 border border-line dark:border-slate-600 rounded px-1">
-                    tab
-                  </kbd>
-                </span>
-              </button>
-            </div>
-          )}
 
           {/* What you are pointing at, held where you can see it — and drop it.
               A highlight is gone the moment the caret enters this box, so it is

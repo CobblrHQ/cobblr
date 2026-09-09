@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-tags",
-  version: "0.4.1",
+  version: "0.4.2",
   displayName: "Tags",
   description:
     "Cross-module polymorphic labels. Attach the same tag to a part, a task, a printer: they all show up under that tag.",
@@ -131,6 +131,8 @@ export default defineModule({
   contributes: {
     panels: [
       {
+        // DELIBERATELY universal: a tag is a label a person puts on anything;
+        // it belongs to no face and no kind.
         id: "core-tags:tags",
         surface: "entity-detail-panel" as const,
         target: "*",

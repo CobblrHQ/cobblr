@@ -20,6 +20,7 @@ import {
 } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePlatformWeb } from "./context";
+import { useFaces } from "./faces";
 
 /** Context for `surface: "entity-detail-panel"` — a panel inside the target
  *  kind's detail modal. Keep it small and host-agnostic: a field added here
@@ -45,6 +46,13 @@ export interface ContributedPanelSpec {
   surface: "module-page-tab" | "entity-detail-panel";
   target: string;
   title: string;
+  /** The panel's own predicate, when it declared one. Only `traits` is read
+   *  here, against the trait values the collection wears (real and trial
+   *  axes): a panel with traits shows where every listed one is worn. */
+  appliesTo?: { traits?: string[] } | { any: true } | null;
+  /** Disclosure: the face this panel belongs to. A face a person hid takes
+   *  its panels off the record; eligibility above is untouched. */
+  face?: string | null;
 }
 
 export type DetailPanelComponent = ComponentType<{ ctx: EntityDetailPanelCtx }>;
@@ -141,7 +149,19 @@ export function ContributedDetailPanels({
    *  list rather than a record's own detail view. */
   universal?: boolean;
 }) {
-  const panels = useContributedDetailPanels(target, universal);
+  const all = useContributedDetailPanels(target, universal);
+  const { worn, on } = useFaces(ctx.kind ?? target);
+  // A panel that belongs to traits the collection does not wear stays off
+  // the record; "Price history" is `traits: ["fungible"]` and has nothing to
+  // say on a catalog. Absent traits = the old rule, target alone. Every listed
+  // trait must be worn, which is the matcher's cross-axis AND.
+  const panels = all.filter((p) => {
+    const traits = p.appliesTo && "traits" in p.appliesTo ? p.appliesTo.traits : undefined;
+    const eligible = !traits?.length || worn.has("*") || traits.every((t) => worn.has(t));
+    // Then the person's choice: a hidden face hides its panels.
+    const shown = !p.face || on.has(p.face as never);
+    return eligible && shown;
+  });
   if (panels.length === 0) return null;
   return (
     <>

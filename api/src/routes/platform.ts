@@ -19,7 +19,8 @@ import { checkAvailability as checkAiAvailability } from "../platform/ai.js";
 import { hostedIdentifyEnabled } from "@cobblr/platform-contract/hosted-identify";
 import { AiCapabilities, type AiCapability } from "@cobblr/platform-contract";
 import { clearComputedDefsCache } from "../platform/computed-fields.js";
-import { effectiveAppliesTo, matchAction, getActionScope } from "../platform/actions.js";
+import { effectiveAppliesTo, matchAction, getActionScope, planFor } from "../platform/actions.js";
+import { facesForKind } from "../platform/faces.js";
 import { platformActionMinRole } from "../platform/platform-actions.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import type { ActionAppliesToDecl } from "@cobblr/platform-contract";
@@ -275,6 +276,26 @@ platformOrgRouter.post(
   },
 );
 
+// GET /:slug/faces?kind=<entity-kind> — which faces a collection wears.
+//
+// The one answer every record surface reads before deciding what to show:
+// the strip, the contributed panels, and a module's own detail page all ask
+// this instead of keeping their own rule. Meta-side, so it is cheap.
+//
+// AI-REACH: exempt — a read the assistant gets through list_kinds; nothing to invoke.
+platformOrgRouter.get("/:slug/faces", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    const kind = typeof req.query.kind === "string" ? req.query.kind : null;
+    if (!kind) {
+      res.status(400).json({ error: { code: "missing_kind", message: "?kind=<entity-kind> required" } });
+      return;
+    }
+    res.json(await facesForKind(req.tenant!.org.id, kind));
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ──────────────────────── actions ──────────────────────────────────
 
 platformOrgRouter.get(
@@ -349,6 +370,55 @@ const InvokeBody = z.object({
   bindingId: z.string().uuid().optional(),
   args: z.record(z.unknown()).optional(),
 });
+
+// POST /:slug/actions/plan — what an action WOULD touch, before anyone runs
+// it: the list a confirm card shows. Same body and same gate as invoke; it
+// writes nothing. An action with no planner answers { plan: null } and its
+// card falls back to the action's label.
+// AI-REACH: exempt — a read the confirm card makes about a change already proposed, not a capability
+platformOrgRouter.post(
+  "/:slug/actions/plan",
+  requireAuth,
+  withTenant,
+  async (req, res, next) => {
+    try {
+      const parsed = InvokeBody.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({
+          error: { code: "invalid_body", message: "Bad plan payload", details: parsed.error.issues },
+        });
+        return;
+      }
+      if (!(await requireCapability(req, res, parsed.data.actionId))) return;
+      const isWorkspaceAction = (await getActionScope(parsed.data.actionId)) === "workspace";
+      const plan = await planFor(parsed.data.actionId, {
+        orgId: req.tenant!.org.id,
+        userId: req.session!.id,
+        scope: isWorkspaceAction ? "workspace" : "entity",
+        ...(!isWorkspaceAction && parsed.data.entityKind && parsed.data.entityId
+          ? { entity: { kind: parsed.data.entityKind, id: parsed.data.entityId } }
+          : {}),
+        event: {
+          name: null,
+          payload: parsed.data.args ?? {},
+          actor: {
+            user_id: req.session!.id,
+            display_name: req.session!.display_name,
+            auth_method: req.session!.auth_method,
+            api_token_id: req.session!.api_token_id,
+            api_token_name: null,
+          },
+          timestamp: new Date().toISOString(),
+          trigger_type: "user-invoked",
+        },
+        args: parsed.data.args ?? {},
+      });
+      res.json({ plan });
+    } catch (e) {
+      next(e);
+    }
+  },
+);
 
 // AI-REACH: this IS the door. Every action the assistant runs arrives here,
 // so giving it one of its own would be a door into the door.

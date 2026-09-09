@@ -108,6 +108,7 @@ export function listProviders(): ReturnType<PlatformAi["listProviders"]> {
     .map(({ p }) => ({
     id: p.id,
     label: p.label,
+    ...(p.modelNotes ? { modelNotes: p.modelNotes } : {}),
     credentials: p.describeCredentials(),
     capabilities: p.capabilities,
     setup: p.setup,
@@ -490,7 +491,12 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
   // A choice naming one of the workspace's OWN providers means the personal
   // path is skipped entirely: picking a provider for a job and being served by
   // somebody's routed key anyway is the bug this fixes.
-  const choseWorkspaceProvider = !!choice && !choice.credentialId && !!choice.providerId;
+  //
+  // A per-CALL credential_id (the chat's model pill, one person's choice)
+  // outranks both: it is the most specific thing anyone has said about this
+  // call, and it names a personal connection by id, so the workspace path is
+  // not consulted at all.
+  const choseWorkspaceProvider = !req.credential_id && !!choice && !choice.credentialId && !!choice.providerId;
   if (!req.provider_id && !choseWorkspaceProvider) {
     const personal = await resolvePersonalProvider(
       req.orgId,
@@ -498,7 +504,7 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
       (pid) => !!providers.get(pid)?.capabilities[req.capability],
       "ai-provider",
       req.capability,
-      choice?.credentialId ?? null,
+      req.credential_id ?? choice?.credentialId ?? null,
     );
     if (personal) {
       const pdef = providers.get(personal.providerId);
@@ -508,6 +514,10 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
       // named THIS connection.
       const chosenModel =
         choice?.credentialId && choice.credentialId === personal.credentialId ? choice.model : null;
+      // A call that named THIS connection and also a model gets that model;
+      // one that named a different connection than the one that answered
+      // gets nothing from the pill (req.model is only honoured for the
+      // connection it was chosen with).
       const pmodel =
         req.model ??
         chosenModel ??

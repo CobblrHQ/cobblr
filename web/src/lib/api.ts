@@ -990,7 +990,10 @@ export const api = {
   /** Fetch + store an image for an entity. OMIT `query` and the server derives
    *  the phrase from the entity itself (same derivation as the picker) — hand-
    *  built phrases are how Auto and the web search drifted apart. */
-  enrichEntityImage: (slug: string, body: { entity_kind: string; entity_id: string; query?: string; instance?: string | null; image_url?: string }) =>
+  enrichEntityImage: (
+    slug: string,
+    body: { entity_kind: string; entity_id: string; query?: string; instance?: string | null; image_url?: string; file_id?: string },
+  ) =>
     request<{ image_path: string | null }>("POST", `/orgs/${slug}/modules/core-scan/entity-image`, body),
   /** Fill in the missing pictures across a whole collection in one press — the
    *  same derived auto-fetch a single record's "Auto" runs, for every record
@@ -1378,6 +1381,12 @@ export const api = {
   rotateCalendarFeed: (slug: string) =>
     request<CalendarFeed>("POST", `/orgs/${slug}/calendar/feed/rotate`, {}),
 
+  /** Which faces a collection wears: what a record shows beyond the base. */
+  listFaces: (slug: string, kind: string) =>
+    request<{ kind: string; traits: Record<string, string>; faces: string[]; explicit: string[] }>(
+      "GET",
+      `/orgs/${slug}/faces?kind=${encodeURIComponent(kind)}`,
+    ),
   // Pillar B — actions + invocation
   listActions: (slug: string, kind: string) =>
     request<{ items: PlatformAction[]; bindings: PlatformActionBinding[] }>(
@@ -3609,9 +3618,12 @@ export const api = {
       kind: string;
       entity_id: string;
       instance?: string;
-      mode: "add-qty" | "link-barcode" | "move" | "merge-fields";
+      /** `replace`: the one you had ran out and this is the new one. The
+       *  count is set to what was scanned, the old one is recorded as
+       *  consumed (or discarded via `resolution`), the new one as bought. */
+      mode: "add-qty" | "replace" | "link-barcode" | "move" | "merge-fields";
       location_id?: string;
-      /** Only meaningful on add-qty, the one mode that is a purchase.
+      /** Only meaningful on add-qty / replace, the modes that are a purchase.
        *  `context` keeps a party-sized or stock-up buy from training the rate
        *  like a normal shop; `resolution` says what became of the stock you
        *  still had, which nothing but a person can know. */
@@ -4052,17 +4064,11 @@ export const api = {
   /** Ask Cobb tool consent (per-user, per-workspace): may the chat read your
    *  workspace data into prompts, and the write mode (off / ask / auto)?
    *  Enforced server-side; auto still asks for ACTIONS (irreversible). */
-  aiChatPrefs: (slug: string) =>
-    request<{ read_tools: boolean; write_mode: "off" | "ask" | "auto" }>(
-      "GET",
-      `/orgs/${slug}/modules/core-ai/chat/prefs`,
-    ),
-  aiChatSetPrefs: (slug: string, prefs: { read_tools: boolean; write_mode: "off" | "ask" | "auto" }) =>
-    request<{ read_tools: boolean; write_mode: "off" | "ask" | "auto" }>(
-      "PUT",
-      `/orgs/${slug}/modules/core-ai/chat/prefs`,
-      prefs,
-    ),
+  aiChatPrefs: (slug: string) => request<ChatPrefs>("GET", `/orgs/${slug}/modules/core-ai/chat/prefs`),
+  aiChatSetPrefs: (slug: string, prefs: ChatPrefsInput) =>
+    request<ChatPrefs>("PUT", `/orgs/${slug}/modules/core-ai/chat/prefs`, prefs),
+  /** The model pill: what this chat can be answered by, and what it is set to. */
+  aiChatModels: (slug: string) => request<ChatModelMenu>("GET", `/orgs/${slug}/modules/core-ai/chat/models`),
   /** The AI change ledger: what Cobb wrote (confirmed or auto), what's undoable. */
   aiChatWrites: (slug: string) =>
     request<{
@@ -4675,6 +4681,8 @@ export interface BasicCommandOffer {
   template: string;
   operations: number;
   summary: string;
+  /** Everything it will touch, one per line. */
+  lines?: string[];
 }
 
 /** Result of the no-AI basic-mode matcher (POST …/core-ai/basics/answer). */
@@ -4791,6 +4799,9 @@ export interface AiProviderDef {
   label: string;
   credentials: Record<string, { label: string; secret: boolean; choices?: Array<{ value: string; label: string }> }>;
   capabilities: Record<string, { models: string[]; defaultModel?: string }>;
+  /** What each model is called and costs, for any picker a person reads:
+   *  "Gemini Flash Lite - 500 free a day" rather than an id. */
+  modelNotes?: Record<string, { label: string; note?: string; short?: string }>;
   /** What this provider is FOR. Absent on the per-workspace AI catalogue, which
    *  is AI by definition; the personal catalogue at /me/connections carries
    *  every kind and always sets it. */
@@ -4833,6 +4844,38 @@ export interface ConnRoute {
 }
 
 /** A personal credential the user configured once + routed to workspaces. */
+/** Ask Cobb per-user prefs: the three pills. The model fields are null when
+ *  the workspace's default applies. */
+export interface ChatPrefs {
+  read_tools: boolean;
+  write_mode: "off" | "ask" | "auto";
+  provider_id?: string | null;
+  model?: string | null;
+  credential_id?: string | null;
+}
+export interface ChatPrefsInput {
+  read_tools: boolean;
+  write_mode: "off" | "ask" | "auto";
+  /** Omitted = leave the model choice alone; null = back to the workspace default. */
+  provider_id?: string | null;
+  model?: string | null;
+  credential_id?: string | null;
+}
+export interface ChatModelOption {
+  key: string;
+  label: string;
+  /** What the pill shows at rest; fits beside two other chips on one row. */
+  short: string;
+  note?: string;
+  choice: { provider_id: string | null; model: string; credential_id: string | null };
+}
+export interface ChatModelMenu {
+  groups: Array<{ heading: string; owner?: "you" | "shared"; options: ChatModelOption[] }>;
+  current: ChatModelOption | null;
+  defaultLabel: string | null;
+  defaultShort: string;
+}
+
 export interface UserConnection {
   id: string;
   provider_id: string;
@@ -5997,7 +6040,14 @@ export interface AiChatResponse {
   items?: Array<{ summary: string; proposal: AiChatProposal }>;
   /** AUTO mode: writes already applied this turn (ledgered) — render as
    *  "✓ done" cards with an Undo where undoable. */
-  applied?: Array<{ summary: string; ledger_id?: string; undoable?: boolean }>;
+  applied?: Array<{
+    summary: string;
+    ledger_id?: string;
+    undoable?: boolean;
+    /** Which record, named, so the panel can draw it as a chip. */
+    entity?: { kind: string; id?: string; label?: string };
+    touched?: Array<{ kind: string; id: string; label: string }>;
+  }>;
   /** build-proposal: the build runs async — poll authoringDraft(draft_id)
    *  until the draft leaves "building", then read its validation.preview. */
   building?: boolean;
@@ -6019,6 +6069,8 @@ export type AiChatProposal =
       entity_id: string;
       entity_label?: string;
       args?: Record<string, unknown>;
+      /** What it will touch, from the action's planner: the card lists it. */
+      plan?: { title: string; lines: string[] };
     }
   | { kind: "build"; draft_id: string };
 
@@ -7124,6 +7176,9 @@ export interface PlatformBundleInstance {
   /** Visually group this instance with siblings sharing the same `key` into
    *  one connected navbar element (a quiet `label` stem + each member's name
    *  as a segment). Presentational + generic. */
+  /** The faces this collection wears, chosen by the bundle. Keys left out are
+   *  derived from signal; see docs/architecture/faces.md. */
+  faces?: Partial<Record<"stock" | "perishable" | "serialized" | "maintained" | "lendable" | "container", boolean>>;
   nav_group?: {
     key: string;
     label: string;

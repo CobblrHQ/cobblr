@@ -1,7 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.flagship.groceries",
-    "version": "0.10.1",
+    "version": "0.10.2",
     "scan_keywords": [
       "chips",
       "snack",
@@ -376,6 +376,10 @@
       {
         "module": "inventory",
         "instance_name": "groceries",
+        "faces": {
+          "stock": true,
+          "perishable": true
+        },
         "scan_keywords": [
           "tomato",
           "cucumber",

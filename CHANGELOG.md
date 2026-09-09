@@ -2,6 +2,26 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-09-09
+
+### Features
+- A third pill in the chat header lets you switch which AI answers your chat, from a dropdown of what the workspace already has and what has been shared into it, without a trip to the AI page. Each model shows what it costs: on the free Google tier, Flash Lite at 500 a day or Flash at 20, and on a Claude connection, Sonnet, Opus or Haiku. It is your choice for your chat; everyone else keeps the workspace default.
+- A record shows what its collection is for and folds the rest into one "More about this item" row, so a box of tea no longer carries a serial-number box, a lending form, a service log and a contents panel.
+
+### Improvements
+- "Already tracked" now points out two things it was keeping quiet about. When a scan recognises the kind of thing (Tea) but the record it matched is filed somewhere else (Inventory), the banner says so and offers Move it to Tea, with the destination already chosen; history, tags and printed labels come along. And when the matched record has no picture while the scan just found one, the banner offers Use this scan's picture, one tap, no second download. Both were one tap away and a hunt later.
+- When your workspace has already worked out what a request means (delete duplicates, move all the tea into the Tea list), the assistant now runs exactly that plan and tells you what it did, instead of working the problem out again from scratch and sometimes landing somewhere worse. Anything else you asked for in the same message is still handled.
+- Patch and minor bundle updates now apply on their own, on startup and hourly, whether or not anyone opens the dashboard; the dashboard only reports what has not landed yet.
+- In the chat panel, every record a turn created, changed, moved or proposes to delete is now a chip, in the done card and in Cobb's own sentences. Click one to open the record. A confirm card marks a permanent delete with a small tag instead of a dash.
+- A confirm card for a bulk change now says exactly what it is about to do and lists every record it will touch, folded past five with "and N more". Moving things between lists names each one and the list it leaves and joins. "Move the tea from this page into its own section" now works without AI: the section is created and the tea moved into it, all on one card.
+- Assets and machines fold their dormant sections the same way items do: the service fields, quantity and contents show when the collection wears that face, and sit behind one "More about this item" row otherwise.
+- "Replaced the one that ran out" is now a button, and the "this buy was" chips are gone. When a scan matches something you already have, the banner offers the three answers that matter: Replaced the one that ran out (the count stays what you scanned; the last one is recorded as used, which is how the ledger learns how long a box lasts), +1, still had some (it goes on top), and Old one went bad (recorded as waste, never as consumption). The four "as usual / a one-off / a stock-up / going quicker lately" chips asked for things the ledger measures itself, and one of them changed nothing at all; they are gone.
+- The closed scan card now offers everything the open one does for something you already have. Its line names the record with its count and where it lives ("You already have Green tea ×1 · 📍Pantry"), then the three re-buy answers (Replaced the one that ran out / +1, still had some / Old one went bad), and the move and picture offers when they apply. Opening the card no longer says "you already have" twice: the line steps aside for the full banner, which now keeps the offers on one row and the actions on one row, and fills in the answer the ledger expects.
+- On a workspace's AI page, your own AI connections that the workspace is not using yet are listed with two buttons: Use here (only your calls) and Share (offer it to the whole workspace). Per-job model pickers now show model names with their notes instead of raw ids.
+
+### Fixes
+- On a phone, an item's title no longer sits under the status bar, its fields run in one column instead of two cramped ones, and each field's hint shows one line until you tap it.
+
 ## 2026-09-08
 
 ### Features

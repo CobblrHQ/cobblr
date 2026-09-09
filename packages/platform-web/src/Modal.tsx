@@ -35,6 +35,9 @@ interface Props {
   children: ReactNode;
   /** Width preset. md (default) = 32rem; lg = 48rem; xl = 64rem. */
   size?: "sm" | "md" | "lg" | "xl" | "content";
+  /** A row pinned under the scrolling body: the verbs that must stay in reach
+   *  on a phone (Duplicate, Move, Delete) instead of living five screens down. */
+  footer?: ReactNode;
   /** Tints the header to signal a destructive context. */
   destructive?: boolean;
   /** Render IN-FLOW as a card (same chrome, no portal/overlay/esc/scroll-lock).
@@ -95,7 +98,7 @@ const SIZE: Record<NonNullable<Props["size"]>, string> = {
   content: "max-w-4xl",
 };
 
-export function Modal({ open, onClose, title, subtitle, children, size = "md", destructive, dismissOnBackdrop = true, inline = false, chromeless = false, fillHeight = false, cobb }: Props) {
+export function Modal({ open, onClose, title, subtitle, children, size = "md", destructive, dismissOnBackdrop = true, inline = false, chromeless = false, fillHeight = false, cobb, footer }: Props) {
   // "Dirty" = the user has entered/changed something inside this modal. Tracked
   // by listening (capture) for input/change events bubbling from any descendant
   // field — so we never have to know in advance whether a modal is a form. Only
@@ -231,6 +234,11 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
           </div>
         )}
         <div className="p-5 flex-1 min-h-0 overflow-y-auto">{children}</div>
+        {footer && (
+          <div className="shrink-0 border-t border-line dark:border-slate-700 px-5 py-2.5 bg-surface dark:bg-slate-900">
+            {footer}
+          </div>
+        )}
       </div>
   );
 

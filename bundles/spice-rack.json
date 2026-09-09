@@ -1,7 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.flagship.spice-rack",
-    "version": "0.1.2",
+    "version": "0.2.1",
     "released_at": "2026-08-20",
     "name": "Spice Rack",
     "author": "Cobblr",
@@ -73,6 +73,10 @@
       {
         "module": "inventory",
         "instance_name": "spices",
+        "faces": {
+          "stock": true,
+          "perishable": true
+        },
         "nav_group": {
           "key": "kitchen",
           "label": "Kitchen"

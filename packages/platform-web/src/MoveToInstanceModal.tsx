@@ -35,6 +35,9 @@ export interface MoveToInstanceModalProps {
   noun?: string;
   /** Fired after a successful move, with the destination's display name. */
   onMoved: (movedCount: number, destinationLabel: string) => void;
+  /** A destination already chosen by the caller (the scan that recognised a
+   *  tea says Teas), so the dialog opens on the preview rather than the menu. */
+  defaultTo?: string | null;
 }
 
 async function json<T>(
@@ -70,6 +73,7 @@ export function MoveToInstanceModal({
   ids,
   noun = "record",
   onMoved,
+  defaultTo = null,
 }: MoveToInstanceModalProps) {
   const [destinations, setDestinations] = useState<InstanceOption[]>([]);
   const [to, setTo] = useState<string>("");
@@ -91,9 +95,15 @@ export function MoveToInstanceModal({
       `${base}/instances?module=${encodeURIComponent(moduleName)}`,
       getToken,
     )
-      .then((r) => setDestinations(moveDestinations(r.items, fromInstance)))
+      .then((r) => {
+        const options = moveDestinations(r.items, fromInstance);
+        setDestinations(options);
+        // Only a destination that is actually on the menu; a caller's stale
+        // idea of a list that no longer exists falls back to choosing.
+        if (defaultTo && options.some((o) => o.instance_name === defaultTo)) setTo(defaultTo);
+      })
       .catch((e: Error) => setError(e.message));
-  }, [open, base, moduleName, fromInstance, getToken]);
+  }, [open, base, moduleName, fromInstance, getToken, defaultTo]);
 
   // Ask what would happen as soon as there is a destination, so the field list
   // is on screen before the user commits rather than after.

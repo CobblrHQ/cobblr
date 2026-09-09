@@ -160,7 +160,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Your spice cabinet as its own table. Which jar is open, which are still sealed, and how often you actually re-buy each one.",
     manifest: {
           "id": "cobblr.flagship.spice-rack",
-          "version": "0.2.0",
+          "version": "0.2.1",
           "released_at": "2026-08-20",
           "name": "Spice Rack",
           "author": "Cobblr",
@@ -232,6 +232,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                 {
                       "module": "inventory",
                       "instance_name": "spices",
+                      "faces": { "stock": true, "perishable": true },
                       "nav_group": {
                             "key": "kitchen",
                             "label": "Kitchen"
@@ -463,7 +464,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Your tea cupboard as its own table. Which box is open, which are still sealed, and how often you actually re-buy each one.",
     manifest: {
           "id": "cobblr.flagship.tea",
-          "version": "0.2.0",
+          "version": "0.2.1",
           "released_at": "2026-08-20",
           "name": "Tea",
           "author": "Cobblr",
@@ -535,6 +536,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                 {
                       "module": "inventory",
                       "instance_name": "tea",
+                      "faces": { "stock": true, "perishable": true },
                       "nav_group": {
                             "key": "kitchen",
                             "label": "Kitchen"
@@ -777,7 +779,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Track the fridge/pantry with expiry + storage, and auto-build a shopping list when something runs low or is about to expire. Check an item off → it restocks.",
     manifest: {
       id: "cobblr.flagship.groceries",
-      version: "0.10.1",
+      version: "0.10.2",
       // What its items are actually CALLED. A bundle's suggestion has to be
       // corroborated by the capture's own text before it is trusted, and a
       // category whose members never share its name can never corroborate:
@@ -1061,6 +1063,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
               {
                       "module": "inventory",
                       "instance_name": "groceries",
+                      "faces": { "stock": true, "perishable": true },
         "scan_keywords": [
                 "tomato",
                 "cucumber",

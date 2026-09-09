@@ -20,11 +20,15 @@
 // The detail stays on the card. A bare count ("Made 2 changes") tells you
 // something happened and not what, which is the one report you cannot check.
 
+import { refsOfResponse, type ChatEntityRef } from "./entity-chips";
+
 /** One applied write, as the chat response reports it. */
 export interface AppliedWrite {
   summary: string;
   ledger_id?: string;
   undoable?: boolean;
+  entity?: { kind: string; id?: string; label?: string };
+  touched?: ChatEntityRef[];
 }
 
 /** A "done" card for the panel. A subset of the panel's message shape. */
@@ -32,6 +36,8 @@ export interface AppliedCard {
   role: "assistant";
   content: string;
   resolved: true;
+  /** The records the card names, so each name renders as a chip. */
+  refs?: ChatEntityRef[];
   ledgerId?: string;
   ledgerIds?: string[];
   undoTurnId?: string;
@@ -40,6 +46,7 @@ export interface AppliedCard {
 
 export function appliedCards(applied: AppliedWrite[], turnId: string | null): AppliedCard[] {
   if (applied.length === 0) return [];
+  const refs = refsOfResponse({ applied });
   if (applied.length === 1) {
     const only = applied[0]!;
     return [
@@ -47,6 +54,7 @@ export function appliedCards(applied: AppliedWrite[], turnId: string | null): Ap
         role: "assistant",
         content: only.summary,
         resolved: true,
+        ...(refs.length ? { refs } : {}),
         ...(only.ledger_id ? { ledgerId: only.ledger_id } : {}),
         ...(only.undoable === undefined ? {} : { undoable: only.undoable }),
       },
@@ -62,6 +70,7 @@ export function appliedCards(applied: AppliedWrite[], turnId: string | null): Ap
         ...applied.map((a) => `- ${a.summary.replace(/\.$/, "")}`),
       ].join("\n"),
       resolved: true,
+      ...(refs.length ? { refs } : {}),
       ...(ids.length ? { ledgerIds: ids } : {}),
       // Naming the turn is what lets ONE request put them all back. Without it
       // the handler falls through to pressing the handles this card holds,

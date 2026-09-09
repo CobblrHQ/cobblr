@@ -4594,7 +4594,12 @@ const AttachBody = z.object({
   /** Instance slug when the entity lives in a skinned instance (the bare
    *  module route filters to the default instance and would 404). */
   instance: z.string().optional(),
-  mode: z.enum(["add-qty", "link-barcode", "move", "merge-fields"]),
+  /** `replace`: the one you had ran out and this is its replacement. The
+   *  count is SET to what was scanned rather than added to, and the ledger
+   *  hears the old one consumed (or discarded, when `resolution` says it went
+   *  bad) and the new one bought. The everyday re-buy, said in one tap; `+N`
+   *  used to be the only door, and it counted the empty box as still there. */
+  mode: z.enum(["add-qty", "replace", "link-barcode", "move", "merge-fields"]),
   /** What this re-purchase means, for the consumption ledger. Only add-qty is
    *  a purchase ("+N, more of the same"); the other modes teach or move an
    *  entity and consume nothing.
@@ -4716,13 +4721,15 @@ inboxRouter.post(
     let priorQty = 0;
     let qtyAdded = 0;
     const mergedFields: string[] = [];
-    if (parsed.data.mode === "add-qty") {
+    if (parsed.data.mode === "add-qty" || parsed.data.mode === "replace") {
       // A kind without a native quantity (qtyField absent) has nothing to
       // bump — the attach still merges the barcode below.
       if (scannable.qtyField) {
         const cur = Number(entity[scannable.qtyField] ?? 0);
         const add = Math.max(1, Number(row.quantity ?? 1));
-        newQty = (Number.isFinite(cur) ? cur : 0) + add;
+        // Replace: the old one is gone, so the shelf holds exactly what was
+        // scanned. Add: the old one is still there, so it is on top.
+        newQty = parsed.data.mode === "replace" ? add : (Number.isFinite(cur) ? cur : 0) + add;
         patch[scannable.qtyField] = newQty;
         // The ledger needs both, and the server already knows them - never take
         // a quantity from the client when the entity is authoritative.
@@ -4829,8 +4836,8 @@ inboxRouter.post(
       }
     }
 
-    // add-qty: give the entity the scan's photo when it has none (best-effort).
-    if (parsed.data.mode === "add-qty" && !entity.image_path) {
+    // add-qty / replace: give the entity the scan's photo when it has none (best-effort).
+    if ((parsed.data.mode === "add-qty" || parsed.data.mode === "replace") && !entity.image_path) {
       const photoId = row.catalog_image_file_id ?? row.image_file_id;
       if (photoId) {
         // Both halves from one split. This used to hand-roll it and pass the

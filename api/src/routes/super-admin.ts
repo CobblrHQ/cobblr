@@ -1835,6 +1835,12 @@ const AppendFeedback = z.object({
   // message, but it is not a report: it never reopens, re-triages, or announces.
   // See feedback-append-effects.ts for why this exists.
   from_staff: z.boolean().default(false),
+  // The reporter answering a question the team asked: on the record as theirs,
+  // but it changes nothing (no reopen, no re-triage, no announcement).
+  answers_staff: z.boolean().default(false),
+  // The general form of the above: on the record, changes nothing. Also covers
+  // the reporter confirming the fix worked.
+  records_only: z.boolean().default(false),
   text: z.string().trim().max(5000).default(""),
   images: z
     .array(z.object({ url: z.string().url().max(2000), name: z.string().max(255).optional() }))
@@ -1871,7 +1877,7 @@ superAdminRouter.post("/feedback/append", async (req, res, next) => {
       ...(parsed.data.from_staff ? { from_staff: true } : {}),
       ...(parsed.data.images.length ? { images: parsed.data.images } : {}),
     };
-    const fx = appendEffects({ status: fb.status, fromStaff: parsed.data.from_staff });
+    const fx = appendEffects({ status: fb.status, fromStaff: parsed.data.from_staff, recordsOnly: parsed.data.records_only, answersStaff: parsed.data.answers_staff });
     const reopened = fx.reopen;
     await meta
       .updateTable("feedback")

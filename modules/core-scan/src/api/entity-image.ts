@@ -9,7 +9,7 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { bearer, tenantContext } from "../db.js";
-import { enrichEntityImage } from "../services/entity-image.js";
+import { enrichEntityImage, setEntityImageFile } from "../services/entity-image.js";
 import { deriveImageQuery } from "../services/ddg-images.js";
 import { pictureOptions } from "../services/picture-options.js";
 import { needsImage } from "../services/needs-image.js";
@@ -27,6 +27,9 @@ const Body = z.object({
   instance: z.string().max(80).nullable().optional(),
   /** A specific web-image url the user picked (skips auto-search). */
   image_url: z.string().url().max(2000).optional(),
+  /** A file ALREADY in this workspace's store (a scan's catalog picture),
+   *  handed to the record with no second download. Skips the search too. */
+  file_id: z.string().uuid().optional(),
 });
 
 /** The image-search phrase for an entity, derived server-side from its own
@@ -113,6 +116,21 @@ entityImageRouter.post(
     if (!token) return void res.status(401).json({ error: { code: "no_auth", message: "missing bearer" } });
     const slug = req.params.slug;
     if (!slug) return void res.status(400).json({ error: { code: "no_slug", message: "missing slug" } });
+    // A file already in the store: point the record at it and stop. This is
+    // the "Already tracked" banner handing a scan's picture to the record it
+    // matched, which has none.
+    if (parsed.data.file_id) {
+      const image_path = await setEntityImageFile({
+        orgSlug: slug,
+        bearer: token,
+        entityKind: parsed.data.entity_kind,
+        entityId: parsed.data.entity_id,
+        instance: parsed.data.instance ?? null,
+        fileId: parsed.data.file_id,
+      });
+      res.json({ image_path });
+      return;
+    }
     // No explicit query (and no picked url to skip the search)? Derive the
     // phrase from the entity — the SAME derivation the options strip uses, so
     // "Auto" and "search the web" can't disagree about what this thing is.

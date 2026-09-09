@@ -711,6 +711,8 @@ export interface EntityActionsTable {
   examples: Generated<unknown>;
   /** 0-based index in the module's manifest. The order a person sees. */
   position: Generated<number>;
+  /** Disclosure: the face this verb belongs to; null = the base record. */
+  face: string | null;
 }
 
 export interface EntityActionOrgOverridesTable {

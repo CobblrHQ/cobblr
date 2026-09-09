@@ -5,12 +5,11 @@ import type {
   ActionAppliesToDecl,
   ActionHandler,
   ActionInvokeContext,
-  AxisName,
   EntityActionRecord,
-  TraitName,
 } from "@cobblr/platform-contract";
-import { AXIS_OF_TRAIT } from "@cobblr/platform-contract";
+import { axisOfTrait, type AnyAxisName } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
+import { facesForKind } from "./faces.js";
 import { listKinds, getKind, listKindsForOrg, baseKindOf } from "./entities.js";
 
 const handlers = new Map<string, ActionHandler>();
@@ -24,6 +23,45 @@ export function registerHandler(handlerKey: string, handler: ActionHandler): voi
  *  without its handler would fail at invoke time, in front of a user. */
 export function hasHandler(handlerKey: string): boolean {
   return handlers.has(handlerKey);
+}
+
+/** What an action WILL touch, said before it runs.
+ *
+ *  A confirm card has one job: let a person check the change before it
+ *  happens. "Move records into another list" is the action's name, not the
+ *  change, and a card that says only the name asks for trust instead of
+ *  offering a check. The rule is that a card always says exactly what it is
+ *  about to do, and for a bulk action that is a list: every record that
+ *  moves, and where. The handler already knows how to work that out; a
+ *  planner is the same reading with the write left off. */
+export interface ActionPlan {
+  /** One line, the change in a sentence: "Move 5 records from Pantry into Tea". */
+  title: string;
+  /** One line per thing touched, by what a person calls it. */
+  lines: string[];
+}
+export type ActionPlanner = (ctx: ActionInvokeContext) => Promise<ActionPlan | null>;
+
+const planners = new Map<string, ActionPlanner>();
+
+export function registerPlanner(handlerKey: string, planner: ActionPlanner): void {
+  planners.set(handlerKey, planner);
+}
+
+/** Pinned by the guard test: every action that takes a LIST of records has a
+ *  planner, so no bulk change can ship with a card that names only itself. */
+export function hasPlanner(handlerKey: string): boolean {
+  return planners.has(handlerKey);
+}
+
+export async function planFor(actionId: string, ctx: ActionInvokeContext): Promise<ActionPlan | null> {
+  const row = await meta
+    .selectFrom("entity_actions")
+    .select("invoke_handler")
+    .where("id", "=", actionId)
+    .executeTakeFirst();
+  const planner = row?.invoke_handler ? planners.get(row.invoke_handler) : undefined;
+  return planner ? planner(ctx) : null;
 }
 
 /** Does this action belong in a RECORD's action bar?
@@ -45,7 +83,7 @@ export function belongsOnEntity(
   // appliesTo also defaults to { any: true }, which would otherwise match
   // every kind here.
   if (action.scope === "workspace") return false;
-  return actionApplies(predicate, fields, matchKind, traits);
+  return matchAction(predicate, fields, matchKind, traits).via !== null;
 }
 
 export async function listApplicable(
@@ -99,7 +137,13 @@ export async function listApplicable(
   const fields = orgId
     ? withWorkspaceFieldRoles(kindRecord.fields, await workspaceFieldRoles(orgId, [kind, matchKind]))
     : kindRecord.fields;
-  const applicable = allActions
+  // Match against what the COLLECTION wears, not only what the kind declares:
+  // the same laptops are a count in one collection and individuals in
+  // another, and the trial axes (goes off, gets lent) exist only here. Without
+  // an org there is no collection, so the declaration stands.
+  const verdict = orgId ? await facesForKind(orgId, kind) : null;
+  const traits = verdict ? (verdict.traits as Record<string, unknown>) : kindRecord.traits;
+  const eligible = allActions
     .map(rowToActionRecord)
     .filter((a) =>
       belongsOnEntity(
@@ -107,10 +151,13 @@ export async function listApplicable(
         overrides.get(a.id) ?? a.applies_to,
         fields,
         matchKind,
-        kindRecord.traits,
+        traits,
       ),
     );
-  return orderForRecord(applicable, matchKind.split(":")[0] ?? "");
+  // Eligibility above is FACTS; this is the person's CHOICE. A face they hid
+  // takes its verbs off the record too, without the facts changing.
+  const shown = verdict ? disclose(eligible, new Set(verdict.faces)) : eligible;
+  return orderForRecord(shown, matchKind.split(":")[0] ?? "");
 }
 
 /** The roles a workspace gave its own fields on a kind, from module_field_defs.
@@ -140,6 +187,18 @@ export function withWorkspaceFieldRoles(
   roles: string[],
 ): { role?: string }[] {
   return roles.length === 0 ? native : [...native, ...roles.map((role) => ({ role }))];
+}
+
+/**
+ * What a person's face choices leave on the record.
+ *
+ * An action with no `face` belongs to the base and always stays. One with a
+ * face stays only while that face is shown. This is disclosure, applied after
+ * eligibility: "Log service" is eligible on every drill (physical, unique) and
+ * shown on the ones whose collection has not turned Service off.
+ */
+export function disclose<T extends { face: string | null }>(actions: T[], shownFaces: ReadonlySet<string>): T[] {
+  return actions.filter((a) => !a.face || shownFaces.has(a.face));
 }
 
 /**
@@ -273,12 +332,13 @@ export function matchAction(
   if (p.traits?.length) {
     const have = collectTraitValues(kindTraits);
     // Group required traits by axis: within an axis OR, across AND.
-    const byAxis = new Map<AxisName, TraitName[]>();
+    const byAxis = new Map<AnyAxisName, string[]>();
     for (const t of p.traits as string[]) {
-      const axis = (AXIS_OF_TRAIT as Record<string, AxisName>)[t];
+      // Real or trial axis: a trait word on either matches the same way.
+      const axis = axisOfTrait(t);
       if (!axis) continue;
       const list = byAxis.get(axis) ?? [];
-      list.push(t as TraitName);
+      list.push(t);
       byAxis.set(axis, list);
     }
     if (byAxis.size > 0) {
@@ -342,6 +402,7 @@ function rowToActionRecord(row: {
   args_schema?: unknown;
   version: string;
   position?: number;
+  face?: string | null;
 }): EntityActionRecord {
   return {
     id: row.id,
@@ -352,6 +413,7 @@ function rowToActionRecord(row: {
     applies_to: (row.applies_to as ActionAppliesToDecl) ?? { any: true },
     scope: row.scope === "workspace" ? "workspace" : "entity",
     position: row.position ?? 0,
+    face: row.face ?? null,
     invoke_route: row.invoke_route,
     invoke_handler: row.invoke_handler,
     user_invokable: row.user_invokable ?? true,

@@ -17,7 +17,6 @@ import { createPortal } from "react-dom";
 // nothing enriches it yet — a dead control is worse than none.
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { RepurchaseControls } from "../components/RepurchaseControls";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, CheckCircle, ChevronDown, Copy, Download, ExternalLink, Flag, Image as ImageIcon, ImagePlus, LayoutGrid, Library, List, Loader2, MapPin, MonitorSmartphone, MoreHorizontal, Pencil, ReceiptText, RefreshCw, RotateCcw, ScanLine, Scissors, Search, Sparkles, Tag, Trash2, Truck, Upload, Wand2, X, Zap, Database } from "lucide-react";
@@ -39,7 +38,7 @@ import { ReceiptSourceViewer, type ReceiptMoney } from "../components/ReceiptSou
 import { ReceiptPeek } from "../components/ReceiptPeek";
 import { fieldsStillOnTable, fieldsNoLongerOnTable, isQuietDefault, isImpliedByPeer, isStatedByReceipt } from "../lib/scanCandidateFields";
 import { canRerunLookup } from "../lib/scanRerun";
-import { TrackedMatchBanner } from "../components/TrackedMatchBanner";
+import { TrackedMatchBanner, TrackedMatchLine } from "../components/TrackedMatchBanner";
 import { BinAdjustModal } from "../components/BinAdjustModal";
 import { PairPhoneButton } from "../components/PairPhoneButton";
 import { HeaderMenu, MenuFilterLine, MenuHead, MenuItem, MenuNote, MenuSep } from "../components/HeaderMenu";
@@ -6253,30 +6252,16 @@ function InboxCard({
               which is the right order: whether this is a duplicate decides
               whether the routing matters at all. Opens the card rather than
               merging on the spot — the banner in there shows what would be
-              filled, and merging into something you own is a decision. */}
-          {!planContext && alreadyTracked && (
-            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs" onClick={(e) => e.stopPropagation()}>
-              <span className="inline-flex min-w-0 items-center gap-1.5 text-emerald-700 dark:text-emerald-300">
-                <CheckCircle size={12} className="shrink-0" />
-                <span className="min-w-0">
-                  You already have{" "}
-                  <span className="font-semibold break-words">{trackedMatch!.title}</span>
-                  <span className="text-muted dark:text-slate-400">  - is this the same one?</span>
-                </span>
-              </span>
-              <button
-                type="button"
-                onClick={() => (topCand ? openForm(topCand) : setExpanded(true))}
-                className="shrink-0 inline-flex items-center gap-1 rounded-full border border-emerald-500 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100/60 dark:hover:bg-emerald-900/30 px-2.5 py-1 text-[11px] font-medium transition"
-              >
-                Compare &amp; merge
-              </button>
-              {/* Buying MORE of it is a different answer to "is this the same
-                  one?" than filling in what the scan learned, and on a grocery
-                  re-scan it is the usual one. It carries the cadence chips and
-                  the over-buy question, which had no reachable home before. */}
-              <RepurchaseControls itemId={item.id} quantity={Math.max(1, item.quantity || 1)} />
-            </div>
+              filled, and merging into something you own is a decision.
+              Hidden once the card is open: the full banner takes over there,
+              and the two together said "you already have" twice. */}
+          {!planContext && alreadyTracked && !expanded && (
+            <TrackedMatchLine
+              item={item}
+              fallbackTitle={trackedMatch!.title!}
+              quantity={Math.max(1, item.quantity || 1)}
+              onCompare={() => (topCand ? openForm(topCand) : setExpanded(true))}
+            />
           )}
           {/* ONE row for everything the card says about routing + fields:
               the SERIES tag, the routing chip(s) to file into, AND the field

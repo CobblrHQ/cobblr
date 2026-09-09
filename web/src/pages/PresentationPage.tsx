@@ -15,7 +15,7 @@ import {
   api,
   type EntityKindOverride,
 } from "../lib/api";
-import { pluralise } from "@cobblr/platform-contract";
+import { pluralise, FACE_NAMES, FACE_LABELS, type FaceName } from "@cobblr/platform-contract";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { BASE_NATIVE_FIELDS } from "../lib/native-field-policy";
 import { HeadingsBuilder } from "../components/HeadingsBuilder";
@@ -329,6 +329,7 @@ function PresentationCreateModal({
   const [nestUnderModule, setNestUnderModule] = useState(false);
   const [itemNoun, setItemNoun] = useState("");
   const [itemNounPlural, setItemNounPlural] = useState("");
+  const [faces, setFaces] = useState<Partial<Record<FaceName, boolean>>>({});
   const showGroupLabel = isModuleDefaultInstance(target.target_kind, target.target_id);
   const showNestToggle = target.target_kind === "instance" && !showGroupLabel;
   // Only a collection HAS things inside it. An entity kind or a bundle does not.
@@ -345,6 +346,7 @@ function PresentationCreateModal({
         presents_as_top_level: nestUnderModule ? false : null,
         item_noun: itemNoun.trim() || null,
         item_noun_plural: itemNounPlural.trim() || null,
+        faces: Object.keys(faces).length ? faces : null,
       };
       return api.upsertOverride(activeSlug, {
         target_kind: target.target_kind,
@@ -387,6 +389,8 @@ function PresentationCreateModal({
           groupLabel={groupLabel}
           setGroupLabel={setGroupLabel}
           showGroupLabel={showGroupLabel}
+          faces={faces}
+          setFaces={setFaces}
           itemNoun={itemNoun}
           setItemNoun={setItemNoun}
           itemNounPlural={itemNounPlural}
@@ -447,6 +451,12 @@ function PresentationEditModal({
   const [itemNounPlural, setItemNounPlural] = useState(
     typeof override.config?.item_noun_plural === "string" ? override.config.item_noun_plural : "",
   );
+  // Which faces this collection wears: a choice per face, or "let the signal
+  // decide" (absent). A Groceries table is stock + perishable; a parts bin is
+  // stock; a machine list is maintained. See docs/architecture/faces.md.
+  const [faces, setFaces] = useState<Partial<Record<FaceName, boolean>>>(
+    (override.config?.faces as Partial<Record<FaceName, boolean>> | undefined) ?? {},
+  );
   const showGroupLabel = isModuleDefaultInstance(override.target_kind, override.target_id);
   const showNestToggle = override.target_kind === "instance" && !showGroupLabel;
   const showItemNoun = override.target_kind === "instance";
@@ -461,6 +471,7 @@ function PresentationEditModal({
         presents_as_top_level: nestUnderModule ? false : null,
         item_noun: itemNoun.trim() || null,
         item_noun_plural: itemNounPlural.trim() || null,
+        faces: Object.keys(faces).length ? faces : null,
       };
       return api.upsertOverride(activeSlug, {
         target_kind: override.target_kind,
@@ -503,6 +514,8 @@ function PresentationEditModal({
           groupLabel={groupLabel}
           setGroupLabel={setGroupLabel}
           showGroupLabel={showGroupLabel}
+          faces={faces}
+          setFaces={setFaces}
           itemNoun={itemNoun}
           setItemNoun={setItemNoun}
           itemNounPlural={itemNounPlural}
@@ -565,12 +578,16 @@ function PresentationFields({
   itemNounPlural,
   setItemNounPlural,
   showItemNoun,
+  faces,
+  setFaces,
   moduleName,
 }: {
   label: string;
   setLabel: (v: string) => void;
   plural: string;
   setPlural: (v: string) => void;
+  faces: Partial<Record<FaceName, boolean>>;
+  setFaces: (f: (cur: Partial<Record<FaceName, boolean>>) => Partial<Record<FaceName, boolean>>) => void;
   icon: string;
   setIcon: (v: string) => void;
   hidden: boolean;
@@ -644,6 +661,37 @@ function PresentationFields({
               className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             />
           </label>
+          {/* Faces: what a record in this collection shows beyond its title,
+              photo and fields. Auto follows the signal (an expiry field makes
+              it perishable; physical and one-of-a-kind makes it serviced). */}
+          <fieldset className="block">
+            <legend className="text-xs font-medium text-content dark:text-mortar-100">What a record here shows</legend>
+            <p className="text-[11px] text-faint dark:text-slate-500 mt-0.5 mb-1.5">Auto follows what the fields say. Turn a face on to add its section to every record; off to hide it even when the fields suggest it.</p>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+              {FACE_NAMES.map((f) => (
+                <label key={f} className="flex items-center justify-between gap-2 text-sm text-content dark:text-mortar-100">
+                  <span>{FACE_LABELS[f]}</span>
+                  <select
+                    value={typeof faces[f] === "boolean" ? String(faces[f]) : "auto"}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setFaces((cur) => {
+                        const next = { ...cur };
+                        if (v === "auto") delete next[f];
+                        else next[f] = v === "true";
+                        return next;
+                      });
+                    }}
+                    className="rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1.5 py-0.5 text-xs text-content dark:text-mortar-100"
+                  >
+                    <option value="auto">Auto</option>
+                    <option value="true">On</option>
+                    <option value="false">Off</option>
+                  </select>
+                </label>
+              ))}
+            </div>
+          </fieldset>
           <span className="col-span-2 -mt-1 block text-[11px] text-faint dark:text-slate-500">
             The word for ONE thing inside, which is not the name of the collection:
             a Bookshelf holds books. It names the New button, the empty state and

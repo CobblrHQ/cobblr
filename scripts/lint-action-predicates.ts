@@ -51,6 +51,42 @@ for (const mod of existsSync(MODULES_DIR) ? readdirSync(MODULES_DIR) : []) {
     if (/userInvokable:\s*false/.test(block.body)) continue;
     findings.push(`  ${manifest}:${block.line}  (${block.id}: no appliesTo at all, so it is universal)`);
   }
+  // Contributed panels are the same shape one level up: a detail panel with
+  // `target: "*"` lands on EVERY record's modal, and a box of tea carried a
+  // discussion, a tag row and a price history because nothing asked whether
+  // each belonged there (2026-09-09). A universal panel either scopes with
+  // `appliesTo` (matched against what the collection wears) or says why it is
+  // universal with the same marker an action uses.
+  for (const block of panelBlocks(text)) {
+    if (!/target:\s*"\*"/.test(block.body)) continue;
+    if (/appliesTo\s*:/.test(block.body)) continue;
+    if (block.body.includes(MARKER)) continue;
+    findings.push(`  ${manifest}:${block.line}  (${block.id}: a panel on every record with no appliesTo and no "${MARKER}" reason)`);
+  }
+}
+
+/** Each `{ id: "<module>:<panel>", surface: "entity-detail-panel", … }` in
+ *  `contributes.panels`, as its own text, including the comment lines that
+ *  precede its id (that is where the marker goes). */
+function panelBlocks(text: string): Array<{ id: string; line: number; body: string }> {
+  const start = text.indexOf("panels: [");
+  if (start < 0) return [];
+  const indent = /(^|\n)([ \t]*)panels: \[/.exec(text)?.[2] ?? "";
+  const endRe = new RegExp(`\\n${indent}\\],`);
+  const endMatch = endRe.exec(text.slice(start));
+  const arr = text.slice(start, endMatch ? start + endMatch.index : undefined);
+  const out: Array<{ id: string; line: number; body: string }> = [];
+  const idRe = /\n(\s*)id:\s*"([a-z0-9-]+:[a-z0-9_-]+)"/g;
+  const hits = [...arr.matchAll(idRe)];
+  hits.forEach((h, n) => {
+    const from = h.index ?? 0;
+    const to = n + 1 < hits.length ? (hits[n + 1]!.index ?? arr.length) : arr.length;
+    // Reach back to the block's opening brace so a comment above the id counts.
+    const open = arr.lastIndexOf("{", from);
+    const line = text.slice(0, start + from).split("\n").length;
+    out.push({ id: h[2]!, line, body: arr.slice(open >= 0 ? open : from, to) });
+  });
+  return out;
 }
 
 /** Each `{ id: "<module>:<name>", … }` in `exposes.actions`, as its own text.

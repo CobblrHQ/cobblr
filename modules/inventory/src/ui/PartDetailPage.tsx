@@ -5,7 +5,7 @@
 import { useEffect, useState, type FocusEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, ArrowRightLeft, Copy, Library, Minus, Plus, ShieldCheck, Trash2 } from "lucide-react";
-import { AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, EntityThumb, Modal, RecordHeaderChips, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits } from "@cobblr/platform-web";
+import { AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, EntityThumb, FaceSection, Modal, RecordFaces, RecordHeaderChips, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { QtyStepper } from "./QtyStepper";
 import { isAssorted } from "./assorted";
@@ -18,6 +18,7 @@ import { PartGallery } from "./PartGallery";
 import { MaintenancePanel } from "./MaintenancePanel";
 import { useFieldPresentation } from "./useFieldPresentation";
 import { useDisclosure } from "./useDisclosure";
+import type { FaceName } from "@cobblr/platform-contract";
 import { adoptUnitsAdjustment } from "../reconcile";
 import type { Part } from "./api";
 import { pluralise } from "@cobblr/platform-contract";
@@ -134,6 +135,25 @@ function ReconcileCard({
   );
 }
 
+/** Which face each gated field or section belongs to. Absent = the base
+ *  record, always shown. The stock ones stay on the stock/lean disclosure
+ *  too; the two rules agree by construction (a lean catalog wears no face). */
+const FACE_OF: Record<string, FaceName> = {
+  qty: "stock",
+  unit: "stock",
+  min_qty: "stock",
+  cost: "stock",
+  supplier_url: "stock",
+  manufacturer: "stock",
+  consumable: "stock",
+  serial_number: "serialized",
+  model_number: "serialized",
+  assigned_to: "lendable",
+  allocations: "lendable",
+  warranty: "maintained",
+  maintenance: "maintained",
+};
+
 export function PartDetailPage({ id, onClose }: { id: string; onClose: () => void }) {
   const { api, orgSlug, getToken, entityKind, instance, itemNoun, parent } = useInventory();
   const fp = useFieldPresentation(entityKind);
@@ -142,7 +162,17 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
   const qc = useQueryClient();
   // A native field is hidden if the workspace explicitly hid it OR it's part of
   // the stock face and this instance is a lean catalog. See one-record-substrate.md.
-  const hide = (name: string): boolean => fp.hidden(name) || disclosure.hides(name);
+  // A native field or section is hidden when the workspace hid it, when the
+  // stock/lean disclosure hides it, OR when it belongs to a face this
+  // collection does not wear. The third is what stops a box of tea carrying a
+  // serial-number box, a lending form and a service log: those are faces a
+  // collection turns on, not things every record has.
+  const faces = useFaces(entityKind);
+  const faceOn = (name: string): boolean => {
+    const f = FACE_OF[name];
+    return !f || faces.on.has(f);
+  };
+  const hide = (name: string): boolean => fp.hidden(name) || disclosure.hides(name) || !faceOn(name);
 
   const part = useQuery({
     queryKey: ["inventory-part", id],
@@ -316,6 +346,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
   ];
 
   return (
+    <RecordFaces kind={entityKind} target={instance ? { target_kind: "instance", target_id: `inventory:${instance}` } : { target_kind: "entity_kind", target_id: "inventory:part" }}>
     <div className="space-y-5">
 
       <ReconcileCard
@@ -464,7 +495,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           excludeActionIds={excludeActionIds}
           headerChips
         />
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {/* Quantity + unit read as ONE control: an inline +/- stepper sits
               flush against the unit ("[-] 1 [+] skein") so it's clear they
               belong together. The stepper writes through the same signed
@@ -668,7 +699,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
         <h3 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
           warranty & status
         </h3>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="Warranty expires">
             <InlineText
               value={
@@ -759,7 +790,9 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
       {!hide("allocations") && <AllocationsPanel partId={p.id} />}
 
       <div id="units">
-        <UnitsPanel partId={p.id} />
+        <FaceSection face="serialized" kind={entityKind}>
+          <UnitsPanel partId={p.id} />
+        </FaceSection>
       </div>
 
       {/* Contents — anything physically placed INSIDE this item. Any physical
@@ -767,6 +800,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           "box of mugs" tracked as one item can be itemized later: open it and add
           the individual mugs inside. Same generic panel the machines/assets pages
           use; the placement primitive gates what can actually go in. */}
+      <FaceSection face="container" kind={entityKind}>
       <ContentsPanel
         slug={orgSlug}
         getToken={getToken}
@@ -774,6 +808,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
         title="Contents"
         scanIntoHref={`/scan/camera?container_kind=${encodeURIComponent("inventory:part")}&container_id=${encodeURIComponent(p.id)}`}
       />
+      </FaceSection>
 
       {/* Whatever ENABLED modules declare for inventory:part in their manifest
           (contributes.panels) — purchases' price history arrives this way.
@@ -783,7 +818,8 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
         ctx={{ slug: orgSlug, entityId: p.id, entityTitle: p.name }}
       />
 
-      <div className="flex items-center justify-center gap-4 pt-4">
+      {/* Stays in reach on a phone: this row used to be five screens down. */}
+      <div className="flex items-center justify-center gap-4 pt-4 sticky bottom-0 -mx-5 px-5 py-2 bg-surface dark:bg-slate-900 border-t border-line dark:border-slate-700">
         <button
           onClick={() => setDup(true)}
           className="text-xs text-faint dark:text-slate-500 hover:text-accent inline-flex items-center gap-1.5"
@@ -856,6 +892,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
         />
       )}
     </div>
+    </RecordFaces>
   );
 }
 

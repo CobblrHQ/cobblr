@@ -108,6 +108,7 @@
     "lint:background-loops": "tsx scripts/lint-background-loops.ts",
     "lint:one-system-prompt": "tsx scripts/lint-one-system-prompt.ts",
     "lint:bench-mirrors-guards": "tsx scripts/lint-bench-mirrors-guards.ts",
+    "lint:main-runs-complete": "tsx scripts/lint-main-runs-complete.ts",
     "merged-prs-on-main": "bash scripts/merged-prs-on-main.sh",
     "lint:authed-image-src": "tsx scripts/lint-authed-image-src.ts",
     "lint:doc-owned-facts": "tsx scripts/lint-doc-owned-facts.ts",

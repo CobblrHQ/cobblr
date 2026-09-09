@@ -1,176 +1,159 @@
-// "+N to it", the buy-context chips, and the three-way over-buy question.
+// The three answers to "you already have one of these, and you just scanned
+// another": Replaced the one that ran out / +N, still had some / Old one went
+// bad. ONE implementation, because TWO surfaces show the match: the full
+// TrackedMatchBanner (expanded card, result modal) and the scan inbox card's
+// own condensed line. When each drew its own buttons they drifted within a
+// day: the banner had these three while the card still showed the retired
+// "this buy was" chips and a bare "+1 to it" (reported 2026-09-09).
 //
-// Lives on its own because TWO surfaces show "you already have this": the full
-// TrackedMatchBanner (phone result card, result modal) and the scan inbox
-// card's own condensed line, which draws its own markup rather than rendering
-// the banner. The controls shipped inside the banner only, so on the surface
-// people actually use they were simply absent - every test passed and the
-// prompt could not be reached. One component, used by both, is the fix that
-// keeps it that way.
-import { useState } from "react";
+// Which answer is primary is decided by what the ledger and the record
+// already know: stock that is past its expiry date makes "went bad" the
+// obvious one; an empty shelf leaves only "+N to it"; otherwise the everyday
+// re-buy, "replaced", leads.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { PackagePlus } from "lucide-react";
+import { PackagePlus, RefreshCw } from "lucide-react";
 import { useToast } from "@cobblr/platform-web";
 import { api, ApiError, type TrackedMatch } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { leadAnswer } from "../lib/repurchaseAnswer";
 
-type Ctx = "normal" | "faster" | "bulk" | "one_off";
+export type RepurchaseMode = "add-qty" | "replace";
 type Resolution = "over_buy" | "consumed" | "discarded";
 
-const CONTEXTS: Array<[Ctx, string]> = [
-  ["normal", "as usual"],
-  ["one_off", "a one-off"],
-  ["bulk", "a stock-up"],
-  ["faster", "going quicker lately"],
-];
+export interface AttachResult {
+  entity_title: string;
+  new_qty: number | null;
+  prev_location_id: string | null;
+}
 
-const ANSWERS: Array<[Resolution, string]> = [
-  ["over_buy", "Still have them"],
-  ["consumed", "Gone - used them faster"],
-  ["discarded", "They went bad"],
-];
-
-export function RepurchaseControls({
-  itemId,
-  match: matchProp,
-  quantity,
-  onDone,
-}: {
-  itemId: string;
-  /** The match, when the caller already has the full record. The scan inbox
-   *  card only has a title (it reads a cached hint off the item), so when this
-   *  is absent the component resolves the match itself from the same endpoint
-   *  the banner uses. */
-  match?: TrackedMatch;
-  /** How many this scan is adding. */
-  quantity: number;
-  onDone?: () => void;
-}) {
+/** The best tracked match for a scan and the name of where it lives. The inbox
+ *  card only carries a cached title, so this resolves the record from the same
+ *  endpoint the banner uses; a caller that already holds the match passes it
+ *  and no request is made. */
+export function useBestTrackedMatch(itemId: string, matchProp?: TrackedMatch | null) {
   const { activeSlug } = useActiveOrg();
-  const qc = useQueryClient();
-  const toast = useToast();
-  const [context, setContext] = useState<Ctx>("normal");
-  const [asking, setAsking] = useState(false);
-
-  // A workspace without the Cadence capability 404s here; `catch` turns that
-  // into "no opinion", so the +N button still works and no chips appear.
   const resolved = useQuery({
     queryKey: ["scan-tracked", activeSlug, itemId],
     queryFn: () => api.scanTrackedMatches(activeSlug, itemId),
     enabled: !matchProp && !!itemId,
     staleTime: 60_000,
   });
-  const match =
+  const match: TrackedMatch | null =
     matchProp ??
     (resolved.data?.barcode_matches ?? []).concat(resolved.data?.name_matches ?? [])[0] ??
     null;
+  const locations = useQuery({
+    queryKey: ["core-locations", activeSlug],
+    queryFn: () => api.listLocations(activeSlug),
+    enabled: !!activeSlug && !!match?.location_id,
+    staleTime: 60_000,
+  });
+  const where = match?.location_id
+    ? ((locations.data?.items ?? []).find((l) => l.id === match.location_id)?.name ?? null)
+    : null;
+  return { match, where };
+}
 
+const pill = {
+  primary: "bg-emerald-600 hover:bg-emerald-700 text-white",
+  secondary:
+    "border border-emerald-400 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100/60 dark:hover:bg-emerald-900/30",
+};
+
+export function RepurchaseAnswers({
+  itemId,
+  match,
+  quantity,
+  onDone,
+}: {
+  itemId: string;
+  match: TrackedMatch;
+  /** How many this scan is adding. */
+  quantity: number;
+  onDone?: (result: AttachResult, match: TrackedMatch, mode: RepurchaseMode) => void;
+}) {
+  const { activeSlug } = useActiveOrg();
+  const qc = useQueryClient();
+  const toast = useToast();
+
+  // What the ledger makes of a purchase right now. A workspace without the
+  // Cadence capability 404s here; `catch` turns that into "no opinion".
   const cadence = useQuery({
-    queryKey: ["cadence-state", activeSlug, match?.kind, match?.id, match?.expired],
-    // `expired` is the caller's to supply: the ledger keeps events, not the
-    // record's dates. With it, stock that had already gone off is classified as
-    // waste outright and the three-way question is never asked.
-    queryFn: () =>
-      api.cadenceState(activeSlug, match!.kind, match!.id, { expired: !!match!.expired }).catch(() => null),
-    enabled: !!match && match.qty != null,
+    queryKey: ["cadence-state", activeSlug, match.kind, match.id, match.expired],
+    queryFn: () => api.cadenceState(activeSlug, match.kind, match.id, { expired: !!match.expired }).catch(() => null),
+    enabled: match.qty != null && match.qty > 0,
     staleTime: 60_000,
   });
   const cad = cadence.data ?? null;
-  /** Ask only when the ledger says stock should still be there. Everything else
-   *  (no history, shelf already empty) it settles on its own. */
-  const needsAnswer = cad?.repurchase_means === "ask_over_buy";
-  /** What the ledger already worked out, when it did not need to ask. Skipping
-   *  the question and then filing nothing is worse than asking: `discard` is
-   *  precisely the "it went off" answer, and dropping it means food that rotted
-   *  is recorded as food that got eaten — the inversion the split exists to
-   *  prevent. Only `ask_over_buy` genuinely has no answer yet. */
-  const knownResolution: Resolution | undefined =
-    cad?.repurchase_means === "discard"
-      ? "discarded"
-      : cad?.repurchase_means === "consume"
-        ? "consumed"
-        : undefined;
   const daysLeft = cad?.days_until_runout != null ? Math.round(cad.days_until_runout) : null;
+  const lead = leadAnswer(match, cad?.repurchase_means);
 
   const attach = useMutation({
-    mutationFn: (resolution?: Resolution) =>
+    mutationFn: (vars: { mode: RepurchaseMode; resolution?: Resolution }) =>
       api.scanAttach(activeSlug, itemId, {
-        kind: match!.kind,
-        entity_id: match!.id,
-        instance: match!.instance ?? undefined,
-        mode: "add-qty",
-        cadence: { context, ...(resolution ? { resolution } : {}) },
+        kind: match.kind,
+        entity_id: match.id,
+        instance: match.instance ?? undefined,
+        mode: vars.mode,
+        ...(vars.resolution ? { cadence: { resolution: vars.resolution } } : {}),
       }),
-    onSuccess: (r) => {
+    onSuccess: (r, vars) => {
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
-      toast.success(`+${quantity} → ${r.entity_title}${r.new_qty != null ? ` (now ×${r.new_qty})` : ""}`);
-      setAsking(false);
-      onDone?.();
+      toast.success(
+        vars.mode === "replace"
+          ? `${r.entity_title}: replaced${r.new_qty != null ? ` (now ×${r.new_qty})` : ""}`
+          : `+${quantity} → ${r.entity_title}${r.new_qty != null ? ` (now ×${r.new_qty})` : ""}`,
+      );
+      onDone?.(r, match, vars.mode);
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
-  if (!match || match.qty == null) return null;
+  if (match.qty == null || !lead) return null;
   const busy = attach.isPending;
+  const hasSome = match.qty > 0;
+  const cls = (primary: boolean) =>
+    `inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium disabled:opacity-50 ${primary ? pill.primary : pill.secondary}`;
 
   return (
-    <div className="mt-1.5 w-full" onClick={(e) => e.stopPropagation()}>
-      {(cad?.cadence_rate != null || asking) && (
-        <div className="mb-1.5">
-          <div className="text-[11px] text-muted mb-1">
-            {asking ? "Before that - what happened to the ones you had?" : "This buy was"}
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {asking
-              ? ANSWERS.map(([resolution, label]) => (
-                  <button
-                    key={resolution}
-                    type="button"
-                    disabled={busy}
-                    onClick={() => attach.mutate(resolution)}
-                    className="rounded-full border border-amber-400 dark:border-amber-700 text-amber-800 dark:text-amber-200 hover:bg-amber-100/60 dark:hover:bg-amber-900/30 px-2.5 py-1 text-[11px] font-medium disabled:opacity-50"
-                  >
-                    {label}
-                  </button>
-                ))
-              : CONTEXTS.map(([value, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => setContext(value)}
-                    aria-pressed={context === value}
-                    className={`rounded-full px-2.5 py-1 text-[11px] font-medium border transition ${
-                      context === value
-                        ? "border-emerald-500 bg-emerald-100/70 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-200"
-                        : "border-line dark:border-slate-700 text-muted hover:text-content"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-            {asking && (
-              <button type="button" onClick={() => setAsking(false)} className="px-2 py-1 text-[11px] text-muted hover:text-content">
-                Cancel
-              </button>
-            )}
-          </div>
-          {asking && daysLeft != null && (
-            <p className="text-[11px] text-muted mt-1.5">
-              You bought this before and there should still be about {daysLeft} {daysLeft === 1 ? "day" : "days"} left.
-            </p>
-          )}
-        </div>
-      )}
-      {!asking && (
+    <>
+      {hasSome && (
         <button
           type="button"
           disabled={busy}
-          onClick={() => (needsAnswer ? setAsking(true) : attach.mutate(knownResolution))}
-          className="inline-flex items-center gap-1 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1 text-[11px] font-medium disabled:opacity-50"
+          title="The one you had ran out; this is the new one. The count stays what you scanned, and the ledger learns how long the last one lasted."
+          onClick={() => attach.mutate({ mode: "replace", resolution: "consumed" })}
+          className={cls(lead === "replaced")}
         >
-          <PackagePlus size={12} /> +{quantity} to it
+          <RefreshCw size={12} /> Replaced the one that ran out
         </button>
       )}
-    </div>
+      <button
+        type="button"
+        disabled={busy}
+        title={hasSome ? "You still have the old one; this goes on top." : undefined}
+        onClick={() => attach.mutate({ mode: "add-qty", ...(hasSome ? { resolution: "over_buy" as const } : {}) })}
+        className={cls(lead === "add")}
+      >
+        <PackagePlus size={12} /> +{quantity}
+        {hasSome ? ", still had some" : " to it"}
+      </button>
+      {hasSome && (
+        <button
+          type="button"
+          disabled={busy}
+          title="The old one went bad and this replaces it. Recorded as waste, never as consumption."
+          onClick={() => attach.mutate({ mode: "replace", resolution: "discarded" })}
+          className={cls(lead === "went_bad")}
+        >
+          Old one went bad
+        </button>
+      )}
+      {hasSome && daysLeft != null && daysLeft > 0 && (
+        <span className="self-center text-[11px] text-muted" title="What the cadence ledger expects from your past buys">
+          ~{daysLeft} {daysLeft === 1 ? "day" : "days"} of the last one left
+        </span>
+      )}
+    </>
   );
 }

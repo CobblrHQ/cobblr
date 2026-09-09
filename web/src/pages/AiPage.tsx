@@ -29,6 +29,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Info, Pencil, Play, Plus, Sparkles, Trash2 } from "lucide-react";
 import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import { capabilityLabel } from "../lib/ai-capability-labels";
+import { connectionsNotUsedIn, routesWith } from "../lib/unused-connections";
+import type { ConnRoute, UserConnection } from "../lib/api";
 import {
   ApiError,
   api,
@@ -812,7 +814,7 @@ function CapabilityDefaultModal({
             >
               {supportedModels.map((m) => (
                 <option key={m} value={m}>
-                  {m}
+                  {def?.modelNotes?.[m] ? `${def.modelNotes[m]!.label}${def.modelNotes[m]!.note ? ` - ${def.modelNotes[m]!.note}` : ""}` : m}
                 </option>
               ))}
             </select>
@@ -1099,9 +1101,76 @@ function ConnectionsSection({
             />
           ))}
           <SharedAiRows slug={slug} items={shared} />
+          <MyUnusedConnections slug={slug} />
         </div>
       )}
+      {empty && <MyUnusedConnections slug={slug} />}
     </section>
+  );
+}
+
+/** Your own AI connections that this workspace is not using yet, each with the
+ *  two things you can do about it from here. See lib/unused-connections.ts for
+ *  why this lives on the workspace page and not only on /me/connections. */
+function MyUnusedConnections({ slug }: { slug: string }) {
+  const { activeOrg } = useActiveOrg();
+  const orgId = activeOrg?.id ?? "";
+  const qc = useQueryClient();
+  const toast = useToast();
+  const mine = useQuery({
+    queryKey: ["my-connections"],
+    queryFn: () => api.listConnections(),
+  });
+  const unused = orgId ? connectionsNotUsedIn(orgId, mine.data?.items ?? []) : [];
+  const route = useMutation({
+    mutationFn: ({ c, mode }: { c: UserConnection; mode: ConnRoute["mode"] }) =>
+      api.updateConnection(c.id, { provider_id: c.provider_id, routes: routesWith(c.routes, orgId, mode) }),
+    onSuccess: (_r, { c, mode }) => {
+      toast.success(
+        mode === "my-calls"
+          ? `${c.label || c.provider_id} now answers your own calls here.`
+          : `${c.label || c.provider_id} is shared with this workspace.`,
+      );
+      void qc.invalidateQueries({ queryKey: ["my-connections"] });
+      void qc.invalidateQueries({ queryKey: ["ai-shares", slug] });
+      void qc.invalidateQueries({ queryKey: ["ai-chat-models", slug] });
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't route that connection."),
+  });
+  if (unused.length === 0) return null;
+  return (
+    <div className="mt-3 pt-3 border-t border-line dark:border-slate-700">
+      <div className="text-[11px] uppercase tracking-wide text-faint mb-1.5">Your connections not used here</div>
+      <ul className="space-y-1.5">
+        {unused.map((c) => (
+          <li key={c.id} className="flex items-center justify-between gap-3 text-sm">
+            <span className="min-w-0 truncate text-content dark:text-mortar-100">
+              {c.label || c.provider_id} <span className="text-faint text-xs">{c.provider_id}</span>
+            </span>
+            <span className="shrink-0 inline-flex gap-1.5">
+              <button
+                type="button"
+                disabled={route.isPending}
+                onClick={() => route.mutate({ c, mode: "my-calls" })}
+                title="Only your own work in this workspace uses it."
+                className="rounded-md border border-line dark:border-slate-600 px-2 py-0.5 text-xs text-content dark:text-mortar-200 hover:border-cobble-400 disabled:opacity-50"
+              >
+                Use here
+              </button>
+              <button
+                type="button"
+                disabled={route.isPending}
+                onClick={() => route.mutate({ c, mode: "workspace-default" })}
+                title="Offer it to everyone in this workspace. As the owner, that takes effect at once; otherwise the owner approves."
+                className="rounded-md bg-cobble-600 hover:bg-cobble-500 text-white px-2 py-0.5 text-xs disabled:opacity-50"
+              >
+                Share
+              </button>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

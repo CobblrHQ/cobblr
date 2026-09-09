@@ -7,7 +7,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "purchases",
-  version: "0.10.8",
+  version: "0.10.11",
   displayName: "Purchases",
   description:
     "Orders, line items, and cost rollup. Each order is a vendor purchase; line items can link to inventory parts and to whatever consumed them: printer mods, projects, anything.",
@@ -216,6 +216,9 @@ export default defineModule({
     panels: [
       {
         id: "purchases:price-history",
+        // About what stock cost; nothing to say on a catalog.
+        appliesTo: { traits: ["fungible"] },
+        face: "stock",
         surface: "entity-detail-panel" as const,
         target: "inventory:part",
         title: "Price history",

@@ -108,6 +108,10 @@ export interface CoreAiChatPrefsTable {
   write_tools: Generated<boolean>;
   write_mode: Generated<string>;
   updated_at: Generated<Date>;
+  /** The model pill: null = the workspace default. */
+  provider_id: string | null;
+  model: string | null;
+  credential_id: string | null;
 }
 
 // The AI change ledger: every write Cobb executes (confirmed or auto-applied),

@@ -137,6 +137,41 @@ export const CAPABILITIES: Capability[] = [
     use: "pictureOptions({ query, name, plainQuery, brand, color, fresh, limit }) from services/picture-options.ts, and pass its throttled flag through to the strip",
   },
   {
+    kind: "owns",
+    id: "scan:repurchase-answers",
+    what: "the three answers to 'you already have one of these': Replaced the one that ran out / +N, still had some / Old one went bad, and which of them leads",
+    why:
+      "two surfaces show a tracked match (the closed inbox card's line and the open card's banner) and each drew its " +
+      "own buttons. Within a day of the banner gaining the three answers, the card still showed the retired 'this buy " +
+      "was' chips and a bare '+1 to it' (2026-09-09); the answer a person needed most was on the surface they open least",
+    owner: "web/src/components/RepurchaseControls.tsx",
+    scope: [
+      "web/src/components/TrackedMatchBanner.tsx",
+      "web/src/pages/ScanPage.tsx",
+      "web/src/pages/ScanResultModal.tsx",
+      "web/src/pages/ScanCaptureDrawer.tsx",
+    ],
+    detect: /Replaced the one that ran out|still had some|Old one went bad|This buy was|mode:\s*["']replace["']/,
+    use: "<RepurchaseAnswers itemId match quantity onDone /> from components/RepurchaseControls.tsx",
+  },
+  {
+    kind: "owns",
+    id: "scan:tracked-match-nudges",
+    what: "the two things to say while a scan and the record it matched are both in view: it is filed in the wrong list, it has no picture yet",
+    why:
+      "the nudges shipped in the banner only, so the closed card, the surface people act from, never offered the move " +
+      "or the picture; a second hand-drawn copy would drift the way the answers did (2026-09-09)",
+    owner: "web/src/components/TrackedMatchNudges.tsx",
+    scope: [
+      "web/src/components/TrackedMatchBanner.tsx",
+      "web/src/components/RepurchaseControls.tsx",
+      "web/src/pages/ScanPage.tsx",
+      "web/src/pages/ScanResultModal.tsx",
+    ],
+    detect: /Move it to \{|Use this scan|listMismatch\(|pictureOffer\(/,
+    use: "<TrackedMatchNudges item match /> from components/TrackedMatchNudges.tsx",
+  },
+  {
     kind: "requires-prop",
     id: "picture-strip:reports-the-wall",
     what: "telling a pre-fetched ImageSearchPicker whether the engine refused",

@@ -489,6 +489,8 @@ function ActiveOrgScopedRoutes() {
       cobbIcon={CobbHead}
       api={{
         listActions: (slug, kind) => api.listActions(slug, kind),
+        listFaces: (slug, kind) => api.listFaces(slug, kind),
+        upsertOverride: (slug, body) => api.upsertOverride(slug, body),
         invokeAction: (slug, body) => api.invokeAction(slug, body),
         lookupEntity: (slug, kind, id) => api.lookupEntity(slug, kind, id),
         // Walk-up printing: platform-web needs the printer list to spot a

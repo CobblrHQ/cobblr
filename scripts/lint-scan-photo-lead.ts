@@ -49,7 +49,8 @@ for (const root of ROOTS) {
     const usesCatalog = /[.?]catalog_image_(file_id|url)\b/.test(src);
     const usesOwn = /[.?]image_file_id\b/.test(src);
     if (!usesCatalog || !usesOwn) continue; // not choosing between them
-    if (/from "[^"]*lib\/scanPhoto"/.test(src)) continue; // goes through the rule
+    // A sibling inside lib/ imports it as "./scanPhoto"; the same rule.
+    if (/from "[^"]*(lib\/|\.\/)scanPhoto"/.test(src)) continue; // goes through the rule
     const line = src.split("\n").findIndex((l) => /[.?]catalog_image_(file_id|url)\b/.test(l)) + 1;
     failures.push(
       `${rel}:${line} picks between catalog art and the user's photo without lib/scanPhoto\n` +

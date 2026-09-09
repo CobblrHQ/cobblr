@@ -566,7 +566,7 @@ export async function matchCommand(
   orgId?: string,
   /** Where to look, when the user pointed at something. */
   ctx?: { wsApi: WorkspaceApi; selectionIds?: string[] },
-): Promise<{ id: string; template: string; operations: Operation[]; summary?: string } | null> {
+): Promise<{ id: string; template: string; operations: Operation[]; summary?: string; lines?: string[] } | null> {
   // A COMPUTED command is checked first: it is the most specific thing that
   // can match, and unlike the others it has to go and look at the workspace
   // before it can say what it would do.
@@ -588,6 +588,7 @@ export async function matchCommand(
           template: computed.template,
           operations: plan.operations,
           summary: plan.summary,
+          ...(plan.lines?.length ? { lines: plan.lines } : {}),
         };
       }
     }
@@ -648,6 +649,8 @@ basicsRouter.post(
             // places, keeping the original of each"); a bound one is described
             // from its operations as before.
             summary: hit.summary ?? describeOps(hit.operations),
+            // Everything it will touch, one per line: the card lists them.
+            ...(hit.lines?.length ? { lines: hit.lines } : {}),
           }
         : null,
     });

@@ -79,6 +79,7 @@ import { mergeLabelsQr } from "./platform/merge-labels-qr.js";
 import { backfillPlacements } from "./platform/migrate-location-to-placement.js";
 import { backfillDefaultBindings } from "./platform/seed-bindings.js";
 import { healApprovedButInactiveAi } from "./platform/heal-approved-ai.js";
+import { reconcileBundleUpdates, startBundleUpdateSweeper } from "./platform/bundle-updates.js";
 import { healMentionEntityRef } from "./platform/heal-mention-entity-ref.js";
 import { repairReplayTruncatedNames } from "./platform/repair-replay-truncated-names.js";
 import { backfillIdentityLinks } from "./platform/backfill-identity.js";
@@ -1148,6 +1149,14 @@ async function boot() {
   // with none. See heal-approved-ai.ts for how that state was reachable; it
   // fills a vacuum only, so a live pick is never overridden.
   const aiHealed = await T("healApprovedButInactiveAi", healApprovedButInactiveAi());
+  // Installed bundles catch up to the catalog on their own (patch/minor, with
+  // the install route's own gates). Used to happen only when somebody opened
+  // the dashboard. Idempotent: a current workspace costs one row in a meta
+  // query and opens no tenant pool.
+  const bundleUpdates = await T("reconcileBundleUpdates", reconcileBundleUpdates());
+  if (bundleUpdates.applied > 0) {
+    console.log(`[cobblr-api] bundle updates: ${bundleUpdates.applied} applied, ${bundleUpdates.skipped} left for the prompt`);
+  }
   if (aiHealed.length) console.log(`[cobblr-api] approved-but-idle AI switched on in ${aiHealed.length} workspace(s)`);
 
   // Correct the entity ref on discussion-mention notifications dispatched
@@ -1164,6 +1173,7 @@ async function boot() {
   // which is the failure this exists to prevent. Costs nothing on a box where
   // nobody has set a window (one indexed "any pending?" read per tick).
   startDeliverySweeper();
+  startBundleUpdateSweeper();
 
   // Put back scan names a Replay truncated before 2026-08-12 (a cache miss
   // degraded to the keyword heuristic, whose candidate name then overwrote the

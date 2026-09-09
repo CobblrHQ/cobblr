@@ -32,8 +32,12 @@ const CONNECTION_USER_KEY = "__connection_user_id";
 export const EDGE_BRIDGE_ID = "edge-bridge";
 
 export const SUPPORTED: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>> = {
-  chat: { models: ["sonnet", "llama3.2", "qwen2.5"], defaultModel: "sonnet" },
-  "design-workspace": { models: ["sonnet", "llama3.2", "qwen2.5"], defaultModel: "sonnet" },
+  // sonnet / opus / haiku are the Claude CLI's own aliases and pass straight
+  // through the bridge (its /models lists nothing; the name goes to `claude
+  // -p --model`). Opus for a change is a real choice, and the chat's model
+  // pill is where it gets made.
+  chat: { models: ["sonnet", "opus", "haiku", "llama3.2", "qwen2.5"], defaultModel: "sonnet" },
+  "design-workspace": { models: ["opus", "sonnet", "haiku", "llama3.2", "qwen2.5"], defaultModel: "sonnet" },
   summarise: { models: ["sonnet", "llama3.2", "qwen2.5"], defaultModel: "sonnet" },
   "classify-image": { models: ["sonnet", "llava", "llama3.2-vision"], defaultModel: "sonnet" },
   "extract-text": { models: ["sonnet", "llava", "llama3.2-vision"], defaultModel: "sonnet" },

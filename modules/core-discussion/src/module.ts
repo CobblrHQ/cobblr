@@ -15,7 +15,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-discussion",
-  version: "0.7.3",
+  version: "0.7.4",
   maturity: "beta",
   displayName: "Discussion",
   description:
@@ -123,6 +123,8 @@ export default defineModule({
   contributes: {
     panels: [
       {
+        // DELIBERATELY universal: a conversation is about whatever record it is
+        // on, not a face of it; every record can be talked about.
         id: "core-discussion:conversation",
         surface: "entity-detail-panel" as const,
         target: "*",

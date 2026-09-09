@@ -1,21 +1,84 @@
-// "✔ Already tracked" — the heads-up. Shown on the phone result
-// card and the inbox triage card when a scan matches an entity the workspace
-// already has (exact barcode, or name overlap). Offers acting on the EXISTING
-// entity instead of creating a duplicate: +N (bump qty, adopt barcode/photo),
-// Move here (file it into the active bin), link the barcode, or open it.
+// "You already have this" — both renderings of a tracked match, in one file
+// so they cannot drift apart:
+//
+//   TrackedMatchLine    the inbox card's condensed line (card closed)
+//   TrackedMatchBanner  the full banner (card open, phone result modal)
+//
+// Both name the record, say how many and where, offer the three re-buy
+// answers (RepurchaseControls) and the two nudges (TrackedMatchNudges). The
+// banner adds what the line has no room for: the merge-in preview, Move here,
+// Link barcode, Open. The line adds "Compare & merge", which opens the card.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { CheckCircle2, ExternalLink, MapPin, PackagePlus, X } from "lucide-react";
+import { CheckCircle2, ExternalLink, MapPin, X } from "lucide-react";
 import { useToast } from "@cobblr/platform-web";
 import { api, ApiError, type ScanInboxItem, type TrackedMatch } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { RepurchaseAnswers, useBestTrackedMatch } from "./RepurchaseControls";
+import { TrackedMatchNudges } from "./TrackedMatchNudges";
 
 /** "license_plate" → "License plate" — a friendly label for a raw field key
  *  (no field-def lookup needed for a quick merge preview). */
 function humanizeField(key: string): string {
   const s = key.replace(/_/g, " ").trim();
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+const pill =
+  "inline-flex items-center gap-1 rounded-full border border-emerald-400 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100/60 dark:hover:bg-emerald-900/30 px-2.5 py-1 text-xs font-medium disabled:opacity-50";
+
+function MatchTitle({ match, where, title, sameOne }: { match: TrackedMatch | null; where: string | null; title: string; sameOne?: boolean }) {
+  return (
+    <>
+      <span className="font-medium text-content dark:text-mortar-100">
+        {sameOne ? "Is this the same one? " : "You already have "}
+        <span className="break-words">{title}</span>
+        {match?.qty != null && !sameOne && <span className="text-muted"> ×{match.qty}</span>}
+      </span>
+      {match?.subtitle && <span className="text-muted"> · {match.subtitle}</span>}
+      {where && <span className="text-muted"> · 📍{where}</span>}
+    </>
+  );
+}
+
+/** The closed inbox card's line. The row is stamped with the match's title at
+ *  match time, so the card can say it without a round trip; the record itself
+ *  is fetched for the count, the place, and the buttons. */
+export function TrackedMatchLine({
+  item,
+  fallbackTitle,
+  quantity,
+  onCompare,
+}: {
+  item: ScanInboxItem;
+  fallbackTitle: string;
+  quantity: number;
+  onCompare: () => void;
+}) {
+  const { match, where } = useBestTrackedMatch(item.id);
+  return (
+    <div className="mt-1.5 space-y-1 text-xs" onClick={(e) => e.stopPropagation()}>
+      <div className="flex min-w-0 items-start gap-1.5">
+        <CheckCircle2 size={13} className="shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
+        <div className="min-w-0">
+          <MatchTitle match={match} where={where} title={match?.title ?? fallbackTitle} />
+        </div>
+      </div>
+      {match && <TrackedMatchNudges item={item} match={match} />}
+      <div className="flex flex-wrap items-center gap-1.5">
+        {match && <RepurchaseAnswers itemId={item.id} match={match} quantity={quantity} />}
+        <button
+          type="button"
+          onClick={onCompare}
+          title="Open the card: see what this scan would fill in, or file it as something new"
+          className="inline-flex items-center rounded-full px-2 py-1 text-[11px] text-muted hover:text-content underline decoration-dotted underline-offset-2"
+        >
+          Compare &amp; merge
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export function TrackedMatchBanner({
@@ -36,7 +99,7 @@ export function TrackedMatchBanner({
   onAttached?: (
     result: { entity_title: string; new_qty: number | null; prev_location_id: string | null },
     match: TrackedMatch,
-    mode: "add-qty" | "link-barcode" | "move" | "merge-fields",
+    mode: "add-qty" | "replace" | "link-barcode" | "move" | "merge-fields",
   ) => void;
 }) {
   const { activeSlug } = useActiveOrg();
@@ -51,69 +114,30 @@ export function TrackedMatchBanner({
     enabled: !!item.id && item.status === "pending" && (!!item.barcode_text || !!item.suggested_name),
     staleTime: 60_000,
   });
-  // Location names for "· 📍{where it lives}" (each match shows its location).
-  const locations = useQuery({
-    queryKey: ["core-locations", activeSlug],
-    queryFn: () => api.listLocations(activeSlug),
-    enabled: !!activeSlug,
-    staleTime: 60_000,
-  });
-  const locName = (id: string | null) =>
-    id ? ((locations.data?.items ?? []).find((l) => l.id === id)?.name ?? null) : null;
-
-  // What the ledger makes of a purchase right now. Only asked for the single
-  // best match, and only when there is a quantity to add - the other attach
-  // modes buy nothing. A workspace without the Cadence capability 404s here,
-  // which the `catch` turns into "no opinion", so the banner is unchanged.
-  const bestMatch = (matches.data?.barcode_matches ?? []).concat(matches.data?.name_matches ?? [])[0] ?? null;
-  const cadence = useQuery({
-    queryKey: ["cadence-state", activeSlug, bestMatch?.kind, bestMatch?.id],
-    queryFn: () => api.cadenceState(activeSlug, bestMatch!.kind, bestMatch!.id).catch(() => null),
-    enabled: !!bestMatch && bestMatch.qty != null,
-    staleTime: 60_000,
-  });
-  const cad = cadence.data ?? null;
-  /** Ask only when the ledger says stock should still be there. Everything else
-   *  (no history, shelf already empty, past its date) it settles on its own. */
-  const needsOverBuyAnswer = cad?.repurchase_means === "ask_over_buy";
-  const daysLeft = cad?.days_until_runout != null ? Math.round(cad.days_until_runout) : null;
-
-  // Buying more of something you already have is the moment the ledger learns
-  // the most, and the only moment a person can answer what happened to the old
-  // stock. Asked here or not at all - nobody revisits it later.
-  const [context, setContext] = useState<"normal" | "faster" | "bulk" | "one_off">("normal");
-  const [asking, setAsking] = useState(false);
+  const all = [...(matches.data?.barcode_matches ?? []), ...(matches.data?.name_matches ?? [])];
+  const best = all[0] ?? null;
+  const { where } = useBestTrackedMatch(item.id, best);
 
   const attach = useMutation({
-    mutationFn: (vars: {
-      m: TrackedMatch;
-      mode: "add-qty" | "link-barcode" | "move" | "merge-fields";
-      resolution?: "over_buy" | "consumed" | "discarded";
-    }) =>
+    mutationFn: (vars: { m: TrackedMatch; mode: "link-barcode" | "move" | "merge-fields" }) =>
       api.scanAttach(activeSlug, item.id, {
         kind: vars.m.kind,
         entity_id: vars.m.id,
         instance: vars.m.instance ?? undefined,
         mode: vars.mode,
         ...(vars.mode === "move" && locationId ? { location_id: locationId } : {}),
-        ...(vars.mode === "add-qty"
-          ? { cadence: { context, ...(vars.resolution ? { resolution: vars.resolution } : {}) } }
-          : {}),
       }),
     onSuccess: (r, vars) => {
       void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] });
       toast.success(
-        vars.mode === "add-qty"
-          ? `+${Math.max(1, item.quantity || 1)} → ${r.entity_title}${r.new_qty != null ? ` (now ×${r.new_qty})` : ""}`
-          : vars.mode === "move"
-            ? `Moved ${r.entity_title}${locationName ? ` → ${locationName}` : ""}`
-            : vars.mode === "merge-fields"
-              ? r.merged_fields.length
-                ? `Updated ${r.entity_title} — added ${r.merged_fields.map(humanizeField).join(", ")}`
-                : `${r.entity_title} already had everything — nothing to add`
-              : `Barcode linked to ${r.entity_title}`,
+        vars.mode === "move"
+          ? `Moved ${r.entity_title}${locationName ? ` → ${locationName}` : ""}`
+          : vars.mode === "merge-fields"
+            ? r.merged_fields.length
+              ? `Updated ${r.entity_title}: added ${r.merged_fields.map(humanizeField).join(", ")}`
+              : `${r.entity_title} already had everything, nothing to add`
+            : `Barcode linked to ${r.entity_title}`,
       );
-      setAsking(false);
       onAttached?.(r, vars.m, vars.mode);
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
@@ -134,11 +158,6 @@ export function TrackedMatchBanner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoMove, locationId, matches.isFetched, barcodeMatches.length]);
 
-  const all = [
-    ...(matches.data?.barcode_matches ?? []),
-    ...(matches.data?.name_matches ?? []),
-  ];
-  const best = all[0];
   if (dismissed || !best) return null;
   const exact = best.matched_by === "barcode";
   const busy = attach.isPending;
@@ -160,22 +179,12 @@ export function TrackedMatchBanner({
   const canMerge = best.matched_by === "name" && mergeEntries.length > 0;
 
   return (
-    <div className="rounded-lg border border-emerald-300 dark:border-emerald-700/60 bg-emerald-50/70 dark:bg-emerald-950/20 px-3 py-2.5">
+    <div className="rounded-lg border border-emerald-300 dark:border-emerald-700/60 bg-emerald-50/70 dark:bg-emerald-950/20 px-3 py-2.5 space-y-2">
       <div className="flex items-start gap-2">
         <CheckCircle2 size={15} className="text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
         <div className="min-w-0 flex-1 text-sm">
-          <span className="font-medium text-content dark:text-mortar-100">
-            {canMerge ? (
-              <>Is this the same one? - {best.title}</>
-            ) : (
-              <>Already tracked{exact ? "" : " (name match)"} — {best.title}</>
-            )}
-            {best.qty != null && !canMerge && <span className="text-muted"> ×{best.qty}</span>}
-          </span>
-          {best.subtitle && <span className="text-muted"> · {best.subtitle}</span>}
-          {locName(best.location_id) && (
-            <span className="text-muted"> · 📍{locName(best.location_id)}</span>
-          )}
+          <MatchTitle match={best} where={where} title={best.title} sameOne={canMerge} />
+          <span className="text-[11px] text-faint"> · {exact ? "same barcode" : "matched by name"}</span>
         </div>
         <button
           type="button"
@@ -187,7 +196,7 @@ export function TrackedMatchBanner({
         </button>
       </div>
       {canMerge && (
-        <div className="mt-2 rounded-md bg-white/60 dark:bg-slate-900/40 border border-emerald-200/70 dark:border-emerald-800/50 px-2.5 py-2">
+        <div className="rounded-md bg-white/60 dark:bg-slate-900/40 border border-emerald-200/70 dark:border-emerald-800/50 px-2.5 py-2">
           <div className="text-[11px] font-mono uppercase tracking-widest text-emerald-700 dark:text-emerald-300 mb-1">
             merge in
           </div>
@@ -202,78 +211,8 @@ export function TrackedMatchBanner({
           <p className="text-[11px] text-muted mt-1.5">Only fields it's missing are filled - nothing gets overwritten.</p>
         </div>
       )}
-      {best.qty != null && (cad?.cadence_rate != null || asking) && (
-        <div className="mt-2">
-          <div className="text-[11px] text-muted mb-1">
-            {asking ? "Before that - what happened to the ones you had?" : "This buy was"}
-          </div>
-          {asking ? (
-            <div className="flex flex-wrap gap-1.5">
-              {/* Three answers, three different lessons. Recording waste as
-                  consumption would raise the rate and recommend buying MORE of
-                  what keeps getting binned, so the split is not cosmetic. */}
-              {(
-                [
-                  ["over_buy", "Still have them"],
-                  ["consumed", "Gone - used them faster"],
-                  ["discarded", "They went bad"],
-                ] as const
-              ).map(([resolution, label]) => (
-                <button
-                  key={resolution}
-                  type="button"
-                  disabled={busy}
-                  onClick={() => attach.mutate({ m: best, mode: "add-qty", resolution })}
-                  className="rounded-full border border-amber-400 dark:border-amber-700 text-amber-800 dark:text-amber-200 hover:bg-amber-100/60 dark:hover:bg-amber-900/30 px-2.5 py-1 text-xs font-medium disabled:opacity-50"
-                >
-                  {label}
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => setAsking(false)}
-                className="px-2 py-1 text-xs text-muted hover:text-content"
-              >
-                Cancel
-              </button>
-            </div>
-          ) : (
-            <div className="flex flex-wrap gap-1.5">
-              {/* Normal is the default and stays selected unless you say
-                  otherwise: a stock-up or a party must not train the rate as
-                  though it were an ordinary week. */}
-              {(
-                [
-                  ["normal", "as usual"],
-                  ["one_off", "a one-off"],
-                  ["bulk", "a stock-up"],
-                  ["faster", "going quicker lately"],
-                ] as const
-              ).map(([value, label]) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setContext(value)}
-                  aria-pressed={context === value}
-                  className={`rounded-full px-2.5 py-1 text-xs font-medium border transition ${
-                    context === value
-                      ? "border-emerald-500 bg-emerald-100/70 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-200"
-                      : "border-line dark:border-slate-700 text-muted hover:text-content"
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          )}
-          {asking && daysLeft != null && (
-            <p className="text-[11px] text-muted mt-1.5">
-              You bought this before and there should still be about {daysLeft} {daysLeft === 1 ? "day" : "days"} left.
-            </p>
-          )}
-        </div>
-      )}
-      <div className="mt-2 flex flex-wrap gap-1.5">
+      <TrackedMatchNudges item={item} match={best} />
+      <div className="flex flex-wrap gap-1.5">
         {canMerge && (
           <button
             type="button"
@@ -287,25 +226,15 @@ export function TrackedMatchBanner({
         {/* Not suppressed by a mergeable scan. Buying MORE of something and
             filling in what a scan learned are different answers to different
             questions, and a barcode re-scan of a tracked item usually offers
-            both. Hiding +N behind merge meant the over-buy prompt never
-            appeared in the one situation it exists for. */}
-        {best.qty != null && (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => (needsOverBuyAnswer ? setAsking(true) : attach.mutate({ m: best, mode: "add-qty" }))}
-            className="inline-flex items-center gap-1 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 text-xs font-medium disabled:opacity-50"
-          >
-            <PackagePlus size={12} /> +{Math.max(1, item.quantity || 1)} to it
-          </button>
-        )}
+            both. */}
+        <RepurchaseAnswers
+          itemId={item.id}
+          match={best}
+          quantity={Math.max(1, item.quantity || 1)}
+          onDone={(r, m, mode) => onAttached?.(r, m, mode)}
+        />
         {locationId && best.location_id !== locationId && (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => attach.mutate({ m: best, mode: "move" })}
-            className="inline-flex items-center gap-1 rounded-full border border-emerald-400 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100/60 dark:hover:bg-emerald-900/30 px-2.5 py-1 text-xs font-medium disabled:opacity-50"
-          >
+          <button type="button" disabled={busy} onClick={() => attach.mutate({ m: best, mode: "move" })} className={pill}>
             <MapPin size={12} /> Move here
           </button>
         )}
@@ -320,7 +249,7 @@ export function TrackedMatchBanner({
             disabled={busy}
             title="Teach this entity its barcode - the next scan matches instantly"
             onClick={() => attach.mutate({ m: best, mode: "link-barcode" })}
-            className="inline-flex items-center gap-1 rounded-full border border-emerald-400 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100/60 dark:hover:bg-emerald-900/30 px-2.5 py-1 text-xs font-medium disabled:opacity-50"
+            className={pill}
           >
             Link barcode
           </button>

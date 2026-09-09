@@ -102,6 +102,22 @@ export function register(): void {
       requireModel: false,
       defaultModel: GOOGLE_AI_STUDIO_DEFAULT_MODEL,
       modelForCapability: { "design-workspace": GOOGLE_AI_STUDIO_BUILDER_MODEL },
+      // The menu the chat's model pill offers. Two, on purpose: the free tier
+      // has exactly two models worth choosing between, and the choice is a
+      // quota decision the note makes visible. Google reports fifty-one models
+      // to /models; the settings page shows all of them for someone who wants
+      // to type one, this is for someone deciding in a chat.
+      modelsFor: {
+        chat: [GOOGLE_AI_STUDIO_DEFAULT_MODEL, GOOGLE_AI_STUDIO_BUILDER_MODEL],
+        "design-workspace": [GOOGLE_AI_STUDIO_BUILDER_MODEL, GOOGLE_AI_STUDIO_DEFAULT_MODEL],
+      },
+      modelNotes: {
+        // `short` is what the chat's pill shows at rest. The pill shares one
+        // row with two other chips in a ~430px panel, and "Gemini Flash Lite"
+        // wrapped it to a second row; the family name is the menu's job.
+        [GOOGLE_AI_STUDIO_DEFAULT_MODEL]: { label: "Gemini Flash Lite", short: "Flash Lite", note: "500 free a day" },
+        [GOOGLE_AI_STUDIO_BUILDER_MODEL]: { label: "Gemini Flash", short: "Flash", note: "stronger, 20 free a day" },
+      },
     }),
   );
 }

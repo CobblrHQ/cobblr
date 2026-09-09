@@ -20,6 +20,9 @@ import { pluralise } from "@cobblr/platform-contract";
 export interface ComputedPlan {
   /** What the confirm card says, in a sentence a person can check. */
   summary: string;
+  /** Everything it touches, one per line, by what a person calls it. The
+   *  summary names a few; this is the whole list, for the card to fold. */
+  lines?: string[];
   operations: Operation[];
 }
 
@@ -202,7 +205,9 @@ function saidOf(rec: unknown): string[] {
  *  So the bar is: they said "section" or "list", and the thing they named IS
  *  one. A bare "move the tea into Tea" is left to the model, which now has an
  *  action for it. */
-export function readMoveRequest(message: string): { term: string; destination: string } | null {
+export function readMoveRequest(
+  message: string,
+): { term: string; destination: string; create?: true } | null {
   const m =
     /\b(?:move|put|file|shift)\s+(?:all\s+)?(?:of\s+)?(?:the\s+|my\s+)?(?<term>[a-z0-9'&\- ]{2,40}?)\s+(?:from\s+[a-z0-9'&\- ]{2,40}?\s+)?(?:into|in|to)\s+(?:the\s+)?(?<dest>[a-z0-9'&\- ]{2,40}?)\s+(?:section|list|group|tab)\s*$/i.exec(
       message.trim(),
@@ -213,7 +218,35 @@ export function readMoveRequest(message: string): { term: string; destination: s
   // "move this into X" and "move it into X" name nothing to look for; the
   // model has the conversation and the screen, and this does not.
   if (/^(this|that|these|those|it|them|everything|all)$/i.test(term)) return null;
+  // "into its own section", "into a new list": the list does not exist yet
+  // and is to be called what the things are called. "Tea" for the tea.
+  if (/^(?:its|their|a|the)\s+(?:own|new)$/i.test(destination)) {
+    return { term, destination: titleCase(term), create: true };
+  }
   return { term, destination };
+}
+
+/** The one line over the list. Several things are counted here and named
+ *  in the lines under it, once; a single thing is named here and gets no
+ *  list. The first bubble named the five teas in the headline AND as bullets
+ *  (2026-09-09); the bullets are the ones worth keeping. */
+export function moveHeadline(o: { titles: string[]; label: string; creating: boolean }): string {
+  const n = o.titles.length;
+  const what = n === 1 ? o.titles[0]! : `${n}`;
+  return o.creating
+    ? `Create a ${o.label} section and move ${what} into it.`
+    : `Move ${what} into ${o.label}.`;
+}
+
+function titleCase(s: string): string {
+  return s.replace(/\b[a-z]/g, (c) => c.toUpperCase());
+}
+
+/** What a new list is called internally, from what a person called it. The
+ *  kernel derives the same when the name is left blank; it is sent so the
+ *  move that follows can name the list before the kernel has said. */
+function instanceSlug(displayName: string): string {
+  return displayName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
 export const COMPUTED_COMMANDS: ComputedCommand[] = [
@@ -245,11 +278,27 @@ export const COMPUTED_COMMANDS: ComputedCommand[] = [
           (mentionsWord(k.display_name ?? "", said.destination) ||
             (k.instance_name ?? "").toLowerCase() === said.destination.toLowerCase()),
       );
-      if (!dest?.instance_name) return null;
+      // "into its own section" with no such list yet: it will be created,
+      // from whichever module the things being moved belong to. The list is
+      // found from the records, not guessed: they are looked for in every
+      // list, and the plan only stands when they all live under one module.
+      const creating = !dest && said.create;
+      if (!dest?.instance_name && !creating) return null;
       // Its siblings: the other lists of the same module, which is where the
       // things being moved actually are.
-      const siblings = kinds.filter((k) => k.module_name === dest.module_name && k.id !== dest.id);
-      const moving: Array<{ id: string; title: string }> = [];
+      // Where the things could be. With a destination, its module's other
+      // lists (the module's own primary list included: the tea in Inventory
+      // is as movable as the tea in Pantry). Without one, every list of
+      // every module that has lists at all, primary included - the first
+      // live run asked for chamomile "in its own section" while the
+      // chamomile sat in Inventory itself, found nothing in Pantry and Tea,
+      // and offered nothing (2026-09-09). A module with no lists yet is
+      // left to the model, which can create the first one.
+      const listed = new Set(kinds.filter((k) => !!k.instance_name).map((k) => k.module_name)); // registry-filter-ok: names the modules that have lists, to include their primary kinds below
+      const siblings = dest
+        ? kinds.filter((k) => k.module_name === dest.module_name && k.id !== dest.id)
+        : kinds.filter((k) => listed.has(k.module_name));
+      const moving: Array<{ id: string; title: string; module: string }> = [];
       for (const k of siblings) {
         const r = await getTool("list_records")!.execute(wsApi, { kind: k.id, limit: 500 });
         if (!r.ok) continue;
@@ -259,26 +308,44 @@ export const COMPUTED_COMMANDS: ComputedCommand[] = [
           if (!id) continue;
           if (selectionIds?.length && !selectionIds.includes(id)) continue;
           if (!saidOf(rec).some((v) => mentionsWord(v, said.term))) continue;
-          moving.push({ id, title: typeof row.title === "string" ? row.title : id });
+          moving.push({ id, title: typeof row.title === "string" ? row.title : id, module: k.module_name ?? "" });
         }
       }
       if (!moving.length) return null;
-      const label = dest.display_name ?? dest.instance_name;
-      const names = moving.slice(0, 3).map((x) => x.title).join(", ");
-      const more = moving.length > 3 ? ` and ${moving.length - 3} more` : "";
+      const modules = [...new Set(moving.map((x) => x.module))];
+      // Things from two modules cannot share one new list; say nothing rather
+      // than pick one and quietly leave the rest behind.
+      if (creating && modules.length !== 1) return null;
+      const label = dest ? (dest.display_name ?? dest.instance_name!) : said.destination;
+      const toName = dest ? dest.instance_name! : instanceSlug(said.destination);
+      const move: Operation = {
+        tool: "action",
+        entity_kind: "",
+        action_id: "platform:move-records",
+        payload: { ids: moving.map((x) => x.id), to: toName },
+      };
+      const titles = moving.map((x) => x.title);
+      if (creating) {
+        return {
+          summary: moveHeadline({ titles, label, creating: true }),
+          lines: [`New section: ${label}`, ...titles],
+          operations: [
+            {
+              tool: "action",
+              entity_kind: "",
+              action_id: "platform:create-instance",
+              payload: { module_name: modules[0]!, display_name: label, instance_name: toName },
+            },
+            move,
+          ],
+        };
+      }
       return {
-        summary:
-          moving.length === 1
-            ? `Move ${names} into ${label}.`
-            : `Move ${moving.length} into ${label}: ${names}${more}.`,
-        operations: [
-          {
-            tool: "action",
-            entity_kind: "",
-            action_id: "platform:move-records",
-            payload: { ids: moving.map((x) => x.id), to: dest.instance_name },
-          },
-        ],
+        summary: moveHeadline({ titles, label, creating: false }),
+        // One thing is named in the headline; a list of several is named
+        // once, in the lines, not twice.
+        ...(titles.length > 1 ? { lines: titles } : {}),
+        operations: [move],
       };
     },
   },

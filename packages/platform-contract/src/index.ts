@@ -249,6 +249,98 @@ export function fieldRoleOwnedMessage(role: FieldRole): string {
 }
 export const FieldRoleSchema = z.enum(FIELD_ROLE_VALUES);
 
+/**
+ * FACES: what a record shows, as a view over the traits its collection wears.
+ *
+ * docs/design-decisions/one-record-substrate.md: "stock is a face, not a type;
+ * faces stack, derived from signals, per collection, sticky, one-tap override".
+ * A face is not a second vocabulary. It is a person-facing name for a
+ * combination of trait values - some on the six declared axes, two on the
+ * trial axes above - resolved per collection rather than declared per kind:
+ *
+ *   stock       identity: fungible
+ *   serialized  identity: unique, on a kind DECLARED fungible (units under a type)
+ *   maintained  tangibility: physical + identity: unique
+ *   container   containment: container
+ *   perishable  spoilage: perishable          (trial axis)
+ *   lendable    custody: lendable             (trial axis)
+ *
+ * Fields, panels and actions never mention a face; they declare `traits`, and
+ * the same matcher that always served actions decides. The face names exist
+ * for the row a person taps ("More about this item: + Serials") and for the
+ * Presentation page, where a choice is written as a per-collection trait
+ * override. Until 2026-09-09 a box of tea rendered every section the platform
+ * had, because nothing resolved any of this per collection.
+ */
+export const FACE_NAMES = ["stock", "perishable", "serialized", "maintained", "lendable", "container"] as const;
+export type FaceName = (typeof FACE_NAMES)[number];
+export const FaceSchema = z.enum(FACE_NAMES);
+/** What a person calls each face, for the row that offers the dormant ones. */
+export const FACE_LABELS: Record<FaceName, string> = {
+  stock: "Stock",
+  perishable: "Goes off",
+  serialized: "Serials",
+  maintained: "Service",
+  lendable: "Lending",
+  container: "Contents",
+};
+/** A collection's resolved trait values, one per axis (real and trial),
+ *  as the faces resolver hands them on. */
+export type CollectionTraits = Partial<Record<AnyAxisName, AnyTraitName>>;
+/** Which faces a set of resolved traits implies. Pure; the one definition. */
+export function facesOf(traits: CollectionTraits, declaredIdentity: string | null | undefined): FaceName[] {
+  const out: FaceName[] = [];
+  if (traits.identity === "fungible") out.push("stock");
+  if (traits.spoilage === "perishable") out.push("perishable");
+  if (traits.identity === "unique" && declaredIdentity === "fungible") out.push("serialized");
+  if (traits.tangibility === "physical" && traits.identity === "unique") out.push("maintained");
+  if (traits.custody === "lendable") out.push("lendable");
+  if (traits.containment === "container") out.push("container");
+  return out;
+}
+export type FaceConfig = Partial<Record<FaceName, boolean>>;
+/**
+ * A person's per-face choices, applied to a collection's derived traits.
+ *
+ * FACTS AND CHOICES ARE DIFFERENT THINGS, and an Off never rewrites a fact.
+ * Turning the service log off on a tool collection must not make the drill
+ * fungible (which would take its serial number and its lend-ability with it),
+ * and "don't track expiry on the pantry" must not tell the platform the tea
+ * keeps. So an Off only HIDES the face; the traits stand. An On asserts a fact
+ * where the choice is one - tracking individuals makes them unique, choosing
+ * to lend makes custody lendable, saying things go off makes spoilage
+ * perishable, saying a thing holds things makes it a container, counting
+ * makes it fungible - and merely shows the face where it is not (service on a
+ * screw cannot make the screw unique; it just shows the log).
+ *
+ * Returns both: the resolved traits (eligibility, what a thing CAN do) and
+ * the faces shown (disclosure, what a person wants to SEE). The strip and the
+ * panels read the second; anything reasoning about the thing reads the first.
+ */
+export function resolveFaces(
+  derived: CollectionTraits,
+  explicit: FaceConfig | null | undefined,
+  declaredIdentity: string | null | undefined,
+): { traits: CollectionTraits; faces: FaceName[] } {
+  const traits: CollectionTraits = { ...derived };
+  const assert = (axis: AnyAxisName, value: AnyTraitName, on: boolean | undefined) => {
+    if (on === true) traits[axis] = value;
+  };
+  assert("identity", "fungible", explicit?.stock);
+  assert("identity", "unique", explicit?.serialized);
+  assert("spoilage", "perishable", explicit?.perishable);
+  assert("custody", "lendable", explicit?.lendable);
+  assert("containment", "container", explicit?.container);
+  const implied = new Set<FaceName>(facesOf(traits, declaredIdentity));
+  const faces = FACE_NAMES.filter((f) => {
+    const choice = explicit?.[f];
+    if (choice === false) return false;
+    if (choice === true) return true;
+    return implied.has(f);
+  });
+  return { traits, faces };
+}
+
 const EntityField = z.object({
   name: z.string().min(1).max(80),
   // `object` is for free-form JSON attribute blobs (e.g.
@@ -267,6 +359,12 @@ const EntityField = z.object({
   // for writing (the AI tool registry, form builders) must leave these out.
   readOnly: z.boolean().optional(),
   role: EntityFieldRole.optional(),
+  /** The trait value this native field belongs to, real or trial (`qty` is
+   *  `fungible`, `serial_number` is `unique`, `assigned_to` is `lendable`).
+   *  Absent = the base record, shown whatever the collection wears. */
+  trait: z
+    .lazy(() => z.enum([...TRAIT_NAMES, ...(Object.keys(FACE_TRAIT_AXES) as string[])] as [string, ...string[]]))
+    .optional(),
   // The SEMANTIC decode role (P3 of the identifier-decoder registry) — distinct
   // from the PRESENTATION `role` above. Marks a field as either HOLDING a
   // decodable identifier (`identifier:<decoderId>`, e.g. `identifier:vin`) or as
@@ -668,6 +766,35 @@ export const AXIS_OF_TRAIT = {
 
 export type TraitName = keyof typeof AXIS_OF_TRAIT;
 export type AxisName = (typeof AXIS_OF_TRAIT)[TraitName];
+
+/**
+ * TRIAL AXES: traits in every way but one - no preset or profile takes a
+ * position on them. They exist so a face can be spelled in trait words
+ * ("goes off" is `perishable`, "gets lent" is `lendable`) and matched by the
+ * same per-axis-OR / cross-axis-AND rule, without asking every module author
+ * to declare spoilage for a task or custody for a location.
+ *
+ * Resolved per COLLECTION by the faces resolver (api/src/platform/faces.ts),
+ * from a field role or an explicit choice, never from the kind's declaration.
+ * If one earns its keep it moves into AXIS_OF_TRAIT and the presets; that is a
+ * move, not a rewrite, because everything already reads them through
+ * axisOfTrait(). Decided 2026-09-09: "add these as extra traits for the
+ * purpose of faces, defined the same way, and see how that goes."
+ */
+export const FACE_TRAIT_AXES = {
+  perishable: "spoilage",
+  keeps: "spoilage",
+  lendable: "custody",
+  kept: "custody",
+} as const;
+export type TrialTraitName = keyof typeof FACE_TRAIT_AXES;
+export type TrialAxisName = (typeof FACE_TRAIT_AXES)[TrialTraitName];
+export type AnyTraitName = TraitName | TrialTraitName;
+export type AnyAxisName = AxisName | TrialAxisName;
+/** The axis a trait lives on, real or trial. Undefined for an unknown word. */
+export function axisOfTrait(t: string): AnyAxisName | undefined {
+  return (AXIS_OF_TRAIT as Record<string, AxisName>)[t] ?? (FACE_TRAIT_AXES as Record<string, TrialAxisName>)[t];
+}
 
 /** The 12 trait words as a tuple, for validating client input against the
  *  vocabulary (z.enum) instead of re-listing it somewhere it can drift. */
@@ -1185,6 +1312,11 @@ const EntityAction = z.object({
   // help. When in doubt, leave it: the cost is a refusal that explains itself,
   // not a silently missing capability.
   undoable: z.boolean().default(false),
+  /** Which face this verb belongs to, for DISCLOSURE: a hidden face takes its
+   *  verbs off the record along with its fields and panels. Eligibility is
+   *  `appliesTo` (facts); this is the person's choice. Absent = the base
+   *  record, shown whatever is hidden. */
+  face: FaceSchema.optional(),
   // How a PERSON asks for this, in their own words. One or two lines.
   //
   // The action list in the assistant's prompt is ids and labels, which tells a
@@ -1529,6 +1661,13 @@ const ModuleManifest = z.object({
             target: z.string().min(1),
             /** The tab/panel label the host renders. */
             title: z.string().min(1),
+            /** Same predicate an action carries, matched against the traits
+             *  the collection wears ("Price history" is `traits: ["fungible"]`
+             *  and says nothing on a catalog). Absent, `target` alone decides. */
+            appliesTo: ActionAppliesTo.optional(),
+            /** The face this panel belongs to, for disclosure (see the same
+             *  field on an action). */
+            face: FaceSchema.optional(),
           }),
         )
         .default([]),
@@ -2793,6 +2932,18 @@ export interface PlatformActions {
   invoke(actionId: string, ctx: ActionInvokeContext): Promise<unknown>;
 }
 
+/** What a collection wears, as the platform resolved it: the trait values
+ *  (real and trial axes) and the faces they imply. */
+export interface FaceVerdict {
+  kind: string;
+  /** Eligibility: the trait values the collection wears (facts). */
+  traits: CollectionTraits;
+  /** Disclosure: the faces a person sees (facts less their choices). */
+  faces: FaceName[];
+  /** Which faces were chosen in config rather than derived. */
+  explicit: FaceName[];
+}
+
 export interface EntityActionRecord {
   id: string;
   module_name: string;
@@ -2808,6 +2959,8 @@ export interface EntityActionRecord {
   invoke_handler: string | null;
   /** False = wire-only; don't render as a user button. */
   user_invokable: boolean;
+  /** Disclosure: the face this verb belongs to, or null for the base. */
+  face: string | null;
   /** Where the module declared it, 0-based. The strip lists a record's own
    *  module's actions first, in this order. */
   position: number;
@@ -3493,6 +3646,10 @@ export interface AiProviderDef {
   rank?: number;
   /** Map capability → models the provider supports for it. */
   capabilities: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>>;
+  /** What a model is CALLED and what it costs, for a picker a person reads.
+   *  "gemini-flash-lite-latest" means nothing at a glance; "Flash Lite - 500
+   *  free a day" is a decision. Optional; an id with no entry shows as its id. */
+  modelNotes?: Record<string, { label: string; note?: string; short?: string }>;
   /** Whether a workspace that has configured NO provider may have this one
    *  auto-selected by the zero-config fallback. Default true — a managed,
    *  credential-less provider (instance key) is ready to use. A provider that
@@ -3625,6 +3782,8 @@ export interface PlatformAi {
     // while the UI reads it, so the type was quietly lying about the payload.
     credentials: Record<string, AiCredentialField>;
     capabilities: Partial<Record<AiCapability, { models: string[]; defaultModel?: string }>>;
+    /** What each model is called and costs, for a picker a person reads. */
+    modelNotes?: Record<string, { label: string; note?: string; short?: string }>;
     setup?: AiProviderSetup;
     /** Position in the picker; lower first, and FIRST IS THE DEFAULT. The list
      *  is returned already sorted by it — carried as well as applied, so a
@@ -3643,6 +3802,11 @@ export interface PlatformAi {
     /** Override provider + model from workspace defaults. */
     provider_id?: string;
     model?: string;
+    /** A PERSONAL connection routed into this workspace, chosen for this call
+     *  (cobblr_meta.user_credentials.id). The chat's model pill sets it per
+     *  user; a workspace's per-job default sets it per workspace. Wins over
+     *  the workspace's own providers, the way naming a provider_id does. */
+    credential_id?: string;
     /** Per-call provider knobs (max_tokens, temperature, …) merged OVER the
      *  workspace capability-default config. A surface that knows its own
      *  needs (the matchmaker's 2-candidate JSON never fits 1024 tokens)
@@ -5357,4 +5521,5 @@ export function textSearchWhere(eb: LikeBuilder, q: string | undefined, columns:
   if (exprs.length === 0) return null;
   return eb.or(exprs);
 }
+
 

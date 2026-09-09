@@ -14,12 +14,12 @@ import { matchByLabel, splitNames } from "@cobblr/platform-contract/said-names";
 import { disableModuleForOrg, enableModuleForOrg } from "../modules/enable.js";
 import { listEntries } from "../modules/registry.js";
 import { meta } from "../db/meta.js";
-import { registerHandler } from "./actions.js";
+import { registerHandler, registerPlanner } from "./actions.js";
 import { getMover, instancesHolding, moveRecords } from "./move-records.js";
 import * as activity from "./activity.js";
 import { upsertNativeFieldOverride } from "./native-field-overrides.js";
 import { USER_SOURCE, recordClaim } from "./bundle-claims.js";
-import { listKindsForOrg } from "./entities.js";
+import { listKindsForOrg, lookup } from "./entities.js";
 import {
   FieldDefCreate,
   createFieldDef,
@@ -651,14 +651,61 @@ export function registerPlatformActionHandlers(): void {
     try {
       const result = await moveRecords(ctx.orgId, from.module, ids, from.name, to.name);
       const n = result.moved.length;
+      // Every record it moved, by its NEW kind: the panel draws each as a chip
+      // that opens it where it now lives.
+      const toKind = getMover(from.module)!.kindFor(to.name);
       return {
         ok: true,
         summary: n === 1 ? `Moved 1 record into ${to.label}.` : `Moved ${n} records into ${to.label}.`,
-        data: { moved: n, to: to.name, from: from.name, carried: result.fieldsCarried },
+        data: {
+          moved: n,
+          to: to.name,
+          from: from.name,
+          carried: result.fieldsCarried,
+          touched: result.moved.map((id) => ({ kind: toKind, id })),
+        },
       };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : "couldn't move those" };
     }
+  });
+
+  // The same reading as the handler above, with the write left off: the
+  // confirm card lists every record by name and says which list it leaves
+  // and which it joins. "Move records into another list" on its own was the
+  // card a person saw for five named teas (2026-09-09).
+  registerPlanner("platform.move-records", async (ctx: ActionInvokeContext) => {
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const ids = readListArg(args, "ids");
+    const toSaid = str(args.to);
+    if (!toSaid || ids.length === 0) return null;
+    const to = await findInstance(ctx.orgId, toSaid);
+    if ("error" in to) return null;
+    const fromSaid = str(args.from);
+    let from: { name: string; label: string; module: string };
+    if (fromSaid) {
+      const f = await findInstance(ctx.orgId, fromSaid);
+      if ("error" in f) return null;
+      from = f;
+    } else {
+      const found = await instancesHolding(ctx.orgId, to.module, ids);
+      if ("error" in found) return null;
+      const f = await findInstance(ctx.orgId, found.instance);
+      from = "error" in f ? { name: found.instance, label: found.instance, module: to.module } : f;
+    }
+    const mover = getMover(from.module);
+    if (!mover) return null;
+    const kind = mover.kindFor(from.name);
+    const lines: string[] = [];
+    for (const id of ids.slice(0, 200)) {
+      const ent = await lookup(ctx.orgId, kind, id).catch(() => null);
+      lines.push(ent?.title ?? `a record that no longer exists (${id.slice(0, 8)})`);
+    }
+    const n = lines.length;
+    return {
+      title: n === 1 ? `Move 1 record from ${from.label} into ${to.label}` : `Move ${n} records from ${from.label} into ${to.label}`,
+      lines,
+    };
   });
 
   registerHandler("platform.demote-category", async (ctx: ActionInvokeContext) => {

@@ -14,6 +14,7 @@ import { missingActionArgs, reconcileActionArgs } from "./action-args-guard.js";
 import { groundingNudgeFor } from "./groundless-answer.js";
 import { movedNotCreated } from "./move-not-create.js";
 import { misreportedWrites } from "./reported-truthfully.js";
+import { chatModelMenu } from "./chat-model-menu.js";
 import { describedInsteadOfActing } from "./act-dont-describe.js";
 import { escortCoveredByAction, resolveActionId, ESCORT_COVERAGE } from "./act-dont-escort.js";
 import { buildSystemPrompt, situationalSuffix, type PromptWorkspace, type PromptOptions } from "./system-prompt.js";
@@ -107,10 +108,24 @@ function writeRequestOf(call: ToolCall): WriteRequest | null {
 }
 
 /** Applied-write summaries for the widget's "✓ done — Undo" cards. */
-function appliedSummaries(applied: AppliedWrite[]): Array<{ summary: string; ledger_id?: string; undoable?: boolean }> {
+function appliedSummaries(applied: AppliedWrite[]): Array<{
+  summary: string;
+  ledger_id?: string;
+  undoable?: boolean;
+  entity?: WriteOutcome["entity"];
+  touched?: WriteOutcome["touched"];
+}> {
   return applied.map((a) => {
     const r = a.result as WriteOutcome;
-    return { summary: r?.message ?? a.call.name, ledger_id: r?.ledger_id, undoable: r?.undoable };
+    return {
+      summary: r?.message ?? a.call.name,
+      ledger_id: r?.ledger_id,
+      undoable: r?.undoable,
+      // Which record, and what it is called: the panel draws the name as a
+      // chip that opens it (web/src/lib/entity-chips.ts).
+      ...(r?.entity?.id && r.entity.label ? { entity: r.entity } : {}),
+      ...(r?.touched?.length ? { touched: r.touched } : {}),
+    };
   });
 }
 
@@ -142,6 +157,11 @@ export type WriteMode = "off" | "ask" | "auto";
 export interface ChatToolPrefs {
   read_tools: boolean;
   write_mode: WriteMode;
+  /** The model pill: which AI answers THIS person's chat. All null = whatever
+   *  the workspace would have used. See chat-model-menu.ts. */
+  provider_id?: string | null;
+  model?: string | null;
+  credential_id?: string | null;
 }
 const DEFAULT_PREFS: ChatToolPrefs = { read_tools: true, write_mode: "ask" };
 
@@ -153,10 +173,22 @@ async function chatPrefsOf(req: Parameters<typeof tenantDb>[0]): Promise<ChatToo
   try {
     const row = await tenantDb(req)
       .selectFrom("core_ai_chat_prefs")
-      .select(["read_tools", "write_mode"])
+      .select(["read_tools", "write_mode", "provider_id", "model", "credential_id"])
       .where("user_id", "=", sessionUserId(req) ?? "")
       .executeTakeFirst();
-    return row ? { read_tools: !!row.read_tools, write_mode: asWriteMode(row.write_mode) } : DEFAULT_PREFS;
+    if (!row) return DEFAULT_PREFS;
+    // The model fields ride along only when a choice exists. A caller that
+    // never chose sees exactly the two-field shape it always did, and "never
+    // chose" and "went back to the default" are the same state, which they are.
+    const pick =
+      row.model && (row.provider_id || row.credential_id)
+        ? {
+            provider_id: (row.provider_id as string | null) ?? null,
+            model: row.model as string,
+            credential_id: (row.credential_id as string | null) ?? null,
+          }
+        : {};
+    return { read_tools: !!row.read_tools, write_mode: asWriteMode(row.write_mode), ...pick };
   } catch {
     return DEFAULT_PREFS; // fail-open to defaults, never break the chat
   }
@@ -315,6 +347,26 @@ async function actionCopy(c: Ctx, actionId: string): Promise<ActionCopy | null> 
  *  registry, not guessed from whether the model bothered to name an entity —
  *  the model naming one is exactly the mistake to survive (it invented a parent
  *  location to satisfy a shape that demanded a record). */
+async function actionPlan(
+  c: Ctx,
+  actionId: string,
+  args: Record<string, unknown>,
+  on: { kind: string; id: string } | null,
+): Promise<{ title: string; lines: string[] } | null> {
+  try {
+    const r = await callApi(c, "POST", "/actions/plan", {
+      actionId,
+      args,
+      ...(on ? { entityKind: on.kind, entityId: on.id } : {}),
+    });
+    const plan = r.body.plan as { title?: unknown; lines?: unknown } | null | undefined;
+    if (!plan || typeof plan.title !== "string" || !Array.isArray(plan.lines)) return null;
+    return { title: plan.title, lines: plan.lines.filter((l): l is string => typeof l === "string") };
+  } catch {
+    return null;
+  }
+}
+
 async function isWorkspaceAction(c: Ctx, actionId: string): Promise<boolean> {
   try {
     const reg = await callApi(c, "GET", "/registered-actions");
@@ -392,18 +444,23 @@ async function proposalOf(
       // Cobb could describe and not do.
       const copy = await actionCopy(c, actionId);
       const argValues = (a.args && typeof a.args === "object" ? a.args : {}) as Record<string, unknown>;
+      // What it WILL touch, from the action's own planner: the card says the
+      // change ("Move 5 records from Pantry into Tea") and lists every record,
+      // never only the action's name. An action with no planner keeps the
+      // sentence summariseAction makes from its label and arguments.
+      const plan = await actionPlan(c, actionId, argValues, kind && id ? { kind, id } : null);
       if (!kind || !id) {
         if (!(await isWorkspaceAction(c, actionId))) {
           return { error: "I need the action and the exact record to run it on." };
         }
         return {
-          summary: summariseAction(actionId, copy, argValues),
-          proposal: { kind: "action", action_id: actionId, ...args },
+          summary: plan?.title ?? summariseAction(actionId, copy, argValues),
+          proposal: { kind: "action", action_id: actionId, ...args, ...(plan ? { plan } : {}) },
         };
       }
       const label = await labelOf(wsApi, kind, id);
       return {
-        summary: summariseAction(actionId, copy, argValues, label),
+        summary: plan?.title ?? summariseAction(actionId, copy, argValues, label),
         proposal: {
           kind: "action",
           action_id: actionId,
@@ -411,6 +468,7 @@ async function proposalOf(
           entity_id: id,
           entity_label: label,
           ...args,
+          ...(plan ? { plan } : {}),
         },
       };
     }
@@ -500,6 +558,13 @@ async function runTurn(
         const r = await platform().ai.invoke({
           orgId,
           capability: "chat",
+          // The model pill: this person's choice for THEIR chat, when they
+          // made one. A provider_id names a workspace connection, a
+          // credential_id names a personal one routed here; null is the
+          // workspace's default, which is the whole path below untouched.
+          ...(prefs.credential_id ? { credential_id: prefs.credential_id } : {}),
+          ...(prefs.provider_id && !prefs.credential_id ? { provider_id: prefs.provider_id } : {}),
+          ...(prefs.model && (prefs.provider_id || prefs.credential_id) ? { model: prefs.model } : {}),
           // Show the answer being written. Only when somebody is listening to
           // this turn (the persisted-turn path); the blocking POST has nobody
           // to show it to.
@@ -1080,6 +1145,8 @@ chatRouter.post(
         // with one Undo — which presses every handle it made.
         ...(ids.length > 1 ? { ledger_ids: ids, count: "count" in out ? out.count : ids.length } : {}),
         undoable: out.undoable === true,
+        ...("entity" in out && out.entity?.id && out.entity.label ? { entity: out.entity } : {}),
+        ...("touched" in out && out.touched?.length ? { touched: out.touched } : {}),
       }).catch(() => {});
     }
     sendOutcome(res, out);
@@ -1248,6 +1315,11 @@ const PrefsBody = z.object({
   read_tools: z.boolean(),
   write_mode: z.enum(["off", "ask", "auto"]).optional(),
   write_tools: z.boolean().optional(),
+  // The model pill. Omitted = leave as is; null = back to the workspace
+  // default. A choice is a provider_id OR a credential_id, plus a model.
+  provider_id: z.string().max(120).nullable().optional(),
+  model: z.string().max(200).nullable().optional(),
+  credential_id: z.string().max(80).nullable().optional(),
 });
 
 // AI-REACH: this module IS the assistant; its own configuration is not a thing it should reach into
@@ -1264,19 +1336,94 @@ chatRouter.put(
     }
     const mode: WriteMode = parsed.data.write_mode ?? (parsed.data.write_tools === false ? "off" : "ask");
     const writeTools = mode !== "off";
+    // The model choice, only when the body spoke to it: a pill toggling
+    // "read my data" must not wipe the model somebody picked a minute ago.
+    const spoke = "provider_id" in parsed.data || "model" in parsed.data || "credential_id" in parsed.data;
+    const pick = spoke
+      ? {
+          provider_id: parsed.data.provider_id ?? null,
+          model: parsed.data.model ?? null,
+          credential_id: parsed.data.credential_id ?? null,
+        }
+      : {};
     await tenantDb(req)
       .insertInto("core_ai_chat_prefs")
-      .values({ user_id: userId, read_tools: parsed.data.read_tools, write_tools: writeTools, write_mode: mode })
+      .values({ user_id: userId, read_tools: parsed.data.read_tools, write_tools: writeTools, write_mode: mode, ...pick })
       .onConflict((oc) =>
         oc.column("user_id").doUpdateSet({
           read_tools: parsed.data.read_tools,
           write_tools: writeTools,
           write_mode: mode,
+          ...pick,
           updated_at: new Date(),
         }),
       )
       .execute();
-    res.json({ read_tools: parsed.data.read_tools, write_mode: mode });
+    res.json(await chatPrefsOf(req));
+  }),
+);
+
+// ── GET /chat/models — what the model pill can offer, and what it is set to ──
+//
+// The workspace's own providers plus the personal connections routed in and
+// approved, each with its provider's short list of chat models. The choice is
+// per person and lives on the same prefs row as the other two pills.
+// AI-REACH: this module IS the assistant; which model answers it is not a thing it should reach into
+chatRouter.get(
+  "/models",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const userId = sessionUserId(req) ?? "";
+    const orgId = tenantContext(req).org.id;
+    const [prefs, rows, routed, chatDefault] = await Promise.all([
+      chatPrefsOf(req),
+      tenantDb(req)
+        .selectFrom("core_ai_providers")
+        .select(["provider_id", "label", "enabled", "config"])
+        .where("enabled", "=", true)
+        .execute()
+        .catch(() => []),
+      // The module-facing seam for "which personal connections may this
+      // workspace name": the same list the AI page's per-job picker uses.
+      platform().connections.routedTo("ai-provider", orgId).catch(() => []),
+      // What the workspace's own chat default is, so the pill can SAY it at
+      // rest ("Flash Lite") instead of "Default". The per-job row when one
+      // was set; otherwise the first enabled provider's default, which is
+      // the same first step the resolver takes.
+      tenantDb(req)
+        .selectFrom("core_ai_capability_defaults")
+        .select(["provider_id", "model", "credential_id"])
+        .where("capability", "=", "chat")
+        .executeTakeFirst()
+        .catch(() => undefined),
+    ]);
+    const providers = platform().ai.listProviders().map((p) => ({
+      id: p.id,
+      label: p.label,
+      models: p.capabilities.chat?.models ?? [],
+      ...(p.capabilities.chat?.defaultModel ? { defaultModel: p.capabilities.chat.defaultModel } : {}),
+      ...(p.modelNotes ? { modelNotes: p.modelNotes } : {}),
+    }));
+    const firstEnabled = rows[0] ? providers.find((p) => p.id === rows[0]!.provider_id) : undefined;
+    const workspaceDefault = chatDefault?.provider_id && chatDefault.model
+      ? { provider_id: chatDefault.credential_id ? (routed.find((c) => c.credentialId === chatDefault.credential_id)?.providerId ?? chatDefault.provider_id) : chatDefault.provider_id, model: chatDefault.model }
+      : firstEnabled?.defaultModel
+        ? { provider_id: firstEnabled.id, model: firstEnabled.defaultModel }
+        : null;
+    const menu = chatModelMenu({
+      providers,
+      workspaceDefault,
+      workspace: rows.map((r) => ({
+        provider_id: r.provider_id,
+        label: r.label,
+        enabled: !!r.enabled,
+        model: typeof (r.config as Record<string, unknown> | null)?.model === "string" ? String((r.config as Record<string, unknown>).model) : null,
+      })),
+      routed,
+      viewerUserId: userId,
+      prefs,
+    });
+    res.json(menu);
   }),
 );
 
@@ -1435,6 +1582,9 @@ const ExecBody = z.object({
       entity_kind: z.string().optional(),
       entity_id: z.string().optional(),
       args: z.record(z.unknown()).optional(),
+      // What the card showed. Carried back so the execute step is the same
+      // object the person confirmed; nothing reads it server-side.
+      plan: z.object({ title: z.string(), lines: z.array(z.string()) }).optional(),
     }),
     z.object({ kind: z.literal("build"), draft_id: z.string() }),
   ]),

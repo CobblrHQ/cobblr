@@ -122,8 +122,11 @@ export function CustomFieldsPanel({
   const ungrouped = inSection(null);
   const grouped = sections.map((s) => ({ s, fs: inSection(s.id) })).filter((g) => g.fs.length > 0);
 
+  // One column on a phone. Two columns at 390px left each field 170px wide,
+  // which a date input's own minimum width in Safari overran, and every
+  // bundle-authored help paragraph wrapped to five lines beside another one.
   const grid = (fs: PlatformFieldDef[]) => (
-    <div className="grid grid-cols-2 gap-3">
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
       {fs.map((f) => (
         <FieldRow
           key={f.id}
@@ -236,8 +239,31 @@ function FieldRow({
   return (
     <div className="space-y-1">
       {inner}
-      <p className="text-[11px] text-faint dark:text-slate-500 leading-snug">{def.help}</p>
+      <HelpText text={def.help} />
     </div>
+  );
+}
+
+/** A bundle's plain-language hint, one line until asked for.
+ *
+ *  The hints are good writing and there are a lot of them: ten fields with a
+ *  five-line paragraph each was most of a phone-height record modal. The first
+ *  line answers "what is this field"; the rest is there on a tap, and stays
+ *  open once opened. Short help (a single line anyway) renders as it did. */
+export function HelpText({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const long = text.length > 90;
+  return (
+    <p
+      className={
+        "text-[11px] text-faint dark:text-slate-500 leading-snug " +
+        (long && !open ? "line-clamp-1 cursor-pointer" : "")
+      }
+      onClick={long && !open ? () => setOpen(true) : undefined}
+      title={long && !open ? "Show the whole hint" : undefined}
+    >
+      {text}
+    </p>
   );
 }
 

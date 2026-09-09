@@ -59,7 +59,10 @@ export interface WriteOutcome {
   /** What was held back, and what is in the way, for that offer's wording. */
   label?: string;
   detail?: string;
-  entity?: { kind: string; id?: string };
+  entity?: { kind: string; id?: string; label?: string };
+  /** Records an action touched (a move names every record it moved), each
+   *  with what a person calls it, so the panel can draw them as chips. */
+  touched?: Array<{ kind: string; id: string; label: string }>;
   ledger_id?: string;
   undoable?: boolean;
 }
@@ -194,6 +197,30 @@ export async function performWrites(
   };
 }
 
+/** The records an action reports having touched, named. A handler says
+ *  `touched: [{kind, id}]` (the move handler names every record it moved);
+ *  the name is read here, from the record, so the chip says what a person
+ *  calls it and never an id. A record that cannot be read is left out rather
+ *  than shown as a chip to nowhere. */
+async function touchedByAction(
+  wsApi: WorkspaceApi,
+  result: unknown,
+): Promise<Array<{ kind: string; id: string; label: string }>> {
+  if (!result || typeof result !== "object") return [];
+  const r = result as { touched?: unknown; data?: { touched?: unknown } };
+  const raw = Array.isArray(r.touched) ? r.touched : Array.isArray(r.data?.touched) ? r.data!.touched : [];
+  const out: Array<{ kind: string; id: string; label: string }> = [];
+  for (const t of raw.slice(0, 50) as Array<{ kind?: unknown; id?: unknown; label?: unknown }>) {
+    if (typeof t?.kind !== "string" || typeof t?.id !== "string") continue;
+    const label =
+      typeof t.label === "string" && t.label.trim()
+        ? t.label.trim()
+        : labelOfImage(await imageOf(wsApi, t.kind, t.id).catch(() => null), "");
+    if (label) out.push({ kind: t.kind, id: t.id, label });
+  }
+  return out;
+}
+
 export async function performWrite(
   wsApi: WorkspaceApi,
   db: Kysely<CoreAiDB>,
@@ -242,9 +269,11 @@ export async function performWrite(
       .returning("id")
       .executeTakeFirst();
     // What the action itself said it did, rather than a tick with no sentence.
+    const touched = await touchedByAction(wsApi, (r.data as { result?: unknown } | undefined)?.result);
     return {
       ok: true,
       message: actionSaid((r.data as { result?: unknown } | undefined)?.result),
+      ...(touched.length ? { touched } : {}),
       ledger_id: row?.id,
       undoable: false,
     };
@@ -282,7 +311,7 @@ export async function performWrite(
     return {
       ok: true,
       message: `Created ${label}.`,
-      entity: { kind: entity_kind, id: created.id ? String(created.id) : undefined },
+      entity: { kind: entity_kind, id: created.id ? String(created.id) : undefined, label },
       ledger_id: row?.id,
       undoable: !!created.id,
     };
@@ -322,7 +351,7 @@ export async function performWrite(
       })
       .returning("id")
       .executeTakeFirst();
-    return { ok: true, message: "Updated.", entity: { kind: entity_kind, id }, ledger_id: row?.id, undoable: true };
+    return { ok: true, message: "Updated.", entity: { kind: entity_kind, id, label }, ledger_id: row?.id, undoable: true };
   }
 
   // delete
@@ -348,7 +377,7 @@ export async function performWrite(
     })
     .returning("id")
     .executeTakeFirst();
-  return { ok: true, message: `Deleted ${label}.`, entity: { kind: entity_kind, id }, ledger_id: row?.id, undoable: true };
+  return { ok: true, message: `Deleted ${label}.`, entity: { kind: entity_kind, id, label }, ledger_id: row?.id, undoable: true };
 }
 
 /** Put a stored row back through the kind's own restore seam.

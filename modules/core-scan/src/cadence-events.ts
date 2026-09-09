@@ -32,13 +32,15 @@ export interface BuildOpts {
 /**
  * The ledger events an attach should file, in order.
  *
- * Only `add-qty` is a purchase - "+N, more of the same". `link-barcode`,
- * `move` and `merge-fields` teach or relocate an entity and consume nothing,
- * so they file nothing; treating them as purchases would invent a shopping
- * habit out of a barcode being linked.
+ * `add-qty` ("+N, more of the same") and `replace` ("the one I had ran out,
+ * this is the new one") are purchases. `link-barcode`, `move` and
+ * `merge-fields` teach or relocate an entity and consume nothing, so they file
+ * nothing; treating them as purchases would invent a shopping habit out of a
+ * barcode being linked.
  */
 export function buildCadenceEvents(opts: BuildOpts): CadenceEventBody[] {
-  if (opts.mode !== "add-qty") return [];
+  const replace = opts.mode === "replace";
+  if (opts.mode !== "add-qty" && !replace) return [];
   if (!(opts.added > 0)) return [];
 
   const base = { entity_kind: opts.kind, entity_id: opts.entityId, source: "scan" as const };
@@ -53,7 +55,10 @@ export function buildCadenceEvents(opts: BuildOpts): CadenceEventBody[] {
 
   // What happened to the stock that was still there. Only a human knows, so
   // with no answer we record only the purchase rather than inventing one.
-  const resolution = opts.cadence?.resolution;
+  // `replace` IS the answer: the one you had ran out, which is consumption
+  // unless the person said it went bad. That is the everyday re-buy, and the
+  // fact the ledger measures its interval from.
+  const resolution = opts.cadence?.resolution ?? (replace ? "consumed" : undefined);
   if (!resolution || resolution === "over_buy") return events;
   if (!(opts.priorQty > 0)) return events; // nothing was left to explain
 

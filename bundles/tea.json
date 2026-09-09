@@ -1,7 +1,7 @@
 {
   "manifest": {
     "id": "cobblr.flagship.tea",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "released_at": "2026-08-20",
     "name": "Tea",
     "author": "Cobblr",
@@ -73,6 +73,10 @@
       {
         "module": "inventory",
         "instance_name": "tea",
+        "faces": {
+          "stock": true,
+          "perishable": true
+        },
         "nav_group": {
           "key": "kitchen",
           "label": "Kitchen"

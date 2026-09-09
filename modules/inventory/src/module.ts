@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "inventory",
-  version: "0.21.6",
+  version: "0.21.10",
   displayName: "Inventory",
   description:
     "Parts, locations, categories, stock tracking, polymorphic allocations. The generalised toolkit you'd otherwise Frankenstein from a spreadsheet.",
@@ -49,18 +49,18 @@ export default defineModule({
         fields: [
           { name: "name", type: "text", role: "title", required: true },
           { name: "description", type: "text", role: "summary" },
-          { name: "qty", type: "number", role: "quantity" },
-          { name: "unit", type: "text", role: "unit" },
-          { name: "cost", type: "number" },
-          { name: "min_qty", type: "number" },
+          { name: "qty", type: "number", role: "quantity", trait: "fungible" },
+          { name: "unit", type: "text", role: "unit", trait: "fungible" },
+          { name: "cost", type: "number", trait: "fungible" },
+          { name: "min_qty", type: "number", trait: "fungible" },
           // An ESTIMATE, deliberately not role:"quantity" — that role means a
           // counted amount, and a face reading it as one would render a guess
           // with a stepper. Its presence is what marks a record as an
           // assortment. See docs/design-decisions/assorted-contents.md.
-          { name: "approximate_qty", type: "number" },
-          { name: "estimated_at", type: "date" },
-          { name: "manufacturer", type: "text" },
-          { name: "supplier_url", type: "url" },
+          { name: "approximate_qty", type: "number", trait: "fungible" },
+          { name: "estimated_at", type: "date", trait: "fungible" },
+          { name: "manufacturer", type: "text", trait: "fungible" },
+          { name: "supplier_url", type: "url", trait: "fungible" },
           { name: "image_path", type: "image-path", role: "image" },
           { name: "notes", type: "text" },
           // Free-form JSON attribute blob. Declared so we can also
@@ -81,7 +81,7 @@ export default defineModule({
           // part with no hand-written QR rule. The sibling parity fields
           // (model_number, assigned_to, warranty_*) stay undeclared — they are not
           // identifiers. See docs/design-decisions/resolvable-registry.md D6.
-          { name: "serial_number", type: "text", fieldRole: "identifier" },
+          { name: "serial_number", type: "text", fieldRole: "identifier", trait: "unique" },
         ],
         // Cross-module readable: name + description for labels & rendering,
         // qty/min_qty for low-stock / dep-satisfied checks, unit for quantity
@@ -173,6 +173,7 @@ export default defineModule({
         examples: ["used one", "I just took one out"],
         undoable: true,
         label: "Use one",
+        face: "stock",
         description:
           "Knock a single unit off a part's on-hand qty: the zero-friction 'I took one out' tap. Binary, no number entry (that's Adjust stock). Decrements through the same path as adjust-stock, so it writes the usage ledger and trips 'running low → shopping list' when it crosses the reorder threshold. partId falls back to the targeted entity.",
         appliesTo: { kinds: ["inventory:part"] },
@@ -184,6 +185,7 @@ export default defineModule({
         examples: ["opened it", "cracked open the pesto", "started this one"],
         undoable: true,
         label: "Opened",
+        face: "perishable",
         description:
           "Record that you opened one, today. Starts the shorter opened clock on that one only - the unopened ones keep their own dates - and records WHEN, so how long it lasts after opening can be measured the next time one goes off. Args: { partId?, timezone? }.",
         // Only where something CAN go off: a table whose bundle marked a field as
@@ -202,6 +204,7 @@ export default defineModule({
         examples: ["used it up", "that is all gone", "ate the last one"],
         undoable: true,
         label: "Used up",
+        face: "stock",
         description:
           "One verb for the end of a thing, whatever kind of thing it is. On something that goes off (a table with an expiry field, lots dated on arrival) it ends the OLDEST lot as used, records how long it lasted as a lower bound on its shelf life, and takes one off the count - the same bookkeeping mark-finished does. On plain stock it empties the count. Args: { partId?, timezone? }.",
         appliesTo: { kinds: ["inventory:part"] },
@@ -217,6 +220,7 @@ export default defineModule({
         examples: ["it went bad", "had to bin it", "this one spoiled before I got to it"],
         undoable: true,
         label: "Threw it out",
+        face: "perishable",
         description:
           "Record that one went bad and was binned. This is the only thing that MEASURES how long something keeps, so it is what teaches the shelf life; it also files a waste event, which is what tells you when you are consistently buying more than you get through. Args: { partId?, timezone? }.",
         // Only where something CAN go off: a table whose bundle marked a field as
@@ -235,6 +239,7 @@ export default defineModule({
         examples: ["another one arrived", "got one more", "add one to the fridge"],
         undoable: true,
         label: "Restock one",
+        face: "perishable",
         description:
           "Record that another one arrived today. NOT the same as adding one to the count: a container arriving today has its own shelf life, so this dates the new arrival from the item's shelf_life_days rather than letting it inherit the previous one's deadline. Several on the same day merge into one lot. Args: { partId?, qty?, timezone? }.",
         // Only where something CAN go off: a table whose bundle marked a field as
@@ -254,6 +259,7 @@ export default defineModule({
         examples: ["replaced the filter", "swapped in a new box", "replaced it with a fresh one"],
         undoable: true,
         label: "Replaced",
+        face: "stock",
         description:
           "One verb for swapping a thing out. On something that goes off it consumes the oldest lot and adds a fresh one dated today from the item's shelf life - the same bookkeeping swap-fresh does. On plain stock it stamps when it was replaced and consumes a spare if there is one. Args: { partId?, timezone? }.",
         appliesTo: { kinds: ["inventory:part"] },
@@ -284,10 +290,13 @@ export default defineModule({
         examples: ["set aside four for that project", "reserve some of these"],
         undoable: true,
         label: "Reserve stock for something",
+        face: "lendable",
         description:
           "Set aside some of this part for a project, build or order, without moving stock yet. Pass `qty`, and `for_kind` + `for_id` saying what it is reserved for (list_records gives you the id). Optionally `reason`, which becomes the line on the part's statement when it is consumed. Stock only moves when the reservation is CONSUMED (inventory:settle-allocation).",
         icon: "bookmark",
-        appliesTo: { kinds: ["inventory:part"] },
+        // Lending is a trait a collection wears (custody, a trial axis); this verb
+        // sat on every inventory part, tea included, until it said so.
+        appliesTo: { traits: ["fungible", "lendable"] },
         invokeHandler: "inventory.reserve-stock",
         argsSchema: {
           qty: { label: "How much to reserve", type: "number" },
@@ -300,9 +309,10 @@ export default defineModule({
         id: "inventory:split-lot",
         examples: ["split one off that lot", "I opened one of the pack"],
         label: "Split one off",
+        face: "stock",
         description:
           "Split units off a lot's quantity into a NEW separate item (default 1 (the 'I entered 5 spools as one lot and just opened one' move). The new item inherits the lot's instance, fields, manufacturer, location, image, and parent pairing(s) so type rollups still count it; the lot's qty drops by the split amount. Generic) works on any inventory item with a numeric qty, in any instance. The lot must keep ≥1. Args: { quantity?: number (default 1) }.",
-        appliesTo: { kinds: ["inventory:part"] },
+        appliesTo: { traits: ["fungible"] },
         invokeHandler: "inventory.split-lot",
         userInvokable: true,
         argsSchema: {
@@ -314,6 +324,7 @@ export default defineModule({
         examples: ["ate the last one", "that's the end of the jar", "all gone"],
         undoable: true,
         label: "Finished it",
+        face: "perishable",
         description:
           "Record that you used the last of one up. Counts as a LOWER BOUND on how long it keeps - it lasted at least this long - and never as a measurement, because you ate it rather than testing it. Args: { partId?, timezone? }.",
         // Only where something CAN go off: a table whose bundle marked a field as
@@ -333,6 +344,7 @@ export default defineModule({
         examples: ["swapped in a new box", "finished it and opened the new one", "replaced it with a fresh one"],
         undoable: true,
         label: "Replaced with a fresh one",
+        face: "perishable",
         description:
           "The old one is finished and an identical new one arrived, in one tap. The count does not move, the old lot ends as used (a floor on its shelf life), the new lot is dated today, and the consumption ledger hears one consumed and one bought, which is how it learns how often you go through it. Args: { partId?, timezone? }.",
         // Only where something CAN go off: a table whose bundle marked a field as

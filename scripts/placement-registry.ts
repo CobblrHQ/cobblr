@@ -238,7 +238,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: ".forgejo/workflows/",
     exemplar: ".forgejo/workflows/ci.yml",
     why: "Forgejo keeps no job logs and parses each job on its own: a step that ships no log is unreadable after the fact, a label nobody carries never runs, and a YAML anchor across jobs invalidates the whole file.",
-    lints: ["lint:ci-sink", "lint:ci-runner-labels", "lint:ci-lanes", "lint:workflow-yaml", "lint:ci-pr-any-base", "lint:forgejo-pagination"],
+    lints: ["lint:ci-sink", "lint:ci-runner-labels", "lint:ci-lanes", "lint:workflow-yaml", "lint:ci-pr-any-base", "lint:forgejo-pagination", "lint:main-runs-complete"],
     notes: [
       "The `test` and `test-full` jobs are one job in two places; edit the gate, copy its env+steps over the tracker.",
       "No YAML anchors or merge keys across jobs: Forgejo's job parser splits first and resolves second.",

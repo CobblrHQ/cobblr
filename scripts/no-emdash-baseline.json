@@ -260,10 +260,6 @@
     "text": "Restricted token —"
   },
   {
-    "file": "web/src/components/TrackedMatchBanner.tsx",
-    "text": "+ → Moved Updated — added already had everything — nothing to add Barcode linked to"
-  },
-  {
     "file": "web/src/components/TraitFingerprint.tsx",
     "text": "Uncertain — the module author flagged =' ' as a judgment call rather than a definitive ass"
   },

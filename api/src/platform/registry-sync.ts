@@ -50,6 +50,7 @@ export async function syncManifestRegistries(): Promise<{
     examples: string[];
     version: string;
     position: number;
+    face: string | null;
   }> = [];
 
   for (const entry of listEntries()) {
@@ -122,6 +123,7 @@ export async function syncManifestRegistries(): Promise<{
         examples: a.examples ?? [],
         version: a.version ?? m.version,
         position,
+        face: a.face ?? null,
       });
     }
   }
@@ -148,6 +150,7 @@ export async function syncManifestRegistries(): Promise<{
       examples: a.examples ?? [],
       version: a.version,
       position,
+      face: null,
     });
   }
 
@@ -272,6 +275,7 @@ export async function syncManifestRegistries(): Promise<{
           examples: sql`${JSON.stringify(a.examples)}::jsonb`,
           version: a.version,
           position: a.position,
+          face: a.face,
         })
         .onConflict((b) =>
           b.column("id").doUpdateSet({
@@ -288,6 +292,7 @@ export async function syncManifestRegistries(): Promise<{
             undoable: a.undoable,
             examples: sql`${JSON.stringify(a.examples)}::jsonb`,
             position: a.position,
+            face: a.face,
             version: a.version,
           }),
         )

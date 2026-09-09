@@ -998,30 +998,21 @@ function WorkspaceHeader({
   );
 }
 
-// Guard so an auto-applied (patch/minor) update fires AT MOST ONCE per
-// (workspace, bundle, target version) — even across the remounts a bundles
-// refetch causes. A failed auto-apply is NOT retried (the key stays set): the
-// row falls back to its manual controls rather than looping the apply against
-// live workspace data. Module-level so it survives BundleUpdateRow remounts.
-const autoAppliedUpdates = new Set<string>();
 
 // One bundle-update line in the dashboard header strip.
 //
 // Update FLOW is decided by the SemVer delta (owner-approved policy — see
-// lib/bundleUpdateTier.ts):
-//   • PATCH  → silent auto-apply. No toast; audited via the server's
-//              `bundle_installed` activity-log entry (applyValidatedBundle).
-//   • MINOR  → auto-apply + a toast naming what was added.
-//   • MAJOR / non-semver / ambiguous → the existing explicit prompt. NEVER
-//              silent.
+// the contract's bundle-update-tier):
+//   • PATCH / MINOR → the SERVER applies them on its own, on boot and hourly
+//              (api/src/platform/bundle-updates.ts), with the install route's
+//              own gates. This row only reports one that has not landed yet,
+//              and offers "Update now" for anyone who does not want to wait.
+//   • MAJOR / non-semver / ambiguous → the explicit prompt. NEVER silent.
 //
-// SAFETY GATE: auto-apply (patch/minor) only runs when the inline apply is
-// provably safe for THIS workspace — validateBundle reports no upgrade
-// conflicts (a field the user customised that the new version changes/removes
-// routes to the modal), and the apply itself doesn't hit needs_enable /
-// field_def_collision (those throw → we fall back to the prompt, never guess).
-// A conflict-free update applies inline (one POST, no modal — feedback
-// e429a627); the only change here is that patch/minor no longer need the click.
+// The auto-apply used to live HERE, as an effect that fired when this row
+// mounted - so a workspace whose owner never opened Home never updated, and
+// six bundles updated at once in front of the one person who did
+// (2026-09-09). A page must not be the thing that keeps a workspace current.
 function BundleUpdateRow({
   slug,
   update,
@@ -1049,7 +1040,6 @@ function BundleUpdateRow({
   // guard. Demand an explicit confirm rather than risk dropping user data.
   const shipsCatalogs = updateMayTeardownCatalogs(update.installedManifest, update.manifest);
   const tier = shipsCatalogs ? "prompt" : classifyBundleUpdate(update.installedV, update.latestV);
-  const autoKey = `${slug}:${update.externalId}@${update.latestV}`;
 
   const preview = useQuery({
     queryKey: ["bundle-update-preview", slug, update.externalId, update.latestV],
@@ -1060,7 +1050,6 @@ function BundleUpdateRow({
   const hasConflict = (preview.data?.preview?.upgrade_conflicts?.length ?? 0) > 0;
   // Preview came back AND nothing the user customised collides → the inline
   // apply is safe to take without routing through the modal.
-  const previewClean = !!preview.data && !hasConflict;
 
   // Open the detail modal in place over the dashboard rather than routing to
   // /bundles — closing it keeps the user here and leaves sibling update rows intact.
@@ -1098,8 +1087,8 @@ function BundleUpdateRow({
       // Anything that needs a decision (module-enable / field collision /
       // unexpected) is NEVER resolved silently. A manual click routes to the
       // modal; a silent auto-apply just stops and lets the row fall back to its
-      // manual controls (the autoAppliedUpdates guard prevents a re-fire), so
-      // the user is never yanked into a modal they didn't ask for.
+      // manual controls, so the user is never yanked into a modal they didn't
+      // ask for.
       if (e instanceof ApiError && (e.code === "needs_enable" || e.code === "field_def_collision")) {
         if (!silent) openModal();
         return;
@@ -1107,19 +1096,6 @@ function BundleUpdateRow({
       if (!silent) toast.error(e instanceof ApiError ? e.message : (e as Error).message);
     }
   }
-
-  // Auto-apply patch/minor once the preview is clean. Guarded so it fires at
-  // most once per target version and never for a guest.
-  useEffect(() => {
-    if (!canApply) return;
-    if (!tierAutoApplies(tier)) return; // major / non-semver → manual prompt only
-    if (!previewClean) return; // wait for a clean, conflict-free preview
-    if (install.isPending || install.isSuccess) return;
-    if (autoAppliedUpdates.has(autoKey)) return;
-    autoAppliedUpdates.add(autoKey);
-    void runUpdate(tier === "patch"); // patch: silent · minor: toast
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canApply, tier, previewClean, autoKey]);
 
   const updateNow = () => void runUpdate(false);
 
@@ -1139,10 +1115,10 @@ function BundleUpdateRow({
       {install.isPending ? (
         <span className="shrink-0 text-faint dark:text-slate-500">Updating…</span>
       ) : preview.isPending ? (
-        // While the preview loads: an auto tier (patch/minor) is about to apply
-        // itself, so show a passive "Checking…" rather than a manual action.
+        // While the preview loads: an auto tier (patch/minor) will land on its
+        // own within the hour, so say so rather than offer a click.
         canApply && tierAutoApplies(tier) ? (
-          <span className="shrink-0 text-faint dark:text-slate-500">Checking…</span>
+          <span className="shrink-0 text-faint dark:text-slate-500">Updates on its own</span>
         ) : (
           <button
             type="button"

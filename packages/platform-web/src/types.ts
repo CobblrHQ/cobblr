@@ -120,6 +120,12 @@ export interface FieldSection {
  *  takes one of these via a Provider so the components stay
  *  framework-agnostic and the host owns network + auth. */
 export interface PlatformWebApi {
+  /** Which faces a collection wears (GET /:slug/faces). Optional so a host
+   *  without it shows every face, as before. */
+  listFaces?(slug: string, kind: string): Promise<{ kind: string; traits?: Record<string, string>; faces: string[]; explicit: string[] }>;
+  /** Write a collection's override config (PUT /:slug/entity-kind-overrides);
+   *  the faces row uses it to turn a face on. */
+  upsertOverride?(slug: string, body: { target_kind: "instance" | "entity_kind" | "bundle"; target_id: string; config?: Record<string, unknown> }): Promise<unknown>;
   listActions(slug: string, kind: string): Promise<{
     items: PlatformAction[];
     bindings: PlatformActionBinding[];

@@ -76,7 +76,36 @@ export async function enrichEntityImage(opts: {
     if (!imageUrl) return null;
     const fileId = await fetchAndStoreImage(opts.orgId, imageUrl);
     if (!fileId) return null;
-    const imagePath = `/api/v1/orgs/${opts.orgSlug}/modules/core-files/files/${fileId}/raw?variant=medium`;
+    return setEntityImageFile({ ...opts, fileId });
+  } catch (err) {
+    console.error("[core-scan] entity-image enrich failed:", (err as Error).message);
+    return null;
+  }
+}
+
+/** The image_path a stored file renders at. One spelling, because the scan
+ *  inbox, the entity picker and this module's own enrich all point records at
+ *  the same file store. */
+export function imagePathForFile(orgSlug: string, fileId: string): string {
+  return `/api/v1/orgs/${orgSlug}/modules/core-files/files/${fileId}/raw?variant=medium`;
+}
+
+/** Point an entity at a file ALREADY in the store: a scan's catalog picture
+ *  handed to the record it matched, with no second download. The "Already
+ *  tracked" banner offers this when the tracked record has no picture and the
+ *  scan just found one. Best-effort like the enrich; null on any failure. */
+export async function setEntityImageFile(opts: {
+  orgSlug: string;
+  bearer: string;
+  entityKind: string;
+  entityId: string;
+  instance?: string | null;
+  fileId: string;
+}): Promise<string | null> {
+  try {
+    const [moduleName, type] = opts.entityKind.split(":");
+    if (!moduleName || !type) return null;
+    const imagePath = imagePathForFile(opts.orgSlug, opts.fileId);
     // Set image_path via the entity's CRUD route (loopback only, carries the
     // bearer). Instance items live under /instances/<instance>/items/<id>.
     const route = opts.instance
@@ -90,7 +119,7 @@ export async function enrichEntityImage(opts: {
     if (!patch.ok) return null;
     return imagePath;
   } catch (err) {
-    console.error("[core-scan] entity-image enrich failed:", (err as Error).message);
+    console.error("[core-scan] entity-image set failed:", (err as Error).message);
     return null;
   }
 }

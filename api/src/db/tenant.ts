@@ -7,6 +7,7 @@
 // authenticated role per request. For Phase 0 we just hold N pools.
 
 import { Kysely, PostgresDialect } from "kysely";
+import { sweepGate } from "./sweep-gate.js";
 import { Pool } from "pg";
 import { env } from "../env.js";
 import { meta } from "./meta.js";
@@ -280,13 +281,18 @@ export async function withTenantDbForSweep<T>(
   orgId: string,
   fn: (db: Kysely<TenantDB>) => Promise<T>,
 ): Promise<T> {
-  const db = await getTenantDb(orgId);
-  const mySeq = accessSeq.get(orgId);
-  try {
-    return await fn(db);
-  } finally {
-    await releaseIdleTenantPool(orgId, mySeq);
-  }
+  // Every sweep passes through here, so this is where the process-wide cap
+  // on sweep-held pools lives (see sweep-gate.ts). The pool is opened INSIDE
+  // the slot, so waiting sweeps hold nothing.
+  return sweepGate.run(async () => {
+    const db = await getTenantDb(orgId);
+    const mySeq = accessSeq.get(orgId);
+    try {
+      return await fn(db);
+    } finally {
+      await releaseIdleTenantPool(orgId, mySeq);
+    }
+  });
 }
 
 /** For tenant deletion — also useful in tests to reset the pool when

@@ -9,7 +9,7 @@ import { z } from "zod";
 import { applyBundleLocations, previewBundleLocations } from "../platform/apply-bundle-locations.js";
 import { resolveEnabledFeatures, featuresToOffer as pickFeaturesToOffer } from "../platform/feature-defaults.js";
 import { sql, type Kysely } from "kysely";
-import { platform, CatalogSchemaConfig, packFieldIssues, FieldRoleSchema, FieldTypeSchema, isFieldScope, parseFieldScope } from "@cobblr/platform-contract";
+import { platform, CatalogSchemaConfig, packFieldIssues, FieldRoleSchema, FieldTypeSchema, isFieldScope, parseFieldScope, FaceSchema } from "@cobblr/platform-contract";
 import { requireAuth } from "../auth/middleware.js";
 import { requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
@@ -262,6 +262,11 @@ const InstanceEntry = z.object({
    *  matchmaker prompt; purely additive — routing still works off noun + fields
    *  when absent. */
   scan_keywords: z.array(z.string().min(1).max(60)).max(40).optional(),
+  /** The faces this collection wears, chosen by the bundle: a Groceries table
+   *  is stock + perishable and nothing else, so its records never carry a
+   *  serial-number box or a service log. Keys left out are derived from
+   *  signal; a boolean here wins either way (docs/architecture/faces.md). */
+  faces: z.record(FaceSchema, z.boolean()).optional(),
   field_defs: z.array(FieldDefEntry).default([]),
   field_overrides: z.array(FieldOverrideEntry).default([]),
   saved_views: z.array(SavedViewEntry).default([]),
@@ -1556,7 +1561,7 @@ export async function applyValidatedBundle(
         isDefault: false,
       });
     }
-    const instConfig: Record<string, unknown> = { item_noun: inst.item_noun ?? null, qty_unit: inst.qty_unit ?? null, parent: inst.parent ?? null, nav_group: inst.nav_group ?? null, scan_keywords: inst.scan_keywords ?? null };
+    const instConfig: Record<string, unknown> = { item_noun: inst.item_noun ?? null, qty_unit: inst.qty_unit ?? null, parent: inst.parent ?? null, nav_group: inst.nav_group ?? null, scan_keywords: inst.scan_keywords ?? null, faces: inst.faces ?? null };
     // Creation-time stock signal: a bundle that declares a MEASURED unit (a
     // qty_unit that isn't blank or "each" — filament in kg, yarn in skeins)
     // carries stock character before any data exists, so latch it to stock at

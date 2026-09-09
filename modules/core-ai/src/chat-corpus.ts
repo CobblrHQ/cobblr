@@ -298,6 +298,7 @@ export const CHAT_CORPUS: CorpusCase[] = [
   ...ph("workshop", command, "action:platform:move-records", [
     "move all the tea from this page into the Tea section",
     "move the tea into the Tea list",
+    "move tea from this page into its own section",
   ]),
   ...ph("workshop", answer("my-data"), "read:count_records", [
     "which printer do I have the most of?", "how many machines do I have?",

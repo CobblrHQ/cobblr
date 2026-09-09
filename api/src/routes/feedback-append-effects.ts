@@ -25,8 +25,23 @@ export interface AppendEffects {
   announceReopen: boolean;
 }
 
-export function appendEffects(input: { status: TicketStatus | string; fromStaff: boolean }): AppendEffects {
+export function appendEffects(input: {
+  status: TicketStatus | string;
+  fromStaff: boolean;
+  /** On the record, changes nothing. The general case: a reporter answering a
+   *  question the team asked, or confirming the fix worked. */
+  recordsOnly?: boolean;
+  /** The narrower predecessor of recordsOnly, still accepted because a bot
+   *  deployed before it sends this name. */
+  answersStaff?: boolean;
+}): AppendEffects {
   const closed = input.status === "resolved" || input.status === "wontfix";
   if (input.fromStaff) return { reopen: false, retriage: false, announceReopen: false };
+  // Some of what a reporter says is on the record without being a report: an
+  // answer to a question the team asked (the operator asked why a PNG mattered,
+  // the reporter said his printer cannot print PDF, and the fixed ticket
+  // reopened and announced itself, 2026-09-08), or their confirmation that the
+  // fix worked. Both belong on the ticket; neither changes its state.
+  if (input.recordsOnly || input.answersStaff) return { reopen: false, retriage: false, announceReopen: false };
   return { reopen: closed, retriage: true, announceReopen: closed };
 }

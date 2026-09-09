@@ -53,7 +53,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { ContentsPanel } from "../components/ContentsPanel";
 import { CustomFieldsPanel,
-  EntityActionsBar,
+  EntityActionsBar, FaceSection, RecordFaces,
   useAskCobbAboutSelection,
   Modal,
   useToast,
@@ -1325,6 +1325,7 @@ function MachineDetailModal({
               large on the LEFT with its picker, everything else on the RIGHT,
               so the modal uses width instead of scrolling tall. Stacks on
               phones. */}
+          <RecordFaces kind={instance ? `${instance}:item` : ENTITY_KIND} target={instance ? { target_kind: "instance", target_id: `machines:${instance}` } : { target_kind: "entity_kind", target_id: ENTITY_KIND }}>
           <div className="grid gap-6 md:grid-cols-[minmax(180px,240px)_1fr]">
             <div className="space-y-2">
               <EntityImageEdit
@@ -1413,7 +1414,7 @@ function MachineDetailModal({
               </label>
             )}
             {/* Quantity is an inventory-ism — a tracked machine (printer/laser/CNC) is one unit. Hide for specialised instances. */}
-            {!fp.hidden("quantity") && !instance && <EditField label={fp.label("quantity", "Quantity")} value={String(m.quantity)} numeric onCommit={(v) => update.mutate({ quantity: Number(v) || 0 })} />}
+            <FaceSection face="stock" kind={instance ? `${instance}:item` : ENTITY_KIND}>{!fp.hidden("quantity") && !instance && <EditField label={fp.label("quantity", "Quantity")} value={String(m.quantity)} numeric onCommit={(v) => update.mutate({ quantity: Number(v) || 0 })} />}</FaceSection>
             <LocationTreePicker label="Location" kind="area" value={m.location_id} onChange={(id) => update.mutate({ location_id: id })} size="sm" />
           </dl>
 
@@ -1429,7 +1430,9 @@ function MachineDetailModal({
 
           {/* What's installed inside this machine (a printer's mods/parts). The
               generic placement panel — same one a server asset or a drawer uses. */}
-          <ContentsPanel slug={activeSlug} container={{ kind: "machines:machine", id: m.id }} title="Installed components" />
+          <FaceSection face="container" kind={instance ? `${instance}:item` : ENTITY_KIND}>
+            <ContentsPanel slug={activeSlug} container={{ kind: "machines:machine", id: m.id }} title="Installed components" />
+          </FaceSection>
 
           {/* Contributed detail panels (e.g. digifab's Print manager) — the
               panel registry renders whatever enabled modules declare for
@@ -1486,6 +1489,7 @@ function MachineDetailModal({
               Close
             </button>
           </div>
+          </RecordFaces>
         </div>
       ) : (
         <div className="text-xs text-faint">loading…</div>

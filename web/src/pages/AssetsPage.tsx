@@ -16,7 +16,7 @@ import { queueLabelsBulk } from "../lib/queue-label";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { CustomFieldsPanel,
-  EntityActionsBar,
+  EntityActionsBar, FaceSection, RecordFaces,
   useAskCobbAboutSelection,
   Modal,
   useToast,
@@ -736,6 +736,7 @@ function AssetDetailModal({
           {/* Wide record layout: the cover large on the LEFT, fields on the
               RIGHT — so an image-bearing record (a book, a wine, a machine)
               uses the width instead of scrolling tall. Stacks on phones. */}
+          <RecordFaces kind={kind} target={instance ? { target_kind: "instance", target_id: `assets:${instance}` } : { target_kind: "entity_kind", target_id: ENTITY_KIND }}>
           <div className="grid gap-6 md:grid-cols-[minmax(200px,260px)_1fr]">
             <div className="space-y-3">
               <EntityThumb
@@ -774,9 +775,12 @@ function AssetDetailModal({
                 <EditField label={fp.label("serial_number", "Serial number")} value={a.serial_number ?? ""} onCommit={(v) => update.mutate({ serial_number: v || null })} />
               ))}
             {!fp.hidden("purchased_at") && <EditField label={fp.label("purchased_at", "Purchased at")} value={a.purchased_at ?? ""} onCommit={(v) => update.mutate({ purchased_at: v || null })} type="date" />}
+            {/* Service face: warranty + last service. Off hides them; the asset stays unique. */}
+            <FaceSection face="maintained" kind={kind}>
             {!fp.hidden("warranty_until") && <EditField label={fp.label("warranty_until", "Warranty until")} value={a.warranty_until ?? ""} onCommit={(v) => update.mutate({ warranty_until: v || null })} type="date" />}
             {!fp.hidden("last_service_at") && <EditField label={fp.label("last_service_at", "Last service")} value={a.last_service_at ?? ""} onCommit={(v) => update.mutate({ last_service_at: v || null })} type="date" />}
-            {!fp.hidden("quantity") && <EditField label={fp.label("quantity", "Quantity")} value={String(a.quantity)} numeric onCommit={(v) => update.mutate({ quantity: Number(v) || 0 })} />}
+            </FaceSection>
+            <FaceSection face="stock" kind={kind}>{!fp.hidden("quantity") && <EditField label={fp.label("quantity", "Quantity")} value={String(a.quantity)} numeric onCommit={(v) => update.mutate({ quantity: Number(v) || 0 })} />}</FaceSection>
             <LocationTreePicker
               label="Location"
               value={a.location_id}
@@ -794,7 +798,9 @@ function AssetDetailModal({
           />
           {/* What's inside this asset — e.g. the components in a server/computer.
               Same generic placement panel a machine or a drawer uses. */}
-          <ContentsPanel slug={activeSlug} container={{ kind: ENTITY_KIND, id: a.id }} title="Contents" />
+          <FaceSection face="container" kind={kind}>
+            <ContentsPanel slug={activeSlug} container={{ kind: ENTITY_KIND, id: a.id }} title="Contents" />
+          </FaceSection>
           <EntityAttachments kind={ENTITY_KIND} entityId={a.id} />
           <EditField label="Notes" value={a.notes ?? ""} multiline onCommit={(v) => update.mutate({ notes: v || null })} />
             </div>
@@ -835,6 +841,7 @@ function AssetDetailModal({
               Close
             </button>
           </div>
+          </RecordFaces>
         </div>
       ) : asset.isError ? (
         // Don't sit on "loading…" forever when the fetch fails (a 404, a stale

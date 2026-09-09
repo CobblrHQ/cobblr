@@ -85,7 +85,7 @@ export function ScanResultModal({
   onAttached?: (
     r: { itemId: string; prevLocationId: string | null; entityTitle: string },
     match: TrackedMatch,
-    mode: "add-qty" | "link-barcode" | "move" | "merge-fields",
+    mode: "add-qty" | "replace" | "link-barcode" | "move" | "merge-fields",
   ) => void;
 }) {
   const { activeSlug } = useActiveOrg();
