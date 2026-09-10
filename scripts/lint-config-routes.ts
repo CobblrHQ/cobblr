@@ -46,7 +46,7 @@ for (const m of region.matchAll(
   if (m[1] !== undefined) lastLabel = m[1];
   else if (m[3] !== undefined) lastSection = m[3];
   else if (m[2] !== undefined)
-    destinations.push({ label: lastLabel, to: m[2].split(/[?#]/)[0], section: lastSection });
+    destinations.push({ label: lastLabel, to: m[2].split(/[?#]/)[0] ?? m[2], section: lastSection });
 }
 if (destinations.length === 0) {
   console.error(`[lint:config-routes] parsed 0 destinations from ${NAV} — regex drift?`);
@@ -67,7 +67,7 @@ if (sectionless.length > 0) {
 
 // Mounted routes: every <Route path="..."> in App.tsx.
 const appSrc = read(APP);
-const mounted = [...appSrc.matchAll(/path="([^"]+)"/g)].map((m) => m[1]);
+const mounted = [...appSrc.matchAll(/path="([^"]+)"/g)].map((m) => m[1] ?? "");
 const mountedSet = new Set(mounted);
 // Relative mounted paths (no leading slash) can nest under a parent route.
 const relative = mounted.filter((p) => !p.startsWith("/"));

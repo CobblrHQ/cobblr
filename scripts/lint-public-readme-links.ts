@@ -53,7 +53,7 @@ const shipsTarget = (target: string) => {
   if (shipped.has(target)) return true;
   // A directory link is fine when anything under it ships.
   const asDir = target.endsWith("/") ? target : `${target}/`;
-  for (const p of shipped) if (p.startsWith(asDir)) return true;
+  for (const p of shipped) if (String(p).startsWith(asDir)) return true;
   return false;
 };
 

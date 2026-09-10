@@ -62,10 +62,10 @@ for (const m of readdirSync(MODULES)) {
   if (!existsSync(src) || !statSync(src).isDirectory()) continue;
   for (const f of walk(src)) {
     const txt = readFileSync(f, "utf8");
-    for (const mm of txt.matchAll(/registerHandler\(\s*["']([^"']+)["']/g)) check(m, mm[1], "action handler", f);
-    for (const mm of txt.matchAll(/invokeHandler:\s*["']([^"']+)["']/g)) check(m, mm[1], "invokeHandler", f);
+    for (const mm of txt.matchAll(/registerHandler\(\s*["']([^"']+)["']/g)) check(m, mm[1] ?? "", "action handler", f);
+    for (const mm of txt.matchAll(/invokeHandler:\s*["']([^"']+)["']/g)) check(m, mm[1] ?? "", "invokeHandler", f);
     // manifest action ids: id: "module:action" (colon-namespaced)
-    for (const mm of txt.matchAll(/\bid:\s*["']([a-z0-9_-]+:[a-z0-9_-]+)["']/g)) check(m, mm[1], "action id", f);
+    for (const mm of txt.matchAll(/\bid:\s*["']([a-z0-9_-]+:[a-z0-9_-]+)["']/g)) check(m, mm[1] ?? "", "action id", f);
   }
 }
 

@@ -30,18 +30,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import {
-  BulkActionBar,
-  Modal,
-  useToast,
-  useConfirm,
-  usePageTitle,
-  useAskCobbAboutSelection,
-  RecordRow,
-  useSelectionResolver,
-  buildLocationForest,
-  type LocationNode as SharedLocationNode,
-} from "@cobblr/platform-web";
+import { BulkActionBar, Modal, useToast, useConfirm, usePageTitle, useAskCobbAboutSelection, RecordRow, useSelectionResolver, buildLocationForest, type LocationNode as SharedLocationNode, usePublishChatContext } from "@cobblr/platform-web";
 import { ApiError, api, fetchAuthBlobUrl, type Location } from "../lib/api";
 import { totalUsage, useLocationUsage, type UsageCounts } from "../lib/useLocationUsage";
 import { queueLabelsBulk } from "../lib/queue-label";
@@ -191,6 +180,14 @@ export function LocationsPage() {
   const usageByLocation = useLocationUsage(activeSlug);
 
   const items = useMemo(() => list.data?.items ?? [], [list.data]);
+
+  // What is on this screen, so "the tea from this page" can mean this page.
+  // A page that lists one kind of record says which kind (chat-context.ts).
+  usePublishChatContext({
+    kind: "core-locations:location",
+    label: "Locations",
+    summary: `${items.length} place${items.length === 1 ? "" : "s"}`,
+  });
 
   // Highlighting "Rack 1" should mean the rack, not the words. Exact match, and
   // only when exactly one place answers to that name: a guess that resolves to

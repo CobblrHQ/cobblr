@@ -3876,11 +3876,16 @@ export const api = {
     request<void>("DELETE", `/orgs/${slug}/modules/core-ai/basics/commands/${id}`),
   // "Does anything this workspace already knows fit what is being typed?"
   // Asked as the user types; writes nothing.
-  matchCommand: (slug: string, message: string, selectionIds?: string[]) =>
+  matchCommand: (slug: string, message: string, selectionIds?: string[], pageKind?: string) =>
     request<{ command: BasicCommandOffer | null }>(
       "POST",
       `/orgs/${slug}/modules/core-ai/basics/commands/match`,
-      { message, ...(selectionIds?.length ? { selection_ids: selectionIds } : {}) },
+      {
+        message,
+        ...(selectionIds?.length ? { selection_ids: selectionIds } : {}),
+        // Which list is on screen, so "from this page" means this page.
+        ...(pageKind ? { page_kind: pageKind } : {}),
+      },
     ),
   // Answer a question that is still being typed, from the workspace, with no
   // model involved. Null when it is not a question this can answer.
@@ -4017,7 +4022,7 @@ export const api = {
     messages: { role: "user" | "assistant"; content: string }[],
     /** What the user is looking at right now (route + one-line summary), for
      *  Cobb's situational awareness. See web/src/lib/chat-context.ts. */
-    context?: { label: string; summary?: string },
+    context?: { label: string; summary?: string; kind?: string },
   ) =>
     request<AiChatResponse>("POST", `/orgs/${slug}/modules/core-ai/chat`, { messages, ...(context ? { context } : {}) }),
   /** The same turn, PERSISTED. Returns at once with a turn id; subscribe with
@@ -4027,7 +4032,7 @@ export const api = {
   aiChatStart: (
     slug: string,
     messages: { role: "user" | "assistant"; content: string }[],
-    context?: { label: string; summary?: string },
+    context?: { label: string; summary?: string; kind?: string },
     /** What the user is pointing AT — ticked rows, or a highlight. The
      *  difference between Cobb knowing you are on Locations and Cobb knowing
      *  you mean these twelve racks. */
@@ -4683,6 +4688,8 @@ export interface BasicCommandOffer {
   summary: string;
   /** Everything it will touch, one per line. */
   lines?: string[];
+  /** What it found and is NOT touching, said plainly. */
+  note?: string;
 }
 
 /** Result of the no-AI basic-mode matcher (POST …/core-ai/basics/answer). */

@@ -25,7 +25,7 @@
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-// @ts-expect-error plain .mjs, the single source of truth for the voice
+// plain .mjs, the single source of truth for the voice
 import { lintProse } from "./prose-rules.mjs";
 
 const ROOT = new URL("..", import.meta.url).pathname;

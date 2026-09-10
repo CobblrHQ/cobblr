@@ -57,10 +57,10 @@ for (const rootRel of CSS_ROOTS) {
   for (const file of walk(resolve(ROOT, rootRel), ".css")) {
     const css = stripComments(readFileSync(file, "utf8"));
     for (const m of css.matchAll(/([^{}]*#[A-Za-z][\w-]*[^{}]*)\{([^{}]*)\}/g)) {
-      const selector = m[1].trim();
-      const ids = [...selector.matchAll(/#([A-Za-z][\w-]*)/g)].map((x) => x[1]);
+      const selector = (m[1] ?? "").trim();
+      const ids = [...selector.matchAll(/#([A-Za-z][\w-]*)/g)].map((x) => x[1] ?? "").filter(Boolean);
       if (ids.length === 0) continue;
-      const props = m[2]
+      const props = (m[2] ?? "")
         .split(";")
         .map((d) => d.split(":")[0]?.trim().toLowerCase())
         .filter((p): p is string => !!p);

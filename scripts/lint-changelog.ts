@@ -22,12 +22,12 @@
 //
 // Diffs against main; no-ops with no base. Run: npx tsx scripts/lint-changelog.ts
 import { execSync } from "node:child_process";
-// @ts-expect-error plain .mjs module, shared with the docs site's lint
+// plain .mjs module, shared with the docs site's lint
 import { lintProse } from "./prose-rules.mjs";
-// @ts-expect-error plain .mjs module, shared with the publisher so this gate and
+// plain .mjs module, shared with the publisher so this gate and
 // the renderer can never disagree about who an entry is for
 import { ALL_ENTRY_TYPES, AUDIENCE_TYPES, isInternalChangelogEntry } from "./publish/changelog-filter.mjs";
-// @ts-expect-error plain .mjs module, shared with docs-flush so this gate and the
+// plain .mjs module, shared with docs-flush so this gate and the
 // release-time splice can never disagree about what "the heading exists" means
 import { findHeadingLine, listHeadings, parseDocsTarget } from "./docs-target.mjs";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
@@ -273,8 +273,10 @@ function ver(j: unknown): string | undefined {
 }
 function minorOrMajor(oldV?: string, newV?: string): boolean {
   if (!oldV || !newV || oldV === newV) return false;
-  const [oM, oN] = oldV.split(".").map(Number);
-  const [nM, nN] = newV.split(".").map(Number);
+  // A version with fewer parts than expected reads as zeroes rather than as
+  // undefined: "2" means 2.0, and a bump away from it is still a bump.
+  const [oM = 0, oN = 0] = oldV.split(".").map(Number);
+  const [nM = 0, nN = 0] = newV.split(".").map(Number);
   return nM > oM || (nM === oM && nN > oN);
 }
 
@@ -283,17 +285,17 @@ const reasons: string[] = [];
 if (subjects.some((s) => /^feat(\(.+\))?!?:/i.test(s))) reasons.push("a feat: commit");
 const seenMod = new Set<string>();
 for (const f of changed) {
-  const m = f.match(/^modules\/([^/]+)\//);
-  if (!m || seenMod.has(m[1])) continue;
-  seenMod.add(m[1]);
-  const mt = `modules/${m[1]}/src/module.ts`;
+  const mod = f.match(/^modules\/([^/]+)\//)?.[1];
+  if (!mod || seenMod.has(mod)) continue;
+  seenMod.add(mod);
+  const mt = `modules/${mod}/src/module.ts`;
   const oldMt = tryGit(`show ${base}:${mt}`);
   if (!oldMt) {
-    if (existsSync(mt)) reasons.push(`a new module modules/${m[1]}`);
+    reasons.push(`a new module modules/${mod}`);
     continue;
   }
   if (existsSync(mt) && minorOrMajor(oldMt.match(/version:\s*"([^"]+)"/)?.[1], readFileSync(mt, "utf8").match(/version:\s*"([^"]+)"/)?.[1]))
-    reasons.push(`a minor/major bump in modules/${m[1]}`);
+    reasons.push(`a minor/major bump in modules/${mod}`);
 }
 
 if (reasons.length === 0) {

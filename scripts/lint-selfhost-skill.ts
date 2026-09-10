@@ -45,7 +45,7 @@ const surface = `${compose}\n${envExample}`;
 // Variables the skill tells someone to set, or names in prose. Deliberately
 // broad: prose that names a variable is instruction too.
 const NAMED = new Set(
-  [...skill.matchAll(/\b((?:COBBLR|POSTGRES|WATCHTOWER|COMPOSE|TS|WEB|JWT|TENANT|SUPERADMIN|PUBLIC|CLOUDFLARE|DUCKDNS|BACKUP|DOCKER)_[A-Z0-9_]+)\b/g)].map((m) => m[1]),
+  [...skill.matchAll(/\b((?:COBBLR|POSTGRES|WATCHTOWER|COMPOSE|TS|WEB|JWT|TENANT|SUPERADMIN|PUBLIC|CLOUDFLARE|DUCKDNS|BACKUP|DOCKER)_[A-Z0-9_]+)\b/g)].map((m) => m[1] ?? ""),
 );
 
 // Set by the operator's shell rather than declared in the stack, so they are

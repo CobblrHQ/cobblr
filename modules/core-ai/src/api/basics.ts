@@ -565,8 +565,8 @@ export async function matchCommand(
   message: string,
   orgId?: string,
   /** Where to look, when the user pointed at something. */
-  ctx?: { wsApi: WorkspaceApi; selectionIds?: string[] },
-): Promise<{ id: string; template: string; operations: Operation[]; summary?: string; lines?: string[] } | null> {
+  ctx?: { wsApi: WorkspaceApi; selectionIds?: string[]; pageKind?: string },
+): Promise<{ id: string; template: string; operations: Operation[]; summary?: string; lines?: string[]; note?: string } | null> {
   // A COMPUTED command is checked first: it is the most specific thing that
   // can match, and unlike the others it has to go and look at the workspace
   // before it can say what it would do.
@@ -578,6 +578,7 @@ export async function matchCommand(
           wsApi: ctx.wsApi,
           message,
           ...(ctx.selectionIds?.length ? { selectionIds: ctx.selectionIds } : {}),
+          ...(ctx.pageKind ? { pageKind: ctx.pageKind } : {}),
         })
         .catch(() => null);
       // No plan means nothing to do — "delete duplicates" in a workspace with
@@ -589,6 +590,7 @@ export async function matchCommand(
           operations: plan.operations,
           summary: plan.summary,
           ...(plan.lines?.length ? { lines: plan.lines } : {}),
+          ...(plan.note ? { note: plan.note } : {}),
         };
       }
     }
@@ -632,12 +634,15 @@ basicsRouter.post(
         // What the user is pointing at, so "delete duplicates" can mean the
         // ones in THIS rack rather than every one in the workspace.
         selection_ids: z.array(z.string().max(64)).max(200).optional(),
+        // The list on screen, so "from this page" means this page.
+        page_kind: z.string().max(120).optional(),
       })
       .safeParse(req.body);
     if (!body.success) return badBody(res, body.error);
     const hit = await matchCommand(tenantDb(req), body.data.message, tenantContext(req).org.id, {
       wsApi: chatWorkspaceApi(ctxOf(req)),
       ...(body.data.selection_ids?.length ? { selectionIds: body.data.selection_ids } : {}),
+      ...(body.data.page_kind ? { pageKind: body.data.page_kind } : {}),
     });
     res.json({
       command: hit
@@ -651,6 +656,8 @@ basicsRouter.post(
             summary: hit.summary ?? describeOps(hit.operations),
             // Everything it will touch, one per line: the card lists them.
             ...(hit.lines?.length ? { lines: hit.lines } : {}),
+            // What it found and is leaving alone.
+            ...(hit.note ? { note: hit.note } : {}),
           }
         : null,
     });

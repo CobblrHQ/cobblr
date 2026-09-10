@@ -304,6 +304,7 @@ export function PartsListPage() {
   // Tell Ask Cobb what's on this screen — `low_stock` is the module's own flag.
   const lowStock = partItems.filter((p) => p.low_stock).length;
   usePublishChatContext({
+    kind: entityKind,
     label: itemNounPlural ? itemNounPlural.replace(/^\w/, (ch) => ch.toUpperCase()) : "Inventory",
     summary:
       `${partItems.length} ${partItems.length === 1 ? itemNoun : itemNounPlural}` +

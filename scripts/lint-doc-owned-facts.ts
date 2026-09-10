@@ -58,6 +58,25 @@ const FACTS: OwnedFact[] = [
       /canary[^.\n]{0,50}\b(updated|rolled|deployed|replaced)\b[^.\n]{0,30}by[^.\n]{0,20}watchtower/i,
     ],
   },
+  {
+    what: "which radio reaches which printer (a PM220S prints over BLE and reports its roll only over Classic)",
+    owner: "docs/design-decisions/bluetooth-classic-printer-hosting.md",
+    anchor: "#which-radio-reaches-which-printer",
+    claims: [
+      // The line that shipped the wrong answer: a Classic-path finding written
+      // up as a verdict on every browser API, one day before the bench printed
+      // to the same model over BLE from Chrome. It sat in BACKLOG.md for six
+      // weeks, contradicting `connectivity: { ble: "works" }` in profiles.ts.
+      // Deliberately keyed on the TOTALISER. "no browser can reach a Bluetooth
+      // Classic printer" is true and stays unflagged; "no browser API can reach
+      // it at all" is the same finding inflated into a verdict on both radios.
+      /no browser[^.\n]{0,60}\breach\b[^.\n]{0,30}\bat all\b/i,
+      // Any doc telling a reader this model is one-radio. The per-model answer
+      // is data (`PrinterProfile.connectivity`), not prose to be re-derived.
+      /PM220S[^.\n]{0,80}\b(not BLE|BLE[- ]only|Classic[- ]only|no browser)\b/i,
+      /\b(not BLE|BLE[- ]only|Classic[- ]only)\b[^.\n]{0,80}PM220S/i,
+    ],
+  },
 ];
 
 const DOC_DIRS = ["docs"];

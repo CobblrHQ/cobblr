@@ -46,6 +46,7 @@
     "lint:public-readme-links": "tsx scripts/lint-public-readme-links.ts",
     "lint:no-vh-overlays": "tsx scripts/lint-no-vh-overlays.ts",
     "lint:ui-vocab": "tsx scripts/lint-ui-vocab.ts",
+    "lint:scripts-typecheck": "tsx scripts/lint-scripts-typecheck.ts",
     "lint:registry-filter": "tsx scripts/lint-registry-filter.ts",
     "lint:notification-links": "tsx scripts/lint-notification-links.ts",
     "lint:modal-in-place": "tsx scripts/lint-modal-in-place.ts",
@@ -280,7 +281,8 @@
     "lint:credential-slot-kind": "tsx scripts/lint-credential-slot-kind.ts",
     "lint:doc-status-honest": "tsx scripts/lint-doc-status-honest.ts",
     "lint:empty-array-under-set-u": "tsx scripts/lint-empty-array-under-set-u.ts",
-    "lint:cli-flush-before-exit": "tsx scripts/lint-cli-flush-before-exit.ts"
+    "lint:cli-flush-before-exit": "tsx scripts/lint-cli-flush-before-exit.ts",
+    "lint:census-on-every-exit": "tsx scripts/lint-census-on-every-exit.ts"
   },
   "devDependencies": {
     "jsdom": "^30.0.1",

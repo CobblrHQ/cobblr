@@ -52,8 +52,10 @@ if (subjects.some((s) => /^feat(\(.+\))?!?:/i.test(s))) reasons.push("a feat: co
 // 2) minor/major bump (patch = fix, exempt)
 function minorOrMajorBump(oldV?: string, newV?: string): boolean {
   if (!oldV || !newV || oldV === newV) return false;
-  const [oM, oN] = oldV.split(".").map(Number);
-  const [nM, nN] = newV.split(".").map(Number);
+  // A version with fewer parts than expected reads as zeroes rather than as
+  // undefined: "2" means 2.0, and a bump away from it is still a bump.
+  const [oM = 0, oN = 0] = oldV.split(".").map(Number);
+  const [nM = 0, nN = 0] = newV.split(".").map(Number);
   return nM > oM || (nM === oM && nN > oN);
 }
 function ver(j: unknown): string | undefined {
@@ -73,19 +75,19 @@ for (const f of changed.filter((f) => /^bundles\/[^/]+\.json$/.test(f))) {
 const newModules: string[] = [];
 const seenMod = new Set<string>();
 for (const f of changed) {
-  const m = f.match(/^modules\/([^/]+)\//);
-  if (!m || seenMod.has(m[1])) continue;
-  seenMod.add(m[1]);
-  const mt = `modules/${m[1]}/src/module.ts`;
+  const mod = f.match(/^modules\/([^/]+)\//)?.[1];
+  if (!mod || seenMod.has(mod)) continue;
+  seenMod.add(mod);
+  const mt = `modules/${mod}/src/module.ts`;
   const oldMt = tryGit(`show ${base}:${mt}`);
   if (!oldMt) {
-    if (existsSync(mt)) newModules.push(m[1]); // module.ts didn't exist at base
+    newModules.push(mod); // module.ts didn't exist at base
     continue;
   }
   if (existsSync(mt)) {
     const oldVer = oldMt.match(/version:\s*"([^"]+)"/)?.[1];
     const newVer = readFileSync(mt, "utf8").match(/version:\s*"([^"]+)"/)?.[1];
-    if (minorOrMajorBump(oldVer, newVer)) reasons.push(`a minor/major bump in modules/${m[1]}`);
+    if (minorOrMajorBump(oldVer, newVer)) reasons.push(`a minor/major bump in modules/${mod}`);
   }
 }
 for (const nm of newModules) reasons.push(`a new module modules/${nm}`);

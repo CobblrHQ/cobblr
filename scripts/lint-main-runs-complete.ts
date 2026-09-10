@@ -45,7 +45,7 @@ for (const f of readdirSync(DIR).filter((n) => n.endsWith(".yml") || n.endsWith(
   const block = src.match(/^concurrency:\s*\n((?:[ \t]+.*\n?)+)/m)?.[1];
   const why = pushesMain ? "runs on push to main" : "runs on a schedule";
   if (shorthand) {
-    findings.push(`  ${f}: \`concurrency: ${shorthand[1].trim()}\` ${why}; the shorthand cancels the run in progress`);
+    findings.push(`  ${f}: \`concurrency: ${(shorthand[1] ?? "").trim()}\` ${why}; the shorthand cancels the run in progress`);
     continue;
   }
   if (!block) continue; // no concurrency: nothing to cancel

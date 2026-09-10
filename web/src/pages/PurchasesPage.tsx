@@ -253,6 +253,7 @@ export function PurchasesPage() {
     (o) => o.status === "planned" || o.status === "ordered" || o.status === "in-transit",
   ).length;
   usePublishChatContext({
+    kind: "purchases:order",
     label: "Purchases",
     summary:
       `${allRows.length} order${allRows.length === 1 ? "" : "s"}` +

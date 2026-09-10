@@ -209,12 +209,13 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "scripts/ (git hooks in scripts/git-hooks/)",
     exemplar: "scripts/merge-pr.sh",
     why: "The same file runs on macOS (bash 3.2, BSD sed) and on the Linux CI box; a construct that is fine on one aborts on the other, after part of the work has already printed as done.",
-    lints: ["lint:bash-portable", "lint:portable-sed", "lint:sigpipe", "lint:deploy-state-in-flow", "lint:shell-lib-git-cwd", "lint:tsbuildinfo-not-shared", "lint:nightly-cut-clock", "lint:empty-array-under-set-u"],
+    lints: ["lint:bash-portable", "lint:portable-sed", "lint:sigpipe", "lint:deploy-state-in-flow", "lint:shell-lib-git-cwd", "lint:tsbuildinfo-not-shared", "lint:nightly-cut-clock", "lint:empty-array-under-set-u", "lint:scripts-typecheck"],
     notes: [
       "Prose (commit messages, PR bodies) goes through a FILE, never a quoted shell string.",
       "Linux-only scripts opt out with `# gnu-sed: <reason>`; that one line covers both sed and bash rules.",
       "merge-pr.sh and new-worktree.sh must PRINT where the channels are (lib/deploy-state.sh): everyone here works from a stale idea of what the nightly is, and a detour to check it is one nobody takes mid-task.",
       "Worktrees SHARE node_modules, so nothing worktree-specific belongs there: a tsBuildInfoFile under it makes tsc -b trust another worktree timestamps and pass on a broken tree.",
+      "A .ts script here is TYPECHECKED like the rest of the repo (lint:scripts-typecheck) - `pnpm typecheck` walks the workspaces and scripts/ is not one, so this is the gate that covers it.",
       "A lib in scripts/lib/ is sourced by callers it does not control, so it must not read git from $PWD: scope with `git -C \"$repo\"` resolved from BASH_SOURCE, or say why not with `# cwd-repo: <reason>`.",
     ],
   },
@@ -252,7 +253,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "scripts/",
     exemplar: "scripts/lint-background-loops.ts",
     why: "Bespoke scripts enforce invariants a general linter cannot express; there is deliberately no ESLint here.",
-    lints: ["lint:placement", "lint:lints-are-wired"],
+    lints: ["lint:placement", "lint:lints-are-wired", "lint:scripts-typecheck"],
     notes: [
       "Start with scripts/new-lint.sh <slug> --row <row> --rule \"<sentence>\": it writes the file from scripts/templates/lint.template.ts, registers lint:<slug> in package.json, claims the row, and runs it once (skill: writing-a-lint).",
       "A 'one implementation only' rule is a ROW in scripts/capabilities.ts, not a new script.",
@@ -383,7 +384,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "scripts/",
     exemplar: "scripts/release-daily.sh",
     why: "One commit becomes several artifacts on several surfaces, so anything naming or timing a release has to agree with the rest of that chain rather than be locally correct.",
-    lints: ["lint:one-release-clock", "lint:ci-sink", "lint:oci-labels", "lint:node-resolves", "lint:test-imports-script"],
+    lints: ["lint:one-release-clock", "lint:ci-sink", "lint:oci-labels", "lint:node-resolves", "lint:test-imports-script", "lint:census-on-every-exit"],
     notes: [
       "A nightly's date is an EDITORIAL label read from the local day, not UTC. The banner, the changelog post, the image snapshot tag and the coupling census all have to name the same night.",
       "Two clocks that are each internally consistent will not alert. That is why the rule spans both files instead of living in either.",

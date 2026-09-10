@@ -72,7 +72,10 @@ for (const fb of FEATURED_BUNDLES) {
   current[id] = { version: String(manifest.version ?? "0.0.0"), hash: contentHash(manifest) };
 }
 const sortedCurrent: Lock = {};
-for (const id of Object.keys(current).sort()) sortedCurrent[id] = current[id];
+for (const id of Object.keys(current).sort()) {
+  const entry = current[id];
+  if (entry) sortedCurrent[id] = entry;
+}
 
 if (WRITE) {
   writeFileSync(LOCK, JSON.stringify(sortedCurrent, null, 2) + "\n");

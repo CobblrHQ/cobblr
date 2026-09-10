@@ -95,8 +95,8 @@ for (const f of changed.filter((f) => /^bundles\/[^/]+\.json$/.test(f) && f !== 
 // ── modules: a migrations change must bump module.ts version ──
 const modsWithMigrationChange = new Set<string>();
 for (const f of changed) {
-  const m = f.match(/^modules\/([^/]+)\/migrations\//);
-  if (m) modsWithMigrationChange.add(m[1]);
+  const mod = f.match(/^modules\/([^/]+)\/migrations\//)?.[1];
+  if (mod) modsWithMigrationChange.add(mod);
 }
 for (const mod of modsWithMigrationChange) {
   const mt = `modules/${mod}/src/module.ts`;

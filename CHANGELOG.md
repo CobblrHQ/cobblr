@@ -2,6 +2,19 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-09-10
+
+### Improvements
+- Asking to move things "from this page" now checks that page first and moves only what is on it, saying how many more it found elsewhere and left alone. When the page holds none of them, it says so and offers the ones it did find, each with the list it is in, instead of quietly doing nothing or quietly moving everything.
+
+### Fixes
+- A change that moves the AI rail defers its benchmark to the nightly run, which is by design; it no longer reports that deferral as a failed check. The nightly itself could crash when every API key had spent its daily quota, which is the moment it was written to wait out; that is fixed, and scripts are now checked for names that do not exist so the class cannot ship again.
+- Reloading the page with Cobb's panel open brought the conversation back scrolled to the very first message, with everything that had happened since below the fold. It now opens at the newest message, where you left it.
+- When a change moves the AI rail, its benchmark is deferred to the nightly run. That deferral is now reported as a warning rather than an error, so the commit no longer reads as a failed build for something that was never measured. Releases are unaffected: a deferral still counts as no verdict and the previous one stands.
+- "Move the tea from this page into the Tea section" now means this page when the page is a list of records. When it is not, the plan still offers, and its headline says where it actually looked ("from every list") instead of claiming a scope it did not use. A plan that gathers records from several lists names the list each one is in.
+- The repository's own tooling scripts are now typechecked like the rest of the code. They never were, which is how a script could name a variable that did not exist and only fail when that line finally ran. Fixing the backlog turned up a duplicated import, two version comparisons that misread a short version number, and a dozen places where a pattern match was used without checking it matched.
+- Asking to move things "from this page" now really does read that page: the page was telling Cobb which records it lists, and that was being dropped before it arrived, so the search quietly covered the whole workspace. Cards also name a list the way the navigation does ("in Inventory") instead of by the singular word for one record ("in Part"), and the Locations page now says what it is showing.
+
 ## 2026-09-09
 
 ### Features

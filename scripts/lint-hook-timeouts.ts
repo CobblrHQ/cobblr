@@ -17,7 +17,7 @@ import { dirname, join } from "node:path";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const CONFIG = readFileSync(join(ROOT, "api/vitest.config.ts"), "utf8");
 const hookTimeoutMatch = /hookTimeout:\s*([\d_]+)/.exec(CONFIG);
-const HOOK_TIMEOUT = hookTimeoutMatch ? Number(hookTimeoutMatch[1].replace(/_/g, "")) : 120_000;
+const HOOK_TIMEOUT = hookTimeoutMatch?.[1] ? Number(hookTimeoutMatch[1].replace(/_/g, "")) : 120_000;
 
 const HOOKS = new Set(["beforeAll", "afterAll", "beforeEach", "afterEach"]);
 const TEST_DIR = join(ROOT, "api/tests");

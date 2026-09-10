@@ -495,7 +495,7 @@ const ChatBody = z.object({
   // page publishes). BOUNDED so a client can't stuff the prompt. See
   // web/src/lib/chat-context.ts.
   context: z
-    .object({ label: z.string().min(1).max(120), summary: z.string().max(600).optional() })
+    .object({ label: z.string().min(1).max(120), summary: z.string().max(600).optional(), kind: z.string().max(120).optional() })
     .optional(),
   // What the user is POINTING AT: rows they ticked, or a highlight. Bounded the
   // same way as the context above — a client cannot stuff the prompt.
@@ -890,6 +890,7 @@ chatRouter.post(
       {
         wsApi: chatWorkspaceApi(c),
         ...(parsed.data.selection?.ids?.length ? { selectionIds: parsed.data.selection.ids } : {}),
+        ...(parsed.data.context?.kind ? { pageKind: parsed.data.context.kind } : {}),
       },
     )
       .then((hit) =>

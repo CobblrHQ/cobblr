@@ -13,6 +13,11 @@ export interface ChatPageContext {
   label: string;
   /** One-line state of what's on screen, e.g. "19 pending, 16 waiting 2d+". */
   summary?: string;
+  /** The records this page LISTS, as a kind id ("spices:item"). Set it on a
+   *  page that is one list of one kind, and leave it off anywhere else: it is
+   *  what lets "move the tea from this page" mean this page. Without it a
+   *  plan has to search every list and say so. */
+  kind?: string;
 }
 
 let current: ChatPageContext | null = null;
@@ -26,15 +31,25 @@ export function getChatPageContext(): ChatPageContext | null {
  *  Cleanup only clears if WE are still the current publisher, so a page that
  *  unmounts AFTER the next page mounted (route transition) can't clobber it. */
 export function usePublishChatContext(ctx: ChatPageContext | null): void {
-  const label = ctx?.label ?? "";
-  const summary = ctx?.summary ?? "";
+  // THE WHOLE OBJECT IS KEPT. This used to rebuild it field by field from
+  // `label` and `summary`, so `kind` - added later and wired at both the
+  // publishing and the reading end - was dropped in the middle. Nothing
+  // failed: "move the tea from this page" simply went on meaning the whole
+  // workspace, and the unit tests passed because they called the planner
+  // directly and never crossed this seam (2026-09-10). A rebuild is a field
+  // to forget; a copy is not.
+  //
+  // The dep is the serialised context: pages build a fresh object every
+  // render, so an identity dep would republish forever, and a field list
+  // would be the same trap again.
+  const key = ctx?.label ? JSON.stringify(ctx) : "";
   useEffect(() => {
-    const mine: ChatPageContext | null = label ? { label, ...(summary ? { summary } : {}) } : null;
+    const mine: ChatPageContext | null = key ? (JSON.parse(key) as ChatPageContext) : null;
     current = mine;
     return () => {
       if (current === mine) current = null;
     };
-  }, [label, summary]);
+  }, [key]);
 }
 
 // ── What the user has SELECTED ───────────────────────────────────────────────

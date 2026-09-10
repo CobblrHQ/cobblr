@@ -190,6 +190,7 @@ export function MachinesPage({
       .join(", ");
   })();
   usePublishChatContext({
+    kind: instance ? `${instance}:item` : ENTITY_KIND,
     label: instance ? `Machines (${instance})` : "Machines",
     summary: `${allRows.length} machine${allRows.length === 1 ? "" : "s"}` + (machineStates ? ` (${machineStates})` : ""),
   });

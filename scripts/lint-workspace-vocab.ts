@@ -133,7 +133,7 @@ for (const root of ROOTS) {
     lines.forEach((line, i) => {
       if (isCommentLine(line)) return;
       if (SUPPRESS_RE.test(line)) return;
-      if (i > 0 && SUPPRESS_RE.test(lines[i - 1])) return;
+      if (i > 0 && SUPPRESS_RE.test(lines[i - 1] ?? "")) return;
 
       let hitRole: string | null = null;
       let hitText = "";

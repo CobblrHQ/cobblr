@@ -31,9 +31,12 @@ const read = (rel: string) => (existsSync(join(ROOT, rel)) ? readFileSync(join(R
 const MIT = /\bMIT\b/;
 const fails: string[] = [];
 
-function expectFsl(rel: string) {
+function expectFsl(rel: string): void {
   const t = read(rel);
-  if (!t) return fails.push(`${rel} is missing; core's licence must be present.`);
+  if (!t) {
+    fails.push(`${rel} is missing; core's licence must be present.`);
+    return;
+  }
   if (!/Functional Source License/.test(t)) fails.push(`${rel} is not the Functional Source License.`);
   if (!/ALv2|Apache License, Version 2\.0/.test(t)) {
     fails.push(`${rel} does not name Apache-2.0 as the future licence (FSL-1.1-ALv2).`);
@@ -43,9 +46,12 @@ function expectFsl(rel: string) {
   }
 }
 
-function expectApache(rel: string) {
+function expectApache(rel: string): void {
   const t = read(rel);
-  if (!t) return fails.push(`${rel} is missing.`);
+  if (!t) {
+    fails.push(`${rel} is missing.`);
+    return;
+  }
   const ok =
     /Apache License\s*\n?\s*Version 2\.0, January 2004/.test(t) &&
     /TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION/.test(t);

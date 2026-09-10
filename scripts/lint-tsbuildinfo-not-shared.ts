@@ -44,7 +44,8 @@ for (const f of tsconfigs(ROOT)) {
   const src = readFileSync(f, "utf8");
   if (/shared-tsbuildinfo-ok:/.test(src)) continue;
   const m = /"tsBuildInfoFile"\s*:\s*"([^"]+)"/.exec(src);
-  if (m && /(^|\/)node_modules\//.test(m[1])) bad.push({ file: relative(ROOT, f), value: m[1] });
+  const value = m?.[1];
+  if (value && /(^|\/)node_modules\//.test(value)) bad.push({ file: relative(ROOT, f), value });
 }
 
 if (bad.length) {

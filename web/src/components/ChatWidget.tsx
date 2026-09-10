@@ -94,7 +94,7 @@ interface Msg {
   /** A learned command that fits what was typed, offered for confirmation. The
    *  message rides along because the SERVER re-binds it: the browser never
    *  sends the operations, only what the user said. */
-  command?: { id: string; template: string; operations: number; summary: string; message: string; lines?: string[] };
+  command?: { id: string; template: string; operations: number; summary: string; message: string; lines?: string[]; note?: string };
   /** The records this message names. Each name renders as a chip that opens
    *  the record (web/src/lib/entity-chips.ts). */
   refs?: ChatEntityRef[];
@@ -555,7 +555,14 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
   // is a literal `false` in a production build, so the control and this state's
   // only writer are eliminated there and Cobb stays `idle` for users.
   const [devPose, setDevPose] = useState<CobbPose>("idle");
-  const scrollRef = useRef<HTMLDivElement>(null);
+  // Mirrored into STATE, for the same reason the textarea below is: the panel
+  // is a portalled rail tab, so this element mounts a render LATER than the
+  // messages it is meant to show. On a reload the conversation is restored
+  // from storage first, the scroll effect fires against a null ref and bails,
+  // and nothing changes afterwards to make it run again - so a restored
+  // conversation opened scrolled to the TOP, showing the oldest thing said
+  // (2026-09-10). Mirroring the element makes its arrival a dependency.
+  const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   // Mirrored into STATE as well, so the sizing effect below re-runs the moment
   // the textarea actually attaches. A plain ref cannot do that: it mutates
@@ -570,9 +577,13 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
     setTaEl(el);
   }, []);
 
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [messages, busy]);
+  // A LAYOUT effect, so a restored conversation is at the bottom before the
+  // browser paints rather than jumping there afterwards. (A frame callback
+  // would do neither: this file learned that with the caret, and forbids one.)
+  useLayoutEffect(() => {
+    if (!scrollEl) return;
+    scrollEl.scrollTop = scrollEl.scrollHeight;
+  }, [messages, busy, scrollEl]);
 
   // Auto-grow the input with its content (up to a cap), then shrink back — and
   // place the caret at the end of a message just recalled from history.
@@ -816,7 +827,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
     let cancelled = false;
     const t = setTimeout(() => {
       void api
-        .matchCommand(activeSlug, text, getChatSelection()?.ids)
+        .matchCommand(activeSlug, text, getChatSelection()?.ids, getChatPageContext()?.kind)
         .then((r) => {
           if (!cancelled) setSuggestion(r.command);
         })
@@ -1662,7 +1673,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
             </div>
           )}
 
-          <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+          <div ref={setScrollEl} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
             {/* The big Cobb is the EMPTY panel — nothing said, nothing typed.
                 He steps aside the moment there is something to show, so his
                 first answer arrives exactly where every later one does: inline,
@@ -1840,6 +1851,9 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                       <div className="text-[11px] text-muted dark:text-slate-400">
                         {m.command.summary} · learned from “{m.command.template}”
                       </div>
+                      {m.command.note && (
+                        <div className="text-[11px] text-muted dark:text-slate-400 break-words">{m.command.note}</div>
+                      )}
                       {m.command.lines && <PlanLines lines={m.command.lines} />}
                       <div className="mt-1.5 flex items-center gap-2">
                         <button
@@ -1957,6 +1971,9 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                   <div className="text-sm font-medium text-emerald-800 dark:text-emerald-300 break-words">
                     {suggestion.summary.replace(/\.\s*$/, "")}
                   </div>
+                  {suggestion.note && (
+                    <div className="text-[11px] text-emerald-700/80 dark:text-emerald-400/70 break-words">{suggestion.note}</div>
+                  )}
                   {suggestion.lines && <PlanLines lines={suggestion.lines} tone="green" />}
                   {/* The rule's generic name ("move things into another list") is
                       not a sentence about THIS plan, and the plan above already

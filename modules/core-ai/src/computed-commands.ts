@@ -20,6 +20,11 @@ import { pluralise } from "@cobblr/platform-contract";
 export interface ComputedPlan {
   /** What the confirm card says, in a sentence a person can check. */
   summary: string;
+  /** A true thing about the plan that is not part of it: what it found and
+   *  did NOT touch. "5 more tea are in other lists" belongs here, because a
+   *  plan that quietly moves 2 of 7 is precise and unhelpful, and one that
+   *  moves all 7 when the page held 2 is helpful and wrong. */
+  note?: string;
   /** Everything it touches, one per line, by what a person calls it. The
    *  summary names a few; this is the whole list, for the card to fold. */
   lines?: string[];
@@ -37,6 +42,9 @@ export interface ComputedCommand {
     wsApi: WorkspaceApi;
     /** The records the user had selected, when they had any: the scope. */
     selectionIds?: string[];
+    /** The kind the page on screen lists, when it lists one. "from this page"
+     *  means this. */
+    pageKind?: string;
     /** What was actually typed. "Delete duplicates" needs nothing from the
      *  sentence beyond having matched, but a command that has to know WHICH
      *  things and WHERE ("move all the tea into the Tea section") cannot work
@@ -207,13 +215,17 @@ function saidOf(rec: unknown): string[] {
  *  action for it. */
 export function readMoveRequest(
   message: string,
-): { term: string; destination: string; create?: true } | null {
+): { term: string; destination: string; create?: true; thisPage?: true } | null {
   const m =
-    /\b(?:move|put|file|shift)\s+(?:all\s+)?(?:of\s+)?(?:the\s+|my\s+)?(?<term>[a-z0-9'&\- ]{2,40}?)\s+(?:from\s+[a-z0-9'&\- ]{2,40}?\s+)?(?:into|in|to)\s+(?:the\s+)?(?<dest>[a-z0-9'&\- ]{2,40}?)\s+(?:section|list|group|tab)\s*$/i.exec(
+    /\b(?:move|put|file|shift)\s+(?:all\s+)?(?:of\s+)?(?:the\s+|my\s+)?(?<term>[a-z0-9'&\- ]{2,40}?)\s+(?:from\s+(?<src>[a-z0-9'&\- ]{2,40}?)\s+)?(?:into|in|to)\s+(?:the\s+)?(?<dest>[a-z0-9'&\- ]{2,40}?)\s+(?:section|list|group|tab)\s*$/i.exec(
       message.trim(),
     );
   const term = m?.groups?.term?.trim();
   const destination = m?.groups?.dest?.trim();
+  // "from this page" / "from here" is a SCOPE, and it used to be parsed and
+  // dropped: the plan then searched the whole workspace while the sentence
+  // said otherwise (seen on a page that was not a list at all, 2026-09-09).
+  const thisPage = /^(?:this|the current)\s+(?:page|screen|list|view)$|^here$/i.test(m?.groups?.src?.trim() ?? "");
   if (!term || !destination) return null;
   // "move this into X" and "move it into X" name nothing to look for; the
   // model has the conversation and the screen, and this does not.
@@ -221,25 +233,105 @@ export function readMoveRequest(
   // "into its own section", "into a new list": the list does not exist yet
   // and is to be called what the things are called. "Tea" for the tea.
   if (/^(?:its|their|a|the)\s+(?:own|new)$/i.test(destination)) {
-    return { term, destination: titleCase(term), create: true };
+    return { term, destination: titleCase(term), create: true, ...(thisPage ? { thisPage: true as const } : {}) };
   }
-  return { term, destination };
+  return { term, destination, ...(thisPage ? { thisPage: true as const } : {}) };
 }
 
 /** The one line over the list. Several things are counted here and named
  *  in the lines under it, once; a single thing is named here and gets no
  *  list. The first bubble named the five teas in the headline AND as bullets
  *  (2026-09-09); the bullets are the ones worth keeping. */
-export function moveHeadline(o: { titles: string[]; label: string; creating: boolean }): string {
+export function moveHeadline(o: {
+  titles: string[];
+  label: string;
+  creating: boolean;
+  /** The lists they are in now. */
+  sources?: string[];
+  /** True when the search was held to the page the person named. */
+  scoped?: boolean;
+  /** True when the page they named held none of these, and what is offered
+   *  is what exists elsewhere. */
+  emptyPage?: boolean;
+}): string {
   const n = o.titles.length;
   const what = n === 1 ? o.titles[0]! : `${n}`;
+  // Nothing here. Say that before offering anything else, or the offer reads
+  // as an answer to a question nobody asked.
+  if (o.emptyPage) {
+    return o.creating
+      ? `None on this page. Create a ${o.label} section and move the ${what} elsewhere into it?`
+      : `None on this page. Move the ${what} elsewhere into ${o.label}?`;
+  }
+  // Where from, said once: the page when that is what was searched, the one
+  // list when there is one, and "every list" when the search was wider than
+  // the sentence asked for. Silence about scope is how "from this page" ended
+  // up meaning the whole workspace.
+  const src = o.sources ?? [];
+  const from = o.scoped
+    ? " from this page"
+    : src.length === 1
+      ? ` from ${src[0]}`
+      : src.length > 1
+        ? ` from every list`
+        : "";
   return o.creating
-    ? `Create a ${o.label} section and move ${what} into it.`
-    : `Move ${what} into ${o.label}.`;
+    ? `Create a ${o.label} section and move ${what}${from} into it.`
+    : `Move ${what}${from} into ${o.label}.`;
+}
+
+/** What the plan found and is NOT touching. Empty when there is nothing to
+ *  add: a plan that took everything it found needs no footnote. */
+export function moveNote(o: {
+  term: string;
+  here: number;
+  elsewhere: number;
+  emptyPage: boolean;
+  sources?: string[];
+}): string {
+  const total = o.here + o.elsewhere;
+  if (o.emptyPage) {
+    const where = (o.sources ?? []).length ? ` (in ${(o.sources ?? []).join(", ")})` : "";
+    return `No ${o.term} on this page. There ${o.elsewhere === 1 ? "is 1" : `are ${o.elsewhere}`} elsewhere${where}.`;
+  }
+  if (o.elsewhere === 0) return "";
+  return `${o.here} of the ${total} ${o.term} in this workspace ${o.here === 1 ? "is" : "are"} on this page; the other ${o.elsewhere} stay where they are.`;
 }
 
 function titleCase(s: string): string {
   return s.replace(/\b[a-z]/g, (c) => c.toUpperCase());
+}
+
+/** What each module's DEFAULT list is called, by module name. Empty when the
+ *  workspace cannot say, and the caller falls back to the module's own name. */
+async function defaultInstanceNames(wsApi: WorkspaceApi): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  try {
+    const r = await wsApi.request("GET", "/instances");
+    const items = ((r as { body?: { items?: unknown[] } }).body?.items ?? []) as Array<{
+      module_name?: unknown;
+      display_name?: unknown;
+      is_default?: unknown;
+    }>;
+    for (const i of items) {
+      if (i.is_default !== true) continue;
+      if (typeof i.module_name === "string" && typeof i.display_name === "string") out.set(i.module_name, i.display_name);
+    }
+  } catch {
+    /* the fallback below is a good enough name */
+  }
+  return out;
+}
+
+/** The name to print for the list a record is in. */
+export function listNameOf(
+  k: { id: string; display_name?: string | null; instance_name?: string | null; module_name?: string | null },
+  defaults: Map<string, string>,
+): string {
+  // A named list already IS what a person calls it.
+  if (k.instance_name) return k.display_name ?? k.instance_name;
+  const mod = k.module_name ?? "";
+  return defaults.get(mod) ?? titleCase(mod.replace(/^core-/, "").replace(/-/g, " ")) ?? k.id;
 }
 
 /** What a new list is called internally, from what a person called it. The
@@ -264,7 +356,7 @@ export const COMPUTED_COMMANDS: ComputedCommand[] = [
     match: /\b(move|put|file|shift)\b[\s\S]{0,60}\b(?:into|in|to)\s+(?:the\s+)?[a-z0-9'&\- ]{2,40}?\s+(?:section|list|group|tab)\b/i,
     template: "move things into another list",
     description: "Move records that already exist from one list into another, keeping their photos, history and labels.",
-    async plan({ wsApi, selectionIds, message }) {
+    async plan({ wsApi, selectionIds, message, pageKind }) {
       const said = readMoveRequest(message);
       if (!said) return null;
       const kinds = await fetchKinds(wsApi).catch(() => []);
@@ -295,11 +387,28 @@ export const COMPUTED_COMMANDS: ComputedCommand[] = [
       // and offered nothing (2026-09-09). A module with no lists yet is
       // left to the model, which can create the first one.
       const listed = new Set(kinds.filter((k) => !!k.instance_name).map((k) => k.module_name)); // registry-filter-ok: names the modules that have lists, to include their primary kinds below
-      const siblings = dest
+      // What each list is CALLED. A named list carries its own display name;
+      // a module's primary kind carries the singular noun of a record instead
+      // ("Part"), so "(in Part)" is what a person was told the tea was in. The
+      // default instance is what they actually see in the nav ("Inventory"),
+      // so it is asked for, with the module's own name as the fallback.
+      const listNames = await defaultInstanceNames(wsApi);
+      const everywhere = dest
         ? kinds.filter((k) => k.module_name === dest.module_name && k.id !== dest.id)
         : kinds.filter((k) => listed.has(k.module_name));
-      const moving: Array<{ id: string; title: string; module: string }> = [];
-      for (const k of siblings) {
+      // THE PAGE COMES FIRST, and the rest is still worth knowing. Every list
+      // is read, and the split happens after: what is on the page the person
+      // named, and what is not. Reading only the page would make "none here"
+      // indistinguishable from "nothing anywhere", and reading only the whole
+      // workspace is how "from this page" came to mean all of it.
+      // A page counts as a page whenever the workspace knows the kind it lists,
+      // not only when that kind is one of the lists being searched. A page of
+      // locations holds no tea, and saying so is the answer; treating it as
+      // "no page at all" silently widened the search to the whole workspace,
+      // which is the thing this was written to stop.
+      const pageIsAList = !!said.thisPage && !!pageKind && kinds.some((k) => k.id === pageKind);
+      const found: Array<{ id: string; title: string; module: string; from: string; kind: string }> = [];
+      for (const k of everywhere) {
         const r = await getTool("list_records")!.execute(wsApi, { kind: k.id, limit: 500 });
         if (!r.ok) continue;
         for (const rec of ((r.data as { items?: unknown[] })?.items ?? [])) {
@@ -308,9 +417,27 @@ export const COMPUTED_COMMANDS: ComputedCommand[] = [
           if (!id) continue;
           if (selectionIds?.length && !selectionIds.includes(id)) continue;
           if (!saidOf(rec).some((v) => mentionsWord(v, said.term))) continue;
-          moving.push({ id, title: typeof row.title === "string" ? row.title : id, module: k.module_name ?? "" });
+          found.push({
+            id,
+            title: typeof row.title === "string" ? row.title : id,
+            module: k.module_name ?? "",
+            from: listNameOf(k, listNames),
+            kind: k.id,
+          });
         }
       }
+      if (!found.length) return null;
+      // What is on the page, and what is not. With no page scope stated (or a
+      // page that is not a list at all) everything found is in scope, and the
+      // headline says where it looked.
+      const here = pageIsAList ? found.filter((x) => x.kind === pageKind) : found;
+      const elsewhere = pageIsAList ? found.filter((x) => x.kind !== pageKind) : [];
+      // Some here: move exactly those, and say what was left where it is.
+      // None here: say so first, then offer the ones that do exist, named -
+      // a dead end that knows the answer is worse than no dead end.
+      const emptyPage = pageIsAList && here.length === 0;
+      const moving = emptyPage ? elsewhere : here;
+      const scoped = pageIsAList && !emptyPage;
       if (!moving.length) return null;
       const modules = [...new Set(moving.map((x) => x.module))];
       // Things from two modules cannot share one new list; say nothing rather
@@ -325,10 +452,19 @@ export const COMPUTED_COMMANDS: ComputedCommand[] = [
         payload: { ids: moving.map((x) => x.id), to: toName },
       };
       const titles = moving.map((x) => x.title);
+      const sources = [...new Set(moving.map((x) => x.from))];
+      // Where they came from, on every line, when they did not all come from
+      // one place. A person who said "from this page" and got things from
+      // three lists can see that at a glance instead of finding out after.
+      // Where each one is, whenever that is not already obvious: several
+      // lists, or a plan the person did not think they were asking for.
+      const named = sources.length > 1 || emptyPage ? moving.map((x) => `${x.title} (in ${x.from})`) : titles;
+      const note = moveNote({ term: said.term, here: here.length, elsewhere: elsewhere.length, emptyPage, sources });
       if (creating) {
         return {
-          summary: moveHeadline({ titles, label, creating: true }),
-          lines: [`New section: ${label}`, ...titles],
+          summary: moveHeadline({ titles, label, creating: true, sources, scoped, emptyPage }),
+          ...(note ? { note } : {}),
+          lines: [`New section: ${label}`, ...named],
           operations: [
             {
               tool: "action",
@@ -341,10 +477,12 @@ export const COMPUTED_COMMANDS: ComputedCommand[] = [
         };
       }
       return {
-        summary: moveHeadline({ titles, label, creating: false }),
+        summary: moveHeadline({ titles, label, creating: false, sources, scoped, emptyPage }),
+        ...(note ? { note } : {}),
         // One thing is named in the headline; a list of several is named
-        // once, in the lines, not twice.
-        ...(titles.length > 1 ? { lines: titles } : {}),
+        // once, in the lines, not twice. When none were on the page, the list
+        // is the answer to "do you mean these?" and is always worth showing.
+        ...(titles.length > 1 || emptyPage ? { lines: named } : {}),
         operations: [move],
       };
     },
