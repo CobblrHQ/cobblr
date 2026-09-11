@@ -24,7 +24,7 @@ export function registerInventoryResolvers(): void {
         .where("id", "=", id)
         .executeTakeFirst();
       if (!row) return null;
-      return toResolvedPart(row);
+      return toResolvedPart(row, (await categoryNames(db, [row])).get(row.category_id ?? "") ?? null);
     },
   );
 
@@ -152,8 +152,9 @@ export function registerInventoryResolvers(): void {
       sortedQ = sortedQ.orderBy(col as never, desc ? "desc" : "asc");
     }
     const rows = await sortedQ.limit(limit).offset(offset).execute();
+    const names = await categoryNames(db, rows);
     return {
-      items: rows.map((r) => toResolvedPart(r)),
+      items: rows.map((r) => toResolvedPart(r, names.get(r.category_id ?? "") ?? null)),
     };
   };
   // SCOPED TO THE DEFAULT INSTANCE, deliberately. This used to pass no
@@ -184,11 +185,25 @@ export function registerInventoryResolvers(): void {
       .where("instance", "=", instance as never)
       .executeTakeFirst();
     if (!row) return null;
-    return toResolvedPart(row);
+    return toResolvedPart(row, (await categoryNames(db, [row])).get(row.category_id ?? "") ?? null);
   });
 }
 
-function toResolvedPart(row: {
+/** The names of the categories these rows are filed under, one query. Kept
+ *  out of the part queries themselves: a join there would make every
+ *  unqualified column in the filter dialects ambiguous (both tables have a
+ *  name), and a category is a lookup, not a filter. */
+async function categoryNames(
+  db: Kysely<InventoryDB>,
+  rows: ReadonlyArray<{ category_id?: string | null }>,
+): Promise<Map<string, string>> {
+  const ids = [...new Set(rows.map((r) => r.category_id).filter((id): id is string => !!id))];
+  if (!ids.length) return new Map();
+  const cats = await db.selectFrom("inventory_categories").select(["id", "name"]).where("id", "in", ids).execute();
+  return new Map(cats.map((c) => [c.id, c.name]));
+}
+
+export function toResolvedPart(row: {
   id: string;
   name: string;
   description: string | null;
@@ -206,7 +221,8 @@ function toResolvedPart(row: {
   estimated_at?: Date | null;
   metadata: unknown;
   archived?: boolean;
-}): ResolvedEntity {
+  category_id?: string | null;
+}, categoryName: string | null = null): ResolvedEntity {
   const qty = Number(row.qty);
   // A skinned instance's items live at /instances/<name>/items/:id; the default
   // ("inventory") instance lives at the base /inventory/parts/:id. Without this,
@@ -239,6 +255,11 @@ function toResolvedPart(row: {
       supplier_url: row.supplier_url,
       image_path: row.image_path,
       notes: row.notes,
+      // What it is filed under, by name. Rice under Grocery IS grocery: a
+      // view, a search, the assistant and the no-AI move planner all read a
+      // record through here, and none of them could tell until this was said.
+      // Named as the parts list route names it, so the two shapes stay one.
+      category_name: categoryName,
       // Where it lives — the scan "already tracked" banner shows it, and
       // move-mode uses it to skip entities already in the active bin.
       location_id: row.location_id ?? null,

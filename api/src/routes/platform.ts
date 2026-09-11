@@ -19,7 +19,7 @@ import { checkAvailability as checkAiAvailability } from "../platform/ai.js";
 import { hostedIdentifyEnabled } from "@cobblr/platform-contract/hosted-identify";
 import { AiCapabilities, type AiCapability } from "@cobblr/platform-contract";
 import { clearComputedDefsCache } from "../platform/computed-fields.js";
-import { effectiveAppliesTo, matchAction, getActionScope, planFor } from "../platform/actions.js";
+import { effectiveAppliesTo, matchAction, getActionScope, planFor, undoFor } from "../platform/actions.js";
 import { facesForKind } from "../platform/faces.js";
 import { platformActionMinRole } from "../platform/platform-actions.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
@@ -362,7 +362,10 @@ platformOrgRouter.get(
 );
 
 const InvokeBody = z.object({
-  actionId: z.string(),
+  // Not merely a string: "" matched no action, read as record-scoped, and was
+  // refused with "entityKind and entityId are required" - a message about the
+  // wrong thing, which is how a missing action id hid for a day (2026-09-11).
+  actionId: z.string().min(1, "actionId is required"),
   // Optional: a workspace-scoped action has no record. For an entity-scoped
   // action they're required — enforced after we read the action's scope.
   entityKind: z.string().optional(),
@@ -413,6 +416,12 @@ platformOrgRouter.post(
         },
         args: parsed.data.args ?? {},
       });
+      // { plan } or { plan: null, error }: the reason travels, so the caller
+      // can hand it to the model instead of falling back to a bare label.
+      if (plan && "error" in plan) {
+        res.json({ plan: null, error: plan.error });
+        return;
+      }
       res.json({ plan });
     } catch (e) {
       next(e);
@@ -590,7 +599,10 @@ platformOrgRouter.post(
         entityKind: isWorkspaceAction ? undefined : parsed.data.entityKind,
         entityId: isWorkspaceAction ? undefined : parsed.data.entityId,
       });
-      res.json({ ok: true, result });
+      // The way back, when the action knows one: stored by the caller's
+      // ledger beside the write, so Undo on the card runs it.
+      const undo = await undoFor(parsed.data.actionId, result, { orgId: req.tenant!.org.id }).catch(() => null);
+      res.json({ ok: true, result, ...(undo ? { undo } : {}) });
     } catch (err) {
       next(err);
     }

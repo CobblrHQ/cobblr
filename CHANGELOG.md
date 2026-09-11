@@ -2,6 +2,23 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-09-11
+
+### Features
+- Moving records into another list can now be undone from the chat, and the card after a move offers to open the list they went to. Under the hood an action can declare its own undo, and the card offers Undo exactly when one exists; whether an action needs confirming first is unchanged.
+
+### Fixes
+- A failing assistant benchmark no longer holds back the nightly release. It used to fall back to the newest commit the benchmark had passed on, which left the nightly days behind while unrelated fixes waited on one regression. The benchmark still runs before the cut and its verdict is reported in the morning summary, so a regression can be fixed before it ships; continuous integration still has to be green.
+- Three benchmark cases about moving records between lists had failed every night since they were written, because the workspace they are measured against contained neither the records nor the list they name. The benchmark now creates both, and refuses to run at all if that workspace has grown a list nobody expected, which is what quietly turned a leftover test list into what looked like a regression.
+- Cobb no longer answers with an empty bubble. A turn that ended with nothing to show (a reply that was only a stage direction, or the step limit landing on a model with no answer) now says what happened. And "get all the other grocery out of inventory and into the dedicated section" is understood without AI: "the dedicated section" is the groceries' own list, and "the other" means the rest of them.
+- Pressing "Do it" on a move the workspace planned itself (moving the tea into the Tea list, say) now performs the move. It failed with a message about a missing record, because the action's name was lost between the plan and the write; a plan that runs an action and one that edits records now travel the same road.
+- "Get the tea out of inventory into the Tea section" now looks in Inventory, the list the sentence named, the way "from this page" already held to the page; it used to search every list. The offer says where it looked ("from Inventory") and names what it left there that said nothing about the word.
+- A confirm card can no longer say only the name of an action. When the assistant gets the details of a move wrong (a list that does not exist, names where record ids were needed), the reason now goes back to the assistant to correct before anything is shown, and if it still cannot be worked out you read the reason instead of a card. "Get all the tea out of inventory and into the dedicated tea section" is also understood without any AI now.
+- The no-AI move offer says what it is leaving on the page. "Get all the other grocery into the dedicated section" on a kitchen page moved the one record filed under Groceries and looked like the whole answer; now it names the ones it had no word for and says to send the message so Cobb can look through them, and Cobb is told to propose the fuller move in one card.
+- When the workspace answers what you are typing on its own (the green "no AI used" bubble), the chat now scrolls so the answer is actually on screen instead of arriving below the visible area.
+- A part's category is now part of what the record says. Rice filed under Grocery reads as grocery to views, search, the assistant, and the no-AI move: "get all the other grocery out of inventory and into the dedicated section" finds the groceries on the page by their category, not only by their names.
+- After "Do it" on a plan the workspace made itself, the card now says what actually happened ("Moved 3 records into Tea.") instead of a count with the wrong verb, and offers Undo only when the change can in fact be undone.
+
 ## 2026-09-10
 
 ### Improvements

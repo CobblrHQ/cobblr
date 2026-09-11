@@ -14,8 +14,15 @@ import { meta } from "../db/meta.js";
 import { clearComputedDefsCache } from "./computed-fields.js";
 import { resolveFieldDefsForKind } from "./field-defs.js";
 
+/** Where each field sat before, by storage name: the heading it was under,
+ *  or null for the ungrouped list. This is what an undo is built from. */
+export interface FieldPlace {
+  field: string;
+  section: string | null;
+}
+
 export type GroupFieldsResult =
-  | { ok: true; section: string; moved: string[] }
+  | { ok: true; section: string; moved: string[]; before: FieldPlace[]; renamed_from?: string }
   | { ok: false; message: string };
 
 /** The defs a person can name on this kind: its own, never a trait-scoped one.
@@ -91,7 +98,7 @@ export async function groupFields(
       .where("org_id", "=", orgId)
       .execute();
     clearComputedDefsCache();
-    return { ok: true, section: renameTo, moved: [] };
+    return { ok: true, section: renameTo, moved: [], before: [], renamed_from: hit.label };
   }
   const defs = await ownDefs(orgId, entityKind);
   if (defs.length === 0) return { ok: false, message: `"${entityKind}" has no custom fields to group` };
@@ -108,6 +115,10 @@ export async function groupFields(
     sectionName,
     existing.map((s) => ({ label: s.name, id: s.id })),
   );
+  const before: FieldPlace[] = resolved.ids.map((f) => ({
+    field: f.name,
+    section: existing.find((s) => s.id === defs.find((d) => d.id === f.id)?.section_id)?.name ?? null,
+  }));
   let sectionId: string;
   let label = sectionName;
   if (match && !("ambiguous" in match)) {
@@ -135,7 +146,7 @@ export async function groupFields(
       .execute();
   }
   clearComputedDefsCache();
-  return { ok: true, section: label, moved: resolved.ids.map((f) => f.label) };
+  return { ok: true, section: label, moved: resolved.ids.map((f) => f.label), before };
 }
 
 /** Take the named fields out of whatever heading they are under. A heading left
@@ -151,6 +162,18 @@ export async function ungroupFields(
 
   const touched = defs.filter((d) => resolved.ids.some((f) => f.id === d.id));
   const sections = [...new Set(touched.map((d) => d.section_id).filter((s): s is string => !!s))];
+  const names = sections.length
+    ? await meta
+        .selectFrom("field_sections")
+        .select(["id", "name"])
+        .where("org_id", "=", orgId)
+        .where("id", "in", sections)
+        .execute()
+    : [];
+  const before: FieldPlace[] = resolved.ids.map((f) => ({
+    field: f.name,
+    section: names.find((n) => n.id === touched.find((d) => d.id === f.id)?.section_id)?.name ?? null,
+  }));
   await meta
     .updateTable("module_field_defs")
     .set({ section_id: null } as never)
@@ -175,5 +198,5 @@ export async function ungroupFields(
     }
   }
   clearComputedDefsCache();
-  return { ok: true, section: "", moved: resolved.ids.map((f) => f.label) };
+  return { ok: true, section: "", moved: resolved.ids.map((f) => f.label), before };
 }

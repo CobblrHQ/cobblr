@@ -199,7 +199,11 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
     const calls = r.tool_calls ?? [];
 
     if (calls.length === 0) {
-      if (r.content.trim()) {
+      // What the person would actually see. A reply that is nothing but a
+      // stage direction is empty once the direction is stripped, and an empty
+      // reply is handled below, not passed through as a blank bubble.
+      const spoken = stripStageDirections(scrubIds(r.content, seenNames));
+      if (spoken.trim()) {
         if (!nudgedForReport && applied.length > 0 && deps.reportCheck) {
           const wrong = deps.reportCheck(lastUserSaid, r.content, applied.map((a) => a.call.name));
           if (wrong) {
@@ -221,7 +225,7 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
             continue;
           }
         }
-        return { kind: "reply", text: stripStageDirections(scrubIds(r.content, seenNames)), applied };
+        return { kind: "reply", text: spoken, applied };
       }
       // No tool calls AND no words. Two different models arrive here for two
       // opposite reasons, and the nudge has to serve both:
@@ -344,5 +348,13 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
       "(You've used the maximum number of tool rounds. Answer the user now with what you've learned: no more tool calls.)",
   });
   const last = await deps.callModel(transcript);
-  return { kind: "reply", text: last.content, applied };
+  const said = stripStageDirections(scrubIds(last.content ?? "", seenNames)).trim();
+  // The cap's final call can come back with no words at all (another tool
+  // call, or nothing): the person still gets a sentence that says what
+  // happened, never a blank bubble.
+  return {
+    kind: "reply",
+    text: said || "I couldn't finish that one: I ran out of steps before reaching an answer. Try asking again, or in a different way.",
+    applied,
+  };
 }

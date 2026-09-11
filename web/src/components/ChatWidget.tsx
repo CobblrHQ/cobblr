@@ -34,7 +34,7 @@ import {
   stopBrowsing,
   type HistoryState,
 } from "../lib/input-history";
-import { useDetailRoute } from "../lib/useDetailRoute";
+import { useDetailRoute, useListRoute } from "../lib/useDetailRoute";
 import { useAiStatus, AiOffNotice } from "./AiStatusNotice";
 import { RailTabContent, openRail, useRailActiveTab, useRailTab } from "./SideRail";
 
@@ -98,6 +98,8 @@ interface Msg {
   /** The records this message names. Each name renders as a chip that opens
    *  the record (web/src/lib/entity-chips.ts). */
   refs?: ChatEntityRef[];
+  /** Where the change put things: the card offers to go there. */
+  destination?: { kind: string; label: string };
 }
 
 const kindLabel = (id: string) => id.split(":")[1] ?? id;
@@ -463,6 +465,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
   const { activeSlug } = useActiveOrg();
   const navigate = useNavigate();
   const detailRoute = useDetailRoute(activeSlug ?? "");
+  const listRoute = useListRoute(activeSlug ?? "");
   // The chip a named record renders as. Built once per workspace: a new
   // components object per render would remount every chip on every keystroke.
   const mdComponents = useMemo(
@@ -580,10 +583,6 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
   // A LAYOUT effect, so a restored conversation is at the bottom before the
   // browser paints rather than jumping there afterwards. (A frame callback
   // would do neither: this file learned that with the caret, and forbids one.)
-  useLayoutEffect(() => {
-    if (!scrollEl) return;
-    scrollEl.scrollTop = scrollEl.scrollHeight;
-  }, [messages, busy, scrollEl]);
 
   // Auto-grow the input with its content (up to a cap), then shrink back — and
   // place the caret at the end of a message just recalled from history.
@@ -750,7 +749,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
           ),
         ]);
       } else {
-        setMessages([...next, ...doneCards.map(named), named({ role: "assistant", content: r.text ?? "(no response)" })]);
+        setMessages([...next, ...doneCards.map(named), named({ role: "assistant", content: r.text?.trim() || "I didn't manage an answer for that. Try asking again, or in a different way." })]);
       }
     }
   }
@@ -774,7 +773,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
           content: (out.ok ? "✓ " : "✗ ") + out.message,
           // Kept so "do that again" and "undo" can point here later.
           ...(out.ok ? { ranCommand: { id: m.command!.id, message: m.command!.message } } : {}),
-          ...(out.ledger_ids?.length ? { resolved: true, ledgerIds: out.ledger_ids, undoable: true } : {}),
+          ...(out.ledger_ids?.length ? { resolved: true, ledgerIds: out.ledger_ids, undoable: out.undoable !== false, ...(out.destination ? { destination: out.destination } : {}) } : {}),
         }];
       });
     } catch (e) {
@@ -802,6 +801,16 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
    *  itself. A read is safe to just do, so this is the answer rather than an
    *  offer to go and get it. */
   const [peek, setPeek] = useState<{ answer: string; detail?: string; from: "page" | "workspace" | "guide" } | null>(null);
+
+  // EVERYTHING that renders in the list is a reason to be at the bottom, not
+  // only a message. The offer bubble and the peek bubble render after the
+  // messages while a person is still typing, and with only messages watched
+  // here they arrived below the fold: the workspace had the answer and the
+  // panel did not show it (2026-09-11).
+  useLayoutEffect(() => {
+    if (!scrollEl) return;
+    scrollEl.scrollTop = scrollEl.scrollHeight;
+  }, [messages, busy, suggestion, peek, scrollEl]);
   // Whether this workspace has taught itself ANYTHING. Checked once, because a
   // workspace with no commands must not send a request per keystroke forever.
   const knowsCommands = useQuery({
@@ -918,7 +927,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
           // that never involves a model was also the only one you could not
           // take back.
           ...(out.ledger_ids?.length
-            ? { resolved: true, ledgerIds: out.ledger_ids, undoable: true }
+            ? { resolved: true, ledgerIds: out.ledger_ids, undoable: out.undoable !== false, ...(out.destination ? { destination: out.destination } : {}) }
             : {}),
         },
       ]);
@@ -983,7 +992,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
           setMessages([...next, { role: "assistant", content: r.reply }]);
           if (act.kind === "run-command") {
             const out = await api.runCommand(activeSlug, act.id, act.message, getChatSelection()?.ids).catch(
-              (e: unknown) => ({ ok: false, message: e instanceof ApiError ? e.message : "That didn't work.", ledger_ids: [] as string[] }),
+              (e: unknown) => ({ ok: false, message: e instanceof ApiError ? e.message : "That didn't work.", ledger_ids: [] as string[], undoable: false, destination: undefined as { kind: string; label: string } | undefined }),
             );
             if (out.ok) workspaceChanged();
             consume((m) => !!m.command && !m.resolved, { resolved: true });
@@ -991,7 +1000,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
               role: "assistant",
               content: (out.ok ? "✓ " : "✗ ") + out.message,
               ...(out.ok ? { ranCommand: { id: act.id, message: act.message } } : {}),
-              ...(out.ledger_ids?.length ? { resolved: true, ledgerIds: out.ledger_ids, undoable: true } : {}),
+              ...(out.ledger_ids?.length ? { resolved: true, ledgerIds: out.ledger_ids, undoable: out.undoable !== false, ...(out.destination ? { destination: out.destination } : {}) } : {}),
             }]);
           } else if (act.kind === "undo") {
             let ok = 0;
@@ -1176,6 +1185,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                 content: String(data.summary ?? `Made ${bulkIds.length} changes.`),
                 resolved: true,
                 ...(relayRefs.length ? { refs: relayRefs } : {}),
+                ...(data.destination && typeof data.destination === "object" ? { destination: data.destination as { kind: string; label: string } } : {}),
                 ledgerIds: bulkIds,
                 ...(turnIdRef.current ? { undoTurnId: turnIdRef.current } : {}),
                 undoable: data.undoable === true,
@@ -1891,6 +1901,26 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                           className="rounded-md bg-cobble-600 hover:bg-cobble-500 text-white text-[11px] font-medium px-2.5 py-0.5 transition"
                         >
                           View it →
+                        </button>
+                      </div>
+                    ) : null;
+                  })()}
+                  {/* Take-me-there for a MOVE: the things are somewhere new now,
+                      and a card that says so without offering the way is half a
+                      change. Only when that list has a page. */}
+                  {(() => {
+                    const to = m.destination ? listRoute(m.destination.kind) : null;
+                    return to && m.destination ? (
+                      <div className="mt-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOpen(false);
+                            navigate(to);
+                          }}
+                          className="rounded-md bg-cobble-600 hover:bg-cobble-500 text-white text-[11px] font-medium px-2.5 py-0.5 transition"
+                        >
+                          Open {m.destination.label} →
                         </button>
                       </div>
                     ) : null;

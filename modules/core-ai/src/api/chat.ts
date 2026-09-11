@@ -114,6 +114,7 @@ function appliedSummaries(applied: AppliedWrite[]): Array<{
   undoable?: boolean;
   entity?: WriteOutcome["entity"];
   touched?: WriteOutcome["touched"];
+  destination?: WriteOutcome["destination"];
 }> {
   return applied.map((a) => {
     const r = a.result as WriteOutcome;
@@ -125,6 +126,7 @@ function appliedSummaries(applied: AppliedWrite[]): Array<{
       // chip that opens it (web/src/lib/entity-chips.ts).
       ...(r?.entity?.id && r.entity.label ? { entity: r.entity } : {}),
       ...(r?.touched?.length ? { touched: r.touched } : {}),
+      ...(r?.destination ? { destination: r.destination } : {}),
     };
   });
 }
@@ -352,16 +354,20 @@ async function actionPlan(
   actionId: string,
   args: Record<string, unknown>,
   on: { kind: string; id: string } | null,
-): Promise<{ title: string; lines: string[] } | null> {
+): Promise<{ plan: { title: string; lines: string[] } } | { error: string } | null> {
   try {
     const r = await callApi(c, "POST", "/actions/plan", {
       actionId,
       args,
       ...(on ? { entityKind: on.kind, entityId: on.id } : {}),
     });
+    // The planner's reason is the model's correction. It reaches the model
+    // through validateWrite, and if the model still cannot plan it, the person
+    // reads the reason instead of a card that names only the action.
+    if (typeof r.body.error === "string" && r.body.error) return { error: r.body.error };
     const plan = r.body.plan as { title?: unknown; lines?: unknown } | null | undefined;
     if (!plan || typeof plan.title !== "string" || !Array.isArray(plan.lines)) return null;
-    return { title: plan.title, lines: plan.lines.filter((l): l is string => typeof l === "string") };
+    return { plan: { title: plan.title, lines: plan.lines.filter((l): l is string => typeof l === "string") } };
   } catch {
     return null;
   }
@@ -448,7 +454,12 @@ async function proposalOf(
       // change ("Move 5 records from Pantry into Tea") and lists every record,
       // never only the action's name. An action with no planner keeps the
       // sentence summariseAction makes from its label and arguments.
-      const plan = await actionPlan(c, actionId, argValues, kind && id ? { kind, id } : null);
+      const planned = await actionPlan(c, actionId, argValues, kind && id ? { kind, id } : null);
+      // The planner could not: say why, and show no card. This is the last
+      // door, after validateWrite has already handed the model the same
+      // reason; a card here would be the bare label the rule forbids.
+      if (planned && "error" in planned) return { error: planned.error };
+      const plan = planned?.plan ?? null;
       if (!kind || !id) {
         if (!(await isWorkspaceAction(c, actionId))) {
           return { error: "I need the action and the exact record to run it on." };
@@ -632,7 +643,18 @@ async function runTurn(
         // above - the user still confirms the proposal either way.
         const fixed = reconcileActionArgs(schema, a.args);
         if (fixed) a.args = fixed.args;
-        return missingActionArgs(real ?? typed, schema, a.args);
+        const missing = missingActionArgs(real ?? typed, schema, a.args);
+        if (missing) return missing;
+        // The arguments are all there; can a plan be made from them? An action
+        // that knows how to say what it will touch is asked now, before a
+        // card exists, and its reason ("no list called tea", "pass ids not
+        // names") goes back as the tool result so the model corrects itself.
+        // The card that used to appear here said only "Move records into
+        // another list" (2026-09-11), which is a card nobody can check.
+        const argValues = (a.args && typeof a.args === "object" ? a.args : {}) as Record<string, unknown>;
+        const on = a.entity_kind && a.entity_id ? { kind: String(a.entity_kind), id: String(a.entity_id) } : null;
+        const planned = await actionPlan(c, real ?? typed, argValues, on);
+        return planned && "error" in planned ? planned.error : null;
       },
       // Only where there is something to look WITH. A chat whose owner turned
       // workspace reading off has no read tools, and telling that model to
@@ -899,6 +921,7 @@ chatRouter.post(
               template: hit.template,
               summary: hit.summary ?? `${hit.operations.length} changes`,
               operations: hit.operations.length,
+              ...(hit.note ? { note: hit.note } : {}),
             }
           : undefined,
       )
@@ -1148,6 +1171,7 @@ chatRouter.post(
         undoable: out.undoable === true,
         ...("entity" in out && out.entity?.id && out.entity.label ? { entity: out.entity } : {}),
         ...("touched" in out && out.touched?.length ? { touched: out.touched } : {}),
+        ...(out.destination ? { destination: out.destination } : {}),
       }).catch(() => {});
     }
     sendOutcome(res, out);

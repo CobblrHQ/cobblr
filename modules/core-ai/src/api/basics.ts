@@ -18,10 +18,10 @@ import { matchBasics, normalize } from "../basics-match.js";
 import { CONTROL_KEYS, actReply, resolveControlAct } from "../control-context.js";
 import { COMPUTED_COMMANDS, computedCommandFor } from "../computed-commands.js";
 import { getTool, type WorkspaceApi } from "@cobblr/workspace-tools";
-import { bindCommand, deriveCommand, type LearnedCommand, type Operation } from "../learned-commands.js";
+import { bindCommand, deriveCommand, type LearnedCommand, type Operation, writeOf } from "../learned-commands.js";
 import { readQuestionOf, MIN_PEEK_LENGTH, type KindWords } from "../live-answers.js";
 import { countQuestionOf, phraseCountText, phraseMostOf, type KindFields, type CountResult } from "../count-answers.js";
-import { performWrite, performWrites } from "./chat-ledger.js";
+import { performWrite, performWrites, bulkMessage, type WriteOutcome } from "./chat-ledger.js";
 import { chatWorkspaceApi, ctxOf } from "./chat.js";
 import {
   loadEffectiveRules,
@@ -875,18 +875,22 @@ basicsRouter.post(
         return;
       }
       const uid = sessionUserId(req) ?? "";
-      const outs = await performWrites(wsApiC, db, uid, plan.operations.map((op) => ({
-        tool: op.tool,
-        entity_kind: op.entity_kind,
-        ...(op.entity_id ? { entity_id: op.entity_id } : {}),
-        ...(op.tool === "action" ? { args: op.payload } : { fields: op.payload }),
-      })), { auto: false, orgId: tenantContext(req).org.id, prompt: body.data.message });
+      const outs = await performWrites(wsApiC, db, uid, plan.operations.map(writeOf), {
+        auto: false,
+        orgId: tenantContext(req).org.id,
+        prompt: body.data.message,
+      });
       res.json({
         ok: outs.ok,
         done: outs.count,
         failed: outs.failed.length,
         message: outs.message,
         ledger_ids: outs.ledger_ids,
+        // Whether the ledger can put this back. The panel offered Undo on
+        // every run that left ledger rows, and pressing it on a move (which
+        // the ledger records but cannot reverse) went nowhere (2026-09-11).
+        undoable: outs.undoable,
+        ...(outs.destination ? { destination: outs.destination } : {}),
       });
       return;
     }
@@ -914,32 +918,23 @@ basicsRouter.post(
     }
     const wsApi = chatWorkspaceApi(ctxOf(req));
     const userId = sessionUserId(req) ?? "";
-    const done: string[] = [];
-    const failed: string[] = [];
-    for (const op of ops) {
-      const out = await performWrite(
-        wsApi,
-        db,
-        userId,
-        {
-          tool: op.tool,
-          entity_kind: op.entity_kind,
-          ...(op.entity_id ? { entity_id: op.entity_id } : {}),
-          ...(op.action_id ? { action_id: op.action_id } : {}),
-          ...(op.tool === "action" ? { args: op.payload } : { fields: op.payload }),
-        },
-        { auto: false, prompt: body.data.message, orgId: tenantContext(req).org.id },
-      );
-      (out.ok ? done : failed).push(out.message);
+    // The same sentence the computed path gives, from the same function, so
+    // a taught command that runs an action also says what the action said.
+    const reqs = ops.map(writeOf);
+    const outcomes: WriteOutcome[] = [];
+    for (const r of reqs) {
+      outcomes.push(await performWrite(wsApi, db, userId, r, { auto: false, prompt: body.data.message, orgId: tenantContext(req).org.id }));
     }
+    const done = outcomes.filter((o) => o.ok);
+    const failed = outcomes.filter((o) => !o.ok);
     res.json({
       ok: failed.length === 0,
       done: done.length,
       failed: failed.length,
-      message:
-        failed.length === 0
-          ? `Done: ${done.length} change${done.length === 1 ? "" : "s"}.`
-          : `${done.length} done, ${failed.length} could not be applied: ${failed[0]}`,
+      message: bulkMessage(reqs, outcomes),
+      ledger_ids: done.map((d) => d.ledger_id).filter((id): id is string => !!id),
+      undoable: done.every((d) => d.undoable !== false),
+      ...(done.find((d) => d.destination)?.destination ? { destination: done.find((d) => d.destination)!.destination } : {}),
     });
     if (done.length && !wanted.startsWith("shipped:")) {
       await db

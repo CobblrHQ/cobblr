@@ -15,15 +15,26 @@
 // from scratch and arriving somewhere worse. The escape stays: if the person
 // clearly meant something the plan does not cover, the model says so.
 
-export function suggestionLine(sug?: { template: string; summary: string; operations: number }): string {
+export function suggestionLine(sug?: { template: string; summary: string; operations: number; note?: string }): string {
   if (!sug?.template) return "";
   const n = sug.operations;
+  // The plan's own limit, when it has one: what it found and is NOT touching.
+  // Those records are exactly the ones the person may still mean ("all the
+  // other grocery" on a page where one record is filed under Groceries and
+  // eight are groceries by judgement), and judgement is the model's part.
+  const limit = sug.note
+    ? ` The plan adds: "${sug.note}" Where it says records say nothing about the word, they may still be what the person ` +
+      `means: read those records, and if the sentence plainly covers some of them, propose ONE fuller move ` +
+      `(platform:move-records, every id, the same destination) as ONE confirm card, and say which you added and why. ` +
+      `Leave out what plainly is not meant.`
+    : "";
   return (
     `\n\nWORKED OUT ALREADY, IN CODE: this workspace read that request as "${sug.template}" and planned it exactly - ` +
     `${sug.summary} (${n} change${n === 1 ? "" : "s"}). This plan came from looking at the records, not from guessing, ` +
     `and it is the answer to that part of the message: run THIS plan (the same records, the same action), do not ` +
     `reinvent it, and do not create, delete or rename anything it did not. Say what it does in plain words, and ` +
     `handle anything ELSE the person asked for in the same message. Only if they clearly meant something this plan ` +
-    `does not cover, say what the plan would have done and ask.`
+    `does not cover, say what the plan would have done and ask.` +
+    limit
   );
 }

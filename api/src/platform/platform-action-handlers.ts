@@ -14,7 +14,7 @@ import { matchByLabel, splitNames } from "@cobblr/platform-contract/said-names";
 import { disableModuleForOrg, enableModuleForOrg } from "../modules/enable.js";
 import { listEntries } from "../modules/registry.js";
 import { meta } from "../db/meta.js";
-import { registerHandler, registerPlanner } from "./actions.js";
+import { registerHandler, registerPlanner, registerUndo } from "./actions.js";
 import { getMover, instancesHolding, moveRecords } from "./move-records.js";
 import * as activity from "./activity.js";
 import { upsertNativeFieldOverride } from "./native-field-overrides.js";
@@ -80,6 +80,44 @@ const FIELD_TYPE_WORDS: Record<string, { type: string; impliesChoices?: boolean 
   member: { type: "member" },
   person: { type: "member" },
 };
+
+/** The workspace's override row for a field, as it stands: what an edit of
+ *  the label, hidden, or choices is undone back to. */
+async function readFieldOverride(
+  orgId: string,
+  entityKind: string,
+  name: string,
+): Promise<{ label: string | null; hidden: boolean; choices: string[] | null }> {
+  const row = await meta
+    .selectFrom("native_field_overrides")
+    .select(["display_label", "hidden", "overrides"])
+    .where("org_id", "=", orgId)
+    .where("entity_kind", "=", entityKind)
+    .where("name", "=", name)
+    .executeTakeFirst();
+  const choices = (row?.overrides as { choices?: unknown } | null)?.choices;
+  return {
+    label: row?.display_label ?? null,
+    hidden: row?.hidden ?? false,
+    choices: Array.isArray(choices) ? choices.filter((c): c is string => typeof c === "string") : null,
+  };
+}
+
+/** Grouping put back: every field to the heading it was under, the ones that
+ *  were under none to the ungrouped list. One step per heading, in order. */
+function fieldsBackWhereTheyWere(entityKind: string, before: Array<{ field: string; section: string | null }>): Array<{ action_id: string; args: Record<string, unknown> }> {
+  const bySection = new Map<string | null, string[]>();
+  for (const b of before) bySection.set(b.section, [...(bySection.get(b.section) ?? []), b.field]);
+  const steps: Array<{ action_id: string; args: Record<string, unknown> }> = [];
+  for (const [section, fields] of bySection) {
+    steps.push(
+      section === null
+        ? { action_id: "platform:ungroup-fields", args: { entity_kind: entityKind, fields: fields.join(", ") } }
+        : { action_id: "platform:group-fields", args: { entity_kind: entityKind, section, fields: fields.join(", ") } },
+    );
+  }
+  return steps;
+}
 
 function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
@@ -255,36 +293,60 @@ export function registerPlatformActionHandlers(): void {
       // this, "hide the manufacturer field" was answered with a list of custom fields.
       const native = await findNativeField(ctx.orgId, entityKind, said);
       if (!native) return { ok: false, error: found.error };
-      const label = str(args.display_label);
-      const choices = str(args.choices)
-        ? str(args.choices)
-            .split(",")
-            .map((c) => c.trim())
-            .filter(Boolean)
-        : undefined;
-      if (!label && hidden === undefined && !choices) {
+      // null puts a label or a choice list BACK to the field's own: that is
+      // how an edit is undone, and the way to say "clear it" without a
+      // second action.
+      const label = args.display_label === null ? null : str(args.display_label) || undefined;
+      const choices =
+        args.choices === null
+          ? null
+          : str(args.choices)
+            ? str(args.choices)
+                .split(",")
+                .map((c) => c.trim())
+                .filter(Boolean)
+            : undefined;
+      if (label === undefined && hidden === undefined && choices === undefined) {
         return { ok: false, error: `"${native.label}" is built in. You can rename it, hide it, or set its choices` };
       }
+      const before = await readFieldOverride(ctx.orgId, entityKind, native.name);
       await upsertNativeFieldOverride(ctx.orgId, entityKind, native.name, {
-        displayLabel: label || undefined,
+        displayLabel: label,
         hidden,
         choices,
       });
       const said2 = [
-        label ? `now called "${label}"` : "",
+        label ? `now called "${label}"` : label === null ? "back to its own name" : "",
         hidden === true ? "hidden" : hidden === false ? "showing again" : "",
-        choices ? "choices set" : "",
+        choices ? "choices set" : choices === null ? "choices cleared" : "",
       ]
         .filter(Boolean)
         .join(", ");
       return {
         ok: true,
         summary: `"${native.label}" on ${entityKind}: ${said2}`,
-        data: { name: native.name, built_in: true },
+        data: {
+          name: native.name,
+          built_in: true,
+          entity_kind: entityKind,
+          before,
+          changed: { label: label !== undefined, hidden: hidden !== undefined, choices: choices !== undefined },
+        },
       };
     }
     const wide = scopeRefusal(found, entityKind, "change");
     if (wide) return wide;
+
+    // What the def and its override say now, kept with the result so the
+    // change can be put back exactly.
+    const defBefore = (await resolveFieldDefsForKind(ctx.orgId, entityKind)).find((d) => d.id === found.id);
+    const before = {
+      display_label: defBefore?.display_label ?? found.label,
+      required: defBefore?.required ?? false,
+      unit: defBefore?.unit ?? null,
+      choices: defBefore?.choices ?? null,
+      hidden: (await readFieldOverride(ctx.orgId, entityKind, found.name)).hidden,
+    };
 
     // Hiding is the override layer even for a workspace's own field: the def
     // stays, its row on the form goes.
@@ -292,11 +354,14 @@ export function registerPlatformActionHandlers(): void {
       await upsertNativeFieldOverride(ctx.orgId, entityKind, found.name, { hidden });
     }
 
+    // null clears unit or choices: the way an edit that set them is undone.
     const patch: Record<string, unknown> = {};
     if (str(args.display_label)) patch.display_label = str(args.display_label);
     if (typeof args.required === "boolean") patch.required = args.required;
-    if (str(args.unit)) patch.unit = str(args.unit);
-    if (str(args.choices)) {
+    if (args.unit === null) patch.unit = null;
+    else if (str(args.unit)) patch.unit = str(args.unit);
+    if (args.choices === null) patch.choices = null;
+    else if (str(args.choices)) {
       patch.choices = str(args.choices)
         .split(",")
         .map((c) => c.trim())
@@ -307,7 +372,7 @@ export function registerPlatformActionHandlers(): void {
         return {
           ok: true,
           summary: `"${found.label}" on ${entityKind} is ${hidden ? "hidden" : "showing again"}`,
-          data: { name: found.name },
+          data: { name: found.name, entity_kind: entityKind, before, changed: { hidden: true } },
         };
       }
       return {
@@ -323,8 +388,45 @@ export function registerPlatformActionHandlers(): void {
     return {
       ok: true,
       summary: `"${found.label}" on ${entityKind}: ${changed}`,
-      data: { id: result.def.id, name: result.def.name, display_label: result.def.display_label },
+      data: {
+        id: result.def.id,
+        name: result.def.name,
+        display_label: result.def.display_label,
+        entity_kind: entityKind,
+        before,
+        changed: {
+          hidden: hidden !== undefined,
+          display_label: "display_label" in patch,
+          required: "required" in patch,
+          unit: "unit" in patch,
+          choices: "choices" in patch,
+        },
+      },
     };
+  });
+
+  // An edit is undone by the same action, given what each changed part said
+  // before. Only the parts that changed go back; the rest is not touched.
+  registerUndo("platform.edit-field", (result) => {
+    const d = (result as { data?: Record<string, unknown> } | null)?.data;
+    const before = d?.before as Record<string, unknown> | undefined;
+    const changed = d?.changed as Record<string, boolean> | undefined;
+    const name = typeof d?.name === "string" ? d.name : "";
+    const kind = typeof d?.entity_kind === "string" ? d.entity_kind : "";
+    if (!before || !changed || !name || !kind) return null;
+    const args: Record<string, unknown> = { entity_kind: kind, field: name };
+    const list = (v: unknown): string | null => (Array.isArray(v) && v.length ? v.join(", ") : null);
+    if (d?.built_in) {
+      if (changed.label) args.display_label = before.label ?? null;
+      if (changed.choices) args.choices = list(before.choices);
+    } else {
+      if (changed.display_label) args.display_label = before.display_label;
+      if (changed.required) args.required = before.required;
+      if (changed.unit) args.unit = before.unit ?? null;
+      if (changed.choices) args.choices = list(before.choices);
+    }
+    if (changed.hidden) args.hidden = before.hidden;
+    return Object.keys(args).length > 2 ? { action_id: "platform:edit-field", args } : null;
   });
 
   registerHandler("platform.remove-field", async (ctx: ActionInvokeContext) => {
@@ -362,8 +464,27 @@ export function registerPlatformActionHandlers(): void {
       summary: renameTo
         ? `that heading is called "${result.section}" now`
         : `${result.moved.join(", ")} now under "${result.section}"`,
-      data: { section: result.section, fields: result.moved },
+      data: {
+        section: result.section,
+        fields: result.moved,
+        entity_kind: entityKind,
+        before: result.before,
+        ...(result.renamed_from ? { renamed_from: result.renamed_from } : {}),
+      },
     };
+  });
+
+  // A renamed heading gets its name back; grouped fields go back to wherever
+  // each one was, one step per heading.
+  registerUndo("platform.group-fields", (result) => {
+    const d = (result as { data?: Record<string, unknown> } | null)?.data;
+    const kind = typeof d?.entity_kind === "string" ? d.entity_kind : "";
+    if (!kind) return null;
+    if (typeof d?.renamed_from === "string" && typeof d.section === "string") {
+      return { action_id: "platform:group-fields", args: { entity_kind: kind, section: d.section, rename_to: d.renamed_from } };
+    }
+    const before = Array.isArray(d?.before) ? (d.before as Array<{ field: string; section: string | null }>) : [];
+    return fieldsBackWhereTheyWere(kind, before);
   });
 
   registerHandler("platform.ungroup-fields", async (ctx: ActionInvokeContext) => {
@@ -378,8 +499,18 @@ export function registerPlatformActionHandlers(): void {
     return {
       ok: true,
       summary: `${result.moved.join(", ")} no longer under a heading`,
-      data: { fields: result.moved },
+      data: { fields: result.moved, entity_kind: entityKind, before: result.before },
     };
+  });
+
+  // Back under the heading each one was under. A field that was under none
+  // has nothing to go back to, and a run that touched only those offers nothing.
+  registerUndo("platform.ungroup-fields", (result) => {
+    const d = (result as { data?: Record<string, unknown> } | null)?.data;
+    const kind = typeof d?.entity_kind === "string" ? d.entity_kind : "";
+    const before = Array.isArray(d?.before) ? (d.before as Array<{ field: string; section: string | null }>) : [];
+    if (!kind) return null;
+    return fieldsBackWhereTheyWere(kind, before.filter((b) => b.section !== null));
   });
 
   registerHandler("platform.create-instance", async (ctx: ActionInvokeContext) => {
@@ -453,6 +584,14 @@ export function registerPlatformActionHandlers(): void {
     };
   });
 
+  // Turning it off again. A feature that was already on was left as it was,
+  // so there is nothing to put back.
+  registerUndo("platform.enable-module", (result) => {
+    const d = (result as { data?: { module?: unknown; already_enabled?: unknown } } | null)?.data;
+    if (typeof d?.module !== "string" || d.already_enabled) return null;
+    return { action_id: "platform:disable-module", args: { module: d.module } };
+  });
+
   registerHandler("platform.disable-module", async (ctx: ActionInvokeContext) => {
     const said = str((ctx.args ?? {}).module);
     if (!said) return { ok: false, error: "module is required (the feature's name, e.g. Shipments)" };
@@ -477,7 +616,10 @@ export function registerPlatformActionHandlers(): void {
   const findThing = async (
     orgId: string,
     said: string,
-  ): Promise<{ targetKind: "entity_kind" | "instance"; targetId: string; label: string } | { error: string }> => {
+  ): Promise<
+    | { targetKind: "entity_kind" | "instance"; targetId: string; label: string; before: { name: string; plural: string } }
+    | { error: string }
+  > => {
     const [kinds, instances, overrides] = await Promise.all([
       listKindsForOrg(orgId),
       listInstances(orgId),
@@ -485,22 +627,35 @@ export function registerPlatformActionHandlers(): void {
     ]);
     const labelOf = (targetKind: string, targetId: string, fallback: string): string =>
       overrides.find((o) => o.target_kind === targetKind && o.target_id === targetId)?.display_label ?? fallback;
+    const pluralOf = (targetKind: string, targetId: string, fallback: string): string =>
+      overrides.find((o) => o.target_kind === targetKind && o.target_id === targetId)?.display_label_plural ?? fallback;
 
-    const candidates: Array<{ label: string; targetKind: "entity_kind" | "instance"; targetId: string }> = [];
+    // `before` is what it is called today, singular and plural: the rename's
+    // way back.
+    type Candidate = {
+      label: string;
+      targetKind: "entity_kind" | "instance";
+      targetId: string;
+      before: { name: string; plural: string };
+    };
+    const candidates: Candidate[] = [];
     for (const k of kinds) {
       const label = labelOf("entity_kind", k.id, k.display_name);
-      candidates.push({ label, targetKind: "entity_kind", targetId: k.id });
       // The plural is what people usually say ("call my parts spools"), so it is
       // matched as well as the singular rather than instead of it.
-      const plural = k.display_name_plural ?? pluralise(label);
-      if (plural !== label) candidates.push({ label: plural, targetKind: "entity_kind", targetId: k.id });
+      const plural = pluralOf("entity_kind", k.id, k.display_name_plural ?? pluralise(label));
+      const before = { name: label, plural };
+      candidates.push({ label, targetKind: "entity_kind", targetId: k.id, before });
+      if (plural !== label) candidates.push({ label: plural, targetKind: "entity_kind", targetId: k.id, before });
     }
     for (const i of instances) {
       if (i.is_default) continue;
+      const label = labelOf("instance", i.instance_name, i.display_name ?? i.instance_name);
       candidates.push({
-        label: labelOf("instance", i.instance_name, i.display_name ?? i.instance_name),
+        label,
         targetKind: "instance",
         targetId: i.instance_name,
+        before: { name: label, plural: pluralOf("instance", i.instance_name, pluralise(label)) },
       });
     }
     const hit = matchByLabel(said, candidates);
@@ -519,16 +674,16 @@ export function registerPlatformActionHandlers(): void {
         (a) => !(a.targetKind === "instance") && !(inst && a.targetId === `${inst.targetId}:item`),
       );
       if (inst && others.length === 0) {
-        return { targetKind: "instance", targetId: inst.targetId, label: inst.label };
+        return { targetKind: "instance", targetId: inst.targetId, label: inst.label, before: inst.before };
       }
       const distinct = [...new Set(hit.ambiguous.map((a) => `${a.targetKind}:${a.targetId}`))];
       if (distinct.length > 1) {
         return { error: `"${said}" could be ${hit.ambiguous.map((a) => `"${a.label}"`).join(" or ")} — which one?` };
       }
       const first = hit.ambiguous[0]!;
-      return { targetKind: first.targetKind, targetId: first.targetId, label: first.label };
+      return { targetKind: first.targetKind, targetId: first.targetId, label: first.label, before: first.before };
     }
-    return { targetKind: hit.targetKind, targetId: hit.targetId, label: hit.label };
+    return { targetKind: hit.targetKind, targetId: hit.targetId, label: hit.label, before: hit.before };
   };
 
   registerHandler("platform.rename-thing", async (ctx: ActionInvokeContext) => {
@@ -549,8 +704,16 @@ export function registerPlatformActionHandlers(): void {
     return {
       ok: true,
       summary: `"${found.label}" is now called ${plural}`,
-      data: { target: found.targetId, name, plural },
+      data: { target: found.targetId, name, plural, before: found.before },
     };
+  });
+
+  // Called what it was called. The thing is named by its NEW name, which is
+  // what the workspace calls it by the time the undo runs.
+  registerUndo("platform.rename-thing", (result) => {
+    const d = (result as { data?: { name?: unknown; before?: { name?: unknown; plural?: unknown } } } | null)?.data;
+    if (typeof d?.name !== "string" || typeof d.before?.name !== "string" || typeof d.before?.plural !== "string") return null;
+    return { action_id: "platform:rename-thing", args: { target: d.name, name: d.before.name, plural: d.before.plural } };
   });
 
   /** An instance by what it is called. Promote and fold-back both name lists,
@@ -598,11 +761,25 @@ export function registerPlatformActionHandlers(): void {
       return {
         ok: true,
         summary: `${displayName} is its own list now, with ${result.moved} moved out of ${parent.label}`,
-        data: { instance: result.instance.instance_name, moved: result.moved, kind: `${result.instance.instance_name}:item` },
+        data: {
+          instance: result.instance.instance_name,
+          moved: result.moved,
+          kind: `${result.instance.instance_name}:item`,
+          from: parent.name,
+          category,
+        },
       };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : "couldn't promote that category" };
     }
+  });
+
+  // Folded back into the list it came out of, stamped with the same category:
+  // the pair this action was designed with.
+  registerUndo("platform.promote-category", (result) => {
+    const d = (result as { data?: { instance?: unknown; from?: unknown; category?: unknown } } | null)?.data;
+    if (typeof d?.instance !== "string" || typeof d.from !== "string" || typeof d.category !== "string") return null;
+    return { action_id: "platform:demote-category", args: { list: d.instance, into: d.from, category: d.category } };
   });
 
   // Moving records between lists.
@@ -663,6 +840,10 @@ export function registerPlatformActionHandlers(): void {
           from: from.name,
           carried: result.fieldsCarried,
           touched: result.moved.map((id) => ({ kind: toKind, id })),
+          // Where they are now, so the card can offer to take the person
+          // there: a move that lands somewhere they have to go and find is
+          // half a change.
+          destination: { kind: toKind, label: to.label },
         },
       };
     } catch (err) {
@@ -678,34 +859,56 @@ export function registerPlatformActionHandlers(): void {
     const args = (ctx.args ?? {}) as Record<string, unknown>;
     const ids = readListArg(args, "ids");
     const toSaid = str(args.to);
-    if (!toSaid || ids.length === 0) return null;
+    // Every way this cannot be planned is said, in the words the handler
+    // would refuse with: the model reads them and fixes the call. Silence here
+    // was a bare confirm card (2026-09-11).
+    if (!toSaid) return { error: "to (the list to move them into) is required" };
+    if (ids.length === 0) return { error: "ids are required - read the records first and pass their real ids, never their names" };
     const to = await findInstance(ctx.orgId, toSaid);
-    if ("error" in to) return null;
+    if ("error" in to) return { error: to.error };
     const fromSaid = str(args.from);
     let from: { name: string; label: string; module: string };
     if (fromSaid) {
       const f = await findInstance(ctx.orgId, fromSaid);
-      if ("error" in f) return null;
+      if ("error" in f) return { error: f.error };
       from = f;
     } else {
       const found = await instancesHolding(ctx.orgId, to.module, ids);
-      if ("error" in found) return null;
+      if ("error" in found) return { error: found.error };
       const f = await findInstance(ctx.orgId, found.instance);
       from = "error" in f ? { name: found.instance, label: found.instance, module: to.module } : f;
     }
     const mover = getMover(from.module);
-    if (!mover) return null;
+    if (!mover) return { error: `${from.module} records cannot be moved between lists.` };
     const kind = mover.kindFor(from.name);
     const lines: string[] = [];
+    let missing = 0;
     for (const id of ids.slice(0, 200)) {
       const ent = await lookup(ctx.orgId, kind, id).catch(() => null);
+      if (!ent) missing += 1;
       lines.push(ent?.title ?? `a record that no longer exists (${id.slice(0, 8)})`);
+    }
+    // Not one of them is a record: these are names, or ids from another list.
+    // A card listing five "no longer exists" lines is a card about nothing.
+    if (missing === ids.length) {
+      return { error: `none of those ids is a record in ${from.label} - pass the ids list_records returns, not names` };
     }
     const n = lines.length;
     return {
       title: n === 1 ? `Move 1 record from ${from.label} into ${to.label}` : `Move ${n} records from ${from.label} into ${to.label}`,
       lines,
     };
+  });
+
+  // The inverse of a move is the same move the other way, on the same ids,
+  // which the result already names. Exact, because the handler's field
+  // carry-over is additive (a field is added to the destination, never
+  // removed), so the way back loses nothing the way there had.
+  registerUndo("platform.move-records", (result) => {
+    const d = (result as { data?: { touched?: Array<{ id?: unknown }>; to?: unknown; from?: unknown } } | null)?.data;
+    const ids = (d?.touched ?? []).map((t) => t.id).filter((id): id is string => typeof id === "string");
+    if (!ids.length || typeof d?.to !== "string" || typeof d?.from !== "string") return null;
+    return { action_id: "platform:move-records", args: { ids, to: d.from, from: d.to } };
   });
 
   registerHandler("platform.demote-category", async (ctx: ActionInvokeContext) => {
@@ -728,11 +931,24 @@ export function registerPlatformActionHandlers(): void {
       return {
         ok: true,
         summary: `${inst.label} folded back into ${into.label} as "${category}", with ${result.moved} moved`,
-        data: { moved: result.moved, category },
+        data: { moved: result.moved, category, list: inst.name, display_name: inst.label, into: into.name },
       };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : "couldn't fold that list back" };
     }
+  });
+
+  // Given its own list again, with the same short name and label, from the
+  // category it was folded in under.
+  registerUndo("platform.demote-category", (result) => {
+    const d = (result as { data?: { category?: unknown; list?: unknown; display_name?: unknown; into?: unknown } } | null)?.data;
+    if (typeof d?.category !== "string" || typeof d.list !== "string" || typeof d.display_name !== "string" || typeof d.into !== "string") {
+      return null;
+    }
+    return {
+      action_id: "platform:promote-category",
+      args: { from: d.into, category: d.category, display_name: d.display_name, instance_name: d.list },
+    };
   });
 
   registerHandler("platform.rename-workspace", async (ctx: ActionInvokeContext) => {
@@ -757,12 +973,19 @@ export function registerPlatformActionHandlers(): void {
       ref: { module: null, entityType: "org", entityId: ctx.orgId },
       diff: { name: { from: before?.name ?? null, to: name } },
     });
-    return { ok: true, summary: `this workspace is called "${name}" now`, data: { name } };
+    return { ok: true, summary: `this workspace is called "${name}" now`, data: { name, before: before?.name ?? null } };
+  });
+
+  registerUndo("platform.rename-workspace", (result) => {
+    const d = (result as { data?: { name?: unknown; before?: unknown } } | null)?.data;
+    if (typeof d?.before !== "string" || !d.before.trim() || d.before === d.name) return null;
+    return { action_id: "platform:rename-workspace", args: { name: d.before } };
   });
 
   registerHandler("platform.set-simple-mode", async (ctx: ActionInvokeContext) => {
     const on = (ctx.args ?? {}).on;
     if (typeof on !== "boolean") return { ok: false, error: "on must be true (simple) or false (everything)" };
+    const was = await meta.selectFrom("orgs").select("focused").where("id", "=", ctx.orgId).executeTakeFirst();
     await meta
       .updateTable("orgs")
       .set({ focused: on, updated_at: new Date() })
@@ -778,8 +1001,15 @@ export function registerPlatformActionHandlers(): void {
     return {
       ok: true,
       summary: on ? "simple mode is on: the advanced screens are put away" : "simple mode is off: everything is showing",
-      data: { focused: on },
+      data: { focused: on, before: !!was?.focused },
     };
+  });
+
+  // Set back the way it was. Setting it to what it already was left nothing to undo.
+  registerUndo("platform.set-simple-mode", (result) => {
+    const d = (result as { data?: { focused?: unknown; before?: unknown } } | null)?.data;
+    if (typeof d?.focused !== "boolean" || typeof d.before !== "boolean" || d.before === d.focused) return null;
+    return { action_id: "platform:set-simple-mode", args: { on: d.before } };
   });
 
   registerHandler("platform.set-field-preset", async (ctx: ActionInvokeContext) => {
@@ -811,6 +1041,16 @@ export function registerPlatformActionHandlers(): void {
     };
   });
 
+  // The switch the other way. A set that was already on (nothing added) or
+  // already off (nothing taken away) was not changed, so nothing goes back.
+  registerUndo("platform.set-field-preset", (result) => {
+    const d = (result as { data?: { preset?: unknown; on?: unknown; created?: unknown; removed?: unknown } } | null)?.data;
+    if (typeof d?.preset !== "string" || typeof d.on !== "boolean") return null;
+    const touched = d.on ? d.created : d.removed;
+    if (!Array.isArray(touched) || touched.length === 0) return null;
+    return { action_id: "platform:set-field-preset", args: { preset: d.preset, on: !d.on } };
+  });
+
   registerHandler("platform.set-wire-enabled", async (ctx: ActionInvokeContext) => {
     const args = (ctx.args ?? {}) as Record<string, unknown>;
     const wireId = str(args.wire_id);
@@ -818,12 +1058,25 @@ export function registerPlatformActionHandlers(): void {
     if (typeof args.enabled !== "boolean") {
       return { ok: false, error: "enabled must be true (on) or false (off)" };
     }
+    const was = await meta
+      .selectFrom("entity_action_bindings")
+      .select("enabled")
+      .where("id", "=", wireId)
+      .where("org_id", "=", ctx.orgId)
+      .executeTakeFirst();
     const result = await setWireEnabled(ctx.orgId, wireId, args.enabled, ctx.userId);
     if (!result.ok) return { ok: false, error: result.message };
     return {
       ok: true,
       summary: `automation ${result.wire.action_id} is now ${result.wire.enabled ? "on" : "off"}`,
-      data: { id: result.wire.id, enabled: result.wire.enabled },
+      data: { id: result.wire.id, enabled: result.wire.enabled, before: was?.enabled ?? result.wire.enabled },
     };
+  });
+
+  // Set back the way it was; a toggle to what it already was left nothing to undo.
+  registerUndo("platform.set-wire-enabled", (result) => {
+    const d = (result as { data?: { id?: unknown; enabled?: unknown; before?: unknown } } | null)?.data;
+    if (typeof d?.id !== "string" || typeof d.enabled !== "boolean" || typeof d.before !== "boolean" || d.before === d.enabled) return null;
+    return { action_id: "platform:set-wire-enabled", args: { wire_id: d.id, enabled: d.before } };
   });
 }

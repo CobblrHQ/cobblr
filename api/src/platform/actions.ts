@@ -40,7 +40,13 @@ export interface ActionPlan {
   /** One line per thing touched, by what a person calls it. */
   lines: string[];
 }
-export type ActionPlanner = (ctx: ActionInvokeContext) => Promise<ActionPlan | null>;
+/** A planner answers the plan, or the reason there is none. It used to answer
+ *  null for both, and null is what let a confirm card fall back to the
+ *  action's bare label ("Move records into another list") when the model had
+ *  passed a list that did not exist - the card the rule was written against.
+ *  A reason goes back to the model, which fixes its arguments; a plan goes on
+ *  the card. Nothing else is ever shown. */
+export type ActionPlanner = (ctx: ActionInvokeContext) => Promise<ActionPlan | { error: string } | null>;
 
 const planners = new Map<string, ActionPlanner>();
 
@@ -54,7 +60,56 @@ export function hasPlanner(handlerKey: string): boolean {
   return planners.has(handlerKey);
 }
 
-export async function planFor(actionId: string, ctx: ActionInvokeContext): Promise<ActionPlan | null> {
+/** The action that puts THIS one back. An action that can say how it is
+ *  undone registers it beside its handler, in the same terms the rail already
+ *  runs: an action id and its arguments. The inverse is ledgered as a write
+ *  of its own when it runs, and its own inverse is the original again, so
+ *  undoing an undo needs nothing extra. Every action either has one of these
+ *  or is declared not undoable, and a guard test holds the two together. */
+export interface ActionUndo {
+  action_id: string;
+  args: Record<string, unknown>;
+}
+/** One step or several, in order: fields that came out of two headings go
+ *  back under both. An empty list, or null, means this run left nothing to put
+ *  back (a feature that was already on, a toggle to what it already was). */
+export type ActionUndoer = (
+  result: unknown,
+  ctx: { orgId: string },
+) => Promise<ActionUndo | ActionUndo[] | null> | ActionUndo | ActionUndo[] | null;
+
+const undoers = new Map<string, ActionUndoer>();
+
+export function registerUndo(handlerKey: string, undoer: ActionUndoer): void {
+  undoers.set(handlerKey, undoer);
+}
+
+export function hasUndo(handlerKey: string): boolean {
+  return undoers.has(handlerKey);
+}
+
+/** The registered undoer itself, for a test to hand a result to. */
+export function undoerFor(handlerKey: string): ActionUndoer | undefined {
+  return undoers.get(handlerKey);
+}
+
+export async function undoFor(actionId: string, result: unknown, ctx: { orgId: string }): Promise<ActionUndo[] | null> {
+  const row = await meta
+    .selectFrom("entity_actions")
+    .select("invoke_handler")
+    .where("id", "=", actionId)
+    .executeTakeFirst();
+  const undoer = row?.invoke_handler ? undoers.get(row.invoke_handler) : undefined;
+  if (!undoer) return null;
+  const steps = await undoer(result, ctx);
+  const list = steps === null ? [] : Array.isArray(steps) ? steps : [steps];
+  return list.length ? list : null;
+}
+
+export async function planFor(
+  actionId: string,
+  ctx: ActionInvokeContext,
+): Promise<ActionPlan | { error: string } | null> {
   const row = await meta
     .selectFrom("entity_actions")
     .select("invoke_handler")

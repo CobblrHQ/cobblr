@@ -48,6 +48,8 @@ export interface BulkOutcome {
   /** One per record that landed — a single Undo in the panel presses them all. */
   ledger_ids: string[];
   undoable: boolean;
+  /** Where the batch put things, when one of its actions said. */
+  destination?: { kind: string; label: string };
 }
 
 export interface WriteOutcome {
@@ -63,6 +65,8 @@ export interface WriteOutcome {
   /** Records an action touched (a move names every record it moved), each
    *  with what a person calls it, so the panel can draw them as chips. */
   touched?: Array<{ kind: string; id: string; label: string }>;
+  /** Where an action put things, so the card can offer to go there. */
+  destination?: { kind: string; label: string };
   ledger_id?: string;
   undoable?: boolean;
 }
@@ -126,9 +130,32 @@ function labelOfImage(img: RecordImage | null, fallback: string): string {
   return String(img?.title ?? img?.name ?? img?.fields?.title ?? img?.fields?.name ?? fallback);
 }
 
-/** Can this ledger row be undone? (Its own state + the kind's declared routes.) */
+/** The steps that put an action back, as it handed them back with its result,
+ *  in order. None means this run cannot be undone from here. */
+type UndoStep = { action_id: string; args: Record<string, unknown> };
+function undoSteps(v: unknown): UndoStep[] | null {
+  const list = Array.isArray(v) ? v : v && typeof v === "object" ? [v] : [];
+  const steps = list.filter(
+    (u): u is UndoStep =>
+      !!u && typeof (u as UndoStep).action_id === "string" && !!(u as UndoStep).args && typeof (u as UndoStep).args === "object",
+  );
+  return steps.length ? steps : null;
+}
+function undoHandedBack(data: unknown): UndoStep[] | null {
+  return undoSteps((data as { undo?: unknown } | null)?.undo);
+}
+
+/** Where an action says it put things, if it said. */
+function destinationOf(result: unknown): { kind: string; label: string } | null {
+  const d = (result as { data?: { destination?: { kind?: unknown; label?: unknown } } } | null)?.data?.destination;
+  if (!d || typeof d.kind !== "string" || typeof d.label !== "string") return null;
+  return { kind: d.kind, label: d.label };
+}
+
+/** Can this ledger row be undone? (Its own state + the kind's declared routes,
+ *  or, for an action, the inverse it stored.) */
 export function undoableOf(
-  row: { tool: string; entity_kind: string; entity_id: string | null; undone_at: Date | null; before: unknown },
+  row: { tool: string; entity_kind: string; entity_id: string | null; undone_at: Date | null; before: unknown; payload?: unknown },
   kinds: Parameters<typeof resolveUpdatePath>[2],
 ): boolean {
   if (row.undone_at) return false;
@@ -139,8 +166,12 @@ export function undoableOf(
       return !!row.entity_id && !!row.before && resolveUpdatePath(row.entity_kind, row.entity_id, kinds) !== null;
     case "delete":
       return !!row.before; // recreate needs the image (create route re-checked at undo time)
+    case "action":
+      // An action is undoable when it handed back its inverse and the ledger
+      // kept it. One with side effects the kernel cannot reverse never does.
+      return !!undoSteps(parseJsonb<{ undo?: unknown }>(row.payload)?.undo);
     default:
-      return false; // actions: side effects have no inverse
+      return false;
   }
 }
 
@@ -156,17 +187,26 @@ export function undoableOf(
  *  Partial success is the normal case (a rack that already has two of the five
  *  shelves), so nothing is rolled back and nothing is hidden: the count that
  *  landed and the reasons the rest did not both come back. */
-export async function performWrites(
-  wsApi: WorkspaceApi,
-  db: Kysely<CoreAiDB>,
-  userId: string,
-  reqs: WriteRequest[],
-  opts: { auto: boolean; orgId?: string; prompt?: string; turnId?: string },
-): Promise<BulkOutcome> {
-  const results: WriteOutcome[] = [];
-  for (const r of reqs) results.push(await performWrite(wsApi, db, userId, r, opts));
+/** What a batch of writes says it did, in one sentence a person can check.
+ *
+ *  An ACTION says what it said. The verb-and-count sentence below was written
+ *  for record writes, where the tool names the verb and the kind names the
+ *  noun; an action has neither (its entity_kind is "", it runs on the
+ *  workspace), and the first computed command to run one came back as
+ *  "Added 1 ." for a move of three teas (2026-09-11). The action's handler
+ *  had already written "Moved 3 records into Tea." and the sentence threw it
+ *  away one line before the person. Pure, so it is tested without a ledger. */
+export function bulkMessage(reqs: WriteRequest[], results: WriteOutcome[]): string {
   const done = results.filter((r) => r.ok);
   const failed = results.filter((r) => !r.ok);
+  const allActions = reqs.length > 0 && reqs.every((r) => r.tool === "action");
+  if (allActions) {
+    const said = done.map((d) => d.message.trim()).filter(Boolean);
+    const first = said[0] ?? "Done.";
+    const head = said.length <= 1 ? first : `${first} ${said.slice(1).join(" ")}`;
+    if (!failed.length) return head;
+    return `${done.length ? `${head} ` : ""}${failed.length} could not be: ${failed[0]!.message}${failed.length > 1 ? ` (and ${failed.length - 1} more)` : ""}`;
+  }
   // One instruction can span kinds ("delete duplicates" cleans locations AND
   // parts), and "Removed 2 locations" is wrong when one of them was a part.
   const kinds = new Set(reqs.map((r) => r.entity_kind));
@@ -179,21 +219,35 @@ export async function performWrites(
   // "2 were already there" is the whole of what a person needs from the common
   // partial: asking for shelves 1-5 where two exist. Matching on the error CODE
   // (which this repo owns) rather than the sentence, and only collapsing when
-  // every failure is that one — a mixed bag still shows a real reason.
+  // every failure is that one - a mixed bag still shows a real reason.
   const dupes = failed.filter((f) => f.message.includes("(duplicate_sibling)"));
   const allDupes = failed.length > 0 && dupes.length === failed.length;
-  const message = !failed.length
+  return !failed.length
     ? `${verb} ${done.length} ${plural}.`
     : allDupes
       ? `${verb} ${done.length} ${plural}. ${failed.length} ${failed.length === 1 ? "was" : "were"} already there.`
       : `${verb} ${done.length} ${plural}. ${failed.length} could not be: ${failed[0]!.message}${failed.length > 1 ? ` (and ${failed.length - 1} more)` : ""}`;
+}
+
+export async function performWrites(
+  wsApi: WorkspaceApi,
+  db: Kysely<CoreAiDB>,
+  userId: string,
+  reqs: WriteRequest[],
+  opts: { auto: boolean; orgId?: string; prompt?: string; turnId?: string },
+): Promise<BulkOutcome> {
+  const results: WriteOutcome[] = [];
+  for (const r of reqs) results.push(await performWrite(wsApi, db, userId, r, opts));
+  const done = results.filter((r) => r.ok);
+  const failed = results.filter((r) => !r.ok);
   return {
     ok: done.length > 0,
-    message,
+    message: bulkMessage(reqs, results),
     count: done.length,
     failed: failed.map((f) => f.message),
     ledger_ids: done.map((d) => d.ledger_id).filter((id): id is string => !!id),
     undoable: done.every((d) => d.undoable !== false),
+    ...(done.find((d) => d.destination)?.destination ? { destination: done.find((d) => d.destination)!.destination } : {}),
   };
 }
 
@@ -250,6 +304,7 @@ export async function performWrite(
       args: req.args,
     });
     if (!r.ok) return { ok: false, message: r.error ?? "Action failed." };
+    const undo = undoHandedBack(r.data);
     const row = await db
       .insertInto("core_ai_chat_writes")
       .values({
@@ -259,7 +314,7 @@ export async function performWrite(
         entity_id: req.entity_id ?? null,
         entity_label: req.action_id ?? "",
         before: null,
-        payload: JSON.stringify({ action_id: req.action_id, args: req.args ?? null }) as unknown,
+        payload: JSON.stringify({ action_id: req.action_id, args: req.args ?? null, ...(undo ? { undo } : {}) }) as unknown,
         auto_applied: opts.auto,
         prompt: opts.prompt ?? null,
         turn_id: opts.turnId ?? null,
@@ -270,12 +325,16 @@ export async function performWrite(
       .executeTakeFirst();
     // What the action itself said it did, rather than a tick with no sentence.
     const touched = await touchedByAction(wsApi, (r.data as { result?: unknown } | undefined)?.result);
+    const destination = destinationOf((r.data as { result?: unknown } | undefined)?.result);
     return {
       ok: true,
       message: actionSaid((r.data as { result?: unknown } | undefined)?.result),
       ...(touched.length ? { touched } : {}),
+      ...(destination ? { destination } : {}),
       ledger_id: row?.id,
-      undoable: false,
+      // Undoable exactly when the action handed back its inverse; the row
+      // carries it, and undoWrite runs it.
+      undoable: !!undo,
     };
   }
 
@@ -648,8 +707,31 @@ export async function undoWrite(
       }
       break;
     }
+    case "action": {
+      // Run the steps the action handed back, each a write of its own: it is
+      // ledgered, its own inverse is the original again, and the message is
+      // what the inverse said ("Moved 3 records into Inventory."). A step
+      // that fails stops the rest, and says which.
+      const steps = undoSteps(parseJsonb<{ undo?: unknown }>(row.payload)?.undo);
+      if (!steps) return { ok: false, message: "This action did not say how it is undone." };
+      const said: string[] = [];
+      let last: WriteOutcome | null = null;
+      for (const step of steps) {
+        last = await performWrite(
+          wsApi,
+          db,
+          userId,
+          { tool: "action", entity_kind: "", action_id: step.action_id, args: step.args },
+          { auto: false, orgId, undoOf: row.id },
+        );
+        if (!last.ok) return { ok: false, message: `Could not put it back: ${last.message}` };
+        said.push(last.message);
+      }
+      outcome = { ...last!, message: said.join(" ") };
+      break;
+    }
     default:
-      return { ok: false, message: "Actions can't be undone: they have real-world side effects." };
+      return { ok: false, message: "This kind of change has no way back." };
   }
 
   if (outcome.ok) {

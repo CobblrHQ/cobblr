@@ -3912,7 +3912,7 @@ export const api = {
       `/orgs/${slug}/modules/core-ai/chat/undo-turn/${encodeURIComponent(turnId)}${force ? "?force=1" : ""}`,
     ),
   runCommand: (slug: string, id: string, message: string, selectionIds?: string[]) =>
-    request<{ ok: boolean; done: number; failed: number; message: string; ledger_ids?: string[] }>(
+    request<{ ok: boolean; done: number; failed: number; message: string; ledger_ids?: string[]; undoable?: boolean; destination?: { kind: string; label: string } }>(
       "POST",
       `/orgs/${slug}/modules/core-ai/basics/commands/${id}/run`,
       { message, ...(selectionIds?.length ? { selection_ids: selectionIds } : {}) },
@@ -6054,6 +6054,8 @@ export interface AiChatResponse {
     /** Which record, named, so the panel can draw it as a chip. */
     entity?: { kind: string; id?: string; label?: string };
     touched?: Array<{ kind: string; id: string; label: string }>;
+    /** Where an action put things: the card offers to go there. */
+    destination?: { kind: string; label: string };
   }>;
   /** build-proposal: the build runs async — poll authoringDraft(draft_id)
    *  until the draft leaves "building", then read its validation.preview. */

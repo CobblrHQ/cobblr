@@ -28,6 +28,30 @@ import { compileTemplate, type CommandSlot } from "@cobblr/platform-contract";
 export { compileTemplate };
 
 /** One thing that was done: a chat write, as the ledger records it. */
+/** The ledger write an operation becomes. ONE function, because the two run
+ *  paths each carried their own hand-copied version and one of them forgot
+ *  `action_id`: the first computed command with an action in its plan
+ *  (moving tea into a list) reached the invoke route as `actionId: ""`, which
+ *  matched no action, was treated as record-scoped, and refused with
+ *  "entityKind and entityId are required" - a message about the wrong thing
+ *  entirely (2026-09-11). A copy is a field to forget; a function is not. */
+export function writeOf(op: Operation): {
+  tool: Operation["tool"];
+  entity_kind: string;
+  entity_id?: string;
+  action_id?: string;
+  args?: Record<string, unknown>;
+  fields?: Record<string, unknown>;
+} {
+  return {
+    tool: op.tool,
+    entity_kind: op.entity_kind,
+    ...(op.entity_id ? { entity_id: op.entity_id } : {}),
+    ...(op.action_id ? { action_id: op.action_id } : {}),
+    ...(op.tool === "action" ? { args: op.payload } : { fields: op.payload }),
+  };
+}
+
 export interface Operation {
   tool: "create" | "update" | "delete" | "action";
   entity_kind: string;

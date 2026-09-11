@@ -235,17 +235,29 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     id: "platform:move-records",
     min_role: "grantable",
     label: "Move records into another list",
+      // The boundary sentence is load-bearing, and its absence was measurable. This
+      // action is NEWER than core-placement:place, and adding it to the rail changed the
+      // answer to sentences it has nothing to do with: the corpus case "the rice lives in
+      // the pantry now" wants core-placement:place and began returning move-records the day
+      // this shipped, taking the kitchen bucket to 13/14 against a 100% floor and stopping
+      // the nightly channel for two days (2026-09-09 to 09-11).
+      //
+      // The old example made it worse rather than better: "the tea in Pantry" put a pantry
+      // into the one description a model reads when deciding what a sentence about a pantry
+      // means. The example now names two things that are plainly lists, and the exclusion
+      // says out loud which action owns the other reading.
     description:
-      "Move records that already exist from one list into another (the tea in Pantry into the Tea list). The records keep their ids, their photos, their history and their printed labels; only which list they are in changes. This is the ONLY way to move something between lists: creating a record in the new list leaves the original where it was and makes a second copy, and deleting it destroys what was there. Runs on the workspace, not a record. Read the records first and pass their real ids.",
+      "Move records that already exist from one list into another (the chamomile in Inventory into the Tea list). The records keep their ids, their photos, their history and their printed labels; only which list they are in changes. This is the ONLY way to move something between lists: creating a record in the new list leaves the original where it was and makes a second copy, and deleting it destroys what was there. NOT for where a thing physically IS: a destination that is a place rather than a list (a room, a shelf, a bin, a pantry) is core-placement:place, and so is any sentence about a thing living, sitting or being kept somewhere. Runs on the workspace, not a record. Read the records first and pass their real ids.",
     icon: "folder-input",
     scope: "workspace",
     invoke_handler: "platform.move-records",
     user_invokable: true,
-    // NOT undoable, in the specific sense that flag carries: an AI may not run
-    // this without a person confirming. It is a bulk change to where someone's
-    // things live, and it is not always exactly reversible - the move preview
-    // exists because a value can land in a list that has no field to show it
-    // under. A card naming what moves, before it moves, is the point.
+    // NOT undoable, in the specific sense this flag carries: an AI may not run
+    // it without a person confirming. It is a bulk change to where someone's
+    // things live, and the card naming what moves, before it moves, is the
+    // point. The way BACK is a different thing and it has one: the same move
+    // the other way, registered beside the handler (registerUndo), which is
+    // what puts Undo on the card after it runs.
     //
     // It still runs from the app, from a wire, and from any chat that can show
     // a confirm card. Only a relay with no way to ask refuses, and says which
