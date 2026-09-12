@@ -10,6 +10,8 @@
 // so a part and a unit sharing a serial are visibly different things.
 
 import { Modal } from "@cobblr/platform-web";
+import { useKindLabels } from "../lib/useKindLabels";
+import { useActiveOrg } from "../auth/ActiveOrgContext";
 import type { ScanResolveCandidate } from "../lib/api";
 
 export function ScanAmbiguityModal({
@@ -25,6 +27,7 @@ export function ScanAmbiguityModal({
   onPick: (c: ScanResolveCandidate) => void;
   onClose: () => void;
 }) {
+  const labels = useKindLabels(useActiveOrg().activeSlug);
   return (
     <Modal open onClose={onClose} title={`“${scanKey}” matches ${candidates.length} things`}>
       <div className="space-y-3">
@@ -49,7 +52,7 @@ export function ScanAmbiguityModal({
                   {c.entity_label}
                 </div>
                 <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                  {c.entity_kind}
+                  {labels.collection(c.entity_kind)}
                   {c.rule_name ? ` · via ${c.rule_name}` : ""}
                 </div>
               </button>

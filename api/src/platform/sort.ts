@@ -1,3 +1,5 @@
+import { normalizeSortSpec } from "@cobblr/platform-contract";
+
 // Sort-grammar normalization for platform.entities.list (D16).
 //
 // `sort` reaches list() in two grammars. Resolvers only understand the REST
@@ -12,19 +14,12 @@ export function normalizeEntitySort(raw: unknown): string[] | undefined {
     if (raw != null) console.warn("[entities] ignoring non-array sort:", raw);
     return undefined;
   }
-  const out: string[] = [];
+  // The grammar lives in the contract (normalizeSortSpec), so the view query
+  // the pages build and the list() the kernel runs read a sort the same way.
+  // This wrapper keeps the kernel's warnings about entries it dropped.
   for (const e of raw) {
-    if (typeof e === "string") {
-      if (e) out.push(e);
-    } else if (e && typeof e === "object") {
-      const field = (e as { field?: unknown }).field;
-      const dir = (e as { dir?: unknown }).dir;
-      if (typeof field === "string" && field) {
-        out.push(dir === "desc" || dir === "-" ? `-${field}` : field);
-      } else {
-        console.warn("[entities] ignoring malformed sort entry:", e);
-      }
-    }
+    if (typeof e === "string" || (e && typeof e === "object" && typeof (e as { field?: unknown }).field === "string")) continue;
+    console.warn("[entities] ignoring malformed sort entry:", e);
   }
-  return out.length > 0 ? out : undefined;
+  return normalizeSortSpec(raw);
 }

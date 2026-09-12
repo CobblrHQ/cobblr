@@ -566,7 +566,16 @@ export async function matchCommand(
   orgId?: string,
   /** Where to look, when the user pointed at something. */
   ctx?: { wsApi: WorkspaceApi; selectionIds?: string[]; pageKind?: string },
-): Promise<{ id: string; template: string; operations: Operation[]; summary?: string; lines?: string[]; note?: string } | null> {
+): Promise<{
+  id: string;
+  template: string;
+  operations: Operation[];
+  summary?: string;
+  lines?: string[];
+  note?: string;
+  also?: Array<{ id: string; title: string }>;
+  to?: { name: string; label: string };
+} | null> {
   // A COMPUTED command is checked first: it is the most specific thing that
   // can match, and unlike the others it has to go and look at the workspace
   // before it can say what it would do.
@@ -591,6 +600,8 @@ export async function matchCommand(
           summary: plan.summary,
           ...(plan.lines?.length ? { lines: plan.lines } : {}),
           ...(plan.note ? { note: plan.note } : {}),
+          ...(plan.also?.length ? { also: plan.also } : {}),
+          ...(plan.to ? { to: plan.to } : {}),
         };
       }
     }

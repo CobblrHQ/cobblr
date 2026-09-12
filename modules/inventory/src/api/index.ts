@@ -35,6 +35,10 @@ platform().entities.registerScannable("inventory:part", {
   createEndpoint: "inventory/parts",
   qtyField: "qty",
   default: true, // the fallback scan target when no identify hint matches a noun
+  // The quantity door: the floor (stock-floor.ts), the lots and the
+  // consumption ledger all live at this action, so a scan's undone bump comes
+  // back off through it rather than a bare write of the column.
+  adjustAction: "inventory:adjust-stock",
 });
 // Any type='date' custom field on inventory:part (or its instances) becomes an
 // all-day calendar event — the owning module declares its kind+table; the
@@ -44,6 +48,8 @@ platform().calendar.registerDateFieldSource({
   table: "inventory_parts",
   entityModule: "inventory",
   entityType: "part",
+  // A stock-face record with nothing on hand has nothing left to date.
+  onHand: { column: "qty", instanceColumn: "instance" },
 });
 
 // Per-instance item count — lets the nav hide an empty auto-created default
@@ -96,10 +102,15 @@ platform().instances.registerMover("inventory", {
 const router = Router({ mergeParams: true });
 
 router.use("/categories", categoriesRouter);
+// The importer rides on the parts router so it reaches BOTH doors:
+// /modules/inventory/parts/import (the base table) and
+// /instances/<name>/items/import (a named collection), scoped by the same
+// instanceOf the queries use. Mounted on the module router it only ever had
+// the first door, so a Bookshelf's own import filed its books as parts.
+partsRouter.use(importRouter);
 router.use("/parts", partsRouter);
 router.use("/allocations", allocationsRouter);
 router.use("/spoolman", spoolmanRouter);
-router.use(importRouter);
 
 export default router;
 

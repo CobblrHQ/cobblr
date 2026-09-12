@@ -38,3 +38,24 @@ export function expiredSandboxesQuery(db: unknown, limit: number, now: Date) {
     .orderBy("trial_expires_at", "asc")
     .limit(limit);
 }
+
+/** Finished sandboxes that waited too long unclaimed. Their kitchen was dated
+ *  the day they were built and has drifted since; the pool replaces them. Only
+ *  rows with `trial_expires_at IS NULL` (nobody has them): a claimed sandbox is
+ *  the visitor's for its hour and is the reaper's other query. */
+export function stalePooledSandboxesQuery(db: unknown, limit: number, now: Date, maxAgeMs: number) {
+  return (db as Kysely<ReapableOrgs & { orgs: { created_at: Date } }>)
+    .selectFrom("orgs")
+    .select(["id", "slug"])
+    .where("sandbox", "=", true)
+    .where("trial_expires_at", "is", null)
+    .where("created_at", "<", new Date(now.getTime() - maxAgeMs))
+    .orderBy("created_at", "asc")
+    .limit(limit);
+}
+
+/** The pool a claim may draw from: finished, unclaimed, and younger than the
+ *  cap, so nobody inherits a kitchen dated last week. */
+export function claimableSince(now: Date, maxAgeMs: number): Date {
+  return new Date(now.getTime() - maxAgeMs);
+}

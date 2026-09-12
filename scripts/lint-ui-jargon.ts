@@ -25,7 +25,27 @@ const ROOTS = ["web/src", "modules"];
 const BASELINE = join("scripts", "ui-jargon-baseline.json");
 // A `}` closing a JSX expr / template `${}`, then the jargon noun, NOT followed
 // by `=` (a `rows={8}` attribute) or `.`/`[` (a `.rows` / `["rows"]` access).
-const OFFENSE = /\}\s*(rows|records|entities)\b(?!\s*[=.[])/;
+const COUNT_OFFENSE = /\}\s*(rows|records|entities)\b(?!\s*[=.[])/;
+
+// A KIND ID or a RENDERER ID printed as text. The 2026-09-12 new-user review
+// saw `bookshelf:item`, `groceries:item`, GALLERY, VENDING and INVENTORY:PART
+// as chips, and a bin sheet calling a book "part". A kind id is a routing
+// key; the person sees a collection with a name and a noun, and
+// @cobblr/platform-contract/kind-label answers both. So: a JSX text slot
+// `>{x.kind}<` / `{view.entity_kind}` / `{v.view_type}` fails, and so does
+// a `.toUpperCase()` on one of those. Property ACCESS is fine (`kind={k}`,
+// `key={e.kind}`, a filter); only printing it as words is the offense.
+// A `{x.kind}` slot NOT preceded by `=` or `$` is JSX text: an attribute
+// (`entityKind={kind}`, `key={e.kind}`) is a value, a template `${e.kind}` is
+// a key, and a destructuring `{ kind }` has the space this pattern refuses.
+const KIND_ID_OFFENSE =
+  /(?<![=$\w])\{[\w.?!]*\b(kind|entity_kind|entityKind|view_type|viewType)\}|\b(kind|entity_kind|entityKind|view_type|viewType)\.toUpperCase\(\)/;
+
+// Phrases the review called out by name. "ran a wire" is a verb nobody
+// outside this codebase uses; the activity row says "ran an automation".
+const PHRASE_OFFENSE = /ran a wire|wire failed|INVENTORY:PART|\bVENDING\b|\bGALLERY\b/;
+
+const OFFENSE = new RegExp(`${COUNT_OFFENSE.source}|${KIND_ID_OFFENSE.source}|${PHRASE_OFFENSE.source}`);
 
 function tsxFiles(dir: string): string[] {
   const out: string[] = [];
@@ -57,6 +77,8 @@ for (const root of ROOTS) {
     readFileSync(file, "utf8")
       .split("\n")
       .forEach((l, i) => {
+        // A comment naming the jargon is the explanation, not the offense.
+        if (/^\s*(\/\/|\*|\{\/\*|\/\*)/.test(l)) return;
         if (!OFFENSE.test(l)) return;
         const snippet = l.trim();
         found.push({ file, line: i + 1, snippet, key: `${file}::${snippet}` });
@@ -80,11 +102,12 @@ try {
 const violations = found.filter((f) => !baseline.has(f.key));
 
 if (violations.length > 0) {
-  console.error(`✗ ui-jargon lint: ${violations.length} NEW user-facing count(s) using DB-speak instead of the item's noun:\n`);
+  console.error(`✗ ui-jargon lint: ${violations.length} NEW user-facing string(s) that are DB-speak, a kind id, or a renderer id:\n`);
   for (const v of violations) console.error(`  ${v.file}:${v.line}  ${v.snippet.slice(0, 110)}`);
   console.error(`\nA count shown to a user must read in the item's OWN noun ("5 machines"), not "5 rows".
-Derive it from the kind: const noun = entity_kind.split(":")[1]. If this is a genuinely
-technical count (a DB-restore or CSV-file row count), add it with:
+A kind or renderer id is a routing key, not a word: use useKindLabels(slug).collection(kind) /
+.noun(kind) / .viewType(t) (web) or @cobblr/platform-contract/kind-label. If this is a
+genuinely technical string (a DB-restore row count, a config code), add it with:
   npx tsx scripts/lint-ui-jargon.ts --write-baseline`);
   process.exit(1);
 }

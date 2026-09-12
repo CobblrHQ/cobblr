@@ -17,6 +17,7 @@
 // circular import.
 
 import { platform } from "@cobblr/platform-contract";
+import { isStoreCode } from "./barcode-lookup.js";
 import { sql, type Kysely } from "kysely";
 import type { CoreScanDB } from "../db.js";
 
@@ -64,6 +65,9 @@ export async function rememberLocalIdentity(
   const code = upc.trim();
   const title = identity.title.trim();
   if (!code || !title) return;
+  // A shop's own label never enters the cache, even this workspace's: the
+  // next shop's same number is a different thing (see isStoreCode).
+  if (isStoreCode(code)) return;
   const fields = {
     found: true,
     source: "photo",

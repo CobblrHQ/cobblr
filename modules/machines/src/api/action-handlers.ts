@@ -9,6 +9,7 @@ import { sql, type Kysely } from "kysely";
 import type { MachinesDB } from "../db.js";
 
 export function registerMachinesActionHandlers(): void {
+  registerUndos();
   platform().actions.registerHandler("machines.record-usage", async (ctx) => {
     // Args (a hardwired wire value) take precedence; else the event payload.
     const args = (ctx.args ?? {}) as { machineId?: string; prints?: number; hours?: number };
@@ -42,5 +43,17 @@ export function registerMachinesActionHandlers(): void {
       .executeTakeFirst();
     if (!updated) return { ok: false, error: "machine_not_found" };
     return { ok: true, machineId, prints, hours };
+  });
+}
+
+function registerUndos(): void {
+  platform().actions.registerUndo("machines.record-usage", (result, ctx) => {
+    const r = result as { ok?: unknown; skipped?: unknown; machineId?: unknown; prints?: unknown; hours?: unknown } | null;
+    if (r?.ok !== true || r.skipped || typeof r.machineId !== "string") return null;
+    const prints = typeof r.prints === "number" ? -r.prints : 0;
+    const hours = typeof r.hours === "number" ? -r.hours : 0;
+    if (!prints && !hours) return null;
+    const on = ctx.entity ? { entity_kind: ctx.entity.kind, entity_id: ctx.entity.id } : { entity_kind: "machines:machine", entity_id: r.machineId };
+    return { action_id: "machines:record-usage", args: { machineId: r.machineId, prints, hours }, ...on };
   });
 }

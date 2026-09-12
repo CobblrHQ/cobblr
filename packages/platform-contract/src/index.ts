@@ -15,6 +15,9 @@ export { pluralise, countOf, itemNounFor } from "@cobblr/platform-contract/plura
 export { expiryState, expiryPhrase, EXPIRING_WITHIN_DAYS, type ExpiryState, type ExpiryReading } from "@cobblr/platform-contract/expiry-grace";
 export { keepMembers, isMember, parcelAudience } from "@cobblr/platform-contract/membership";
 export { splitEntityKind, entityKindOf, type EntityKindParts } from "@cobblr/platform-contract/entity-kind";
+export { actionRunsUnconfirmed, type ActionConsent } from "@cobblr/platform-contract/action-consent";
+export { isActionStep, type ActionUndoStep, type ActionUndoer, type ActionUndoContext } from "@cobblr/platform-contract/action-undo";
+import type { ActionUndoer, ActionUndoStep, ActionUndoContext } from "@cobblr/platform-contract/action-undo";
 export { destinationLabel, normaliseTargetKind, betterDestination, type DestinationTable } from "@cobblr/platform-contract/destination-label";
 export { NotificationBatcher, type ComposedBurst } from "@cobblr/platform-contract/notification-batcher";
 import type {
@@ -288,6 +291,29 @@ export const FACE_LABELS: Record<FaceName, string> = {
  *  as the faces resolver hands them on. */
 export type CollectionTraits = Partial<Record<AnyAxisName, AnyTraitName>>;
 /** Which faces a set of resolved traits implies. Pure; the one definition. */
+/** Whether a collection discloses STOCK, answered from its meta-side config
+ *  alone, or null when only its data can say. The rungs, in order, and the
+ *  reason each sits where it does:
+ *    1. the person's own toggle (`stock: true|false`) wins outright;
+ *    2. the bundle that made the collection said it wears no stock face
+ *       (`faces.stock === false`): lean, whatever a data write latched. A
+ *       bookshelf's first book arrived with qty 1 and latched the shelf to
+ *       stock, and every book then wore Use one, Used up and a reorder point
+ *       (the 2026-09-12 review); the author's declaration is the fact, the
+ *       latch was a guess from a number every create sends;
+ *    3. the sticky latch (`stock_latched`) set by an earlier stock-shaped write;
+ *    4. null: nothing meta-side says, probe the data (bias lean).
+ *  The kernel's kind synthesis and the inventory module's disclosure route
+ *  both read this, so they cannot disagree about the same collection. */
+export function stockDisclosureFromConfig(cfg: Record<string, unknown> | null | undefined): boolean | null {
+  if (!cfg) return null;
+  if (typeof cfg.stock === "boolean") return cfg.stock;
+  const faces = cfg.faces as Record<string, unknown> | null | undefined;
+  if (faces && typeof faces === "object" && faces.stock === false) return false;
+  if (cfg.stock_latched === true) return true;
+  return null;
+}
+
 export function facesOf(traits: CollectionTraits, declaredIdentity: string | null | undefined): FaceName[] {
   const out: FaceName[] = [];
   if (traits.identity === "fungible") out.push("stock");
@@ -1296,6 +1322,13 @@ const EntityAction = z.object({
   // (event reactions) — they're still targetable by wires, just
   // not surfaced as a manual button.
   userInvokable: z.boolean().default(true),
+  // Exists only as the way back for another action: registered as an undo
+  // step, run by Undo on a card through the actions route, and otherwise
+  // unreachable. Not a button (userInvokable is false too), and not in any
+  // list the assistant reads: the registry hides it from every reader that
+  // does not ask for it, and the chat refuses a model that names one. A
+  // guard holds that every action reached only as an undo step says this.
+  internal: z.boolean().default(false),
   // Can running this by mistake be put right again, INSIDE the workspace?
   //
   // This is what decides whether an AI connection that cannot show a
@@ -2206,6 +2239,52 @@ export interface EntityListQuery {
   sort?: string[];
 }
 
+/** The query a saved view asks for, read off its config the ONE way every
+ *  surface must read it. A view's config carries `filter`, `where` and `sort`
+ *  in the entity-list dialect; older bundles wrote `sort_by` + `sort_dir`
+ *  instead, and the views installed from them still do, so both spellings
+ *  are honoured here rather than at each reader. core-views' data route and
+ *  the inventory list page both call this: for a long time the first applied
+ *  the config and the second applied only group_by and visible_fields, so
+ *  the same view sorted through one door and not the other (#2772, #2422). */
+export function viewQuery(config: Record<string, unknown> | null | undefined): Pick<EntityListQuery, "filter" | "where" | "sort"> {
+  const cfg = config ?? {};
+  const out: Pick<EntityListQuery, "filter" | "where" | "sort"> = {};
+  if (cfg.filter && typeof cfg.filter === "object" && !Array.isArray(cfg.filter)) {
+    out.filter = cfg.filter as Record<string, unknown>;
+  }
+  if (Array.isArray(cfg.where)) out.where = cfg.where as FilterPredicate[];
+  const sort = normalizeSortSpec(cfg.sort);
+  if (sort) out.sort = sort;
+  else if (typeof cfg.sort_by === "string" && cfg.sort_by.trim()) {
+    out.sort = [`${cfg.sort_dir === "desc" ? "-" : ""}${cfg.sort_by.trim()}`];
+  }
+  return out;
+}
+
+/** The sort grammar resolvers speak is the string form, `["name", "-qty"]`.
+ *  View configs written by the view editor carry the object form,
+ *  `[{ field, dir }]`, and for a while that passed through untouched and made
+ *  resolvers return ZERO rows (D16). Both forms normalise here, to strings;
+ *  anything unparseable degrades to `undefined` (unsorted), never an empty
+ *  array, so a bad sort can never empty a result. */
+export function normalizeSortSpec(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: string[] = [];
+  for (const e of raw) {
+    if (typeof e === "string") {
+      if (e.trim()) out.push(e.trim());
+    } else if (e && typeof e === "object") {
+      const field = (e as { field?: unknown }).field;
+      const dir = (e as { dir?: unknown }).dir;
+      if (typeof field === "string" && field.trim()) {
+        out.push(dir === "desc" || dir === "-" ? `-${field.trim()}` : field.trim());
+      }
+    }
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 /** Turn an `EntityListQuery.sort` spec (`["-excitement","name"]`) into an
  *  ordered list of `{ col, dir }` a list resolver can hand straight to its
  *  query builder. A leading `-` means descending; anything else ascending.
@@ -2362,6 +2441,13 @@ export interface ScannableInfo {
    *  (at most one should set it). Lets core-scan route an unhinted scan without
    *  hardcoding a default module. */
   default?: boolean;
+  /** The action that moves this kind's quantity by a delta, invoked ON the
+   *  record with args `{ delta, reason, restock?, sourceKind?, sourceId? }`
+   *  and answering `{ ok, delta, newQty, clamped?, note?, error? }`: the
+   *  module's own quantity door, where its floor, lots and ledger live. When
+   *  declared, core-scan takes an undone bump back through it; without it,
+   *  the quantity field is written through the module's own route. */
+  adjustAction?: string;
 }
 
 /** In-process create/update/delete for one kind, registered by the owning
@@ -2652,6 +2738,13 @@ export interface PlatformEntities {
    * rather than on a name.
    */
   roledFieldsFor(orgId: string, kind: string): Promise<RoledField[]>;
+  /** Every field the workspace defines on `kind`, roled or not, in display
+   *  order, trait-scoped ones included - the columns a table of this kind
+   *  shows beyond the module's own. For the surfaces that must carry the WHOLE
+   *  record rather than act on meaning: a CSV export that drops these ships a
+   *  bookshelf without its authors (2026-09-12), and an import that cannot
+   *  name them has nowhere to put them back. */
+  fieldsFor(orgId: string, kind: string): Promise<DefinedField[]>;
   /** The ONE resolver for where a QR/scan/search hit for an entity should land,
    *  INSTANCE AWARE — shared by the QR-token resolver, the scan registry, and
    *  search so they can't drift (they were three hand-kept copies that each
@@ -2681,6 +2774,12 @@ export interface PlatformEntities {
    *  here before such a lookup. Reads (`lookup`/`list`/`lookupMany`) don't need
    *  it; they fall back at the resolver level. */
   baseKindOf(orgId: string, kind: string): Promise<string>;
+  /** The module kind behind a kind string AND the named instance it lives in:
+   *  `groceries:item` → { base: "inventory:part", instance: "groceries" }; a
+   *  module's own kind → { base: itself, instance: null }. The instance-kind
+   *  grammar lives in the kernel alone; a caller that needs both halves reads
+   *  them here rather than parsing the string. */
+  resolveKind(orgId: string, kind: string): Promise<{ base: string; instance: string | null }>;
   /** Inject `<name>_label` for the relation/member fields on rows a module
    *  queried itself, so a record reads the same whichever URL asked for it.
    *  The generic entity resolver already does this; a module's own list route
@@ -2922,6 +3021,11 @@ export function readJsonArg<T = unknown>(
 
 export interface PlatformActions {
   registerHandler(handlerKey: string, handler: ActionHandler): void;
+  /** How the action behind `handlerKey` is undone, from its result. Register
+   *  it beside the handler; an action declared `undoable` must have one (a
+   *  guard test holds the two together), and the card after a run offers
+   *  Undo exactly when the run handed steps back. See action-undo.ts. */
+  registerUndo(handlerKey: string, undoer: ActionUndoer): void;
   /** Find every registered action that applies to a given entity
    *  kind, factoring in `applies_to` predicates. When `orgId` is
    *  provided, per-org appliesTo overrides take precedence over the
@@ -2930,6 +3034,12 @@ export interface PlatformActions {
   /** Invoke an action programmatically. Throws if no handler is
    *  registered for the action's invoke_handler key. */
   invoke(actionId: string, ctx: ActionInvokeContext): Promise<unknown>;
+  /** The way back from a run, from its result: the steps the action's own
+   *  undoer hands back (see registerUndo), or null when it left nothing to put
+   *  back or has no undoer. A module that invokes another module's action and
+   *  wants to keep its inverse beside its own record (a scan attach keeping
+   *  the restock's) asks here, the same way the invoke route does. */
+  undoFor(actionId: string, result: unknown, ctx: ActionUndoContext): Promise<ActionUndoStep[] | null>;
 }
 
 /** What a collection wears, as the platform resolved it: the trait values
@@ -2959,6 +3069,8 @@ export interface EntityActionRecord {
   invoke_handler: string | null;
   /** False = wire-only; don't render as a user button. */
   user_invokable: boolean;
+  /** The way back for another action, and nothing else: run from Undo only. */
+  internal: boolean;
   /** Disclosure: the face this verb belongs to, or null for the base. */
   face: string | null;
   /** Where the module declared it, 0-based. The strip lists a record's own
@@ -2979,10 +3091,27 @@ export interface PlatformTemplates {
   render(template: string, data: Record<string, unknown>): string;
 }
 
+/** One enabled wire that would fire for an event, as a surface needs to say
+ *  what a gesture is about to do ("+1 to stock when checked"). */
+export interface WireEffect {
+  binding_id: string;
+  action_id: string;
+  /** The action's label from the registry, for a generic rendering. */
+  action_label: string | null;
+  source_kind: string;
+  args: Record<string, unknown> | null;
+}
+
 export interface PlatformWires {
   /** Called by an emitting module when an event fires. The wire
    *  engine looks up matching bindings + invokes their actions. */
   fireEvent(eventName: string, orgId: string, payload: Record<string, unknown>): Promise<void>;
+  /** The enabled wires that WOULD fire for `eventName` on a record of
+   *  `sourceKind`, so a surface can say what a gesture will do before it is
+   *  made. Matches the way the engine matches: by the record's BASE kind, so
+   *  a wire on `groceries:item` and one on `inventory:part` both count for
+   *  either. Same action + args listed once, as the engine fires it once. */
+  effectsOf(orgId: string, eventName: string, sourceKind: string): Promise<WireEffect[]>;
 }
 
 /** Health-probe primitive. Modules register a named probe at boot
@@ -3120,6 +3249,14 @@ export interface DateFieldCalendarSpec {
   entityModule: string;
   /** Entity type for the event payload, e.g. "part". */
   entityType: string;
+  /** The columns that say how much of a record is on hand and which
+   *  collection it is in. A record of a collection with the STOCK face and
+   *  nothing on hand has nothing left to date: the kernel leaves its date
+   *  fields off the calendar and out of queryDateField, so exhausted milk is
+   *  never "expired 5d ago" on the day it is bought again. A collection
+   *  without the stock face (a bookshelf, where the count is not the point)
+   *  keeps every date. Omit and every row counts. */
+  onHand?: { column: string; instanceColumn: string };
 }
 
 export interface PlatformCalendar {
@@ -5280,6 +5417,12 @@ export interface RoledField {
   field_role?: string | null;
   type?: string | null;
   choices?: string[] | null;
+}
+
+/** One workspace-defined field on a kind, as `fieldsFor` reports it. */
+export interface DefinedField extends RoledField {
+  display_label: string;
+  type: string;
 }
 
 export interface MappedValue {

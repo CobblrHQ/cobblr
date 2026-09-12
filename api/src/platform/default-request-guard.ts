@@ -31,8 +31,13 @@ const AUTH: Rule = { max: 20, windowMs: 5 * 60_000 };       // login/signup/magi
 const ANON: Rule = { max: 60, windowMs: 60_000 };           // public token surfaces
 const FEEDBACK: Rule = { max: 10, windowMs: 60_000 };       // feedback submissions
 
+/** Credential writes that live outside /auth/: a kept sandbox choosing its
+ *  password, and asking for its sign-in link again. Both are reached on a
+ *  bearer-token session, and a stolen token must not get unlimited tries. */
+const CREDENTIAL_PATHS = new Set(["/try/set-password", "/try/resend-link"]);
+
 export function classify(path: string): { cls: string; rule: Rule } | null {
-  if (path.startsWith("/auth/")) return { cls: "auth", rule: AUTH };
+  if (path.startsWith("/auth/") || CREDENTIAL_PATHS.has(path)) return { cls: "auth", rule: AUTH };
   if (path.startsWith("/feedback")) return { cls: "feedback", rule: FEEDBACK };
   if (
     path.startsWith("/public/") ||

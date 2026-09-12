@@ -59,8 +59,52 @@ export function photoOrder(item: ScanPhotoItem | null | undefined): PhotoRole[] 
     : ["catalog", "yours", "frame"];
 }
 
+/** Did a person choose this item's catalog picture on the card (a web pick,
+ *  the AI's pick they pressed for, their own photo, an upload, a crop)? The
+ *  route stamps it on every one of those; a lookup's own find never sets it. */
+export function catalogChosen(item: ScanPhotoItem | null | undefined): boolean {
+  return !!(item?.suggested_metadata as { catalog_image_user_set?: boolean } | null)?.catalog_image_user_set;
+}
+
+/** The picture already on the record this item was matched to, when there is
+ *  one. An entity image_path is already what useImageSrc takes. */
+export function trackedPicture(item: ScanPhotoItem | null | undefined): string | null {
+  const m = (item?.suggested_metadata as { tracked_match?: { image_path?: string | null } | null } | null)
+    ?.tracked_match;
+  return m?.image_path || null;
+}
+
+/**
+ * The catalog rungs for THIS item, most-preferred first, with the tracked
+ * record's picture placed by ONE rule:
+ *
+ * - The picture a person CHOSE on this card comes first. They picked it
+ *   looking at this very item, match banner and all; a card that keeps
+ *   showing the record's old picture after "Catalog photo updated" is lying
+ *   (reported 2026-09-12: "except it's not updating!").
+ * - Otherwise the record's own picture comes first. A re-purchase off a
+ *   receipt searched the web again and came home with a tin of cherry
+ *   tomatoes over a photo the owner had picked by hand for that record
+ *   (2026-09-06). A lookup's find never outranks what is already chosen for
+ *   the thing you have.
+ *
+ * `own` is the item's catalog slot as the caller builds it (a stored file,
+ * then the external URL). The tracked rule used to live inline on the
+ * expanded card only, so the gallery tile never knew the record had a picture
+ * and the card never knew the person had picked one.
+ */
+export function catalogRungs(
+  item: ScanPhotoItem | null | undefined,
+  own: Array<string | null | undefined>,
+): Array<string | null | undefined> {
+  const tracked = trackedPicture(item);
+  if (!tracked) return own;
+  return catalogChosen(item) ? [...own, tracked] : [tracked, ...own];
+}
+
 export interface PhotoSources {
-  /** Catalog rungs in order (a stored file, then the external URL). */
+  /** The item's OWN catalog rungs in order (a stored file, then the external
+   *  URL). The tracked record's picture is placed by catalogRungs, not here. */
   catalog?: Array<string | null | undefined>;
   yours?: string | null;
   frame?: string | null;
@@ -87,7 +131,7 @@ export function leadPhoto(
 ): LeadPhoto {
   const pending = photoUnverified(item);
   const byRole: Record<PhotoRole, Array<string | null | undefined>> = {
-    catalog: srcs.catalog ?? [],
+    catalog: catalogRungs(item, srcs.catalog ?? []),
     yours: [srcs.yours],
     frame: [srcs.frame],
   };

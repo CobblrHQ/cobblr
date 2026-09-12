@@ -8,6 +8,7 @@
 
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
+import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext, sessionUserId, loadEvents } from "../db.js";
 import { cadenceTick } from "../sweeper.js";
 import {
@@ -78,7 +79,17 @@ router.get("/state/:kind/:id", async (req: Request, res: Response, next) => {
     const leadTimeDays = q.success ? q.data.lead_time_days : undefined;
     const expired = q.success && q.data.expired === "true";
 
-    const events = await loadEvents(tenantDb(req), req.params.kind!, req.params.id!);
+    // The ledger holds one kind per record, the module's (record.ts
+    // normalises every write), so the read door normalises the same way: a
+    // surface holding the instance kind ("groceries:item", which is what a
+    // tracked match reports) used to read an empty history under it while the
+    // rows sat under inventory:part, and the re-buy buttons never learned
+    // anything for a grocery, a tea or a spice (2026-09-12).
+    const ctx = tenantContext(req);
+    const kind = await platform()
+      .entities.baseKindOf(ctx.org.id, req.params.kind!)
+      .catch(() => req.params.kind!);
+    const events = await loadEvents(tenantDb(req), kind, req.params.id!);
     const state = cadenceState(events);
     res.json({
       ...state,

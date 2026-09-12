@@ -20,7 +20,7 @@ import { platform } from "@cobblr/platform-contract";
 import { lookupBarcode, type BarcodeHit } from "./barcode-lookup.js";
 import { resolveBarcodeViaWebSearch } from "./barcode-websearch.js";
 import { reportBarcodeCorrection } from "./barcode-corrections.js";
-import { classifyScanCode, resolveIsbn, resolveAsin, type ScanCodeType } from "./scan-router.js";
+import { classifyScanCode, resolveIsbn, resolveAsin, isbnFieldsForHit, ISBN_DECODER_ID, type ScanCodeType } from "./scan-router.js";
 import { crossCheckScanPhoto, identifyImage, parsePackSize, refreshCatalogImageByName } from "./enrich-photo.js";
 import { identityMeta, mergeMeta } from "./metadata.js";
 import { looksNonEnglish } from "./catalog-normalize.js";
@@ -379,6 +379,11 @@ interface EnrichContext {
   hints?: string[];
 }
 
+/** What the card says for a store's own label. Exported so the route test can
+ *  assert the consequence by the words the person reads. */
+export const STORE_CODE_NOTE =
+  "This is a store's own label (a deli, produce or in-store code that only that shop can read), so there is nothing to look up. Name it and it files like a typed item.";
+
 export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
   // If the user hand-picked a catalog image, NO enrichment path may overwrite it —
   // it's their explicit choice and must survive a re-run/hint correction. The write
@@ -482,6 +487,29 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
         ai_confidence: "0",
         ai_notes:
           "Amazon fulfillment label (FNSKU) — it identifies a unit only inside Amazon's warehouse, so it can't be looked up. Name it manually, or scan the product's own UPC barcode.",
+        ai_suggested_at: new Date(),
+        updated_at: new Date(),
+      })
+      .where("id", "=", ctx.itemId)
+      .execute();
+    return;
+  }
+  if (codeClass.type === "store-code") {
+    // A shop's own label (GS1 restricted circulation, see isStoreCode). No
+    // provider is asked and neither cache is written: the number is meaningful
+    // only inside that shop, so any catalog hit would be a coincidence, and
+    // the shared cache would then serve that coincidence to every workspace.
+    // FINAL (ai_suggested_at) so it never sits in the retry loop. Naming it
+    // on the card re-routes it through the matchmaker like a typed item.
+    await ctx.db
+      .updateTable("core_scan_inbox_items")
+      .set({
+        ai_confidence: "0",
+        ai_notes: STORE_CODE_NOTE,
+        // The card reads code_type to say WHAT this is in the name slot, in
+        // place of "couldn't identify": the classification is the server's,
+        // and the web must not carry a second copy of the prefix table.
+        suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || '{"code_type":"store-code"}'::jsonb` as never,
         ai_suggested_at: new Date(),
         updated_at: new Date(),
       })
@@ -883,10 +911,20 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
   // AND a real product name to verify.
   const gateOnPhoto = hasScanPhoto && !!hit.title;
 
+  // A book. The ISBN is a decodable identifier, so its hit carries a semantic
+  // bag the way a VIN decode does: `decoded` is what the matchmaker's role-fill
+  // reads (a field declaring decode:author receives the author, the one
+  // declaring identifier:isbn receives the ISBN), and the same bag rides in
+  // `fields` for the commit. The name is the BOOK'S title: prefixing the
+  // publisher as a brand is how a scan read "Mariner Books The Hobbit: or,
+  // There and Back Again" over blank Author / Year / ISBN fields (2026-09-12).
+  const isbnFields = codeClass.type === "isbn" && hit.title ? await isbnFieldsForHit(codeClass.code, hit) : null;
+  const decodedTitle = typeof isbnFields?.title === "string" ? isbnFields.title : null;
+
   await ctx.db
     .updateTable("core_scan_inbox_items")
     .set({
-      suggested_name: withBrandPrefix(hit.title || null, hit.brand),
+      suggested_name: isbnFields ? decodedTitle || hit.title : withBrandPrefix(hit.title || null, hit.brand),
       suggested_manufacturer: hit.brand,
       suggested_sku: hit.model,
       catalog_image_url: catalogImageUrlOrNull(hit.image_url),
@@ -896,6 +934,16 @@ export async function enrichBarcodeItem(ctx: EnrichContext): Promise<void> {
         description: hit.description,
         raw: hit.raw,
         low_trust: lowTrust || undefined,
+        // `decoded` is the role-fill's bag (title included, for a field that
+        // declares decode:title); `fields` is the by-name bag the commit lands
+        // on the record's metadata, so the title stays out of it: the name
+        // already carries it.
+        ...(isbnFields
+          ? {
+              decoded: { decoder_id: hit.decoder_id ?? ISBN_DECODER_ID, fields: isbnFields },
+              fields: Object.fromEntries(Object.entries(isbnFields).filter(([k]) => k !== "title")),
+            }
+          : {}),
         // Multipack read off the title ("WD-40 2 Pack") — carried to the entity.
         ...(parsePackSize(hit.title) ? { pack_size: parsePackSize(hit.title) } : {}),
         // The pending-check bag: the values to restore when the photo confirms.

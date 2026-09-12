@@ -348,6 +348,9 @@ for (const mod of readdirSync(MODULES)) {
   if (!existsSync(man)) continue;
   const src = readFileSync(man, "utf8");
   for (const m of src.matchAll(/id:\s*["'`]([a-z0-9-]+:[a-z0-9-]+)["'`]([\s\S]{0,400}?)label:\s*["'`]([^"'`]+)["'`]/g)) {
+    // An action that exists only as the way back for another is no door the
+    // assistant can walk through, so it is not listed as one.
+    if (/internal:\s*true/.test(m[2]!)) continue;
     if (!actionLabels.has(m[1]!)) actionLabels.set(m[1]!, m[3]!);
     actionsByModule.set(mod, [...new Set([...(actionsByModule.get(mod) ?? []), m[1]!])]);
   }

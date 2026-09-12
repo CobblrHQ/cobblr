@@ -41,6 +41,7 @@ function coerceNumber(v: unknown): number | undefined {
 }
 
 export function registerTrackingActionHandlers(): void {
+  registerUndos();
   if (registered) return;
   registered = true;
 
@@ -92,5 +93,21 @@ export function registerTrackingActionHandlers(): void {
 
     const row = await logMeasurement({ db, orgId: ctx.orgId, metric, value, note: args.note ?? null });
     return { ok: true, metricId: metric.id, value, measurementId: row.id };
+  });
+}
+
+function registerUndos(): void {
+  platform().actions.registerHandler("tracking.remove-measurement", async (ctx) => {
+    const id = String((ctx.args as { measurement_id?: unknown } | null)?.measurement_id ?? "").trim();
+    if (!id) return { ok: false, error: "missing measurement_id" };
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<TrackingDB>;
+    const row = await db.deleteFrom("tracking_measurements").where("id", "=", id).returning(["id"]).executeTakeFirst();
+    if (!row) return { ok: true, skipped: true, reason: "already gone" };
+    return { ok: true, summary: "Removed the measurement.", removed: row.id };
+  });
+  platform().actions.registerUndo("tracking.log-measurement", (result) => {
+    const r = result as { ok?: unknown; skipped?: unknown; measurementId?: unknown } | null;
+    if (r?.ok !== true || r.skipped || typeof r.measurementId !== "string") return null;
+    return { action_id: "tracking:remove-measurement", args: { measurement_id: r.measurementId } };
   });
 }

@@ -6,6 +6,7 @@
 // shown and written is THIS BIN's row only — Cobblr multi-location keeps one
 // row per location, so another bin of the same part is a different row.
 import { useMemo, useState } from "react";
+import { useKindLabels } from "../lib/useKindLabels";
 import { useMutation } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { ExternalLink, Minus, PackagePlus, Plus } from "lucide-react";
@@ -32,6 +33,9 @@ export function BinAdjustModal({
   inline?: boolean;
 }) {
   const { activeSlug } = useActiveOrg();
+  // "the only book in this bin", by the collection's own noun; the match
+  // carries the module's ("part"), which is wrong for a book (2026-09-12).
+  const labels = useKindLabels(activeSlug);
   const toast = useToast();
   const navigate = useNavigate();
   const [qty, setQty] = useState(item.qty ?? 0);
@@ -111,7 +115,7 @@ export function BinAdjustModal({
             <div className="font-medium text-content dark:text-mortar-100 leading-snug">{item.title}</div>
             {item.subtitle && <div className="text-xs text-muted truncate">{item.subtitle}</div>}
             <div className="text-[11px] font-mono uppercase tracking-widest text-muted mt-0.5">
-              only {item.noun} in this bin
+              the only {labels.noun(item.kind)} in this bin
             </div>
           </div>
         </div>

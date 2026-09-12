@@ -20,6 +20,7 @@ function splitKind(kind: string): { source_module: string; source_type: string }
 }
 
 export function registerTagActionHandlers(): void {
+  registerUndos();
   if (registered) return;
   registered = true;
 
@@ -57,7 +58,7 @@ export function registerTagActionHandlers(): void {
       .where("source_type", "=", src.source_type)
       .where("source_id", "=", entity.id)
       .executeTakeFirst();
-    if (already) return { ok: true, tag_id: tagId, attachment_id: already.id, already_tagged: true };
+    if (already) return { ok: true, tag_id: tagId, attachment_id: already.id, already_tagged: true, tag_name: tagName };
 
     const row = await db
       .insertInto("core_tags_assignments")
@@ -76,7 +77,7 @@ export function registerTagActionHandlers(): void {
       source_type: src.source_type,
       source_id: entity.id,
     });
-    return { ok: true, tag_id: tagId, attachment_id: row.id };
+    return { ok: true, tag_id: tagId, attachment_id: row.id, tag_name: tagName };
   });
 
   platform().actions.registerHandler("core-tags.untag-record", async (ctx) => {
@@ -102,7 +103,7 @@ export function registerTagActionHandlers(): void {
       .where("source_id", "=", entity.id)
       .returning("id")
       .executeTakeFirst();
-    if (!row) return { ok: true, removed: false, reason: "not tagged with that" };
+    if (!row) return { ok: true, removed: false, reason: "not tagged with that" , tag_name: tagName };
     await platform().events.emit("core-tags.assignment.deleted", {
       orgId: ctx.orgId,
       tagId: tag.id,
@@ -110,7 +111,7 @@ export function registerTagActionHandlers(): void {
       source_type: src.source_type,
       source_id: entity.id,
     });
-    return { ok: true, removed: true };
+    return { ok: true, removed: true , tag_name: tagName };
   });
 
   // Merging two tags was reachable only by hand: the module had tag-record and
@@ -147,5 +148,20 @@ export function registerTagActionHandlers(): void {
         note: `"${source.name}" is gone; everything it was on now carries "${target.name}".`,
       },
     };
+  });
+}
+
+// Tagging is undone by untagging, and the other way round. A tag that was
+// already there, or one that was not, changed nothing and hands back nothing.
+function registerUndos(): void {
+  platform().actions.registerUndo("core-tags.tag-record", (result, ctx) => {
+    const r = result as { tag_name?: unknown; already_tagged?: unknown } | null;
+    if (!ctx.entity || typeof r?.tag_name !== "string" || r.already_tagged) return null;
+    return { action_id: "core-tags:untag-record", args: { tag_name: r.tag_name }, entity_kind: ctx.entity.kind, entity_id: ctx.entity.id };
+  });
+  platform().actions.registerUndo("core-tags.untag-record", (result, ctx) => {
+    const r = result as { tag_name?: unknown; removed?: unknown } | null;
+    if (!ctx.entity || typeof r?.tag_name !== "string" || !r.removed) return null;
+    return { action_id: "core-tags:tag-record", args: { tag_name: r.tag_name }, entity_kind: ctx.entity.kind, entity_id: ctx.entity.id };
   });
 }

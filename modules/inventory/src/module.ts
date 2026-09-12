@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "inventory",
-  version: "0.21.12",
+  version: "0.21.19",
   displayName: "Inventory",
   description:
     "Parts, locations, categories, stock tracking, polymorphic allocations. The generalised toolkit you'd otherwise Frankenstein from a spreadsheet.",
@@ -370,7 +370,7 @@ export default defineModule({
         undoable: true,
         label: "Adjust part stock",
         description:
-          "Add or subtract from a part's on-hand qty. Wire it to purchases.order_item.received for auto-bump-on-arrival, or fire it from any other event source. Args: { partId, delta, reason? }.",
+          "Add or subtract from a part's on-hand qty. Wire it to purchases.order_item.received for auto-bump-on-arrival, or fire it from any other event source. Args: { partId, delta, reason?, restock? }. With restock: true a positive delta is stock that arrived: a lot dated today, good until today plus the item's shelf life, and the record's bought-on date moves to today. Anything arriving on an empty record is dated the same way.",
         // Tightened from { any: true } to inventory:part-only — wire
         // can still hit it for any source via target traversal, but
         // the manual-button surface stays scoped.
@@ -386,6 +386,8 @@ export default defineModule({
         argsSchema: {
           partId: { label: "Part id", type: "text" },
           delta: { label: "Change in qty (+ adds, − subtracts)", type: "number" },
+          restock: { label: "This is stock that arrived: date it today (optional)", type: "boolean" },
+          timezone: { label: "Timezone to date arriving stock in (optional)", type: "text" },
           reason: { label: "Reason (optional)", type: "text" },
           sourceKind: { label: "Record kind this adjustment came from (optional)", type: "text" },
           sourceId: { label: "Record id this adjustment came from (optional)", type: "text" },
@@ -405,6 +407,57 @@ export default defineModule({
           partId: { label: "Part id", type: "text" },
           qty: { label: "On-hand qty (absolute)", type: "number" },
           reason: { label: "Reason (optional)", type: "text" },
+        },
+      },
+      // The three below are the way back for other actions, run by Undo on a
+      // card: never a button, never for an assistant to reach for. Declared so
+      // the undo rail can run them through the same door as everything else.
+      {
+        // NO-PHRASING: the way back for another action, run only from Undo
+        id: "inventory:restore-part",
+        internal: true,
+        label: "Put a part back",
+        description:
+          "Internal, the inverse of a stock move, a lifecycle mark or an item edit: puts a part's count, name, place and changed fields back to what they were. Runs from Undo on the card; not for direct use.",
+        icon: "undo",
+        scope: "workspace" as const,
+        userInvokable: false,
+        invokeHandler: "inventory.restore-part",
+        argsSchema: {
+          partId: { label: "The part", type: "text" },
+          qty: { label: "The count to put back", type: "number" },
+          name: { label: "The name to put back", type: "text" },
+          location_id: { label: "The place to put back", type: "text" },
+          metadata: { label: "Fields to put back", type: "json" },
+          absent: { label: "Fields to remove", type: "list" },
+        },
+      },
+      {
+        // NO-PHRASING: the way back for another action, run only from Undo
+        id: "inventory:remove-category",
+        internal: true,
+        label: "Remove a category",
+        description: "Internal, the inverse of adding a category: removes one nothing is filed under. Runs from Undo on the card; not for direct use.",
+        icon: "undo",
+        scope: "workspace" as const,
+        userInvokable: false,
+        invokeHandler: "inventory.remove-category",
+        argsSchema: {
+          category_id: { label: "The category's id", type: "text" },
+        },
+      },
+      {
+        // NO-PHRASING: the way back for another action, run only from Undo
+        id: "inventory:reopen-allocation",
+        internal: true,
+        label: "Reopen a reservation",
+        description: "Internal, the inverse of consuming or releasing a reservation: it is reserved again, and consumed stock comes back. Runs from Undo on the card; not for direct use.",
+        icon: "undo",
+        scope: "workspace" as const,
+        userInvokable: false,
+        invokeHandler: "inventory.reopen-allocation",
+        argsSchema: {
+          allocation_id: { label: "The reservation's id", type: "text" },
         },
       },
       {

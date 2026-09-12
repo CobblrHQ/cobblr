@@ -17,6 +17,7 @@ interface BuildOneArgs {
 }
 
 export function registerBuildsActionHandlers(): void {
+  registerUndos();
   if (registered) return;
   registered = true;
 
@@ -100,7 +101,7 @@ export function registerBuildsActionHandlers(): void {
       qtyBuilt: qty,
       viaWire: ctx.event?.trigger_type === "event",
     });
-    return { ok: true, runId: run.id, qtyBuilt: qty, consumed };
+    return { ok: true, runId: run.id, buildId, qtyBuilt: qty, consumed };
   });
 
   // The failure leg of build-one: a recorded build whose fabrication run then
@@ -189,6 +190,23 @@ export function registerBuildsActionHandlers(): void {
       qtyReversed: qty,
       viaWire: ctx.event?.trigger_type === "event",
     });
-    return { ok: true, runId: run.id, qtyReversed: qty, returned };
+    return { ok: true, runId: run.id, buildId, qtyReversed: qty, returned };
+  });
+}
+
+// A build is reversed, a reversal is built again: each is the other's inverse
+// on the same build and quantity, and each is a run of its own in the history.
+function registerUndos(): void {
+  const on = (ctx: { entity?: { kind: string; id: string } }, buildId: string) =>
+    ctx.entity?.kind === "builds:build" ? { entity_kind: "builds:build", entity_id: ctx.entity.id } : { entity_kind: "builds:build", entity_id: buildId };
+  platform().actions.registerUndo("builds.build-one", (result, ctx) => {
+    const r = result as { ok?: unknown; buildId?: unknown; qtyBuilt?: unknown } | null;
+    if (r?.ok !== true || typeof r.buildId !== "string" || typeof r.qtyBuilt !== "number") return null;
+    return { action_id: "builds:reverse-one", args: { build_id: r.buildId, qty: r.qtyBuilt }, ...on(ctx, r.buildId) };
+  });
+  platform().actions.registerUndo("builds.reverse-one", (result, ctx) => {
+    const r = result as { ok?: unknown; buildId?: unknown; qtyReversed?: unknown } | null;
+    if (r?.ok !== true || typeof r.buildId !== "string" || typeof r.qtyReversed !== "number") return null;
+    return { action_id: "builds:build-one", args: { build_id: r.buildId, qty: r.qtyReversed }, ...on(ctx, r.buildId) };
   });
 }

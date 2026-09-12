@@ -30,6 +30,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { FEATURED_BUNDLES } from "../web/src/lib/featured-bundles.js";
+import { twinScopeWires, type ManifestLike } from "./lib/bundle-wire-scopes.js";
 
 const LOCK = path.join(process.cwd(), "bundles", "bundle-versions.lock.json");
 const WRITE = process.argv.includes("--write");
@@ -62,6 +63,24 @@ function contentHash(manifest: Record<string, unknown>): string {
 
 type LockEntry = { version: string; hash: string };
 type Lock = Record<string, LockEntry>;
+
+// ── a wire at both scopes fires twice (scripts/lib/bundle-wire-scopes.ts) ──
+const twins: string[] = [];
+for (const fb of FEATURED_BUNDLES) {
+  const m = fb.manifest as unknown as ManifestLike;
+  for (const t of twinScopeWires(m)) twins.push(`${m.id}: ${t}`);
+}
+if (twins.length) {
+  console.error(
+    "[lint:bundle-content] ✗ a wire declared at both the top level and inside an instance fires twice:\n" +
+      twins.map((v) => "  - " + v).join("\n") +
+      "\n\n  The wire engine selects bindings by (org, event) and resolves both rows to the same\n" +
+      "  record, so one check-off restocked twice and filed two purchases (2026-09-12).\n" +
+      "  Keep the instance wire; remove the top-level twin. Then bump the bundle version and\n" +
+      "  re-run sync-bundles.ts + this script with --write.",
+  );
+  process.exit(1);
+}
 
 // ── current state from the source of truth ──
 const current: Lock = {};

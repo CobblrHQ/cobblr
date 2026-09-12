@@ -3,6 +3,7 @@
 // state, import + apply a bundle, uninstall cleanly.
 
 import { Router } from "express";
+import { bundleTableWords } from "@cobblr/platform-contract/bundle-words";
 import { trackProductEvent } from "../platform/product-events.js";
 import { parseWireFilter } from "../platform/wire-filter.js";
 import { z } from "zod";
@@ -343,6 +344,13 @@ export const BundleManifest = z.object({
    *  the update prompt. Display-only; stored in the manifest jsonb. */
   released_at: z.string().optional(),
   changelog: z.string().max(2000).optional(),
+  /** The bundle's own routing vocabulary: what its things are CALLED. Read by
+   *  the per-scan offer for a bundle not yet installed (lib/flagship-bundles.ts)
+   *  and, since 2026-09-12, unioned into each provided table's words at install
+   *  so the installed table knows what the offer knew. Larger cap than an
+   *  instance's list on purpose: this is the whole domain's vocabulary. Without
+   *  this key the parse dropped it and the install never saw it. */
+  scan_keywords: z.array(z.string().min(1).max(60)).max(400).optional(),
   /** Catalog tier — where this bundle is OFFERED (see lib/flagship-bundles.ts):
    *  `core` (default when absent) is suggested per-scan AND browsable in the
    *  marketplace; `extended` is browsable but NOT suggested per-scan (it only
@@ -1561,7 +1569,17 @@ export async function applyValidatedBundle(
         isDefault: false,
       });
     }
-    const instConfig: Record<string, unknown> = { item_noun: inst.item_noun ?? null, qty_unit: inst.qty_unit ?? null, parent: inst.parent ?? null, nav_group: inst.nav_group ?? null, scan_keywords: inst.scan_keywords ?? null, faces: inst.faces ?? null };
+    // The table's routing vocabulary is BOTH lists, deduped: the instance's own
+    // words and the manifest's. The offer for a not-yet-installed bundle has
+    // merged them since 2026-08-19 (flagshipBundleMenu: "a bundle's declared
+    // vocabulary should not vanish because it grew a table"), but the install
+    // wrote only the instance's, so an installed Groceries knew 40 words while
+    // the offer knew 150, and the dashboard's sample cola filed into plain
+    // Inventory in a sandbox whose Groceries declared "cola" one level up
+    // (2026-09-12). The instance's words come first so a table-specific term
+    // wins any first-match read.
+    const tableWords = bundleTableWords(inst.scan_keywords, m.scan_keywords);
+    const instConfig: Record<string, unknown> = { item_noun: inst.item_noun ?? null, qty_unit: inst.qty_unit ?? null, parent: inst.parent ?? null, nav_group: inst.nav_group ?? null, scan_keywords: tableWords.length ? tableWords : null, faces: inst.faces ?? null };
     // Creation-time stock signal: a bundle that declares a MEASURED unit (a
     // qty_unit that isn't blank or "each" — filament in kg, yarn in skeins)
     // carries stock character before any data exists, so latch it to stock at

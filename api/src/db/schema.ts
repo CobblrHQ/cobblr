@@ -699,6 +699,7 @@ export interface EntityActionsTable {
    *  button on entity-detail pages (they exist only to be fired by
    *  a wire on an event). */
   user_invokable: Generated<boolean>;
+  internal: Generated<boolean>;
   /** Machine-readable arg shape { name: { label, type } } from the action
    *  manifest; null = none. Drives the wire composer's per-arg fields. */
   args_schema: unknown | null;

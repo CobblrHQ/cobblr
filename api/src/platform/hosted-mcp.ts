@@ -21,6 +21,7 @@
 // credentials and never elevates.
 
 import { platform } from "@cobblr/platform-contract";
+import { actionRunsUnconfirmed } from "@cobblr/platform-contract/action-consent";
 import { WORKSPACE_TOOLS, jsonSchemaOf, mcpToolName, toolFromMcpName, type WorkspaceApi } from "@cobblr/workspace-tools";
 import { signMcpWriteGrant, verifySession } from "../auth/jwt.js";
 import { meta } from "../db/meta.js";
@@ -234,7 +235,8 @@ export function writeRefusal(_tool: string, mode: WriteMode): string | null {
  *  action is cautious until someone decides otherwise. */
 export function actionRefusal(action: { id: string; label?: string | null; undoable?: boolean } | null): string | null {
   if (!action) return null; // unknown id — let the invoke route give its own error
-  if (action.undoable) return null;
+  // The one rule both doors read; the in-app auto chat asks the same question.
+  if (actionRunsUnconfirmed(action)) return null;
   const name = action.label ? `"${action.label}"` : action.id;
   return `${name} cannot be undone from inside the workspace, so it needs a person to confirm it, and this connection has no way to show a confirmation. Run it from Cobblr, where the confirm step appears. Actions that CAN be undone run from here normally - list_actions marks each one.`;
 }

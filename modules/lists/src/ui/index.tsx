@@ -6,8 +6,8 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ContributedDetailPanels, Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
-import { ListChecks, Plus, Trash2, X, RotateCcw, Hand } from "lucide-react";
-import { ListsApi, type ListSummary, type ListItem, ListsApiError } from "./api.js";
+import { ListChecks, Plus, Trash2, X, RotateCcw, Hand, Minus } from "lucide-react";
+import { ListsApi, type ListSummary, type ListItem, ListsApiError, lineQuantity, restockAmount, willDatePhrase } from "./api.js";
 
 export const navItems = [{ label: "Lists", path: "/lists", icon: ListChecks }];
 
@@ -150,9 +150,18 @@ function ListDetailModal({ listId, api, orgSlug, onClose }: { listId: string; ap
     onError: (e) => toast.error(e instanceof ListsApiError ? e.message : String(e)),
   });
   const toggle = useMutation({
-    mutationFn: ({ id, checked }: { id: string; checked: boolean }) => api.toggleItem(id, checked),
+    mutationFn: ({ id, checked, quantity }: { id: string; checked: boolean; quantity?: number }) => api.toggleItem(id, checked, quantity),
     onSuccess: invalidate,
   });
+  // The amount a line will restock when checked, per line, corrected here
+  // before the check. Starts from the line's own quantity ("×3") when it has
+  // one, else the wire's amount. Only lines that restock have an entry.
+  const [amounts, setAmounts] = useState<Record<string, number>>({});
+  const amountFor = (it: ListItem): number | null => {
+    const wired = restockAmount(it.on_check);
+    if (wired == null) return null;
+    return amounts[it.id] ?? lineQuantity(it.qty) ?? wired;
+  };
   const remove = useMutation({ mutationFn: (id: string) => api.removeItem(id), onSuccess: invalidate });
   const claim = useMutation({
     mutationFn: ({ id, claimed }: { id: string; claimed: boolean }) => api.claimItem(id, claimed),
@@ -193,10 +202,10 @@ function ListDetailModal({ listId, api, orgSlug, onClose }: { listId: string; ap
               <input
                 type="checkbox"
                 checked={it.checked}
-                onChange={() => toggle.mutate({ id: it.id, checked: !it.checked })}
+                onChange={() => toggle.mutate({ id: it.id, checked: !it.checked, quantity: amountFor(it) ?? undefined })}
                 className="h-4 w-4 accent-cobble-600"
               />
-              <span className={`flex-1 ${it.checked ? "line-through text-faint" : ""}`}>
+              <span className={`flex-1 min-w-0 ${it.checked ? "line-through text-faint" : ""}`}>
                 {it.title}
                 {it.qty && <span className="text-xs text-muted ml-2">×{it.qty}</span>}
                 {it.metadata?.source_ref?.kind && (
@@ -213,6 +222,37 @@ function ListDetailModal({ listId, api, orgSlug, onClose }: { listId: string; ap
                     title={`${it.claimed_by_name} said they'd get this`}
                   >
                     <Hand size={10} /> {it.claimed_by_name}
+                  </span>
+                )}
+                {/* What checking it off will DO, said before it happens, with the
+                    amount correctable: the row used to restock silently, and by
+                    an amount nobody could see or change (2026-09-12). The amount
+                    comes from the wire the kernel says will fire; the person's
+                    correction rides the check as `quantity`. */}
+                {!it.checked && amountFor(it) != null && (
+                  <span className="mt-0.5 flex items-center gap-1 text-[11px] text-muted" title="Checking this off adds to the record it came from">
+                    <span className="inline-flex items-center rounded border border-line dark:border-slate-700">
+                      <button
+                        type="button"
+                        aria-label="One fewer"
+                        disabled={amountFor(it)! <= 1}
+                        onClick={() => setAmounts((a) => ({ ...a, [it.id]: Math.max(1, amountFor(it)! - 1) }))}
+                        className="px-1 py-0.5 hover:text-content disabled:opacity-40"
+                      >
+                        <Minus size={10} />
+                      </button>
+                      <span className="px-1 font-medium tabular-nums text-content dark:text-mortar-100">+{amountFor(it)}</span>
+                      <button
+                        type="button"
+                        aria-label="One more"
+                        onClick={() => setAmounts((a) => ({ ...a, [it.id]: amountFor(it)! + 1 }))}
+                        className="px-1 py-0.5 hover:text-content"
+                      >
+                        <Plus size={10} />
+                      </button>
+                    </span>
+                    to stock when checked
+                    {willDatePhrase(it.will_date) && <span className="text-faint">· {willDatePhrase(it.will_date)}</span>}
                   </span>
                 )}
               </span>

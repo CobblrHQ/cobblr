@@ -32,11 +32,17 @@ export function on(eventName: string, module: string, handler: EventHandler): vo
  *  subscribers registered via on() still run fire-and-forget on the
  *  next microtask tick (slow side-effects shouldn't block responses).
  *
- *  A caller that needs read-after-write consistency (e.g. a route
- *  that responds to the client, who then immediately re-reads) should
- *  `await emit(...)` so the response only goes out after the wires
- *  have applied. Non-awaiting callers still trigger the wires; they
- *  just don't wait for them. */
+ *  THE RULE: `await emit(...)` when anything after you depends on what
+ *  the wire does; `void emit(...)` is for notifications. "Depends"
+ *  includes a response the client will act on by re-reading (a route
+ *  that answers "restocked" and a page that refetches the stock), a
+ *  later step that assumes the move landed (a cancel that reverses a
+ *  commit), and a second emit whose wire touches the same ledger. A
+ *  wire that MOVES stock or a count is never a notification. emit never
+ *  rejects, so awaiting costs latency and nothing else; a `void` on one
+ *  of these let a build's reversal overtake its commit into the stock
+ *  floor and leave phantom output credit (#2826), and let a shopping
+ *  row answer before the restock it promised had landed. */
 export async function emit<T>(eventName: string, payload: T): Promise<void> {
   // 1. Fan out to direct subscribers — fire-and-forget on next tick.
   const list = subs.get(eventName);

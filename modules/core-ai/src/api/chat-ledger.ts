@@ -16,7 +16,10 @@
 //   delete → the SAME row returns, same id, so everything that pointed at it
 //            still does. Only where a kind has no restore seam does it fall
 //            back to recreating a copy, and then it says so.
-//   action → recorded, NOT undoable (arbitrary side effects: print, adjust…)
+//   action → recorded; undoable when the action handed back its inverse
+//            (the kernel's registerUndo), not otherwise (a print, a device
+//            command). Whether it ran without a confirm is a different
+//            question, answered from its declaration (actionRunsUnconfirmed).
 //
 // Each change has its own id — that id is what an undo names — and each one
 // carries the hash of what it produced, so "put this change back" can be
@@ -29,8 +32,12 @@ import type { Kysely } from "kysely";
 import { actionSaid } from "./action-summary.js";
 import { getTool, fetchKinds, resolveUpdatePath, resolveDeletePath, type WorkspaceApi } from "@cobblr/workspace-tools";
 import { imageId, platform, pluralise } from "@cobblr/platform-contract";
+import { isActionStep, type ActionUndoStep } from "@cobblr/platform-contract/action-undo";
 import type { CoreAiDB } from "../db.js";
 
+/** One write the chat asks the ledger to make. An action carries its id and
+ *  arguments; whether it may be applied without a confirm is decided from its
+ *  declaration by the caller (autoWriteMustHold), never here. */
 export interface WriteRequest {
   tool: "create" | "update" | "delete" | "action";
   entity_kind: string;
@@ -132,14 +139,30 @@ function labelOfImage(img: RecordImage | null, fallback: string): string {
 
 /** The steps that put an action back, as it handed them back with its result,
  *  in order. None means this run cannot be undone from here. */
-type UndoStep = { action_id: string; args: Record<string, unknown> };
+type UndoStep = ActionUndoStep;
 function undoSteps(v: unknown): UndoStep[] | null {
   const list = Array.isArray(v) ? v : v && typeof v === "object" ? [v] : [];
-  const steps = list.filter(
-    (u): u is UndoStep =>
-      !!u && typeof (u as UndoStep).action_id === "string" && !!(u as UndoStep).args && typeof (u as UndoStep).args === "object",
-  );
+  const steps = list.filter((u): u is UndoStep => {
+    if (!u || typeof u !== "object") return false;
+    const s = u as Record<string, unknown>;
+    if (typeof s.action_id === "string") return !!s.args && typeof s.args === "object";
+    return (s.tool === "delete" || s.tool === "update") && typeof s.entity_kind === "string" && typeof s.entity_id === "string";
+  });
   return steps.length ? steps : null;
+}
+
+/** The write a step is, in the ledger's own terms. */
+function stepWrite(step: UndoStep): WriteRequest {
+  if (isActionStep(step)) {
+    return {
+      tool: "action",
+      entity_kind: step.entity_kind ?? "",
+      ...(step.entity_id ? { entity_id: step.entity_id } : {}),
+      action_id: step.action_id,
+      args: step.args,
+    };
+  }
+  return { tool: step.tool, entity_kind: step.entity_kind, entity_id: step.entity_id, ...(step.fields ? { fields: step.fields } : {}) };
 }
 function undoHandedBack(data: unknown): UndoStep[] | null {
   return undoSteps((data as { undo?: unknown } | null)?.undo);
@@ -328,7 +351,11 @@ export async function performWrite(
     const destination = destinationOf((r.data as { result?: unknown } | undefined)?.result);
     return {
       ok: true,
-      message: actionSaid((r.data as { result?: unknown } | undefined)?.result),
+      // The card never promises more than the ledger can do: a run that handed
+      // back no way back says so beside what it did.
+      message: undo
+        ? actionSaid((r.data as { result?: unknown } | undefined)?.result)
+        : `${actionSaid((r.data as { result?: unknown } | undefined)?.result)} Cannot be undone from here.`,
       ...(touched.length ? { touched } : {}),
       ...(destination ? { destination } : {}),
       ledger_id: row?.id,
@@ -717,13 +744,7 @@ export async function undoWrite(
       const said: string[] = [];
       let last: WriteOutcome | null = null;
       for (const step of steps) {
-        last = await performWrite(
-          wsApi,
-          db,
-          userId,
-          { tool: "action", entity_kind: "", action_id: step.action_id, args: step.args },
-          { auto: false, orgId, undoOf: row.id },
-        );
+        last = await performWrite(wsApi, db, userId, stepWrite(step), { auto: false, orgId, undoOf: row.id });
         if (!last.ok) return { ok: false, message: `Could not put it back: ${last.message}` };
         said.push(last.message);
       }

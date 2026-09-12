@@ -46,6 +46,10 @@ export interface CorpusCase {
    *  resolve a pronoun with no referent, then scoring the honest answer as a
    *  miss. Only for sentences that genuinely depend on it. */
   on?: { label: string; summary?: string };
+  /** The turns before this one, when the sentence only means something after
+   *  them. "put it back" after a change the assistant made is the card's
+   *  Undo, and a bench that sent it alone was scoring "put what back?". */
+  before?: Array<{ role: "user" | "assistant"; content: string }>;
   /** Broad bucket, for coverage reporting. */
   cat: string;
   no_ai: NoAiExpect;
@@ -99,6 +103,23 @@ export const CHAT_CORPUS: CorpusCase[] = [
   ...ph("control", answer("undo"), "action:undo", [
     "undo", "undo that", "put it back", "revert what you just did",
   ]),
+  // After a change the assistant made and applied, "put it back" is the
+  // card's Undo. The model composed a fresh +1 stock write instead (measured
+  // on the rig, 2026-09-13): right count, wrong road, and a second ledger row
+  // where the card already had the way back. With AI off the control word
+  // resolves against the prior turn's ledger in code; with AI on the widget
+  // now does the same before any model is asked, and the prompt says so for
+  // the phrasings the control vocabulary misses.
+  {
+    say: "put it back",
+    cat: "control",
+    no_ai: answer("undo"),
+    ai: "answer",
+    before: [
+      { role: "user", content: "I just used one Basmati rice" },
+      { role: "assistant", content: "I've recorded that you used one Basmati rice." },
+    ],
+  },
   // ── questions about MY data (the everyday spellings) ─────────────────────
   // A count is arithmetic: the model's right move is count_records, never a
   // page it then counts by eye (that is how "how many Bambus" became "None").
@@ -295,8 +316,22 @@ export const CHAT_CORPUS: CorpusCase[] = [
   // moved them, once it proposed deleting them. The no-AI path takes this one
   // now (computed:move-into-list), and platform:move-records is what either
   // path runs.
+  // "There are other spice and baking items in inventory that I am also
+  // looking to move to their correct locations" (2026-09-12): one sentence
+  // per category is a workaround. Sorting a list into sections by what each
+  // record is filed under is worked out in code (computed:sort-into-lists),
+  // and runs the move and the promote-category actions.
+  ...ph("workshop", command, "action:platform:move-records|action:platform:promote-category", [
+    "sort the rest of inventory into the right sections",
+    "put everything in inventory where it belongs",
+    "move the rest of inventory into their own sections",
+    "file everything on this page into the correct lists",
+  ]),
   ...ph("workshop", command, "action:platform:move-records", [
     "move all the tea from this page into the Tea section",
+    "get all the other grocery/ spices out of inventory and into the dedicated sections",
+    "get the grocery and spices out of inventory and into their own sections",
+    "move the chamomile and earl grey into the Tea list",
     "move the tea into the Tea list",
     "move tea from this page into its own section",
     "get all the tea out of inventory and into the dedicated tea section",

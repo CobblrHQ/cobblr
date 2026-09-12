@@ -32,6 +32,7 @@ function when(v: unknown): Date | null {
 }
 
 export function registerMaintenanceHandlers(): void {
+  registerUndos();
   platform().actions.registerHandler("core-maintenance.log", async (ctx) => {
     const e = ctx.entity;
     if (!e) return { ok: false, error: "this runs on a record: say which thing was serviced" };
@@ -93,6 +94,11 @@ export function registerMaintenanceHandlers(): void {
       };
     }
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreMaintenanceDB>;
+    const before = await db
+      .selectFrom("core_maintenance_entries")
+      .select(["performed_at", "performed_by"])
+      .where("id", "=", id)
+      .executeTakeFirst();
     const row = await db
       .updateTable("core_maintenance_entries")
       .set({
@@ -103,6 +109,59 @@ export function registerMaintenanceHandlers(): void {
       .returningAll()
       .executeTakeFirst();
     if (!row) return { ok: false, error: `no maintenance entry with id ${id}` };
-    return { ok: true, result: { id: row.id, name: row.name, performed_at: row.performed_at } };
+    return {
+      ok: true,
+      result: { id: row.id, name: row.name, performed_at: row.performed_at },
+      was: { performed_at: before?.performed_at ?? null, performed_by: before?.performed_by ?? null },
+    };
   });
+}
+
+// A logged entry is removed again; a completed one is put back to scheduled,
+// with whatever it said before.
+function registerUndos(): void {
+  platform().actions.registerHandler("core-maintenance.remove-entry", async (ctx) => {
+    const id = String((ctx.args as { entry_id?: unknown } | null)?.entry_id ?? "").trim();
+    if (!id) return { ok: false, error: "missing entry_id" };
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreMaintenanceDB>;
+    const row = await db.deleteFrom("core_maintenance_entries").where("id", "=", id).returning(["id", "name"]).executeTakeFirst();
+    if (!row) return { ok: true, skipped: true, reason: "already gone" };
+    return { ok: true, summary: `Removed the ${row.name} entry.`, removed: row.id };
+  });
+  platform().actions.registerHandler("core-maintenance.reopen-entry", async (ctx) => {
+    const a = (ctx.args as { entry_id?: unknown; performed_at?: unknown; performed_by?: unknown } | null) ?? {};
+    const id = String(a.entry_id ?? "").trim();
+    if (!id) return { ok: false, error: "missing entry_id" };
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreMaintenanceDB>;
+    const before = await db.selectFrom("core_maintenance_entries").select(["performed_at", "performed_by"]).where("id", "=", id).executeTakeFirst();
+    const row = await db
+      .updateTable("core_maintenance_entries")
+      .set({
+        performed_at: typeof a.performed_at === "string" && a.performed_at ? new Date(a.performed_at) : null,
+        performed_by: typeof a.performed_by === "string" && a.performed_by ? a.performed_by : null,
+      } as never)
+      .where("id", "=", id)
+      .returning(["id", "name"])
+      .executeTakeFirst();
+    if (!row) return { ok: false, error: `no maintenance entry with id ${id}` };
+    return {
+      ok: true,
+      summary: `${row.name} is back to how it was.`,
+      result: { id: row.id },
+      was: { performed_at: before?.performed_at ?? null, performed_by: before?.performed_by ?? null },
+    };
+  });
+  platform().actions.registerUndo("core-maintenance.log", (result) => {
+    const r = (result as { ok?: unknown; result?: { id?: unknown } } | null);
+    if (r?.ok !== true || typeof r.result?.id !== "string") return null;
+    return { action_id: "core-maintenance:remove-entry", args: { entry_id: r.result.id } };
+  });
+  const reopen = (result: unknown) => {
+    const r = result as { ok?: unknown; result?: { id?: unknown }; was?: { performed_at?: unknown; performed_by?: unknown } } | null;
+    if (r?.ok !== true || typeof r.result?.id !== "string" || !r.was) return null;
+    const at = r.was.performed_at instanceof Date ? r.was.performed_at.toISOString() : typeof r.was.performed_at === "string" ? r.was.performed_at : null;
+    return { action_id: "core-maintenance:reopen-entry", args: { entry_id: r.result.id, performed_at: at, performed_by: r.was.performed_by ?? null } };
+  };
+  platform().actions.registerUndo("core-maintenance.complete", reopen);
+  platform().actions.registerUndo("core-maintenance.reopen-entry", reopen);
 }

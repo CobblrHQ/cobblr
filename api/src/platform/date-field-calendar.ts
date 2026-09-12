@@ -17,6 +17,7 @@ import { dateFieldDirection, dateEventTitle, type CalendarEvent, type DateFieldC
 import { meta } from "../db/meta.js";
 import { getTenantDb } from "../db/tenant.js";
 import * as calendar from "./calendar-registry.js";
+import { facesForKind } from "./faces.js";
 
 type Spec = DateFieldCalendarSpec;
 
@@ -29,6 +30,47 @@ interface DateRow {
   id: string;
   name: string;
   dt: string;
+  /** Present when the spec declares `onHand`. */
+  on_hand?: string | number | null;
+  instance?: string | null;
+}
+
+/** The kind a row lives under, from its instance column: the module's own
+ *  kind for the default instance, `<instance>:item` for a named one. */
+function kindOfRow(spec: Spec, instance: string | null | undefined): string {
+  if (!instance || instance === spec.entityModule) return spec.kind;
+  return `${instance}:item`;
+}
+
+/** Drop rows that have nothing left to date: in a collection with the stock
+ *  face and with nothing on hand. Faces are resolved once per kind per call. */
+async function withSomethingOnHand<T extends DateRow>(orgId: string, spec: Spec, rows: T[]): Promise<T[]> {
+  if (!spec.onHand) return rows;
+  const stockByKind = new Map<string, boolean>();
+  const out: T[] = [];
+  for (const r of rows) {
+    const kind = kindOfRow(spec, r.instance);
+    let stock = stockByKind.get(kind);
+    if (stock === undefined) {
+      try {
+        stock = (await facesForKind(orgId, kind)).faces.includes("stock");
+      } catch {
+        stock = false; // unreadable faces: keep the row rather than hide a date
+      }
+      stockByKind.set(kind, stock);
+    }
+    const onHand = r.on_hand == null ? null : Number(r.on_hand);
+    if (stock && onHand !== null && Number.isFinite(onHand) && onHand <= 0) continue;
+    out.push(r);
+  }
+  return out;
+}
+
+/** The extra columns a spec with `onHand` selects, else nothing. */
+function onHandColumns(spec: Spec) {
+  return spec.onHand
+    ? sql.raw(`, ${spec.onHand.column}::text as on_hand, ${spec.onHand.instanceColumn}::text as instance`)
+    : sql.raw("");
 }
 
 // Specs registered by owning modules (kind → spec), so the kernel can resolve a
@@ -59,7 +101,7 @@ export async function queryDateField(
     // spec.table is module-declared (never user input) → sql.raw is safe; the
     // field name + dates are bound as parameters.
     const compiled = sql<DateRow>`
-      select id::text as id, name, (metadata->>${field}) as dt
+      select id::text as id, name, (metadata->>${field}) as dt${onHandColumns(spec)}
       from ${sql.raw(spec.table)}
       where metadata->>${field} is not null
         and (metadata->>${field})::date >= ${fromISO}::date
@@ -67,7 +109,7 @@ export async function queryDateField(
       order by (metadata->>${field})::date asc
     `.compile(tdb);
     const { rows } = (await tdb.executeQuery(compiled)) as { rows: DateRow[] };
-    return rows.map((r) => ({ id: r.id, name: r.name, value: r.dt }));
+    return (await withSomethingOnHand(orgId, spec, rows)).map((r) => ({ id: r.id, name: r.name, value: r.dt }));
   } catch (err) {
     const msg = (err as Error).message;
     if (msg.includes("does not exist") || msg.includes("invalid input syntax")) return [];
@@ -127,13 +169,14 @@ export function registerDateFieldSource(spec: Spec): void {
           // Table name comes from the fixed SPECS list (never user input),
           // so sql.raw is safe; the field name is bound as a parameter.
           const compiled = sql<DateRow>`
-            select id::text as id, name, (metadata->>${d.name}) as dt
+            select id::text as id, name, (metadata->>${d.name}) as dt${onHandColumns(spec)}
             from ${sql.raw(spec.table)}
             where metadata->>${d.name} is not null
               and (metadata->>${d.name})::date >= ${from}::date
               and (metadata->>${d.name})::date <= ${to}::date
           `.compile(tdb);
-          const { rows } = (await tdb.executeQuery(compiled)) as { rows: DateRow[] };
+          const { rows: allRows } = (await tdb.executeQuery(compiled)) as { rows: DateRow[] };
+          const rows = await withSomethingOnHand(orgId, spec, allRows);
           for (const r of rows) {
             events.push({
               id: `${spec.entityModule}-date:${d.name}:${r.id}:${r.dt.slice(0, 10)}`,

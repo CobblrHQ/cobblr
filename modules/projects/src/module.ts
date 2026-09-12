@@ -11,7 +11,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "projects",
-  version: "0.3.2",
+  version: "0.3.4",
   displayName: "Projects",
   description:
     "Projects + tasks + dependencies. Tasks can wait on other tasks or on any module's entity, the platform brokers.",
@@ -157,6 +157,22 @@ export default defineModule({
         // Wire-only — fired by the stock-changed wire, not a button.
         // Clicking it manually on an arbitrary entity is meaningless.
         userInvokable: false,
+      },
+      {
+        // NO-PHRASING: the way back for another action, run only from Undo
+        id: "projects:reopen-task",
+        internal: true,
+        label: "Put a task back",
+        description: "Internal, the inverse of marking a task done: puts its status and completion back to what they were. Runs from Undo on the card; not for direct use.",
+        icon: "undo",
+        scope: "workspace" as const,
+        userInvokable: false,
+        invokeHandler: "projects.reopen-task",
+        argsSchema: {
+          task_id: { label: "The task's id", type: "text" },
+          status: { label: "The status to put back", type: "text" },
+          completed_at: { label: "When it said it was completed, or blank", type: "text" },
+        },
       },
       {
         // NO-PHRASING: acts on the task named by the event; asked without one there is no task to mark

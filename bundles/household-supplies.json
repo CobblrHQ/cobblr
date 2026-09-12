@@ -2,12 +2,12 @@
   "manifest": {
     "id": "cobblr.flagship.household-supplies",
     "catalog": "disabled",
-    "version": "0.3.2",
+    "version": "0.3.3",
     "name": "Household Supplies",
     "description": "Your household supplies as their own table, reorder level per supply auto-adds to a shopping list on low stock; check off → it restocks. Grouped by where they live.",
     "author": "Cobblr",
-    "released_at": "2026-07-15",
-    "changelog": "Named for the thing, not the trick it does: “Household Supplies auto-reorder” is now just “Household Supplies” (the auto-reorder is what it DOES, and the description already says so). Earlier: “Area” became a real Location, so a thing has one place, not two, and existing area values moved over automatically; before that, “Usual pack” became “Pack size”.",
+    "released_at": "2026-09-12",
+    "changelog": "Checking an item off the shopping list dates the fresh stock: bought today, good until today plus its shelf life, instead of inheriting the last lot's dates. Named for the thing, not the trick it does: “Household Supplies auto-reorder” is now just “Household Supplies” (the auto-reorder is what it DOES, and the description already says so). Earlier: “Area” became a real Location, so a thing has one place, not two, and existing area values moved over automatically; before that, “Usual pack” became “Pack size”.",
     "requires": [
       {
         "module": "inventory"
@@ -63,6 +63,7 @@
             "trigger_event": "lists.item.checked",
             "args": {
               "delta": 1,
+              "restock": true,
               "reason": "Restocked, checked off the shopping list"
             }
           }

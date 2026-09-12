@@ -3378,7 +3378,32 @@ export const api = {
   emptySandbox: () => request<{ deleted: number; failed: number }>("POST", "/try/empty", {}),
 
   keepSandbox: (email: string) =>
-    request<{ ok: boolean; expires_at: string; emailed: boolean }>("POST", "/try/keep", { email }),
+    request<{ ok: boolean; kind: "trial"; expires_at: string; emailed: boolean }>("POST", "/try/keep", { email }),
+
+  /** What kind of workspace this is, for the strip at the foot of the page.
+   *  `link_open` is true while a kept sandbox's owner has no real door yet
+   *  (no password chosen, emailed link unused): the strip then offers both. */
+  workspaceTrial: (slug: string) =>
+    request<{
+      kind: "sandbox" | "trial" | "none";
+      expires_at: string | null;
+      email: string | null;
+      link_open: boolean;
+    }>("GET", `/orgs/${slug}/trial`),
+
+  /** Send the kept workspace's sign-in link again. */
+  resendSandboxLink: () =>
+    request<{ ok: boolean; emailed: boolean; email: string }>("POST", "/try/resend-link", {}),
+
+  /** Choose a password for a kept sandbox. Revokes every other session and the
+   *  anonymous link; the response carries a fresh token for THIS tab. */
+  setSandboxPassword: async (password: string) => {
+    const res = await request<{ ok: boolean; token: string; email: string }>("POST", "/try/set-password", {
+      password,
+    });
+    if (res?.token) setToken(res.token);
+    return res;
+  },
 
   confirmScanItem: (
     slug: string,
@@ -3429,6 +3454,21 @@ export const api = {
   /** Revert a commit: send a resolved scan back to the pending inbox
    *  (deletes the CREATED entity through its module; never touches a
    *  pre-existing entity the scan merely attached to). */
+  /** File everything: a dry run returns the plan (three piles); `confirm`
+   *  with the item ids and plans the sheet SHOWED acts on exactly those. A
+   *  bulk write, deliberately not reachable by an agent (AI-REACH exempt on
+   *  the route); the sheet is its only door. */
+  autofileScan: (
+    slug: string,
+    body: {
+      confirm?: boolean;
+      batch_id?: string;
+      timezone?: string;
+      item_ids?: string[];
+      seen?: Array<{ item_id: string; action: "attach" | "create" | "skip"; to_id?: string | null }>;
+      location_id?: string | null;
+    },
+  ) => request<AutofileDryRun | AutofileResult>("POST", `/orgs/${slug}/modules/core-scan/inbox/autofile`, body),
   unconfirmScanItem: (slug: string, id: string) =>
     request<{ item: ScanInboxItem; entity_deleted: boolean; note: string | null }>(
       "POST",
@@ -3828,10 +3868,12 @@ export const api = {
   // AI-consuming UI can warn about the degraded no-AI experience up front.
   /** The dashboard "what needs me" feed (attention.ts) — derived from field
    *  semantics: low stock, overdue/upcoming dates, pending captures. */
-  getAttention: (slug: string) =>
-    request<{ items: Array<{ kind: "low_stock" | "overdue" | "upcoming" | "pending_scans"; label: string; count: number; sample: string[]; route: string; entries?: Array<{ id: string; title: string; action?: Record<string, string> }> }> }>(
+  getAttention: (slug: string, today?: string) =>
+    request<{ items: Array<{ kind: "low_stock" | "overdue" | "due_today" | "upcoming" | "pending_scans" | "photo_wanted"; label: string; count: number; sample: string[]; route: string; entries?: Array<{ id: string; title: string; action?: Record<string, string> }> }> }>(
       "GET",
-      `/orgs/${slug}/attention`,
+      // The client's calendar day, so "overdue" and "due today" are read the
+      // way the schedule beside the feed reads them, not by the server clock.
+      `/orgs/${slug}/attention${today ? `?today=${today}` : ""}`,
     ),
   getAiStatus: (slug: string) =>
     request<AiStatus>("GET", `/orgs/${slug}/ai-status`),
@@ -5474,6 +5516,38 @@ export interface OrganizeApplyResponse {
 }
 
 /** "Already tracked" — an existing entity matching a scan (by barcode or name). */
+/** One line of the File everything plan, as the route returns it. */
+export type AutofilePlanLine =
+  | { action: "attach"; itemId: string; name: string | null; to: { kind: string; id: string; title: string; instance?: string | null; matched_by?: string | null }; qty: number; why: string }
+  | { action: "create"; itemId: string; name: string | null; destination: string | null; installs?: string | null; qty: number; why: string }
+  | { action: "skip"; itemId: string; name: string | null; why: string };
+export interface AutofileSummary {
+  attached: number;
+  created: number;
+  skipped: number;
+  reasons: Record<string, number>;
+}
+export interface AutofileDryRun {
+  dry_run: true;
+  plans: AutofilePlanLine[];
+  total: number;
+  /** More rows wait beyond the page it planned; run again for the rest. */
+  more?: boolean;
+  summary: AutofileSummary;
+  message: string;
+}
+export interface AutofileResult {
+  dry_run: false;
+  summary: AutofileSummary;
+  message: string;
+  failures: Array<{ itemId: string; error: string }>;
+  changed: Array<{ itemId: string; name: string | null; was: string; now: string }>;
+  /** The items it acted on, for per-line undo. */
+  filed: string[];
+  /** Tables installed on the way, because a line needed one the workspace did not have. */
+  installed?: Array<{ bundle_external_id: string; label: string }>;
+}
+
 export interface TrackedMatch {
   kind: string;
   id: string;
@@ -5489,7 +5563,9 @@ export interface TrackedMatch {
    *  expiry-role field. Lets a re-purchase be recorded as waste instead of
    *  consumption without asking. */
   expired: boolean;
-  matched_by: "barcode" | "name" | "bin";
+  matched_by: "barcode" | "name" | "bin" | "identifier";
+  /** For an identifier match, the field's label ("ISBN"). */
+  matched_label?: string | null;
 }
 
 /** Capture-first: pending captures grouped by the flagship bundle they fit. */
@@ -6041,6 +6117,9 @@ export interface SuperAdminBarcodeCacheItem {
 export interface AiChatResponse {
   type: "reply" | "proposal" | "proposals" | "build-proposal" | "error";
   text?: string;
+  /** The plan the workspace worked out for this sentence without AI, as the
+   *  same Do-it card the offer strip shows. Present whatever the model said. */
+  command?: { id: string; template: string; operations: number; summary: string; message: string; lines?: string[]; note?: string };
   summary?: string;
   proposal?: AiChatProposal;
   /** type:"proposals" — several writes from one turn, each its own confirm. */
@@ -6637,6 +6716,9 @@ export interface ActivityEntry {
    *  updates/creates show a name instead of the bare entity_type. Null when the
    *  record is gone (deleted) or the kind isn't resolvable. */
   entity_title?: string | null;
+  /** The COLLECTION the record lives in (`bookshelf:item`), resolved from the
+   *  live record, so the feed can use its noun. Null when the record is gone. */
+  entity_kind?: string | null;
 }
 
 /** Shape of /me/activity rows — every workspace activity attributed

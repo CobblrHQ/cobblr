@@ -92,7 +92,7 @@ export async function seedSandbox(
   let contents: SeedOutcome["contents"];
   if (slug) {
     try {
-      const outcome = await seedSandboxRecords(slug, await signSession(userId), trimmed);
+      const outcome = await seedSandboxRecords(slug, await signSession(userId), trimmed, Date.now(), { orgId });
       contents = { created: outcome.created, failed: outcome.failed, images: outcome.images };
     } catch (err) {
       // Never fatal: an empty-but-working sandbox beats no sandbox.

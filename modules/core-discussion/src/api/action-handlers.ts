@@ -32,6 +32,7 @@ async function baseSplit(orgId: string, kind: string) {
 }
 
 export function registerDiscussionActionHandlers(): void {
+  registerUndos();
   if (registered) return;
   registered = true;
 
@@ -126,5 +127,13 @@ export function registerDiscussionActionHandlers(): void {
       });
     }
     return { ok: true, resolved };
+  });
+}
+
+function registerUndos(): void {
+  platform().actions.registerUndo("core-discussion.resolve-conversation", (result, ctx) => {
+    const r = result as { ok?: unknown; resolved?: unknown } | null;
+    if (!ctx.entity || r?.ok !== true || typeof r.resolved !== "boolean") return null;
+    return { action_id: "core-discussion:resolve-conversation", args: { resolved: !r.resolved }, entity_kind: ctx.entity.kind, entity_id: ctx.entity.id };
   });
 }

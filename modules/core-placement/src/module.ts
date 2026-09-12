@@ -20,7 +20,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-placement",
-  version: "0.2.3",
+  version: "0.2.4",
   displayName: "Placement",
   description:
     "The containment primitive: records which container each thing lives inside (a part in a machine, a component in a server, an item in a location). Exposed platform-wide via platform().placement; a Location is just one kind of container.",

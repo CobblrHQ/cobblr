@@ -22,18 +22,28 @@ import { env } from "../env.js";
 import { runExclusive } from "./exclusive.js";
 import { sandboxEnabled, sandboxTtlMs, sandboxCapacity, provisionSandboxWorkspace, handOverSandbox } from "./try-sandbox.js";
 import type { ProvisionDeps, SandboxResult, SandboxWorkspace } from "./try-sandbox.js";
+import { claimableSince } from "./try-sandbox-query.js";
 
 export function poolTarget(): number {
   return sandboxEnabled() ? env.TRY_SANDBOX_POOL : 0;
 }
 
-/** How many finished sandboxes are waiting for somebody. */
-export async function readyCount(): Promise<number> {
+/** How long a finished sandbox may wait unclaimed. Its kitchen is dated the
+ *  day it was built; past this it has drifted and the reaper replaces it. */
+export function poolMaxAgeMs(): number {
+  return env.TRY_SANDBOX_POOL_MAX_AGE_MINUTES * 60_000;
+}
+
+/** How many finished sandboxes are waiting for somebody, young enough to hand
+ *  over. A stale one is not ready; it is the reaper's, and counting it here
+ *  would stop the top-up from replacing it. */
+export async function readyCount(now: number = Date.now()): Promise<number> {
   const row = await meta
     .selectFrom("orgs")
     .select(({ fn }) => [fn.countAll<string>().as("n")])
     .where("sandbox", "=", true)
     .where("trial_expires_at", "is", null)
+    .where("created_at", ">=", claimableSince(new Date(now), poolMaxAgeMs()))
     .executeTakeFirst();
   return Number(row?.n ?? 0);
 }
@@ -45,12 +55,17 @@ export async function readyCount(): Promise<number> {
  *  workspace. A row another transaction is already taking is skipped instead of
  *  waited for, so a burst spreads across the pool rather than queueing on its
  *  first row. */
-export async function claimPooledSandbox(): Promise<SandboxWorkspace | null> {
+export async function claimPooledSandbox(now: number = Date.now()): Promise<SandboxWorkspace | null> {
+  // Oldest first, but never older than the cap: the seed dates its kitchen
+  // relative to the day the sandbox was built, and a visitor handed one that
+  // waited a week opens on a fridge that has drifted a week (six overdue
+  // groceries on a first screen, 2026-09-12). Older ones are the reaper's.
+  const since = claimableSince(new Date(now), poolMaxAgeMs());
   const claimed = await sql<{ id: string; slug: string }>`
     update orgs set trial_expires_at = now()
      where id = (
        select id from orgs
-        where sandbox = true and trial_expires_at is null
+        where sandbox = true and trial_expires_at is null and created_at >= ${since}
         order by created_at asc
         for update skip locked
         limit 1
@@ -72,7 +87,7 @@ export async function claimPooledSandbox(): Promise<SandboxWorkspace | null> {
 /** A ready sandbox if there is one, otherwise null and the caller builds. */
 export async function takeFromPool(now: number = Date.now()): Promise<SandboxResult | null> {
   if (poolTarget() <= 0) return null;
-  const ws = await claimPooledSandbox();
+  const ws = await claimPooledSandbox(now);
   if (!ws) return null;
   return handOverSandbox(ws, now);
 }

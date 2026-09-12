@@ -9,8 +9,8 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { platform } from "@cobblr/platform-contract";
-import { sessionUser, tenantContext, tenantDb } from "../db.js";
+import { platform, type DefinedField } from "@cobblr/platform-contract";
+import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireCapability } from "./util.js";
 
 export const importRouter = Router({ mergeParams: true });
@@ -43,6 +43,10 @@ interface ParsedRow {
   insured: boolean;
   archived: boolean;
   supplier_url: string | null;
+  /** The table's own fields (a bookshelf's author, a pantry's expiry), by
+   *  field name, typed by the field's definition. What the export writes
+   *  after the native columns, read back. */
+  metadata: Record<string, unknown>;
   // Verbatim from the CSV so the UI can show which row had a problem.
   row_number: number;
   warnings: string[];
@@ -174,19 +178,60 @@ function asNumber(v: string | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function parseCsv(text: string): ParseResult {
+/** A cell of the table's own field, typed by its definition. Numbers and
+ *  booleans come back as what the field stores; everything else stays text.
+ *  A blank cell is absent, not an empty string, so an import never writes ""
+ *  over a field the record simply did not have. */
+function ownValue(field: DefinedField, raw: string | undefined): unknown {
+  const v = raw?.trim();
+  if (!v) return undefined;
+  if (field.type === "number") {
+    const n = asNumber(v);
+    return n == null ? undefined : n;
+  }
+  if (field.type === "boolean") return asBool(v);
+  return v;
+}
+
+/** Which CSV column carries each of the table's own fields. The export writes
+ *  the field NAME as the header; a hand-made file may use the label instead,
+ *  so both match, case-insensitively. A native column never doubles as an own
+ *  field: those are claimed first. */
+function detectOwnFields(
+  rawHeaders: string[],
+  fields: DefinedField[],
+  claimed: Set<number>,
+): Array<{ field: DefinedField; idx: number }> {
+  const norm = rawHeaders.map((h) => h.toLowerCase().trim());
+  const out: Array<{ field: DefinedField; idx: number }> = [];
+  for (const field of fields) {
+    const wants = [field.name.toLowerCase(), field.display_label.toLowerCase()];
+    const idx = norm.findIndex((h, i) => !claimed.has(i) && wants.includes(h));
+    if (idx >= 0) {
+      out.push({ field, idx });
+      claimed.add(idx);
+    }
+  }
+  return out;
+}
+
+function parseCsv(text: string, ownFields: DefinedField[] = []): ParseResult {
   const lines = splitLines(text);
   if (lines.length === 0) {
     return { rows: [], errors: [{ row_number: 0, message: "Empty CSV" }], detected_headers: {} };
   }
   const headers = parseCsvLine(lines[0]!);
   const colIdx = detectHeaders(headers);
+  const ownCols = detectOwnFields(headers, ownFields, new Set(Object.values(colIdx)));
 
   const detected_headers: Record<string, string | null> = {};
   for (const field of Object.keys(HEADER_SYNONYMS)) {
     const idx = colIdx[field];
     detected_headers[field] = idx === undefined ? null : (headers[idx] ?? null);
   }
+  // The table's own fields show in the preview beside the native ones, so a
+  // person can see that "author" was recognised before committing.
+  for (const { field, idx } of ownCols) detected_headers[field.name] = headers[idx] ?? null;
 
   if (colIdx.name === undefined) {
     return {
@@ -237,6 +282,11 @@ function parseCsv(text: string): ParseResult {
       insured: asBool(get("insured")),
       archived: asBool(get("archived")),
       supplier_url: get("supplier_url")?.trim() || null,
+      metadata: Object.fromEntries(
+        ownCols
+          .map(({ field, idx }) => [field.name, ownValue(field, fields[idx])] as const)
+          .filter(([, v]) => v !== undefined),
+      ),
       row_number: i + 1,
       warnings,
     });
@@ -246,16 +296,23 @@ function parseCsv(text: string): ParseResult {
 
 // ────────────────────────── HTTP routes ──────────────────────────
 
-// AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
+// AI-REACH: exempt takes or produces a file (multipart or binary), which an action cannot carry
 importRouter.post(
-  "/parts/import",
+  "/import",
   asyncHandler(async (req, res) => {
     // Bulk import IS a create — gate it on the same capability as
     // POST /parts so a member can't bulk-insert past the permission.
     if (!(await requireCapability(req, res, "inventory:create-part"))) return;
     const parsed = ImportBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    const result = parseCsv(parsed.data.csv);
+    // The table this import lands in. A named collection (a Bookshelf) has
+    // its own fields under `<instance>:item` and its own rows under the
+    // instance column; both used to be ignored, so a bookshelf's file came
+    // back as bare parts in the base inventory.
+    const instance = instanceOf(req);
+    const kind = instance === "inventory" ? "inventory:part" : `${instance}:item`;
+    const ownFields = await platform().entities.fieldsFor(tenantContext(req).org.id, kind);
+    const result = parseCsv(parsed.data.csv, ownFields);
 
     if (parsed.data.dry_run || result.rows.length === 0) {
       res.json({
@@ -296,6 +353,7 @@ importRouter.post(
     // bulk-insert in chunks. A 40k import was 32s of row-by-row round
     // trips; chunked multi-row inserts bring it to a couple of seconds.
     const valueRows = result.rows.map((row) => ({
+      instance,
       name: row.name,
       qty: String(row.qty),
       unit: row.unit ?? "each",
@@ -319,6 +377,7 @@ importRouter.post(
       insured: row.insured,
       archived: row.archived,
       supplier_url: row.supplier_url,
+      metadata: row.metadata,
     }));
 
     const CHUNK = 500;

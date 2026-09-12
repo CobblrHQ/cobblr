@@ -2,7 +2,7 @@
 // entities via platform().entities.lookup()/list() without knowing our tables.
 
 import { type Kysely } from "kysely";
-import { platform, type ResolvedEntity } from "@cobblr/platform-contract";
+import { platform, textSearchWhere, type ResolvedEntity } from "@cobblr/platform-contract";
 import type { ListsDB } from "../db.js";
 
 let registered = false;
@@ -19,9 +19,11 @@ export function registerListResolvers(): void {
 
   platform().entities.registerListResolver("lists:list", async (orgId, query) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<ListsDB>;
-    const rows = await db
-      .selectFrom("lists_lists")
-      .selectAll()
+    let q = db.selectFrom("lists_lists").selectAll();
+    // Workspace search hands every resolver its words. Ignoring them here made
+    // every search return the first shopping lists, whatever was typed.
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["title", "description"] })!);
+    const rows = await q
       .limit(Math.min(query.limit ?? 50, 200))
       .offset(query.offset ?? 0)
       .orderBy("created_at", "desc")
@@ -40,6 +42,7 @@ export function registerListResolvers(): void {
     let q = db.selectFrom("lists_items").selectAll();
     const listId = query.filter?.list_id;
     if (typeof listId === "string") q = q.where("list_id", "=", listId);
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["title", "note"] })!);
     const rows = await q.limit(Math.min(query.limit ?? 100, 500)).offset(query.offset ?? 0).orderBy("created_at", "asc").execute();
     return { items: rows.map(itemToResolved) };
   });

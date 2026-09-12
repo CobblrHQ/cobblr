@@ -10,6 +10,8 @@
 //     with `choices` OR instance scan_keywords
 //     (choices ARE the heuristic's extraction vocabulary; a skin with no
 //      choices and no keywords is unreachable without AI)
+//   · a declared field named like an identifier (isbn, vin, serial) carries
+//     the identifier role, so the scan pipeline can see it
 //
 // Legacy field_defs-only bundles (no provides_instances) are exempt from the
 // instance checks but still need identity. Run: npx tsx scripts/lint-bundle-quality.ts
@@ -17,6 +19,9 @@ import fs from "node:fs";
 import path from "node:path";
 
 const dir = path.join(process.cwd(), "bundles");
+/** Field names that ARE identifiers by any reading. `serial` alone is included
+ *  because a bundle that declares its own serial field means the serial. */
+const IDENTIFIER_NAMED = /(^|_)(isbn|issn|vin|imei|serial|serial_number|serial_no|asset_tag)$/;
 const problems: string[] = [];
 let checked = 0;
 
@@ -48,6 +53,23 @@ for (const f of fs.readdirSync(dir).sort()) {
     const hasKeywords = Array.isArray(pi.scan_keywords) && (pi.scan_keywords as unknown[]).length > 0;
     if (fds.length > 0 && !hasChoices && !hasKeywords)
       where(`instance ${label}: no field choices AND no scan_keywords — heuristically unreachable without AI`);
+    // A field NAMED like an identifier must carry the identifier ROLE. The name
+    // is what a person reads; the role is what the scan pipeline reads: "you
+    // already have" and the duplicate finder match identifier-role fields, and
+    // the decoder fill lands the code on `identifier:<decoder>`. A bookshelf
+    // whose `isbn` field carried no role made a second, blank Hobbit from a
+    // scan of the ISBN of the one already on the shelf (2026-09-12). Declared
+    // fields only: a hidden native (`serial_number`) carries its role natively.
+    for (const d of fds) {
+      const name = String(d.name ?? "").toLowerCase();
+      if (!IDENTIFIER_NAMED.test(name)) continue;
+      const role = d.field_role === "identifier" || String(d.decode_role ?? "").startsWith("identifier:");
+      if (!role)
+        where(
+          `instance ${label}: field "${name}" is named like an identifier but declares no identifier role ` +
+            `(field_role: "identifier" and, for a decodable code, decode_role: "identifier:<decoder>")`,
+        );
+    }
   }
 }
 

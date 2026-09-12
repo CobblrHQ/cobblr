@@ -4,8 +4,8 @@
     "hash": "99306b2c985b5a8b39c842676b34057600d3e135c799bbe3c51dcd49235f9e63"
   },
   "cobblr.community.bookshelf": {
-    "version": "0.2.0",
-    "hash": "dd90519445c8d0013584fe176991c0a435cb42c48f4fe9a9c7183aa1b10dea24"
+    "version": "0.2.3",
+    "hash": "dcae849ec4b29f4a58f5323669626f82d19663f91b58f19b34bacb4138019030"
   },
   "cobblr.community.cnc-machines": {
     "version": "0.3.1",
@@ -28,8 +28,8 @@
     "hash": "cd02deedc8d0fce6c2c961d0f056280f7e9bd29129b6008fcde228bb699daaed"
   },
   "cobblr.community.lending-library": {
-    "version": "0.1.0",
-    "hash": "dddacf85289f403502d8c96491987ec9c9302b5870bd6052d1d9acc94363f373"
+    "version": "0.1.1",
+    "hash": "6228e7d311029743a98325c8a55d364067f561b6b64e013ba8fa955508d3c66b"
   },
   "cobblr.community.printer-parts": {
     "version": "0.2.0",
@@ -72,8 +72,8 @@
     "hash": "24ca0447bad1d722cdd18aceb900cc1593de21513e082185d69b05a952306852"
   },
   "cobblr.flagship.groceries": {
-    "version": "0.10.2",
-    "hash": "05f1dad79dc4f14b8cbeb3b57b7bed2d03714595a1f92b562c4697666eacece0"
+    "version": "0.10.7",
+    "hash": "26270606e9000088d8bbe383141937ae593f39357e3e9bf1543544ff128fac41"
   },
   "cobblr.flagship.grocery-spend": {
     "version": "0.1.2",
@@ -88,12 +88,12 @@
     "hash": "eb361e205786bbafdcda36bebb919beca80b1389231d681ea24e004b847f3d0a"
   },
   "cobblr.flagship.household-supplies": {
-    "version": "0.3.2",
-    "hash": "b7569bde3a4af283d9d1e373662be3aa1a98687bba0448cba079d68e371462ce"
+    "version": "0.3.3",
+    "hash": "7cdabefa0044b9b0b3d934fcd3de3e058a4832ef248ae22307eb75d8158ca874"
   },
   "cobblr.flagship.maker-workshop": {
-    "version": "0.1.1",
-    "hash": "54c6a3119ccae28a6d73a99897fcb34de00dcb18dc74aaa5e46b765d23e06660"
+    "version": "0.1.2",
+    "hash": "88629587d496a68237bf6fb8784252b9415b5a1622c91bcc4fa0e05174bf90d3"
   },
   "cobblr.flagship.medications": {
     "version": "0.3.1",
@@ -108,16 +108,16 @@
     "hash": "07624338cfbe4a034a7cd8aadc9e88b29635a3dd30d4866243e4dd4fbed92020"
   },
   "cobblr.flagship.spice-rack": {
-    "version": "0.2.1",
-    "hash": "ea8cb7453ba333d121c15f376d08f62277f83c87fbdba94fa6567522a8fb3670"
+    "version": "0.2.4",
+    "hash": "5bf36660165496e7b099baf20a1e9ae5c24ce0d8007fcd735369f95e6488462a"
   },
   "cobblr.flagship.subscriptions": {
     "version": "0.2.2",
     "hash": "c21efaf08112977c62408d2e330a7bca1f9715f73d6943351c317978492c58b2"
   },
   "cobblr.flagship.tea": {
-    "version": "0.2.1",
-    "hash": "1e15f17e6365b6f90a990299357d4c384a4046fd7a9a0bc7c9f526c206201fb2"
+    "version": "0.2.4",
+    "hash": "78c06b07b620fcf64bc3de90ed8463386a959200d02fa50f4f366ddc2fa428cd"
   },
   "cobblr.flagship.vehicles": {
     "version": "0.4.1",

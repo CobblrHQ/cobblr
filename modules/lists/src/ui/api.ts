@@ -31,6 +31,37 @@ export interface ListItem {
    *  inventory part that ran low). Drives the "from inventory" provenance badge
    *  and is what closes the buy→restock loop on check-off. */
   metadata?: { source_ref?: { kind?: string; id?: string } } | null;
+  /** What checking this line off will do: the wires that fire on its source
+   *  record, from the kernel. Absent on a line with no source, or once checked. */
+  on_check?: CheckEffect[];
+  /** What the restock will stamp on the record: bought today, good until a
+   *  date when the item declares a shelf life. Absent when checking off adds
+   *  to a stocked record without dating it. */
+  will_date?: { on: string; until: string | null } | null;
+}
+
+export interface CheckEffect {
+  binding_id: string;
+  action_id: string;
+  action_label: string | null;
+  source_kind: string;
+  args: Record<string, unknown> | null;
+}
+
+/** The amount a restock effect will add, when one is among the effects. */
+export function restockAmount(effects: CheckEffect[] | undefined): number | null {
+  for (const e of effects ?? []) {
+    const d = e.args?.delta;
+    if (/:adjust-stock$/.test(e.action_id) && typeof d === "number" && d > 0) return d;
+  }
+  return null;
+}
+
+/** A numeric line quantity ("3", "3 boxes"), or null when the line does not say. */
+export function lineQuantity(qty: string | null | undefined): number | null {
+  const m = /^\s*(\d+)/.exec(qty ?? "");
+  const n = m ? Number(m[1]) : NaN;
+  return Number.isInteger(n) && n > 0 ? n : null;
 }
 
 export interface ListDetail {
@@ -94,8 +125,8 @@ export class ListsApi {
   addItem(listId: string, body: { title: string; note?: string; qty?: string }) {
     return this.req<ListItem>("POST", "/items", { ...body, list_id: listId });
   }
-  toggleItem(id: string, checked: boolean) {
-    return this.req<ListItem>("PATCH", `/items/${id}`, { checked });
+  toggleItem(id: string, checked: boolean, quantity?: number) {
+    return this.req<ListItem>("PATCH", `/items/${id}`, { checked, ...(checked && quantity ? { quantity } : {}) });
   }
   claimItem(id: string, claimed: boolean) {
     return this.req<ListItem>("PATCH", `/items/${id}`, { claimed });
@@ -103,4 +134,14 @@ export class ListsApi {
   removeItem(id: string) {
     return this.req<void>("DELETE", `/items/${id}`);
   }
+}
+
+/** "dated today, good until 22 Sep" for the row, or null when nothing is dated. */
+export function willDatePhrase(w: { on: string; until: string | null } | null | undefined, today = new Date().toISOString().slice(0, 10)): string | null {
+  if (!w) return null;
+  const on = w.on === today ? "today" : w.on;
+  if (!w.until) return `dated ${on}`;
+  const d = new Date(`${w.until}T00:00:00Z`);
+  const until = Number.isNaN(d.getTime()) ? w.until : d.toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" });
+  return `dated ${on}, good until ${until}`;
 }

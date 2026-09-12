@@ -17,6 +17,7 @@ const str = (v: unknown): string =>
   typeof v === "string" && v.trim() ? v.trim() : "";
 
 export function registerDependencyHandlers(): void {
+  registerUndos();
   platform().actions.registerHandler("projects.blocked-by", async (ctx) => {
     const task = requireActionEntity(ctx);
     const args = (ctx.args ?? {}) as Record<string, unknown>;
@@ -72,9 +73,34 @@ export function registerDependencyHandlers(): void {
     const row = await db
       .deleteFrom("projects_task_dependencies")
       .where("id", "=", depId)
-      .returning(["id"])
+      .returningAll()
       .executeTakeFirst();
     if (!row) return { ok: false, error: `no dependency with id ${depId}` };
-    return { ok: true, result: { removed: row.id } };
+    const r = row as Record<string, unknown>;
+    return {
+      ok: true,
+      result: { removed: row.id },
+      // What it waited on, so the way back can record the same wait again.
+      was: { task_id: r.task_id, depends_on_task_id: r.depends_on_task_id ?? null, blocks_kind: r.blocks_kind ?? null, blocks_id: r.blocks_id ?? null },
+    };
+  });
+}
+
+function registerUndos(): void {
+  platform().actions.registerUndo("projects.blocked-by", (result, ctx) => {
+    const id = (result as { ok?: unknown; result?: { dependency_id?: unknown } } | null);
+    if (id?.ok !== true || typeof id.result?.dependency_id !== "string") return null;
+    return { action_id: "projects:unblock", args: { dependency_id: id.result.dependency_id }, ...(ctx.entity ? { entity_kind: ctx.entity.kind, entity_id: ctx.entity.id } : {}) };
+  });
+  platform().actions.registerUndo("projects.unblock", (result) => {
+    const w = (result as { ok?: unknown; was?: { task_id?: unknown; depends_on_task_id?: unknown; blocks_kind?: unknown; blocks_id?: unknown } } | null);
+    if (w?.ok !== true || typeof w.was?.task_id !== "string") return null;
+    const args = typeof w.was.depends_on_task_id === "string"
+      ? { depends_on_task_id: w.was.depends_on_task_id }
+      : typeof w.was.blocks_kind === "string" && typeof w.was.blocks_id === "string"
+        ? { blocks_kind: w.was.blocks_kind, blocks_id: w.was.blocks_id }
+        : null;
+    if (!args) return null;
+    return { action_id: "projects:blocked-by", args, entity_kind: "projects:task", entity_id: w.was.task_id };
   });
 }

@@ -25,6 +25,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { env } from "../env.js";
+import { resolveNamedLocations, resolveLocations } from "./try-sandbox-places.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -95,6 +96,11 @@ export async function seedSandboxRecords(
   sessionToken: string,
   name: string,
   now: number = Date.now(),
+  opts: {
+    /** The workspace, for resolving `$location` names through the location
+     *  writer. Without it, named places are left unresolved. */
+    orgId?: string;
+  } = {},
 ): Promise<RecordSeedOutcome> {
   const trimmed = (name ?? "").trim();
   if (!trimmed || !/^[a-z0-9][a-z0-9-]{0,40}$/.test(trimmed)) {
@@ -122,6 +128,20 @@ export async function seedSandboxRecords(
   let failed = 0;
   const withImages: Array<{ id: string; entity_kind: string; instance: string; image_url: string }> = [];
 
+  // Places first, so a record is filed where its storage says on the write
+  // that creates it. The kind is the platform's own "where" (the placement
+  // seam names it the same way), not a module this file learns about.
+  let locationIds = new Map<string, string>();
+  if (opts.orgId) {
+    try {
+      const { getEntityWriterFor } = await import("./entities.js");
+      const writer = await getEntityWriterFor(opts.orgId, "core-locations:location");
+      locationIds = await resolveNamedLocations(opts.orgId, requests, writer ?? null);
+    } catch (err) {
+      console.error("[try-sandbox] locations for the seed failed:", (err as Error).message);
+    }
+  }
+
   for (const r of requests) {
     // Instance names are workspace data, but they land in a URL, so they are
     // pinned to the same shape the platform allows rather than trusted.
@@ -133,7 +153,7 @@ export async function seedSandboxRecords(
       const res = await fetch(`${base()}/api/v1/orgs/${encodeURIComponent(slug)}/instances/${encodeURIComponent(r.instance)}/items`, {
         method: "POST",
         headers: auth,
-        body: JSON.stringify(resolveDates(r.body ?? {}, now)),
+        body: JSON.stringify(resolveLocations(resolveDates(r.body ?? {}, now), locationIds)),
       });
       if (!res.ok) {
         failed++;

@@ -49,7 +49,17 @@ export function AuthPage() {
   usePageTitle("Sign in");
   const { login, signup } = useAuth();
   const { badge: envBadge } = useDeployEnv();
-  const [mode, setMode] = useState<Mode>("login");
+  // `/?mode=signup` opens on the signup form. A link that says "Make an
+  // account instead" (the sandbox start page, when the captcha turns someone
+  // away) must land on the account form, not on a login form with a small
+  // toggle underneath it. Snapped back to login below if signup is off.
+  const [mode, setMode] = useState<Mode>(() => {
+    try {
+      return new URLSearchParams(window.location.search).get("mode") === "signup" ? "signup" : "login";
+    } catch {
+      return "login";
+    }
+  });
   // signup_enabled gates the "create account" toggle. Default true
   // so the toggle is shown in the brief window before /auth/config
   // resolves — if the server says signup is disabled, we both hide

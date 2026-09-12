@@ -18,6 +18,8 @@
 // 30s so navigating away + back doesn't refire everything.
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { activityKind } from "../lib/activityKind";
+import { useKindLabels } from "../lib/useKindLabels";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, CheckCircle2, ChevronDown, Compass, Download, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Pin, Sliders, Sparkles, X } from "lucide-react";
@@ -148,6 +150,15 @@ export function Dashboard() {
         userName={user?.display_name ?? user?.email ?? ""}
       />
 
+      {/* The first task, for a workspace the person has not made anything in
+          yet. Above the alerts and previews on purpose: on a pre-filled sandbox
+          it used to sit under "8 coming up in Groceries" and a week of expiry
+          rows about food the visitor never bought, so the one thing on the page
+          telling them what to do was the last thing they reached. It renders
+          nothing once the workspace is theirs (then the collapsed bar below the
+          data takes over). */}
+      <GettingStartedPanel slug={activeSlug} />
+
       {/* Owner action: a member offered to share their AI and it's waiting on
           approval (until then the workspace has no AI). Loud + inline-actionable
           so it isn't a dead-end. Renders nothing unless there's a pending offer. */}
@@ -190,8 +201,6 @@ export function Dashboard() {
       <QuickLinks slug={activeSlug} />
 
       <SetupCardsPanel slug={activeSlug} />
-
-      <GettingStartedPanel slug={activeSlug} />
 
       {/* The arrangeable body — at-a-glance tiles + pinned views + the scanner
           capture queue ("what to do" + waiting-to-file) + recent activity, all
@@ -466,9 +475,12 @@ function BundleSuggestionsCard({ slug, role }: { slug: string; role?: string }) 
 // "What needs me" — the dashboard's attention feed (redesign B2). Every row is
 // one tap to act; severity-ordered (overdue → low stock → captures → upcoming).
 function AttentionFeed({ slug }: { slug: string }) {
+  // The same day the schedule buckets on: local, keyed so the query refetches
+  // when the day turns rather than bucketing against yesterday.
+  const today = dayKey(new Date());
   const q = useQuery({
-    queryKey: ["attention", slug],
-    queryFn: () => api.getAttention(slug),
+    queryKey: ["attention", slug, today],
+    queryFn: () => api.getAttention(slug, today),
     enabled: !!slug,
     staleTime: 30_000,
     refetchInterval: 60_000,
@@ -480,12 +492,13 @@ function AttentionFeed({ slug }: { slug: string }) {
   if (items.length === 0) return null;
   const tone: Record<string, string> = {
     overdue: "border-red-300 dark:border-red-800 bg-red-50/70 dark:bg-red-950/20",
+    due_today: "border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/20",
     low_stock: "border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/20",
     pending_scans: "border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20",
     photo_wanted: "border-cobble-300 dark:border-cobble-700 bg-cobble-50/60 dark:bg-cobble-900/20",
     upcoming: "border-line dark:border-slate-700 bg-surface dark:bg-slate-900",
   };
-  const glyph: Record<string, string> = { overdue: "⏰", low_stock: "📉", pending_scans: "📷", photo_wanted: "📷", upcoming: "📅" };
+  const glyph: Record<string, string> = { overdue: "⏰", due_today: "📆", low_stock: "📉", pending_scans: "📷", photo_wanted: "📷", upcoming: "📅" };
   return (
     <section className="space-y-1.5">
       <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">// needs you</div>
@@ -649,6 +662,10 @@ function AttentionRow({ slug, item: it, tone, glyph }: { slug: string; item: Att
   });
   const entries = it.entries ?? [];
   const expandable = entries.length > 0;
+  // An overdue or upcoming entry names its record; the row opens it where the
+  // date can be acted on (Used up, Threw it out live on the record), rather
+  // than sending a person to find the row again in the full table.
+  const routeFor = useDetailRoute(slug);
   // Few items → their ACTIONS live on the closed row itself (the author: "I have to
   // open the overdue task to check it off"). Many items → expand first.
   const inlineActs = entries.length > 0 && entries.length <= 3 && entries.some((e) => e.action);
@@ -747,6 +764,15 @@ function AttentionRow({ slug, item: it, tone, glyph }: { slug: string; item: Att
                     className="shrink-0 rounded bg-cobble-600 hover:bg-cobble-700 text-white text-[11px] font-medium px-2 py-0.5 transition"
                   >
                     Photograph
+                  </Link>
+                )}
+                {e.action?.record && e.action?.kind && routeFor(e.action.kind, e.action.record) && (
+                  <Link
+                    to={routeFor(e.action.kind, e.action.record)!}
+                    title="Open this item"
+                    className="shrink-0 rounded border border-line dark:border-slate-600 text-content dark:text-mortar-100 text-[11px] font-medium px-2 py-0.5 hover:border-accent hover:text-accent transition"
+                  >
+                    Open
                   </Link>
                 )}
                 {e.action?.connection_id && e.action?.device_id && (
@@ -889,19 +915,22 @@ function GettingStartedPanel({
   // scan inbox) are useful for adding MORE, not just the first. Once the
   // workspace has content it renders collapsed (a slim bar that expands), so it
   // stays one click away without dominating an established dashboard.
-  const hasContent = contentProbe.hasContent;
+  // Placement follows what the PERSON has made, not what is in the tables: a
+  // sandbox arrives pre-filled, and that content is ours. See the probe.
+  const established = contentProbe.userMade;
   // The guided "What do you want to do?" panel PERSISTS - the guided add
   // (and the mini scan inbox) are useful for adding MORE, not just the
   // first thing. Established workspace: the panel is a growth affordance,
   // not the hero, so it renders collapsed BELOW the data (reported 2026-07-18);
-  // on a blank workspace the hero IS the dashboard and keeps the top slot.
+  // on a blank workspace, or one the person has not touched yet, the hero IS
+  // the dashboard and keeps the top slot, above the alerts and previews.
   // (The pre-panel "first-run wizard" and its skippedWizard localStorage
   // fossil are gone - nothing had set the flag since the onboarding-start
   // redesign, and the dead branch kept implying a wizard that no longer
   // exists: new-user-flow.md F4.)
   if (collapsedOnly)
-    return hasContent ? <WhatToDoPanel slug={slug} startCollapsed /> : null;
-  if (hasContent) return null;
+    return established ? <WhatToDoPanel slug={slug} startCollapsed /> : null;
+  if (established) return null;
   return <WhatToDoPanel slug={slug} startCollapsed={false} />;
 }
 
@@ -2026,6 +2055,7 @@ const ACTIVITY_NOISE = new Set(["org_module", "org", "user", "tenant"]);
 
 function RecentActivity({ slug, editing = false }: { slug: string; editing?: boolean }) {
   const { ready, hasContent } = useWorkspaceContentProbe(slug);
+  const labels = useKindLabels(slug);
   const q = useQuery({
     queryKey: ["dash-activity", slug],
     queryFn: () => api.orgActivity(slug, 50),
@@ -2056,9 +2086,9 @@ function RecentActivity({ slug, editing = false }: { slug: string; editing?: boo
             const first = g.items[0];
             if (!first) return null;
             return g.items.length === 1 ? (
-              <ActivityRow key={first.id} entry={first} />
+              <ActivityRow key={first.id} entry={first} labels={labels} />
             ) : (
-              <ActivityGroupRow key={first.id} group={g} />
+              <ActivityGroupRow key={first.id} group={g} labels={labels} />
             );
           })}
         </ul>
@@ -2091,7 +2121,9 @@ function groupActivity(items: ActivityEntry[]): ActivityGroup[] {
   return out;
 }
 
-function ActivityRow({ entry: e }: { entry: ActivityEntry }) {
+type KindLabels = ReturnType<typeof useKindLabels>;
+
+function ActivityRow({ entry: e, labels }: { entry: ActivityEntry; labels: KindLabels }) {
   return (
     <li className="px-3 py-2 flex items-baseline gap-1.5 text-sm">
       <span className="text-muted dark:text-slate-400 shrink-0">
@@ -2101,7 +2133,7 @@ function ActivityRow({ entry: e }: { entry: ActivityEntry }) {
         {humanAction(e.action)}
       </span>
       <span className="text-content dark:text-mortar-100 truncate min-w-0">
-        {activityTitle(e)}
+        {activityTitle(e, labels)}
       </span>
       <span className="flex-1" />
       <span className="font-mono text-[10px] text-faint shrink-0">
@@ -2117,7 +2149,7 @@ function ActivityRow({ entry: e }: { entry: ActivityEntry }) {
  *  three specific things. Each child row falls back to its entity_type
  *  + timestamp when its diff carries no title, so the burst is always
  *  inspectable even without per-item names. */
-function ActivityGroupRow({ group }: { group: ActivityGroup }) {
+function ActivityGroupRow({ group, labels }: { group: ActivityGroup; labels: KindLabels }) {
   // Guaranteed non-empty: ActivityGroup is only constructed inside
   // groupActivity which always pushes at least one item before the
   // group is recorded; and the caller only renders this for groups
@@ -2134,14 +2166,15 @@ function ActivityGroupRow({ group }: { group: ActivityGroup }) {
   // bare "N bindings —" with nothing after the dash (feedback 6c87c6e2).
   const ids = group.items.map(activityIdentity);
   const allSame = ids.every((t) => t === ids[0] && t !== "");
-  const noun = (first.entity_type ?? "item").split(":").pop()!.replace(/[_-]/g, " ");
+  // The collection's own noun ("3 books"), not the module's type ("3 parts"
+  // about a shelf of books, 2026-09-12).
+  const noun = labels.noun(activityKind(first));
   const distinct = [...new Set(ids.filter(Boolean))];
   const summary = allSame ? (
-    <>{activityTitle(first)}</>
+    <>{activityTitle(first, labels)}</>
   ) : (
     <>
-      <strong>{group.items.length}</strong> {noun}
-      {group.items.length === 1 ? "" : "s"}
+      <strong>{group.items.length}</strong> {group.items.length === 1 ? noun : pluralise(noun)}
       {distinct.length > 0 && (
         <span className="text-faint dark:text-slate-400"> — {distinct.slice(0, 2).join(", ")}{distinct.length > 2 ? ", …" : ""}</span>
       )}
@@ -2186,7 +2219,7 @@ function ActivityGroupRow({ group }: { group: ActivityGroup }) {
         </summary>
         <ul className="border-t border-line dark:border-slate-800 bg-mortar-25 dark:bg-slate-800/20 divide-y divide-line dark:divide-slate-800/40 pl-6 border-l-2 border-l-line dark:border-l-slate-700">
           {group.items.map((e) => (
-            <ActivityRow key={e.id} entry={e} />
+            <ActivityRow key={e.id} entry={e} labels={labels} />
           ))}
         </ul>
       </details>
@@ -2235,7 +2268,7 @@ function shortActionId(id: string): string {
  *  summary from their diff (e.g. "inventory.part.low_stock → notify") instead of
  *  the bare "binding" entity_type. Everything else uses its create-time title,
  *  falling back to the entity_type. */
-function activityTitle(e: ActivityEntry): React.ReactNode {
+function activityTitle(e: ActivityEntry, labels: KindLabels): React.ReactNode {
   const diff = (e.diff ?? {}) as Record<string, unknown>;
   if (AUTOMATION_ACTIONS.has(e.action)) {
     const event = pickString(diff, ["event"]);
@@ -2253,7 +2286,7 @@ function activityTitle(e: ActivityEntry): React.ReactNode {
   // Diff title (creates carry one) → server-resolved live-record title (updates)
   // → bare entity_type (deleted / unresolvable).
   const title = pickString(diff, ["name", "title", "label"]) ?? e.entity_title;
-  return title ?? <span className="font-mono text-xs text-faint">{e.entity_type}</span>;
+  return title ?? <span className="text-xs text-faint">{labels.noun(activityKind(e))}</span>;
 }
 
 /** A stable plain-text identity for burst summarization — the string form of
@@ -2281,8 +2314,10 @@ function humanAction(a: string): string {
     user_created: "joined",
     pairing_created: "linked",
     pairing_deleted: "unlinked",
-    wire_fired: "ran a wire",
-    wire_failed: "wire failed",
+    // "ran a wire" read as jargon to a new user (2026-09-12): the row is
+    // "<actor> <verb> <event -> action>", so the verb says what happened.
+    wire_fired: "ran an automation",
+    wire_failed: "automation failed",
   };
   if (map[a]) return map[a];
   // 'task_created' → 'created task' (the entity_type is already

@@ -14,7 +14,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "tracking",
-  version: "0.3.4",
+  version: "0.3.6",
   displayName: "Tracking",
   description:
     "Log a number over time toward a goal, and see the trend. Weight, runs, habits, budgets, mood, any measurement with a target. Ships a trend-chart view.",
@@ -84,6 +84,20 @@ export default defineModule({
     ],
     api: [],
     actions: [
+      {
+        // NO-PHRASING: the way back for another action, run only from Undo
+        id: "tracking:remove-measurement",
+        internal: true,
+        label: "Remove a measurement",
+        description: "Internal, the inverse of logging a measurement: removes it again. Runs from Undo on the card; not for direct use.",
+        icon: "undo",
+        scope: "workspace" as const,
+        userInvokable: false,
+        invokeHandler: "tracking.remove-measurement",
+        argsSchema: {
+          measurement_id: { label: "The measurement's id", type: "text" },
+        },
+      },
       {
         id: "tracking:log-measurement",
         examples: ["weighed in at 82", "record 15 for today"],

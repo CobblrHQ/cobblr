@@ -20,9 +20,13 @@ import { requireAuth } from "../auth/middleware.js";
 import { captchaEnabled, captchaSiteKey, verifyCaptcha } from "../platform/captcha.js";
 import { provisionOrgForUser } from "./auth.js";
 import { enableDefaultModulesForOrg } from "../modules/enable.js";
+import { hashPassword } from "../auth/password.js";
+import { signSession } from "../auth/jwt.js";
 import {
   keepSandbox,
+  keptSandboxForUser,
   provisionSandbox,
+  setKeptSandboxPassword,
   redeemSandboxToken,
   sandboxCapacity,
   sandboxEnabled,
@@ -34,6 +38,7 @@ import { issueSignInLink } from "../platform/sign-in-link.js";
 import { createSandboxExport, fetchSandboxExport } from "../platform/try-sandbox-export.js";
 import { takeYourWorkEmail } from "../platform/try-sandbox-export-copy.js";
 import { sendAuthEmail } from "../platform/hosted-seams.js";
+import { startHtml } from "./try-start-page.js";
 
 /** Not an error: a pooled sandbox was filled before it was handed over, so the
  *  seed step is skipped rather than run a second time and double everything. */
@@ -66,96 +71,8 @@ function goneHtml(reason: "expired" | "unknown" | "revoked"): string {
  a.ghost{background:transparent;color:#3D4451;margin-left:.5rem}
 </style></head><body><div class="card">
 <h1>Your hour is up.</h1><p>${line}</p>
-<a href="/api/v1/try">Start another</a><a class="ghost" href="/">Make an account</a>
+<a href="/api/v1/try">Start another</a><a class="ghost" href="/?mode=signup">Make an account</a>
 </div></body></html>`;
-}
-
-/** The page a stranger lands on when they open /try in a browser.
- *
- *  GET /try needs a captcha token, and until now the only thing that could
- *  produce one was the marketing site's button. That made the endpoint useless
- *  on its own: a human opening the link got a raw JSON 400, which reads as
- *  broken software rather than as a challenge. The link has to work by itself -
- *  it gets pasted into chats, typed off a slide, opened from a QR code.
- *
- *  So the api draws the widget itself and submits as soon as it solves. Managed
- *  Turnstile passes most visitors without a click, so the usual experience is
- *  this page flashing by.
- *
- *  No-JS is a real ending, not a dead end: the form posts nothing, so the page
- *  says what happened and offers the ordinary signup instead. */
-function startHtml(siteKey: string): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="robots" content="noindex" /><title>Cobblr - starting your sandbox</title>
-<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
-<style>
- body{margin:0;min-height:100vh;display:grid;place-items:center;background:#F6F2EA;color:#2b3038;
-      font:16px/1.55 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:24px}
- .card{max-width:30rem;text-align:center}
- h1{font-size:1.6rem;color:#3D4451;margin:0 0 .6rem}
- p{margin:0 0 1.2rem;color:#5d5647}
- .w{display:flex;justify-content:center;min-height:70px}
- .spin{width:34px;height:34px;margin:0 auto;border-radius:50%;
-       border:3px solid rgba(61,68,81,.18);border-top-color:#8B7355;
-       animation:sp .9s linear infinite}
- @keyframes sp{to{transform:rotate(360deg)}}
- .bar{height:6px;width:min(19rem,80vw);margin:1.1rem auto 0;border-radius:999px;
-      background:rgba(61,68,81,.12);overflow:hidden}
- .bar i{display:block;height:100%;width:0;border-radius:999px;background:#8B7355;
-        transition:width .6s ease}
- .step{margin-top:.8rem;color:#5d5647;min-height:1.4em;
-       transition:opacity .25s ease}
- @media (prefers-reduced-motion:reduce){.spin{animation:none;border-top-color:#8B7355}}
- a{display:inline-block;border:2px solid #3D4451;border-radius:10px;padding:.7rem 1.3rem;
-   background:transparent;color:#3D4451;font-weight:600;text-decoration:none;margin-top:1rem}
- noscript p{color:#8B3A3A}
-</style></head><body><div class="card">
-<h1>Setting up your sandbox</h1>
-<p id="lede">It lasts an hour, and you do not need an account.</p>
-<div class="w"><div class="cf-turnstile" data-sitekey="${siteKey}" data-callback="cobblrGo"></div></div>
-<div id="work" hidden>
-  <div class="spin"></div>
-  <div class="bar"><i id="fill"></i></div>
-  <p class="step" id="step">Creating your workspace</p>
-</div>
-<noscript><p>This needs JavaScript to check you are not a robot.</p>
-<a href="/">Make an account instead</a></noscript>
-</div>
-<script>
- // Between the challenge passing and the workspace appearing the server is
- // making a database, running migrations, installing two bundles and fetching
- // book covers. That is a real few seconds, and with the widget gone and
- // nothing in its place the page just sits there looking broken.
- //
- // These lines are the actual order of work, not decoration, and the bar is
- // deliberately asymptotic: it never reaches the end on a timer, because the
- // only thing that finishes it is the page arriving.
- var STEPS = [
-   [0,    'Creating your workspace',   12],
-   [900,  'Setting up your shelves',   34],
-   [2200, 'Adding a shelf of books',   58],
-   [3800, 'Stocking the kitchen',      76],
-   [5600, 'Almost there',              90]
- ];
- function cobblrGo(token){
-   var w = document.querySelector('.w');
-   if (w) w.hidden = true;
-   var lede = document.getElementById('lede');
-   if (lede) lede.textContent = 'This takes a few seconds. It lasts an hour once it is up.';
-   var work = document.getElementById('work');
-   if (work) work.hidden = false;
-   var step = document.getElementById('step'), fill = document.getElementById('fill');
-   STEPS.forEach(function(s){
-     setTimeout(function(){
-       if (step) step.textContent = s[1];
-       if (fill) fill.style.width = s[2] + '%';
-     }, s[0]);
-   });
-   window.location.replace('/api/v1/try/start?captcha=' + encodeURIComponent(token));
- }
-</script>
-</body></html>`;
 }
 
 // ── GET /try — draw the challenge (free), then hand off to /try/start ─────
@@ -199,7 +116,7 @@ tryRouter.get(
       // deploy runbook requires it before this goes on the homepage.
       if (captchaEnabled()) {
         const token = typeof req.query.captcha === "string" ? req.query.captcha : undefined;
-        if (!(await verifyCaptcha(token, req.ip))) {
+        if (!(await verifyCaptcha(token, req))) {
           res
             .status(400)
             .json({ error: { code: "captcha_failed", message: "Could not verify you are human." } });
@@ -350,10 +267,7 @@ tryRouter.post(
         const issued = await issueSignInLink({
           email: to,
           absBase,
-          subject: "Your Cobblr workspace is saved",
-          intro:
-            "Your sandbox is now a real workspace, with everything you put in it. " +
-            "This link signs you in:",
+          ...keepLinkCopy(),
           requestIp: req.ip ?? null,
           requestUa: req.get("user-agent") ?? null,
         });
@@ -374,7 +288,94 @@ tryRouter.post(
       );
       // `emailed` is not decoration: the UI must not tell someone to check an
       // inbox nothing was sent to.
-      res.json({ ok: true, expires_at: r.expiresAt.toISOString(), emailed: r.emailed });
+      res.json({ ok: true, kind: r.kind, expires_at: r.expiresAt.toISOString(), emailed: r.emailed });
+      return;
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ── after keeping: the strip's two buttons ────────────────────────────────
+//
+// Keeping binds an email and sends a sign-in link, and that used to be the
+// whole story: the person was still standing in the tab, with no password, and
+// the only door back in was an email that may or may not arrive. These two
+// routes are the strip's answer. Both are gated on keptSandboxForUser: they
+// exist for the person who just gave their address, and nobody else.
+
+/** Sends the sign-in link again, to the address keep bound. */
+function keepLinkCopy() {
+  return {
+    subject: "Your Cobblr workspace is saved",
+    intro:
+      "Your sandbox is now a real workspace, with everything you put in it. " +
+      "This link signs you in:",
+  };
+}
+
+// POST /try/resend-link
+// AI-REACH: sends a sign-in link to the account's own address. A credential
+// action the person takes on themselves from the strip; an agent has no
+// business asking for someone's way in.
+tryRouter.post(
+  "/try/resend-link",
+  requireAuth,
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      if (!sandboxEnabled()) {
+        res.status(404).json({ error: { code: "not_found", message: "Not found" } });
+        return;
+      }
+      const kept = await keptSandboxForUser(req.session!.id);
+      if (!kept) {
+        res.status(400).json({ error: { code: "not_kept", message: "Keep the workspace first." } });
+        return;
+      }
+      const issued = await issueSignInLink({
+        email: kept.email,
+        absBase: `${req.protocol}://${req.get("host") ?? ""}`,
+        ...keepLinkCopy(),
+        requestIp: req.ip ?? null,
+        requestUa: req.get("user-agent") ?? null,
+      });
+      console.log(`[try-sandbox] resent sign-in link for org ${kept.orgId}` + (issued.sent ? "" : " (NOT sent)"));
+      res.json({ ok: true, emailed: issued.sent, email: kept.email });
+      return;
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+const SetPasswordBody = z.object({ password: z.string().min(8).max(200) });
+
+// POST /try/set-password
+// AI-REACH: chooses the account's password. Self-only credential write, the
+// same class as /me/password; never reachable by an agent.
+tryRouter.post(
+  "/try/set-password",
+  requireAuth,
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      if (!sandboxEnabled()) {
+        res.status(404).json({ error: { code: "not_found", message: "Not found" } });
+        return;
+      }
+      const parsed = SetPasswordBody.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: { code: "invalid_body", message: "At least 8 characters." } });
+        return;
+      }
+      const kept = await keptSandboxForUser(req.session!.id);
+      if (!kept) {
+        res.status(400).json({ error: { code: "not_kept", message: "Keep the workspace first." } });
+        return;
+      }
+      await setKeptSandboxPassword(req.session!.id, await hashPassword(parsed.data.password));
+      const token = await signSession(req.session!.id);
+      console.log(`[try-sandbox] password set for org ${kept.orgId}; sandbox links closed`);
+      res.json({ ok: true, token, email: kept.email });
       return;
     } catch (err) {
       next(err);

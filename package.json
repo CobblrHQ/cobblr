@@ -230,6 +230,7 @@
     "lint:auth-rate-limits": "tsx scripts/lint-auth-rate-limits.ts",
     "e2e:scan-header": "node e2e/scan-header-margin.mjs",
     "e2e:live-sort": "node e2e/live-sort-mobile.mjs",
+    "e2e:try-captcha-recovery": "node --experimental-strip-types e2e/try-start-captcha-recovery.mjs",
     "e2e:scan-menu": "node e2e/scan-menu-fit.mjs",
     "e2e:scan-mobile": "node e2e/scan-mobile-intake.mjs",
     "e2e:scan-card": "node e2e/scan-card-photo-column.mjs",
@@ -243,6 +244,7 @@
     "lint:ci-pr-any-base": "tsx scripts/lint-ci-pr-any-base.ts",
     "lint:ci-lanes": "tsx scripts/lint-ci-lanes.ts",
     "lint:workflow-yaml": "tsx scripts/lint-workflow-yaml.ts",
+    "lint:latest-monotonic": "tsx scripts/lint-latest-monotonic.ts",
     "lint:oci-labels": "tsx scripts/lint-oci-labels.ts",
     "lint:instance-identity": "tsx scripts/lint-instance-identity.ts",
     "lint:env-documented": "tsx scripts/lint-env-documented.ts",
@@ -282,7 +284,9 @@
     "lint:doc-status-honest": "tsx scripts/lint-doc-status-honest.ts",
     "lint:empty-array-under-set-u": "tsx scripts/lint-empty-array-under-set-u.ts",
     "lint:cli-flush-before-exit": "tsx scripts/lint-cli-flush-before-exit.ts",
-    "lint:census-on-every-exit": "tsx scripts/lint-census-on-every-exit.ts"
+    "lint:census-on-every-exit": "tsx scripts/lint-census-on-every-exit.ts",
+    "lint:shipped-script-imports": "tsx scripts/lint-shipped-script-imports.ts",
+    "lint:fetch-retry": "tsx scripts/lint-fetch-retry.ts"
   },
   "devDependencies": {
     "jsdom": "^30.0.1",

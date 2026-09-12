@@ -29,6 +29,18 @@ import { checkEntitlement } from "../platform/hosted-seams.js";
 import { disableModuleForOrg, enableModuleForOrg } from "../modules/enable.js";
 import { recordClaim, USER_SOURCE } from "../platform/bundle-claims.js";
 import { lookup as lookupEntity } from "../platform/entities.js";
+
+/** The kind a resolved record is FILED under: `<instance>:item` for a record
+ *  in a named instance (read off its instance field, else its detail route,
+ *  the same seam the scan matcher's toMatch reads), the module kind
+ *  otherwise. */
+function collectionKindOf(r: { fields?: Record<string, unknown>; detailUrl?: string | null }, moduleKind: string): string {
+  const inst = r.fields?.instance;
+  const moduleName = moduleKind.split(":")[0];
+  if (typeof inst === "string" && inst && inst !== moduleName) return `${inst}:item`;
+  const m = /^\/instances\/([^/]+)\//.exec(r.detailUrl ?? "");
+  return m?.[1] ? `${m[1]}:item` : moduleKind;
+}
 import { getEntry as getModuleEntry } from "../modules/registry.js";
 
 export const orgsRouter = Router();
@@ -233,6 +245,56 @@ orgsRouter.delete("/:slug", requireAuth, withTenant, async (req, res, next) => {
     // Shared with the operator console's delete (platform/delete-org.ts).
     await hardDeleteOrg(req.tenant!.org.id);
     res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /orgs/:slug/trial — what kind of workspace this is, for the strip at the
+// foot of the page that says so. Three answers:
+//   sandbox  the no-account hour; expires_at is when it is deleted
+//   trial    an account trial; expires_at is when it ends, email is the way in
+//   none     a kept, paid or self-hosted workspace; nothing to say
+// The web used to work this out from a localStorage key the landing page wrote,
+// which meant a kept workspace had no state at all (the key was cleared and
+// nothing replaced it), and an ordinary trial never had one. Asking the server
+// makes every browser agree with the reaper.
+orgsRouter.get("/:slug/trial", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    const org = await meta
+      .selectFrom("orgs")
+      .select(["sandbox", "trial_expires_at"])
+      .where("id", "=", req.tenant!.org.id)
+      .executeTakeFirstOrThrow();
+    const user = await meta
+      .selectFrom("users")
+      .select("email")
+      .where("id", "=", req.session!.id)
+      .executeTakeFirstOrThrow();
+    const kind = org.sandbox ? "sandbox" : org.trial_expires_at ? "trial" : "none";
+    // A kept sandbox whose owner has not yet come in through a real door: the
+    // anonymous link (and the emailed one) are still the only ways back, so
+    // the strip offers Resend and Set a password. Once a password is chosen or
+    // the emailed link is used, the sandbox links are revoked and this is
+    // false, and an ordinary trial (signup with a password) never had one.
+    const open =
+      kind === "trial"
+        ? await meta
+            .selectFrom("try_sandbox_tokens")
+            .select("id")
+            .where("org_id", "=", req.tenant!.org.id)
+            .where("user_id", "=", req.session!.id)
+            .where("revoked_at", "is", null)
+            .where("expires_at", ">", new Date())
+            .executeTakeFirst()
+        : undefined;
+    res.json({
+      kind,
+      expires_at: kind === "none" ? null : org.trial_expires_at?.toISOString() ?? null,
+      // A sandbox user's address is a placeholder nobody can read mail at.
+      email: kind === "trial" ? user.email : null,
+      link_open: !!open,
+    });
   } catch (err) {
     next(err);
   }
@@ -726,21 +788,32 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
     // module-owned records whose diff carries no name (creates already do); a
     // deleted record won't resolve and the UI falls back to the entity_type.
     const titleByEntity = new Map<string, string>(); // `${entity_type}:${entity_id}` → title
-    const toResolve = new Map<string, { kind: string; entityId: string }>();
+    // The COLLECTION the record lives in, from the live record: a part filed
+    // in the bookshelf instance is a book, and the feed should say so. The
+    // log row carries only the module's type ("part"), which is how a burst
+    // of shelved books read "3 parts" (2026-09-12). Resolved for every
+    // module-owned entry, not only the untitled ones, because the collection
+    // is a property of the record, not of the diff.
+    const kindByEntity = new Map<string, string>();
+    const toResolve = new Map<string, { kind: string; entityId: string; needsTitle: boolean }>();
     for (const i of items) {
       if (!i.module_name || !i.entity_id) continue;
       const d = (i.diff ?? {}) as Record<string, unknown>;
-      if (typeof d.name === "string" || typeof d.title === "string" || typeof d.label === "string") continue;
+      const titled = typeof d.name === "string" || typeof d.title === "string" || typeof d.label === "string";
       toResolve.set(`${i.entity_type}:${i.entity_id}`, {
         kind: `${i.module_name}:${i.entity_type}`,
         entityId: i.entity_id,
+        needsTitle: !titled,
       });
     }
     await Promise.all(
       [...toResolve.entries()].map(async ([key, ref]) => {
         try {
           const r = await lookupEntity(req.tenant!.org.id, ref.kind, ref.entityId);
-          if (r?.title) titleByEntity.set(key, r.title);
+          if (!r) return;
+          if (ref.needsTitle && r.title) titleByEntity.set(key, r.title);
+          const k = collectionKindOf(r, ref.kind);
+          if (k) kindByEntity.set(key, k);
         } catch {
           /* deleted / unresolvable kind — UI falls back to the entity_type */
         }
@@ -751,6 +824,7 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
       items: items.map((i) => ({
         ...i,
         entity_title: titleByEntity.get(`${i.entity_type}:${i.entity_id}`) ?? null,
+        entity_kind: kindByEntity.get(`${i.entity_type}:${i.entity_id}`) ?? null,
         actor: i.user_id
           ? {
               id: i.user_id,

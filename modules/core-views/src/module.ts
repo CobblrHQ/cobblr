@@ -18,7 +18,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-views",
-  version: "0.2.3",
+  version: "0.2.6",
   displayName: "Views",
   description:
     "Saved filtered/sorted views per entity kind. List today; kanban, calendar, table land as renderers ship. Removes the need for every module to invent its own list page.",
@@ -64,6 +64,20 @@ export default defineModule({
     ],
     api: [],
     actions: [
+      {
+        // NO-PHRASING: the way back for another action, run only from Undo
+        id: "core-views:delete-view",
+        internal: true,
+        label: "Delete a saved view",
+        description: "Internal, the inverse of saving a view: deletes it again. Runs from Undo on the card; not for direct use.",
+        icon: "undo",
+        scope: "workspace" as const,
+        userInvokable: false,
+        invokeHandler: "core-views.delete-view",
+        argsSchema: {
+          view_id: { label: "The view's id", type: "text" },
+        },
+      },
       {
         // WORKSPACE-scoped: it configures the workspace, it does not run on a
         // record. Rides invoke_action, so it inherits the confirm gate, the

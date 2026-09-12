@@ -13,6 +13,7 @@ import type { ProjectsDB } from "../db.js";
 let registered = false;
 
 export function registerProjectsHandlers(): void {
+  registerUndos();
   if (registered) return;
   registered = true;
 
@@ -229,6 +230,7 @@ export function registerProjectsHandlers(): void {
       return { ok: true, completed: 0, reason: "no linked task" };
     }
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<ProjectsDB>;
+    const before = await db.selectFrom("projects_tasks").select(["status", "completed_at"]).where("id", "=", taskId).executeTakeFirst();
     // Idempotent — only flips a task that isn't already done, so a
     // re-fired wire never re-stamps completed_at.
     const updated = await db
@@ -240,7 +242,7 @@ export function registerProjectsHandlers(): void {
       .executeTakeFirst();
     if (!updated) return { ok: true, completed: 0, reason: "missing or already done" };
     platform().events.emit("projects.task.completed", { orgId: ctx.orgId, taskId: updated.id });
-    return { ok: true, completed: 1, taskId: updated.id };
+    return { ok: true, completed: 1, taskId: updated.id, was: { status: before?.status ?? "todo", completed_at: before?.completed_at ?? null } };
   });
 }
 
@@ -310,4 +312,34 @@ function toResolvedTask(row: {
       due_date: row.due_date,
     },
   };
+}
+
+function registerUndos(): void {
+  platform().actions.registerHandler("projects.reopen-task", async (ctx) => {
+    const a = (ctx.args as { task_id?: unknown; status?: unknown; completed_at?: unknown } | null) ?? {};
+    const id = String(a.task_id ?? "").trim();
+    if (!id) return { ok: false, error: "missing task_id" };
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<ProjectsDB>;
+    const before = await db.selectFrom("projects_tasks").select(["status", "completed_at"]).where("id", "=", id).executeTakeFirst();
+    const row = await db
+      .updateTable("projects_tasks")
+      .set({
+        status: typeof a.status === "string" && a.status ? a.status : "todo",
+        completed_at: typeof a.completed_at === "string" && a.completed_at ? new Date(a.completed_at) : null,
+        updated_at: new Date(),
+      } as never)
+      .where("id", "=", id)
+      .returning(["id", "title"])
+      .executeTakeFirst();
+    if (!row) return { ok: false, error: `no task with id ${id}` };
+    return { ok: true, summary: `${row.title} is back to how it was.`, taskId: row.id, was: { status: before?.status ?? "todo", completed_at: before?.completed_at ?? null } };
+  });
+  const back = (result: unknown) => {
+    const r = result as { ok?: unknown; taskId?: unknown; was?: { status?: unknown; completed_at?: unknown } } | null;
+    if (r?.ok !== true || typeof r.taskId !== "string" || !r.was) return null;
+    const at = r.was.completed_at instanceof Date ? r.was.completed_at.toISOString() : typeof r.was.completed_at === "string" ? r.was.completed_at : null;
+    return { action_id: "projects:reopen-task", args: { task_id: r.taskId, status: r.was.status ?? "todo", completed_at: at } };
+  };
+  platform().actions.registerUndo("projects.mark-task-done", back);
+  platform().actions.registerUndo("projects.reopen-task", back);
 }

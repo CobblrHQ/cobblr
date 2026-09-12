@@ -18,6 +18,7 @@ import type { CoreUnitsDB } from "../db.js";
 import { BUILTIN_UNITS } from "../units-catalog.js";
 
 export function registerUnitsHandlers(): void {
+  registerUndos();
   platform().actions.registerHandler("core-units.add-unit", async (ctx) => {
     const args = (ctx.args ?? {}) as Record<string, unknown>;
     // A model will happily send "Fathom" or "fathoms" for a code the route
@@ -37,6 +38,8 @@ export function registerUnitsHandlers(): void {
       return { ok: false, error: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") };
     }
     const builtin = BUILTIN_UNITS.find((u) => u.code === parsed.data.code);
+    const dbForBefore = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreUnitsDB>;
+    const existedBefore = !!(await dbForBefore.selectFrom("core_units_custom").select("code").where("code", "=", parsed.data.code).executeTakeFirst());
     if (builtin) {
       // Not a failure worth alarming anyone about — they asked for something
       // they already have, so say what they have.
@@ -70,7 +73,25 @@ export function registerUnitsHandlers(): void {
     return {
       ok: true,
       summary: `${row.name} (${row.symbol}) can now be used as a unit`,
-      data: { code: row.code, symbol: row.symbol, name: row.name, category: row.category },
+      data: { code: row.code, symbol: row.symbol, name: row.name, category: row.category, existed: existedBefore },
     };
+  });
+}
+
+function registerUndos(): void {
+  platform().actions.registerHandler("core-units.remove-unit", async (ctx) => {
+    const code = String((ctx.args as { code?: unknown } | null)?.code ?? "").trim().toLowerCase();
+    if (!code) return { ok: false, error: "missing code" };
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreUnitsDB>;
+    const row = await db.deleteFrom("core_units_custom").where("code", "=", code).returning(["code", "name"]).executeTakeFirst();
+    if (!row) return { ok: true, skipped: true, reason: "already gone" };
+    return { ok: true, summary: `${row.name} is no longer a unit here.`, removed: row.code };
+  });
+  // A unit that already existed was updated in place, which this cannot put
+  // back exactly, so it hands back nothing; one this run made is removed.
+  platform().actions.registerUndo("core-units.add-unit", (result) => {
+    const d = (result as { ok?: unknown; data?: { code?: unknown; existed?: unknown } } | null);
+    if (d?.ok !== true || typeof d.data?.code !== "string" || d.data.existed) return null;
+    return { action_id: "core-units:remove-unit", args: { code: d.data.code } };
   });
 }

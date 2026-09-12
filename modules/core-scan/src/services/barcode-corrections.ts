@@ -12,6 +12,7 @@
 // CobblrHQ/barcode-intelligence/docs/correction-feedback.md.
 
 import crypto from "node:crypto";
+import { isStoreCode } from "./barcode-lookup.js";
 
 const norm = (s: string | null | undefined): string =>
   (s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -88,6 +89,9 @@ export async function reportBarcodeCorrection(opts: {
   const target = correctionTarget();
   if (!target) return; // no resolver + no BIdb configured → nowhere to send
   if (!/^[0-9]{6,14}$/.test(opts.upc)) return;
+  // A shop's own label is meaningful only in that shop: a name somebody gives
+  // it is not a fact about a product, and must never reach the shared DB.
+  if (isStoreCode(opts.upc)) return;
   if (!(opts.now ?? "").trim()) return; // never POST a blank value
   // A confirm or a commit-signal both affirm the CURRENT value, so neither needs
   // it to have changed; a photo/triage correction must be a real change.

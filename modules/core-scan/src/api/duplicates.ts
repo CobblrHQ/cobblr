@@ -26,10 +26,13 @@
 import { Router } from "express";
 import { z } from "zod";
 import { platform, type ResolvedEntity } from "@cobblr/platform-contract";
+import { scanTargetOfRecord } from "../services/scan-target.js";
 import { bearer, tenantContext } from "../db.js";
 import { INTERNAL_API } from "./inbox.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { looksLikeSameThing, mergePlan } from "../services/merge-records.js";
+import { identifierFieldsByKind } from "../services/entity-match.js";
+import { identifierCanonical } from "../services/identifier-equals.js";
 
 export const duplicatesRouter = Router({ mergeParams: true });
 
@@ -49,9 +52,19 @@ interface DuplicatePair {
   a: { id: string; title: string; qty: number | null; location_id: string | null };
   b: { id: string; title: string; qty: number | null; location_id: string | null };
   /** Significant words the two share, so the reason is visible rather than
-   *  asserted ("Roma, Tomatoes"). */
+   *  asserted ("Roma, Tomatoes"). For an identifier pair, the label and the
+   *  value ("ISBN 9780547928227"). */
   shared: string[];
 }
+
+/** A named field's value, flat or under `metadata` (a bundle's custom fields
+ *  land there). */
+const fieldOf = (e: ResolvedEntity, name: string): unknown => {
+  const f = e.fields as Record<string, unknown>;
+  if (f[name] !== undefined) return f[name];
+  const md = f.metadata;
+  return md && typeof md === "object" ? (md as Record<string, unknown>)[name] : undefined;
+};
 
 const tokensOf = (s: string): string[] =>
   (s.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []).filter(Boolean);
@@ -94,15 +107,18 @@ duplicatesRouter.get(
         const kind = rec.id.includes(":") ? rec.id : `${rec.module_name}:${rec.id}`;
         // Merge needs a create endpoint and (for counting) a qty field, and
         // both come from the owning MODULE - an instance is a skin over it.
-        const scannable =
-          platform().entities.getScannable(kind) ??
-          platform().entities.getScannableForModule(rec.module_name);
+        const scannable = scanTargetOfRecord({ kind, module_name: rec.module_name });
         return scannable
           ? { kind, noun: scannable.noun, qtyField: scannable.qtyField as string | undefined }
           : null;
       })
       .filter((k): k is { kind: string; noun: string; qtyField: string | undefined } => k !== null);
     const pairs: DuplicatePair[] = [];
+    // Identifier-ROLE fields per kind (a book's ISBN). Two records carrying the
+    // same identifier are the same thing whatever their titles say: "The
+    // Hobbit" and "The Hobbit: or, There and Back Again" share one word, which
+    // the title rule rightly refuses, and the same ISBN, which settles it.
+    const identifierByKind = await identifierFieldsByKind(ctx.org.id);
 
     for (const k of kinds) {
       let items: ResolvedEntity[];
@@ -113,6 +129,32 @@ duplicatesRouter.get(
         // A kind whose resolver is unhappy must not take the whole sweep down.
         continue;
       }
+      const paired = new Set<string>();
+      for (const f of identifierByKind.get(k.kind) ?? []) {
+        const byValue = new Map<string, ResolvedEntity[]>();
+        for (const e of items) {
+          const v = identifierCanonical(fieldOf(e, f.name));
+          if (!v) continue;
+          byValue.set(v, [...(byValue.get(v) ?? []), e]);
+        }
+        for (const [value, same] of byValue) {
+          for (let i = 0; i + 1 < same.length; i++) {
+            const a = same[i]!;
+            const b = same[i + 1]!;
+            paired.add(`${a.id}|${b.id}`);
+            pairs.push({
+              kind: k.kind,
+              noun: k.noun,
+              a: { id: a.id, title: a.title, qty: qtyOf(a, k.qtyField), location_id: locOf(a) },
+              b: { id: b.id, title: b.title, qty: qtyOf(b, k.qtyField), location_id: locOf(b) },
+              shared: [`${f.label} ${value}`],
+            });
+            if (pairs.length >= MAX_PAIRS) break;
+          }
+          if (pairs.length >= MAX_PAIRS) break;
+        }
+      }
+      if (pairs.length >= MAX_PAIRS) break;
       // Only within one kind. Two records in different tables are not a
       // duplicate to merge - they are a routing question, and answering it here
       // would move somebody's record between tables without being asked.
@@ -126,6 +168,7 @@ duplicatesRouter.get(
           if (!b.title?.trim()) continue;
           // The scan matcher's own rule plus a second shared word, because this
           // list ends in a button that deletes one of the two.
+          if (paired.has(`${a.id}|${b.id}`) || paired.has(`${b.id}|${a.id}`)) continue;
           const { same, shared } = looksLikeSameThing(a.title, b.title);
           if (!same) continue;
           pairs.push({

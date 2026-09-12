@@ -82,7 +82,7 @@ export interface PromptOptions {
 export function consentLine(prefs?: { read_tools: boolean; write_mode: "off" | "ask" | "auto" }): string {
   if (!prefs) return "";
   if (prefs.write_mode === "auto") {
-    return `\n\nAUTO MODE: your record creates/updates/deletes apply IMMEDIATELY (every change is tracked and the user can undo it) — report what you did plainly. Actions still require the user's confirm.`;
+    return `\n\nAUTO MODE: your record creates and updates apply IMMEDIATELY, and so does an action whose list_actions entry says undoable: true (every change is tracked and the user can undo it) — report what you did plainly. A delete, and any other action, still goes to the user as a confirm card.`;
   }
   if (prefs.read_tools && prefs.write_mode !== "off") return "";
   const off =
@@ -197,7 +197,7 @@ Your name is Cobb. When the user asks who or what you are, introduce yourself as
 
 TWO THINGS YOU DO:
 1. Answer questions and help with whatever the user asks — including general knowledge, how-to, crafts, ideas, explanations. Answer directly and fully; do not deflect a real question by saying you "only manage records". If you happen to know what's in their workspace that's relevant, weave it in.
-2. Take actions in THIS workspace when the user wants to save, create, or change something — you PROPOSE the write and the user confirms before anything runs.
+2. Take actions in THIS workspace when the user wants to save, create, or change something — you PROPOSE the write and the user confirms before anything runs. One exception: "undo", "put it back", "revert that" about a change YOU made in this conversation is NOT a new change to compose. That change's card has an Undo; say so, and call no write tool.
 
 ${GROUNDING_RULES}
 

@@ -1,5 +1,6 @@
 // /scan — the inbox review queue, photo-inbox-grade.
 import { createPortal } from "react-dom";
+import { FileEverythingSheet } from "../components/FileEverythingSheet";
 //
 // Layout (the author's spec):
 //   · ONE narrow header row — title + count + the intake buttons
@@ -48,13 +49,13 @@ import { classifyFiles, classifyOmni, clipboardImages, omniPlaceholder } from ".
 import { catalogUndoHistory, catalogUndoLabel, catalogUndoTitle } from "./scanCatalogUndo";
 import { shouldPersistNameEdit } from "./scanNameEdit";
 import { ChipFields, type ChipFieldDef, type ChipFieldType } from "../components/ChipFields";
-import { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
+import { useAiStatus, AiOffNotice, aiStatusLine } from "../components/AiStatusNotice";
 export { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 import { decideLocationScan, filingLabel } from "../lib/scanFiling";
 import { measureDevice, photoPressAction } from "../lib/photoDevice";
 import { scanNotesPlacement } from "../lib/scanNotes";
 import { shouldOfferSplit } from "../lib/splitOffer";
-import { leadPhoto, photoOrder, photoUnverified } from "../lib/scanPhoto";
+import { leadPhoto, photoOrder, photoUnverified, catalogRungs } from "../lib/scanPhoto";
 import { findCombineClusters } from "../lib/scanCombine";
 import { entryKey, withRoutedInstances, pickDestinationKey } from "../lib/scanDestination";
 import {
@@ -483,17 +484,22 @@ function humanizeKey(k: string): string {
 
 /** The at-the-moment-of-pain variant: a nameless miss in the confirm flow. */
 export function AiOffMissHint({ status }: { status: AiStatus | null }) {
-  if (!status || status.available) return null;
+  const line = aiStatusLine(status, "identify");
+  if (!line) return null;
   return (
     <p className="text-xs text-amber-600 dark:text-amber-400">
       No catalog match - and no AI is set up to identify it, so name it
       yourself.{" "}
-      {status.reason !== "operator_disabled" && (
-        <Link to="/configuration/ai" className="underline">
-          Set up AI
-        </Link>
-      )}{" "}
-      {status.reason !== "operator_disabled" && "to have these filled automatically."}
+      {/* The link and its verb come from the one resolver, so this hint can
+          never offer a connect path the operator has switched off. */}
+      {line.cta && (
+        <>
+          <Link to={line.cta.to} className="underline">
+            {line.cta.label.replace(/\s*\u2192$/, "")}
+          </Link>{" "}
+          to have these filled automatically.
+        </>
+      )}
     </p>
   );
 }
@@ -694,6 +700,9 @@ export function ScanPage() {
   // "Same thing twice" - the pairs that already exist. Filing stops NEW ones;
   // nothing but a review removes the ones created before it could.
   const [showDuplicates, setShowDuplicates] = useState(false);
+  // File everything: the plan-first bulk filer (#2444). Scoped to one receipt
+  // session from its row, or the whole pending inbox from the header menu.
+  const [fileEverything, setFileEverything] = useState<{ batchId: string | null; defaultLocationId: string | null; scope: string } | null>(null);
   const glanceCfg = useQuery({
     queryKey: ["scan-glance-config", activeSlug],
     queryFn: () => api.getScanGlanceConfig(activeSlug),
@@ -3012,6 +3021,15 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                 />
               )}
               <MenuItem
+                icon={<Zap size={14} />}
+                label="File everything"
+                hint="a plan first: what gets added to things you have, what is filed as new, what is left for you"
+                onClick={() => {
+                  setFileEverything({ batchId: null, defaultLocationId: fileBin || null, scope: "the inbox" });
+                  close();
+                }}
+              />
+              <MenuItem
                 icon={<Copy size={14} />}
                 label="Same thing twice"
                 hint="records that look like one thing under two names, and a way to put them back together"
@@ -3278,6 +3296,16 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
         />
       )}
 
+      {fileEverything && (
+        <FileEverythingSheet
+          slug={activeSlug}
+          batchId={fileEverything.batchId}
+          defaultLocationId={fileEverything.defaultLocationId}
+          scope={fileEverything.scope}
+          onClose={() => setFileEverything(null)}
+          onFiled={() => void qc.invalidateQueries({ queryKey: ["scan-inbox", activeSlug] })}
+        />
+      )}
       {showDuplicates && (
         <DuplicateRecordsSheet
           slug={activeSlug}
@@ -4256,6 +4284,30 @@ className="ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark
                       )}
                     </button>
                   )}
+                  {/* The plan-first filer for this session: adds to what you
+                      have where one thing matches, files the rest as new, leaves
+                      the ambiguous. File all beside it still creates from each
+                      card's candidate; folding the two is a follow-up. Hidden
+                      while the AI is still deciding, like File all. */}
+                  {busy === 0 && pendingInSession > 0 && g.isBatch && g.batchId && (
+                    <button
+                      type="button"
+                      disabled={bulkBusy}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const first = g.items.find((it) => it.status === "pending");
+                        setFileEverything({
+                          batchId: g.batchId,
+                          defaultLocationId: first?.target_location_id ?? (fileBin || null),
+                          scope: g.sourceFileId ? "this receipt" : "this session",
+                        });
+                      }}
+                      title="Shows a plan first: what gets added to things you already have, what is filed as new, what is left for you. Nothing is written until you confirm."
+                      className="shrink-0 inline-flex items-center gap-1 rounded-md border border-cobble-300 dark:border-cobble-700 hover:border-accent disabled:opacity-50 px-2 py-1 text-[11px] font-medium text-accent"
+                    >
+                      <Zap size={11} /> File<span className="hidden sm:inline"> everything</span>
+                    </button>
+                  )}
                   {busy > 0 ? (
                     <span
                       className="shrink-0 inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-1.5 py-0.5 text-[10px] font-medium text-accent"
@@ -5143,6 +5195,8 @@ function InboxCard({
   // retry worker stamps ai_suggested_at when it gives up, which is what
   // needsName reads.
   const cantIdentify = needsName;
+  const storeCode =
+    (item.suggested_metadata as { code_type?: string } | null)?.code_type === "store-code";
   // The matchmaker THREW for this item: the backend stamps match_failed (+
   // matched_at, so the pulse stops) — but the row then read as SETTLED with a
   // name, zero candidates, and no error anywhere, while File-all silently
@@ -5465,18 +5519,11 @@ function InboxCard({
   const catalogFileUrl = item.catalog_image_file_id
     ? `/api/v1/orgs/${activeSlug}/modules/core-files/files/${item.catalog_image_file_id}/raw?variant=med`
     : null;
-  // The picture already chosen for the thing you HAVE comes first. A
-  // re-purchase off a receipt searched the web again and came home with a tin
-  // of cherry tomatoes, over a photo the owner had picked by hand for that very
-  // record (2026-09-06). The match is stamped server-side with the record's
-  // own image, and nothing found on the web outranks it.
-  const trackedImg =
-    ((item.suggested_metadata as { tracked_match?: { image_path?: string | null } | null } | null)
-      ?.tracked_match?.image_path ?? null) || null;
-  // An entity image_path is already what useImageSrc takes (BinAdjustModal
-  // hands it over as-is), internal or external.
+  // Where the tracked record's picture sits against this item's own catalog
+  // slot is scanPhoto.ts's call (catalogRungs): the record's picture beats a
+  // lookup's find, and a picture the person chose here beats both.
   const catalogUrl =
-    [trackedImg, catalogFileUrl, item.catalog_image_url ?? null].find(
+    catalogRungs(item, [catalogFileUrl, item.catalog_image_url ?? null]).find(
       (u): u is string => !!u && !brokenSrcs.has(u),
     ) ?? null;
   const pictureStatus = (item.suggested_metadata as { catalog_image_status?: string } | null)?.catalog_image_status;
@@ -5943,6 +5990,12 @@ function InboxCard({
               // workspace e2e, 2026-09-01). Naming it by hand still works.
               <span className="text-muted">
                 No AI to read this {idNoun} yet (<Link to={`/w/${activeSlug}/ai`} className="underline hover:text-content" onClick={(e) => e.stopPropagation()}>set it up</Link>) - or name it:
+              </span>
+            ) : cantIdentify && storeCode ? (
+              // A shop's own label (the server classified it): nothing to
+              // look up, so "couldn't identify" would be the wrong story.
+              <span className="text-muted" title="A deli, produce or in-store code that only that shop can read. Nothing was looked up.">
+                A store's own label - name it and it files like a typed item:
               </span>
             ) : cantIdentify ? (
               <span className="text-muted">Couldn’t identify this {idNoun}  - name it:</span>

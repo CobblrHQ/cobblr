@@ -18,7 +18,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-units",
-  version: "0.2.2",
+  version: "0.2.4",
   displayName: "Units",
   description:
     "Canonical unit vocabulary: built-in units (gram/g, meter/m, each/ea) plus your own, with a shorthand-vs-full-word display toggle. Powers the unit picker on quantity fields.",
@@ -41,6 +41,20 @@ export default defineModule({
     events: [],
     api: [],
     actions: [
+      {
+        // NO-PHRASING: the way back for another action, run only from Undo
+        id: "core-units:remove-unit",
+        internal: true,
+        label: "Remove a unit",
+        description: "Internal, the inverse of adding a unit this workspace made: removes it again. Runs from Undo on the card; not for direct use.",
+        icon: "undo",
+        scope: "workspace" as const,
+        userInvokable: false,
+        invokeHandler: "core-units.remove-unit",
+        argsSchema: {
+          code: { label: "The unit's code", type: "text" },
+        },
+      },
       {
         // WORKSPACE-scoped: it teaches the workspace a word, it does not run on
         // a record. This is what makes "we measure rope in fathoms" reachable

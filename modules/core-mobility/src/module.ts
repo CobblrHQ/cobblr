@@ -53,7 +53,7 @@ const fieldDefsFor = (kind: string) => [
 
 export default defineModule({
   name: "core-mobility",
-  version: "0.1.3",
+  version: "0.1.5",
   displayName: "Mobility",
   description:
     "Home vs current location with drift detection. Give a tool or bin a home, mark it mobile, and it shows 'away · 3d' when it wanders, with one-tap Return home. Fixtures opt out.",
@@ -103,6 +103,23 @@ export default defineModule({
         appliesTo: { kinds: MOBILITY_KINDS.map((k) => k.kind) },
         invokeHandler: "core-mobility.recompute-away",
         userInvokable: false,
+      },
+      {
+        // NO-PHRASING: the way back for another action, run only from Undo
+        id: "core-mobility:set-away-since",
+        internal: true,
+        label: "Set the away stamp",
+        description: "Internal, the inverse of returning a thing home or recomputing whether it is away: puts the away stamp back to what it was. Runs from Undo on the card; not for direct use.",
+        icon: "undo",
+        // DELIBERATELY universal: the inverse of return-home and recompute-away,
+        // which run on whatever mobile kind those ran on; never offered to a
+        // person, so it appears on no record's buttons.
+        appliesTo: { any: true },
+        userInvokable: false,
+        invokeHandler: "core-mobility.set-away-since",
+        argsSchema: {
+          away_since: { label: "The stamp to put back, or blank for none", type: "text" },
+        },
       },
       {
         id: "core-mobility:return-home",

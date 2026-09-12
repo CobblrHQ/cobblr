@@ -19,7 +19,7 @@ import { checkAvailability as checkAiAvailability } from "../platform/ai.js";
 import { hostedIdentifyEnabled } from "@cobblr/platform-contract/hosted-identify";
 import { AiCapabilities, type AiCapability } from "@cobblr/platform-contract";
 import { clearComputedDefsCache } from "../platform/computed-fields.js";
-import { effectiveAppliesTo, matchAction, getActionScope, planFor, undoFor } from "../platform/actions.js";
+import { effectiveAppliesTo, matchAction, getActionScope, planFor, undoFor, hasUndo } from "../platform/actions.js";
 import { facesForKind } from "../platform/faces.js";
 import { platformActionMinRole } from "../platform/platform-actions.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
@@ -601,7 +601,10 @@ platformOrgRouter.post(
       });
       // The way back, when the action knows one: stored by the caller's
       // ledger beside the write, so Undo on the card runs it.
-      const undo = await undoFor(parsed.data.actionId, result, { orgId: req.tenant!.org.id }).catch(() => null);
+      const undo = await undoFor(parsed.data.actionId, result, {
+        orgId: req.tenant!.org.id,
+        ...(parsed.data.entityKind && parsed.data.entityId ? { entity: { kind: parsed.data.entityKind, id: parsed.data.entityId } } : {}),
+      }).catch(() => null);
       res.json({ ok: true, result, ...(undo ? { undo } : {}) });
     } catch (err) {
       next(err);
@@ -1523,7 +1526,10 @@ platformOrgRouter.get(
         .orderBy("id")
         .execute();
       res.json({
-        items: actions.map((a) => {
+        // An action that exists only as the way back for another is not listed
+        // for anyone who did not ask: every reader the assistant has (the tool,
+        // the prompt rail, the argument schemas) comes through here.
+        items: actions.filter((a) => a.internal !== true || req.query.include_internal === "1").map((a) => {
           const ovr = overrides.get(a.id);
           const effective = (ovr?.applies_to_override ??
             a.applies_to) as ActionAppliesToDecl;
@@ -1566,6 +1572,12 @@ platformOrgRouter.get(
             // Whether a mistaken run can be put right here. A caller that
             // cannot show a confirmation reads this to know what it may run.
             undoable: a.undoable === true,
+            internal: a.internal === true,
+            // Whether a run of it can be put back from the card: the handler
+            // registered how. Distinct from `undoable`, which is whether an
+            // AI may run it unconfirmed; a guard holds the second to imply
+            // the first for every declared action.
+            has_inverse: !!a.invoke_handler && hasUndo(a.invoke_handler),
             examples: (a.examples as string[] | null) ?? [],
           };
         }),
@@ -1624,7 +1636,7 @@ platformOrgRouter.get(
           traits: kind.traits ?? null,
           profile: kind.profile ?? null,
         },
-        actions: actions.map((a) => {
+        actions: actions.filter((a) => a.internal !== true || req.query.include_internal === "1").map((a) => {
           const effective = (overrides.get(a.id) ??
             a.applies_to) as ActionAppliesToDecl;
           const scope = a.scope === "workspace" ? "workspace" : "entity";
@@ -1649,6 +1661,12 @@ platformOrgRouter.get(
             match_reason: reason,
             args_schema: a.args_schema ?? null,
             undoable: a.undoable === true,
+            internal: a.internal === true,
+            // Whether a run of it can be put back from the card: the handler
+            // registered how. Distinct from `undoable`, which is whether an
+            // AI may run it unconfirmed; a guard holds the second to imply
+            // the first for every declared action.
+            has_inverse: !!a.invoke_handler && hasUndo(a.invoke_handler),
             examples: (a.examples as string[] | null) ?? [],
           };
         }),

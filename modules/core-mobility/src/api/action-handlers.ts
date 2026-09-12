@@ -19,6 +19,7 @@
 // wholesale → read-modify-write.
 
 import { platform } from "@cobblr/platform-contract";
+import type { ActionUndoStep } from "@cobblr/platform-contract/action-undo";
 import { computeAwaySince } from "../compute-away.js";
 
 function coerce(raw: unknown): Record<string, unknown> {
@@ -49,6 +50,7 @@ async function entityMeta(
 let registered = false;
 
 export function registerActionHandlers(): void {
+  registerUndos();
   if (registered) return;
   registered = true;
 
@@ -83,11 +85,12 @@ export function registerActionHandlers(): void {
     const nextVal = next === null ? null : next.toISOString();
     if ((meta.away_since ?? null) === nextVal) return { ok: true, changed: false };
 
+    const wasAwaySince = (meta.away_since ?? null) as string | null;
     meta.away_since = nextVal;
     const writer = await platform().entities.getWriter(ctx.orgId, kind);
     if (!writer) return { ok: false, reason: "no_writer" };
     await writer.update(ctx.orgId, id, { metadata: meta });
-    return { ok: true, changed: true, away_since: nextVal };
+    return { ok: true, changed: true, away_since: nextVal, was_away_since: wasAwaySince };
   });
 
   // Return an item home: current location := home, stamp cleared.
@@ -102,6 +105,8 @@ export function registerActionHandlers(): void {
     if (meta.mobility !== "mobile") return { ok: false, reason: "not_mobile" };
     if (!home) return { ok: false, reason: "no_home" };
 
+    const wasAwaySince = (meta.away_since ?? null) as string | null;
+    const wasIn = await platform().placement.containerOf({ orgId: ctx.orgId, containee: { kind, id } }).catch(() => null);
     meta.away_since = null;
     const writer = await platform().entities.getWriter(ctx.orgId, kind);
     if (!writer) return { ok: false, reason: "no_writer" };
@@ -118,6 +123,52 @@ export function registerActionHandlers(): void {
     } catch {
       await writer.update(ctx.orgId, id, { location_id: home });
     }
-    return { ok: true, location_id: home };
+    return { ok: true, location_id: home, was_away_since: wasAwaySince, was_in: wasIn };
+  });
+}
+
+// The away stamp is put back as it was; a thing sent home goes back where it
+// was, or out of any place when it was in none.
+function registerUndos(): void {
+  platform().actions.registerHandler("core-mobility.set-away-since", async (ctx) => {
+    const kind = ctx.entity?.kind;
+    const id = ctx.entity?.id;
+    if (!kind || !id) return { ok: false, reason: "no_entity" };
+    const raw = (ctx.args as { away_since?: unknown } | null)?.away_since;
+    const value = typeof raw === "string" && raw ? raw : null;
+    const meta = await entityMeta(ctx.orgId, kind, id);
+    if (!meta) return { ok: false, reason: "not_found" };
+    const was = (meta.away_since ?? null) as string | null;
+    if (was === value) return { ok: true, changed: false };
+    meta.away_since = value;
+    const writer = await platform().entities.getWriter(ctx.orgId, kind);
+    if (!writer) return { ok: false, reason: "no_writer" };
+    await writer.update(ctx.orgId, id, { metadata: meta });
+    return { ok: true, changed: true, away_since: value, was_away_since: was, summary: value ? "Marked away again." : "Away stamp cleared." };
+  });
+  const stampBack = (result: unknown, ctx: { entity?: { kind: string; id: string } }): ActionUndoStep | null => {
+    const r = result as { changed?: unknown; was_away_since?: unknown } | null;
+    if (!ctx.entity || !r?.changed) return null;
+    return {
+      action_id: "core-mobility:set-away-since",
+      args: { away_since: typeof r.was_away_since === "string" ? r.was_away_since : null },
+      entity_kind: ctx.entity.kind,
+      entity_id: ctx.entity.id,
+    };
+  };
+  platform().actions.registerUndo("core-mobility.recompute-away", stampBack);
+  platform().actions.registerUndo("core-mobility.set-away-since", stampBack);
+  platform().actions.registerUndo("core-mobility.return-home", (result, ctx) => {
+    const r = result as { ok?: unknown; was_away_since?: unknown; was_in?: { kind?: unknown; id?: unknown } | null } | null;
+    if (!ctx.entity || r?.ok !== true) return null;
+    const on = { entity_kind: ctx.entity.kind, entity_id: ctx.entity.id };
+    const steps: ActionUndoStep[] = [];
+    if (r.was_in && typeof r.was_in.kind === "string" && typeof r.was_in.id === "string") {
+      steps.push({ action_id: "core-placement:place", args: { container_kind: r.was_in.kind, container_id: r.was_in.id }, ...on });
+    } else {
+      steps.push({ action_id: "core-placement:remove", args: {}, ...on });
+    }
+    steps.push({ action_id: "core-mobility:set-away-since", args: { away_since: typeof r.was_away_since === "string" ? r.was_away_since : null }, ...on });
+    return steps;
   });
 }

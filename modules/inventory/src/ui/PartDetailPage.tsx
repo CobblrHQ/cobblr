@@ -488,9 +488,13 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           </div>
         </div>
         {/* Actions on their own full-width row so a long button row never
-            crushes the title (the bar wraps internally). */}
+            crushes the title (the bar wraps internally). The record's OWN kind,
+            not the module's: a Bookshelf's verbs are decided by the shelf's
+            faces (server-side, listApplicable), and asking for inventory:part
+            here handed every book the base table's Use one, Used up and
+            Restock whatever the shelf declared (the 2026-09-12 review). */}
         <EntityActionsBar
-          entityKind="inventory:part"
+          entityKind={entityKind}
           entityId={p.id}
           excludeActionIds={excludeActionIds}
           headerChips
@@ -974,7 +978,11 @@ function InlineText({
   numeric?: boolean;
   className?: string;
 }) {
-  const initial = value == null ? "" : String(value);
+  // A numeric column reaches the page as Postgres wrote it, "1.000" for a
+  // reorder point of 1, and String() kept the zeros (the 2026-09-12 review saw
+  // a threshold of 1.000 on a phone). A number shows as the number.
+  const initial =
+    value == null ? "" : numeric && Number.isFinite(Number(value)) ? String(parseFloat(Number(value).toFixed(3))) : String(value);
   const [draft, setDraft] = useState(initial);
   function commit(e: FocusEvent<HTMLInputElement>) {
     if (e.target.value !== initial) onCommit(e.target.value);

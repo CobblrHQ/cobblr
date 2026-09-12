@@ -1,3 +1,7 @@
+// VOCAB-ENUMERATION OK: each role named here has its own consequence for a
+// match, and that is the point of a role: expiry decides "expired", pack the
+// count, identifier a match tier as exact as a barcode. A new role changes
+// nothing here until it means something to matching.
 // "Already tracked" — find entities the workspace ALREADY has that match a
 // scan, by exact barcode or by name-token overlap. The heads-up banner +
 // the lookup half of attach-to-existing (see scan-parity-final-mile.md).
@@ -16,8 +20,10 @@
 // EZ-Reach" matches "WD-40 EZ-Reach Lubricant" but not "WD External Drive".
 
 import type { Kysely } from "kysely";
-import { platform, type ResolvedEntity } from "@cobblr/platform-contract";
+import { identifierFieldNames, platform, type ResolvedEntity } from "@cobblr/platform-contract";
+import { scanTargetOfRecord } from "./scan-target.js";
 import { isJunkName } from "./enrich.js";
+import { identifierEquals, identifierForms } from "./identifier-equals.js";
 
 export interface TrackedMatch {
   kind: string;
@@ -41,7 +47,13 @@ export interface TrackedMatch {
    *  of something that had already gone off would otherwise be recorded as
    *  consumption, raising the learned rate for food that got binned. */
   expired: boolean;
-  matched_by: "barcode" | "name" | "bin";
+  /** `identifier`: the scanned code equalled an identifier-ROLE field on the
+   *  record (a book's ISBN, a declared serial). As exact as a barcode match,
+   *  and reported in barcode_matches for the same reason. */
+  matched_by: "barcode" | "name" | "bin" | "identifier";
+  /** For an identifier match, the field's label ("ISBN"), so the banner can say
+   *  "same ISBN" rather than "same barcode". */
+  matched_label?: string | null;
 }
 
 /** A named field's value, flat or nested under `metadata` — native columns land
@@ -186,7 +198,7 @@ function metaBarcode(fields: Record<string, unknown>): string | null {
 function toMatch(
   e: { kind: string; id: string; title: string; subtitle?: string; image_path?: string; detailUrl?: string; fields: Record<string, unknown> },
   info: { noun: string; qtyField?: string },
-  matchedBy: "barcode" | "name" | "bin",
+  matchedBy: "barcode" | "name" | "bin" | "identifier",
   expiryField?: string | null,
 ): TrackedMatch {
   const rawQty = info.qtyField ? e.fields[info.qtyField] : undefined;
@@ -229,22 +241,71 @@ function toMatch(
  * The merge details still come from the owning MODULE, because an instance is
  * a skin over it.
  */
-async function kindsForOrg(orgId: string): Promise<Array<{ kind: string; noun: string; qtyField?: string }>> {
-  let recs: Array<{ id: string; module_name: string }>;
+interface OrgKind {
+  kind: string;
+  noun: string;
+  qtyField?: string;
+  /** The kind's NATIVE identifier fields (a part's serial_number), by role. */
+  nativeIdentifiers: string[];
+}
+
+async function kindsForOrg(orgId: string): Promise<OrgKind[]> {
+  let recs: Array<{ id: string; module_name: string; fields?: { name: string; fieldRole?: string | null }[] }>;
   try {
     recs = await platform().entities.listKindsForOrg(orgId);
   } catch {
-    return platform().entities.listScannable();
+    return platform().entities.listScannable().map((k) => ({ ...k, nativeIdentifiers: [] }));
   }
-  const out: Array<{ kind: string; noun: string; qtyField?: string }> = [];
+  const out: OrgKind[] = [];
   for (const rec of recs) {
     // A synthesized instance record already carries its full kind in `id`
     // ("groceries:item"); a base record carries the bare kind ("part").
     const kind = rec.id.includes(":") ? rec.id : `${rec.module_name}:${rec.id}`;
-    const info =
-      platform().entities.getScannable(kind) ?? platform().entities.getScannableForModule(rec.module_name);
+    const info = scanTargetOfRecord({ kind, module_name: rec.module_name });
     if (!info) continue;
-    out.push({ kind, noun: info.noun, ...(info.qtyField ? { qtyField: info.qtyField } : {}) });
+    out.push({
+      kind,
+      noun: info.noun,
+      ...(info.qtyField ? { qtyField: info.qtyField } : {}),
+      nativeIdentifiers: identifierFieldNames(rec),
+    });
+  }
+  return out;
+}
+
+/** The workspace's identifier-ROLE custom fields, per kind: a bundle's ISBN, a
+ *  declared serial. Read by role (field_role identifier, or a decode_role of
+ *  identifier:<decoder>), never by name. The seeded Hobbit's ISBN lived in a
+ *  custom field neither "you already have" nor the duplicate finder could
+ *  see, so an ISBN scan made a second, blank Hobbit (2026-09-12). */
+export async function identifierFieldsByKind(
+  orgId: string,
+): Promise<Map<string, Array<{ name: string; label: string }>>> {
+  const out = new Map<string, Array<{ name: string; label: string }>>();
+  try {
+    const meta = platform().db.meta as unknown as Kysely<{
+      module_field_defs: {
+        org_id: string;
+        entity_kind: string;
+        name: string;
+        display_label: string | null;
+        field_role: string | null;
+        decode_role: string | null;
+      };
+    }>;
+    const rows = await meta
+      .selectFrom("module_field_defs")
+      .select(["entity_kind", "name", "display_label"])
+      .where("org_id", "=", orgId)
+      .where((eb) => eb.or([eb("field_role", "=", "identifier"), eb("decode_role", "like", "identifier:%")]))
+      .execute();
+    for (const r of rows) {
+      const list = out.get(r.entity_kind) ?? [];
+      list.push({ name: r.name, label: r.display_label || r.name });
+      out.set(r.entity_kind, list);
+    }
+  } catch {
+    // no defs, no opinion; never fail a scan over this
   }
   return out;
 }
@@ -260,6 +321,7 @@ export async function findTracked(
 
   const barcodeMatches: TrackedMatch[] = [];
   if (barcode) {
+    const identifierByKind = await identifierFieldsByKind(orgId);
     const perKind = await Promise.all(
       kinds.map(async (k) => {
         try {
@@ -269,9 +331,33 @@ export async function findTracked(
           });
           // Post-verify: only rows whose metadata REALLY carries this barcode
           // count (a resolver that ignored the filter returns arbitrary rows).
-          return res.items
+          const byBarcode = res.items
             .filter((e) => metaBarcode(e.fields) === barcode)
             .map((e) => toMatch(e, k, "barcode", expiryByKind.get(e.kind)));
+          // Identifier tier: the code equals an identifier-ROLE field on the
+          // record (a book's ISBN, a declared serial). Probed by each form the
+          // code can take (an ISBN-10 and its ISBN-13 are one book) and
+          // post-verified the same way, since a resolver may ignore the filter.
+          const idFields = [
+            ...(identifierByKind.get(k.kind) ?? []),
+            ...k.nativeIdentifiers.map((name) => ({ name, label: name })),
+          ];
+          const seen = new Set(byBarcode.map((m) => `${m.kind}:${m.id}`));
+          const byIdentifier: TrackedMatch[] = [];
+          for (const f of idFields) {
+            for (const form of identifierForms(barcode)) {
+              const r = await platform()
+                .entities.list(orgId, k.kind, { filter: { [f.name]: form }, limit: 3 })
+                .catch(() => ({ items: [] as ResolvedEntity[] }));
+              for (const e of r.items) {
+                const key = `${e.kind}:${e.id}`;
+                if (seen.has(key) || !identifierEquals(fieldValue(e.fields, f.name), barcode)) continue;
+                seen.add(key);
+                byIdentifier.push({ ...toMatch(e, k, "identifier", expiryByKind.get(e.kind)), matched_label: f.label });
+              }
+            }
+          }
+          return [...byBarcode, ...byIdentifier];
         } catch {
           return [];
         }

@@ -7,6 +7,7 @@
 // have to know the URL syntax.
 
 import { useMemo } from "react";
+import { useKindLabels } from "../lib/useKindLabels";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Search, X } from "lucide-react";
@@ -18,6 +19,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 export function SearchPage() {
   usePageTitle("Search");
   const { activeSlug } = useActiveOrg();
+  const labels = useKindLabels(activeSlug);
   const [params, setParams] = useSearchParams();
   const q = (params.get("q") ?? "").trim();
   const kindsParam = params.get("kinds") ?? "";
@@ -188,8 +190,8 @@ export function SearchPage() {
       {grouped.map(([kind, items]) => (
         <section key={kind} className="space-y-2">
           <h2 className="text-sm font-medium text-content dark:text-slate-300 sticky top-0 bg-subtle dark:bg-slate-950 py-1 flex items-center gap-2">
-            <span className="font-mono text-[10px] uppercase tracking-wider text-faint">
-              {kind}
+            <span className="text-[10px] uppercase tracking-wider text-faint">
+              {labels.collection(kind)}
             </span>
             <span className="text-xs text-faint">{items.length}</span>
           </h2>

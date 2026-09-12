@@ -25,6 +25,7 @@ import { NavLink } from "react-router-dom";
 import { ChevronDown, Settings2, Sliders } from "lucide-react";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ModulePickerModal } from "./ModulePickerModal";
+import { useHoverAwareOpen } from "./hover-aware-open";
 import { isFocused } from "../lib/api";
 import { useNavModules, HEADING_PREFIX, NAVGROUP_PREFIX, stripNavStem, navTargetFor, surfaceTops } from "./useNavModules";
 
@@ -251,23 +252,12 @@ function MoreMenu({
   items: { top: OrgModule; kids: { name: string; displayName: string }[] }[];
 }) {
   const target = useNavTarget();
-  const [open, setOpen] = useState(false);
+  // Hover opens, click opens-or-toggles (hover-aware-open.ts), pointer over
+  // the popover keeps it, leaving closes after the intent delay.
+  const { open, setOpen, hoverOpen, hoverClose, clickTrigger, stayOpen, cancelClose } = useHoverAwareOpen();
   const triggerRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
-  const closeTimer = useRef<number | null>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
-
-  function scheduleClose() {
-    if (closeTimer.current != null) window.clearTimeout(closeTimer.current);
-    closeTimer.current = window.setTimeout(() => setOpen(false), 120);
-  }
-  function openNow() {
-    if (closeTimer.current != null) {
-      window.clearTimeout(closeTimer.current);
-      closeTimer.current = null;
-    }
-    setOpen(true);
-  }
 
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) return;
@@ -301,12 +291,7 @@ function MoreMenu({
     return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
 
-  useEffect(
-    () => () => {
-      if (closeTimer.current != null) window.clearTimeout(closeTimer.current);
-    },
-    [],
-  );
+  useEffect(() => () => cancelClose(), [cancelClose]);
 
   const childTo = (parentName: string, k: { name: string }) =>
     k.name.startsWith(INSTANCE_PREFIX)
@@ -323,12 +308,12 @@ function MoreMenu({
     <div
       className="relative shrink-0 flex items-center"
       ref={triggerRef}
-      onMouseEnter={openNow}
-      onMouseLeave={scheduleClose}
+      onMouseEnter={hoverOpen}
+      onMouseLeave={hoverClose}
     >
       <button
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={clickTrigger}
         aria-label="More navigation links"
         className="px-1.5 py-1 rounded text-sm whitespace-nowrap text-muted dark:text-slate-400 hover:text-accent transition flex items-center gap-0.5"
       >
@@ -341,8 +326,8 @@ function MoreMenu({
       {open && pos && createPortal(
         <div
           ref={popoverRef}
-          onMouseEnter={openNow}
-          onMouseLeave={scheduleClose}
+          onMouseEnter={stayOpen}
+          onMouseLeave={hoverClose}
           style={{ position: "fixed", left: Math.max(8, pos.left), top: pos.top }}
           className="w-64 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg z-[60] max-h-[70vh] overflow-y-auto"
         >
@@ -413,34 +398,17 @@ function ModuleGroupChip({
   onInstallMore?: () => void;
 }) {
   const target = useNavTarget();
-  const [open, setOpen] = useState(false);
+  // Hover opens, click opens-or-toggles, leaving closes after the 120ms
+  // hover-intent delay (the cursor crossing the 0px gap between trigger and
+  // popover briefly hovers document.body; without the grace period the
+  // popover snaps shut before an entry can be clicked). hover-aware-open.ts.
+  const { open, setOpen, hoverOpen, hoverClose, clickTrigger, stayOpen, cancelClose } = useHoverAwareOpen();
   const triggerRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
-  // Debounced close — cursor crossing the 0px gap between trigger
-  // and popover briefly hovers `document.body`. Without a grace
-  // period the popover snaps shut before the user can click an
-  // entry. 120ms is the hover-intent number; matches what
-  // Linear/Slack feel like.
-  const closeTimer = useRef<number | null>(null);
   // Viewport-absolute position for the portaled popover (in viewport
   // coords because we render via createPortal(document.body) to
   // escape ancestor clipping like the header's overflow-x-clip).
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
-
-  function scheduleClose() {
-    if (closeTimer.current != null) window.clearTimeout(closeTimer.current);
-    closeTimer.current = window.setTimeout(() => setOpen(false), 120);
-  }
-  function cancelClose() {
-    if (closeTimer.current != null) {
-      window.clearTimeout(closeTimer.current);
-      closeTimer.current = null;
-    }
-  }
-  function openNow() {
-    cancelClose();
-    setOpen(true);
-  }
 
   // Recompute position whenever the popover opens or the window resizes.
   useLayoutEffect(() => {
@@ -477,28 +445,24 @@ function ModuleGroupChip({
   }, [open]);
 
   // Cleanup timer on unmount.
-  useEffect(() => {
-    return () => {
-      if (closeTimer.current != null) window.clearTimeout(closeTimer.current);
-    };
-  }, []);
+  useEffect(() => () => cancelClose(), [cancelClose]);
 
   return (
     <div
       className="relative shrink-0 flex items-center"
       ref={triggerRef}
       data-top={parent.name}
-      onMouseEnter={openNow}
-      onMouseLeave={scheduleClose}
+      onMouseEnter={hoverOpen}
+      onMouseLeave={hoverClose}
     >
-      {/* The parent name links to the module's page; the chevron toggles
+      {/* The parent name links to the module's page; the chevron opens
           the popover. A user-defined HEADING has no page of its own — it's
           a pure label that just opens its dropdown. Hovering the row opens
           it either way. */}
       {parent.name.startsWith(HEADING_PREFIX) ? (
         <button
           type="button"
-          onClick={() => setOpen((o) => !o)}
+          onClick={clickTrigger}
           className="pl-2 pr-1 py-1 rounded-l transition text-sm whitespace-nowrap text-muted dark:text-slate-400 hover:text-accent"
         >
           {parent.displayName}
@@ -521,7 +485,7 @@ function ModuleGroupChip({
         onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          setOpen((o) => !o);
+          clickTrigger();
         }}
         aria-label={parent.groupLabel || `${parent.displayName} categories`}
         className="pl-0.5 pr-1.5 py-1 rounded-r text-faint dark:text-slate-500 hover:text-accent transition"
@@ -536,8 +500,8 @@ function ModuleGroupChip({
       {open && pos && createPortal(
         <div
           ref={popoverRef}
-          onMouseEnter={openNow}
-          onMouseLeave={scheduleClose}
+          onMouseEnter={stayOpen}
+          onMouseLeave={hoverClose}
           style={{ position: "fixed", left: pos.left, top: pos.top }}
           className="w-64 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg z-[60] overflow-hidden"
         >

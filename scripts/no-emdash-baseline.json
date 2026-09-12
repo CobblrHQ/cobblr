@@ -25,7 +25,7 @@
   },
   {
     "file": "modules/core-ai/src/api/chat.ts",
-    "text": "(Applied immediately — every change is tracked and undoable.) (This PROPOSES the change — "
+    "text": "(An action whose list_actions entry says undoable: true is applied immediately, tracked an"
   },
   {
     "file": "modules/core-ai/src/api/chat.ts",

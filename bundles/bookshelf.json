@@ -2,8 +2,8 @@
   "manifest": {
     "id": "cobblr.community.bookshelf",
     "released_at": "2026-06-28",
-    "changelog": "First catalogued release: books as their own shelf with author, ISBN scan-in, and read status.",
-    "version": "0.2.0",
+    "changelog": "The shelf opens on its covers rather than the table, and remembers the view you pick. A book is not stock: the shelf no longer offers Use one, Used up or a reorder point, and the parts-category picker is gone from the book form. An ISBN scan fills author, year and ISBN, and a book you already have is offered instead of a second copy.",
+    "version": "0.2.3",
     "name": "Bookshelf",
     "description": "Your books as their own shelf: author + ISBN + year + read status, on a lean catalog that opens as a cover wall. Spine-label wire bundled.",
     "author": "Cobblr community",
@@ -41,27 +41,42 @@
         "glyph": "📚",
         "item_noun": "book",
         "qty_unit": "each",
+        "faces": {
+          "stock": false,
+          "perishable": false
+        },
+        "field_overrides": [
+          {
+            "entity_kind": "inventory:part",
+            "name": "category",
+            "hidden": true
+          }
+        ],
         "field_defs": [
           {
             "entity_kind": "bookshelf:item",
             "name": "author",
             "display_label": "Author",
             "type": "text",
-            "position": 1
+            "position": 1,
+            "decode_role": "decode:author"
           },
           {
             "entity_kind": "bookshelf:item",
             "name": "isbn",
             "display_label": "ISBN",
             "type": "text",
-            "position": 2
+            "position": 2,
+            "decode_role": "identifier:isbn",
+            "field_role": "identifier"
           },
           {
             "entity_kind": "bookshelf:item",
             "name": "year",
             "display_label": "Year",
             "type": "number",
-            "position": 3
+            "position": 3,
+            "decode_role": "decode:year"
           },
           {
             "entity_kind": "bookshelf:item",
@@ -90,6 +105,7 @@
             "name": "Covers",
             "view_type": "gallery",
             "pinned": true,
+            "is_default": true,
             "config": {
               "image_field": "image_path",
               "caption_field": "author"

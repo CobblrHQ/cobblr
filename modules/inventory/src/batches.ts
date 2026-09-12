@@ -21,6 +21,8 @@
 // the difference between a useful warning and one that cries wolf about
 // everything in the fridge.
 
+import { goodUntil } from "@cobblr/platform-contract/fresh-lot";
+
 export interface Batch {
   /** ISO date (YYYY-MM-DD) this lot arrived. */
   received_on: string;
@@ -164,11 +166,7 @@ export function localToday(now: Date, timezone: string): string {
 /** The date `+` should stamp: today plus however long this keeps. Null when the
  *  item does not declare a shelf life, so nothing is invented. */
 export function expiryFor(receivedOn: string, shelfLifeDays: number | null | undefined): string | null {
-  if (shelfLifeDays == null || !Number.isFinite(shelfLifeDays) || shelfLifeDays <= 0) return null;
-  const d = new Date(`${receivedOn}T00:00:00Z`);
-  if (Number.isNaN(d.getTime())) return null;
-  d.setUTCDate(d.getUTCDate() + Math.trunc(shelfLifeDays));
-  return d.toISOString().slice(0, 10);
+  return goodUntil(receivedOn, shelfLifeDays);
 }
 
 /** One line per lot, oldest first - what the drill-down shows. */

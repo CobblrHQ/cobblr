@@ -37,6 +37,11 @@ export const RecordBody = z.object({
   unit_price: z.number().nonnegative().nullable().optional(),
   /** ISO date. Defaults to now; a receipt should pass its OWN date. */
   occurred_at: z.string().datetime().optional(),
+  /** The announcer's own reference to what caused this row, e.g. a scan inbox
+   *  item as "core-scan:inbox:<id>". An undo of that thing voids the row
+   *  through remove-event { source_ref } rather than filing a counter-event,
+   *  because an "adjust" never un-teaches a purchase. */
+  source_ref: z.string().min(1).max(200).optional(),
 });
 export type CadenceObservation = z.infer<typeof RecordBody>;
 
@@ -75,6 +80,7 @@ export async function recordCadenceEvent(
       unit_price: b.unit_price ?? null,
       ...(b.occurred_at ? { occurred_at: new Date(b.occurred_at) } : {}),
       user_id: userId,
+      source_ref: b.source_ref ?? null,
     })
     .returning(["id", "occurred_at"])
     .executeTakeFirstOrThrow();

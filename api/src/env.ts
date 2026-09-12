@@ -149,6 +149,12 @@ const Schema = z.object({
   //    watches. Each one is a real database, so it counts against MAX_LIVE.
   TRY_SANDBOX_POOL: z.coerce.number().int().nonnegative().default(0),
   TRY_SANDBOX_POOL_INTERVAL_MS: z.coerce.number().int().positive().default(20_000),
+  //  • TRY_SANDBOX_POOL_MAX_AGE_MINUTES — how long a finished sandbox may wait
+  //    before it is thrown away unclaimed. The seed dates its kitchen relative
+  //    to the day it was built, so a sandbox that waited a week hands a visitor
+  //    a fridge that has drifted a week: on 2026-09-12 a first screen read six
+  //    overdue groceries. Six hours keeps every date within the day.
+  TRY_SANDBOX_POOL_MAX_AGE_MINUTES: z.coerce.number().int().positive().default(360),
   //  • TRY_SANDBOX_EXPORT_DAYS — how long the ONE file a visitor asked us to
   //    email them survives. Their database still dies on the hour; this is the
   //    export artifact only, and only for somebody who gave an address. Kept
@@ -183,6 +189,10 @@ const Schema = z.object({
   COBBLR_CAPTCHA_PROVIDER: z.enum(["turnstile"]).optional(),
   COBBLR_CAPTCHA_SECRET: z.string().optional(),
   COBBLR_CAPTCHA_SITE_KEY: z.string().optional(),
+  // Operator-issued secret that lets ONE designated automated reviewer past the
+  // captcha, presented in the x-cobblr-captcha-review header. Unset = no such
+  // door. See platform/captcha.ts for why it exists and what it does not skip.
+  COBBLR_CAPTCHA_REVIEW_TOKEN: z.string().optional(),
   // "true" rejects signups from known disposable-email providers.
   COBBLR_BLOCK_DISPOSABLE_EMAILS: z.string().optional(),
   // "true" requires a verified email before login succeeds (needs a real SMTP

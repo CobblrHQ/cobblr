@@ -9,6 +9,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "./api";
+import { isSandboxSession } from "./sandbox-session";
 
 /** One limit=1 read per enabled domain module + each named instance; cached.
  *  Named instances are counted because most flagship bundles keep ALL their
@@ -33,8 +34,16 @@ export async function probeWorkspaceItemCount(slug: string, enabled: Set<string>
   return counts.reduce((a, b) => a + b, 0);
 }
 
-/** Pass "" as `slug` to keep the probe fully idle (e.g. off the dashboard). */
-export function useWorkspaceContentProbe(slug: string): { ready: boolean; hasContent: boolean } {
+/** Pass "" as `slug` to keep the probe fully idle (e.g. off the dashboard).
+ *
+ *  `hasContent`: anything at all in the workspace. `userMade`: content the
+ *  person put there. They differ in a sandbox, which arrives pre-filled with a
+ *  shelf of books and a kitchen so the first screen is not an empty table;
+ *  that content is ours, not theirs, and reading it as theirs demoted the
+ *  first-task panel below alerts and previews about groceries they never
+ *  bought (review finding USE-07). A gate that decides where onboarding goes
+ *  reads `userMade`; a gate about the data itself reads `hasContent`. */
+export function useWorkspaceContentProbe(slug: string): { ready: boolean; hasContent: boolean; userMade: boolean } {
   const mods = useQuery({
     queryKey: ["org-modules", slug],
     queryFn: () => api.orgModules(slug),
@@ -53,5 +62,6 @@ export function useWorkspaceContentProbe(slug: string): { ready: boolean; hasCon
   });
   // Zero modules = empty by definition, known as soon as the module list loads.
   const ready = mods.data !== undefined && (enabled.size === 0 || probeQ.data !== undefined);
-  return { ready, hasContent: (probeQ.data ?? 0) > 0 };
+  const hasContent = (probeQ.data ?? 0) > 0;
+  return { ready, hasContent, userMade: hasContent && !isSandboxSession() };
 }

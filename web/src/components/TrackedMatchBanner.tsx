@@ -9,6 +9,7 @@
 // banner adds what the line has no room for: the merge-in preview, Move here,
 // Link barcode, Open. The line adds "Compare & merge", which opens the card.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { catalogChosen } from "../lib/scanPhoto";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { CheckCircle2, ExternalLink, MapPin, X } from "lucide-react";
@@ -159,7 +160,7 @@ export function TrackedMatchBanner({
   }, [autoMove, locationId, matches.isFetched, barcodeMatches.length]);
 
   if (dismissed || !best) return null;
-  const exact = best.matched_by === "barcode";
+  const exact = best.matched_by === "barcode" || best.matched_by === "identifier";
   const busy = attach.isPending;
 
   // "Same one — fill it in": the fields THIS scan learned that could enrich the
@@ -184,7 +185,10 @@ export function TrackedMatchBanner({
         <CheckCircle2 size={15} className="text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
         <div className="min-w-0 flex-1 text-sm">
           <MatchTitle match={best} where={where} title={best.title} sameOne={canMerge} />
-          <span className="text-[11px] text-faint"> · {exact ? "same barcode" : "matched by name"}</span>
+          <span className="text-[11px] text-faint">
+            {" "}
+            · {best.matched_by === "identifier" ? `same ${best.matched_label || "identifier"}` : exact ? "same barcode" : "matched by name"}
+          </span>
         </div>
         <button
           type="button"
@@ -208,7 +212,11 @@ export function TrackedMatchBanner({
               </div>
             ))}
           </dl>
-          <p className="text-[11px] text-muted mt-1.5">Only fields it's missing are filled - nothing gets overwritten.</p>
+          <p className="text-[11px] text-muted mt-1.5">
+            {catalogChosen(item)
+              ? "Only fields it's missing are filled, and the picture you picked becomes its photo."
+              : "Only fields it's missing are filled - nothing gets overwritten."}
+          </p>
         </div>
       )}
       <TrackedMatchNudges item={item} match={best} />

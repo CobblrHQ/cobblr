@@ -17,6 +17,13 @@
 // Keep is the primary because it is the one that saves the work in place;
 // copy is offered plainly beside it rather than buried, since for most people
 // twenty minutes into a first look it is the likelier yes.
+//
+// Once kept, the modal is a different thing: the person has walked through
+// this door, so the copy / hosted / self-host section goes, and what remains is
+// the one success line and the two ways back in. Keep sends a sign-in link,
+// and if that were the only door then a spam folder would lock them out of
+// the workspace they just decided to keep. So they can choose a password
+// right here, and the strip at the foot of the page opens this same view.
 import { useEffect, useState } from "react";
 import { Modal } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
@@ -29,36 +36,64 @@ interface Paths {
   export_days: number;
 }
 
+export interface KeptWorkspace {
+  email: string;
+  expires_at: string;
+  emailed: boolean;
+}
+
 export function SandboxSaveModal({
   open,
   onClose,
   onKept,
+  onPasswordSet,
+  initial = "save",
+  email: knownEmail = null,
 }: {
   open: boolean;
   onClose: () => void;
-  /** The bar stops counting down once the workspace is theirs. */
-  onKept?: () => void;
+  /** The bar switches from counting down to "yours until" once the workspace is theirs. */
+  onKept?: (kept: KeptWorkspace) => void;
+  /** The anonymous link is closed once a password exists; the bar stops offering the two. */
+  onPasswordSet?: () => void;
+  /** "password": open straight into the kept view with the password form up,
+   *  which is what the strip's Set a password button does. */
+  initial?: "save" | "password";
+  /** The address keep bound, for the kept view when opened after the fact. */
+  email?: string | null;
 }) {
   const [email, setEmail] = useState("");
-  const [busy, setBusy] = useState<null | "keep" | "copy">(null);
+  const [busy, setBusy] = useState<null | "keep" | "copy" | "resend" | "password">(null);
   const [error, setError] = useState<string | null>(null);
   const [paths, setPaths] = useState<Paths | null>(null);
-  const [kept, setKept] = useState<{ emailed: boolean } | null>(null);
+  const [kept, setKept] = useState<{ emailed: boolean; email: string } | null>(null);
   const [copied, setCopied] = useState<{ emailed: boolean; link: string; days: number } | null>(null);
+  const [resent, setResent] = useState<null | "sent" | "failed">(null);
+  const [password, setPassword] = useState("");
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  const [passwordSet, setPasswordSet] = useState(false);
 
   // The destinations come from the server so this and the email can never
-  // disagree about where "carry on" goes.
+  // disagree about where "carry on" goes. Not needed once kept: that section
+  // no longer renders.
   useEffect(() => {
-    if (!open) return;
+    if (!open || initial === "password") return;
     void api.sandboxPaths().then(setPaths).catch(() => setPaths(null));
-  }, [open]);
+  }, [open, initial]);
 
   useEffect(() => {
     if (!open) {
       setError(null);
       setBusy(null);
+      setPasswordOpen(false);
+      setPassword("");
+      return;
     }
-  }, [open]);
+    if (initial === "password") {
+      setKept((k) => k ?? { emailed: true, email: knownEmail ?? "" });
+      setPasswordOpen(true);
+    }
+  }, [open, initial, knownEmail]);
 
   if (!open) return null;
   const days = copied?.days ?? paths?.export_days ?? 7;
@@ -68,9 +103,10 @@ export function SandboxSaveModal({
     setBusy("keep");
     setError(null);
     try {
-      const res = await api.keepSandbox(email.trim());
-      setKept({ emailed: res.emailed });
-      onKept?.();
+      const to = email.trim();
+      const res = await api.keepSandbox(to);
+      setKept({ emailed: res.emailed, email: to });
+      onKept?.({ email: to, expires_at: res.expires_at, emailed: res.emailed });
     } catch (err) {
       setError(
         err instanceof ApiError && err.status === 409
@@ -100,16 +136,105 @@ export function SandboxSaveModal({
     }
   }
 
+  async function resend() {
+    if (busy) return;
+    setBusy("resend");
+    setError(null);
+    try {
+      const r = await api.resendSandboxLink();
+      setResent(r.emailed ? "sent" : "failed");
+    } catch {
+      setResent("failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function savePassword() {
+    if (busy || password.length < 8) return;
+    setBusy("password");
+    setError(null);
+    try {
+      await api.setSandboxPassword(password);
+      setPasswordSet(true);
+      setPasswordOpen(false);
+      setPassword("");
+      onPasswordSet?.();
+    } catch {
+      setError("Could not set that password. Try again?");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
-    <Modal open={open} onClose={onClose} title="Don't lose this" size="md">
+    <Modal open={open} onClose={onClose} title={kept ? "This workspace is yours" : "Don't lose this"} size="md">
       <div className="space-y-4">
         {kept ? (
-          <p className="text-sm text-content dark:text-mortar-100">
-            <strong>Saved. This workspace is yours now.</strong>{" "}
-            {kept.emailed
-              ? "Check your email for the link back in."
-              : "We could not send your sign-in link, so keep this tab open and this page's address: it still works."}
-          </p>
+          <div className="space-y-3" data-testid="kept-view">
+            <p className="text-sm text-content dark:text-mortar-100">
+              <strong>Saved. This workspace is yours now.</strong>{" "}
+              {passwordSet
+                ? `Sign in with ${kept.email} and your password from now on.`
+                : kept.emailed
+                  ? `A sign-in link went to ${kept.email}. This tab keeps working for a week either way.`
+                  : "We could not send your sign-in link, so keep this tab open and this page's address: it still works for a week."}
+            </p>
+            {!passwordSet && (
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={resend}
+                  disabled={!!busy}
+                  className="rounded-md border border-line dark:border-slate-600 disabled:opacity-50 px-3 py-1.5 text-sm font-medium hover:bg-subtle transition"
+                >
+                  {busy === "resend" ? "Sending…" : resent === "sent" ? "Sent again" : resent === "failed" ? "Could not send" : "Resend the link"}
+                </button>
+                {!passwordOpen && (
+                  <button
+                    type="button"
+                    onClick={() => setPasswordOpen(true)}
+                    className="rounded-md bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm font-medium transition"
+                  >
+                    Set a password
+                  </button>
+                )}
+              </div>
+            )}
+            {passwordOpen && !passwordSet && (
+              <form
+                className="space-y-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void savePassword();
+                }}
+              >
+                <p className="text-xs text-muted">
+                  So you can get back in without the email. At least 8 characters.
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    autoFocus
+                    autoComplete="new-password"
+                    minLength={8}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Choose a password"
+                    aria-label="New password"
+                    className="input flex-1"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!!busy || password.length < 8}
+                    className="rounded-md bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white px-3 py-1.5 text-sm font-medium transition"
+                  >
+                    {busy === "password" ? "Saving…" : "Save"}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
         ) : copied ? (
           <div className="space-y-3">
             <p className="text-sm text-muted">
@@ -177,7 +302,8 @@ export function SandboxSaveModal({
           </>
         )}
         {error && <p className="text-sm text-ember-600 dark:text-ember-400">{error}</p>}
-        {paths && <TwoPaths paths={paths} />}
+        {/* The other door out of a sandbox. Gone once they have taken this one. */}
+        {!kept && paths && <TwoPaths paths={paths} />}
       </div>
     </Modal>
   );

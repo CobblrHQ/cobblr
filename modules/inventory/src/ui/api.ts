@@ -186,6 +186,8 @@ export interface ImportRow {
   notes: string | null;
   category_name: string | null;
   location_name: string | null;
+  /** The table's own fields (author, expiry...), by field name. */
+  metadata?: Record<string, unknown>;
   row_number: number;
   warnings: string[];
 }
@@ -424,9 +426,16 @@ export class InventoryApi {
     /** Lego-style lifecycle filter, see the API ListQuery comment. */
     lifecycle?: "bulk" | "kit" | "parted-out";
     cursor?: string;
+    /** A saved view's own query (filter / where / sort), see viewQuery. */
+    filter?: Record<string, unknown>;
+    where?: unknown[];
+    sort?: string[];
   } = {}) => {
     const params = new URLSearchParams();
     if (q.search) params.set("search", q.search);
+    if (q.filter && Object.keys(q.filter).length) params.set("filter", JSON.stringify(q.filter));
+    if (q.where && q.where.length) params.set("where", JSON.stringify(q.where));
+    if (q.sort && q.sort.length) params.set("sort", q.sort.join(","));
     if (q.category_id) params.set("category_id", q.category_id);
     if (q.location_id) params.set("location_id", q.location_id);
     if (q.state) params.set("state", q.state);
@@ -567,7 +576,8 @@ export class InventoryApi {
     default_category_id?: string | null;
     default_location_id?: string | null;
   }) =>
-    this.request<ImportResponse>("POST", "/parts/import", b);
+    // Through partsBase, so a Bookshelf's Import lands on the bookshelf.
+    this.partsRequest<ImportResponse>("POST", "/import", b);
 
   listAllocations = (q: { part_id?: string; status?: AllocationStatus } = {}) => {
     const params = new URLSearchParams();

@@ -18,6 +18,9 @@ export interface CoreCadenceEventsTable {
   unit_price: string | number | null;
   occurred_at: Generated<Date>;
   user_id: string | null;
+  /** The announcer's own reference to what caused the row (a scan inbox
+   *  item: "core-scan:inbox:<id>"), so that thing's undo can void it. */
+  source_ref: string | null;
   created_at: Generated<Date>;
 }
 

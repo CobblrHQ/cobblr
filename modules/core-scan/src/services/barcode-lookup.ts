@@ -28,6 +28,14 @@ export interface BarcodeHit {
   category: string | null;
   image_url: string | null;
   raw: Record<string, unknown>;
+  /** A DECODED identifier's semantic bag (an ISBN's title / author / year /
+   *  isbn / publisher), keyed in the decoder's own vocabulary. The fill lands
+   *  each key on the destination field that declares `decode:<key>`, and the
+   *  identifier itself on the one declaring `identifier:<decoderId>`, so the
+   *  words never have to match a field's name. Absent for a plain product hit. */
+  fields?: Record<string, string | number>;
+  /** The registry id the fields decode under (`isbn`). Present iff `fields` is. */
+  decoder_id?: string;
 }
 
 export type BarcodeOutcome =
@@ -534,8 +542,33 @@ export function isbn10ChecksumOk(code: string): boolean {
   return (sum + last) % 11 === 0;
 }
 
+/** GS1 restricted-circulation numbers: EAN-13 prefixes 02, 04 and 20 to 29
+ *  (a 12-digit UPC-A leading 2 or 4 is the same code with its leading 0
+ *  dropped; a GTIN-14 carries a packaging indicator ahead of the 13). They are
+ *  a shop's own labels: variable-weight deli and produce, loyalty stubs, an
+ *  in-store SKU. The number means something only inside the shop that printed
+ *  it, so no global catalog can know it, and any hit is a coincidence in
+ *  somebody's database. A synthetic 2000000000015 typed into Scan resolved to
+ *  a real milk product and sat in the inbox as an identification (2026-09-12).
+ *  The checksum is still required: a mis-read of a real product's code is a
+ *  mis-read, not a store code. EAN-8 is left alone here. */
+export function hasStoreCodePrefix(code: string): boolean {
+  const c = code.trim();
+  if (!/^\d{12,14}$/.test(c)) return false;
+  const gtin13 = c.length === 12 ? `0${c}` : c.length === 14 ? c.slice(1) : c;
+  return /^(02|04|2[0-9])/.test(gtin13);
+}
+
+export function isStoreCode(code: string): boolean {
+  return hasStoreCodePrefix(code) && gtinChecksumOk(code.trim());
+}
+
 export function looksLikeProductBarcode(code: string): boolean {
   const c = code.trim().toUpperCase();
+  // A valid GTIN that is a shop's own label is still not a PRODUCT code: no
+  // provider can answer, so none is asked. lookupBarcode's miss then costs no
+  // quota and caches nothing.
+  if (isStoreCode(c)) return false;
   // 8-digit codes are deliberately NOT checksummed: the scan can be EAN-8
   // (standard GTIN checksum) or UPC-E (check digit computed over the EXPANDED
   // UPC-A form), and the digits alone don't say which — running the wrong

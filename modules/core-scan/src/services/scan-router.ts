@@ -7,9 +7,9 @@
 // classifyScanCode is a pure function (unit-tested). resolveIsbn / resolveAsin are
 // the type-specific lookups enrich dispatches to.
 
-import type { BarcodeHit } from "./barcode-lookup.js";
+import { gtinChecksumOk, hasStoreCodePrefix, isStoreCode, type BarcodeHit } from "./barcode-lookup.js";
 
-export type ScanCodeType = "upc" | "isbn" | "asin" | "fnsku" | "url" | "unknown";
+export type ScanCodeType = "upc" | "isbn" | "asin" | "fnsku" | "url" | "store-code" | "unknown";
 
 /** Classify a scanned string by what kind of code it is. */
 export function classifyScanCode(raw: string): { type: ScanCodeType; code: string } {
@@ -22,6 +22,12 @@ export function classifyScanCode(raw: string): { type: ScanCodeType; code: strin
   // Numeric barcodes: UPC-A/E, EAN-8/13, GTIN-14 — and ISBN-13 (a 978/979 EAN).
   if (/^[0-9]{6,14}$/.test(code)) {
     if (/^(978|979)[0-9]{10}$/.test(code)) return { type: "isbn", code }; // ISBN-13
+    // A shop's own label (GS1 restricted circulation): nothing outside that
+    // shop can resolve it, so it never enters the product chain. The same
+    // prefix with a BAD check digit is a mis-read of something, not a store
+    // code and not a product: unknown.
+    if (isStoreCode(code)) return { type: "store-code", code };
+    if (hasStoreCodePrefix(code) && !gtinChecksumOk(code)) return { type: "unknown", code };
     return { type: "upc", code };
   }
 
@@ -47,7 +53,35 @@ export function classifyScanCode(raw: string): { type: ScanCodeType; code: strin
   return { type: "unknown", code };
 }
 
-/** A book by ISBN, via Open Library (free, no key). null on miss/unreachable. */
+/** The decoder id an ISBN's fields decode under: a bundle field declaring
+ *  `identifier:isbn` HOLDS the ISBN, one declaring `decode:author` / `decode:year`
+ *  receives those keys. */
+export const ISBN_DECODER_ID = "isbn";
+
+/** The semantic bag for a book, from an Open Library record. Pure. The title
+ *  is the BOOK'S title: the author used to be folded into it and the publisher
+ *  prefixed as a brand, which is how a scan named "Mariner Books The Hobbit:
+ *  or, There and Back Again" while Author, Year and ISBN sat blank beneath it
+ *  (2026-09-12). Year is the four digits of `publish_date`, in any of the
+ *  shapes the API uses ("2012", "September 18, 2012", "Sept 2012"). */
+export function isbnFieldsFromOpenLibrary(
+  b: OpenLibraryBook,
+  isbn: string,
+): Record<string, string | number> {
+  const out: Record<string, string | number> = { isbn };
+  if (b.title?.trim()) out.title = b.title.trim();
+  const authors = (b.authors ?? []).map((a) => a.name?.trim()).filter(Boolean).join(", ");
+  if (authors) out.author = authors;
+  const year = /\b(1[5-9]\d{2}|20\d{2})\b/.exec(b.publish_date ?? "")?.[1];
+  if (year) out.year = Number(year);
+  const publisher = b.publishers?.[0]?.name?.trim();
+  if (publisher) out.publisher = publisher;
+  return out;
+}
+
+/** A book by ISBN, via Open Library (free, no key). null on miss/unreachable.
+ *  The hit's title is the book's title and its brand the publisher; the
+ *  structured bag rides in `fields` for the role-fill. */
 export async function resolveIsbn(isbn: string): Promise<BarcodeHit | null> {
   const clean = isbn.replace(/[^0-9X]/gi, "").toUpperCase();
   if (!clean) return null;
@@ -59,26 +93,47 @@ export async function resolveIsbn(isbn: string): Promise<BarcodeHit | null> {
   const j = (await res.json().catch(() => ({}))) as Record<string, OpenLibraryBook>;
   const b = j[`ISBN:${clean}`];
   if (!b || !b.title) return null;
-  const authors = (b.authors ?? []).map((a) => a.name).filter(Boolean).join(", ");
+  const fields = isbnFieldsFromOpenLibrary(b, clean);
+  const authors = typeof fields.author === "string" ? fields.author : "";
   return {
     source: "openlibrary",
-    title: authors ? `${b.title} — ${authors}` : b.title,
-    brand: b.publishers?.[0]?.name ?? authors ?? null,
+    title: b.title,
+    brand: b.publishers?.[0]?.name ?? null,
     model: clean,
     description: b.subtitle ?? null,
     category: "Books",
     image_url: b.cover?.medium ?? b.cover?.large ?? b.cover?.small ?? null,
-    raw: { openlibrary: { key: b.key, url: b.url, authors, isbn: clean } },
+    raw: { openlibrary: { key: b.key, url: b.url, authors, isbn: clean, publish_date: b.publish_date ?? null } },
+    fields,
+    decoder_id: ISBN_DECODER_ID,
   };
 }
 
-interface OpenLibraryBook {
+/** The decoded bag for an ISBN hit that came from a tier that does not carry
+ *  one (the shared resolver's Open Library mirror returns the composed title
+ *  only): re-read the book from Open Library for its fields; on a miss, the
+ *  hit's own title and the ISBN are still a bag worth landing. */
+export async function isbnFieldsForHit(isbn: string, hit: BarcodeHit): Promise<Record<string, string | number>> {
+  if (hit.fields) return hit.fields;
+  const live = await resolveIsbn(isbn).catch(() => null);
+  if (live?.fields) return live.fields;
+  const out: Record<string, string | number> = { isbn: isbn.replace(/[^0-9X]/gi, "").toUpperCase() };
+  // The mirror composes "Title — Author": split it back rather than land the
+  // author in the title field.
+  const [title, author] = hit.title.split(/\s+—\s+/, 2);
+  if (title?.trim()) out.title = title.trim();
+  if (author?.trim()) out.author = author.trim();
+  return out;
+}
+
+export interface OpenLibraryBook {
   title: string;
   subtitle?: string;
   key?: string;
   url?: string;
   authors?: { name: string }[];
   publishers?: { name: string }[];
+  publish_date?: string;
   cover?: { small?: string; medium?: string; large?: string };
 }
 

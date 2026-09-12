@@ -21,6 +21,7 @@ import { RecordsPage } from "./RecordsPage";
 import { BundleFeaturesStrip } from "../components/BundleFeaturesStrip";
 import { api, getToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { initialViewId, rememberView, rememberedView } from "../lib/instance-view";
 import { SavedViewPage } from "./SavedViewPage";
 
 export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
@@ -46,7 +47,11 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
   // Pinned views render HERE as tabs beside the table, and `?view=board`
   // (or a view's id) opens one directly: that is a managed app's home path.
   const [searchParams, setSearchParams] = useSearchParams();
-  const wantView = searchParams.get("view");
+  // With no `?view=` in the URL (the nav link, a reload after the nav link)
+  // the collection opens on the view this device last picked, else the one
+  // its bundle marked default (Groceries' "What's on hand", the Bookshelf's
+  // cover wall), else the table. instance-view.ts, tested.
+  const urlView = searchParams.get("view");
   const early = (instancesQ.data?.items ?? []).find((i) => i.instance_name === name);
   const kindId = early ? `${early.instance_name}:item` : null;
   const viewsQ = useQuery({
@@ -56,6 +61,11 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
     staleTime: 60_000,
   });
   const pinnedViews = (viewsQ.data?.items ?? []).filter((v) => v.pinned);
+  const wantView = initialViewId({
+    urlView,
+    remembered: name ? rememberedView(activeSlug, name) : null,
+    views: pinnedViews,
+  });
   const activeView = wantView
     ? (pinnedViews.find((v) => v.id === wantView) ??
       (wantView === "board" ? (pinnedViews.find((v) => v.view_type !== "table") ?? pinnedViews[0] ?? null) : null))
@@ -186,6 +196,7 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
   })();
 
   const pickView = (id: string | null) => {
+    if (name) rememberView(activeSlug, name, id);
     const next = new URLSearchParams(searchParams);
     if (id) next.set("view", id);
     else next.delete("view");

@@ -26,8 +26,9 @@ import type {
   EntityWriter,
   ResolvedEntity,
 } from "@cobblr/platform-contract";
-import { TRAIT_PRESETS, traitAxisValue } from "@cobblr/platform-contract";
+import { TRAIT_PRESETS, stockDisclosureFromConfig, traitAxisValue } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
+import { instanceKindName } from "./instance-kind.js";
 import { INSTANCE_ITEM_DETAIL, resolveDetailPath } from "./instance-detail.js";
 import { getEntry } from "../modules/registry.js";
 
@@ -82,22 +83,30 @@ export function registerInstanceResolver(
  *  like an instance one — `lists:item` is the lists module's own kind, and
  *  mapping it away would break lists. */
 export async function baseKindOf(orgId: string, kind: string): Promise<string> {
+  return (await resolveKind(orgId, kind)).base;
+}
+
+/** Both halves of a kind string: the module kind it resolves to and the
+ *  named instance it lives in (null for a module's own kind, or for an
+ *  instance name this workspace does not have). Registry first, because a
+ *  genuine module kind can look like an instance one (`lists:item`). */
+export async function resolveKind(orgId: string, kind: string): Promise<{ base: string; instance: string | null }> {
   const registered = await meta
     .selectFrom("entity_kinds")
     .select("id")
     .where("id", "=", kind)
     .executeTakeFirst();
-  if (registered) return kind;
+  if (registered) return { base: kind, instance: null };
 
-  const m = /^([a-z0-9][a-z0-9-]*):item$/.exec(kind);
-  if (!m) return kind;
+  const name = instanceKindName(kind);
+  if (!name) return { base: kind, instance: null };
   const inst = await meta
     .selectFrom("workspace_module_instances")
     .select(["module_name"])
     .where("org_id", "=", orgId)
-    .where("instance_name", "=", m[1]!)
+    .where("instance_name", "=", name)
     .executeTakeFirst();
-  if (!inst) return kind;
+  if (!inst) return { base: kind, instance: null };
 
   const primary = await meta
     .selectFrom("entity_kinds")
@@ -106,8 +115,8 @@ export async function baseKindOf(orgId: string, kind: string): Promise<string> {
     .where("is_primary", "=", true)
     .executeTakeFirst();
   // A module with no primary kind (lists) leaves the kind as-is rather than
-  // guessing one of several.
-  return primary?.id ?? kind;
+  // guessing one of several; the instance is still the instance.
+  return { base: primary?.id ?? kind, instance: name };
 }
 
 /** For a `<name>:item` kind with no exact single-entity resolver, find the
@@ -1060,8 +1069,7 @@ export async function listKindsForOrg(orgId: string): Promise<EntityKindRecord[]
     let profile = primary.profile;
     if (traitAxisValue(primary.traits as Record<string, unknown> | null, "identity") === "fungible") {
       const cfg = overrideConfigByTarget.get(`${inst.module_name}:${inst.instance_name}`) ?? {};
-      const stock =
-        typeof cfg.stock === "boolean" ? cfg.stock : cfg.stock_latched === true ? true : false;
+      const stock = stockDisclosureFromConfig(cfg) ?? false;
       if (!stock) {
         traits = TRAIT_PRESETS["catalog-record"] as EntityKindRecord["traits"];
         profile = "catalog-record";

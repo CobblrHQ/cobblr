@@ -39,6 +39,7 @@ interface StockLowPayload {
 const OPEN_STATUSES: OrderStatus[] = ["planned", "ordered", "in-transit"];
 
 export function registerPurchasesActionHandlers(): void {
+  registerUndos();
   if (registered) return;
   registered = true;
 
@@ -222,5 +223,17 @@ export function registerPurchasesActionHandlers(): void {
     }
 
     return { ok: true, order_id: orderId, arrived_at: arrivedOn, lines_received: items.length };
+  });
+}
+
+function registerUndos(): void {
+  // A draft this run made is deleted whole, through the record rail; a line
+  // added to an existing draft is removed on its own.
+  platform().actions.registerUndo("purchases.draft-po", (result) => {
+    const r = result as { ok?: unknown; skipped?: unknown; order_id?: unknown; item_id?: unknown; created_order?: unknown } | null;
+    if (r?.ok !== true || r.skipped) return null;
+    if (r.created_order && typeof r.order_id === "string") return { tool: "delete", entity_kind: "purchases:order", entity_id: r.order_id };
+    if (typeof r.item_id === "string") return { action_id: "purchases:remove-line", args: { line_id: r.item_id } };
+    return null;
   });
 }

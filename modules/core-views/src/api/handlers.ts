@@ -30,6 +30,7 @@ const VIEW_TYPE_WORDS: Record<string, string> = {
 };
 
 export function registerViewsHandlers(): void {
+  registerUndos();
   platform().actions.registerHandler("core-views.save-view", async (ctx) => {
     const args = (ctx.args ?? {}) as Record<string, unknown>;
     const wantedType =
@@ -101,5 +102,22 @@ export function registerViewsHandlers(): void {
       summary: `"${row.name}" saved as a ${row.view_type} view of ${row.entity_kind}${row.pinned ? ", pinned to the dashboard" : ""}`,
       data: { id: row.id, name: row.name, entity_kind: row.entity_kind, view_type: row.view_type },
     };
+  });
+}
+
+function registerUndos(): void {
+  platform().actions.registerHandler("core-views.delete-view", async (ctx) => {
+    const id = String((ctx.args as { view_id?: unknown } | null)?.view_id ?? "").trim();
+    if (!id) return { ok: false, error: "missing view_id" };
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreViewsDB>;
+    const row = await db.deleteFrom("core_views_views").where("id", "=", id).returning(["id", "name"]).executeTakeFirst();
+    if (!row) return { ok: true, skipped: true, reason: "already gone" };
+    return { ok: true, summary: `Removed the ${row.name} view.`, removed: row.id };
+  });
+  platform().actions.registerUndo("core-views.save-view", (result) => {
+    const r = result as { ok?: unknown; result?: { id?: unknown }; view?: { id?: unknown }; id?: unknown } | null;
+    const id = typeof r?.result?.id === "string" ? r.result.id : typeof r?.view?.id === "string" ? r.view.id : typeof r?.id === "string" ? r.id : null;
+    if (r?.ok !== true || !id) return null;
+    return { action_id: "core-views:delete-view", args: { view_id: id } };
   });
 }

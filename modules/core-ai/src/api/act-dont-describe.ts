@@ -61,6 +61,12 @@ const MIN_NAME = 5;
 /** Below this it is a word, not an instruction. See the note above. */
 const MIN_WORDS = 4;
 
+/** A reply that OFFERS to do the thing asked. "Want me to move that over?"
+ *  after "get the grocery into the dedicated section" is describing with a
+ *  question mark on it: the judgement is made, the doing is handed back. It
+ *  names no action label, so the name trigger never saw it (2026-09-12). */
+const OFFER = /\b(?:want|would you like|do you want|like) me to\b|\bshall i\b|\bshould i (?:go ahead|move|do|run|make)\b/i;
+
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** The action the reply talks about, or null. */
@@ -89,14 +95,17 @@ export function describedInsteadOfActing(
   if (!reply.trim() || looksLikeAMove(reply) || isAQuestion(userText)) return null;
   if (userText.trim().split(/\s+/).filter(Boolean).length < MIN_WORDS) return null;
   const named = actionNamedIn(reply, actionNames);
-  if (!named && !sawActionList) return null;
+  const offered = OFFER.test(reply) && reply.includes("?");
+  if (!named && !sawActionList && !offered) return null;
   // The tail matters as much as the ask. "Make me an api token" and "restore
   // last week's backup" ALSO read the action list and answer in prose, and
   // they are right to: nothing there does it. So the way out is named first
   // and explicitly, and inventing an id is ruled out in the same sentence.
   const which = named
     ? `You described "${named}" instead of running it.`
-    : `You read the list of actions and then wrote about what could be done, instead of doing it.`;
+    : offered
+      ? `You offered to do it ("want me to...?") instead of doing it.`
+      : `You read the list of actions and then wrote about what could be done, instead of doing it.`;
   return (
     `(${which} They asked you to do something, not to be told how it would be done - and nothing has changed ` +
     `in their workspace. If one of the actions you just read does what they asked, call invoke_action with it ` +

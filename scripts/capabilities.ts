@@ -138,6 +138,38 @@ export const CAPABILITIES: Capability[] = [
   },
   {
     kind: "owns",
+    id: "scan:target-from-kind",
+    what: "turning a kind (a module's kind, or an instance kind like groceries:item) into a scan target: the module's scannable plus the instance it names",
+    why:
+      "scannability is registered per MODULE kind and a tracked match is reported under the kind it lives in, so a route " +
+      "that looked the request's kind up directly answered 'groceries:item is not a scan target' on every re-buy button " +
+      "(2026-09-12). Confirm had grown its own fallback for the same miss in June and attach never did; a third spelling " +
+      "sat in the matcher. Only the owner asks the kernel's scannable registry, whatever the argument is called",
+    owner: "modules/core-scan/src/services/scan-target.ts",
+    scope: [
+      "modules/core-scan/src/api/inbox.ts",
+      "modules/core-scan/src/api/duplicates.ts",
+      "modules/core-scan/src/api/entity-image.ts",
+      "modules/core-scan/src/services/entity-match.ts",
+    ],
+    detect: /\bgetScannable(ForModule)?\s*\(/,
+    use: "scanTargetOf(orgId, kind, instance?, module?) for a request's kind, scanTargetOfRecord({ kind, module_name }) for a registry record, both from services/scan-target.ts",
+  },
+  {
+    kind: "owns",
+    id: "scan:quantity-through-the-door",
+    what: "moving a scannable record's count from a scan route: the kind's adjust action (its lots, floor and ledger) when it declares one, else its module route; and the one count a create starts with",
+    why:
+      "a scan attach bumped the count with a PATCH of the quantity field, a bare number: the milk you just scanned kept last week's " +
+      "dates and no lot was started, while a check-off on the same record dated a fresh one (2026-09-12). The bin adjust and the " +
+      "undo had their own PATCH too. A quantity key spelled in a scan route is the next path back to the bare write",
+    owner: "modules/core-scan/src/services/scan-target.ts",
+    scope: ["modules/core-scan/src/api/inbox.ts", "modules/core-scan/src/api/putaway.ts", "modules/core-scan/src/services/autofile.ts"],
+    detect: /\[[^\]\n]*(qty(_f|F)ield|\bfield)[^\]\n]*\]\s*[:=]/,
+    use: "moveQuantity(orgId, target, entity, delta, { restock, reason, source, door, current }) and startingCount(scannable, qty) from services/scan-target.ts",
+  },
+  {
+    kind: "owns",
     id: "scan:repurchase-answers",
     what: "the three answers to 'you already have one of these': Replaced the one that ran out / +N, still had some / Old one went bad, and which of them leads",
     why:

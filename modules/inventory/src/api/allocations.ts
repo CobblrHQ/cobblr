@@ -198,7 +198,10 @@ export async function settleAllocation(
       await trx
         .updateTable("inventory_parts")
         .set({
-          qty: sql<string>`qty - ${current.qty}::numeric`,
+          // Never below zero: the reservation was bounded when it was made,
+          // but stock can have moved since (stock-floor.ts, and the column's
+          // own CHECK).
+          qty: sql<string>`greatest(0, qty - ${current.qty}::numeric)`,
           updated_at: new Date(),
         })
         .where("id", "=", current.part_id)

@@ -16,6 +16,9 @@
 import { Router } from "express";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
+import { facesForKind } from "../platform/faces.js";
+import { viewQuery } from "@cobblr/platform-contract";
+import { dueState, todayFrom } from "../lib/due-day.js";
 
 export const attentionRouter = Router({ mergeParams: true });
 
@@ -34,7 +37,7 @@ interface AttentionEntry {
 }
 
 interface AttentionRow {
-  kind: "low_stock" | "overdue" | "upcoming" | "pending_scans" | "photo_wanted";
+  kind: "low_stock" | "overdue" | "due_today" | "upcoming" | "pending_scans" | "photo_wanted";
   label: string;
   count: number;
   /** Up to 3 item names, for the row's detail line. */
@@ -112,7 +115,11 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
       .slice(0, INSTANCE_CAP);
 
     const now = Date.now();
-    const horizon = now + WINDOW_DAYS * 86_400_000;
+    // By DAY, the way the schedule beside this feed reads a date, and on the
+    // client's day when it says (?today=YYYY-MM-DD). A date is midnight, so a
+    // clock comparison called anything due today overdue from 00:01 and the
+    // headline said "6 overdue" over a schedule that said 5 and 1 today.
+    const today = todayFrom(req.query.today);
 
     await Promise.all(
       domain.map(async (inst) => {
@@ -154,24 +161,93 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
           (d) => d.type === "date" && DUE_RE.test(`${d.name} ${d.display_label ?? ""}`),
         );
         if (dueFields.length === 0) return;
-        const overdue: string[] = [];
-        const upcoming: string[] = [];
+        // A stock-face record with nothing on hand has nothing left to date:
+        // exhausted milk is not overdue, it is gone (the calendar and the
+        // expiry sweeper apply the same rule through the kernel's date query).
+        let stockFace = false;
+        try {
+          stockFace = (await facesForKind(req.tenant!.org.id, `${inst.instance_name}:item`)).faces.includes("stock");
+        } catch {
+          stockFace = false;
+        }
+        type Dated = { id: string; name: string; when: number; field: string };
+        const overdue: Dated[] = [];
+        const dueToday: Dated[] = [];
+        const upcoming: Dated[] = [];
         for (const r of rowsOf) {
+          if (stockFace && r.qty != null && Number(r.qty) <= 0) continue;
           const meta = (r.metadata ?? {}) as Record<string, unknown>;
           for (const f of dueFields) {
             const raw = meta[f.name];
             if (typeof raw !== "string" || !raw) continue;
             const t = Date.parse(raw);
             if (!Number.isFinite(t)) continue;
-            if (t < now) overdue.push(String(r.name ?? "item"));
-            else if (t <= horizon) upcoming.push(String(r.name ?? "item"));
+            const dated = { id: String(r.id ?? r.name ?? "item"), name: String(r.name ?? "item"), when: t, field: f.name };
+            // By calendar day, the way the schedule reads it: due today is
+            // today, never overdue (due-day.ts).
+            const state = dueState(raw, today, WINDOW_DAYS);
+            if (state === "none") continue;
+            if (state === "overdue") overdue.push(dated);
+            else if (state === "today") dueToday.push(dated);
+            else if (state === "upcoming") upcoming.push(dated);
             break; // one signal per item is enough
           }
         }
+        // The alert should land on the rows it counted, in the order that
+        // matters. A saved view on this collection that ORDERS by one of its
+        // due fields ("Use it or lose it", soonest first) is that landing, so
+        // the row's route opens it; otherwise the bare table. The reviewer's
+        // arrow used to open the whole grocery table with nothing selected
+        // and the overdue rows to be found again by hand (2026-09-12).
+        const dueNames = new Set(dueFields.map((f) => f.name));
+        const views = await j<{ items: Array<{ id: string; config?: Record<string, unknown> }> }>(
+          `/orgs/${slug}/modules/core-views/views?kind=${encodeURIComponent(`${inst.instance_name}:item`)}`,
+          token,
+        );
+        const dueView = (views?.items ?? []).find((v) =>
+          (viewQuery(v.config).sort ?? []).some((spec) => dueNames.has(spec.replace(/^-/, ""))),
+        );
+        const dueRoute = dueView ? `${route}?view=${encodeURIComponent(dueView.id)}` : route;
+        const ago = (t: number) => {
+          const d = Math.round((now - t) / 86_400_000);
+          return d <= 0 ? "today" : d === 1 ? "yesterday" : `${d}d ago`;
+        };
+        const ahead = (t: number) => {
+          const d = Math.round((t - now) / 86_400_000);
+          return d <= 0 ? "today" : d === 1 ? "tomorrow" : `in ${d}d`;
+        };
+        // Soonest first, both lists: the most overdue leads, the nearest
+        // upcoming leads.
+        overdue.sort((a, b) => a.when - b.when);
+        upcoming.sort((a, b) => a.when - b.when);
+        const kind = `${inst.instance_name}:item`;
         if (overdue.length > 0)
-          rows.push({ kind: "overdue", label: `overdue in ${inst.display_name}`, count: overdue.length, sample: overdue.slice(0, 3), route });
+          rows.push({
+            kind: "overdue",
+            label: `overdue in ${inst.display_name}`,
+            count: overdue.length,
+            sample: overdue.slice(0, 3).map((d) => d.name),
+            route: dueRoute,
+            entries: overdue.slice(0, 8).map((d) => ({ id: d.id, title: `${d.name} — ${ago(d.when)}`, action: { record: d.id, kind } })),
+          });
+        if (dueToday.length > 0)
+          rows.push({
+            kind: "due_today",
+            label: `due today in ${inst.display_name}`,
+            count: dueToday.length,
+            sample: dueToday.slice(0, 3).map((d) => d.name),
+            route: dueRoute,
+            entries: dueToday.slice(0, 8).map((d) => ({ id: d.id, title: `${d.name} — today`, action: { record: d.id, kind } })),
+          });
         if (upcoming.length > 0)
-          rows.push({ kind: "upcoming", label: `coming up in ${inst.display_name}`, count: upcoming.length, sample: upcoming.slice(0, 3), route });
+          rows.push({
+            kind: "upcoming",
+            label: `coming up in ${inst.display_name}`,
+            count: upcoming.length,
+            sample: upcoming.slice(0, 3).map((d) => d.name),
+            route: dueRoute,
+            entries: upcoming.slice(0, 8).map((d) => ({ id: d.id, title: `${d.name} — ${ahead(d.when)}`, action: { record: d.id, kind } })),
+          });
       }),
     );
 
@@ -188,11 +264,8 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
       const openTasks = tasks.items.filter(
         (t) => t.due_date && !["done", "cancelled"].includes(t.status),
       );
-      const overdueTasks = openTasks.filter((t) => Date.parse(t.due_date!) < now);
-      const upcomingTasks = openTasks.filter((t) => {
-        const ts = Date.parse(t.due_date!);
-        return ts >= now && ts <= horizon;
-      });
+      const overdueTasks = openTasks.filter((t) => dueState(t.due_date, today, WINDOW_DAYS) === "overdue");
+      const upcomingTasks = openTasks.filter((t) => ["today", "upcoming"].includes(dueState(t.due_date, today, WINDOW_DAYS)));
       const taskEntry = (t: { id?: string; title: string }) => ({ id: String(t.id ?? t.title), title: t.title, action: { task: String(t.id ?? "") } });
       if (overdueTasks.length > 0)
         rows.push({
@@ -251,7 +324,7 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
     }
 
     // Severity order: overdue → low stock → pending scans → upcoming.
-    const rank = { overdue: 0, low_stock: 1, photo_wanted: 2, pending_scans: 3, upcoming: 4 } as const;
+    const rank = { overdue: 0, due_today: 1, low_stock: 2, photo_wanted: 3, pending_scans: 4, upcoming: 5 } as const;
     rows.sort((a, b) => rank[a.kind] - rank[b.kind] || b.count - a.count);
     res.json({ items: rows });
   } catch (err) {

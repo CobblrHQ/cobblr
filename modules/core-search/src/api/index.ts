@@ -57,11 +57,15 @@ router.get("/search", (req, res, next) => {
       .map((s) => s.trim())
       .filter(Boolean);
 
-    // Discover the candidate kinds. Use the registry (every kind
-    // declared by every module's manifest) as the source of truth;
-    // list() returns { items: [] } for kinds without a list resolver,
-    // so they're naturally filtered out by the post-filter below.
-    const allKinds = await platform().entities.listKinds();
+    // Discover the candidate kinds, for THIS workspace. listKinds() is the
+    // process registry: base kinds only, every module whether or not this
+    // workspace enabled it. A record in a named collection (a Bookshelf, a
+    // Groceries list) lives under its own `<instance>:item` kind, which only
+    // listKindsForOrg synthesizes, so searching the registry could never find
+    // a book or a grocery while the page's own kind chips (org-aware) showed
+    // both. list() returns { items: [] } for kinds without a list resolver,
+    // so those fall out of kinds_searched naturally.
+    const allKinds = await platform().entities.listKindsForOrg(orgId);
     const candidateIds = kindsParam
       ? allKinds.filter((k) => kindsParam.includes(k.id)).map((k) => k.id)
       : allKinds.map((k) => k.id);

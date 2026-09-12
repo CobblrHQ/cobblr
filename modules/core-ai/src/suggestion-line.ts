@@ -31,10 +31,10 @@ export function suggestionLine(sug?: { template: string; summary: string; operat
   return (
     `\n\nWORKED OUT ALREADY, IN CODE: this workspace read that request as "${sug.template}" and planned it exactly - ` +
     `${sug.summary} (${n} change${n === 1 ? "" : "s"}). This plan came from looking at the records, not from guessing, ` +
-    `and it is the answer to that part of the message: run THIS plan (the same records, the same action), do not ` +
-    `reinvent it, and do not create, delete or rename anything it did not. Say what it does in plain words, and ` +
-    `handle anything ELSE the person asked for in the same message. Only if they clearly meant something this plan ` +
-    `does not cover, say what the plan would have done and ask.` +
+    `and it is the answer to that part of the message. It is ALREADY offered to the person as a card with a Do it ` +
+    `button, so do not run or invoke it yourself, and do not create, delete or rename anything it did not. Say in ` +
+    `one plain sentence what it will do, then handle anything ELSE the person asked for in the same message. Only ` +
+    `if they clearly meant something this plan does not cover, say what the plan would have done and ask.` +
     limit
   );
 }

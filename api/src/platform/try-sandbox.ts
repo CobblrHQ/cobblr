@@ -287,8 +287,15 @@ export async function redeemSandboxToken(plain: string): Promise<RedeemResult> {
 export const KEEP_GRACE_MS = 7 * 24 * 3600_000;
 
 export type KeepResult =
-  | { ok: true; expiresAt: Date; emailed: boolean }
+  | { ok: true; kind: "trial"; expiresAt: Date; emailed: boolean }
   | { ok: false; reason: "not_sandbox" | "email_taken" };
+
+/** What a person is called once they have given an email and nothing else:
+ *  the part before the @, which is what most mail clients show anyway. */
+export function displayNameFromEmail(email: string): string {
+  const local = email.split("@")[0]?.trim() ?? "";
+  return local || "Owner";
+}
 
 /** Sends the sign-in link that becomes the way back in, and says whether it
  *  actually went. Injected because the absolute URL comes from the request. */
@@ -317,7 +324,21 @@ export async function keepSandbox(
 
   const expiresAt = new Date(Date.now() + env.TRY_TTL_DAYS * 86_400_000);
   await meta.transaction().execute(async (trx) => {
-    await trx.updateTable("users").set({ email }).where("id", "=", userId).execute();
+    // The person was "Guest" in a workspace called "Sandbox", which was true
+    // for an hour and stops being true here. Keeping is the moment it becomes
+    // somebody's, so both names change with it. A name the visitor already
+    // gave the workspace is theirs and is left alone.
+    await trx
+      .updateTable("users")
+      .set({ email, display_name: displayNameFromEmail(email) })
+      .where("id", "=", userId)
+      .execute();
+    await trx
+      .updateTable("orgs")
+      .set({ name: "My workspace" })
+      .where("id", "=", orgId)
+      .where("name", "=", "Sandbox")
+      .execute();
     // No longer a sandbox: the reaper must stop treating it as disposable, and
     // the TTL becomes the account trial's.
     await trx
@@ -368,7 +389,52 @@ export async function keepSandbox(
         `the sandbox link is the only way back in and stays open for the grace window`,
     );
   }
-  return { ok: true, expiresAt, emailed };
+  return { ok: true, kind: "trial", expiresAt, emailed };
+}
+
+// ── after keeping: the two doors back in ──────────────────────────────────
+
+/** The workspace this session keeps, if it came in through a sandbox link and
+ *  has since been kept. Null for a live sandbox (not kept yet), for an account
+ *  that never was a sandbox, and for a token nobody issued. Both post-keep
+ *  actions - resending the sign-in link and choosing a password - are gated
+ *  on this, because each hands a way in to whoever holds the session, and
+ *  that must only ever be the person who gave the email. */
+export async function keptSandboxForUser(
+  userId: string,
+): Promise<{ orgId: string; email: string } | null> {
+  const row = await meta
+    .selectFrom("try_sandbox_tokens as t")
+    .innerJoin("orgs as o", "o.id", "t.org_id")
+    .innerJoin("users as u", "u.id", "t.user_id")
+    .select(["o.id as org_id", "u.email"])
+    .where("t.user_id", "=", userId)
+    .where("o.sandbox", "=", false)
+    .where("o.trial_expires_at", "is not", null)
+    .executeTakeFirst();
+  if (!row) return null;
+  if (row.email.endsWith(`@${SANDBOX_EMAIL_DOMAIN}`)) return null;
+  return { orgId: row.org_id, email: row.email };
+}
+
+/** Give a kept sandbox's owner a password. They were provisioned with a hash
+ *  of random bytes, so they have nothing to present as "current" - and the
+ *  emailed link must not be the only way in (a spam folder is a locked door).
+ *  The sandbox links close here: the anonymous URL was the only door, and it
+ *  no longer is. Every other session is revoked and a fresh token returned,
+ *  the same shape as an ordinary password change. */
+export async function setKeptSandboxPassword(
+  userId: string,
+  passwordHash: string,
+): Promise<{ changedAt: Date }> {
+  const changedAt = new Date();
+  await meta
+    .updateTable("users")
+    .set({ password_hash: passwordHash, must_reset_password: false, tokens_valid_from: changedAt })
+    .where("id", "=", userId)
+    .execute();
+  await revokeSandboxLinksForUser(userId);
+  return { changedAt };
 }
 
 // ── the reaper's half ─────────────────────────────────────────────────────

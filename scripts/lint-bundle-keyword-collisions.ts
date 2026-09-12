@@ -19,7 +19,7 @@ const WORD = /[a-z][a-z0-9-]{2,}/g;
 const stem = (w: string): string => w.replace(/(ies|es|s)$/, (m) => (m === "ies" ? "y" : ""));
 
 interface Inst { instance_name?: string; display_name?: string; item_noun?: string; scan_keywords?: string[] }
-interface Manifest { id: string; provides_instances?: Inst[]; features?: Array<{ provides_instances?: Inst[] }> }
+interface Manifest { id: string; scan_keywords?: string[]; provides_instances?: Inst[]; features?: Array<{ provides_instances?: Inst[] }> }
 
 function main(): void {
   const dir = path.join(process.cwd(), "bundles");
@@ -37,6 +37,10 @@ function main(): void {
       }
       for (const k of inst.scan_keywords ?? []) keywords.set(stem(k.toLowerCase()), k);
     }
+    // The MANIFEST-level list too. It reaches every installed table the bundle
+    // provides (the install unions it into the table's own words), so a claim
+    // there is the same claim; this list is where "tea" hid in Groceries.
+    for (const k of m.scan_keywords ?? []) keywords.set(stem(k.toLowerCase()), k);
     bundles.push({ id: m.id, nouns, keywords });
   }
   const problems: string[] = [];

@@ -15,7 +15,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-search",
-  version: "0.1.0",
+  version: "0.1.1",
   displayName: "Search",
   description:
     "One search bar, all entity kinds. Each kind opts in by declaring a list resolver; core-search fans the query out and merges.",

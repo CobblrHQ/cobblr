@@ -18,13 +18,14 @@
 //                invoke the action once per discovered target.
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { sourceIdKey, type ActionInvokeActor } from "@cobblr/platform-contract";
+import { sourceIdKey, type ActionInvokeActor, type WireEffect } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import { invoke } from "./actions.js";
 import { baseKindOf, lookup, walkPairings } from "./entities.js";
 import { render } from "./templates.js";
 import { log as logActivity } from "./activity.js";
 import { parseWireFilter, passesWireFilter } from "./wire-filter.js";
+import { FiringLedger, firingKey } from "./wire-firing-key.js";
 import { currentActor } from "../lib/request-context.js";
 
 // Cycle guard. A wire's action may emit() further events — that's how
@@ -188,6 +189,11 @@ async function fireBindings(
   // same firing shares the originating user/token (same audit identity).
   const actor = await resolveActor();
   const firedAt = new Date().toISOString();
+  // One firing, one action per record: two bindings that resolve the same
+  // entity with the same action and args (a bundle's top-level twin of its
+  // instance wire, or two bundles that both restock on check-off) run it
+  // once. See wire-firing-key.ts for the incident.
+  const ledger = new FiringLedger();
 
   // Look up the source entity once if the payload carries an id.
   // Most events do: { orgId, partId, ... } / { orgId, taskId, ... }.
@@ -205,7 +211,8 @@ async function fireBindings(
       // while the emitter, knowing only its own module, sends "partId". The key
       // just missed, sourceId came out "", and the wire silently never fired.
       // Every instance wire in every bundle was dead this way.
-      const idKey = sourceIdKey(await baseKindOf(orgId, b.source_kind));
+      const baseKind = await baseKindOf(orgId, b.source_kind);
+      const idKey = sourceIdKey(baseKind);
       const sourceId =
         typeof payload[idKey] === "string" ? (payload[idKey] as string) : "";
 
@@ -274,6 +281,13 @@ async function fireBindings(
               )
             : undefined;
 
+        // The target's kind is the binding's own; a "self" target on an
+        // instance wire is the instance kind. Key the record by its BASE
+        // kind so the twin on the module's kind is recognised as the same.
+        const targetBaseKind = t.kind === b.source_kind ? baseKind : await baseKindOf(orgId, t.kind);
+        if (!ledger.claim({ action_id: b.action_id, target_kind: targetBaseKind, target_id: t.id, args: renderedArgs, template: rendered })) {
+          continue;
+        }
         await invoke(b.action_id, {
           orgId,
           userId: actor.user_id,
@@ -376,4 +390,33 @@ export async function setWireEnabled(
     diff: { action_id: updated.action_id, source_kind: updated.source_kind, enabled },
   });
   return { ok: true, wire: updated };
+}
+
+/** What a gesture is about to do. The enabled event wires that would fire for
+ *  a record of `sourceKind`, matched the way fireBindings matches (by base
+ *  kind) and collapsed the way it fires (same action + args once). Static args
+ *  only: a templated arg renders at firing time against the record. */
+export async function effectsOf(orgId: string, eventName: string, sourceKind: string): Promise<WireEffect[]> {
+  const rows = await meta
+    .selectFrom("entity_action_bindings as b")
+    .leftJoin("entity_actions as a", "a.id", "b.action_id")
+    .select(["b.id as id", "b.source_kind", "b.action_id", "b.args", "a.label as label"])
+    .where("b.org_id", "=", orgId)
+    .where("b.trigger_type", "=", "event")
+    .where("b.trigger_event", "=", eventName)
+    .where("b.enabled", "=", true)
+    .execute();
+  if (rows.length === 0) return [];
+  const wanted = await baseKindOf(orgId, sourceKind);
+  const seen = new Set<string>();
+  const out: WireEffect[] = [];
+  for (const r of rows) {
+    if ((await baseKindOf(orgId, r.source_kind)) !== wanted) continue;
+    const args = r.args && typeof r.args === "object" ? (r.args as Record<string, unknown>) : null;
+    const key = firingKey({ action_id: r.action_id, target_kind: wanted, target_id: "", args });
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ binding_id: r.id, action_id: r.action_id, action_label: r.label ?? null, source_kind: r.source_kind, args });
+  }
+  return out;
 }

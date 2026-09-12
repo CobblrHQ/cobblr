@@ -96,6 +96,7 @@ import { reconcileOrphanTenantRoles } from "./platform/reconcile-tenant-roles.js
 import { reconcileScanCategoryFields } from "./platform/reconcile-scan-category.js";
 import { reconcileAppScanFallback } from "./platform/reconcile-app-scan-fallback.js";
 import { backfillBundleClaims } from "./platform/backfill-bundle-claims.js";
+import { healTwinBundleWires } from "./platform/heal-twin-bundle-wires.js";
 import {
   registerDeclarativeScanResolver,
   refreshScanUrlManifests,
@@ -236,6 +237,16 @@ async function boot() {
             choices: (d.choices as string[] | null) ?? null,
           }));
       },
+      fieldsFor: async (orgId, kind) => {
+        const defs = await resolveFieldDefsForKind(orgId, kind);
+        return defs.map((d) => ({
+          name: d.name,
+          display_label: d.display_label,
+          field_role: d.field_role,
+          type: d.type,
+          choices: (d.choices as string[] | null) ?? null,
+        }));
+      },
       registerComputedContext: computedFields.registerComputedContext,
       registerCreateDefaults: createDefaults.registerCreateDefaults,
       unregisterCreateDefaults: createDefaults.unregisterCreateDefaults,
@@ -258,6 +269,7 @@ async function boot() {
       titleForEntity: entities.titleForEntity,
       resolvedKindForEntity: entities.resolvedKindForEntity,
       baseKindOf: entities.baseKindOf,
+      resolveKind: entities.resolveKind,
       // Modules call this on rows their OWN list route queried, so a record
       // reads the same whichever URL asked for it. See field-labels.ts.
       withFieldLabels,
@@ -265,8 +277,10 @@ async function boot() {
     },
     actions: {
       registerHandler: actions.registerHandler,
+      registerUndo: actions.registerUndo,
       listApplicable: actions.listApplicable,
       invoke: actions.invoke,
+      undoFor: actions.undoFor,
     },
     live: {
       registerCapability: live.registerCapability,
@@ -285,7 +299,7 @@ async function boot() {
       convert: unitsImpl.convert,
     },
     nav: navSurface,
-    wires: { fireEvent: wires.fireEvent },
+    wires: { fireEvent: wires.fireEvent, effectsOf: wires.effectsOf },
     health: {
       registerProbe: health.registerProbe,
       snapshot: health.snapshot,
@@ -1207,6 +1221,12 @@ async function boot() {
   // were provisioned before provisioning set it. Two cobblr_meta reads.
   const appFallback = await T("reconcileAppScanFallback", reconcileAppScanFallback());
   if (appFallback.orgsHealed > 0) console.log(`[cobblr-api] app scan-fallback reconcile: ${appFallback.orgsHealed} workspace(s) pointed at their app's table`);
+
+  // A bundle wire installed at both scopes fired twice per event. The bundles
+  // no longer declare the twin; this drops the rows already installed where
+  // the update is held for the prompt. One cobblr_meta query, no tenant pool.
+  const twins = await T("healTwinBundleWires", healTwinBundleWires());
+  if (twins.rowsDropped > 0) console.log(`[cobblr-api] twin bundle wires dropped: ${twins.rowsDropped} row(s) in ${twins.orgsHealed} workspace(s)`);
 
   // Self-heal the bundle-resource-claims ledger for installs that predate it,
   // so a bundle uninstall can refcount correctly. Once per org, idempotent.

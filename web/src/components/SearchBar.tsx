@@ -5,6 +5,7 @@
 // /search results page.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useKindLabels } from "../lib/useKindLabels";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Search } from "lucide-react";
@@ -14,6 +15,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 
 export function SearchBar() {
   const { activeSlug } = useActiveOrg();
+  const labels = useKindLabels(activeSlug);
   const navigate = useNavigate();
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
@@ -147,7 +149,7 @@ export function SearchBar() {
             >
               <div className="font-medium truncate">{h.title}</div>
               <div className="text-xs text-muted dark:text-slate-400 truncate">
-                {h.kind}
+                {labels.collection(h.kind)}
                 {h.subtitle ? ` · ${h.subtitle}` : ""}
               </div>
             </button>

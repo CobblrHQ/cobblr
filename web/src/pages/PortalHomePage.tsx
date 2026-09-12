@@ -6,6 +6,7 @@
 // "configure portal" CTA; non-admins see "ask an admin to pin views."
 
 import { Link, Navigate, useOutletContext, useSearchParams } from "react-router-dom";
+import { useKindLabels } from "../lib/useKindLabels";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, LayoutDashboard, LayoutGrid, Settings } from "lucide-react";
 import { api, type AppTheme, type PortalConfig } from "../lib/api";
@@ -21,6 +22,7 @@ interface PortalCtx {
 
 export function PortalHomePage() {
   const { portalConfig, activeSlug, skin } = useOutletContext<PortalCtx>();
+  const labels = useKindLabels(activeSlug);
   usePageTitle(portalConfig.display_name ?? "Portal");
 
   // We need view names; fetch all saved views and filter to the
@@ -191,7 +193,7 @@ export function PortalHomePage() {
                   className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 truncate"
                   style={mutedStyle(skin)}
                 >
-                  {v.entity_kind} · {v.view_type}
+                  {labels.collection(v.entity_kind)} · {labels.viewType(v.view_type)}
                 </div>
               </div>
               <ChevronRight

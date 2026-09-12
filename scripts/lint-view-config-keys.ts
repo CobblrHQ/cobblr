@@ -17,7 +17,7 @@
 // purpose — it needs no view-model refactor, and the two halves live in one
 // file, so a grep-level check is exactly as reliable as the thing it guards.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 
 const FILE = "web/src/pages/ViewsPage.tsx";
 const src = readFileSync(FILE, "utf8");
@@ -65,6 +65,55 @@ if (orphans.length > 0) {
   process.exit(1);
 }
 
+// The mirror image: a BUNDLE writes a config key no renderer reads. The
+// groceries bundle shipped "Use it or lose it" with `sort_by: "expires_on"`,
+// a spelling nothing in the product ever read (the grammar is `sort:
+// ["expires_on"]`, see viewQuery in the contract), so the view promised an
+// order on the marketing page and stayed alphabetical in the app for months
+// (#2772). A key here must be one a renderer or the view query reads.
+const READABLE = new Set<string>([
+  ...reads,
+  // The view's query, read through viewQuery() on both the api and the page.
+  "filter",
+  "where",
+  "sort",
+  // Read by the list pages and the panel renderers outside ViewsPage.tsx.
+  "group_by",
+  "visible_fields",
+  "image_field",
+  "caption_field",
+  "qty_field",
+  "expiry_field",
+  "min_qty_field",
+]);
+const deadKnobs: string[] = [];
+for (const file of readdirSync("bundles").filter((f) => f.endsWith(".json"))) {
+  const raw = JSON.parse(readFileSync(`bundles/${file}`, "utf8")) as { manifest?: Record<string, unknown> };
+  const m = raw.manifest;
+  if (!m) continue;
+  type View = { name?: string; config?: Record<string, unknown> };
+  const views: View[] = [...((m.saved_views as View[] | undefined) ?? [])];
+  for (const inst of (m.provides_instances as Array<{ saved_views?: View[] }> | undefined) ?? []) {
+    views.push(...(inst.saved_views ?? []));
+  }
+  for (const v of views) {
+    for (const key of Object.keys(v.config ?? {})) {
+      if (!READABLE.has(key)) deadKnobs.push(`${file}: view "${v.name ?? "?"}" writes config.${key}`);
+    }
+  }
+}
+if (deadKnobs.length) {
+  console.error(
+    `✗ lint:view-config-keys: ${deadKnobs.length} bundle view config key(s) nothing reads:\n` +
+      deadKnobs.map((d) => `    ${d}`).join("\n") +
+      "\n  A saved view's ordering is `sort: [\"field\", \"-other\"]` (viewQuery); its rows are\n" +
+      "  `filter` / `where`. A key with no reader is a promise the app never keeps.\n" +
+      "  Edit web/src/lib/featured-bundles.ts (the source), then regenerate with\n" +
+      "  npx tsx scripts/sync-bundles.ts and npx tsx scripts/lint-bundle-content.ts --write.\n",
+  );
+  process.exit(1);
+}
+
 console.log(
-  `[lint:view-config-keys] ✓ ${reads.size} renderer config key(s) all settable in the view modals`,
+  `[lint:view-config-keys] ✓ ${reads.size} renderer config key(s) all settable in the view modals; every bundle view key has a reader`,
 );

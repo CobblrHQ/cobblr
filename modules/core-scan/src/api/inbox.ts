@@ -24,6 +24,7 @@ import { randomUUID } from "node:crypto";
 import { buildCadenceEvents } from "../cadence-events.js";
 import {
   planItem,
+  planStillHolds,
   summarise,
   describeSummary,
   type AutofilePlan,
@@ -32,6 +33,7 @@ import {
 import { resolveRequirement, storageRequirementFor } from "../services/storage-requirement.js";
 import { applyReceiptFacts } from "../services/receipt-candidate-facts.js";
 import { alignStorageFields } from "../services/align-storage-fields.js";
+import { moveQuantity, scanTargetOf, startingCount, type QuantityMove } from "../services/scan-target.js";
 import { retargetByCategory } from "../services/retarget-by-category.js";
 import { lineQuantity } from "../services/receipt-shared.js";
 import { expiryDefaults } from "../services/shelf-life.js";
@@ -47,8 +49,11 @@ import {
   roledFactsPatch,
   traitAxisValue,
   type DecodeFillTarget,
+  isActionStep,
+  type ActionUndoStep,
 } from "@cobblr/platform-contract";
 import { splitEntityKind, entityKindOf } from "@cobblr/platform-contract/entity-kind";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { displayed as displayedNote } from "../services/routing-note.js";
 import {
   matchesScanFacet,
@@ -1925,16 +1930,16 @@ inboxRouter.post(
     );
     const kindKey = `${target.module}:${target.kind}`;
     // The owning module declares its scan target (create endpoint + quantity
-    // field) via registerScannable — core-scan reads it instead of a hardcoded
-    // map. (Audit 2026-06-26 follow-up.) A caller may pass an INSTANCE-scoped
-    // kind (target_kind "vehicles:item" → kindKey "assets:vehicles:item")
-    // instead of the module's base kind; scannability is a MODULE property and
-    // the instance routes the create separately (createUrl below), so fall back
-    // to the module's scannable rather than 400ing. (Confirming a vehicle from
-    // the scan inbox hit this: "assets:vehicles:item is not a scan target".)
-    const scanTarget =
-      platform().entities.getScannable(kindKey) ??
-      platform().entities.getScannableForModule(target.module);
+    // field) via registerScannable. A caller may pass an INSTANCE kind
+    // (target_kind "vehicles:item") instead of the module's kind; the one
+    // resolver every scan route uses (services/scan-target.ts) reads the
+    // module through the kernel and falls back to the module's scannable, so
+    // the instance routes the create (createUrl below) without a 400. (This
+    // route had its own copy of that rule since a vehicle hit "assets:vehicles:item
+    // is not a scan target"; attach and the bin adjust had none.)
+    const scanTarget = (
+      await scanTargetOf(ctx.org.id, target.kind.includes(":") ? target.kind : kindKey, parsed.data.instance, target.module)
+    )?.scannable;
     if (!scanTarget) {
       res.status(400).json({
         error: {
@@ -2121,7 +2126,7 @@ inboxRouter.post(
         ...candidateFields,
         ...typedMetadata,
       },
-      ...(qtyField && qty ? { [qtyField]: qty } : {}),
+      ...startingCount(scanTarget, qty),
       // Empty box → do NOT file the entity at the scan location: that's where
       // the BOX lives; the item itself is deployed elsewhere.
       // Container beats location: scanning INTO a bin/server is the more
@@ -4418,6 +4423,134 @@ inboxRouter.get(
   }),
 );
 
+/** The ledger's name for what one inbox item did, so an undo can ask the
+ *  ledger to forget exactly that (core-cadence:remove-event by source_ref). */
+const inboxSourceRef = (itemId: string) => `core-scan:inbox:${itemId}`;
+
+/** Take an attach's quantity bump back off the record it attached to, through
+ *  the record's own quantity door, and ask the ledger to forget the purchase.
+ *
+ *  The door matters. Inventory's quantity write carries the floor (a count
+ *  cannot go below zero, and says so), the lots and the consumption ledger;
+ *  a kernel writer.update of `qty - n` bypassed all three and, since the
+ *  floor became a CHECK constraint, would fail as a bare 500 once a person
+ *  had used some in between. So: the kind's declared `adjustAction` when it
+ *  has one (invoked ON the record with delta -n; what it reports as moved is
+ *  what is reported here), else the module route the bump itself used.
+ *  The cadence ledger learns intervals from purchases, and a -n adjust does
+ *  not un-teach one, so the purchase the attach filed is removed by its
+ *  source_ref instead; best-effort, a ledger the workspace does not keep is
+ *  not an error.
+ *
+ *  Returns what it took and the record's title, or null when there was
+ *  nothing recorded to take (an attach from before the qty was written down,
+ *  or a kind with no quantity). A refusal from the door (nothing on hand) is
+ *  returned with qty 0 and the door's own sentence. Never throws into the
+ *  caller: an unconfirm that cannot reverse the bump still reopens the item
+ *  and says so. */
+async function reverseAttachedQty(
+  orgId: string,
+  itemId: string,
+  attached: { kind?: string; id?: string; instance?: string | null; mode?: string; qty_added?: number; qty_field?: string },
+  userId: string | null,
+  door: { baseUrl: string; slug: string; headers: Record<string, string> },
+): Promise<{ qty: number; title: string; refused?: string } | null> {
+  if (attached.mode !== "add-qty" || !attached.id || !attached.kind) return null;
+  const qty = Number(attached.qty_added ?? 0);
+  const field = attached.qty_field;
+  if (!(qty > 0) || !field) return null;
+  const current = await platform().entities.lookup(orgId, attached.kind, attached.id);
+  if (!current) return null;
+  const target = await scanTargetOf(orgId, attached.kind, attached.instance);
+  if (!target) return null;
+
+  // Through the one quantity door (services/scan-target.ts): the record's
+  // adjust action when it declares one, else its module route. Same helper
+  // the attach itself moves the count with.
+  const cur = Number((current.fields as Record<string, unknown>)[field] ?? 0);
+  const moved = await moveQuantity(orgId, target, { kind: attached.kind, id: attached.id }, -qty, {
+    userId,
+    reason: "undo: scan attach",
+    source: { kind: "core-scan:inbox", id: itemId },
+    door,
+    current: Number.isFinite(cur) ? cur : 0,
+  });
+  const took = moved.ok ? Math.abs(moved.delta) : 0;
+  const refused = moved.ok ? undefined : (moved.refused ?? "the record's quantity could not be changed");
+
+  await forgetLedgerPurchase(orgId, userId, itemId);
+  return { qty: took, title: current.title, ...(refused ? { refused } : {}) };
+}
+
+/** The ledger's purchase, by the name the attach gave it. A workspace with
+ *  no ledger, or one that predates source refs, simply has nothing to forget. */
+async function forgetLedgerPurchase(orgId: string, userId: string | null, itemId: string): Promise<void> {
+  await platform()
+    .actions.invoke("core-cadence:remove-event", {
+      orgId,
+      userId,
+      scope: "workspace",
+      event: {
+        name: "core-scan.inbox.unconfirm",
+        payload: {},
+        actor: { user_id: userId, display_name: null, auth_method: "session" },
+        timestamp: new Date().toISOString(),
+        trigger_type: "user-invoked",
+      },
+      args: { source_ref: inboxSourceRef(itemId) },
+    })
+    .catch((err: unknown) => console.warn("[core-scan] ledger purchase not removed:", (err as Error)?.message ?? err));
+}
+
+/** Put the record back the way the attach found it, through the steps the
+ *  record's own action handed back at attach time (inventory: restore-part
+ *  from the snapshot: the lot goes, the dates and the count go back). The
+ *  honest inverse of a dated lot is that lot, not `-n`.
+ *
+ *  Only while the record still reads what the attach left. A snapshot put
+ *  back over a record somebody has used since would resurrect what they used
+ *  (attach +2 to 3 = 5, they use 4, the snapshot says 5): then the caller
+ *  falls through to taking `-n` off, which says how many were left. Returns
+ *  null when the steps were not run. */
+async function restoreAttachedRecord(
+  orgId: string,
+  itemId: string,
+  attached: { kind?: string; id?: string; qty_field?: string; qty_after?: number; undo?: unknown },
+  userId: string | null,
+): Promise<{ title: string; refused?: string } | null> {
+  const steps = Array.isArray(attached.undo) ? (attached.undo as ActionUndoStep[]) : [];
+  if (!steps.length || !attached.id || !attached.kind || !attached.qty_field || typeof attached.qty_after !== "number") return null;
+  const current = await platform().entities.lookup(orgId, attached.kind, attached.id);
+  if (!current) return null;
+  const now = Number((current.fields as Record<string, unknown>)[attached.qty_field] ?? NaN);
+  if (now !== attached.qty_after) return null;
+  let refused: string | undefined;
+  for (const step of steps) {
+    if (!isActionStep(step)) continue;
+    const r = (await platform()
+      .actions.invoke(step.action_id, {
+        orgId,
+        userId,
+        entity: { kind: step.entity_kind ?? attached.kind, id: step.entity_id ?? attached.id },
+        event: {
+          name: "core-scan.inbox.unconfirm",
+          payload: {},
+          actor: { user_id: userId, display_name: null, auth_method: "session" },
+          timestamp: new Date().toISOString(),
+          trigger_type: "user-invoked",
+        },
+        args: step.args,
+      })
+      .catch((err: unknown) => ({ ok: false, error: (err as Error)?.message ?? String(err) }))) as { ok?: boolean; error?: string } | null;
+    if (r?.ok !== true) {
+      refused = r?.error ?? "the record could not be put back";
+      break;
+    }
+  }
+  await forgetLedgerPurchase(orgId, userId, itemId);
+  return { title: current.title, ...(refused ? { refused } : {}) };
+}
+
 // ─────────────────────── POST /inbox/:id/unconfirm ─────────────────────
 // REVERT a commit: bring a resolved scan back to the pending inbox so a wrong
 // confirm can be redone (the mirror of restore-from-discarded, for the other
@@ -4477,15 +4610,48 @@ inboxRouter.post(
     }
 
     const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
-    const attached = meta.attached_to as { kind?: string; id?: string; mode?: string } | undefined;
+    const attached = meta.attached_to as
+      | { kind?: string; id?: string; instance?: string | null; mode?: string; qty_added?: number; qty_field?: string; qty_after?: number; undo?: unknown }
+      | undefined;
     let entityDeleted = false;
     let note: string | null = null;
 
     if (attached?.id) {
-      note =
-        attached.mode === "add-qty"
-          ? "The existing entry it attached to was left untouched — undo the quantity bump there if needed."
-          : "The existing entry it attached to was left untouched.";
+      // An attach that restocked kept the record's own way back (the lot it
+      // started, the dates it stamped, the count): put that back, while the
+      // record still reads what the attach left. Otherwise, or for an older
+      // attach that only recorded what it added, take exactly that back off
+      // the record through its own quantity door. Either way the ledger is
+      // asked to forget the purchase, so a bulk "File everything" that
+      // attached to the wrong thing is undoable line by line.
+      const who = sessionUser(req)?.id ?? null;
+      const restored =
+        attached.mode === "add-qty" || attached.mode === "replace"
+          ? await restoreAttachedRecord(ctx.org.id, id, attached, who).catch(() => null)
+          : null;
+      if (restored) {
+        note = restored.refused
+          ? `${restored.title}: ${restored.refused}. Nothing was put back.`
+          : `Took the ${Number(attached.qty_added ?? 0)} back off ${restored.title}, and the lot it started.`;
+      } else {
+        const token = bearer(req) ?? "";
+        const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
+        const took = await reverseAttachedQty(ctx.org.id, id, attached, who, {
+          baseUrl,
+          slug: ctx.org.slug,
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        }).catch(() => null);
+        note =
+          attached.mode === "add-qty"
+            ? took
+              ? took.refused
+                ? `${took.title}: ${took.refused}. Nothing was taken back.`
+                : took.qty < Number(attached.qty_added ?? 0)
+                  ? `Took the ${took.qty} back off ${took.title} (only that many were left).`
+                  : `Took the ${took.qty} back off ${took.title}.`
+              : "The existing entry it attached to was left untouched — undo the quantity bump there if needed."
+            : "The existing entry it attached to was left untouched.";
+      }
     } else if (row.target_entity_id && row.target_module && row.target_kind) {
       const kindKey = row.target_kind.includes(":")
         ? row.target_kind
@@ -4687,18 +4853,25 @@ inboxRouter.post(
         .execute()
         .catch(() => {});
     });
-    const scannable = platform().entities.getScannable(parsed.data.kind);
-    if (!scannable) {
+    // The match's kind is the kind the record LIVES under (`groceries:item`
+    // for a Groceries table's milk); scannability belongs to its module and
+    // the instance routes the write. Resolved in one place for every scan
+    // route (services/scan-target.ts): a direct lookup on the request's kind
+    // answered "groceries:item is not a scan target" on every re-buy button.
+    const target = await scanTargetOf(ctx.org.id, parsed.data.kind, parsed.data.instance);
+    if (!target) {
       res.status(400).json({
         error: { code: "not_scannable", message: `${parsed.data.kind} is not a scan target` },
       });
       return;
     }
+    const { scannable, baseKind } = target;
+    const instance = target.instance;
     const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
     // The entity's CRUD path: instance items live under /instances/:slug/items,
     // everything else under the module's own route (same rule confirm uses).
-    const entityPath = parsed.data.instance
-      ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/instances/${parsed.data.instance}/items/${parsed.data.entity_id}`
+    const entityPath = instance
+      ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/instances/${instance}/items/${parsed.data.entity_id}`
       : `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${scannable.createEndpoint}/${parsed.data.entity_id}`;
     const authHeaders = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
@@ -4720,21 +4893,21 @@ inboxRouter.post(
     let newQty: number | null = null;
     let priorQty = 0;
     let qtyAdded = 0;
+    /** The way back for the quantity moves, in undo order, from the door. */
+    const undoSteps: NonNullable<QuantityMove["undo"]> = [];
     const mergedFields: string[] = [];
     if (parsed.data.mode === "add-qty" || parsed.data.mode === "replace") {
       // A kind without a native quantity (qtyField absent) has nothing to
       // bump — the attach still merges the barcode below.
       if (scannable.qtyField) {
         const cur = Number(entity[scannable.qtyField] ?? 0);
-        const add = Math.max(1, Number(row.quantity ?? 1));
-        // Replace: the old one is gone, so the shelf holds exactly what was
-        // scanned. Add: the old one is still there, so it is on top.
-        newQty = parsed.data.mode === "replace" ? add : (Number.isFinite(cur) ? cur : 0) + add;
-        patch[scannable.qtyField] = newQty;
         // The ledger needs both, and the server already knows them - never take
-        // a quantity from the client when the entity is authoritative.
+        // a quantity from the client when the entity is authoritative. The
+        // moves themselves run after the field PATCH below, so a record with
+        // a fresh lot on it is never overwritten by a snapshot taken before
+        // the lot existed, and a PATCH that fails leaves the count unmoved.
         priorQty = Number.isFinite(cur) ? cur : 0;
-        qtyAdded = add;
+        qtyAdded = Math.max(1, Number(row.quantity ?? 1));
       }
       // Barcode-append: a scanned (not AI-read) code the entity doesn't have yet.
       const aiRead = isMachineReadCode(
@@ -4767,9 +4940,9 @@ inboxRouter.post(
           module?: string;
           fields?: Record<string, unknown>;
         }> | null) ?? [];
-      const [candMod] = parsed.data.kind.split(":");
-      const cand = parsed.data.instance
-        ? candidates.find((c) => c.instance === parsed.data.instance)
+      const [candMod] = baseKind.split(":");
+      const cand = instance
+        ? candidates.find((c) => c.instance === instance)
         : (candidates.find((c) => !c.instance && c.module === candMod) ?? candidates[0]);
       const blank = (v: unknown) =>
         v === undefined || v === null || (typeof v === "string" && v.trim() === "");
@@ -4836,15 +5009,71 @@ inboxRouter.post(
       }
     }
 
-    // add-qty / replace: give the entity the scan's photo when it has none (best-effort).
-    if ((parsed.data.mode === "add-qty" || parsed.data.mode === "replace") && !entity.image_path) {
-      const photoId = row.catalog_image_file_id ?? row.image_file_id;
+    if ((parsed.data.mode === "add-qty" || parsed.data.mode === "replace") && scannable.qtyField && qtyAdded > 0) {
+      // A scan attach is a PURCHASE, so it restocks the way a check-off does:
+      // through the record's own quantity door (services/scan-target.ts),
+      // where the fresh lot dated today, the bought-on and expiry stamps and
+      // the floor live. It used to be a PATCH of the count, and the milk you
+      // just scanned kept last week's dates (2026-09-12). The door hands the
+      // action's own inverse back, kept beside this item for its undo.
+      // Replace: the old one is gone first (nothing to take on an empty
+      // shelf: the floor would refuse, so that leg is skipped), then the
+      // new one arrives; the ledger hears the old one consumed or discarded
+      // through buildCadenceEvents below, as before.
+      const doorCtx = { baseUrl, slug: ctx.org.slug, headers: authHeaders };
+      const who = sessionUser(req)?.id ?? null;
+      const source = { kind: "core-scan:inbox", id: id ?? "" };
+      const entityRef = { kind: parsed.data.kind, id: parsed.data.entity_id };
+      let current = priorQty;
+      if (parsed.data.mode === "replace" && priorQty > 0) {
+        const gone = await moveQuantity(ctx.org.id, target, entityRef, -priorQty, {
+          userId: who,
+          reason: parsed.data.cadence?.resolution === "discarded" ? "replaced: the old one went bad" : "replaced: the old one was used up",
+          source,
+          door: doorCtx,
+          current,
+        });
+        if (!gone.ok) {
+          res.status(409).json({ error: { code: "attach_failed", message: gone.refused ?? "the record's quantity could not be changed" } });
+          return;
+        }
+        current = gone.newQty ?? current + gone.delta;
+        if (gone.undo) undoSteps.unshift(...gone.undo);
+      }
+      const arrived = await moveQuantity(ctx.org.id, target, entityRef, qtyAdded, {
+        userId: who,
+        reason: parsed.data.mode === "replace" ? "replaced, the new one arrived (scan)" : "restocked from a scan",
+        restock: true,
+        source,
+        door: doorCtx,
+        current,
+      });
+      if (!arrived.ok) {
+        res.status(502).json({ error: { code: "attach_failed", message: arrived.refused ?? "the record's quantity could not be changed" } });
+        return;
+      }
+      newQty = arrived.newQty ?? current + arrived.delta;
+      if (arrived.undo) undoSteps.unshift(...arrived.undo);
+    }
+
+    // add-qty / replace: give the entity the scan's photo when it has none
+    // (best-effort). A picture the person CHOSE on the card is different: they
+    // picked it looking at the "same as X" banner, for X, and it lands on the
+    // record whether or not the record had one. The scan's own photo and a
+    // lookup's find still only fill an empty slot (2026-09-12).
+    const chosenId =
+      (row.suggested_metadata as { catalog_image_user_set?: boolean } | null)?.catalog_image_user_set &&
+      row.catalog_image_file_id
+        ? row.catalog_image_file_id
+        : null;
+    if ((parsed.data.mode === "add-qty" || parsed.data.mode === "replace") && (chosenId || !entity.image_path)) {
+      const photoId = chosenId ?? row.catalog_image_file_id ?? row.image_file_id;
       if (photoId) {
         // Both halves from one split. This used to hand-roll it and pass the
         // WHOLE kind as source_type, so the row was written "inventory:part"
         // while every reader queries "part" - orphaned on write, and invisible
         // because the PATCH below sets image_path regardless.
-        const { module, type } = splitEntityKind(parsed.data.kind);
+        const { module, type } = splitEntityKind(baseKind);
         void platform()
           .files.attach(ctx.org.id, {
             fileId: photoId,
@@ -4868,7 +5097,9 @@ inboxRouter.post(
 
     // Resolve the inbox item as "attached" (history + metadata carry the ref).
     const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
-    const [module] = parsed.data.kind.split(":");
+    // The owning MODULE, from the module's kind: an instance kind's prefix is
+    // the instance, not a module.
+    const [module] = baseKind.split(":");
     const resolvedRow = await db
       .updateTable("core_scan_inbox_items")
       .set({
@@ -4877,7 +5108,17 @@ inboxRouter.post(
         target_kind: parsed.data.kind,
         target_entity_id: parsed.data.entity_id,
         suggested_metadata: mergeMeta({
-          attached_to: { kind: parsed.data.kind, id: parsed.data.entity_id, mode: parsed.data.mode },
+          attached_to: {
+            kind: parsed.data.kind,
+            id: parsed.data.entity_id,
+            ...(instance ? { instance } : {}),
+            mode: parsed.data.mode,
+            // What the bump was, so unconfirm can take exactly it back off.
+            ...(qtyAdded > 0 && scannable.qtyField ? { qty_added: qtyAdded, qty_field: scannable.qtyField, qty_after: newQty } : {}),
+            // The action's own inverse (the record as it was, lot and all),
+            // run by unconfirm while the record still reads what this left.
+            ...(undoSteps.length ? { undo: undoSteps } : {}),
+          },
         }) as never,
         resolved_at: new Date(),
         updated_at: new Date(),
@@ -4905,7 +5146,7 @@ inboxRouter.post(
     const cadenceEvents = buildCadenceEvents({
       mode: parsed.data.mode,
       cadence: parsed.data.cadence,
-      kind: parsed.data.kind,
+      kind: baseKind,
       entityId: parsed.data.entity_id,
       added: qtyAdded,
       priorQty: priorQty,
@@ -4914,6 +5155,8 @@ inboxRouter.post(
       await platform().events.emit("core-scan.stock.observed", {
         orgId: ctx.org.id,
         userId: sessionUser(req)?.id ?? null,
+        // Named after the item, so an undo can ask the ledger to forget it.
+        source_ref: inboxSourceRef(id ?? ""),
         ...ev,
       });
     }
@@ -4974,14 +5217,15 @@ inboxRouter.post(
       res.status(401).json({ error: { code: "no_auth", message: "Bearer token required" } });
       return;
     }
-    const scannable = platform().entities.getScannable(parsed.data.kind);
-    if (!scannable) {
+    const target = await scanTargetOf(ctx.org.id, parsed.data.kind, parsed.data.instance);
+    if (!target) {
       res.status(400).json({ error: { code: "not_scannable", message: `${parsed.data.kind} is not a scan target` } });
       return;
     }
+    const { scannable, instance } = target;
     const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
-    const entityPath = parsed.data.instance
-      ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/instances/${parsed.data.instance}/items/${parsed.data.entity_id}`
+    const entityPath = instance
+      ? `${baseUrl}/api/v1/orgs/${ctx.org.slug}/instances/${instance}/items/${parsed.data.entity_id}`
       : `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/${scannable.createEndpoint}/${parsed.data.entity_id}`;
     const authHeaders = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
     const getRes = await fetch(entityPath, { headers: authHeaders });
@@ -5007,24 +5251,31 @@ inboxRouter.post(
     }
     const cur = Number(entity[qtyField] ?? 0);
     const oldQty = Number.isFinite(cur) ? cur : 0;
-    const newQty = parsed.data.set != null ? parsed.data.set : Math.max(0, oldQty + (parsed.data.delta ?? 0));
-    const patchRes = await fetch(entityPath, {
-      method: "PATCH",
-      headers: authHeaders,
-      body: JSON.stringify({ [qtyField]: newQty }),
-    });
-    if (!patchRes.ok) {
-      const errText = await patchRes.text();
-      let targetMsg: string | undefined;
-      try {
-        targetMsg = (JSON.parse(errText) as { error?: { message?: string } }).error?.message;
-      } catch {
-        /* non-JSON */
+    // A recount is a delta from what is there. Through the one quantity door
+    // (services/scan-target.ts): the record's adjust action, with its floor
+    // and ledger, else its module route. Nothing to move is not an error.
+    const delta = parsed.data.set != null ? parsed.data.set - oldQty : (parsed.data.delta ?? 0);
+    let newQty = oldQty;
+    if (delta !== 0) {
+      const moved = await moveQuantity(
+        ctx.org.id,
+        target,
+        { kind: parsed.data.kind, id: parsed.data.entity_id },
+        delta,
+        {
+          userId: sessionUser(req)?.id ?? null,
+          reason: parsed.data.set != null ? "recounted from the bin label" : delta > 0 ? "added from the bin label" : "removed from the bin label",
+          ...(delta > 0 && parsed.data.set == null ? { restock: true } : {}),
+          source: { kind: "core-locations:location", id: req.params.locationId ?? "" },
+          door: { baseUrl, slug: ctx.org.slug, headers: authHeaders },
+          current: oldQty,
+        },
+      );
+      if (!moved.ok) {
+        res.status(409).json({ error: { code: "adjust_failed", message: moved.refused ?? "the record's quantity could not be changed" } });
+        return;
       }
-      res.status(patchRes.status).json({
-        error: { code: "adjust_failed", message: targetMsg ?? `Update returned ${patchRes.status}` },
-      });
-      return;
+      newQty = moved.newQty ?? oldQty + moved.delta;
     }
     res.json({
       entity_title: typeof entity.name === "string" ? entity.name : parsed.data.entity_id,
@@ -5512,6 +5763,21 @@ const AutofileBody = z.object({
   batch_id: z.string().optional(),
   /** Passed to the entity write so a date lands on the right calendar day. */
   timezone: z.string().optional(),
+  /** On confirm: act ONLY on these items. The sheet sends the ids it showed,
+   *  so a run never writes what nobody looked at. The dry run used to return
+   *  the first 100 plans while confirm acted on every pending row, so a
+   *  130-item inbox previewed 100 and wrote 130 (2026-09-12). */
+  item_ids: z.array(z.string().min(1)).max(500).optional(),
+  /** On confirm: what the sheet showed for each item. An item whose plan no
+   *  longer holds (a match filed from another device in between) is skipped
+   *  and reported as changed, rather than acted on under a plan nobody saw. */
+  seen: z
+    .array(z.object({ item_id: z.string().min(1), action: z.enum(["attach", "create", "skip"]), to_id: z.string().nullish(), destination: z.string().nullish() }))
+    .max(500)
+    .optional(),
+  /** On confirm: where the "filed as new" pile goes. The per-item confirm
+   *  takes the same key; the sheet defaults it to the session's scan area. */
+  location_id: z.string().nullish(),
 });
 
 // AI-REACH: exempt — a bulk write over the whole pending inbox. An agent should
@@ -5531,19 +5797,30 @@ inboxRouter.post(
       return;
     }
 
+    // One more than the page, so the response can say whether there is more
+    // waiting beyond what it planned, rather than a total that quietly reads
+    // 200 for a 400-line inbox.
+    const PAGE = 200;
     let q = db
       .selectFrom("core_scan_inbox_items")
       .selectAll()
       .where("status", "=", "pending")
       .orderBy("created_at", "asc")
-      .limit(200);
+      .limit(PAGE + 1);
     if (parsed.data.batch_id) q = q.where("scan_batch_id", "=", parsed.data.batch_id);
-    const rows = await q.execute();
+    if (parsed.data.confirm && parsed.data.item_ids?.length) q = q.where("id", "in", parsed.data.item_ids);
+    const fetched = await q.execute();
+    const more = fetched.length > PAGE;
+    const rows = more ? fetched.slice(0, PAGE) : fetched;
 
     // Match every row FIRST, so the plan is computed against one consistent
     // picture. Doing it row-by-row while also writing would let an earlier
     // create become a later row's "match", which is how one receipt line
     // silently absorbs the next.
+    // Filing into a table the workspace does not have yet installs the bundle
+    // first, and installing changes what the workspace is made of: owner or
+    // admin, the same bar as the install route itself.
+    const canInstall = roleSatisfies((req as unknown as { tenant?: { role: string } }).tenant?.role as "owner", ["owner", "admin"]);
     const plans: AutofilePlan[] = [];
     for (const row of rows) {
       let matches: { barcode_matches: TrackedCandidate[]; name_matches: TrackedCandidate[] } = {
@@ -5558,7 +5835,7 @@ inboxRouter.post(
       } catch {
         // A matcher that fails must not turn into "nothing matched", which
         // would create a duplicate. Treat it as ambiguous and leave it.
-        plans.push({ action: "skip", itemId: row.id, why: "could not check what you already have" });
+        plans.push({ action: "skip", itemId: row.id, name: row.suggested_name, why: "could not check what you already have" });
         continue;
       }
       const cand = (row.suggested_candidates as Array<Record<string, unknown>> | null)?.[0] ?? null;
@@ -5570,20 +5847,41 @@ inboxRouter.post(
           candidate: cand as never,
           barcodeMatches: matches.barcode_matches,
           nameMatches: matches.name_matches,
+          canInstall,
         }),
       );
     }
 
+    // The plan the sheet shows is the plan confirm acts on: every row it
+    // planned. `total` is how many it planned and `more` says there are rows
+    // beyond the page, so the sheet can say "the first 200; run again for
+    // the rest" instead of a count that looks complete.
     const summary = summarise(plans);
     if (!parsed.data.confirm) {
       res.json({
         dry_run: true,
         summary,
         message: describeSummary(summary),
-        plans: plans.slice(0, 100),
+        plans,
+        total: plans.length,
+        more,
       });
       return;
     }
+    // Changed since you looked: the re-plan disagrees with what was shown.
+    const seenById = new Map((parsed.data.seen ?? []).map((x) => [x.item_id, x] as const));
+    const changed: Array<{ itemId: string; name: string | null; was: string; now: string }> = [];
+    const actionable = plans.filter((plan) => {
+      const seen = seenById.get(plan.itemId);
+      if (!seen || planStillHolds(seen, plan)) return true;
+      changed.push({
+        itemId: plan.itemId,
+        name: plan.name,
+        was: seen.action === "create" && seen.destination ? `${seen.action} into ${seen.destination}` : seen.action,
+        now: plan.action === "create" && plan.destination ? `${plan.action} into ${plan.destination}` : plan.action,
+      });
+      return false;
+    });
 
     const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
     const authHeaders = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
@@ -5591,7 +5889,41 @@ inboxRouter.post(
     let created = 0;
     const failures: Array<{ itemId: string; error: string }> = [];
 
-    for (const plan of plans) {
+    // Install each table the creates need, once per bundle, before the first
+    // create into it: the same install-then-file the session's File all runs.
+    // KEEP THE ANSWER: the install reports the target it really made, and a
+    // bundle that skins a module's default table (Groceries) makes no
+    // instance while the candidate still carries the token the routing menu
+    // needed to name it. Filing with the candidate's token asks for an
+    // instance the install declined to create, and every line 404s on a
+    // bundle that installed perfectly (the receipt of 2026-08-22).
+    const needed = new Map<string, string>();
+    for (const plan of actionable) {
+      if (plan.action !== "create" || !plan.installs) continue;
+      const cand = (rows.find((x) => x.id === plan.itemId)?.suggested_candidates as Array<Record<string, unknown>> | null)?.[0];
+      const bundleId = String(cand?.bundle_external_id ?? "");
+      if (bundleId) needed.set(bundleId, plan.installs);
+    }
+    const installedInstance = new Map<string, string | null>();
+    const installed: Array<{ bundle_external_id: string; label: string }> = [];
+    const installFailed = new Map<string, string>();
+    for (const [bundleId, label] of needed) {
+      try {
+        const r = await fetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/quickstart/materialize`, {
+          method: "POST",
+          headers: authHeaders,
+          body: JSON.stringify({ bundle_external_id: bundleId, item_ids: [] }),
+        });
+        if (!r.ok) throw new Error(`install ${r.status}`);
+        const body = (await r.json()) as { instance?: string | null; installed?: unknown };
+        installedInstance.set(bundleId, body.instance ?? null);
+        if (body.installed) installed.push({ bundle_external_id: bundleId, label });
+      } catch (err) {
+        installFailed.set(bundleId, `could not install ${label}: ${(err as Error).message}`);
+      }
+    }
+
+    for (const plan of actionable) {
       try {
         if (plan.action === "attach") {
           const r = await fetch(
@@ -5620,6 +5952,11 @@ inboxRouter.post(
           const targetModule = String(cand?.module ?? "");
           const targetKind = String(cand?.kind ?? "");
           if (!targetModule || !targetKind) throw new Error("candidate lost its destination");
+          const bundleId = String(cand?.bundle_external_id ?? "");
+          if (bundleId && installFailed.has(bundleId)) throw new Error(installFailed.get(bundleId));
+          // The instance the install made (possibly none), not the candidate's
+          // routing token, when the table was installed on the way.
+          const instance = bundleId && installedInstance.has(bundleId) ? installedInstance.get(bundleId) : cand?.instance;
           const r = await fetch(
             `${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-scan/inbox/${plan.itemId}/confirm`,
             {
@@ -5628,10 +5965,11 @@ inboxRouter.post(
               body: JSON.stringify({
                 target_module: targetModule,
                 target_kind: targetKind,
-                ...(cand?.instance ? { instance: cand.instance } : {}),
+                ...(instance ? { instance } : {}),
                 name: row?.suggested_name,
                 quantity: plan.qty,
                 extras: (cand?.fields as Record<string, unknown> | undefined) ?? {},
+                ...(parsed.data.location_id ? { location_id: parsed.data.location_id } : {}),
               }),
             },
           );
@@ -5645,8 +5983,23 @@ inboxRouter.post(
       }
     }
 
-    const done = { ...summary, attached, created };
-    res.json({ dry_run: false, summary: done, message: describeSummary(done), failures });
+    const done = {
+      ...summarise(actionable),
+      attached,
+      created,
+      skipped: summarise(actionable).skipped + changed.length,
+    };
+    if (changed.length) done.reasons["changed since you looked"] = changed.length;
+    res.json({
+      dry_run: false,
+      summary: done,
+      message: describeSummary(done, failures.length),
+      failures,
+      changed,
+      installed,
+      // What the sheet needs for per-line undo: the items it acted on.
+      filed: actionable.filter((p) => p.action !== "skip" && !failures.some((f) => f.itemId === p.itemId)).map((p) => p.itemId),
+    });
   }),
 );
 
@@ -6447,6 +6800,7 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
                 title: bestTracked.title,
                 instance: bestTracked.instance,
                 matched_by: bestTracked.matched_by,
+                matched_label: bestTracked.matched_label ?? null,
                 // The picture a person already chose for the thing they have.
                 // A re-purchase off a receipt searched the web again and came
                 // home with a tin, over a photo the owner had hand-picked for

@@ -132,7 +132,7 @@ const BrickLinkPage = lazy(() => import("./pages/BrickLinkPage").then((m) => ({ 
 import { ForcePasswordResetPage } from "./pages/ForcePasswordResetPage";
 const AdminConsole = lazy(() => import("./pages/AdminConsole").then((m) => ({ default: m.AdminConsole })));
 import { AppLayout } from "./components/AppLayout";
-import { SandboxBar } from "./components/SandboxBar";
+import { WorkspaceStateBar } from "./components/WorkspaceStateBar";
 import { ImpersonationBanner } from "./components/ImpersonationBanner";
 import { AdminLayout } from "./components/AdminLayout";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -532,15 +532,16 @@ function ActiveOrgScopedRoutes() {
       {/* Always-on feedback button for every signed-in user — except the
           operator console, where the operator IS the recipient. */}
       {!onAdmin && !fullSide && <FeedbackWidget />}
-      {/* The sandbox countdown and its Keep button.
+      {/* The strip that says what kind of workspace this is: a sandbox's
+          countdown and Keep button, a trial's "yours until", nothing at all
+          for a kept or self-hosted one.
           It lived in the sidebar foot, which only renders in full-sidebar mode -
           so in the default top-nav layout a visitor saw no clock and had no way
           to keep the workspace, and it simply vanished when the hour was up. It
           portals to <body> anyway, so the only thing its position in the tree
-          decides is WHETHER it mounts. Here it always does; it still draws
-          nothing unless this browser is holding a sandbox expiry, which makes it
-          inert everywhere else, self-hosts included. */}
-      <SandboxBar />
+          decides is WHETHER it mounts. Here it always does; the server says
+          whether there is anything to draw. */}
+      <WorkspaceStateBar slug={activeSlug} />
       {shouldRedirectToPortal && <Navigate to={`/portal/${activeSlug}`} replace />}
       {shouldRedirectToAppHome && <Navigate to={appMode!.home_path} replace />}
       <Routes>

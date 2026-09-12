@@ -46,7 +46,7 @@ import { NewPartDialog } from "./NewPartDialog";
 import { ImportDialog } from "./ImportDialog";
 import { PartDetailModal } from "./PartDetailPage";
 import type { PartListItem, InvFieldDef } from "./api";
-import { countOf } from "@cobblr/platform-contract";
+import { countOf, viewQuery } from "@cobblr/platform-contract";
 import { strayRecords } from "@cobblr/platform-contract/instance-for-category";
 
 /** One of this module's lists, as `GET /instances?module=inventory` describes it. */
@@ -65,7 +65,7 @@ type SavedViewLite = {
   view_type: string;
   pinned?: boolean;
   is_default?: boolean;
-  config?: { group_by?: string; visible_fields?: string[] };
+  config?: { group_by?: string; visible_fields?: string[] } & Record<string, unknown>;
 };
 
 export function PartsListPage() {
@@ -146,6 +146,11 @@ export function PartsListPage() {
   const activeView = viewId ? views.find((v) => v.id === viewId) ?? null : null;
   const groupBy = activeView?.config?.group_by;
   const viewFields = activeView?.config?.visible_fields;
+  // The view's own query (filter / where / sort), read the one way every
+  // surface reads it, and sent to the server so it holds across pages.
+  // Only group_by and visible_fields used to reach this page, so "Use it or
+  // lose it" stayed alphabetical and a Built chip filtered nothing.
+  const viewQ = activeView ? viewQuery(activeView.config) : {};
   // When a view is active, restrict the custom columns to its visible_fields;
   // otherwise show the first 6 (the prior behaviour).
   const customCols = viewFields
@@ -192,7 +197,7 @@ export function PartsListPage() {
     queryKey: [
       "inventory-parts",
       entityKind,
-      { search, categoryId, locationId, state, lowOnly, archivedFilter, warrantyFilter, insuredOnly, lifecycle },
+      { search, categoryId, locationId, state, lowOnly, archivedFilter, warrantyFilter, insuredOnly, lifecycle, view: activeView?.id ?? null },
     ],
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
@@ -208,6 +213,7 @@ export function PartsListPage() {
         insured_only: insuredOnly || undefined,
         lifecycle: lifecycle || undefined,
         cursor: pageParam,
+        ...viewQ,
       }),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
   });
@@ -268,7 +274,32 @@ export function PartsListPage() {
     }
   }
 
-  const partItems = parts.data?.pages.flatMap((p) => p.items) ?? [];
+  // The server orders by anything stored. A COMPUTED field has no stored value
+  // to order by, so a view sorted on one ("Re-buy soonest" by runs_out_in) is
+  // ordered here, over the rows loaded so far, by the value the row carries.
+  // Same grammar as the server (`-field` for descending), so the two never
+  // disagree about what a spec means.
+  const computedNames = new Set(allCustomCols.filter((d) => d.type === "computed").map((d) => d.name));
+  const clientSort = (viewQ.sort ?? []).filter((s) => computedNames.has(s.replace(/^-/, "")));
+  const fetched = parts.data?.pages.flatMap((p) => p.items) ?? [];
+  const partItems = clientSort.length === 0
+    ? fetched
+    : [...fetched].sort((a, b) => {
+        for (const spec of clientSort) {
+          const key = spec.replace(/^-/, "");
+          const dir = spec.startsWith("-") ? -1 : 1;
+          const va = (a as unknown as Record<string, unknown>)[key] ?? (a.metadata as Record<string, unknown> | null)?.[key];
+          const vb = (b as unknown as Record<string, unknown>)[key] ?? (b.metadata as Record<string, unknown> | null)?.[key];
+          // No value sorts last in either direction: an unknown is not the
+          // smallest or the largest answer.
+          if (va == null && vb == null) continue;
+          if (va == null) return 1;
+          if (vb == null) return -1;
+          const c = typeof va === "number" && typeof vb === "number" ? va - vb : String(va).localeCompare(String(vb));
+          if (c !== 0) return c * dir;
+        }
+        return 0;
+      });
   // Things filed in the catch-all wearing a category that NAMES one of this
   // module's own lists ("Teas" on a base-Inventory row, in a workspace with a
   // Teas list) belong in that list; nobody looks for tea under Inventory. The

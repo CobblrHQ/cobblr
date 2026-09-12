@@ -22,6 +22,7 @@ import { GROUNDING_RULES, PLAIN_ANSWER_RULES, TOOL_USE_RULES } from "./prompt-ru
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { matchCommand } from "./basics.js";
+import { withPlanCard } from "./plan-card.js";
 import { tenantContext, sessionUserId, sessionDisplayName, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import {
@@ -42,6 +43,7 @@ import { recordRound } from "../providers/replay.js";
 import { performWrite, performWrites, undoWrite, undoableOf, type WriteRequest, type WriteOutcome } from "./chat-ledger.js";
 import type { ToolCall, ChatTurn } from "../providers/tool-wire.js";
 import { summariseAction, type ActionCopy } from "./action-summary.js";
+import { actionRunsUnconfirmed, type ActionConsent } from "@cobblr/platform-contract/action-consent";
 import { inferMoveFromToolShape, jsonBlockIn } from "./tool-shaped-move.js";
 
 /** ToolCall → the ledgered write request shape (null = not a known write). */
@@ -64,16 +66,21 @@ export function writeRequestsOf(call: ToolCall): WriteRequest[] {
 }
 
 /** In auto mode, which write calls STILL hold for confirmation instead of
- *  auto-applying. Actions (irreversible side effects) hold, and so do
- *  destructive record ops — a delete, including any bulk/multi delete. Creates
- *  and updates auto-apply. The reason deletes hold even in auto: untrusted
- *  workspace content (entity names/descriptions/scanned text pulled into Cobb's
- *  context) must never be able to steer an UNCONFIRMED delete. Pure so the same
- *  decision the auto-write closure makes can be asserted directly. */
-export function autoWriteMustHold(ws: WriteRequest[]): boolean {
+ *  auto-applying. Destructive record ops hold: a delete, including any
+ *  bulk/multi delete. The reason, even in auto: untrusted workspace content
+ *  (entity names/descriptions/scanned text pulled into Cobb's context) must
+ *  never be able to steer an UNCONFIRMED delete. Creates and updates
+ *  auto-apply. An action auto-applies exactly when its declaration says an AI
+ *  may run it with no person confirming (`undoable`, the same rule the relay
+ *  reads: actionRunsUnconfirmed in platform-contract), and holds otherwise,
+ *  unknown included. Pure so the same decision the auto-write closure makes
+ *  can be asserted directly, and so the relay and this door can be held to
+ *  the same answer for every action. */
+export function autoWriteMustHold(ws: WriteRequest[], action?: ActionConsent | null): boolean {
   const w = ws[0];
   if (!w) return true;
-  return w.tool === "action" || ws.some((r) => r.tool === "delete");
+  if (w.tool === "action") return !actionRunsUnconfirmed(action);
+  return ws.some((r) => r.tool === "delete");
 }
 
 /** One deliberate instruction may carry many records; a LOOP that keeps
@@ -205,8 +212,10 @@ export function toolDefsFor(prefs: ChatToolPrefs): Array<{ name: string; descrip
       name: t.name,
       description:
         t.mode === "write"
-          ? prefs.write_mode === "auto" && t.name !== "invoke_action"
-            ? `${t.description} (Applied immediately — every change is tracked and undoable.)`
+          ? prefs.write_mode === "auto"
+            ? t.name === "invoke_action"
+              ? `${t.description} (An action whose list_actions entry says undoable: true is applied immediately, tracked and undoable. Any other action PROPOSES the change and the user confirms before it runs.)`
+              : `${t.description} (Applied immediately — every change is tracked and undoable.)`
             : `${t.description} (This PROPOSES the change — the user confirms before anything runs.)`
           : t.description,
       parameters: jsonSchemaOf(t.params),
@@ -300,6 +309,34 @@ const argsSchemaCache = new Map<
   { at: number; byId: Map<string, Record<string, { label?: string; type?: string }>>; labels: string[] }
 >();
 /** Every action id this workspace has, memoised beside the arg schemas. */
+/** The registry with the inverse-only actions it hides by default, for the
+ *  one reader that needs to know they exist: the refusal below. */
+async function actionsIncludingInternal(c: Ctx): Promise<Array<{ id: string; internal?: boolean; label?: string | null }>> {
+  try {
+    const reg = await callApi(c, "GET", "/registered-actions?include_internal=1");
+    return (reg.body.items as Array<{ id: string; internal?: boolean; label?: string | null }> | undefined) ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/** Why the model may not call this action, or null. An action that exists
+ *  only as the way back for another (declared `internal`) is run by Undo on
+ *  a card and by nothing else; a model that names one gets the sentence
+ *  rather than a card with guessed arguments. */
+export function internalActionRefusal(
+  actionId: string,
+  registry: ReadonlyArray<{ id: string; internal?: boolean; label?: string | null }>,
+): string | null {
+  const hit = registry.find((a) => a.id === actionId);
+  if (!hit?.internal) return null;
+  return (
+    `${actionId}${hit.label ? ` ("${hit.label}")` : ""} is the way back for another action: it runs only when the user ` +
+    `presses Undo on a card, never on request. If the user wants a change undone, tell them the card has an Undo; ` +
+    `do not call this.`
+  );
+}
+
 async function actionIds(c: Ctx): Promise<string[] | null> {
   const hit = argsSchemaCache.get(c.slug);
   if (!hit || Date.now() - hit.at > 60_000) {
@@ -368,6 +405,20 @@ async function actionPlan(
     const plan = r.body.plan as { title?: unknown; lines?: unknown } | null | undefined;
     if (!plan || typeof plan.title !== "string" || !Array.isArray(plan.lines)) return null;
     return { plan: { title: plan.title, lines: plan.lines.filter((l): l is string => typeof l === "string") } };
+  } catch {
+    return null;
+  }
+}
+
+/** Whether an action may run with no person confirming, from the registry:
+ *  the same `undoable` the relay reads for the same question. Unknown reads
+ *  as null, which holds. */
+async function actionSafety(c: Ctx, actionId: string): Promise<ActionConsent | null> {
+  try {
+    const reg = await callApi(c, "GET", "/registered-actions");
+    const items = (reg.body.items as Array<{ id: string; undoable?: boolean }> | undefined) ?? [];
+    const hit = items.find((a) => a.id === actionId);
+    return hit ? { undoable: hit.undoable === true } : null;
   } catch {
     return null;
   }
@@ -553,8 +604,10 @@ async function runTurn(
   // The consent + auto-mode sentences ride in the prompt the caller built
   // (system-prompt.ts consentLine): a prompt assembled in two places is one
   // that differs between callers, and lint:one-system-prompt says so.
-  // AUTO mode: record CRUD applies immediately through the ledger (undoable);
-  // actions return null → still proposed. Hard cap per turn.
+  // AUTO mode: record creates and updates, and the actions declared safe to
+  // run unconfirmed, apply immediately through the ledger (undoable); deletes
+  // and every other action return null and are proposed. Hard cap per turn,
+  // and every auto write counts against it, actions included.
   const AUTO_WRITE_CAP = 10;
   let autoWrites = 0;
   const userId = sessionUserId(req) ?? "";
@@ -632,6 +685,9 @@ async function runTurn(
         const a = call.args ?? {};
         const typed = String(a.action_id ?? "");
         if (!typed) return null;
+        // The way back for another action is not something to call.
+        const internal = internalActionRefusal(typed, await actionsIncludingInternal(c));
+        if (internal) return internal;
         // platform:group_fields for platform:group-fields: the model chose the
         // right action and typed the separator its own way. Correct it in
         // place rather than refusing the turn.
@@ -680,10 +736,12 @@ async function runTurn(
             executeWrite: async (call: ToolCall) => {
               const ws = writeRequestsOf(call);
               const w = ws[0];
-              // Actions + destructive record ops (delete, incl. bulk/multi
-              // delete) keep the confirm gate even in auto mode; over-cap too.
-              // See autoWriteMustHold for why deletes hold. Creates/updates auto-apply.
-              if (!w || autoWriteMustHold(ws) || autoWrites >= AUTO_WRITE_CAP) return null;
+              // Destructive record ops (delete, incl. bulk/multi delete) and
+              // any action not declared safe to run unconfirmed keep the
+              // confirm gate even in auto mode; over-cap too. See
+              // autoWriteMustHold. Creates/updates and undoable actions apply.
+              const action = w?.tool === "action" && w.action_id ? await actionSafety(c, w.action_id) : null;
+              if (!w || autoWriteMustHold(ws, action) || autoWrites >= AUTO_WRITE_CAP) return null;
               autoWrites++;
               if (ws.length > 1) {
                 return performWrites(wsApi, ldb, userId, ws, {
@@ -905,27 +963,22 @@ chatRouter.post(
     // same match the offer strip uses, and asking the client would use an
     // offer that may be stale by now. A suggestion is a nicety; a turn must
     // not fail for want of one.
-    const suggestion = await matchCommand(
-      tenantDb(req),
-      String([...parsed.data.messages].reverse().find((m) => m.role === "user")?.content ?? ""),
-      tenantContext(req).org.id,
-      {
-        wsApi: chatWorkspaceApi(c),
-        ...(parsed.data.selection?.ids?.length ? { selectionIds: parsed.data.selection.ids } : {}),
-        ...(parsed.data.context?.kind ? { pageKind: parsed.data.context.kind } : {}),
-      },
-    )
-      .then((hit) =>
-        hit
-          ? {
-              template: hit.template,
-              summary: hit.summary ?? `${hit.operations.length} changes`,
-              operations: hit.operations.length,
-              ...(hit.note ? { note: hit.note } : {}),
-            }
-          : undefined,
-      )
-      .catch(() => undefined);
+    const asked = String([...parsed.data.messages].reverse().find((m) => m.role === "user")?.content ?? "");
+    const hit = await matchCommand(tenantDb(req), asked, tenantContext(req).org.id, {
+      wsApi: chatWorkspaceApi(c),
+      ...(parsed.data.selection?.ids?.length ? { selectionIds: parsed.data.selection.ids } : {}),
+      ...(parsed.data.context?.kind ? { pageKind: parsed.data.context.kind } : {}),
+    }).catch(() => null);
+    // The plan rides in the prompt so the model can narrate it, AND in the
+    // reply as a card (withPlanCard) so it is offered whatever the model does.
+    const suggestion = hit
+      ? {
+          template: hit.template,
+          summary: hit.summary ?? `${hit.operations.length} changes`,
+          operations: hit.operations.length,
+          ...(hit.note ? { note: hit.note } : {}),
+        }
+      : undefined;
     const situational: PromptOptions = {
       consent: promptPrefs,
       ...(parsed.data.context ? { context: parsed.data.context } : {}),
@@ -951,7 +1004,7 @@ chatRouter.post(
     const asTurn = req.query.mode === "turn";
     if (!asTurn) {
       try {
-        res.json(await runTurn(req, parsed, system, c, orgId));
+        res.json(withPlanCard(await runTurn(req, parsed, system, c, orgId), hit, asked));
       } catch (err) {
         const status = err instanceof TurnError ? err.status : 502;
         const msg = err instanceof Error ? err.message : String(err);
@@ -1005,7 +1058,7 @@ chatRouter.post(
           TURN_DEADLINE_MS,
           `this took longer than ${Math.round(TURN_DEADLINE_MS / 60000)} minutes, so I stopped waiting. Nothing was changed. If your AI is a local model or a bridge it may be busy or wedged; try again, or check Configuration → AI.`,
         );
-        await finishTurn(tdb, turnId, { ok: true, result });
+        await finishTurn(tdb, turnId, { ok: true, result: withPlanCard(result, hit, asked) });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (!(err instanceof TurnError) || err.status === 502) console.error(`[core-ai] chat failed: ${msg}`);

@@ -35,7 +35,7 @@ import {
   type HistoryState,
 } from "../lib/input-history";
 import { useDetailRoute, useListRoute } from "../lib/useDetailRoute";
-import { useAiStatus, AiOffNotice } from "./AiStatusNotice";
+import { useAiStatus, AiOffNotice, aiStatusLine } from "./AiStatusNotice";
 import { RailTabContent, openRail, useRailActiveTab, useRailTab } from "./SideRail";
 
 // Shown only if the basic-mode endpoint itself is unreachable (network error) —
@@ -724,6 +724,10 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
       // in his prose is a chip too, not only the card's.
       const refs = refsOfResponse(r);
       const named = (m: Msg): Msg => (refs.length ? { ...m, refs } : m);
+      // The plan the workspace worked out in code rides as a Do-it card, right
+      // after Cobb's sentence and before anything the model added: it is the
+      // answer to that part of the message, whatever the model made of it.
+      const planCard = r.command ? [named({ role: "assistant" as const, content: "", command: r.command })] : [];
       if (r.type === "proposal" && r.proposal) {
         setMessages([
           ...next,
@@ -731,6 +735,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
           // The loop may say something useful before proposing ("found 3 skeins
           // that match — want me to add the pattern?"): keep that text.
           ...(r.text ? [named({ role: "assistant" as const, content: r.text })] : []),
+          ...planCard,
           named({ role: "assistant", content: r.summary ?? "I can do that — confirm?", proposal: r.proposal }),
         ]);
       } else if (r.type === "proposals" && r.items?.length) {
@@ -740,6 +745,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
           ...next,
           ...doneCards.map(named),
           ...(r.text ? [named({ role: "assistant" as const, content: r.text })] : []),
+          ...planCard,
           ...r.items.map((it) =>
             named({
               role: "assistant" as const,
@@ -749,7 +755,12 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
           ),
         ]);
       } else {
-        setMessages([...next, ...doneCards.map(named), named({ role: "assistant", content: r.text?.trim() || "I didn't manage an answer for that. Try asking again, or in a different way." })]);
+        setMessages([
+          ...next,
+          ...doneCards.map(named),
+          named({ role: "assistant", content: r.text?.trim() || (r.command ? "Here is what I can do." : "I didn't manage an answer for that. Try asking again, or in a different way.") }),
+          ...(r.command ? [named({ role: "assistant" as const, content: "", command: r.command })] : []),
+        ]);
       }
     }
   }
@@ -1041,6 +1052,46 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
 
     setBusy(true);
     try {
+      // A control word that points at the last card's change ("undo", "put it
+      // back") is the card's Undo, whichever way the chat is answered: the
+      // same server rule basic mode runs, asked with the ledger handles only,
+      // so "yes" and "again" stay the model's to read. Without this the
+      // model composed a fresh +1 stock write for "put it back" (rig,
+      // 2026-09-13): right count, wrong road, a second ledger row.
+      const handles = (() => {
+        for (let i = next.length - 1; i >= 0; i--) {
+          const m = next[i]!;
+          if (m.undone) continue;
+          const h = m.ledgerIds ?? (m.ledgerId ? [m.ledgerId] : []);
+          if (h.length) return h;
+        }
+        return [] as string[];
+      })();
+      if (handles.length && text.trim().split(/\s+/).length <= 6) {
+        const control = await api.answerBasic(activeSlug, text, { ledger_ids: handles }).catch(() => null);
+        const undoAct = control?.act?.kind === "undo" ? control.act : null;
+        if (undoAct) {
+          let ok = 0;
+          for (const id of undoAct.ledger_ids) {
+            const u = await api.aiChatUndo(activeSlug, id).catch(() => ({ ok: false, message: "" }));
+            if (u.ok) ok++;
+          }
+          if (ok) workspaceChanged();
+          setMessages((prev) => {
+            const copy = [...prev];
+            for (let i = copy.length - 1; i >= 0; i--) {
+              const m = copy[i]!;
+              if ((m.ledgerIds ?? (m.ledgerId ? [m.ledgerId] : [])).length > 0 && !m.undone) {
+                copy[i] = { ...m, undone: true };
+                break;
+              }
+            }
+            return [...copy, { role: "assistant", content: ok === undoAct.ledger_ids.length ? "✓ Undone." : ok ? `✓ Undid ${ok} of ${undoAct.ledger_ids.length}.` : "✗ I couldn't undo that." }];
+          });
+          setBusy(false);
+          return;
+        }
+      }
       // Start a PERSISTED turn and follow it, rather than holding one request
       // open for the whole loop. The turn lives server-side: progress streams
       // in as it happens, a refresh resubscribes to the same id, and a second
@@ -1700,8 +1751,13 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                 <Cobb pose={devPose} size={150} title="Cobb" className="cobb-lift" />
                 <p className="text-xs text-faint dark:text-slate-500 leading-relaxed mt-2">
                   {aiOff ? (
-                    <>Ask me the basics - "what can you do", "how do I add a part", "where do I scan". For
-                    questions about your actual data or to have me make changes, connect AI up top.</>
+                    <>Ask me the basics - "what can you do", "how do I add a part", "where do I scan".{" "}
+                    {/* "connect AI up top" is only true when there is something to
+                        connect. With the operator switch off the notice above says
+                        so and offers no link, and this line must not contradict it. */}
+                    {aiStatusLine(aiStatus)?.cta
+                      ? "For questions about your actual data or to have me make changes, connect AI up top."
+                      : "Questions about your actual data, and changes, need AI, which is off here."}</>
                   ) : (
                     // The last line must match the write-mode chip: "I'll check
                     // with you" is only true in ASK mode — in AUTO, changes apply
@@ -1859,7 +1915,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                   {m.command && !m.resolved && (
                     <div className="mt-2">
                       <div className="text-[11px] text-muted dark:text-slate-400">
-                        {m.command.summary} · learned from “{m.command.template}”
+                        {m.command.summary} · {m.command.id.startsWith("computed:") ? "worked out from the page, no AI used" : `learned from “${m.command.template}”`}
                       </div>
                       {m.command.note && (
                         <div className="text-[11px] text-muted dark:text-slate-400 break-words">{m.command.note}</div>

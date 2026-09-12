@@ -10,7 +10,9 @@
 //  module, bricklink-connector — it drives create-items + update-item.)
 
 import { sql, type Kysely } from "kysely";
-import { platform, requireActionEntity } from "@cobblr/platform-contract";
+import { platform, requireActionEntity, type ActionInvokeContext } from "@cobblr/platform-contract";
+import type { ActionUndoStep } from "@cobblr/platform-contract/action-undo";
+import { statedQuantity } from "@cobblr/platform-contract/stated-quantity";
 import type { InventoryDB } from "../db.js";
 import { recordConsumption } from "./stock-ledger.js";
 import { reserveAllocation, settleAllocation } from "./allocations.js";
@@ -31,6 +33,8 @@ import {
   type Batch,
 } from "../batches.js";
 import { observation, swapFreshObservations, type StockObservation } from "../observations.js";
+import { arrivedToday, freshLotStamps, startsFreshLot } from "../fresh-lot.js";
+import { BELOW_ZERO, NOTHING_ON_HAND, floorDelta } from "../stock-floor.js";
 
 let registered = false;
 
@@ -66,6 +70,11 @@ interface AdjustStockPayload {
   partId?: string;
   delta?: number;
   reason?: string;
+  /** The delta is stock that ARRIVED (a purchase): a lot dated today, whatever
+   *  was on the shelf. The check-off wires set it; so does the record's own
+   *  Restock button. See fresh-lot.ts. */
+  restock?: boolean;
+  timezone?: string;
   // Optional source attribution for the consumption ledger — e.g. the wire
   // fired by digifab.print.completed passes sourceKind:"digifab:job" + the job id.
   sourceKind?: string;
@@ -90,16 +99,27 @@ async function applyStockDelta(
   // too would double-count. Generic — any external tracker opts a part out.
   const ext = await db
     .selectFrom("inventory_parts")
-    .select(sql<string | null>`metadata->>'tracked_by'`.as("tracked_by"))
+    .select([sql<string | null>`metadata->>'tracked_by'`.as("tracked_by"), "qty"])
     .where("id", "=", partId)
     .executeTakeFirst();
-  if (ext?.tracked_by) {
+  if (!ext) return { ok: false, error: "part_not_found" };
+  if (ext.tracked_by) {
     return { ok: true, skipped: true, reason: `externally tracked by ${ext.tracked_by}` };
   }
 
+  // The floor. A decrement on an empty record is refused with the one
+  // sentence every surface shows; one larger than what is on hand takes what
+  // is there and says so. Applied here, at the write, so use-one, use-up,
+  // mark-spoiled and a wire's negative delta all inherit it (stock-floor.ts).
+  const verdict = floorDelta(Number(ext.qty), delta);
+  if (verdict.kind === "refuse") {
+    return { ok: false, error: verdict.error, partId, delta: 0, newQty: Math.max(0, Number(ext.qty)) };
+  }
+  const applied = verdict.applied;
+
   const updated = await db
     .updateTable("inventory_parts")
-    .set({ qty: sql<string>`qty + ${delta}::numeric`, updated_at: new Date() })
+    .set({ qty: sql<string>`greatest(0, qty + ${applied}::numeric)`, updated_at: new Date() })
     .where("id", "=", partId)
     .returning(["id", "name", "qty", "min_qty"])
     .executeTakeFirst();
@@ -112,7 +132,7 @@ async function applyStockDelta(
   try {
     await recordConsumption(db, {
       partId,
-      delta,
+      delta: applied,
       reason: reason ?? null,
       sourceKind: p.sourceKind ?? null,
       sourceId: p.sourceId ?? null,
@@ -124,7 +144,7 @@ async function applyStockDelta(
   await platform().events.emit("inventory.stock.changed", {
     orgId,
     partId: updated.id,
-    delta,
+    delta: applied,
     newQty: Number(updated.qty),
     reason,
   });
@@ -134,10 +154,158 @@ async function applyStockDelta(
   // list", so a one-tap "use one" that crosses the threshold reorders for free.
   const newQty = Number(updated.qty);
   const minQty = updated.min_qty == null ? null : Number(updated.min_qty);
-  if (delta < 0 && minQty != null && minQty > 0 && newQty <= minQty) {
+  if (applied < 0 && minQty != null && minQty > 0 && newQty <= minQty) {
     await platform().events.emit("inventory.stock.low", { orgId, partId: updated.id, newQty, minQty });
   }
-  return { ok: true, partId: updated.id, delta, newQty };
+  // `delta` is what actually moved (the inverse of this is +delta); a clamp
+  // says what was asked and why less happened.
+  return {
+    ok: true,
+    partId: updated.id,
+    delta: applied,
+    newQty,
+    ...(verdict.kind === "clamp" ? { clamped: true, requested: delta, note: verdict.note } : {}),
+  };
+}
+
+
+// ─────────────────────────── the way back ───────────────────────────────
+// Every stock move and lifecycle mark changes a part's count and a few keys
+// of its metadata (the lots, the dates, a status); the item edit changes its
+// name, fields and place. The honest inverse of any of them is the part the
+// way it was, and one action puts it there: restore-part, given what the run
+// changed and the values before. The wrapper takes the snapshot on the way
+// in, diffs on the way out, and hands the difference back with the result;
+// the undoer registered beside each handler turns that into the step.
+
+interface PartSnapshot {
+  qty: number;
+  name: string;
+  location_id: string | null;
+  metadata: Record<string, unknown>;
+}
+
+async function partSnapshot(orgId: string, partId: string): Promise<PartSnapshot | null> {
+  const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
+  const row = await db
+    .selectFrom("inventory_parts")
+    .select(["qty", "name", "location_id", "metadata"])
+    .where("id", "=", partId)
+    .executeTakeFirst();
+  if (!row) return null;
+  return {
+    qty: Number(row.qty),
+    name: row.name,
+    location_id: row.location_id ?? null,
+    metadata: ((row.metadata as Record<string, unknown> | null) ?? {}) as Record<string, unknown>,
+  };
+}
+
+/** What a run changed, with the values before: the arguments of restore-part. */
+export interface PartUndoState {
+  partId: string;
+  qty?: number;
+  name?: string;
+  location_id?: string | null;
+  /** Metadata keys to set back, with their values before. */
+  metadata?: Record<string, unknown>;
+  /** Metadata keys that did not exist before, to remove. */
+  absent?: string[];
+}
+
+function same(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+
+/** The part the action names, wherever the handler reads it from. */
+function partIdOf(ctx: ActionInvokeContext): string | null {
+  const args = (ctx.args as { partId?: unknown } | null) ?? {};
+  const ev = (ctx.event?.payload as { partId?: unknown } | null) ?? {};
+  const id = ctx.entity?.id ?? args.partId ?? ev.partId;
+  return typeof id === "string" && id ? id : null;
+}
+
+/** Run a handler on a part and hand back, with its result, what it changed. A
+ *  run that did nothing (refused, skipped, or changed nothing) hands back no
+ *  undo state, and the card offers nothing to put back. */
+async function withPartUndo(
+  ctx: ActionInvokeContext,
+  run: () => Promise<Record<string, unknown>>,
+): Promise<Record<string, unknown>> {
+  const partId = partIdOf(ctx);
+  const before = partId ? await partSnapshot(ctx.orgId, partId) : null;
+  const result = await run();
+  if (!partId || !before || result.ok !== true || result.skipped) return result;
+  const after = await partSnapshot(ctx.orgId, partId);
+  if (!after) return result;
+  const state: PartUndoState = { partId };
+  if (after.qty !== before.qty) state.qty = before.qty;
+  if (after.name !== before.name) state.name = before.name;
+  if (after.location_id !== before.location_id) state.location_id = before.location_id;
+  const keys = new Set([...Object.keys(before.metadata), ...Object.keys(after.metadata)]);
+  for (const k of keys) {
+    if (same(before.metadata[k], after.metadata[k])) continue;
+    if (k in before.metadata) (state.metadata ??= {})[k] = before.metadata[k];
+    else (state.absent ??= []).push(k);
+  }
+  if (Object.keys(state).length === 1) return result;
+  return { ...result, undo_state: state };
+}
+
+/** The step that puts the part back, from a result the wrapper decorated. */
+export function partUndoStep(result: unknown): ActionUndoStep | null {
+  const state = (result as { undo_state?: PartUndoState } | null)?.undo_state;
+  if (!state || typeof state.partId !== "string") return null;
+  return { action_id: "inventory:restore-part", args: { ...state } };
+}
+
+/** Put a part back to a snapshot: the count through the stock path (so the
+ *  statement shows the reversal and the wires hear it), the fields and place
+ *  through the same seams the edit used, the metadata keys merged back and
+ *  the ones that were not there removed. Itself wrapped, so undoing an undo
+ *  is another restore. */
+async function restorePart(ctx: ActionInvokeContext): Promise<Record<string, unknown>> {
+  const a = (ctx.args as Partial<PartUndoState> | null) ?? {};
+  const partId = typeof a.partId === "string" ? a.partId : "";
+  if (!partId) return { ok: false, error: "missing partId" };
+  const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
+  const current = await partSnapshot(ctx.orgId, partId);
+  if (!current) return { ok: false, error: "part_not_found" };
+  if (typeof a.qty === "number" && a.qty !== current.qty) {
+    const applied = await applyStockDelta(ctx.orgId, { partId, delta: a.qty - current.qty, reason: "put back" });
+    if (applied.ok !== true) return applied;
+  }
+  if (typeof a.name === "string" && a.name !== current.name) {
+    await db.updateTable("inventory_parts").set({ name: a.name, updated_at: new Date() }).where("id", "=", partId).execute();
+  }
+  if (a.location_id !== undefined && a.location_id !== current.location_id) {
+    try {
+      if (a.location_id) {
+        await platform().placement.place({
+          orgId: ctx.orgId,
+          containee: { kind: "inventory:part", id: partId },
+          container: { kind: "core-locations:location", id: a.location_id },
+        });
+      } else {
+        await platform().placement.remove({ orgId: ctx.orgId, containee: { kind: "inventory:part", id: partId } });
+      }
+    } catch {
+      await db.updateTable("inventory_parts").set({ location_id: a.location_id ?? null } as never).where("id", "=", partId).execute();
+    }
+  }
+  const set = a.metadata && typeof a.metadata === "object" ? a.metadata : {};
+  const absent = Array.isArray(a.absent) ? a.absent.filter((k): k is string => typeof k === "string") : [];
+  if (Object.keys(set).length || absent.length) {
+    // Each step in its own parens: `-` binds tighter than `||` in Postgres,
+    // so `a || b - 'k'` removes k from b (where it never was) and leaves it
+    // on a. The lot an undone restock started stayed on the record that way.
+    let expr = sql`coalesce(metadata, '{}'::jsonb)`;
+    if (Object.keys(set).length) expr = sql`(${expr} || ${JSON.stringify(set)}::jsonb)`;
+    for (const k of absent) expr = sql`(${expr} - ${k}::text)`;
+    await db.updateTable("inventory_parts").set({ metadata: expr as never, updated_at: new Date() }).where("id", "=", partId).execute();
+  }
+  await platform().events.emit("inventory.part.updated", { orgId: ctx.orgId, partId });
+  return { ok: true, summary: `Put ${current.name} back the way it was.`, partId };
 }
 
 export function registerInventoryActionHandlers(): void {
@@ -234,25 +402,54 @@ export function registerInventoryActionHandlers(): void {
     return { ok: true, filed, areas_created: areasCreated };
   });
 
-  platform().actions.registerHandler("inventory.adjust-stock", async (ctx) => {
-    // Args take precedence (an admin can hardwire a wire to "always
-    // add 1"); otherwise we pull from the event payload.
-    const args = (ctx.args as AdjustStockPayload | null) ?? {};
-    const ev = (ctx.event?.payload as AdjustStockPayload | null) ?? {};
-    const partId = args.partId ?? ev.partId;
-    const delta = args.delta ?? ev.delta;
-    const reason = args.reason ?? ev.reason ?? "wire-driven adjustment";
-    if (!partId || typeof delta !== "number" || delta === 0) {
-      return { ok: true, skipped: true, reason: "missing partId or delta" };
-    }
-    return applyStockDelta(ctx.orgId, {
-      partId,
-      delta,
-      reason,
-      sourceKind: args.sourceKind ?? ev.sourceKind,
-      sourceId: args.sourceId ?? ev.sourceId,
-    });
-  });
+  platform().actions.registerHandler("inventory.adjust-stock", (ctx) =>
+    withPartUndo(ctx, async () => {
+      // Args take precedence (an admin can hardwire a wire to "always
+      // add 1"); otherwise we pull from the event payload. The one thing that
+      // beats a fixed arg is a QUANTITY the person stated on the gesture
+      // ("I got 3", checked off the shopping list): the fixed amount exists for
+      // events that do not say, and the shopping row shows it as the default.
+      const args = (ctx.args as AdjustStockPayload | null) ?? {};
+      const ev = (ctx.event?.payload as AdjustStockPayload | null) ?? {};
+      // The record the action was invoked ON counts too: a chat card or a row
+      // button targets the entity and sends no partId, and the invoke used to
+      // answer "skipped: missing partId" while claiming ok.
+      const partId = args.partId ?? ev.partId ?? ctx.entity?.id;
+      const delta = statedQuantity((ev as { quantity?: unknown }).quantity, args.delta) ?? args.delta ?? ev.delta;
+      const reason = args.reason ?? ev.reason ?? "wire-driven adjustment";
+      if (!partId || typeof delta !== "number" || delta === 0) {
+        return { ok: true, skipped: true, reason: "missing partId or delta" };
+      }
+      // Stock arriving goes through the lots, so a restock (the wire says
+      // `restock: true`) or anything landing on an empty shelf is a fresh lot
+      // dated today, good until today plus the item's shelf life, and the
+      // record's bought-on and expiry role fields say so. Before this, the
+      // check-off wire's +1 was a bare count and the fresh milk inherited the
+      // old lot's dates (fresh-lot.ts). A correction on a stocked record stays
+      // a bare count: reconcile files it as an undated lot, as it always did.
+      if (delta > 0) {
+        const restock = (args as { restock?: unknown }).restock === true;
+        return withBatches(
+          ctx.orgId,
+          partId,
+          reason,
+          delta,
+          (batches, { today, shelfLifeDays, qtyBefore }) => {
+            if (!startsFreshLot({ delta, qtyBefore, restock })) return batches;
+            return addBatch(batches, { received_on: today, expires_on: expiryFor(today, shelfLifeDays) ?? "", qty: delta });
+          },
+          typeof args.timezone === "string" ? { timezone: args.timezone } : {},
+        );
+      }
+      return applyStockDelta(ctx.orgId, {
+        partId,
+        delta,
+        reason,
+        sourceKind: args.sourceKind ?? ev.sourceKind,
+        sourceId: args.sourceId ?? ev.sourceId,
+      });
+    }),
+  );
 
 
 /**
@@ -274,7 +471,7 @@ async function withBatches(
   partId: string,
   reason: string,
   delta: number,
-  mutate: (batches: Batch[], ctx: { today: string; shelfLifeDays: number | null }) => Batch[],
+  mutate: (batches: Batch[], ctx: { today: string; shelfLifeDays: number | null; qtyBefore: number }) => Batch[],
   opts: { timezone?: string } = {},
 ): Promise<Record<string, unknown>> {
   const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
@@ -304,9 +501,41 @@ async function withBatches(
   // Reconciling the lots to the new qty afterwards keeps them honest without
   // ever letting them govern: a dateless item stays batch-free and behaves
   // exactly as it did before batches existed.
-  const qtyAfter = Math.max(0, qtyNow + delta);
-  const next = reconcileToQty(mutate(current, { today, shelfLifeDays }), qtyAfter);
+  // The floor, before any lot is touched: a decrement on an empty record is
+  // refused with the one sentence every surface shows, and a larger one than
+  // what is on hand is clamped (stock-floor.ts). The stock write below applies
+  // the same rule again; this keeps the lots from being rewritten for nothing.
+  const verdict = floorDelta(qtyNow, delta);
+  if (verdict.kind === "refuse") {
+    return { ok: false, error: verdict.error, partId, delta: 0, newQty: Math.max(0, qtyNow), qty: Math.max(0, qtyNow) };
+  }
+  const qtyAfter = Math.max(0, qtyNow + verdict.applied);
+  const next = reconcileToQty(mutate(current, { today, shelfLifeDays, qtyBefore: qtyNow }), qtyAfter);
   const visible = visibleFrom(next);
+
+  // A lot dated today grew: stock arrived. The record's own role fields say
+  // so, by the workspace's declarations rather than by name. Read through the
+  // entities door so an instance row (a Groceries table's milk) answers with
+  // its own fields. A use-one, or a bare correction (reconcile files those as
+  // an undated lot), never rewrites a bought-on date.
+  let stamps: Record<string, string | null> = {};
+  if (arrivedToday(current, next, today)) {
+    try {
+      const kind = await platform().entities.resolvedKindForEntity(orgId, "inventory:part", partId);
+      const roled = await platform().entities.roledFieldsFor(orgId, kind);
+      stamps = freshLotStamps({
+        today,
+        visibleExpiry: visible.expires_on,
+        qtyBefore: qtyNow,
+        roles: {
+          acquiredOn: roled.find((f) => f.field_role === "acquired-on")?.name ?? null,
+          expiry: roled.find((f) => f.field_role === "expiry")?.name ?? null,
+        },
+      });
+    } catch (err) {
+      console.warn(`[inventory] arrival stamps skipped for ${partId}:`, (err as Error).message);
+    }
+  }
 
   // Metadata first, so a failure in the stock write leaves the lots describing
   // what is really there rather than what we hoped to do.
@@ -316,6 +545,7 @@ async function withBatches(
       metadata: sql`coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({
         batches: next,
         ...(visible.expires_on !== null ? { expires_on: visible.expires_on } : {}),
+        ...stamps,
       })}::jsonb`,
     })
     .where("id", "=", partId)
@@ -324,7 +554,9 @@ async function withBatches(
   // Through the normal path, so the consumption ledger, stock.changed and the
   // running-low wire all fire exactly as they do for any other stock move.
   const applied =
-    delta === 0 ? { ok: true, skipped: true, reason: "no quantity change" } : await applyStockDelta(orgId, { partId, delta, reason });
+    verdict.applied === 0
+      ? { ok: true, skipped: true, reason: "no quantity change" }
+      : await applyStockDelta(orgId, { partId, delta: verdict.applied, reason });
 
   return { ...applied, batches: next, expires_on: visible.expires_on, qty: qtyAfter };
 }
@@ -337,53 +569,57 @@ async function withBatches(
   // and the stock.low → shopping-list wire all fire for free.
 
   // Use one: knock a single unit off. The everyday tap ("took one out").
-  platform().actions.registerHandler("inventory.use-one", async (ctx) => {
-    const partId = ctx.entity?.id ?? (ctx.args as { partId?: string } | null)?.partId;
-    if (!partId) return { ok: false, error: "missing_part" };
-    const tz = (ctx.args as { timezone?: string } | null)?.timezone;
-    // Always the OLDEST lot. It is the one the warning named, so taking from
-    // anywhere else would leave the warning standing after the user did what it
-    // asked - and once that lot empties the deadline moves on by itself.
-    const applied = await withBatches(
-      ctx.orgId,
-      partId,
-      "used one",
-      -1,
-      (batches) => consumeOldest(batches, 1).batches,
-      { ...(tz ? { timezone: tz } : {}) },
-    );
-    await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "consume", -1)]);
-    return applied;
-  });
+  platform().actions.registerHandler("inventory.use-one", (ctx) =>
+    withPartUndo(ctx, async () => {
+      const partId = ctx.entity?.id ?? (ctx.args as { partId?: string } | null)?.partId;
+      if (!partId) return { ok: false, error: "missing_part" };
+      const tz = (ctx.args as { timezone?: string } | null)?.timezone;
+      // Always the OLDEST lot. It is the one the warning named, so taking from
+      // anywhere else would leave the warning standing after the user did what it
+      // asked - and once that lot empties the deadline moves on by itself.
+      const applied = await withBatches(
+        ctx.orgId,
+        partId,
+        "used one",
+        -1,
+        (batches) => consumeOldest(batches, 1).batches,
+        { ...(tz ? { timezone: tz } : {}) },
+      );
+      await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "consume", -1)]);
+      return applied;
+    }),
+  );
 
   // Restock one: another arrived today, good until its own date. NOT qty + 1 -
   // a container arriving today has its own shelf life, and incrementing a count
   // would leave it inheriting the previous lot's deadline.
-  platform().actions.registerHandler("inventory.restock-one", async (ctx) => {
-    const args = (ctx.args as { partId?: string; qty?: number; timezone?: string } | null) ?? {};
-    const partId = ctx.entity?.id ?? args.partId;
-    if (!partId) return { ok: false, error: "missing_part" };
-    const add = Math.max(1, Math.trunc(Number(args.qty ?? 1)));
-    const applied = await withBatches(
-      ctx.orgId,
-      partId,
-      "restocked one",
-      add,
-      (batches, { today, shelfLifeDays }) => {
-        const expires = expiryFor(today, shelfLifeDays);
-        // No shelf life declared means no date. Adding one anyway would put a
-        // confident deadline on something nobody measured.
-        return addBatch(batches, {
-          received_on: today,
-          expires_on: expires ?? "",
-          qty: add,
-        });
-      },
-      { ...(args.timezone ? { timezone: args.timezone } : {}) },
-    );
-    await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "purchase", add)]);
-    return applied;
-  });
+  platform().actions.registerHandler("inventory.restock-one", (ctx) =>
+    withPartUndo(ctx, async () => {
+      const args = (ctx.args as { partId?: string; qty?: number; timezone?: string } | null) ?? {};
+      const partId = ctx.entity?.id ?? args.partId;
+      if (!partId) return { ok: false, error: "missing_part" };
+      const add = Math.max(1, Math.trunc(Number(args.qty ?? 1)));
+      const applied = await withBatches(
+        ctx.orgId,
+        partId,
+        "restocked one",
+        add,
+        (batches, { today, shelfLifeDays }) => {
+          const expires = expiryFor(today, shelfLifeDays);
+          // No shelf life declared means no date. Adding one anyway would put a
+          // confident deadline on something nobody measured.
+          return addBatch(batches, {
+            received_on: today,
+            expires_on: expires ?? "",
+            qty: add,
+          });
+        },
+        { ...(args.timezone ? { timezone: args.timezone } : {}) },
+      );
+      await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "purchase", add)]);
+      return applied;
+    }),
+  );
 
   // Replaced with a fresh one: the old box is finished and an identical new
   // one arrived, in one tap. The count does not move (so nothing trips the
@@ -424,12 +660,14 @@ async function withBatches(
   // Wire-only alias now: the button is "Replaced", which comes here for a
   // perishable. Kept so a wire or the assistant saying "swapped in a new box"
   // still lands.
-  platform().actions.registerHandler("inventory.swap-fresh", async (ctx) => {
-    const args = (ctx.args as { partId?: string; timezone?: string } | null) ?? {};
-    const partId = ctx.entity?.id ?? args.partId;
-    if (!partId) return { ok: false, error: "missing_part" };
-    return swapFresh(ctx.orgId, ctx.userId, partId, args.timezone);
-  });
+  platform().actions.registerHandler("inventory.swap-fresh", (ctx) =>
+    withPartUndo(ctx, async () => {
+      const args = (ctx.args as { partId?: string; timezone?: string } | null) ?? {};
+      const partId = ctx.entity?.id ?? args.partId;
+      if (!partId) return { ok: false, error: "missing_part" };
+      return swapFresh(ctx.orgId, ctx.userId, partId, args.timezone);
+    }),
+  );
 
 
   // ───────────── lifecycle marks (learning what you never knew) ─────────────
@@ -468,6 +706,9 @@ async function withBatches(
     const result = await withBatches(orgId, partId, reason, -1, (batches) => consumeOldest(batches, 1).batches, {
       ...(timezone ? { timezone } : {}),
     });
+    // Nothing ended: nothing to learn from. A refused decrement (the record
+    // was empty) must not teach a shelf life it never measured.
+    if (result.ok !== true) return result;
 
     // When it turned up. A dated lot knows; most items do not have one, because
     // only `restock-one` creates them - anything filed by a scan, an import or
@@ -525,91 +766,102 @@ async function withBatches(
 
   // Opened: starts the shorter clock on ONE unit, and records when, so the
   // opened-to-spoiled duration can be measured later.
-  platform().actions.registerHandler("inventory.mark-opened", async (ctx) => {
-    const args = (ctx.args as { partId?: string; timezone?: string } | null) ?? {};
-    const partId = ctx.entity?.id ?? args.partId;
-    if (!partId) return { ok: false, error: "missing_part" };
-    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
-    const row = await db
-      .selectFrom("inventory_parts")
-      .select(["qty", "metadata"])
-      .where("id", "=", partId)
-      .executeTakeFirst();
-    if (!row) return { ok: false, error: "missing_part" };
-    const md = ((row.metadata as Record<string, unknown> | null) ?? {}) as Record<string, unknown>;
-    const today = localToday(new Date(), args.timezone ?? "UTC");
-    const openedDays =
-      typeof md.shelf_life_opened_days === "number" && md.shelf_life_opened_days > 0
-        ? md.shelf_life_opened_days
-        : null;
-    // Opening does not change how many you have, so the lot count is untouched.
-    // What changes is the DEADLINE on the one you opened: if we know the opened
-    // clock, it takes over, because it is much shorter than the sealed one.
-    const shortened = expiryFor(today, openedDays);
-    await db
-      .updateTable("inventory_parts")
-      .set({
-        metadata: sql`coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({
-          opened_on: today,
-          ...(shortened ? { expires_on: shortened } : {}),
-        })}::jsonb`,
-      })
-      .where("id", "=", partId)
-      .execute();
-    return { ok: true, opened_on: today, expires_on: shortened };
-  });
+  platform().actions.registerHandler("inventory.mark-opened", (ctx) =>
+    withPartUndo(ctx, async () => {
+      const args = (ctx.args as { partId?: string; timezone?: string } | null) ?? {};
+      const partId = ctx.entity?.id ?? args.partId;
+      if (!partId) return { ok: false, error: "missing_part" };
+      const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
+      const row = await db
+        .selectFrom("inventory_parts")
+        .select(["qty", "metadata"])
+        .where("id", "=", partId)
+        .executeTakeFirst();
+      if (!row) return { ok: false, error: "missing_part" };
+      const md = ((row.metadata as Record<string, unknown> | null) ?? {}) as Record<string, unknown>;
+      const today = localToday(new Date(), args.timezone ?? "UTC");
+      const openedDays =
+        typeof md.shelf_life_opened_days === "number" && md.shelf_life_opened_days > 0
+          ? md.shelf_life_opened_days
+          : null;
+      // Opening does not change how many you have, so the lot count is untouched.
+      // What changes is the DEADLINE on the one you opened: if we know the opened
+      // clock, it takes over, because it is much shorter than the sealed one.
+      const shortened = expiryFor(today, openedDays);
+      await db
+        .updateTable("inventory_parts")
+        .set({
+          metadata: sql`coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({
+            opened_on: today,
+            ...(shortened ? { expires_on: shortened } : {}),
+          })}::jsonb`,
+        })
+        .where("id", "=", partId)
+        .execute();
+      return { ok: true, opened_on: today, expires_on: shortened };
+    }),
+  );
 
   // Used up: finished it. A LOWER BOUND on the shelf life, never a measurement.
-  platform().actions.registerHandler("inventory.mark-finished", async (ctx) => {
-    const args = (ctx.args as { partId?: string; timezone?: string } | null) ?? {};
-    const partId = ctx.entity?.id ?? args.partId;
-    if (!partId) return { ok: false, error: "missing_part" };
-    const applied = await endOldestLot(ctx.orgId, partId, "used", args.timezone, "finished it");
-    await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "consume", -1)]);
-    return applied;
-  });
+  platform().actions.registerHandler("inventory.mark-finished", (ctx) =>
+    withPartUndo(ctx, async () => {
+      const args = (ctx.args as { partId?: string; timezone?: string } | null) ?? {};
+      const partId = ctx.entity?.id ?? args.partId;
+      if (!partId) return { ok: false, error: "missing_part" };
+      const applied = await endOldestLot(ctx.orgId, partId, "used", args.timezone, "finished it");
+      await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "consume", -1)]);
+      return applied;
+    }),
+  );
 
   // Threw it out: it went bad. THE measurement, and the only thing that ever
   // teaches a shelf life. Also a cadence discard, which is what feeds the
   // buy-less advice - the signal that says somebody is over-buying.
-  platform().actions.registerHandler("inventory.mark-spoiled", async (ctx) => {
-    const args = (ctx.args as { partId?: string; timezone?: string } | null) ?? {};
-    const partId = ctx.entity?.id ?? args.partId;
-    if (!partId) return { ok: false, error: "missing_part" };
-    const applied = await endOldestLot(ctx.orgId, partId, "spoiled", args.timezone, "threw it out");
-    await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "discard", -1)]);
-    return applied;
-  });
+  platform().actions.registerHandler("inventory.mark-spoiled", (ctx) =>
+    withPartUndo(ctx, async () => {
+      const args = (ctx.args as { partId?: string; timezone?: string } | null) ?? {};
+      const partId = ctx.entity?.id ?? args.partId;
+      if (!partId) return { ok: false, error: "missing_part" };
+      const applied = await endOldestLot(ctx.orgId, partId, "spoiled", args.timezone, "threw it out");
+      await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "discard", -1)]);
+      return applied;
+    }),
+  );
 
   // Used up: it's gone (tossing the empty). Drive on-hand to 0 in one tap —
   // no "how many left?" guess. Reads current qty and deltas it to zero so the
   // ledger + low-stock path stay uniform; a no-op if already 0.
-  platform().actions.registerHandler("inventory.use-up", async (ctx) => {
-    const args = (ctx.args as { partId?: string; timezone?: string } | null) ?? {};
-    const partId = ctx.entity?.id ?? args.partId;
-    if (!partId) return { ok: false, error: "missing_part" };
-    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
-    const row = await db
-      .selectFrom("inventory_parts")
-      .select(["qty", "metadata"])
-      .where("id", "=", partId)
-      .executeTakeFirst();
-    if (!row) return { ok: false, error: "part_not_found" };
-    // ONE button for the end of a thing. "Used up" and "Finished it" were two
-    // chips for one gesture; the difference between them is a property of the
-    // RECORD (does it go off?), so the record decides. A perishable ends its
-    // oldest lot and learns from how long it lasted; plain stock just empties.
-    if (isPerishable(row.metadata)) {
-      const applied = await endOldestLot(ctx.orgId, partId, "used", args.timezone, "used up");
-      await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "consume", -1)]);
+  platform().actions.registerHandler("inventory.use-up", (ctx) =>
+    withPartUndo(ctx, async () => {
+      const args = (ctx.args as { partId?: string; timezone?: string } | null) ?? {};
+      const partId = ctx.entity?.id ?? args.partId;
+      if (!partId) return { ok: false, error: "missing_part" };
+      const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
+      const row = await db
+        .selectFrom("inventory_parts")
+        .select(["qty", "metadata"])
+        .where("id", "=", partId)
+        .executeTakeFirst();
+      if (!row) return { ok: false, error: "part_not_found" };
+      // ONE button for the end of a thing. "Used up" and "Finished it" were two
+      // chips for one gesture; the difference between them is a property of the
+      // RECORD (does it go off?), so the record decides. A perishable ends its
+      // oldest lot and learns from how long it lasted; plain stock just empties.
+      if (isPerishable(row.metadata)) {
+        const applied = await endOldestLot(ctx.orgId, partId, "used", args.timezone, "used up");
+        await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "consume", -1)]);
+        return applied;
+      }
+      const cur = Number(row.qty);
+      // Already empty: nothing to record, and the same sentence every other
+      // decrement gives. ok, because tossing an empty that is already recorded
+      // empty is not a mistake to undo.
+      if (!(cur > 0)) return { ok: true, skipped: true, partId, delta: 0, newQty: Math.max(0, cur), note: "already empty", reason: NOTHING_ON_HAND };
+      const applied = await applyStockDelta(ctx.orgId, { partId, delta: -cur, reason: "used up" });
+      await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "consume", -cur)]);
       return applied;
-    }
-    const cur = Number(row.qty);
-    if (!(cur > 0)) return { ok: true, partId, delta: 0, newQty: cur, note: "already empty" };
-    const applied = await applyStockDelta(ctx.orgId, { partId, delta: -cur, reason: "used up" });
-    await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "consume", -cur)]);
-    return applied;
-  });
+    }),
+  );
 
   // ───────── Replaced (P2 — the replace-clock's one tap) ─────────
   // The single tap you make at the moment of a scheduled swap (furnace filter,
@@ -618,86 +870,91 @@ async function withBatches(
   // next interval; (b) consume a spare — knock one off on-hand, which (via the
   // shared decrement) trips stock.low → shopping list if you're now short. So
   // "Replaced" = reset + consume-spare + maybe-reorder, in one tap.
-  platform().actions.registerHandler("inventory.replaced", async (ctx) => {
-    const args = (ctx.args as { partId?: string; timezone?: string } | null) ?? {};
-    const partId = ctx.entity?.id ?? args.partId;
-    if (!partId) return { ok: false, error: "missing_part" };
-    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
-    // Same rule as use-up: one button, the record decides. A perishable swaps
-    // a fresh lot in (what swap-fresh does); a durable stamps the replacement
-    // and consumes a spare.
-    const current = await db
-      .selectFrom("inventory_parts")
-      .select(["metadata"])
-      .where("id", "=", partId)
-      .executeTakeFirst();
-    if (current && isPerishable(current.metadata)) {
-      return swapFresh(ctx.orgId, ctx.userId, partId, args.timezone);
-    }
-    // Reset the clock: merge last_replaced_at into metadata (jsonb, wholesale-
-    // safe merge so other keys survive).
-    const nowIso = new Date().toISOString();
-    const reset = await db
-      .updateTable("inventory_parts")
-      .set({
-        metadata: sql`coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({ last_replaced_at: nowIso })}::jsonb`,
-        updated_at: new Date(),
-      })
-      .where("id", "=", partId)
-      .returning(["id", "qty"])
-      .executeTakeFirst();
-    if (!reset) return { ok: false, error: "part_not_found" };
-    // Consume the spare that went in — but only if there's one on hand; a
-    // replacement with no spares still resets the clock (the point) without
-    // driving qty negative. The decrement trips stock.low → reorder if short.
-    const cur = Number(reset.qty);
-    const consumed =
-      cur > 0
-        ? await applyStockDelta(ctx.orgId, { partId, delta: -1, reason: "replaced (consumed a spare)" })
-        : { ok: true, skipped: true, reason: "no spare on hand" };
-    return { ok: true, partId, last_replaced_at: nowIso, consumed };
-  });
+  platform().actions.registerHandler("inventory.replaced", (ctx) =>
+    withPartUndo(ctx, async () => {
+      const args = (ctx.args as { partId?: string; timezone?: string } | null) ?? {};
+      const partId = ctx.entity?.id ?? args.partId;
+      if (!partId) return { ok: false, error: "missing_part" };
+      const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
+      // Same rule as use-up: one button, the record decides. A perishable swaps
+      // a fresh lot in (what swap-fresh does); a durable stamps the replacement
+      // and consumes a spare.
+      const current = await db
+        .selectFrom("inventory_parts")
+        .select(["metadata"])
+        .where("id", "=", partId)
+        .executeTakeFirst();
+      if (current && isPerishable(current.metadata)) {
+        return swapFresh(ctx.orgId, ctx.userId, partId, args.timezone);
+      }
+      // Reset the clock: merge last_replaced_at into metadata (jsonb, wholesale-
+      // safe merge so other keys survive).
+      const nowIso = new Date().toISOString();
+      const reset = await db
+        .updateTable("inventory_parts")
+        .set({
+          metadata: sql`coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({ last_replaced_at: nowIso })}::jsonb`,
+          updated_at: new Date(),
+        })
+        .where("id", "=", partId)
+        .returning(["id", "qty"])
+        .executeTakeFirst();
+      if (!reset) return { ok: false, error: "part_not_found" };
+      // Consume the spare that went in — but only if there's one on hand; a
+      // replacement with no spares still resets the clock (the point) without
+      // driving qty negative. The decrement trips stock.low → reorder if short.
+      const cur = Number(reset.qty);
+      const consumed =
+        cur > 0
+          ? await applyStockDelta(ctx.orgId, { partId, delta: -1, reason: "replaced (consumed a spare)" })
+          : { ok: true, skipped: true, reason: "no spare on hand" };
+      return { ok: true, partId, last_replaced_at: nowIso, consumed };
+    }),
+  );
 
   // ─────────────────────── set-stock ───────────────────────────────
   // Set a part's on-hand qty to an ABSOLUTE value (not a delta). The
   // natural op for a scale ("grams remaining"), a stocktake, or a recount —
   // adjust-stock can't express "set to N" without a racy read-then-delta.
   // Same downstream signals as adjust-stock (stock.changed + low-stock).
-  platform().actions.registerHandler("inventory.set-stock", async (ctx) => {
-    const args = (ctx.args as { partId?: string; qty?: number; reason?: string } | null) ?? {};
-    const ev = (ctx.event?.payload as { partId?: string; qty?: number } | null) ?? {};
-    const partId = args.partId ?? ev.partId;
-    const qty = args.qty ?? ev.qty;
-    const reason = args.reason ?? "set to an absolute value";
-    if (!partId || typeof qty !== "number" || qty < 0) {
-      return { ok: true, skipped: true, reason: "missing partId or a non-negative qty" };
-    }
-    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
-    const updated = await db
-      .updateTable("inventory_parts")
-      .set({ qty: sql<string>`${qty}::numeric`, updated_at: new Date() })
-      .where("id", "=", partId)
-      .returning(["id", "name", "qty", "min_qty"])
-      .executeTakeFirst();
-    if (!updated) return { ok: false, error: "part_not_found" };
-    const newQty = Number(updated.qty);
-    await platform().events.emit("inventory.stock.changed", {
-      orgId: ctx.orgId,
-      partId: updated.id,
-      newQty,
-      reason,
-    });
-    const minQty = updated.min_qty == null ? null : Number(updated.min_qty);
-    if (minQty != null && minQty > 0 && newQty <= minQty) {
-      await platform().events.emit("inventory.stock.low", {
+  platform().actions.registerHandler("inventory.set-stock", (ctx) =>
+    withPartUndo(ctx, async () => {
+      const args = (ctx.args as { partId?: string; qty?: number; reason?: string } | null) ?? {};
+      const ev = (ctx.event?.payload as { partId?: string; qty?: number } | null) ?? {};
+      const partId = args.partId ?? ev.partId ?? ctx.entity?.id;
+      const qty = args.qty ?? ev.qty;
+      const reason = args.reason ?? "set to an absolute value";
+      if (!partId || typeof qty !== "number") {
+        return { ok: true, skipped: true, reason: "missing partId or qty" };
+      }
+      if (qty < 0) return { ok: false, error: BELOW_ZERO, partId, requested: qty };
+      const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
+      const updated = await db
+        .updateTable("inventory_parts")
+        .set({ qty: sql<string>`${qty}::numeric`, updated_at: new Date() })
+        .where("id", "=", partId)
+        .returning(["id", "name", "qty", "min_qty"])
+        .executeTakeFirst();
+      if (!updated) return { ok: false, error: "part_not_found" };
+      const newQty = Number(updated.qty);
+      await platform().events.emit("inventory.stock.changed", {
         orgId: ctx.orgId,
         partId: updated.id,
         newQty,
-        minQty,
+        reason,
       });
-    }
-    return { ok: true, partId: updated.id, newQty };
-  });
+      const minQty = updated.min_qty == null ? null : Number(updated.min_qty);
+      if (minQty != null && minQty > 0 && newQty <= minQty) {
+        await platform().events.emit("inventory.stock.low", {
+          orgId: ctx.orgId,
+          partId: updated.id,
+          newQty,
+          minQty,
+        });
+      }
+      return { ok: true, partId: updated.id, newQty };
+    }),
+  );
 
   // ─────────────────────── set-status ──────────────────────────────
   // A small, member-appropriate write: set a part's metadata.status
@@ -705,31 +962,33 @@ async function withBatches(
   // canonical action a custom (Tier B) app block invokes — capability
   // -gated (`inventory:set-status`) like any other, so a worker can only
   // run it if granted. partId comes from args or the targeted entity.
-  platform().actions.registerHandler("inventory.set-status", async (ctx) => {
-    const args = (ctx.args as { partId?: string; status?: string } | null) ?? {};
-    const partId = args.partId ?? (ctx.entity as { id?: string } | null)?.id;
-    const status = typeof args.status === "string" ? args.status.trim().slice(0, 60) : undefined;
-    if (!partId || !status) return { ok: false, error: "missing partId or status" };
-    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
-    const row = await db
-      .selectFrom("inventory_parts")
-      .select(["metadata"])
-      .where("id", "=", partId)
-      .executeTakeFirst();
-    if (!row) return { ok: false, error: "part_not_found" };
-    await db
-      .updateTable("inventory_parts")
-      .set({
-        // Overlay just `status`, DB-side — a part's metadata is multi-writer (the
-        // Lego lifecycle, scan-confirm fields, connector namespaces), and a
-        // snapshot rewrite that set status dropped whatever else had changed.
-        metadata: sql`coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({ status })}::jsonb` as never,
-        updated_at: new Date(),
-      })
-      .where("id", "=", partId)
-      .execute();
-    return { ok: true, partId, status };
-  });
+  platform().actions.registerHandler("inventory.set-status", (ctx) =>
+    withPartUndo(ctx, async () => {
+      const args = (ctx.args as { partId?: string; status?: string } | null) ?? {};
+      const partId = args.partId ?? (ctx.entity as { id?: string } | null)?.id;
+      const status = typeof args.status === "string" ? args.status.trim().slice(0, 60) : undefined;
+      if (!partId || !status) return { ok: false, error: "missing partId or status" };
+      const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
+      const row = await db
+        .selectFrom("inventory_parts")
+        .select(["metadata"])
+        .where("id", "=", partId)
+        .executeTakeFirst();
+      if (!row) return { ok: false, error: "part_not_found" };
+      await db
+        .updateTable("inventory_parts")
+        .set({
+          // Overlay just `status`, DB-side — a part's metadata is multi-writer (the
+          // Lego lifecycle, scan-confirm fields, connector namespaces), and a
+          // snapshot rewrite that set status dropped whatever else had changed.
+          metadata: sql`coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({ status })}::jsonb` as never,
+          updated_at: new Date(),
+        })
+        .where("id", "=", partId)
+        .execute();
+      return { ok: true, partId, status };
+    }),
+  );
 
   // ─────────────────────── create-item ─────────────────────────────
   // Generic item creation — the canonical write a custom (Tier B) app block
@@ -788,7 +1047,7 @@ async function withBatches(
     }
 
     await platform().events.emit("inventory.part.created", { orgId: ctx.orgId, partId: created.id });
-    return { ok: true, item_id: created.id, name: created.name };
+    return { ok: true, item_id: created.id, name: created.name, instance: instance ?? "inventory" };
   });
 
   // ─────────────────────── create-items (bulk) ─────────────────────
@@ -828,48 +1087,50 @@ async function withBatches(
   // metadata fields (e.g. mark a kit metadata.lifecycle='parted-out'). The
   // companion to create-item; lets a Tier-B app or another module edit an item
   // through inventory's public interface instead of touching the table. Generic.
-  platform().actions.registerHandler("inventory.update-item", async (ctx) => {
-    const a = (ctx.args as Record<string, unknown> | null) ?? {};
-    const id = typeof a.id === "string" && a.id ? a.id : (ctx.entity as { id?: string } | null)?.id;
-    if (!id) return { ok: false, error: "missing id" };
-    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
-    const row = await db.selectFrom("inventory_parts").select("metadata").where("id", "=", id).executeTakeFirst();
-    if (!row) return { ok: false, error: "not_found" };
-    const set: Record<string, unknown> = { updated_at: new Date() };
-    if (typeof a.name === "string" && a.name.trim()) set.name = a.name.trim().slice(0, 200);
-    if (typeof a.manufacturer === "string") set.manufacturer = a.manufacturer.trim().slice(0, 120) || null;
-    if (a.fields && typeof a.fields === "object") {
-      const existing = (row.metadata as Record<string, unknown> | null) ?? {};
-      set.metadata = sql`${JSON.stringify({ ...existing, ...(a.fields as Record<string, unknown>) })}::jsonb` as never;
-    }
-    await db.updateTable("inventory_parts").set(set as never).where("id", "=", id).execute();
-    // A location change rides the placement seam (placement-cutover-plan
-    // step 1); place()/remove() keep the legacy location_id column mirrored.
-    // Fall back to the direct column write if placement refuses.
-    if (typeof a.location_id === "string") {
-      try {
-        if (a.location_id) {
-          await platform().placement.place({
-            orgId: ctx.orgId,
-            containee: { kind: "inventory:part", id },
-            container: { kind: "core-locations:location", id: a.location_id },
-          });
-        } else {
-          await platform().placement.remove({
-            orgId: ctx.orgId,
-            containee: { kind: "inventory:part", id },
-          });
-        }
-      } catch {
-        await db.updateTable("inventory_parts")
-          .set({ location_id: a.location_id || null } as never)
-          .where("id", "=", id)
-          .execute();
+  platform().actions.registerHandler("inventory.update-item", (ctx) =>
+    withPartUndo(ctx, async () => {
+      const a = (ctx.args as Record<string, unknown> | null) ?? {};
+      const id = typeof a.id === "string" && a.id ? a.id : (ctx.entity as { id?: string } | null)?.id;
+      if (!id) return { ok: false, error: "missing id" };
+      const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
+      const row = await db.selectFrom("inventory_parts").select("metadata").where("id", "=", id).executeTakeFirst();
+      if (!row) return { ok: false, error: "not_found" };
+      const set: Record<string, unknown> = { updated_at: new Date() };
+      if (typeof a.name === "string" && a.name.trim()) set.name = a.name.trim().slice(0, 200);
+      if (typeof a.manufacturer === "string") set.manufacturer = a.manufacturer.trim().slice(0, 120) || null;
+      if (a.fields && typeof a.fields === "object") {
+        const existing = (row.metadata as Record<string, unknown> | null) ?? {};
+        set.metadata = sql`${JSON.stringify({ ...existing, ...(a.fields as Record<string, unknown>) })}::jsonb` as never;
       }
-    }
-    await platform().events.emit("inventory.part.updated", { orgId: ctx.orgId, partId: id });
-    return { ok: true, id };
-  });
+      await db.updateTable("inventory_parts").set(set as never).where("id", "=", id).execute();
+      // A location change rides the placement seam (placement-cutover-plan
+      // step 1); place()/remove() keep the legacy location_id column mirrored.
+      // Fall back to the direct column write if placement refuses.
+      if (typeof a.location_id === "string") {
+        try {
+          if (a.location_id) {
+            await platform().placement.place({
+              orgId: ctx.orgId,
+              containee: { kind: "inventory:part", id },
+              container: { kind: "core-locations:location", id: a.location_id },
+            });
+          } else {
+            await platform().placement.remove({
+              orgId: ctx.orgId,
+              containee: { kind: "inventory:part", id },
+            });
+          }
+        } catch {
+          await db.updateTable("inventory_parts")
+            .set({ location_id: a.location_id || null } as never)
+            .where("id", "=", id)
+            .execute();
+        }
+      }
+      await platform().events.emit("inventory.part.updated", { orgId: ctx.orgId, partId: id });
+      return { ok: true, id };
+    }),
+  );
 
   // ───────────────── lift-to-type (bundle-migration engine) ─────────────────
   // Generic data migration: lift each item in a SOURCE instance into a TYPE in a
@@ -1185,5 +1446,68 @@ async function withBatches(
           ? `Consumed ${out.qty}: stock is down by that much and the withdrawal is on the part's statement.`
           : `Released ${out.qty} back: stock was never taken, the reservation is simply gone.`,
     };
+  });
+  // ── the way back, registered beside the handlers above ────────────────────
+  platform().actions.registerHandler("inventory.restore-part", (ctx) => withPartUndo(ctx, () => restorePart(ctx)));
+  platform().actions.registerUndo("inventory.adjust-stock", partUndoStep);
+  platform().actions.registerUndo("inventory.use-one", partUndoStep);
+  platform().actions.registerUndo("inventory.restock-one", partUndoStep);
+  platform().actions.registerUndo("inventory.swap-fresh", partUndoStep);
+  platform().actions.registerUndo("inventory.mark-opened", partUndoStep);
+  platform().actions.registerUndo("inventory.mark-finished", partUndoStep);
+  platform().actions.registerUndo("inventory.mark-spoiled", partUndoStep);
+  platform().actions.registerUndo("inventory.use-up", partUndoStep);
+  platform().actions.registerUndo("inventory.replaced", partUndoStep);
+  platform().actions.registerUndo("inventory.set-stock", partUndoStep);
+  platform().actions.registerUndo("inventory.set-status", partUndoStep);
+  platform().actions.registerUndo("inventory.update-item", partUndoStep);
+  platform().actions.registerUndo("inventory.restore-part", partUndoStep);
+  // A created item is deleted again, through the record rail: that delete is
+  // itself ledgered with the row, so undoing the undo brings it back whole.
+  platform().actions.registerUndo("inventory.create-item", (result) => {
+    const r = result as { item_id?: unknown; instance?: unknown } | null;
+    if (typeof r?.item_id !== "string") return null;
+    const instance = typeof r.instance === "string" && r.instance ? r.instance : "inventory";
+    return { tool: "delete", entity_kind: instance === "inventory" ? "inventory:part" : `${instance}:item`, entity_id: r.item_id };
+  });
+  // A reservation is released; a settled one is reopened, and consumed stock
+  // comes back through the stock path.
+  platform().actions.registerUndo("inventory.reserve-stock", (result) => {
+    const r = result as { allocation_id?: unknown } | null;
+    if (typeof r?.allocation_id !== "string") return null;
+    return { action_id: "inventory:settle-allocation", args: { allocation_id: r.allocation_id, status: "released" } };
+  });
+  platform().actions.registerUndo("inventory.settle-allocation", (result) => {
+    const r = result as { allocation_id?: unknown; status?: unknown } | null;
+    if (typeof r?.allocation_id !== "string") return null;
+    return { action_id: "inventory:reopen-allocation", args: { allocation_id: r.allocation_id } };
+  });
+  platform().actions.registerHandler("inventory.reopen-allocation", async (ctx) => {
+    const id = String((ctx.args as { allocation_id?: unknown } | null)?.allocation_id ?? "").trim();
+    if (!id) return { ok: false, error: "missing allocation_id" };
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
+    const row = await db
+      .selectFrom("inventory_allocations")
+      .select(["id", "part_id", "qty", "status"])
+      .where("id", "=", id)
+      .executeTakeFirst();
+    if (!row) return { ok: false, error: `no allocation with id ${id}` };
+    if (row.status === "reserved") return { ok: true, skipped: true, reason: "still reserved" };
+    if (row.status === "consumed") {
+      const back = await applyStockDelta(ctx.orgId, { partId: row.part_id, delta: Number(row.qty), reason: "put back (reservation reopened)" });
+      if (back.ok !== true) return back;
+    }
+    await db
+      .updateTable("inventory_allocations")
+      .set({ status: "reserved", consumed_at: null, released_at: null })
+      .where("id", "=", id)
+      .execute();
+    return { ok: true, summary: `Reopened the reservation of ${row.qty}.`, allocation_id: id, was: row.status };
+  });
+  // Reopening is undone by settling it again the way it was.
+  platform().actions.registerUndo("inventory.reopen-allocation", (result) => {
+    const r = result as { allocation_id?: unknown; was?: unknown } | null;
+    if (typeof r?.allocation_id !== "string" || (r.was !== "consumed" && r.was !== "released")) return null;
+    return { action_id: "inventory:settle-allocation", args: { allocation_id: r.allocation_id, status: r.was } };
   });
 }

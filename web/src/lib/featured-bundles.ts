@@ -160,12 +160,12 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Your spice cabinet as its own table. Which jar is open, which are still sealed, and how often you actually re-buy each one.",
     manifest: {
           "id": "cobblr.flagship.spice-rack",
-          "version": "0.2.1",
-          "released_at": "2026-08-20",
+          "version": "0.2.4",
+          "released_at": "2026-09-12",
           "name": "Spice Rack",
           "author": "Cobblr",
           "description": "Your spices and seasonings as their own table: what is on the rack, which jar is open, and how often you actually re-buy each one.",
-          "changelog": "First release. Spices get their own table rather than rows in generic Inventory, with the fields a spice cabinet needs and none it does not. Each jar can be tracked open versus sealed, so \"four jars of paprika, one of them open\" is something the app can say. Two columns learn from ordinary shopping: how often you re-buy something, and how long the current stock will last.",
+          "changelog": "Checking an item off the shopping list dates the fresh stock: bought today, good until today plus its shelf life, instead of inheriting the last lot's dates. The saved views that promise an order (Re-buy soonest, How often you re-buy, Use it or lose it) now deliver it on the table itself, soonest first. Checking an item off the shopping list now adds exactly what you bought, once: the restock and purchase wires were declared twice and both fired. The shopping row says what checking it off will do. First release. Spices get their own table rather than rows in generic Inventory, with the fields a spice cabinet needs and none it does not. Each jar can be tracked open versus sealed, so \"four jars of paprika, one of them open\" is something the app can say. Two columns learn from ordinary shopping: how often you re-buy something, and how long the current stock will last.",
           "requires": [
                 {
                       "module": "inventory"
@@ -182,15 +182,6 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                       "source_kind": "inventory:part",
                       "action_id": "lists:add-item",
                       "trigger_type": "event",
-                      "trigger_event": "inventory.stock.low",
-                      "args": {
-                            "listTitle": "Shopping list"
-                      }
-                },
-                {
-                      "source_kind": "inventory:part",
-                      "action_id": "lists:add-item",
-                      "trigger_type": "event",
                       "trigger_event": "inventory.stock.predicted-low",
                       "args": {
                             "listTitle": "Shopping list"
@@ -203,27 +194,6 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                       "trigger_event": "core-cadence.reorder.due",
                       "args": {
                             "listTitle": "Shopping list"
-                      }
-                },
-                {
-                      "source_kind": "inventory:part",
-                      "action_id": "inventory:adjust-stock",
-                      "trigger_type": "event",
-                      "trigger_event": "lists.item.checked",
-                      "args": {
-                            "delta": 1,
-                            "reason": "Restocked, checked off the shopping list"
-                      }
-                },
-                {
-                      "source_kind": "inventory:part",
-                      "action_id": "core-cadence:record-event",
-                      "trigger_type": "event",
-                      "trigger_event": "lists.item.checked",
-                      "args": {
-                            "event_type": "purchase",
-                            "qty_delta": 1,
-                            "source": "list"
                       }
                 }
           ],
@@ -254,6 +224,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                                   "trigger_event": "lists.item.checked",
                                   "args": {
                                         "delta": 1,
+                                        "restock": true,
                                         "reason": "Restocked, checked off the shopping list"
                                   }
                             },
@@ -427,8 +398,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                                   "name": "Re-buy soonest",
                                   "view_type": "table",
                                   "config": {
-                                        "sort_by": "runs_out_in",
-                                        "sort_dir": "asc",
+                                        "sort": ["runs_out_in"],
                                         "visible_fields": [
                                               "title",
                                               "qty",
@@ -443,8 +413,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                                   "name": "How often you re-buy",
                                   "view_type": "table",
                                   "config": {
-                                        "sort_by": "replenish_every",
-                                        "sort_dir": "asc",
+                                        "sort": ["replenish_every"],
                                         "visible_fields": [
                                               "title",
                                               "replenish_every",
@@ -464,12 +433,12 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Your tea cupboard as its own table. Which box is open, which are still sealed, and how often you actually re-buy each one.",
     manifest: {
           "id": "cobblr.flagship.tea",
-          "version": "0.2.1",
-          "released_at": "2026-08-20",
+          "version": "0.2.4",
+          "released_at": "2026-09-12",
           "name": "Tea",
           "author": "Cobblr",
           "description": "Your teas as their own table: what is in the cupboard, which box is open, and how often you actually re-buy each one.",
-          "changelog": "First release. Tea gets its own table rather than rows in generic Inventory, counted in boxes with the fields a tea cupboard needs. A box can be tracked open versus sealed, so \"three boxes of Earl Grey, one open\" is something the app can say. Two columns learn from ordinary shopping: how often you re-buy a tea, and how long the current stock will last.",
+          "changelog": "Checking an item off the shopping list dates the fresh stock: bought today, good until today plus its shelf life, instead of inheriting the last lot's dates. The saved views that promise an order (Re-buy soonest, How often you re-buy, Use it or lose it) now deliver it on the table itself, soonest first. Checking an item off the shopping list now adds exactly what you bought, once: the restock and purchase wires were declared twice and both fired. The shopping row says what checking it off will do. First release. Tea gets its own table rather than rows in generic Inventory, counted in boxes with the fields a tea cupboard needs. A box can be tracked open versus sealed, so \"three boxes of Earl Grey, one open\" is something the app can say. Two columns learn from ordinary shopping: how often you re-buy a tea, and how long the current stock will last.",
           "requires": [
                 {
                       "module": "inventory"
@@ -486,15 +455,6 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                       "source_kind": "inventory:part",
                       "action_id": "lists:add-item",
                       "trigger_type": "event",
-                      "trigger_event": "inventory.stock.low",
-                      "args": {
-                            "listTitle": "Shopping list"
-                      }
-                },
-                {
-                      "source_kind": "inventory:part",
-                      "action_id": "lists:add-item",
-                      "trigger_type": "event",
                       "trigger_event": "inventory.stock.predicted-low",
                       "args": {
                             "listTitle": "Shopping list"
@@ -507,27 +467,6 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                       "trigger_event": "core-cadence.reorder.due",
                       "args": {
                             "listTitle": "Shopping list"
-                      }
-                },
-                {
-                      "source_kind": "inventory:part",
-                      "action_id": "inventory:adjust-stock",
-                      "trigger_type": "event",
-                      "trigger_event": "lists.item.checked",
-                      "args": {
-                            "delta": 1,
-                            "reason": "Restocked, checked off the shopping list"
-                      }
-                },
-                {
-                      "source_kind": "inventory:part",
-                      "action_id": "core-cadence:record-event",
-                      "trigger_type": "event",
-                      "trigger_event": "lists.item.checked",
-                      "args": {
-                            "event_type": "purchase",
-                            "qty_delta": 1,
-                            "source": "list"
                       }
                 }
           ],
@@ -558,6 +497,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                                   "trigger_event": "lists.item.checked",
                                   "args": {
                                         "delta": 1,
+                                        "restock": true,
                                         "reason": "Restocked, checked off the shopping list"
                                   }
                             },
@@ -742,8 +682,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                                   "name": "Re-buy soonest",
                                   "view_type": "table",
                                   "config": {
-                                        "sort_by": "runs_out_in",
-                                        "sort_dir": "asc",
+                                        "sort": ["runs_out_in"],
                                         "visible_fields": [
                                               "title",
                                               "qty",
@@ -758,8 +697,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                                   "name": "How often you re-buy",
                                   "view_type": "table",
                                   "config": {
-                                        "sort_by": "replenish_every",
-                                        "sort_dir": "asc",
+                                        "sort": ["replenish_every"],
                                         "visible_fields": [
                                               "title",
                                               "replenish_every",
@@ -779,7 +717,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Track the fridge/pantry with expiry + storage, and auto-build a shopping list when something runs low or is about to expire. Check an item off → it restocks.",
     manifest: {
       id: "cobblr.flagship.groceries",
-      version: "0.10.2",
+      version: "0.10.7",
       // What its items are actually CALLED. A bundle's suggestion has to be
       // corroborated by the capture's own text before it is trusted, and a
       // category whose members never share its name can never corroborate:
@@ -930,11 +868,14 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         "candy",
         "sweets",
         "coffee",
-        "tea",
         "juice",
         "lemonade",
         "cola",
         "soda",
+        // What a food catalog calls the KIND ("Carbonated beverages"): the
+        // category's head noun routes like the name's (2026-09-12).
+        "beverages",
+        "drinks",
         "beer",
         "wine",
         "cider",
@@ -943,9 +884,9 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         "frozen peas",
         "ready meal",
       ],
-      released_at: "2026-08-09",
+      released_at: "2026-09-12",
       changelog:
-        "Scanning a grocery now suggests this bundle. The scanner would pick it and then quietly file the item under plain Inventory instead, because a bundle's suggestion has to be corroborated by the item's own text and nothing called Tomatoes Roma or Croissant contains the word grocery. The bundle now says what its items are called. Marks the expiry date as an expiry field, so re-buying something that already went off is recorded as waste rather than as something you used up. Fixes the status dots on the What's on hand view, which never showed anything about expiry. Adds a What's on hand app: a vending-machine view of the kitchen with a quantity badge and a status dot per item, plus a use-it-or-lose-it list sorted by expiry. Answers what do we actually have without opening the fridge. Learns your cadence from ordinary shopping. Checking an item off the shopping list now also records a purchase in the consumption ledger (when the Cadence capability is on), so the system can start predicting when you will run out instead of only reacting to a low-stock threshold. Same fields, same restock behaviour.",
+        "The installed Groceries table now routes with every word the bundle declares, so a scanned drink or snack lands here first instead of in plain Inventory. Groceries opens on What's on hand, the pantry board, rather than the table, and remembers the view you pick. Checking an item off the shopping list dates the fresh stock: bought today, good until today plus its shelf life, instead of inheriting the last lot's dates. The saved views that promise an order (Re-buy soonest, How often you re-buy, Use it or lose it) now deliver it on the table itself, soonest first. Checking an item off the shopping list now adds exactly what you bought, once: the restock and purchase wires were declared twice and both fired. The shopping row says what checking it off will do. Scanning a grocery now suggests this bundle. The scanner would pick it and then quietly file the item under plain Inventory instead, because a bundle's suggestion has to be corroborated by the item's own text and nothing called Tomatoes Roma or Croissant contains the word grocery. The bundle now says what its items are called. Marks the expiry date as an expiry field, so re-buying something that already went off is recorded as waste rather than as something you used up. Fixes the status dots on the What's on hand view, which never showed anything about expiry. Adds a What's on hand app: a vending-machine view of the kitchen with a quantity badge and a status dot per item, plus a use-it-or-lose-it list sorted by expiry. Answers what do we actually have without opening the fridge. Learns your cadence from ordinary shopping. Checking an item off the shopping list now also records a purchase in the consumption ledger (when the Cadence capability is on), so the system can start predicting when you will run out instead of only reacting to a low-stock threshold. Same fields, same restock behaviour.",
       name: "Groceries",
       description:
         "Turn inventory + lists into a kitchen system: track food with expiry + storage fields, an auto grocery list on low-stock/expiry, restock on check-off.",
@@ -976,25 +917,11 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         },
       ],
       requires: [{ module: "inventory" }, { module: "lists" }, { module: "core-cadence" }],
-      wires: [
-        { source_kind: "inventory:part", action_id: "lists:add-item", trigger_type: "event", trigger_event: "inventory.stock.low", args: { listTitle: "Shopping list" } },
-        { source_kind: "inventory:part", action_id: "lists:add-item", trigger_type: "event", trigger_event: "lists.item.expiring", args: { listTitle: "Shopping list" } },
-        { source_kind: "inventory:part", action_id: "inventory:adjust-stock", trigger_type: "event", trigger_event: "lists.item.checked", args: { delta: 1, reason: "Restocked, checked off the shopping list" } },
-        // Closes the learning loop: the same check-off that restocks also files a
-        // purchase in the cadence ledger, so "how fast do I go through this"
-        // learns from ordinary shopping with nobody logging anything. Needs
-        // core-cadence enabled; the wire is inert (unknown action) without it.
-        { source_kind: "inventory:part", action_id: "core-cadence:record-event", trigger_type: "event", trigger_event: "lists.item.checked", args: { event_type: "purchase", qty_delta: 1, source: "list" } },
-        // Expiry is WASTE, not consumption. Without this the expiring wire above
-        // would quietly add it to the list as if it had been used, and the
-        // learned rate would climb on food nobody ate. Recording it as a discard
-        // is what makes "3 of your last 4 went bad, buy fewer" possible.
-        // The predictive half of the reorder signal, beside the shipped
-        // threshold one above: stock.low fires when you CROSS the reorder level,
-        // this fires when the learned rate says you are about to. Same list, same
-        // action, so the two unify at the destination instead of competing.
-        { source_kind: "inventory:part", action_id: "lists:add-item", trigger_type: "event", trigger_event: "core-cadence.reorder.due", args: { listTitle: "Shopping list" } },
-      ],
+      // The wires live on the groceries INSTANCE below. They used to be declared
+      // here too, on inventory:part; the engine resolves both to the same
+      // record, so one check-off restocked twice and filed two purchases
+      // (2026-09-12). lint:bundle-content refuses a twin at both scopes.
+      wires: [],
       field_defs: [
         { entity_kind: "inventory:part", name: "shelf_life_days", display_label: "Good for (days)", type: "number", position: 1, help: "How long this keeps from the day it arrives. Used to date a new one when you add it, so you never type a use-by. Leave blank and nothing is dated for you." },
         { entity_kind: "inventory:part", name: "shelf_life_opened_days", display_label: "Once opened, good for (days)", type: "number", position: 2, help: "A lemon lasts weeks whole and days once cut. Opening one starts this shorter clock on that one only; the unopened ones keep their own dates." },
@@ -1038,7 +965,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           entity_kind: "inventory:part",
           name: "Use it or lose it",
           view_type: "table",
-          config: { sort_by: "expires_on", sort_dir: "asc", visible_fields: ["title", "expires_on", "storage", "qty"] },
+          config: { sort: ["expires_on"], visible_fields: ["title", "expires_on", "storage", "qty"] },
         },
       ],
       // Groceries is its own TABLE, not a set of extra columns on Inventory.
@@ -1215,8 +1142,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                                       "name": "Re-buy soonest",
                                       "view_type": "table",
                                       "config": {
-                                              "sort_by": "runs_out_in",
-                                              "sort_dir": "asc",
+                                              "sort": ["runs_out_in"],
                                               "visible_fields": ["title", "qty", "runs_out_in", "replenish_every", "min_qty"]
                                       }
                               },
@@ -1225,8 +1151,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                                       "name": "How often you re-buy",
                                       "view_type": "table",
                                       "config": {
-                                              "sort_by": "replenish_every",
-                                              "sort_dir": "asc",
+                                              "sort": ["replenish_every"],
                                               "visible_fields": ["title", "replenish_every", "runs_out_in", "qty"]
                                       }
                               },
@@ -1235,6 +1160,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                                       "name": "What's on hand",
                                       "view_type": "vending",
                                       "pinned": true,
+                                      "is_default": true,
                                       "config": {
                                               "qty_field": "qty",
                                               "expiry_field": "expires_on",
@@ -1246,8 +1172,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                                       "name": "Use it or lose it",
                                       "view_type": "table",
                                       "config": {
-                                              "sort_by": "expires_on",
-                                              "sort_dir": "asc",
+                                              "sort": ["expires_on"],
                                               "visible_fields": [
                                                       "title",
                                                       "expires_on",
@@ -1283,6 +1208,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                                       "trigger_event": "lists.item.checked",
                                       "args": {
                                               "delta": 1,
+                                              "restock": true,
                                               "reason": "Restocked, checked off the shopping list"
                                       }
                               },
@@ -1374,7 +1300,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.maker-workshop",
       catalog: "disabled",
-      version: "0.1.1",
+      version: "0.1.2",
       name: "Maker Workshop",
       description:
         "Inventory + Builds + a parts shopping list, pre-wired into the maker loop: define builds as recipes of tracked parts, build them (which consumes stock), and auto-restock low parts through a shopping list you check off. Showcases the Builds (light BOM) module.",
@@ -1385,7 +1311,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         // parts shopping list. Same proven plumbing as the kitchen bundle.
         { source_kind: "inventory:part", action_id: "lists:add-item", trigger_type: "event", trigger_event: "inventory.stock.low", args: { listTitle: "Parts to buy" } },
         // Check the part off the shopping list → restock it by one.
-        { source_kind: "inventory:part", action_id: "inventory:adjust-stock", trigger_type: "event", trigger_event: "lists.item.checked", args: { delta: 1, reason: "Restocked, checked off the parts list" } },
+        { source_kind: "inventory:part", action_id: "inventory:adjust-stock", trigger_type: "event", trigger_event: "lists.item.checked", args: { delta: 1, restock: true, reason: "Restocked, checked off the parts list" } },
       ],
       field_defs: [
         { entity_kind: "inventory:part", name: "part_type", display_label: "Part type", type: "text", position: 1, choices: ["Mechanical", "Electronic", "Fastener", "Printed", "Raw material", "Consumable"] },
@@ -1793,8 +1719,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.community.bookshelf",
       released_at: "2026-06-28",
-      changelog: "First catalogued release: books as their own shelf with author, ISBN scan-in, and read status.",
-      version: "0.2.0",
+      changelog: "The shelf opens on its covers rather than the table, and remembers the view you pick. A book is not stock: the shelf no longer offers Use one, Used up or a reorder point, and the parts-category picker is gone from the book form. An ISBN scan fills author, year and ISBN, and a book you already have is offered instead of a second copy.",
+      version: "0.2.3",
       name: "Bookshelf",
       description:
         "Your books as their own shelf: author + ISBN + year + read status, on a lean catalog that opens as a cover wall. Spine-label wire bundled.",
@@ -1831,10 +1757,24 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           glyph: "📚",
           item_noun: "book",
           qty_unit: "each",
+          // A shelf is a catalog of unique things. Saying so here is what keeps
+          // a book from wearing Use one, Used up and a reorder point the moment
+          // one arrives with qty 1 (every create sends that), and it outranks
+          // the data latch on shelves already installed. The person can still
+          // turn a face on in Presentation; the bundle only says the default.
+          faces: { stock: false, perishable: false },
+          // Parts categories (Components, Materials, Tools) are the
+          // workspace's, not a book's; hide the picker rather than seed book
+          // categories into a list every other collection shares.
+          field_overrides: [{ entity_kind: "inventory:part", name: "category", hidden: true }],
           field_defs: [
-            { entity_kind: "bookshelf:item", name: "author", display_label: "Author", type: "text", position: 1 },
-            { entity_kind: "bookshelf:item", name: "isbn", display_label: "ISBN", type: "text", position: 2 },
-            { entity_kind: "bookshelf:item", name: "year", display_label: "Year", type: "number", position: 3 },
+            // Roles, not names: the ISBN scan decodes { title, author, year, isbn }
+            // and the fill lands by decode_role; the identifier role is what lets
+            // "you already have" and the duplicate finder see this book by its
+            // ISBN. Without them a scanned ISBN made a second, blank Hobbit.
+            { entity_kind: "bookshelf:item", name: "author", display_label: "Author", type: "text", position: 1, decode_role: "decode:author" },
+            { entity_kind: "bookshelf:item", name: "isbn", display_label: "ISBN", type: "text", position: 2, decode_role: "identifier:isbn", field_role: "identifier" },
+            { entity_kind: "bookshelf:item", name: "year", display_label: "Year", type: "number", position: 3, decode_role: "decode:year" },
             { entity_kind: "bookshelf:item", name: "read_status", display_label: "Status", type: "text", choices: ["To read", "Reading", "Read", "Abandoned"], position: 4 },
             { entity_kind: "bookshelf:item", name: "rating", display_label: "Rating (1-5)", type: "number", position: 5 },
           ],
@@ -1844,6 +1784,9 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
               name: "Covers",
               view_type: "gallery",
               pinned: true,
+              // The shelf opens on its covers, not the table: what a bookshelf
+              // looks like is the first thing a visitor should see.
+              is_default: true,
               config: { image_field: "image_path", caption_field: "author" },
             },
             {
@@ -1864,9 +1807,9 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.community.lending-library",
       released_at: "2026-06-28",
-      changelog: "First catalogued release: track who borrowed what, with due-back dates.",
+      changelog: "An ISBN scan fills author, year and ISBN, and a title you already have is offered instead of a second copy.",
       catalog: "extended",
-      version: "0.1.0",
+      version: "0.1.1",
       name: "Lending Library",
       description:
         "A shelf you lend from: each title carries its copies, and lending one out reserves it against a borrower until it comes back.",
@@ -1906,9 +1849,9 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           item_noun: "book",
           qty_unit: "copy",
           field_defs: [
-            { entity_kind: "lending-library:item", name: "author", display_label: "Author", type: "text", position: 1 },
-            { entity_kind: "lending-library:item", name: "isbn", display_label: "ISBN", type: "text", position: 2 },
-            { entity_kind: "lending-library:item", name: "year", display_label: "Year", type: "number", position: 3 },
+            { entity_kind: "lending-library:item", name: "author", display_label: "Author", type: "text", position: 1, decode_role: "decode:author" },
+            { entity_kind: "lending-library:item", name: "isbn", display_label: "ISBN", type: "text", position: 2, decode_role: "identifier:isbn", field_role: "identifier" },
+            { entity_kind: "lending-library:item", name: "year", display_label: "Year", type: "number", position: 3, decode_role: "decode:year" },
             // Choices are not decoration: they are the fingerprint the HEURISTIC
             // (no-AI) scan router matches a capture against, so this shelf is
             // reachable on a workspace with AI off. lint:bundle-quality enforces
@@ -3194,13 +3137,13 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.household-supplies",
       catalog: "disabled",
-      version: "0.3.2",
+      version: "0.3.3",
       name: "Household Supplies",
       description: "Your household supplies as their own table, reorder level per supply auto-adds to a shopping list on low stock; check off → it restocks. Grouped by where they live.",
       author: "Cobblr",
-      released_at: "2026-07-15",
+      released_at: "2026-09-12",
       changelog:
-        "Named for the thing, not the trick it does: “Household Supplies auto-reorder” is now just “Household Supplies” (the auto-reorder is what it DOES, and the description already says so). Earlier: “Area” became a real Location, so a thing has one place, not two, and existing area values moved over automatically; before that, “Usual pack” became “Pack size”.",
+        "Checking an item off the shopping list dates the fresh stock: bought today, good until today plus its shelf life, instead of inheriting the last lot's dates. Named for the thing, not the trick it does: “Household Supplies auto-reorder” is now just “Household Supplies” (the auto-reorder is what it DOES, and the description already says so). Earlier: “Area” became a real Location, so a thing has one place, not two, and existing area values moved over automatically; before that, “Usual pack” became “Pack size”.",
       requires: [{ module: "inventory" }, { module: "lists" }],
       provides_instances: [
         {
@@ -3215,7 +3158,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
           // instance (the installer rewrites source_kind to supplies:item).
           wires: [
             { source_kind: "inventory:part", action_id: "lists:add-item", trigger_type: "event", trigger_event: "inventory.stock.low", args: { listTitle: "Shopping list" } },
-            { source_kind: "inventory:part", action_id: "inventory:adjust-stock", trigger_type: "event", trigger_event: "lists.item.checked", args: { delta: 1, reason: "Restocked, checked off the shopping list" } },
+            { source_kind: "inventory:part", action_id: "inventory:adjust-stock", trigger_type: "event", trigger_event: "lists.item.checked", args: { delta: 1, restock: true, reason: "Restocked, checked off the shopping list" } },
           ],
           field_defs: [
             // "Area" is deliberately NOT a field — where a supply lives is its

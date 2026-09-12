@@ -49,7 +49,10 @@ for (const f of readdirSync(DIR).filter((n) => n.endsWith(".yml") || n.endsWith(
     continue;
   }
   if (!block) continue; // no concurrency: nothing to cancel
-  const cip = block.match(/cancel-in-progress:\s*(.+)$/m)?.[1]?.trim();
+  // Comments are not config. A comment that quotes the key (ci.yml explains
+  // its own history in one) matched here first and was read as the value.
+  const code = block.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+  const cip = code.match(/^\s*cancel-in-progress:\s*(.+?)\s*$/m)?.[1]?.trim();
   if (!cip) {
     findings.push(`  ${f}: concurrency without cancel-in-progress ${why}; the default cancels the run in progress`);
     continue;

@@ -578,7 +578,16 @@ async function commitBuildIfLinked(
   // Only the writer that flipped null→now emits, so concurrent sends can't
   // double-consume even if they raced past the in-memory guard above.
   if (Number(res.numUpdatedRows ?? 0n) === 0) return;
-  void platform().events.emit("digifab.job.build_committed", {
+  // AWAITED, not fire-and-forget. The wire that moves the stock is the commit;
+  // a cancel that follows the send reverses it, and the two ran concurrently
+  // when this was `void`: under a contended runner the reversal's output
+  // decrement landed before the commit's output credit, on a record still at
+  // 0, where the stock floor refuses it, and the credit then stood with
+  // nothing left to reverse it (#2826, phantom output on cancel). emit never
+  // rejects, so a failing wire still never blocks the send; the send just
+  // returns after the stock has moved, which is the platform's own rule for
+  // read-after-write (events.ts).
+  await platform().events.emit("digifab.job.build_committed", {
     orgId,
     jobId,
     buildId: job.linked_build_id,
@@ -612,7 +621,10 @@ export async function reverseBuildIfCommitted(
     .where("build_reversed_at", "is", null)
     .executeTakeFirst();
   if (Number(res.numUpdatedRows ?? 0n) === 0) return false;
-  void platform().events.emit("digifab.job.build_reversed", {
+  // Awaited for the same reason as the commit: a reversal is not done until
+  // the stock is back, and whoever asked (the cancel route, the verdict) may
+  // be re-read the moment it answers.
+  await platform().events.emit("digifab.job.build_reversed", {
     orgId,
     jobId,
     buildId: job.linked_build_id,

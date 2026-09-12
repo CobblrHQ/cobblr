@@ -7,6 +7,7 @@
 // core_files_attachments; this is the matching UI primitive.
 
 import { useEffect, useRef, useState } from "react";
+import { useKindLabels } from "../lib/useKindLabels";
 import { openAuthedFile } from "../lib/authed-file";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Eye, ImageIcon, Link, Plus, Tag as TagIcon, Trash2, Upload, X } from "lucide-react";
@@ -815,6 +816,7 @@ function PairingsSection({ kind, entityId, compact = false }: { kind: string; en
 function LinkedEntityName({ kind, id }: { kind: string; id: string }) {
   const { activeSlug } = useActiveOrg();
   const detailRoute = useDetailRoute(activeSlug ?? "");
+  const labels = useKindLabels(activeSlug);
   const q = useQuery({
     queryKey: ["entity", activeSlug, kind, id],
     queryFn: () => api.lookupEntity(activeSlug, kind, id),
@@ -838,7 +840,7 @@ function LinkedEntityName({ kind, id }: { kind: string; id: string }) {
       )}
       {/* The kind still earns a place: "which of my things is this" is answered
           by the name, "what sort of thing is it" by this. */}
-      <span className="font-mono text-[10px] text-faint truncate">{kind}</span>
+      <span className="text-[10px] text-faint truncate">{labels.collection(kind)}</span>
     </>
   );
 }
@@ -902,6 +904,7 @@ function PairingCreateModal({
   onCreated: () => void;
 }) {
   const { activeSlug } = useActiveOrg();
+  const pickLabels = useKindLabels(activeSlug);
   const toast = useToast();
   const [query, setQuery] = useState("");
   const [targetKind, setTargetKind] = useState("");
@@ -968,7 +971,7 @@ function PairingCreateModal({
                   }}
                   className="w-full px-3 py-2 text-left hover:bg-subtle dark:hover:bg-slate-800 flex items-center gap-2"
                 >
-                  <span className="font-mono text-[10px] text-faint">{h.kind}</span>
+                  <span className="text-[10px] text-faint">{pickLabels.collection(h.kind)}</span>
                   <span className="text-sm truncate">{h.title}</span>
                 </button>
               </li>

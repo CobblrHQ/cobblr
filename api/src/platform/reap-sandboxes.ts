@@ -27,6 +27,9 @@ import { runExclusive } from "./exclusive.js";
 import { hardDeleteOrg } from "./delete-org.js";
 import { expiredSandboxes, pruneOrphanTokens, pruneOrphanSandboxUsers, sandboxEnabled } from "./try-sandbox.js";
 import { reapExpiredExports } from "./try-sandbox-export.js";
+import { stalePooledSandboxesQuery } from "./try-sandbox-query.js";
+import { poolMaxAgeMs } from "./try-sandbox-pool.js";
+import { meta } from "../db/meta.js";
 
 /** Bounded per sweep so a backlog is drained over several ticks rather than
  *  dropping a hundred databases in one go on a 4-core box. */
@@ -43,9 +46,19 @@ export interface SandboxReapResult {
 export async function reapExpiredSandboxes(now: number = Date.now()): Promise<SandboxReapResult> {
   if (!sandboxEnabled()) return { found: 0, deleted: 0, exports: 0 };
 
+  // Past their hour, plus finished ones that waited unclaimed past the pool's
+  // age cap: those are seeded relative to the day they were built and would
+  // hand a visitor a kitchen that has drifted. The top-up replaces them.
   const expired = await expiredSandboxes(MAX_PER_SWEEP, now);
+  let stale: typeof expired = [];
+  try {
+    stale = await stalePooledSandboxesQuery(meta, Math.max(0, MAX_PER_SWEEP - expired.length), new Date(now), poolMaxAgeMs()).execute();
+  } catch (err) {
+    console.error("[reap-sandboxes] stale pool query failed:", (err as Error).message);
+  }
+  for (const org of stale) console.log(`[reap-sandboxes] ${org.slug} waited unclaimed past the pool age cap`);
   let deleted = 0;
-  for (const org of expired) {
+  for (const org of [...expired, ...stale]) {
     try {
       // Drops the tenant database. The token rows cascade with the org.
       await hardDeleteOrg(org.id);
@@ -91,7 +104,7 @@ export async function reapExpiredSandboxes(now: number = Date.now()): Promise<Sa
     console.error("[reap-sandboxes] export sweep failed:", (err as Error).message);
   }
 
-  return { found: expired.length, deleted, exports };
+  return { found: expired.length + stale.length, deleted, exports };
 }
 
 let timer: ReturnType<typeof setInterval> | null = null;

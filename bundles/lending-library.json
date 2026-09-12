@@ -2,9 +2,9 @@
   "manifest": {
     "id": "cobblr.community.lending-library",
     "released_at": "2026-06-28",
-    "changelog": "First catalogued release: track who borrowed what, with due-back dates.",
+    "changelog": "An ISBN scan fills author, year and ISBN, and a title you already have is offered instead of a second copy.",
     "catalog": "extended",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "name": "Lending Library",
     "description": "A shelf you lend from: each title carries its copies, and lending one out reserves it against a borrower until it comes back.",
     "author": "Cobblr community",
@@ -48,21 +48,25 @@
             "name": "author",
             "display_label": "Author",
             "type": "text",
-            "position": 1
+            "position": 1,
+            "decode_role": "decode:author"
           },
           {
             "entity_kind": "lending-library:item",
             "name": "isbn",
             "display_label": "ISBN",
             "type": "text",
-            "position": 2
+            "position": 2,
+            "decode_role": "identifier:isbn",
+            "field_role": "identifier"
           },
           {
             "entity_kind": "lending-library:item",
             "name": "year",
             "display_label": "Year",
             "type": "number",
-            "position": 3
+            "position": 3,
+            "decode_role": "decode:year"
           },
           {
             "entity_kind": "lending-library:item",

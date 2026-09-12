@@ -12,6 +12,7 @@
 // the workspace could BECOME) and materialize (installs the chosen bundle).
 
 import fs from "node:fs";
+import { bundleTableWords } from "@cobblr/platform-contract/bundle-words";
 import path from "node:path";
 import { getOfficialBundleManifest } from "../routes/registry.js";
 import { inCatalogScope, type CatalogScope } from "./catalog-tier.js";
@@ -247,20 +248,11 @@ export function flagshipBundleMenu(): BundleMenuEntry[] {
           // by the table's 40. A bundle's declared vocabulary should not vanish
           // because it grew a table; the table ADDS to it.
           //
-          // Order matters for nothing here, but the instance's own words come
-          // first so a table-specific term wins any future first-match read.
+          // The rule lives in the contract (bundle-words), shared with the install,
+          // which used to write only the table's own words: the same drift,
+          // one door later (2026-09-12).
           ...(() => {
-            const merged = [
-              ...(keywordsOf(pi.scan_keywords) ?? []),
-              ...(keywordsOf(m.scan_keywords) ?? []),
-            ];
-            const seen = new Set<string>();
-            const words = merged.filter((k) => {
-              const key = k.toLowerCase();
-              if (seen.has(key)) return false;
-              seen.add(key);
-              return true;
-            });
+            const words = bundleTableWords(keywordsOf(pi.scan_keywords), keywordsOf(m.scan_keywords));
             return words.length > 0 ? { scan_keywords: words } : {};
           })(),
           ...fieldRoleAxes(pi.field_defs as Array<Record<string, unknown>> | undefined),

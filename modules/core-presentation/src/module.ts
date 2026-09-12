@@ -16,7 +16,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-presentation",
-  version: "0.1.0",
+  version: "0.1.2",
   displayName: "Presentation",
   description:
     "The shape of your navigation: group sections under a heading, and take them out again. Lets the assistant rearrange the nav for you instead of telling you where to click.",
@@ -29,6 +29,20 @@ export default defineModule({
     events: [],
     api: [],
     actions: [
+    {
+      // NO-PHRASING: the way back for another action, run only from Undo
+      id: "core-presentation:remove-heading",
+      internal: true,
+      label: "Remove an empty heading",
+      description: "Internal, the tail of undoing a grouping: removes a navigation heading nothing sits under. Runs from Undo on the card; not for direct use.",
+      icon: "undo",
+      scope: "workspace" as const,
+      userInvokable: false,
+      invokeHandler: "core-presentation.remove-heading",
+      argsSchema: {
+        heading_id: { label: "The heading's id", type: "text" },
+      },
+    },
     {
       id: "core-presentation:group-nav",
       label: "Group nav sections",

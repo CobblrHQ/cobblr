@@ -62,11 +62,23 @@ instancesRouter.get(
         typeof req.query.module === "string" ? req.query.module : undefined;
       const orgId = req.tenant!.org.id;
       const items = await listInstances(orgId, moduleName);
+      // What the bundle declared for the table (item_noun, qty_unit, faces,
+      // nav_group) lives on the instance's override row, not on the instance
+      // row, and readers of `config.item_noun` here were getting nothing: the
+      // dashboard counted "18 items" and the views chip said "1 item" about a
+      // book whose bundle says "book" (2026-09-12). Merged under the row's own
+      // config, so a key the instance itself carries still wins.
+      const overrides = await listOverrides(orgId);
+      const declaredByInstance = new Map<string, Record<string, unknown>>();
+      for (const o of overrides) {
+        if (o.target_kind === "instance" && o.config) declaredByInstance.set(o.target_id, o.config as Record<string, unknown>);
+      }
       // Enrich with the primary-item count per instance (null if the module
       // registered no counter). Lets the nav hide an empty default instance.
       const enriched = await Promise.all(
         items.map(async (it) => ({
           ...it,
+          config: { ...(declaredByInstance.get(`${it.module_name}:${it.instance_name}`) ?? {}), ...(it.config ?? {}) },
           item_count: await countInstanceItems(orgId, it.module_name, it.instance_name),
           // Whether records here can be moved to a sibling instance. A module
           // opts in by registering a mover, so the UI can hide "Move to..."

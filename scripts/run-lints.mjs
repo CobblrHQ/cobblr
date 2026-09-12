@@ -66,6 +66,17 @@ function main() {
   const concurrency = Number(process.env.COBBLR_LINT_CONCURRENCY) || defaultConcurrency();
   /** Per-lint ceiling. No single check may quietly become the CI job (see below). */
   const BUDGET_MS = Number(process.env.COBBLR_LINT_BUDGET_MS) || 45_000;
+  /** The few lints whose cost is a whole compiler, not a scan. A tsc over
+   *  scripts/ is 16s on an idle runner and 58s with three PRs building at
+   *  once (2026-09-12, three agents pushing together), so the scan budget
+   *  above reads runner contention as a regression and fails a green change.
+   *  Each entry here is a decision, with its reason; the line for everything
+   *  else stays where it is. */
+  const BUDGET_OVERRIDES_MS = {
+    // Type-checks every scripts/*.ts through tsc: the cost is the compiler.
+    "lint:scripts-typecheck": 150_000,
+  };
+  const budgetFor = (name) => BUDGET_OVERRIDES_MS[name] ?? BUDGET_MS;
   console.log(`[lints] ${names.length} lints, ${concurrency} at a time`);
 
   // Run the slowest first: a long job started last is dead wall-clock while the
@@ -137,7 +148,7 @@ function main() {
     // green. Nothing was watching the number, so now something is. The budget is
     // ~6x the whole suite's normal wall, well clear of runner contention: the
     // second-slowest lint in that same run was 9s.
-    const over = results.filter((r) => r.ms > BUDGET_MS).sort((a, b) => b.ms - a.ms);
+    const over = results.filter((r) => r.ms > budgetFor(r.name)).sort((a, b) => b.ms - a.ms);
     if (over.length) {
       console.error(
         `\n[lints] ✗ ${over.length} lint(s) over the ${(BUDGET_MS / 1000).toFixed(0)}s budget:\n` +

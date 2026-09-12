@@ -25,6 +25,7 @@ interface AddItemArgs {
 }
 
 export function registerListActionHandlers(): void {
+  registerUndos();
   if (registered) return;
   registered = true;
 
@@ -97,5 +98,13 @@ export function registerListActionHandlers(): void {
         note: removed ? `Cleared ${removed} done item(s).` : "Nothing was ticked off.",
       },
     };
+  });
+}
+
+function registerUndos(): void {
+  platform().actions.registerUndo("lists.add-item", (result) => {
+    const r = result as { ok?: unknown; added?: unknown; itemId?: unknown } | null;
+    if (r?.ok !== true || !r.added || typeof r.itemId !== "string") return null;
+    return { tool: "delete", entity_kind: "lists:item", entity_id: r.itemId };
   });
 }

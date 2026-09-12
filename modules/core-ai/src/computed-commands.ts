@@ -29,6 +29,12 @@ export interface ComputedPlan {
    *  summary names a few; this is the whole list, for the card to fold. */
   lines?: string[];
   operations: Operation[];
+  /** What the plan saw in its scope and did NOT take, by id: the records the
+   *  word did not reach. A later card can be built from these when the model
+   *  names some of them as covered after all. */
+  also?: Array<{ id: string; title: string }>;
+  /** Where the plan puts things, for that later card to put more. */
+  to?: { name: string; label: string };
 }
 
 export interface ComputedCommand {
@@ -225,19 +231,25 @@ export function saidOf(rec: unknown): string[] {
  *  action for it. */
 export function readMoveRequest(
   message: string,
-): { term: string; destination: string; create?: true; thisPage?: true; source?: string } | null {
+): { term: string; terms?: string[]; destination: string; create?: true; thisPage?: true; source?: string } | null {
   // "get all the tea out of inventory and into the dedicated tea section" is
   // the sentence that reached the model and came back as a card saying only
   // "Move records into another list" (2026-09-11). Every part of it is a move
   // this reader already understood, said with other words: get/take for
   // move, "out of" for from, "and into" for into, "dedicated" for nothing.
   const m =
-    /\b(?:move|put|file|shift|get|take|pull|grab|drag)\s+(?:all\s+)?(?:of\s+)?(?:the\s+|my\s+)?(?<term>[a-z0-9'&\- ]{2,40}?)\s+(?:(?:from|out of)\s+(?<src>[a-z0-9'&\- ]{2,40}?)\s+(?:and\s+)?)?(?:into|in|to|under)\s+(?:the\s+)?(?<dest>[a-z0-9'&\- ]{2,40}?)\s+(?:section|list|group|tab)\s*$/i.exec(
+    /\b(?:move|put|file|shift|get|take|pull|grab|drag)\s+(?:all\s+)?(?:of\s+)?(?:the\s+|my\s+)?(?<term>[a-z0-9'&\-\/, ]{2,60}?)\s+(?:(?:from|out of)\s+(?<src>[a-z0-9'&\- ]{2,40}?)\s+(?:and\s+)?)?(?:into|in|to|under)\s+(?:the\s+)?(?<dest>[a-z0-9'&\- ]{2,40}?)\s+(?:section|list|group|tab)s?\s*$/i.exec(
       message.trim(),
     );
   // "the other grocery", "the remaining teas", "the rest of the spices": the
-  // rest of them, which is not part of what they are called.
-  const term = m?.groups?.term?.trim().replace(/^(?:other|remaining|leftover|rest of (?:the|my)?)\s+/i, "");
+  // rest of them, which is not part of what they are called. And "grocery/
+  // spices", "the grocery and spices": several things, each read on its own.
+  const terms = (m?.groups?.term?.trim() ?? "")
+    .split(/\s*(?:\/|,|&|\band\b|\bor\b|\bplus\b)\s*/i)
+    .map((t) => t.replace(/^(?:the|my)\s+/i, "").replace(/^(?:other|remaining|leftover|rest of (?:the|my)?)\s+/i, "").replace(/^(?:the|my)\s+/i, "").trim())
+    .filter((t) => t.length >= 2);
+  const term = terms[0];
+  const several = terms.length > 1 ? { terms } : {};
   // "the dedicated tea section" is the Tea section: the adjective says how the
   // person feels about the list, not what it is called.
   const rawDest = m?.groups?.dest?.trim() ?? "";
@@ -262,9 +274,9 @@ export function readMoveRequest(
   // the list is the one FOR these things, named after them. "Tea" for the
   // tea. It may not exist yet, and the plan finds out which.
   if (/^(?:its|their|a|the)\s+(?:own|new)$/i.test(destination) || /^(?:dedicated|separate|special|proper|new|own)$/i.test(rawDest)) {
-    return { term, destination: titleCase(term), create: true, ...scope };
+    return { term, ...several, destination: titleCase(term), create: true, ...scope };
   }
-  return { term, destination, ...scope };
+  return { term, ...several, destination, ...scope };
 }
 
 /** The one line over the list. Several things are counted here and named
@@ -396,7 +408,123 @@ function instanceSlug(displayName: string): string {
   return displayName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
+/** "sort the rest of inventory into the right sections" -> { source:
+ *  "inventory" }; "file everything on this page into the correct lists" ->
+ *  { thisPage: true }. The list to sort is the one the sentence names, or the
+ *  page; with neither, the plan looks for a list named anywhere in it. */
+export function readSortRequest(message: string): { source?: string; thisPage?: true } | null {
+  const m = message.trim();
+  if (!SORT_MATCH.test(m)) return null;
+  const src = /\b(?:in|from|out of|on|of)\s+(?:the\s+|my\s+)?(?<src>[a-z][a-z0-9'&\- ]{1,30}?)\s+(?:into|to|where)\b/i.exec(m)?.groups?.src?.trim() ?? "";
+  if (/^(?:this|the current)\s+(?:page|screen|list|view)$|^here$/i.test(src)) return { thisPage: true };
+  if (src && !/^(?:everything|the rest|rest|these|it|them|all)$/i.test(src)) return { source: src };
+  const bare = /\b(?:sort|organi[sz]e|tidy(?:\s+up)?)\s+(?:the\s+|my\s+)?(?<list>[a-z][a-z0-9'&\- ]{1,30}?)\s+into\b/i.exec(m)?.groups?.list?.trim();
+  return bare && !/^(?:everything|the rest|rest|these|it|them|all)$/i.test(bare) ? { source: bare } : {};
+}
+
+// A COLLECTIVE subject ("everything", "the rest", "the other items") going to
+// the RIGHT/own places, or "where it belongs"; or plainly sorting a list into
+// sections. "move the tea into its own section" has no collective subject and
+// stays the single move; "sort the parts by name" is an order, not a sort
+// into lists.
+const SORT_MATCH =
+  /\b(?:everything|the rest|rest of|all of (?:it|them|this|these)|what'?s left|the other (?:items|things|stuff|ones)|the others)\b[\s\S]{0,40}?\b(?:into|to)\s+(?:the\s+|their\s+|its\s+)?(?:right|correct|proper|matching|own)\s+(?:sections?|lists?|places?|spots?|locations?)\b|\bwhere (?:it|they|things|everything) belongs?\b|\b(?:sort|organi[sz]e|tidy(?:\s+up)?)\s+(?:the\s+|my\s+)?[a-z][a-z0-9'&\- ]{1,30}?\s+into\s+(?:sections|lists)\b/i;
+
 export const COMPUTED_COMMANDS: ComputedCommand[] = [
+  {
+    id: "sort-into-lists",
+    match: SORT_MATCH,
+    template: "sort a list into sections",
+    description: "Move each record in a list into the section its category names, and give a category with no section one of its own.",
+    async plan({ wsApi, message, pageKind }) {
+      const said = readSortRequest(message);
+      if (!said) return null;
+      const kinds = await fetchKinds(wsApi).catch(() => []);
+      const listNames = await defaultInstanceNames(wsApi);
+      // The list to sort: the page, the one named, or one named anywhere in
+      // the sentence. It has to be a list of a module that HAS lists.
+      const listed = new Set(kinds.filter((k) => !!k.instance_name).map((k) => k.module_name)); // registry-filter-ok: the modules that have lists, whose primary kinds count as lists too
+      const candidates = kinds.filter((k) => listed.has(k.module_name));
+      const byName = (name: string) =>
+        candidates.find(
+          (k) =>
+            (k.instance_name ?? "").toLowerCase() === name.toLowerCase() ||
+            mentionsWord(listNameOf(k, listNames), name) ||
+            mentionsWord(k.display_name ?? "", name),
+        );
+      const scope = said.thisPage
+        ? candidates.find((k) => k.id === pageKind)
+        : said.source
+          ? byName(said.source)
+          : (candidates.find((k) => k.id === pageKind) ?? candidates.find((k) => mentionsWord(message, listNameOf(k, listNames))));
+      if (!scope) return null;
+      const where = listNameOf(scope, listNames);
+      const fromInstance = scope.instance_name ?? scope.module_name ?? "";
+      // registry-filter-ok: the SECTIONS a category can name are the module's named lists; the primary kind is the list being sorted, or a category nobody files things under
+      const sections = kinds.filter((k) => k.module_name === scope.module_name && !!k.instance_name && k.id !== scope.id);
+      const r = await getTool("list_records")!.execute(wsApi, { kind: scope.id, limit: 500 });
+      if (!r.ok) return null;
+      type Rec = { id: string; title: string; category: string | null };
+      const recs: Rec[] = [];
+      for (const rec of ((r.data as { items?: unknown[] })?.items ?? [])) {
+        const row = rec as { id?: unknown; title?: unknown; fields?: Record<string, unknown> };
+        if (typeof row.id !== "string") continue;
+        const cat = row.fields?.category_name;
+        recs.push({ id: row.id, title: typeof row.title === "string" ? row.title : row.id, category: typeof cat === "string" && cat.trim() ? cat.trim() : null });
+      }
+      // Group by what each is filed under. A category that names an existing
+      // section moves there; one with enough for a section of its own gets
+      // one (the promote-category action: the list is created and the records
+      // moved, and folding it back is its undo); one alone in its category,
+      // or with none, is named and left.
+      const byCategory = new Map<string, Rec[]>();
+      for (const rec of recs) if (rec.category) byCategory.set(rec.category, [...(byCategory.get(rec.category) ?? []), rec]);
+      const moves = new Map<string, { dest: (typeof sections)[number]; recs: Rec[] }>();
+      const promotions: Array<{ category: string; recs: Rec[] }> = [];
+      const alone: Rec[] = [];
+      for (const [category, group] of byCategory) {
+        const dest = sections.find(
+          (k) => mentionsWord(listNameOf(k, listNames), category) || mentionsWord(category, listNameOf(k, listNames)) || (k.instance_name ?? "") === instanceSlug(category),
+        );
+        if (dest) {
+          const cur = moves.get(dest.id) ?? { dest, recs: [] };
+          cur.recs.push(...group);
+          moves.set(dest.id, cur);
+        } else if (group.length >= 2) promotions.push({ category, recs: group });
+        else alone.push(...group);
+      }
+      const uncategorised = recs.filter((x) => !x.category);
+      if (!moves.size && !promotions.length) return null;
+      const operations: Operation[] = [];
+      const lines: string[] = [];
+      const parts: string[] = [];
+      for (const { dest, recs: group } of moves.values()) {
+        const label = listNameOf(dest, listNames);
+        operations.push({ tool: "action", entity_kind: "", action_id: "platform:move-records", payload: { ids: group.map((x) => x.id), to: dest.instance_name! } });
+        for (const x of group) lines.push(`${x.title} → ${label}`);
+        parts.push(`${group.length} into ${label}`);
+      }
+      for (const { category, recs: group } of promotions) {
+        const label = titleCase(category);
+        operations.push({ tool: "action", entity_kind: "", action_id: "platform:promote-category", payload: { from: fromInstance, category, display_name: label } });
+        for (const x of group) lines.push(`${x.title} → ${label} (new section)`);
+        parts.push(`${group.length} into a new ${label} section`);
+      }
+      const moved = operations.length ? lines.length : 0;
+      const list = (xs: string[]) => (xs.length > 1 ? `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}` : xs[0] ?? "");
+      const left: string[] = [];
+      if (alone.length) left.push(`${alone.length} alone in their category (${alone.map((x) => x.title).join(", ")})`);
+      if (uncategorised.length) left.push(`${uncategorised.length} with no category (${uncategorised.map((x) => x.title).join(", ")})`);
+      const leftRecs = [...alone, ...uncategorised];
+      return {
+        summary: `Sort ${moved} from ${where}: ${list(parts)}.`,
+        lines,
+        ...(left.length ? { note: `Left in ${where}: ${list(left)}. Send the message and Cobb will look through them.` } : {}),
+        ...(leftRecs.length ? { also: leftRecs.map((x) => ({ id: x.id, title: x.title })) } : {}),
+        operations,
+      };
+    },
+  },
   {
     id: "move-into-list",
     // The sentence that started this: "move all the tea from this page into
@@ -408,29 +536,36 @@ export const COMPUTED_COMMANDS: ComputedCommand[] = [
     // it without a model at all.
     // The offer strip shows this before anything is planned, so the match has
     // to be as narrow as the parse: a destination the person CALLED a list.
-    match: /\b(move|put|file|shift|get|take|pull|grab|drag)\b[\s\S]{0,60}\b(?:into|in|to|under)\s+(?:the\s+)?[a-z0-9'&\- ]{2,40}?\s+(?:section|list|group|tab)\b/i,
+    match: /\b(move|put|file|shift|get|take|pull|grab|drag)\b[\s\S]{0,60}\b(?:into|in|to|under)\s+(?:the\s+)?[a-z0-9'&\- ]{2,40}?\s+(?:section|list|group|tab)s?\b/i,
     template: "move things into another list",
     description: "Move records that already exist from one list into another, keeping their photos, history and labels.",
     async plan({ wsApi, selectionIds, message, pageKind }) {
       const said = readMoveRequest(message);
       if (!said) return null;
       const kinds = await fetchKinds(wsApi).catch(() => []);
+      // Several things, each into its own section ("grocery/ spices ... into
+      // the dedicated sections"): one destination per thing, found or made
+      // below. One thing, or several into one named list: one destination.
+      const terms = said.terms ?? [said.term];
+      const termWord = terms.join(" or ");
+      const each = !!said.terms && !!said.create;
+      const listFor = (name: string) =>
+        kinds.find(
+          (k) =>
+            !!k.instance_name &&
+            (mentionsWord(k.display_name ?? "", name) || (k.instance_name ?? "").toLowerCase() === name.toLowerCase()),
+        );
       // The destination has to BE a list. "Put the drill in Bin 4" reads the
       // same and means a container, which is a different action entirely - so
       // this asks the workspace rather than the sentence, and falls through
       // when the answer is no.
-      const dest = kinds.find(
-        (k) =>
-          !!k.instance_name &&
-          (mentionsWord(k.display_name ?? "", said.destination) ||
-            (k.instance_name ?? "").toLowerCase() === said.destination.toLowerCase()),
-      );
+      const dest = each ? undefined : listFor(said.destination);
       // "into its own section" with no such list yet: it will be created,
       // from whichever module the things being moved belong to. The list is
       // found from the records, not guessed: they are looked for in every
       // list, and the plan only stands when they all live under one module.
-      const creating = !dest && said.create;
-      if (!dest?.instance_name && !creating) return null;
+      const creating = !each && !dest && said.create;
+      if (!each && !dest?.instance_name && !creating) return null;
       // Its siblings: the other lists of the same module, which is where the
       // things being moved actually are.
       // Where the things could be. With a destination, its module's other
@@ -474,7 +609,7 @@ export const COMPUTED_COMMANDS: ComputedCommand[] = [
         : undefined;
       const scopeKind = pageIsAList ? pageKind! : namedList?.id;
       const where = namedList && !pageIsAList ? listNameOf(namedList, listNames) : undefined;
-      const found: Array<{ id: string; title: string; module: string; from: string; kind: string }> = [];
+      const found: Array<{ id: string; title: string; module: string; from: string; kind: string; term: string }> = [];
       // Everything on the page, matched or not, so the offer can name what it
       // is leaving there.
       const onPage: Array<{ id: string; title: string }> = [];
@@ -487,13 +622,18 @@ export const COMPUTED_COMMANDS: ComputedCommand[] = [
           if (!id) continue;
           if (selectionIds?.length && !selectionIds.includes(id)) continue;
           if (scopeKind && k.id === scopeKind) onPage.push({ id, title: typeof row.title === "string" ? row.title : id });
-          if (!saidOf(rec).some((v) => mentionsWord(v, said.term))) continue;
+          const what = saidOf(rec);
+          const hit = terms.find((t) => what.some((v) => mentionsWord(v, t)));
+          if (!hit) continue;
+          // A thing already in its own section is home, not elsewhere.
+          if (each && listFor(hit)?.id === k.id) continue;
           found.push({
             id,
             title: typeof row.title === "string" ? row.title : id,
             module: k.module_name ?? "",
             from: listNameOf(k, listNames),
             kind: k.id,
+            term: hit,
           });
         }
       }
@@ -530,12 +670,61 @@ export const COMPUTED_COMMANDS: ComputedCommand[] = [
       // Where each one is, whenever that is not already obvious: several
       // lists, or a plan the person did not think they were asking for.
       const named = sources.length > 1 || emptyPage ? moving.map((x) => `${x.title} (in ${x.from})`) : titles;
-      const others = scoped ? onPage.filter((p) => !here.some((h) => h.id === p.id)).map((p) => p.title) : [];
-      const note = moveNote({ term: said.term, here: here.length, elsewhere: elsewhere.length, emptyPage, sources, others, ...(where ? { where } : {}) });
+      const left = scoped ? onPage.filter((p) => !here.some((h) => h.id === p.id)) : [];
+      const others = left.map((p) => p.title);
+      const note = moveNote({ term: termWord, here: here.length, elsewhere: elsewhere.length, emptyPage, sources, others, ...(where ? { where } : {}) });
+      if (each) {
+        // One group per thing, in the order they were said: the list called
+        // that, or a new one named after it. Made lists need one module.
+        type Group = { label: string; toName: string; creating: boolean; module: string; recs: typeof moving };
+        const groups: Group[] = [];
+        const missing: string[] = [];
+        for (const t of terms) {
+          const recs = moving.filter((x) => x.term === t);
+          if (!recs.length) {
+            missing.push(t);
+            continue;
+          }
+          const existing = listFor(t);
+          const mods = [...new Set(recs.map((x) => x.module))];
+          if (!existing && mods.length !== 1) return null;
+          groups.push({
+            label: existing ? (existing.display_name ?? existing.instance_name!) : titleCase(t),
+            toName: existing ? existing.instance_name! : instanceSlug(t),
+            creating: !existing,
+            module: mods[0]!,
+            recs,
+          });
+        }
+        if (!groups.length) return null;
+        const operations: Operation[] = [];
+        const lines: string[] = [];
+        const parts: string[] = [];
+        for (const g of groups) {
+          if (g.creating) {
+            operations.push({ tool: "action", entity_kind: "", action_id: "platform:create-instance", payload: { module_name: g.module, display_name: g.label, instance_name: g.toName } });
+          }
+          operations.push({ tool: "action", entity_kind: "", action_id: "platform:move-records", payload: { ids: g.recs.map((x) => x.id), to: g.toName } });
+          for (const x of g.recs) lines.push(`${x.title} → ${g.label}${g.creating ? " (new section)" : ""}`);
+          parts.push(g.creating ? `${g.recs.length} into a new ${g.label} section` : `${g.recs.length} into ${g.label}`);
+        }
+        const list = (xs: string[]) => (xs.length > 1 ? `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}` : xs[0] ?? "");
+        const from = scoped ? ` from ${where ?? "this page"}` : sources.length === 1 ? ` from ${sources[0]}` : sources.length > 1 ? " from every list" : "";
+        const none = missing.length ? `No ${missing.join(" or ")} ${where ? `in ${where}` : "on this page"}. ` : "";
+        return {
+          summary: `${emptyPage ? "None here. " : ""}Move ${moving.length}${from}: ${list(parts)}.`,
+          ...(none || note ? { note: `${none}${note}`.trim() } : {}),
+          ...(left.length ? { also: left } : {}),
+          lines,
+          operations,
+        };
+      }
       if (creating) {
         return {
           summary: moveHeadline({ titles, label, creating: true, sources, scoped, emptyPage, ...(where ? { where } : {}) }),
           ...(note ? { note } : {}),
+          ...(left.length ? { also: left } : {}),
+          to: { name: toName, label },
           lines: [`New section: ${label}`, ...named],
           operations: [
             {
@@ -551,6 +740,8 @@ export const COMPUTED_COMMANDS: ComputedCommand[] = [
       return {
         summary: moveHeadline({ titles, label, creating: false, sources, scoped, emptyPage, ...(where ? { where } : {}) }),
         ...(note ? { note } : {}),
+        ...(left.length ? { also: left } : {}),
+        to: { name: toName, label },
         // One thing is named in the headline; a list of several is named
         // once, in the lines, not twice. When none were on the page, the list
         // is the answer to "do you mean these?" and is always worth showing.

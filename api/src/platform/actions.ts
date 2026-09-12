@@ -1,6 +1,7 @@
 // Capability Registry runtime. Mirrors entities.ts but for actions
 // rather than entities.
 
+import type { ActionUndoStep, ActionUndoer, ActionUndoContext } from "@cobblr/platform-contract/action-undo";
 import type {
   ActionAppliesToDecl,
   ActionHandler,
@@ -66,17 +67,12 @@ export function hasPlanner(handlerKey: string): boolean {
  *  of its own when it runs, and its own inverse is the original again, so
  *  undoing an undo needs nothing extra. Every action either has one of these
  *  or is declared not undoable, and a guard test holds the two together. */
-export interface ActionUndo {
-  action_id: string;
-  args: Record<string, unknown>;
-}
+export type ActionUndo = ActionUndoStep;
 /** One step or several, in order: fields that came out of two headings go
  *  back under both. An empty list, or null, means this run left nothing to put
- *  back (a feature that was already on, a toggle to what it already was). */
-export type ActionUndoer = (
-  result: unknown,
-  ctx: { orgId: string },
-) => Promise<ActionUndo | ActionUndo[] | null> | ActionUndo | ActionUndo[] | null;
+ *  back (a feature that was already on, a toggle to what it already was).
+ *  The shape lives in the contract so a module registers the same way. */
+export type { ActionUndoer };
 
 const undoers = new Map<string, ActionUndoer>();
 
@@ -93,7 +89,7 @@ export function undoerFor(handlerKey: string): ActionUndoer | undefined {
   return undoers.get(handlerKey);
 }
 
-export async function undoFor(actionId: string, result: unknown, ctx: { orgId: string }): Promise<ActionUndo[] | null> {
+export async function undoFor(actionId: string, result: unknown, ctx: ActionUndoContext): Promise<ActionUndo[] | null> {
   const row = await meta
     .selectFrom("entity_actions")
     .select("invoke_handler")
@@ -454,6 +450,7 @@ function rowToActionRecord(row: {
   invoke_route: string | null;
   invoke_handler: string | null;
   user_invokable?: boolean;
+  internal?: boolean;
   args_schema?: unknown;
   version: string;
   position?: number;
@@ -472,6 +469,7 @@ function rowToActionRecord(row: {
     invoke_route: row.invoke_route,
     invoke_handler: row.invoke_handler,
     user_invokable: row.user_invokable ?? true,
+    internal: row.internal ?? false,
     args_schema:
       (row.args_schema as EntityActionRecord["args_schema"]) ?? null,
     version: row.version,

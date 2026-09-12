@@ -209,7 +209,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "scripts/ (git hooks in scripts/git-hooks/)",
     exemplar: "scripts/merge-pr.sh",
     why: "The same file runs on macOS (bash 3.2, BSD sed) and on the Linux CI box; a construct that is fine on one aborts on the other, after part of the work has already printed as done.",
-    lints: ["lint:bash-portable", "lint:portable-sed", "lint:sigpipe", "lint:deploy-state-in-flow", "lint:shell-lib-git-cwd", "lint:tsbuildinfo-not-shared", "lint:nightly-cut-clock", "lint:empty-array-under-set-u", "lint:scripts-typecheck"],
+    lints: ["lint:bash-portable", "lint:portable-sed", "lint:sigpipe", "lint:deploy-state-in-flow", "lint:shell-lib-git-cwd", "lint:tsbuildinfo-not-shared", "lint:nightly-cut-clock", "lint:empty-array-under-set-u", "lint:scripts-typecheck", "lint:fetch-retry"],
     notes: [
       "Prose (commit messages, PR bodies) goes through a FILE, never a quoted shell string.",
       "Linux-only scripts opt out with `# gnu-sed: <reason>`; that one line covers both sed and bash rules.",
@@ -239,7 +239,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: ".forgejo/workflows/",
     exemplar: ".forgejo/workflows/ci.yml",
     why: "Forgejo keeps no job logs and parses each job on its own: a step that ships no log is unreadable after the fact, a label nobody carries never runs, and a YAML anchor across jobs invalidates the whole file.",
-    lints: ["lint:ci-sink", "lint:ci-runner-labels", "lint:ci-lanes", "lint:workflow-yaml", "lint:ci-pr-any-base", "lint:forgejo-pagination", "lint:main-runs-complete"],
+    lints: ["lint:ci-sink", "lint:ci-runner-labels", "lint:ci-lanes", "lint:workflow-yaml", "lint:latest-monotonic", "lint:ci-pr-any-base", "lint:forgejo-pagination", "lint:main-runs-complete"],
     notes: [
       "The `test` and `test-full` jobs are one job in two places; edit the gate, copy its env+steps over the tracker.",
       "No YAML anchors or merge keys across jobs: Forgejo's job parser splits first and resolves second.",
@@ -253,7 +253,7 @@ export const PLACEMENT: PlacementRow[] = [
     dir: "scripts/",
     exemplar: "scripts/lint-background-loops.ts",
     why: "Bespoke scripts enforce invariants a general linter cannot express; there is deliberately no ESLint here.",
-    lints: ["lint:placement", "lint:lints-are-wired", "lint:scripts-typecheck"],
+    lints: ["lint:placement", "lint:lints-are-wired", "lint:scripts-typecheck", "lint:shipped-script-imports"],
     notes: [
       "Start with scripts/new-lint.sh <slug> --row <row> --rule \"<sentence>\": it writes the file from scripts/templates/lint.template.ts, registers lint:<slug> in package.json, claims the row, and runs it once (skill: writing-a-lint).",
       "A 'one implementation only' rule is a ROW in scripts/capabilities.ts, not a new script.",

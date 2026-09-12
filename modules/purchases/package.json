@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/purchases",
-  "version": "0.1.9",
+  "version": "0.1.11",
   "private": true,
   "type": "module",
   "main": "dist/module.js",

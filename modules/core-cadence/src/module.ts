@@ -4,7 +4,7 @@ import type { CoreCadenceDB } from "./db.js";
 
 export default defineModule({
   name: "core-cadence",
-  version: "0.2.4",
+  version: "0.2.8",
   maturity: "beta",
   displayName: "Cadence",
   description:
@@ -40,6 +40,22 @@ export default defineModule({
     api: ["record", "state"],
     actions: [
       {
+        // NO-PHRASING: the way back for another action, run only from Undo
+        id: "core-cadence:remove-event",
+        internal: true,
+        label: "Remove a recorded event",
+        description:
+          "Internal, the inverse of recording an event: removes it again, by the event's id or by the source_ref the announcer filed it under (every row carrying that reference). Runs from Undo on the card and from a scan attach's undo; not for direct use.",
+        icon: "undo",
+        scope: "workspace" as const,
+        userInvokable: false,
+        invokeHandler: "core-cadence.remove-event",
+        argsSchema: {
+          event_id: { label: "The event's id", type: "text" },
+          source_ref: { label: "The announcer's reference to what caused the event(s), e.g. core-scan:inbox:<id>", type: "text" },
+        },
+      },
+      {
         // Wire/AI-invokable so a receipt import or a list check-off can record a
         // purchase without knowing this module's HTTP shape. NOT userInvokable:
         // people record consumption by using the app, not by filing ledger rows.
@@ -62,6 +78,7 @@ export default defineModule({
           source: { label: "Optional id of whatever triggered it", type: "text" },
           unit_price: { label: "Optional price per unit", type: "number" },
           occurred_at: { label: "When it happened, ISO date, defaults to now", type: "text" },
+          source_ref: { label: "Optional reference to what caused it, so that thing's undo can void it", type: "text" },
         },
         userInvokable: false,
       },

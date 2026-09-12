@@ -17,7 +17,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "builds",
-  version: "0.4.3",
+  version: "0.4.4",
   displayName: "Builds",
   description:
     "Light bill-of-materials: define a build as a recipe of inventory parts, see how many you can build right now (and the limiting component), and consume the parts from stock when you build one. For makers assembling things from tracked parts.",

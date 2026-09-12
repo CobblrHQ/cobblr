@@ -5,8 +5,8 @@
 
 import { sql, type Kysely } from "kysely";
 import { platform, type EntityListQuery, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
-import { PART_CI_FILTER_COLS, PART_FILTER_COLS, type InventoryDB } from "../db.js";
-import { filterValues, isMulti } from "./filter-values.js";
+import { type InventoryDB } from "../db.js";
+import { applyPartFilters, applyPartSort } from "./part-query.js";
 
 let registered = false;
 
@@ -42,115 +42,11 @@ export function registerInventoryResolvers(): void {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
     const limit = Math.min(query.limit ?? 50, 200);
     const offset = query.offset ?? 0;
-    // Every real column, so a filter on one never falls through to the metadata
-    // dialect below and silently matches nothing. See PART_FILTER_COLS.
-    const NATIVE_FILTER_COLS = PART_FILTER_COLS;
     let q = db.selectFrom("inventory_parts").selectAll();
     if (instance) q = q.where("instance", "=", instance as never);
     if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "description", "manufacturer", "notes", "state", "unit"], json: ["metadata"] })!);
-    if (query.filter) {
-      const f = query.filter;
-      for (const [key, val] of Object.entries(f)) {
-        if (val === undefined || val === null) continue;
-        if (key === "_tag") {
-          // D7: every entity carrying this tag (by name). Case-insensitive
-          // match against core_tags_tags.name; sub-query joins assignments.
-          const tagName = String(val).trim().toLowerCase();
-          q = q.where(
-            sql<boolean>`exists (
-              select 1 from core_tags_assignments a
-              join core_tags_tags t on t.id = a.tag_id
-              where a.source_module = 'inventory'
-                and a.source_type = 'part'
-                and a.source_id = inventory_parts.id
-                and lower(t.name) = ${tagName}
-            )`,
-          );
-          continue;
-        }
-        // One value or several. A filter used to be equality-only and silently
-        // IGNORED anything that was not a string, so passing a list applied no
-        // filter and the view showed everything - a panel meant to show one
-        // cupboard showing the whole kitchen, with nothing to notice. An
-        // unusable value now drops the row set to empty instead of widening it:
-        // showing nothing is visibly wrong, showing everything is not.
-        const vals = filterValues(val);
-        if (!vals) {
-          q = q.where(sql<boolean>`false`);
-          continue;
-        }
-        if (NATIVE_FILTER_COLS.has(key)) {
-          // Scanned identifiers arrive in whatever case the scanner emitted, so
-          // those columns compare case-insensitively (and this form can finally
-          // use the lower(serial_number) index from migration 0004).
-          if (PART_CI_FILTER_COLS.has(key)) {
-            const lowered = vals.map((v: string) => v.toLowerCase());
-            q = isMulti(lowered)
-              ? q.where(sql<boolean>`lower(${sql.ref(key)}) = any(${lowered})`)
-              : q.where(sql<boolean>`lower(${sql.ref(key)}) = lower(${lowered[0]!})`);
-          } else {
-            // Single values keep the plain equality so an index still applies.
-            q = isMulti(vals)
-              ? q.where(key as never, "in", vals as never)
-              : q.where(key as never, "=", vals[0]! as never);
-          }
-          continue;
-        }
-        // D8: unknown filter key — assume it's a metadata field.
-        // Postgres ->> returns text; values are compared as text, since JSON
-        // values are stored in their JSON form (numbers come back as text).
-        q = isMulti(vals)
-          ? q.where(sql<boolean>`metadata ->> ${key} = any(${vals})`)
-          : q.where(sql<boolean>`metadata ->> ${key} = ${vals[0]!}`);
-      }
-    }
-    // D10: comparison predicates. Native numeric/date columns, OR a custom
-    // numeric metadata field (a yarn instance's "remaining", a spool's qty) via
-    // a guarded cast. Unknown col / unsupported (col, op) silently skipped.
-    if (query.where) {
-      const COMPARABLE = new Set(["qty", "min_qty", "cost", "created_at", "updated_at"]);
-      for (const p of query.where) {
-        if (!["<", "<=", ">", ">=", "=", "!="].includes(p.op)) continue;
-        const nativeCol = COMPARABLE.has(p.col);
-        if (p.ref_col) {
-          // Column-to-column comparisons stay native-only.
-          if (!nativeCol || !COMPARABLE.has(p.ref_col)) continue;
-          q = q.where(
-            sql<boolean>`${sql.ref(p.col)} ${sql.raw(p.op)} ${sql.ref(p.ref_col)}`,
-          );
-        } else if (p.value !== undefined) {
-          if (nativeCol) {
-            const v = p.value === "now" ? sql<unknown>`now()` : sql<unknown>`${p.value}`;
-            q = q.where(sql<boolean>`${sql.ref(p.col)} ${sql.raw(p.op)} ${v}`);
-          } else if (
-            typeof p.value === "number" ||
-            (typeof p.value === "string" && /^-?[0-9]+(\.[0-9]+)?$/.test(p.value))
-          ) {
-            // Custom numeric metadata field. Guard the cast so a row whose
-            // value isn't a plain number (e.g. "1 kg") is excluded, not an
-            // error. p.col is bound as a parameter (no injection); the op is
-            // whitelisted above.
-            const num = Number(p.value);
-            q = q.where(
-              sql<boolean>`(metadata->>${p.col}) ~ '^-?[0-9]+(\\.[0-9]+)?$' AND (metadata->>${p.col})::numeric ${sql.raw(p.op)} ${num}`,
-            );
-          }
-          // else: non-numeric value on a non-native col → skip.
-        }
-      }
-    }
-    // Sort: default by name asc. Whitelist sortable columns so a
-    // bad config can't blow up the query.
-    const sortable = new Set(["name", "qty", "created_at", "updated_at"]);
-    const sortSpecs = (query.sort ?? ["name"]).filter((s) =>
-      sortable.has(s.replace(/^-/, "")),
-    );
-    let sortedQ = q;
-    for (const spec of sortSpecs) {
-      const desc = spec.startsWith("-");
-      const col = spec.replace(/^-/, "");
-      sortedQ = sortedQ.orderBy(col as never, desc ? "desc" : "asc");
-    }
+    q = applyPartFilters(q, query);
+    const sortedQ = applyPartSort(q, query.sort);
     const rows = await sortedQ.limit(limit).offset(offset).execute();
     const names = await categoryNames(db, rows);
     return {

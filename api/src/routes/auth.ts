@@ -396,7 +396,7 @@ authRouter.post("/signup", async (req, res, next) => {
 
     // ── abuse guards ── both no-op unless configured (the trial box turns them
     // on); run before any DB work so a bot never touches the invite/user path.
-    if (!(await verifyCaptcha(body.captcha_token, req.ip))) {
+    if (!(await verifyCaptcha(body.captcha_token, req))) {
       return res.status(400).json({
         error: { code: "captcha_failed", message: "Captcha verification failed. Please try again." },
       });

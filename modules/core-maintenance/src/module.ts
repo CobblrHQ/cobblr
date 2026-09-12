@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-maintenance",
-  version: "0.1.8",
+  version: "0.1.10",
   displayName: "Maintenance",
   description:
     "Service history + scheduled maintenance for any entity. Oil changes, firmware flashes, warranty renewals: log what's done, get pinged when something's due.",
@@ -96,6 +96,36 @@ export default defineModule({
           scheduled_at: { label: "When it is next due (ISO date)", type: "text" },
           notes: { label: "Notes", type: "text" },
           cost_cents: { label: "Cost in cents", type: "number" },
+        },
+      },
+      {
+        // NO-PHRASING: the way back for another action, run only from Undo
+        id: "core-maintenance:remove-entry",
+        internal: true,
+        label: "Remove a maintenance entry",
+        description: "Internal, the inverse of logging maintenance: removes the entry again. Runs from Undo on the card; not for direct use.",
+        icon: "undo",
+        scope: "workspace" as const,
+        userInvokable: false,
+        invokeHandler: "core-maintenance.remove-entry",
+        argsSchema: {
+          entry_id: { label: "The entry's id", type: "text" },
+        },
+      },
+      {
+        // NO-PHRASING: the way back for another action, run only from Undo
+        id: "core-maintenance:reopen-entry",
+        internal: true,
+        label: "Reopen a maintenance entry",
+        description: "Internal, the inverse of completing an entry: puts back when and by whom it said it was done, or none. Runs from Undo on the card; not for direct use.",
+        icon: "undo",
+        scope: "workspace" as const,
+        userInvokable: false,
+        invokeHandler: "core-maintenance.reopen-entry",
+        argsSchema: {
+          entry_id: { label: "The entry's id", type: "text" },
+          performed_at: { label: "When it said it was done, or blank", type: "text" },
+          performed_by: { label: "Who it said did it, or blank", type: "text" },
         },
       },
       {

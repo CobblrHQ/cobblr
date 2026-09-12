@@ -13,7 +13,8 @@
 
 import { Router } from "express";
 import { sql } from "kysely";
-import { platform, sourceIdKey } from "@cobblr/platform-contract";
+import { platform, sourceIdKey, type WireEffect } from "@cobblr/platform-contract";
+import { goodUntil, startsFreshLot } from "@cobblr/platform-contract/fresh-lot";
 import { z } from "zod";
 import { tenantContext, tenantDb, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
@@ -76,6 +77,40 @@ listsRouter.post(
   }),
 );
 
+/** What checking the line off will stamp on its record, when the restock it
+ *  fires starts a dated lot (the same rule the record applies:
+ *  @cobblr/platform-contract/fresh-lot). The record's on-hand count and shelf
+ *  life come through the entities door; a record with no shelf life is dated
+ *  but not given a use-by. Null when the check-off restocks nothing, or adds to
+ *  a stocked record without a restock wire. */
+async function willDate(
+  orgId: string,
+  ref: { kind: string; id: string },
+  effects: WireEffect[],
+): Promise<{ on: string; until: string | null } | null> {
+  const restock = effects.find((e) => /:adjust-stock$/.test(e.action_id) && typeof e.args?.delta === "number" && (e.args.delta as number) > 0);
+  if (!restock) return null;
+  let fields: Record<string, unknown> = {};
+  try {
+    fields = (await platform().entities.lookup(orgId, ref.kind, ref.id))?.fields ?? {};
+  } catch {
+    return null;
+  }
+  const qty = Number(fields.qty);
+  const starts = startsFreshLot({
+    delta: restock.args!.delta as number,
+    qtyBefore: Number.isFinite(qty) ? qty : 0,
+    restock: restock.args?.restock === true,
+  });
+  if (!starts) return null;
+  const today = new Date().toISOString().slice(0, 10);
+  // Custom fields ride under `metadata` on a resolved record; the shelf life
+  // is the same key the lots read (batches.ts).
+  const md = (fields.metadata as Record<string, unknown> | null) ?? {};
+  const shelf = Number(md.shelf_life_days ?? fields.shelf_life_days);
+  return { on: today, until: goodUntil(today, Number.isFinite(shelf) ? shelf : null) };
+}
+
 listsRouter.get(
   "/lists/:id",
   asyncHandler(async (req, res) => {
@@ -91,7 +126,28 @@ listsRouter.get(
       .orderBy("checked", "asc")
       .orderBy("created_at", "asc")
       .execute();
-    res.json({ ...list, items });
+    // What checking a line off will DO, on the line. A line seeded from another
+    // record restocks it (and files a purchase) through wires, and the row said
+    // nothing about it: milk went 0 to 2 with no visible amount or reason
+    // (2026-09-12). The kernel says which wires would fire for the line's
+    // record; the row shows them and lets the amount be corrected first.
+    const ctx = tenantContext(req);
+    const effectsByKind = new Map<string, WireEffect[]>();
+    const annotated = [];
+    for (const it of items) {
+      const ref = ((it.metadata as { source_ref?: { kind?: string; id?: string } } | null) ?? {}).source_ref;
+      if (!ref?.kind || !ref.id || it.checked) {
+        annotated.push(it);
+        continue;
+      }
+      let effects = effectsByKind.get(ref.kind);
+      if (!effects) {
+        effects = await platform().wires.effectsOf(ctx.org.id, "lists.item.checked", ref.kind);
+        effectsByKind.set(ref.kind, effects);
+      }
+      annotated.push({ ...it, on_check: effects, will_date: await willDate(ctx.org.id, { kind: ref.kind, id: ref.id }, effects) });
+    }
+    res.json({ ...list, items: annotated });
   }),
 );
 
@@ -148,6 +204,10 @@ const ItemUpdate = z.object({
   note: z.string().max(2000).optional(),
   qty: z.string().max(64).optional(),
   checked: z.boolean().optional(),
+  /** How many were bought, stated with the check. The wires that restock the
+   *  line's record and file its purchase take this over their fixed amount;
+   *  the row shows that amount as the default and lets it be corrected. */
+  quantity: z.number().int().positive().max(100_000).optional(),
   /** "I'm getting this" / "never mind". The claimer is always the caller — a
    *  claim is a statement about yourself, never an assignment handed to someone
    *  else, so there is no user id in the body to spoof. */
@@ -198,6 +258,9 @@ listsRouter.patch(
     if (parsed.data.checked !== undefined) {
       patch.checked = parsed.data.checked;
       patch.checked_at = parsed.data.checked ? new Date() : null;
+      // The amount bought is the line's amount from now on, so a shared list
+      // reads "×3" on every phone, not only the one that said so.
+      if (parsed.data.checked && parsed.data.quantity !== undefined) patch.qty = String(parsed.data.quantity);
       // Buying it settles the question of who was getting it. Leaving the claim
       // on a checked line would show "Sam is getting this" next to a line Sam
       // already got.
@@ -234,12 +297,21 @@ listsRouter.patch(
         ref?.kind && ref.id ? await platform().entities.baseKindOf(ctx.org.id, ref.kind) : null;
       const sourceKey =
         parsed.data.checked && refBaseKind && ref?.id ? sourceIdKey(refBaseKind) : undefined;
-      void platform().events.emit("lists.item.checked", {
+      // Awaited: the wires on this event MOVE stock (adjust-stock, the
+      // cadence purchase), and the client re-reads that stock the moment this
+      // route answers (the row's inventory badge, the Groceries page). A
+      // fire-and-forget emit let the answer beat the restock, the same shape
+      // as the digifab cancel race (#2826). emit never rejects.
+      await platform().events.emit("lists.item.checked", {
         orgId: ctx.org.id,
         listId: row.list_id,
         itemId: row.id,
         checked: parsed.data.checked,
         ...(sourceKey ? { [sourceKey]: ref!.id, sourceRef: ref } : {}),
+        // `quantity`: how many the person said they got. An action whose
+        // amount is a wire's fixed arg (adjust-stock's delta, record-event's
+        // qty_delta) takes a stated quantity over it; see those handlers.
+        ...(parsed.data.checked && parsed.data.quantity !== undefined ? { quantity: parsed.data.quantity } : {}),
       });
     }
     if (parsed.data.claimed !== undefined) {

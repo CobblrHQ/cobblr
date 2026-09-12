@@ -6,6 +6,7 @@
 // renderers swap in here as they ship.
 
 import { useState, useMemo, useEffect } from "react";
+import { useKindLabels } from "../lib/useKindLabels";
 import { expiryPhrase, expiryState, pluralise } from "@cobblr/platform-contract";
 import { tallyCadence, CADENCE_PRESETS } from "../lib/cadence";
 import { Link, useSearchParams } from "react-router-dom";
@@ -34,6 +35,7 @@ import {
 export function ViewsPage() {
   usePageTitle("Views");
   const { activeSlug } = useActiveOrg();
+  const labels = useKindLabels(activeSlug);
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
@@ -102,10 +104,10 @@ export function ViewsPage() {
             <LayoutList size={14} className="text-faint" />
             <span className="font-medium truncate">{v.name}</span>
             <span className="text-xs text-muted dark:text-slate-400 truncate">
-              {v.entity_kind}
+              {labels.collection(v.entity_kind)}
             </span>
-            <span className="ml-auto text-xs uppercase text-faint tracking-wide">
-              {v.view_type}
+            <span className="ml-auto text-xs text-faint tracking-wide">
+              {labels.viewType(v.view_type)}
               {v.is_default && " · default"}
               {v.owner_user_id === null && " · shared"}
               {v.pinned && " · pinned"}
@@ -243,9 +245,11 @@ export function SavedViewBody({
   isLoading: boolean;
 }) {
   const cfg = (view.config ?? {}) as ViewConfig;
-  // Count reads in the entity's own noun ("5 machines"), not DB-speak "5 rows".
-  const noun = (view.entity_kind || "").split(":")[1] ?? "";
-  const plural = noun ? pluralise(noun) : "items";
+  // Count reads in the collection's own noun ("5 books"), not DB-speak "5
+  // rows" and not the kind's literal suffix ("5 items" about books).
+  const labels = useKindLabels(useActiveOrg().activeSlug);
+  const noun = labels.noun(view.entity_kind);
+  const plural = pluralise(noun);
   // Bulk select (table view): pick rows → open the organize planner over them.
   // Generic — the planner files whatever the kind's writer accepts a location on;
   // a non-locatable kind just yields nothing to file.
@@ -262,12 +266,15 @@ export function SavedViewBody({
     });
   return (
     <div className="space-y-2">
+      {/* The collection's name and a plain view word. The kind id and the
+          renderer id used to print here as chips; they are routing keys, not
+          words a person uses (2026-09-12). */}
       <div className="text-xs text-muted dark:text-slate-400 flex items-center gap-2">
-        <span>{view.entity_kind}</span>
-        <span className="px-1.5 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300 font-mono text-[10px] uppercase">
-          {view.view_type}
+        <span>{labels.collection(view.entity_kind)}</span>
+        <span className="px-1.5 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300 text-[10px]">
+          {labels.viewType(view.view_type)}
         </span>
-        <span>{items.length} {items.length === 1 && noun ? noun : plural}</span>
+        <span>{items.length} {items.length === 1 ? noun : plural}</span>
       </div>
       {isLoading && <div className="text-sm text-muted">Loading…</div>}
       {items.length === 0 && !isLoading && (
@@ -1576,6 +1583,7 @@ function EditViewModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const editLabels = useKindLabels(slug);
   // Edit form is simpler than create: name + view_type + view-type-
   // specific config + shared toggle. Entity kind is locked because
   // changing it would invalidate the config's filter / where /
@@ -1714,7 +1722,7 @@ function EditViewModal({
           />
         </label>
         <div className="text-xs text-faint">
-          Entity kind: <span className="font-mono">{view.entity_kind}</span>{" "}
+          Collection: <span>{editLabels.collection(view.entity_kind)}</span>{" "}
           (locked)
         </div>
         <label className="block">

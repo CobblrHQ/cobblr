@@ -3,6 +3,7 @@
 // "new reservation" form at the bottom.
 
 import { useEffect, useState, type FormEvent } from "react";
+import { collectionLabelFor } from "@cobblr/platform-contract/kind-label";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useInventory } from "./context";
 import type { AllocationStatus } from "./api";
@@ -263,7 +264,7 @@ export function EntityPicker({
                   className="w-full text-left px-3 py-2 text-sm hover:bg-subtle dark:hover:bg-slate-800 flex items-center gap-2"
                 >
                   <span className="flex-1 truncate text-content dark:text-mortar-100">{label}</span>
-                  <span className="text-[10px] font-mono text-faint shrink-0">{it.kind}</span>
+                  <span className="text-[10px] text-faint shrink-0">{collectionLabelFor(it.kind, [])}</span>
                 </button>
               </li>
             );

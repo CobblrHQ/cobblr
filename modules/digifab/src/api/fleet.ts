@@ -434,7 +434,10 @@ fleetRouter.post(
       if (job) {
         if (outcome === "good") {
           // Fire the held-back consequential effect: close the linked task.
-          void platform().events.emit("digifab.print.confirmed", {
+          // Awaited: the verdict answers and the page refetches the task and
+          // the machine right away, so what this wire moves must be moved
+          // before the answer leaves (#2826 audit; emit never rejects).
+          await platform().events.emit("digifab.print.confirmed", {
             orgId,
             jobId: job.id,
             linkedTaskId: job.linked_task_id,
@@ -445,7 +448,9 @@ fleetRouter.post(
           // forward payload shape so the SAME inventory/machines handlers run:
           // +grams back on the spool, −1 off the machine's print count.
           const grams = job.material_grams != null ? Number(job.material_grams) : null;
-          void platform().events.emit("digifab.print.reversed", {
+          // Awaited for the same reason: grams back on the spool and the
+          // print count off the machine are what the page reads next.
+          await platform().events.emit("digifab.print.reversed", {
             orgId,
             jobId: job.id,
             ...(job.material_part_id && grams && grams > 0

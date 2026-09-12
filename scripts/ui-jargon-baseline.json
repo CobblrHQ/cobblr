@@ -1,4 +1,26 @@
 [
+  "modules/core-file-preview/src/ui/renderers/OcctRenderer.tsx::const label = kind.toUpperCase();",
   "modules/inventory/src/ui/ImportDialog.tsx::{commit.isPending ? \"…\" : `Import ${preview.rows.length} rows`}",
-  "web/src/pages/BackupPage.tsx::toast.success(`Restored ${r?.rows ?? 0} rows, ${r?.files ?? 0} files.`);"
+  "modules/knowledge/src/ui/index.tsx::{e.kind}",
+  "web/src/components/BundleDetailModal.tsx::under <code className=\"font-mono\">{providesLens.entity_kind}</code>.",
+  "web/src/components/BundleDetailModal.tsx::{f.entity_kind}",
+  "web/src/components/FieldDefDetail.tsx::Renders on every <code className=\"font-mono text-accent\">{fieldDef.entity_kind}</code>{\" \"}",
+  "web/src/components/FloorPlan.tsx::<span className=\"font-mono text-[10px] uppercase tracking-widest text-faint\">{loc.kind}</span>",
+  "web/src/components/ImportLocationsDialog.tsx::<td className=\"px-2 py-1 text-faint\">{r.kind}</td>",
+  "web/src/components/PinnedTab.tsx::{entry.kind}",
+  "web/src/components/QuickAccess.tsx::{e.kind}",
+  "web/src/features/edge/DriverPackages.tsx::<span className=\"font-medium text-content dark:text-mortar-100\">{d.kind}</span>",
+  "web/src/pages/AppsConfigPage.tsx::{views.map((v) => (<option key={v.id} value={v.id}>{v.name} ({v.entity_kind})</option>))}",
+  "web/src/pages/BackupPage.tsx::toast.success(`Restored ${r?.rows ?? 0} rows, ${r?.files ?? 0} files.`);",
+  "web/src/pages/BundleComposerPage.tsx::{f.entity_kind}",
+  "web/src/pages/DigifabPage.tsx::<span className=\"text-[10px] font-mono text-faint\">{d.kind}</span>",
+  "web/src/pages/DigifabPage.tsx::<span className=\"uppercase font-mono\">{item.kind}</span>",
+  "web/src/pages/FieldsPage.tsx::<div className=\"font-mono text-xs text-accent dark:text-cobble-300 mb-2\">{kind}</div>",
+  "web/src/pages/LocationDetailPage.tsx::{c.kind}",
+  "web/src/pages/LocationDetailPage.tsx::{l.kind}",
+  "web/src/pages/LocationsPage.tsx::{node.kind}",
+  "web/src/pages/PortalConfigPage.tsx::({v.entity_kind})",
+  "web/src/pages/QrTokensPage.tsx::{t.entity_kind}",
+  "web/src/pages/ScanRulesPage.tsx::<code className=\"text-faint\">{result.entity_kind}</code>",
+  "web/src/pages/SurfacesPage.tsx::{v.name} ({v.entity_kind})"
 ]

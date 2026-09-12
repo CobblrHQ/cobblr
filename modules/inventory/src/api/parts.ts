@@ -8,7 +8,9 @@
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { sql, type RawBuilder } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, stockDisclosureFromConfig, type FilterPredicate } from "@cobblr/platform-contract";
+import { floorDelta } from "../stock-floor.js";
+import { applyPartFilters, applyPartSort } from "./part-query.js";
 import { suggestKindsFromPhoto } from "./suggest-kinds.js";
 import { instanceOf, instanceQtyUnit, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireCapability, requireRole } from "./util.js";
@@ -79,7 +81,9 @@ async function maybeLatchStock(
   const instance = instanceOf(req);
   if (instance === "inventory") return;
   const cfg = (req as unknown as { instanceConfig?: Record<string, unknown> }).instanceConfig;
-  if (typeof cfg?.stock === "boolean" || cfg?.stock_latched === true) return;
+  // Nothing to latch when meta-side already answers: a person's toggle, the
+  // bundle's declared faces, or an earlier latch.
+  if (stockDisclosureFromConfig(cfg) !== null) return;
   if (fieldsShowStockSignal(fields)) await latchInstanceStock(orgId, instance);
 }
 
@@ -204,15 +208,56 @@ const ListQuery = z.object({
   // Opaque cursor — base64 of {name,id} of the last row on the
   // previous page. Absent = first page.
   cursor: z.string().optional(),
+  // A saved view's query, in the generic dialect the entity resolver speaks
+  // (filter: D7 tag / native / D8 metadata equality; where: D10 comparisons;
+  // sort: `["-expires_on","name"]`). The list page renders a view through
+  // THIS route, and for a long time only group_by and visible_fields reached
+  // it, so "Use it or lose it" stayed alphabetical and a Built chip filtered
+  // nothing (#2772, #2422). Compiled by the one shared part-query.ts.
+  filter: z
+    .string()
+    .transform((s, ctx) => {
+      try {
+        const v: unknown = JSON.parse(s);
+        if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
+      } catch {
+        /* fall through */
+      }
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "filter must be a JSON object" });
+      return z.NEVER;
+    })
+    .optional(),
+  where: z
+    .string()
+    .transform((s, ctx) => {
+      try {
+        const v: unknown = JSON.parse(s);
+        if (Array.isArray(v)) return v as FilterPredicate[];
+      } catch {
+        /* fall through */
+      }
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "where must be a JSON array" });
+      return z.NEVER;
+    })
+    .optional(),
+  sort: z
+    .string()
+    .transform((s) => s.split(",").map((x) => x.trim()).filter(Boolean))
+    .optional(),
 });
 
 function encodeCursor(name: string, id: string): string {
   return Buffer.from(JSON.stringify({ name, id })).toString("base64url");
 }
-function decodeCursor(c: string): { name: string; id: string } | null {
+/** Under a view's own sort the page boundary is a row count, not a key. */
+function encodeOffsetCursor(offset: number): string {
+  return Buffer.from(JSON.stringify({ offset })).toString("base64url");
+}
+function decodeCursor(c: string): { name?: string; id?: string; offset?: number } | null {
   try {
     const o = JSON.parse(Buffer.from(c, "base64url").toString("utf8"));
     if (typeof o?.name === "string" && typeof o?.id === "string") return o;
+    if (typeof o?.offset === "number" && o.offset >= 0) return { offset: o.offset };
   } catch {
     /* malformed cursor — treat as no cursor */
   }
@@ -270,10 +315,16 @@ partsRouter.get(
           .where("a.status", "=", "reserved")
           .as("assigned_qty"),
       ])
-      // Stable order: name, then id as tiebreaker (names aren't
-      // unique) — required for correct cursor pagination.
-      .orderBy("p.name")
-      .orderBy("p.id");
+      ;
+    // A view's own query, first, so its predicates AND with the page's.
+    query = applyPartFilters(query, { filter: filter.filter, where: filter.where }, { table: "p" });
+    // Ordering. A view's sort orders by whatever it names (a metadata date,
+    // a native column) with id as the tiebreaker; without one the list keeps
+    // its (name, id) keyset order, which the cursor below depends on.
+    const viewSorted = (filter.sort?.length ?? 0) > 0;
+    query = viewSorted
+      ? applyPartSort(query, filter.sort, { table: "p" }).orderBy("p.id")
+      : query.orderBy("p.name").orderBy("p.id");
     // Scope to the request's instance (default "inventory" on legacy
     // /modules/inventory/parts; the instance slug on /instances/:n/items).
     // ?all_instances=1 reads the WHOLE stash across instances — the
@@ -339,10 +390,15 @@ partsRouter.get(
       );
     }
 
-    // Cursor: keyset pagination on the (name, id) ordering.
+    // Cursor: keyset pagination on the (name, id) ordering; under a view's
+    // own sort the keyset is meaningless, so the cursor carries an offset.
+    let viewOffset = 0;
     if (filter.cursor) {
       const c = decodeCursor(filter.cursor);
-      if (c) {
+      if (c && viewSorted) {
+        viewOffset = c.offset ?? 0;
+        query = query.offset(viewOffset);
+      } else if (c && c.name !== undefined && c.id !== undefined) {
         query = query.where(
           sql<boolean>`(p.name, p.id) > (${c.name}, ${c.id})`,
         );
@@ -478,8 +534,11 @@ partsRouter.get(
     const withUnits = filtered.map((p) => ({ ...p, units_count: unitCounts.get(p.id)?.count ?? 0 }));
 
     const last = filtered[filtered.length - 1];
-    const next_cursor =
-      hasMore && last ? encodeCursor(last.name, last.id) : null;
+    const next_cursor = !hasMore || !last
+      ? null
+      : viewSorted
+        ? encodeOffsetCursor(viewOffset + pageRows.length)
+        : encodeCursor(last.name, last.id);
 
     // This route is a SECOND read path over the same rows the generic entity
     // resolver serves, and only that one post-processed. So a relation or
@@ -536,6 +595,7 @@ partsRouter.get(
         "c.name as category_name",
         "p.location_id",
         "p.created_at",
+        "p.metadata",
       ])
       .orderBy("p.asset_id", "asc")
       .where("p.instance", "=", instanceOf(req));
@@ -584,6 +644,30 @@ partsRouter.get(
       for (const r of resolved) locationNames.set(r.id, r.title);
     }
 
+    // The table's OWN columns come after the module's. A bundle's fields
+    // (author, isbn, reading status on a bookshelf; expiry and storage on a
+    // groceries list) live in metadata, and an export that stopped at the
+    // native columns shipped a bookshelf without its authors (2026-09-12).
+    // Headers are the field names, which is what the importer maps back, so
+    // the file round-trips. Relation and member fields print their label,
+    // the same way the table does, through the one helper both read paths
+    // share.
+    const exportCtx = tenantContext(req);
+    const exportKind = instanceOf(req) === "inventory" ? "inventory:part" : `${instanceOf(req)}:item`;
+    const ownFields = await platform().entities.fieldsFor(exportCtx.org.id, exportKind);
+    const labelled = await platform().entities.withFieldLabels(exportCtx.org.id, exportKind, rows);
+    const ownCell = (row: Record<string, unknown>, f: { name: string; type: string }): string => {
+      if (f.type === "relation" || f.type === "member") {
+        const label = row[`${f.name}_label`];
+        if (typeof label === "string") return label;
+      }
+      const v = (row.metadata as Record<string, unknown> | null)?.[f.name];
+      if (v == null) return "";
+      if (Array.isArray(v)) return v.map((x) => String(x)).join("; ");
+      if (typeof v === "object") return JSON.stringify(v);
+      return String(v);
+    };
+
     const headers = [
       "asset_id",
       "name",
@@ -607,10 +691,11 @@ partsRouter.get(
       "location",
       "notes",
       "created_at",
+      ...ownFields.map((f) => f.name),
     ];
 
-    const lines: string[] = [headers.join(",")];
-    for (const r of rows) {
+    const lines: string[] = [headers.map(csvCell).join(",")];
+    for (const r of labelled) {
       const cells = [
         r.asset_id != null ? String(r.asset_id) : "",
         r.name,
@@ -636,6 +721,7 @@ partsRouter.get(
         r.location_id ? (locationNames.get(r.location_id) ?? "") : "",
         r.notes ?? "",
         new Date(r.created_at).toISOString(),
+        ...ownFields.map((f) => ownCell(r as Record<string, unknown>, f)),
       ];
       lines.push(cells.map(csvCell).join(","));
     }
@@ -1317,10 +1403,29 @@ partsRouter.post(
     const ctx = tenantContext(req);
     const session = sessionUser(req);
 
+    // The floor (stock-floor.ts): the row's own stepper is one more decrement
+    // path, and it inherits the same rule and sentence as every action.
+    const before = await db
+      .selectFrom("inventory_parts")
+      .select(["qty"])
+      .where("id", "=", id)
+      .where("instance", "=", instanceOf(req))
+      .executeTakeFirst();
+    if (!before) {
+      res.status(404).json({ error: { code: "not_found", message: "part not found" } });
+      return;
+    }
+    const verdict = floorDelta(Number(before.qty), parsed.data.delta);
+    if (verdict.kind === "refuse") {
+      res.status(409).json({ error: { code: "nothing_on_hand", message: verdict.error } });
+      return;
+    }
+    const delta = verdict.applied;
+
     const updated = await db
       .updateTable("inventory_parts")
       .set({
-        qty: sql<string>`qty + ${String(parsed.data.delta)}::numeric`,
+        qty: sql<string>`greatest(0, qty + ${String(delta)}::numeric)`,
         updated_at: new Date(),
       })
       .where("id", "=", id)
@@ -1341,7 +1446,7 @@ partsRouter.post(
     try {
       await recordConsumption(db, {
         partId: updated.id,
-        delta: parsed.data.delta,
+        delta,
         reason: parsed.data.reason ?? null,
         sourceKind: parsed.data.source_kind ?? null,
         sourceId: parsed.data.source_id ?? null,
@@ -1355,7 +1460,7 @@ partsRouter.post(
       userId: session.id,
       action: "stock_adjusted",
       ref: { module: "inventory", entityType: "part", entityId: updated.id },
-      diff: { delta: parsed.data.delta, reason: parsed.data.reason ?? null, new_qty: updated.qty },
+      diff: { delta, reason: parsed.data.reason ?? null, new_qty: updated.qty },
     });
     // Await so any wires (e.g. "flip task deps that depended on
     // this part") have run before the client gets its 200. A client
@@ -1363,7 +1468,7 @@ partsRouter.post(
     await platform().events.emit("inventory.stock.changed", {
       orgId: ctx.org.id,
       partId: updated.id,
-      delta: parsed.data.delta,
+      delta,
       newQty: Number(updated.qty),
     });
 
@@ -1378,7 +1483,7 @@ partsRouter.post(
     // a decrease, so re-stocking doesn't re-alert.
     const newQty = Number(updated.qty);
     const minQty = updated.min_qty == null ? null : Number(updated.min_qty);
-    if (parsed.data.delta < 0 && minQty != null && minQty > 0 && newQty <= minQty) {
+    if (delta < 0 && minQty != null && minQty > 0 && newQty <= minQty) {
       await platform().events.emit("inventory.stock.low", {
         orgId: ctx.org.id,
         partId: updated.id,

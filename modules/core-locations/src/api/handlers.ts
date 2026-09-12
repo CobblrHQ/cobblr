@@ -19,6 +19,7 @@ import { ReorderIds, applyOrder } from "./locations.js";
 import type { CoreLocationsDB } from "../db.js";
 
 export function registerLocationsHandlers(): void {
+  registerUndos();
   platform().actions.registerHandler("core-locations.reorder", async (ctx) => {
     // `ids` is a list arg: a real array from invoke_action, a delimited string
     // from a wire's text field. readListArg makes those the same thing — an
@@ -40,7 +41,7 @@ export function registerLocationsHandlers(): void {
     // looks like the wrong thing moved.
     const rows = await db
       .selectFrom("core_locations_locations")
-      .select(["id", "name", "parent_id"])
+      .select(["id", "name", "parent_id", "position"])
       .where("id", "in", parsed.data)
       .execute();
     if (rows.length !== parsed.data.length) {
@@ -57,14 +58,35 @@ export function registerLocationsHandlers(): void {
       };
     }
 
+    // The order before, so the way back is the same action the other way.
+    const previous = previousOrder(rows);
     await applyOrder(db as never, parsed.data);
     const byId = new Map(rows.map((r) => [r.id, r.name]));
     return {
       ok: true,
       result: {
+        previous,
         ordered: parsed.data.map((id, i) => ({ position: i, id, name: byId.get(id) })),
         note: "Sibling order updated. The tree lists shallowest first, then this order, then alphabetically.",
       },
     };
   });
+}
+
+function registerUndos(): void {
+  platform().actions.registerUndo("core-locations.reorder", (result) => {
+    const prev = (result as { result?: { previous?: unknown } } | null)?.result?.previous;
+    if (!Array.isArray(prev) || !prev.length) return null;
+    return { action_id: "core-locations:reorder", args: { ids: prev } };
+  });
+}
+
+/** The order the tree showed these siblings in before a reorder: position,
+ *  then name, the tree's own tiebreak. Untouched locations all sit at
+ *  position 0, and an undo that ordered those by id put them back in an
+ *  order nobody had seen (measured on the rig, 2026-09-13). */
+export function previousOrder(rows: ReadonlyArray<{ id: string; name: string; position: number | string | null }>): string[] {
+  return [...rows]
+    .sort((a, b) => Number(a.position ?? 0) - Number(b.position ?? 0) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+    .map((r) => r.id);
 }

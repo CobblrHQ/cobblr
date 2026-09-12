@@ -860,6 +860,17 @@ export function makeLexicalScorer(item: PerceivedItem): {
     if (/\s/.test(p.trim())) return (item.category ?? "").toLowerCase().includes(p);
     return p.split(/[^a-z0-9]+/).some((w) => w.length >= 3 && catStems.has(stem(w)));
   };
+  // The category's HEAD noun is what kind of thing the lookup said this is:
+  // "Sweetened beverages" is a beverage. A table whose keyword IS that noun
+  // is claiming the kind, the same claim a keyword on the name's head noun
+  // makes, so it counts as strong. A keyword grazing the category's modifier
+  // ("sweetened") stays weak. The dashboard's sample cola carried exactly
+  // this category and no other evidence, and filed into plain Inventory
+  // while Groceries, which declared the word, sat empty (2026-09-12).
+  const catTokens = (item.category ?? "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
+  const catHeadStem = catTokens.length ? stem(catTokens[catTokens.length - 1]!) : "";
+  const hitsCategoryHead = (phrase: string): boolean =>
+    !!catHeadStem && phrase.toLowerCase().split(/[^a-z0-9]+/).some((w) => w.length >= 3 && stem(w) === catHeadStem);
   const nameHas = (phrase: string): boolean => {
     const p = phrase.toLowerCase();
     if (/\s/.test(p.trim())) return nameCore.includes(p);
@@ -932,7 +943,7 @@ export function makeLexicalScorer(item: PerceivedItem): {
         // table whose noun is generic routes on TWO corroborating keywords, the
         // way a real Lego capture carries "lego" + "building set" from its
         // catalog category.)
-        if (hitsHead(term) || (/\s/.test(term.trim()) && nameHas(term))) strong = true;
+        if (hitsHead(term) || hitsCategoryHead(term) || (/\s/.test(term.trim()) && nameHas(term))) strong = true;
       }
     }
     // A choice matches only on a NON-noun capture token (whole-phrase hits the

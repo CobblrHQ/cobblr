@@ -6,6 +6,7 @@
 // with location-bearing entities.
 
 import { useMemo, useState } from "react";
+import { useKindLabels } from "../lib/useKindLabels";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { BinAdjustModal } from "../components/BinAdjustModal";
 import { QuickCreateLocation } from "../components/QuickCreateLocation";
@@ -42,6 +43,7 @@ function str(v: unknown): string | null {
 export function LocationDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { activeSlug } = useActiveOrg();
+  const labels = useKindLabels(activeSlug);
   const navigate = useNavigate();
   const qc = useQueryClient();
   const toast = useToast();
@@ -342,8 +344,10 @@ export function LocationDetailPage() {
                     <div className="text-sm font-medium text-content dark:text-mortar-100 truncate">
                       {item.title}
                     </div>
+                    {/* The collection, not the kind id: INVENTORY:PART under
+                        a book was the review's example (2026-09-12). */}
                     <div className="text-[10px] font-mono uppercase tracking-widest text-faint truncate">
-                      {item.kind}
+                      {labels.collection(item.kind)}
                       {maker ? ` · ${maker}` : ""}
                     </div>
                   </div>

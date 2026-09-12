@@ -17,12 +17,16 @@
 //      instance stays stock without re-probing, so it does NOT flip back to lean
 //      when its quantities drain to zero (the drain-to-restock trap) and
 //      instance-kind synthesis can read the verdict without a tenant pool.
-//   4. Stock-shaped data — any record in the instance carrying a non-zero qty,
-//      a reorder point (min_qty), or a non-"each" unit (a measured unit only
-//      exists to be depleted). `cost` is NOT signal: a catalog recording what a
-//      book cost implies nothing about stock, and would wrongly latch the whole
-//      shelf. On the first fire this SETS the latch (§3 above) so the verdict is
-//      then answered meta-side.
+//   4. Stock-shaped data — any record in the instance carrying a qty ABOVE
+//      ONE, a reorder point (min_qty), or a non-"each" unit (a measured unit
+//      only exists to be depleted). `cost` is NOT signal: a catalog recording
+//      what a book cost implies nothing about stock, and would wrongly latch
+//      the whole shelf. Neither is a qty of exactly 1: that is "I have one",
+//      the default for any unique thing, and every create sends it (the new
+//      form, the seed, a scan), so counting it latched a bookshelf to stock on
+//      its first book and dressed the book in Use one, Used up and a reorder
+//      point (the 2026-09-12 review). On the first fire this SETS the latch
+//      (§3 above) so the verdict is then answered meta-side.
 //
 // Bias lean: absent any signal the instance is a catalog. The disclosure is
 // non-destructive on both sides — hiding the stock panels never drops qty/cost,
@@ -30,21 +34,21 @@
 
 import type { Request, Response } from "express";
 import { sql } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, stockDisclosureFromConfig } from "@cobblr/platform-contract";
 import { asyncHandler } from "./util.js";
 import { tenantDb, instanceOf, tenantContext } from "../db.js";
 
 export interface Disclosure {
   stock: boolean;
   instance: string;
-  source: "override" | "default" | "latched" | "data" | "lean";
+  source: "override" | "default" | "declared" | "latched" | "data" | "lean";
 }
 
 /** True when a record's field bag carries stock signal (a measured/depleting
- *  shape): a non-zero qty, a reorder point, or a non-"each" unit. Shared by the
- *  disclosure probe (SQL, below) and the parts-create latch (route code) so the
- *  two can never disagree on what "stock-shaped" means. `cost` is deliberately
- *  excluded — see the header. */
+ *  shape): a qty above one, a reorder point, or a non-"each" unit. Shared by
+ *  the disclosure probe (SQL, below) and the parts-create latch (route code) so
+ *  the two can never disagree on what "stock-shaped" means. `cost` and a qty of
+ *  exactly 1 are deliberately excluded — see the header. */
 export function fieldsShowStockSignal(row: {
   qty?: number | string | null;
   min_qty?: number | string | null;
@@ -52,7 +56,7 @@ export function fieldsShowStockSignal(row: {
 }): boolean {
   const qty = row.qty == null ? 0 : Number(row.qty);
   const unit = (row.unit ?? "").trim();
-  return (Number.isFinite(qty) && qty !== 0) || row.min_qty != null || (unit !== "" && unit !== "each");
+  return (Number.isFinite(qty) && qty > 1) || row.min_qty != null || (unit !== "" && unit !== "each");
 }
 
 /** Latch this instance to stock meta-side (idempotent; only call when not
@@ -90,20 +94,23 @@ export const disclosureHandler = asyncHandler(async (req: Request, res: Response
     res.json({ stock: override, instance, source: "override" } satisfies Disclosure);
     return;
   }
-
   // 2. The default instance is always stock.
   if (instance === "inventory") {
     res.json({ stock: true, instance, source: "default" } satisfies Disclosure);
     return;
   }
-
-  // 3. Already latched — answer meta-side, no probe. Keeps a drained stock
-  //    instance from flipping back to lean.
-  if (cfg?.stock_latched === true) {
+  // 3. Meta-side: the bundle's declared faces (no stock face = lean, whatever
+  //    a write latched), then the sticky latch. One rule with the kernel's
+  //    kind synthesis (stockDisclosureFromConfig), so the two cannot disagree.
+  const metaSide = stockDisclosureFromConfig(cfg);
+  if (metaSide === false) {
+    res.json({ stock: false, instance, source: "declared" } satisfies Disclosure);
+    return;
+  }
+  if (metaSide === true) {
     res.json({ stock: true, instance, source: "latched" } satisfies Disclosure);
     return;
   }
-
   // 4. Stock-shaped data present? On the first fire, latch it so this becomes a
   //    meta-side answer thereafter (and so combine/scan see the right traits).
   const db = tenantDb(req);
@@ -113,7 +120,7 @@ export const disclosureHandler = asyncHandler(async (req: Request, res: Response
       from inventory_parts
       where instance = ${instance}
         and (
-          qty <> 0
+          qty > 1
           or min_qty is not null
           or (unit is not null and unit <> 'each')
         )
